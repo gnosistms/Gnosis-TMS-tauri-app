@@ -237,9 +237,16 @@ export function cancelGlossaryRename(render) {
 }
 
 export async function submitGlossaryRename(render) {
+  const rename = state.glossaryRename;
+  const nextTitle = String(rename.glossaryName ?? "").trim();
+  if (!nextTitle) {
+    state.glossaryRename = { ...rename, error: "Enter a glossary name." };
+    render();
+    return;
+  }
+
   const team = currentGlossaryTeam();
-  const glossary = glossaryById(state.glossaryRename.glossaryId);
-  const nextTitle = String(state.glossaryRename.glossaryName ?? "").trim();
+  const glossary = glossaryById(rename.glossaryId);
   const allowed = await guardTopLevelResourceAction({
     resource: glossary,
     isExpectedResource: (currentGlossary) =>
@@ -262,11 +269,6 @@ export async function submitGlossaryRename(render) {
     },
   });
   if (!allowed) {
-    return;
-  }
-  if (!nextTitle) {
-    state.glossaryRename.error = "Enter a glossary name.";
-    render();
     return;
   }
   if (areGlossaryLifecycleWritesDisabled()) {

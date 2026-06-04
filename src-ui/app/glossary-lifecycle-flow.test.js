@@ -210,3 +210,28 @@ test("renaming a deleted glossary is blocked before writing metadata", async () 
   assert.equal(metadataWrites.length, 0);
   assert.equal(state.glossaryRename.error, "Could not find the selected glossary.");
 });
+
+test("renaming a glossary validates an empty title before lifecycle guards", async () => {
+  setupGlossaryLifecycleState();
+  state.glossaries[0] = {
+    ...state.glossaries[0],
+    lifecycleState: "deleted",
+  };
+  state.glossaryRename = {
+    ...state.glossaryRename,
+    isOpen: true,
+    glossaryId: "glossary-1",
+    glossaryName: "   ",
+  };
+  const commands = [];
+  invokeHandler = async (command) => {
+    commands.push(command);
+    return {};
+  };
+
+  await submitGlossaryRename(() => {});
+  await flushAsyncWork();
+
+  assert.equal(state.glossaryRename.error, "Enter a glossary name.");
+  assert.deepEqual(commands, []);
+});
