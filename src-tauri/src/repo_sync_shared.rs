@@ -34,6 +34,8 @@ static RESOLVED_GIT_EXECUTABLE: OnceLock<PathBuf> = OnceLock::new();
 static APP_GIT_HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
 static APP_GIT_XDG_CONFIG_HOME: OnceLock<PathBuf> = OnceLock::new();
 static APP_GIT_GLOBAL_CONFIG: OnceLock<PathBuf> = OnceLock::new();
+#[cfg(target_os = "macos")]
+static MACOS_GIT_RUNTIME_ERROR: OnceLock<String> = OnceLock::new();
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -79,10 +81,22 @@ pub(crate) fn initialize_git_runtime<R: Runtime>(app: &AppHandle<R>) {
     {
         let resource_dir = app.path().resource_dir().ok();
         if let Some(app_config_dir) = app_config_dir.as_deref() {
-            if let Ok(Some(path)) =
-                prepare_macos_git_runtime(resource_dir.as_deref(), app_config_dir)
-            {
-                let _ = RESOLVED_GIT_EXECUTABLE.set(path);
+            match prepare_macos_git_runtime(resource_dir.as_deref(), app_config_dir) {
+                Ok(Some(path)) => {
+                    let _ = RESOLVED_GIT_EXECUTABLE.set(path);
+                }
+                Ok(None) => {
+                    #[cfg(not(debug_assertions))]
+                    {
+                        let _ = MACOS_GIT_RUNTIME_ERROR.set(
+                            "Bundled macOS Git runtime not found. Reinstall Gnosis TMS."
+                                .to_string(),
+                        );
+                    }
+                }
+                Err(error) => {
+                    let _ = MACOS_GIT_RUNTIME_ERROR.set(error);
+                }
             }
         }
     }
@@ -103,16 +117,22 @@ pub(crate) fn git_command() -> Result<Command, String> {
         return Ok(command);
     }
 
-    #[cfg(all(target_os = "macos", test))]
+    #[cfg(all(target_os = "macos", debug_assertions))]
     {
+        if let Some(error) = MACOS_GIT_RUNTIME_ERROR.get() {
+            return Err(error.clone());
+        }
         let mut command = Command::new("git");
         configure_git_isolation(&mut command);
         return Ok(command);
     }
 
-    #[cfg(all(target_os = "macos", not(test)))]
+    #[cfg(all(target_os = "macos", not(debug_assertions)))]
     {
-        return Err("Git runtime not found. Reinstall Gnosis TMS.".to_string());
+        return Err(MACOS_GIT_RUNTIME_ERROR
+            .get()
+            .cloned()
+            .unwrap_or_else(|| "Git runtime not found. Reinstall Gnosis TMS.".to_string()));
     }
 
     #[cfg(all(not(windows), not(target_os = "macos")))]
