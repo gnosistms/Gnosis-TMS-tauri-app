@@ -18,7 +18,10 @@ import {
   seedQaListsQueryFromLocal,
 } from "./qa-list-query.js";
 import { queryClient } from "./query-client.js";
-import { setResourcePageRefreshing } from "./resource-page-controller.js";
+import {
+  clearResourcePageDataOwner,
+  setResourcePageRefreshing,
+} from "./resource-page-controller.js";
 import { teamCacheKey } from "./team-cache.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
@@ -42,6 +45,8 @@ export function primeQaListsLoadingState(teamId = state.selectedTeamId, options 
 
   if (!team) {
     state.qaLists = [];
+    state.selectedQaListId = null;
+    clearResourcePageDataOwner(state.qaListsPage);
     setResourcePageRefreshing(state.qaListsPage, false);
     state.qaListDiscovery = {
       ...createQaListDiscoveryState(),
@@ -59,6 +64,8 @@ export function primeQaListsLoadingState(teamId = state.selectedTeamId, options 
   }
 
   state.qaLists = [];
+  state.selectedQaListId = null;
+  clearResourcePageDataOwner(state.qaListsPage);
   setResourcePageRefreshing(state.qaListsPage, true);
   state.qaListDiscovery = {
     ...createQaListDiscoveryState(),
@@ -90,6 +97,8 @@ export async function loadTeamQaLists(render, teamId = state.selectedTeamId, opt
 
   if (!team) {
     state.qaLists = [];
+    state.selectedQaListId = null;
+    clearResourcePageDataOwner(state.qaListsPage);
     setResourcePageRefreshing(state.qaListsPage, false);
     state.qaListDiscovery = {
       ...createQaListDiscoveryState(),

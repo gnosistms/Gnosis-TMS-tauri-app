@@ -127,6 +127,7 @@ test("QA list loading prime preserves visible data for the selected team and cle
     visibleCacheKey: teamCacheKey(team),
   });
   state.qaLists = [{ id: "qa-1", title: "Team 1 QA" }];
+  state.selectedQaListId = "qa-1";
 
   // Selected team (team-1) -> preserved (QA preserves on selected-team match too).
   primeQaListsLoadingState(team.id, { preserveVisibleData: true });
@@ -136,6 +137,9 @@ test("QA list loading prime preserves visible data for the selected team and cle
   // Non-selected, non-owned team (team-2) -> cleared and marked refreshing.
   primeQaListsLoadingState("team-2", { preserveVisibleData: true });
   assert.deepEqual(state.qaLists, []);
+  assert.equal(state.selectedQaListId, null);
+  assert.equal(state.qaListsPage.visibleTeamId, null);
+  assert.equal(state.qaListsPage.visibleCacheKey, null);
   assert.equal(state.qaListsPage.isRefreshing, true);
 });
 
