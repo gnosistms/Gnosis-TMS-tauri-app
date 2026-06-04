@@ -33,10 +33,13 @@ const {
   loadTeamGlossaries,
   primeGlossariesLoadingState,
 } = await import("./glossary-discovery-flow.js");
+const { loadStoredGlossariesForTeam } = await import("./glossary-cache.js");
 const { loadRepoBackedGlossariesForTeam } = await import("./glossary-repo-flow.js");
 const { createResourcePageState } = await import("./resource-page-controller.js");
 const { resetSessionState, state } = await import("./state.js");
+const { getNoticeBadgeText } = await import("./status-feedback.js");
 const { teamCacheKey } = await import("./team-cache.js");
+const { setActiveStorageLogin } = await import("./team-storage.js");
 
 function deferred() {
   let resolve;
@@ -73,6 +76,7 @@ test.afterEach(() => {
   resetGlossariesQueryObserver();
   invokeHandler = async () => null;
   queryClient.clear();
+  setActiveStorageLogin(null);
   resetSessionState();
 });
 
@@ -218,5 +222,68 @@ test("glossary load treats unowned preserve requests as normal loads on failure"
   assert.deepEqual(state.glossaries, []);
   assert.equal(state.glossaryDiscovery.status, "error");
   assert.equal(state.glossaryDiscovery.error, "team-1 remote failed");
+  assert.equal(state.glossariesPage.isRefreshing, false);
+});
+
+test("glossary successful load applies and persists the refreshed query snapshot", async () => {
+  setupGlossaryLoadState();
+  setActiveStorageLogin("glossary-discovery-success-test");
+  const team = state.teams[0];
+  invokeHandler = async (command) => {
+    if (command === "list_local_gtms_glossaries") {
+      return [{
+        glossaryId: "glossary-1",
+        id: "glossary-1",
+        repoName: "glossary-1",
+        fullName: "team-1/glossary-1",
+        title: "Team 1 Glossary",
+      }];
+    }
+    if (command === "sync_local_team_metadata_repo" || command === "ensure_local_team_metadata_repo") {
+      return null;
+    }
+    if (command === "list_local_gnosis_glossary_metadata_records") {
+      return [{
+        id: "glossary-1",
+        glossaryId: "glossary-1",
+        repoName: "glossary-1",
+        fullName: "team-1/glossary-1",
+        title: "Team 1 Glossary",
+        defaultBranch: "main",
+        lifecycleState: "active",
+        remoteState: "linked",
+        recordState: "live",
+      }];
+    }
+    if (command === "inspect_and_migrate_local_repo_bindings") {
+      return { issues: [], autoRepairedCount: 0 };
+    }
+    if (command === "list_gnosis_glossaries_for_installation") {
+      return [{
+        glossaryId: "glossary-1",
+        name: "glossary-1",
+        fullName: "team-1/glossary-1",
+        defaultBranchName: "main",
+      }];
+    }
+    if (command === "sync_gtms_glossary_repos") {
+      return [{
+        repoName: "glossary-1",
+        status: "syncError",
+        message: "Could not sync glossary repo glossary-1.",
+      }];
+    }
+    return null;
+  };
+
+  await loadTeamGlossaries(() => {}, team.id);
+
+  const queryData = queryClient.getQueryData(["glossaries", team.id]);
+  const stored = loadStoredGlossariesForTeam(team);
+  assert.deepEqual(state.glossaries.map((glossary) => glossary.id), ["glossary-1"]);
+  assert.deepEqual(queryData?.glossaries?.map((glossary) => glossary.id), ["glossary-1"]);
+  assert.deepEqual(stored.glossaries.map((glossary) => glossary.id), ["glossary-1"]);
+  assert.equal(getNoticeBadgeText(), "Could not sync glossary repo glossary-1.");
+  assert.equal(state.glossaryDiscovery.status, "ready");
   assert.equal(state.glossariesPage.isRefreshing, false);
 });

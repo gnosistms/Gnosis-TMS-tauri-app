@@ -1,8 +1,28 @@
 import { saveStoredGlossariesForTeam } from "./glossary-cache.js";
-import { normalizeGlossarySummary, sortGlossaries } from "./glossary-shared.js";
+import {
+  applyGlossariesQuerySnapshotToState,
+  persistGlossariesQueryDataForTeam,
+  preserveGlossaryLifecyclePatchesInSnapshot,
+} from "./glossary-query.js";
+import { glossaryKeys, queryClient } from "./query-client.js";
+import { normalizeGlossarySummary, selectedTeam, sortGlossaries } from "./glossary-shared.js";
 import { setResourcePageDataOwner } from "./resource-page-controller.js";
 import { state } from "./state.js";
 import { teamCacheKey } from "./team-cache.js";
+
+export function currentGlossaryTeam() {
+  return selectedTeam();
+}
+
+export function selectedGlossaryTeamMatches(team) {
+  const selected = currentGlossaryTeam();
+  return Boolean(
+    team
+      && selected
+      && selected.id === team.id
+      && selected.installationId === team.installationId,
+  );
+}
 
 export function glossarySnapshotFromList(glossaries = []) {
   const normalized = sortGlossaries(
@@ -59,6 +79,25 @@ export function applyGlossarySnapshotToState(
 
 export function persistGlossariesForTeam(team) {
   saveStoredGlossariesForTeam(team, state.glossaries);
+}
+
+export function applyGlossariesQueryDataForTeam(team, queryData, render, { isFetching = false } = {}) {
+  if (!team?.id || !queryData) {
+    return null;
+  }
+  const queryKey = glossaryKeys.byTeam(team.id);
+  const reconciledQueryData = preserveGlossaryLifecyclePatchesInSnapshot(
+    queryData,
+    queryClient.getQueryData(queryKey),
+  );
+  queryClient.setQueryData(queryKey, reconciledQueryData);
+  applyGlossariesQuerySnapshotToState(reconciledQueryData, {
+    teamId: team.id,
+    isFetching,
+  });
+  persistGlossariesQueryDataForTeam(team, reconciledQueryData);
+  render?.();
+  return reconciledQueryData;
 }
 
 export function removeGlossaryFromState(glossaryId, repoName) {

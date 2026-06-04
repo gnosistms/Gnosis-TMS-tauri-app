@@ -18,7 +18,10 @@ import {
   seedQaListsQueryFromLocal,
 } from "./qa-list-query.js";
 import { queryClient } from "./query-client.js";
-import { setResourcePageRefreshing } from "./resource-page-controller.js";
+import {
+  clearResourcePageDataOwner,
+  setResourcePageRefreshing,
+} from "./resource-page-controller.js";
 import { teamCacheKey } from "./team-cache.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
@@ -33,15 +36,26 @@ function qaListsPageOwnsTeam(team) {
   );
 }
 
+function qaListsPageHasDifferentOwner(team) {
+  return Boolean(
+    (state.qaListsPage?.visibleTeamId || state.qaListsPage?.visibleCacheKey)
+      && !qaListsPageOwnsTeam(team),
+  );
+}
+
 export function primeQaListsLoadingState(teamId = state.selectedTeamId, options = {}) {
   const team = state.teams.find((item) => item.id === teamId) ?? currentQaListTeam();
+  const pageOwnsTeam = qaListsPageOwnsTeam(team);
+  const pageHasDifferentOwner = qaListsPageHasDifferentOwner(team);
   const preserveVisibleData =
     options.preserveVisibleData === true
-    && (qaListsPageOwnsTeam(team) || selectedQaListTeamMatches(team))
+    && (pageOwnsTeam || (!pageHasDifferentOwner && selectedQaListTeamMatches(team)))
     && state.qaLists.length > 0;
 
-  if (!team) {
+  if (!team || !Number.isFinite(team?.installationId)) {
     state.qaLists = [];
+    state.selectedQaListId = null;
+    clearResourcePageDataOwner(state.qaListsPage);
     setResourcePageRefreshing(state.qaListsPage, false);
     state.qaListDiscovery = {
       ...createQaListDiscoveryState(),
@@ -59,6 +73,8 @@ export function primeQaListsLoadingState(teamId = state.selectedTeamId, options 
   }
 
   state.qaLists = [];
+  state.selectedQaListId = null;
+  clearResourcePageDataOwner(state.qaListsPage);
   setResourcePageRefreshing(state.qaListsPage, true);
   state.qaListDiscovery = {
     ...createQaListDiscoveryState(),
@@ -66,9 +82,12 @@ export function primeQaListsLoadingState(teamId = state.selectedTeamId, options 
     recoveryMessage: "",
   };
 
-  const seededSnapshot = seedQaListsQueryFromCache(team, {
-    teamId: team.id,
-  });
+  const seededSnapshot =
+    options.seedFromCache === false
+      ? null
+      : seedQaListsQueryFromCache(team, {
+          teamId: team.id,
+        });
   return {
     preservedVisibleData: false,
     seededFromCache: Boolean(seededSnapshot),
@@ -88,8 +107,10 @@ export async function loadTeamQaLists(render, teamId = state.selectedTeamId, opt
   setResourcePageRefreshing(state.qaListsPage, true);
   render?.();
 
-  if (!team) {
+  if (!team || !Number.isFinite(team?.installationId)) {
     state.qaLists = [];
+    state.selectedQaListId = null;
+    clearResourcePageDataOwner(state.qaListsPage);
     setResourcePageRefreshing(state.qaListsPage, false);
     state.qaListDiscovery = {
       ...createQaListDiscoveryState(),
@@ -129,10 +150,16 @@ export async function loadTeamQaLists(render, teamId = state.selectedTeamId, opt
       }
     }
 
-    ensureQaListsQueryObserver(render, team, { teamId: team.id });
+    ensureQaListsQueryObserver(render, team, {
+      teamId: team.id,
+      preserveVisibleData: preservedVisibleData,
+      suppressRecoveryWarning: options.suppressRecoveryWarning === true,
+    });
     const querySnapshot = await queryClient.fetchQuery(createQaListsQueryOptions(team, {
       teamId: team.id,
       preserveVisibleData: preservedVisibleData,
+      suppressRecoveryWarning: options.suppressRecoveryWarning === true,
+      render,
     }));
     if (!isQaListLoadCurrent(team)) {
       clearScopedSyncBadge("qa", render);
@@ -140,6 +167,18 @@ export async function loadTeamQaLists(render, teamId = state.selectedTeamId, opt
     }
     showScopedSyncBadge("qa", "Refreshing QA lists...", render);
     applyQaListsQueryDataForTeam(team, querySnapshot, null, { isFetching: false });
+    const syncIssueText =
+      typeof querySnapshot.syncIssue?.message === "string"
+        ? querySnapshot.syncIssue.message
+        : typeof querySnapshot.syncIssue === "string"
+          ? querySnapshot.syncIssue
+          : "";
+    const brokerWarning = querySnapshot.discovery?.brokerWarning ?? "";
+    if (syncIssueText) {
+      showNoticeBadge(syncIssueText, render);
+    } else if (brokerWarning) {
+      showNoticeBadge(brokerWarning, render);
+    }
     await completePageSync(render);
   } catch (error) {
     if (!isQaListLoadCurrent(team)) {
@@ -156,12 +195,20 @@ export async function loadTeamQaLists(render, teamId = state.selectedTeamId, opt
       return;
     }
     failPageSync();
-    if (state.qaLists.length === 0) {
+    const hasVisibleLocalData = state.qaLists.length > 0;
+    if (!preservedVisibleData && !hasVisibleLocalData && state.qaListDiscovery?.status !== "ready") {
       state.qaListDiscovery = {
         ...createQaListDiscoveryState(),
         status: "error",
-        error: error?.message ?? "Could not load QA lists.",
+        error: error?.message ?? String(error),
         recoveryMessage: "",
+      };
+    } else {
+      state.qaListDiscovery = {
+        ...createQaListDiscoveryState(),
+        status: "ready",
+        brokerWarning: state.qaListDiscovery?.brokerWarning ?? "",
+        recoveryMessage: state.qaListDiscovery?.recoveryMessage ?? "",
       };
     }
     showNoticeBadge(error?.message ?? String(error), render);
