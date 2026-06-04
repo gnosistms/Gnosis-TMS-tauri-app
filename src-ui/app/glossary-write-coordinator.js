@@ -1,121 +1,56 @@
-import { createWriteIntentCoordinator } from "./write-intent-coordinator.js";
+import { createRepoResourceWriteCoordinator } from "./repo-resource/write-coordinator.js";
 
-const writeIntents = createWriteIntentCoordinator({
+const glossaryWriteCoordinator = createRepoResourceWriteCoordinator({
   defaultScope: "glossary-writes:default",
   label: "Glossary",
+  keyPrefix: "glossary",
+  collectionField: "glossaries",
+  intentResourceIdField: "glossaryId",
+  titleIntentType: "glossaryTitle",
+  lifecycleIntentType: "glossaryLifecycle",
+  repoSyncIntentType: "glossaryRepoSync",
 });
 
 export function resetGlossaryWriteCoordinator() {
-  writeIntents.reset();
+  glossaryWriteCoordinator.reset();
 }
 
 export function glossaryTitleIntentKey(glossaryId) {
-  return `glossary:title:${glossaryId}`;
+  return glossaryWriteCoordinator.titleIntentKey(glossaryId);
 }
 
 export function glossaryLifecycleIntentKey(glossaryId) {
-  return `glossary:lifecycle:${glossaryId}`;
+  return glossaryWriteCoordinator.lifecycleIntentKey(glossaryId);
 }
 
 export function glossaryRepoSyncIntentKey(repoName) {
-  return `glossary:repo-sync:${repoName}`;
+  return glossaryWriteCoordinator.repoSyncIntentKey(repoName);
 }
 
 export function teamMetadataWriteScope(team) {
-  return `team-metadata:${team?.installationId ?? "unknown"}`;
+  return glossaryWriteCoordinator.teamMetadataWriteScope(team);
 }
 
 export function requestGlossaryWriteIntent(intent, operations = {}) {
-  return writeIntents.request(intent, operations);
+  return glossaryWriteCoordinator.requestWriteIntent(intent, operations);
 }
 
 export function getGlossaryWriteIntent(key) {
-  return writeIntents.getIntent(key);
+  return glossaryWriteCoordinator.getWriteIntent(key);
 }
 
 export function anyGlossaryWriteIsActive() {
-  return writeIntents.anyActive();
+  return glossaryWriteCoordinator.anyWriteIsActive();
 }
 
 export function anyGlossaryMutatingWriteIsActive() {
-  return writeIntents.anyActive((intent) => intent.type !== "glossaryRepoSync");
-}
-
-function patchGlossary(snapshot, glossaryId, patch) {
-  if (!snapshot || typeof snapshot !== "object") {
-    return snapshot;
-  }
-
-  let changed = false;
-  const glossaries = (Array.isArray(snapshot.glossaries) ? snapshot.glossaries : [])
-    .map((glossary) => {
-      if (glossary?.id !== glossaryId) {
-        return glossary;
-      }
-      changed = true;
-      return {
-        ...glossary,
-        ...patch,
-      };
-    });
-
-  return changed
-    ? {
-      ...snapshot,
-      glossaries,
-    }
-    : snapshot;
-}
-
-function intentMatchesSnapshot(intent, snapshot) {
-  const glossary = (Array.isArray(snapshot?.glossaries) ? snapshot.glossaries : [])
-    .find((item) => item?.id === intent.glossaryId);
-  if (!glossary) {
-    return false;
-  }
-
-  if (intent.type === "glossaryTitle") {
-    return glossary.title === intent.value?.title;
-  }
-  if (intent.type === "glossaryLifecycle") {
-    return (glossary.lifecycleState === "deleted" ? "deleted" : "active") === intent.value?.lifecycleState;
-  }
-  return false;
+  return glossaryWriteCoordinator.anyMutatingWriteIsActive();
 }
 
 export function applyGlossaryWriteIntentsToSnapshot(snapshot) {
-  let nextSnapshot = snapshot && typeof snapshot === "object"
-    ? {
-        ...snapshot,
-        glossaries: Array.isArray(snapshot.glossaries) ? snapshot.glossaries : [],
-      }
-    : snapshot;
-
-  for (const intent of writeIntents.getIntents()) {
-    if (intent.status === "confirmed") {
-      continue;
-    }
-    if (intent.type === "glossaryTitle") {
-      nextSnapshot = patchGlossary(nextSnapshot, intent.glossaryId, {
-        title: intent.value?.title,
-        pendingMutation: "rename",
-      });
-      continue;
-    }
-    if (intent.type === "glossaryLifecycle") {
-      nextSnapshot = patchGlossary(nextSnapshot, intent.glossaryId, {
-        lifecycleState: intent.value?.lifecycleState === "deleted" ? "deleted" : "active",
-        pendingMutation: intent.value?.lifecycleState === "deleted" ? "softDelete" : "restore",
-      });
-    }
-  }
-
-  return nextSnapshot;
+  return glossaryWriteCoordinator.applyWriteIntentsToSnapshot(snapshot);
 }
 
 export function clearConfirmedGlossaryWriteIntents(snapshot) {
-  writeIntents.clearIntentsWhere((intent) =>
-    intent.status === "pendingConfirmation"
-    && intentMatchesSnapshot(intent, snapshot)
-  );
+  glossaryWriteCoordinator.clearConfirmedWriteIntents(snapshot);
 }

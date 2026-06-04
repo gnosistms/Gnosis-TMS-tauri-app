@@ -1,121 +1,56 @@
-import { createWriteIntentCoordinator } from "./write-intent-coordinator.js";
+import { createRepoResourceWriteCoordinator } from "./repo-resource/write-coordinator.js";
 
-const writeIntents = createWriteIntentCoordinator({
+const qaListWriteCoordinator = createRepoResourceWriteCoordinator({
   defaultScope: "qa-list-writes:default",
   label: "QA list",
+  keyPrefix: "qa-list",
+  collectionField: "qaLists",
+  intentResourceIdField: "qaListId",
+  titleIntentType: "qaListTitle",
+  lifecycleIntentType: "qaListLifecycle",
+  repoSyncIntentType: "qaListRepoSync",
 });
 
 export function resetQaListWriteCoordinator() {
-  writeIntents.reset();
+  qaListWriteCoordinator.reset();
 }
 
 export function qaListTitleIntentKey(qaListId) {
-  return `qa-list:title:${qaListId}`;
+  return qaListWriteCoordinator.titleIntentKey(qaListId);
 }
 
 export function qaListLifecycleIntentKey(qaListId) {
-  return `qa-list:lifecycle:${qaListId}`;
+  return qaListWriteCoordinator.lifecycleIntentKey(qaListId);
 }
 
 export function qaListRepoSyncIntentKey(repoName) {
-  return `qa-list:repo-sync:${repoName}`;
+  return qaListWriteCoordinator.repoSyncIntentKey(repoName);
 }
 
 export function qaListTeamMetadataWriteScope(team) {
-  return `team-metadata:${team?.installationId ?? "unknown"}`;
+  return qaListWriteCoordinator.teamMetadataWriteScope(team);
 }
 
 export function requestQaListWriteIntent(intent, operations = {}) {
-  return writeIntents.request(intent, operations);
+  return qaListWriteCoordinator.requestWriteIntent(intent, operations);
 }
 
 export function getQaListWriteIntent(key) {
-  return writeIntents.getIntent(key);
+  return qaListWriteCoordinator.getWriteIntent(key);
 }
 
 export function anyQaListWriteIsActive() {
-  return writeIntents.anyActive();
+  return qaListWriteCoordinator.anyWriteIsActive();
 }
 
 export function anyQaListMutatingWriteIsActive() {
-  return writeIntents.anyActive((intent) => intent.type !== "qaListRepoSync");
-}
-
-function patchQaList(snapshot, qaListId, patch) {
-  if (!snapshot || typeof snapshot !== "object") {
-    return snapshot;
-  }
-
-  let changed = false;
-  const qaLists = (Array.isArray(snapshot.qaLists) ? snapshot.qaLists : [])
-    .map((qaList) => {
-      if (qaList?.id !== qaListId) {
-        return qaList;
-      }
-      changed = true;
-      return {
-        ...qaList,
-        ...patch,
-      };
-    });
-
-  return changed
-    ? {
-      ...snapshot,
-      qaLists,
-    }
-    : snapshot;
-}
-
-function intentMatchesSnapshot(intent, snapshot) {
-  const qaList = (Array.isArray(snapshot?.qaLists) ? snapshot.qaLists : [])
-    .find((item) => item?.id === intent.qaListId);
-  if (!qaList) {
-    return false;
-  }
-
-  if (intent.type === "qaListTitle") {
-    return qaList.title === intent.value?.title;
-  }
-  if (intent.type === "qaListLifecycle") {
-    return (qaList.lifecycleState === "deleted" ? "deleted" : "active") === intent.value?.lifecycleState;
-  }
-  return false;
+  return qaListWriteCoordinator.anyMutatingWriteIsActive();
 }
 
 export function applyQaListWriteIntentsToSnapshot(snapshot) {
-  let nextSnapshot = snapshot && typeof snapshot === "object"
-    ? {
-        ...snapshot,
-        qaLists: Array.isArray(snapshot.qaLists) ? snapshot.qaLists : [],
-      }
-    : snapshot;
-
-  for (const intent of writeIntents.getIntents()) {
-    if (intent.status === "confirmed") {
-      continue;
-    }
-    if (intent.type === "qaListTitle") {
-      nextSnapshot = patchQaList(nextSnapshot, intent.qaListId, {
-        title: intent.value?.title,
-        pendingMutation: "rename",
-      });
-      continue;
-    }
-    if (intent.type === "qaListLifecycle") {
-      nextSnapshot = patchQaList(nextSnapshot, intent.qaListId, {
-        lifecycleState: intent.value?.lifecycleState === "deleted" ? "deleted" : "active",
-        pendingMutation: intent.value?.lifecycleState === "deleted" ? "softDelete" : "restore",
-      });
-    }
-  }
-
-  return nextSnapshot;
+  return qaListWriteCoordinator.applyWriteIntentsToSnapshot(snapshot);
 }
 
 export function clearConfirmedQaListWriteIntents(snapshot) {
-  writeIntents.clearIntentsWhere((intent) =>
-    intent.status === "pendingConfirmation"
-    && intentMatchesSnapshot(intent, snapshot)
-  );
+  qaListWriteCoordinator.clearConfirmedWriteIntents(snapshot);
 }
