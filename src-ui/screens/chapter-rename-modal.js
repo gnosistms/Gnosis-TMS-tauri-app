@@ -27,9 +27,6 @@ export function renderChapterRenameModal(state) {
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">RENAME FILE</p>
           <h2 class="modal__title">Rename This File</h2>
-          <p class="modal__supporting">
-            This changes the human-readable file title stored in <strong>chapter.json</strong>. The chapter folder slug will stay the same.
-          </p>
           <div class="modal__form">
             <label class="field">
               <span class="field__label">File Name</span>

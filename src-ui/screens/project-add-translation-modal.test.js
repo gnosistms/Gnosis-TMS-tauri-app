@@ -124,17 +124,18 @@ test("add translation progress modal shows full staged progress", () => {
 
   assert.match(html, /Aligning and inserting/);
   assert.match(html, /Please wait/);
+  assert.match(html, /Aligning your pasted translation with this file\. This may take a few minutes\./);
   assert.match(html, /Preparing text units/);
   assert.match(html, /Summarizing sections/);
   assert.match(html, /Finding section matches/);
-  assert.match(html, /Selecting section corridor/);
-  assert.match(html, /Aligning rows inside matched sections/);
+  assert.match(html, /Choosing the best matches/);
+  assert.match(html, /Aligning paragraphs/);
   assert.match(html, /Resolving conflicts/);
   assert.match(html, /Splitting combined target rows/);
   assert.match(html, /Final checks/);
   assert.match(html, /Applying translation/);
   assert.match(html, /aria-label="Preparing text units"[\s\S]*aria-valuenow="100"/);
-  assert.match(html, /aria-label="Aligning rows inside matched sections"[\s\S]*aria-valuenow="50"/);
+  assert.match(html, /aria-label="Aligning paragraphs"[\s\S]*aria-valuenow="50"/);
   assert.match(html, /aria-label="Applying translation"[\s\S]*aria-valuenow="0"/);
   assert.match(html, /Working 2 \/ 4/);
 });

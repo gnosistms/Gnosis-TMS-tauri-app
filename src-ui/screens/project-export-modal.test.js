@@ -53,7 +53,7 @@ test("project export modal shows unsupported function state", () => {
   const html = renderProjectExportModal(exportState({ unsupportedFormat: "xlsx" }));
 
   assert.match(html, /Unsupported function/);
-  assert.match(html, /This feature is not implemented yet\./);
-  assert.match(html, /Contact the developers if you need this feature and ask them to implement it\./);
+  assert.match(html, /Export option unavailable/);
+  assert.match(html, /This export option is not available yet\./);
   assert.match(html, /data-action="close-project-export-unsupported"/);
 });

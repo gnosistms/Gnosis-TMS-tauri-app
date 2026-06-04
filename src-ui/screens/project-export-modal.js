@@ -119,8 +119,8 @@ function renderUnsupportedModal(modal) {
       <section class="card modal-card modal-card--compact">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">Unsupported function</p>
-          <h2 class="modal__title">This feature is not implemented yet.</h2>
-          <p class="modal__supporting">Contact the developers if you need this feature and ask them to implement it.</p>
+          <h2 class="modal__title">Export option unavailable</h2>
+          <p class="modal__supporting">This export option is not available yet.</p>
           <div class="modal__actions">
             ${primaryButton("Ok", "close-project-export-unsupported")}
           </div>

@@ -13,8 +13,9 @@ test("renders remote migrated old-layout discard confirmation modal", () => {
     },
   });
 
-  assert.match(markup, /SERVER HAS NEW DATA FORMAT/);
+  assert.match(markup, /SYNC UPDATE/);
   assert.match(markup, /Overwrite local changes/);
+  assert.match(markup, /A newer version of this project is available online/);
   assert.match(markup, /Discard my changes and continue/);
   assert.match(markup, /Meditation Chamber Books/);
 });

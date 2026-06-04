@@ -97,8 +97,8 @@ const ALIGNMENT_PROGRESS_STEPS = [
   { id: "prepare_units", label: "Preparing text units" },
   { id: "summarize_sections", label: "Summarizing sections" },
   { id: "find_section_matches", label: "Finding section matches" },
-  { id: "select_corridor", label: "Selecting section corridor" },
-  { id: "row_alignment", label: "Aligning rows inside matched sections" },
+  { id: "select_corridor", label: "Choosing the best matches" },
+  { id: "row_alignment", label: "Aligning paragraphs" },
   { id: "resolve_conflicts", label: "Resolving conflicts" },
   { id: "split_targets", label: "Splitting combined target rows" },
   { id: "final_checks", label: "Final checks" },
@@ -192,6 +192,7 @@ function renderProgressModal(modal) {
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">Aligning and inserting</p>
           <h2 class="modal__title">Please wait</h2>
+          <p class="modal__supporting">Aligning your pasted translation with this file. This may take a few minutes.</p>
           <ol class="add-translation-progress" aria-label="Alignment and insertion progress">
             ${ALIGNMENT_PROGRESS_STEPS.map((step, index) => renderProgressStep(step, progress, index, activeIndex)).join("")}
           </ol>
@@ -229,7 +230,7 @@ function renderMismatchModal(modal) {
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">TEXT MISMATCH</p>
           <h2 class="modal__title">Inserted text does not match well</h2>
-          <p class="modal__supporting">Much of the text does not match and can not be aligned. We recommend you check the inserted text to make sure it really is a translation of the text in this file. If you continue with the insert operation, non-similar paragraphs will be aligned with empty space.</p>
+          <p class="modal__supporting">Much of the pasted text does not appear to match this file. If you continue, some parts may be inserted in the wrong place or left blank. Please review the result carefully.</p>
           ${renderError(modal.error)}
           <div class="modal__actions">
             ${secondaryButton("Cancel", "cancel-project-add-translation")}
