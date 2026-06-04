@@ -190,6 +190,42 @@ test("QA list normal load surfaces a remote failure as an error discovery state"
   assert.equal(state.qaListsPage.isRefreshing, false);
 });
 
+test("QA list load keeps ready discovery state when local data survives a remote failure", async () => {
+  setupQaListLoadState();
+  invokeHandler = async (command) => {
+    if (command === "list_local_gtms_qa_lists") {
+      return [{
+        id: "local-qa",
+        title: "Local QA",
+        language: { code: "en", name: "English" },
+        repoName: "local-qa",
+        fullName: "team-1/local-qa",
+      }];
+    }
+    if (command === "sync_local_team_metadata_repo" || command === "ensure_local_team_metadata_repo") {
+      return null;
+    }
+    if (command === "list_local_gnosis_qa_list_metadata_records") {
+      return [];
+    }
+    if (command === "inspect_and_migrate_local_repo_bindings") {
+      return { issues: [], autoRepairedCount: 0 };
+    }
+    if (command === "list_gnosis_qa_lists_for_installation") {
+      throw new Error("team-1 remote failed");
+    }
+    return null;
+  };
+
+  await loadTeamQaLists(() => {}, "team-1");
+
+  assert.deepEqual(state.qaLists.map((qaList) => qaList.id), ["local-qa"]);
+  assert.equal(state.qaListDiscovery.status, "ready");
+  assert.equal(state.qaListDiscovery.error, "");
+  assert.equal(getNoticeBadgeText(), "team-1 remote failed");
+  assert.equal(state.qaListsPage.isRefreshing, false);
+});
+
 test("QA list load surfaces sync issues as notice badges", async () => {
   setupQaListLoadState();
   invokeHandler = async (command) => {

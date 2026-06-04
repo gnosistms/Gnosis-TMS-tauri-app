@@ -180,12 +180,20 @@ export async function loadTeamQaLists(render, teamId = state.selectedTeamId, opt
       return;
     }
     failPageSync();
-    if (state.qaLists.length === 0) {
+    const hasVisibleLocalData = state.qaLists.length > 0;
+    if (!preservedVisibleData && !hasVisibleLocalData && state.qaListDiscovery?.status !== "ready") {
       state.qaListDiscovery = {
         ...createQaListDiscoveryState(),
         status: "error",
-        error: error?.message ?? "Could not load QA lists.",
+        error: error?.message ?? String(error),
         recoveryMessage: "",
+      };
+    } else {
+      state.qaListDiscovery = {
+        ...createQaListDiscoveryState(),
+        status: "ready",
+        brokerWarning: state.qaListDiscovery?.brokerWarning ?? "",
+        recoveryMessage: state.qaListDiscovery?.recoveryMessage ?? "",
       };
     }
     showNoticeBadge(error?.message ?? String(error), render);
