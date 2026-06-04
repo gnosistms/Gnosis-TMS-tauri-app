@@ -2,7 +2,7 @@
 <!-- vt.idd:local-review:batch-5 -->
 
 **Date**: 2026-06-03
-**Status**: **Complete.** Two major findings remain open.
+**Status**: **Complete.** Two major findings identified and resolved in this branch.
 **Scope**: per-domain project sync state machine + repo layout migrations
 **Files**:
 
@@ -144,8 +144,8 @@ blocked.
   covered by `recover_project_rebase_without_unmerged_files_resets_visible_branch_and_keeps_backup`.
 - App-version forward-compat is checked before adopting remote project changes through
   `enforce_remote_project_app_version`.
-- Conflict-overwrite and old-layout discard are explicit user-confirmed recovery paths, but M1
-  still applies because backend permission checks must not rely on UI gating.
+- Conflict-overwrite and old-layout discard are explicit user-confirmed recovery paths. The
+  follow-up fix adds backend write-access checks before those recovery paths mutate the repo.
 
 ---
 
@@ -188,5 +188,5 @@ No findings in `team_repo_migrations.rs`.
 
 | ID | Status | Target |
 |---|---|---|
-| M1 | Open | Add backend write-access gate to destructive project recovery commands. |
-| M2 | Open | Preserve or block divergent committed local work in first-sync attach path. |
+| M1 | Resolved | `overwrite_project_repo_with_remote` and old-layout discard now call `ensure_repo_allows_writes` before repo mutation. |
+| M2 | Resolved | `attach_unsynced_local_project_repo_to_remote` now creates a `gnosis/first-sync-backup-*` branch before adopting remote over a divergent local head. |

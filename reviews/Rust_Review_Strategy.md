@@ -100,8 +100,8 @@ migration step is modified or reordered.
 
 **Review file**: `reviews/2026-06-03-batch-5-review.md`
 **Findings**: 0 Critical, 0 Security, 2 Major, 0 Minor
-**Resolution**: Open; fixes needed for destructive project recovery authorization and
-first-sync attach preservation.
+**Resolution**: Resolved in PR #22 by adding backend write checks for destructive
+project recovery and a backup branch for divergent first-sync attach.
 
 ---
 
