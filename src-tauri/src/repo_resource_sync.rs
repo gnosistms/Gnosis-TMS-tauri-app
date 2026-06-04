@@ -9,6 +9,41 @@
 
 use std::path::Path;
 
+use serde::Serialize;
+
+/// Per-repo sync status returned to the frontend (shared by glossary and QA-list sync).
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RepoSyncSnapshot {
+    pub(crate) repo_name: String,
+    pub(crate) repo_path: String,
+    pub(crate) local_head_oid: Option<String>,
+    pub(crate) remote_head_oid: Option<String>,
+    pub(crate) status: String,
+    pub(crate) message: Option<String>,
+    pub(crate) required_app_version: Option<String>,
+    pub(crate) current_app_version: Option<String>,
+}
+
+/// Result of an old-layout discard command (shared).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DiscardOldLayoutReposResponse {
+    pub(crate) resolved_repo_names: Vec<String>,
+    pub(crate) skipped_repo_names: Vec<String>,
+}
+
+/// Result of an editor-repo sync (shared); reports head movement and term-level changes.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EditorRepoSyncResponse {
+    pub(crate) old_head_sha: Option<String>,
+    pub(crate) new_head_sha: Option<String>,
+    pub(crate) changed_term_ids: Vec<String>,
+    pub(crate) inserted_term_ids: Vec<String>,
+    pub(crate) deleted_term_ids: Vec<String>,
+}
+
 // Repo sync status strings shared by glossary and QA-list sync (single source of truth —
 // previously duplicated identically in both modules).
 pub(crate) const REPO_SYNC_STATUS_NOT_CLONED: &str = "notCloned";
@@ -55,4 +90,24 @@ pub(crate) fn normalized_optional_identifier(value: Option<&str>) -> Option<Stri
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
+}
+
+/// Field-accessor bridge over the per-domain sync descriptors (glossary / QA list), which
+/// are structurally identical apart from their resource-id field name. Implementing this
+/// lets the shared sync logic operate on either descriptor without unifying their types or
+/// changing the frontend JSON contract.
+pub(crate) trait RepoSyncDescriptorLike {
+    fn lifecycle_state(&self) -> Option<&str>;
+    fn record_state(&self) -> Option<&str>;
+    fn remote_state(&self) -> Option<&str>;
+    fn status(&self) -> Option<&str>;
+}
+
+/// Whether a sync descriptor represents a deleted/missing resource (any lifecycle, record,
+/// remote, or transport status flags it as deleted).
+pub(crate) fn descriptor_is_deleted<D: RepoSyncDescriptorLike>(descriptor: &D) -> bool {
+    repo_transport_deleted_state(descriptor.lifecycle_state())
+        || repo_transport_deleted_state(descriptor.record_state())
+        || repo_transport_deleted_state(descriptor.remote_state())
+        || repo_transport_deleted_state(descriptor.status())
 }

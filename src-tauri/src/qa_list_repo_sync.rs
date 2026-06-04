@@ -1,6 +1,6 @@
 use std::{fs, path::Path};
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tauri::AppHandle;
 
 use crate::{
@@ -19,8 +19,9 @@ use crate::{
         sync_pending_repo_layout_migration,
     },
     repo_resource_sync::{
-        normalized_optional_identifier, repo_transport_deleted_state,
-        term_id_from_repo_relative_path,
+        descriptor_is_deleted, normalized_optional_identifier,
+        term_id_from_repo_relative_path, DiscardOldLayoutReposResponse, EditorRepoSyncResponse,
+        RepoSyncDescriptorLike, RepoSyncSnapshot,
         REPO_SYNC_STATUS_DIRTY_LOCAL as QA_LIST_REPO_SYNC_STATUS_DIRTY_LOCAL,
         REPO_SYNC_STATUS_NOT_CLONED as QA_LIST_REPO_SYNC_STATUS_NOT_CLONED,
         REPO_SYNC_STATUS_OUT_OF_SYNC as QA_LIST_REPO_SYNC_STATUS_OUT_OF_SYNC,
@@ -76,41 +77,19 @@ pub(crate) struct QaListEditorRepoSyncInput {
     pub(crate) status: Option<String>,
 }
 
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct QaListRepoSyncSnapshot {
-    pub(crate) repo_name: String,
-    pub(crate) repo_path: String,
-    pub(crate) local_head_oid: Option<String>,
-    pub(crate) remote_head_oid: Option<String>,
-    pub(crate) status: String,
-    pub(crate) message: Option<String>,
-    pub(crate) required_app_version: Option<String>,
-    pub(crate) current_app_version: Option<String>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct DiscardOldLayoutQaListReposResponse {
-    pub(crate) resolved_repo_names: Vec<String>,
-    pub(crate) skipped_repo_names: Vec<String>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct QaListEditorRepoSyncResponse {
-    pub(crate) old_head_sha: Option<String>,
-    pub(crate) new_head_sha: Option<String>,
-    pub(crate) changed_term_ids: Vec<String>,
-    pub(crate) inserted_term_ids: Vec<String>,
-    pub(crate) deleted_term_ids: Vec<String>,
-}
-
-fn qa_list_descriptor_is_deleted(qa_list: &QaListRepoSyncDescriptor) -> bool {
-    repo_transport_deleted_state(qa_list.lifecycle_state.as_deref())
-        || repo_transport_deleted_state(qa_list.record_state.as_deref())
-        || repo_transport_deleted_state(qa_list.remote_state.as_deref())
-        || repo_transport_deleted_state(qa_list.status.as_deref())
+impl RepoSyncDescriptorLike for QaListRepoSyncDescriptor {
+    fn lifecycle_state(&self) -> Option<&str> {
+        self.lifecycle_state.as_deref()
+    }
+    fn record_state(&self) -> Option<&str> {
+        self.record_state.as_deref()
+    }
+    fn remote_state(&self) -> Option<&str> {
+        self.remote_state.as_deref()
+    }
+    fn status(&self) -> Option<&str> {
+        self.status.as_deref()
+    }
 }
 
 #[tauri::command]
@@ -118,7 +97,7 @@ pub(crate) async fn sync_gtms_qa_list_repos(
     app: AppHandle,
     input: QaListRepoSyncInput,
     session_token: String,
-) -> Result<Vec<QaListRepoSyncSnapshot>, String> {
+) -> Result<Vec<RepoSyncSnapshot>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         sync_gtms_qa_list_repos_sync(&app, input, &session_token)
     })
@@ -131,7 +110,7 @@ pub(crate) async fn sync_gtms_qa_list_editor_repo(
     app: AppHandle,
     input: QaListEditorRepoSyncInput,
     session_token: String,
-) -> Result<QaListEditorRepoSyncResponse, String> {
+) -> Result<EditorRepoSyncResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
         sync_gtms_qa_list_editor_repo_sync(&app, input, &session_token)
     })
@@ -144,7 +123,7 @@ pub(crate) async fn discard_old_layout_gtms_qa_list_repos(
     app: AppHandle,
     input: QaListRepoSyncInput,
     session_token: String,
-) -> Result<DiscardOldLayoutQaListReposResponse, String> {
+) -> Result<DiscardOldLayoutReposResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
         discard_old_layout_gtms_qa_list_repos_sync(&app, input, &session_token)
     })
@@ -156,7 +135,7 @@ fn sync_gtms_qa_list_repos_sync(
     app: &AppHandle,
     input: QaListRepoSyncInput,
     session_token: &str,
-) -> Result<Vec<QaListRepoSyncSnapshot>, String> {
+) -> Result<Vec<RepoSyncSnapshot>, String> {
     let needs_transport = input.qa_lists.iter().any(|qa_list| {
         let repo_path = resolve_or_desired_qa_list_git_repo_path(
             app,
@@ -208,7 +187,7 @@ fn sync_gtms_qa_list_repos_sync(
             );
 
             snapshots.push(match sync_result {
-                Ok(local_head_oid) => QaListRepoSyncSnapshot {
+                Ok(local_head_oid) => RepoSyncSnapshot {
                     repo_name: qa_list.repo_name.clone(),
                     repo_path: repo_path.display().to_string(),
                     local_head_oid: local_head_oid.clone(),
@@ -233,7 +212,7 @@ fn sync_gtms_qa_list_editor_repo_sync(
     app: &AppHandle,
     input: QaListEditorRepoSyncInput,
     session_token: &str,
-) -> Result<QaListEditorRepoSyncResponse, String> {
+) -> Result<EditorRepoSyncResponse, String> {
     let qa_list = QaListRepoSyncDescriptor {
         qa_list_id: input.qa_list_id.clone(),
         repo_name: input.repo_name.clone(),
@@ -253,8 +232,8 @@ fn sync_gtms_qa_list_editor_repo_sync(
         &input.repo_name,
     )?;
     let old_head_sha = read_current_head_oid(&repo_path);
-    if qa_list_descriptor_is_deleted(&qa_list) {
-        return Ok(QaListEditorRepoSyncResponse {
+    if descriptor_is_deleted(&qa_list) {
+        return Ok(EditorRepoSyncResponse {
             old_head_sha: old_head_sha.clone(),
             new_head_sha: old_head_sha,
             changed_term_ids: Vec::new(),
@@ -294,7 +273,7 @@ fn sync_gtms_qa_list_editor_repo_sync(
             _ => (Vec::new(), Vec::new(), Vec::new()),
         };
 
-    Ok(QaListEditorRepoSyncResponse {
+    Ok(EditorRepoSyncResponse {
         old_head_sha,
         new_head_sha,
         changed_term_ids,
@@ -307,7 +286,7 @@ fn discard_old_layout_gtms_qa_list_repos_sync(
     app: &AppHandle,
     input: QaListRepoSyncInput,
     session_token: &str,
-) -> Result<DiscardOldLayoutQaListReposResponse, String> {
+) -> Result<DiscardOldLayoutReposResponse, String> {
     let git_transport_token = load_git_transport_token(input.installation_id, session_token)?;
     let git_transport_auth = GitTransportAuth::from_token(&git_transport_token)?;
     let mut resolved_repo_names = Vec::new();
@@ -352,7 +331,7 @@ fn discard_old_layout_gtms_qa_list_repos_sync(
         resolved_repo_names.push(qa_list.repo_name);
     }
 
-    Ok(DiscardOldLayoutQaListReposResponse {
+    Ok(DiscardOldLayoutReposResponse {
         resolved_repo_names,
         skipped_repo_names,
     })
@@ -432,9 +411,9 @@ fn snapshot_from_qa_list_sync_error(
     qa_list: &QaListRepoSyncDescriptor,
     repo_path: &Path,
     error: String,
-) -> QaListRepoSyncSnapshot {
+) -> RepoSyncSnapshot {
     if is_remote_migrated_local_old_layout_changes_error(&error) {
-        return QaListRepoSyncSnapshot {
+        return RepoSyncSnapshot {
             message: Some(
                 "The server has migrated this QA list to a new data format, but this computer still has old-format local changes."
                     .to_string(),
@@ -445,7 +424,7 @@ fn snapshot_from_qa_list_sync_error(
     }
 
     if let Some(requirement) = parse_repo_app_update_requirement_error(&error) {
-        return QaListRepoSyncSnapshot {
+        return RepoSyncSnapshot {
             repo_name: qa_list.repo_name.clone(),
             repo_path: repo_path.display().to_string(),
             local_head_oid: read_current_head_oid(repo_path),
@@ -457,7 +436,7 @@ fn snapshot_from_qa_list_sync_error(
         };
     }
 
-    QaListRepoSyncSnapshot {
+    RepoSyncSnapshot {
         message: Some(error),
         status: QA_LIST_REPO_SYNC_STATUS_SYNC_ERROR.to_string(),
         ..inspect_qa_list_repo_state(qa_list, repo_path)
@@ -467,8 +446,8 @@ fn snapshot_from_qa_list_sync_error(
 fn inspect_qa_list_repo_state(
     qa_list: &QaListRepoSyncDescriptor,
     repo_path: &Path,
-) -> QaListRepoSyncSnapshot {
-    let default_snapshot = || QaListRepoSyncSnapshot {
+) -> RepoSyncSnapshot {
+    let default_snapshot = || RepoSyncSnapshot {
         repo_name: qa_list.repo_name.clone(),
         repo_path: repo_path.display().to_string(),
         local_head_oid: None,
@@ -479,8 +458,8 @@ fn inspect_qa_list_repo_state(
         current_app_version: None,
     };
 
-    if qa_list_descriptor_is_deleted(qa_list) {
-        return QaListRepoSyncSnapshot {
+    if descriptor_is_deleted(qa_list) {
+        return RepoSyncSnapshot {
             local_head_oid: read_current_head_oid(repo_path),
             status: QA_LIST_REPO_SYNC_STATUS_UP_TO_DATE.to_string(),
             message: Some("Skipped because this QA list is deleted.".to_string()),
@@ -500,7 +479,7 @@ fn inspect_qa_list_repo_state(
     let dirty = match git_output(repo_path, &["status", "--porcelain"], None) {
         Ok(value) => !value.trim().is_empty(),
         Err(error) => {
-            return QaListRepoSyncSnapshot {
+            return RepoSyncSnapshot {
                 status: QA_LIST_REPO_SYNC_STATUS_SYNC_ERROR.to_string(),
                 message: Some(error),
                 local_head_oid,
@@ -510,7 +489,7 @@ fn inspect_qa_list_repo_state(
     };
 
     if dirty {
-        return QaListRepoSyncSnapshot {
+        return RepoSyncSnapshot {
             local_head_oid,
             status: QA_LIST_REPO_SYNC_STATUS_DIRTY_LOCAL.to_string(),
             message: Some("Local repo has uncommitted changes.".to_string()),
@@ -541,7 +520,7 @@ fn inspect_qa_list_repo_state(
         status
     };
 
-    QaListRepoSyncSnapshot {
+    RepoSyncSnapshot {
         local_head_oid,
         remote_head_oid,
         status: status.to_string(),
@@ -661,7 +640,7 @@ fn sync_qa_list_repo(
     remote_head_oid: &str,
     git_transport_token: &str,
 ) -> Result<Option<String>, String> {
-    if qa_list_descriptor_is_deleted(qa_list) {
+    if descriptor_is_deleted(qa_list) {
         return Ok(read_current_head_oid(repo_path));
     }
 
