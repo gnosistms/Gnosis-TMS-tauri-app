@@ -1,6 +1,6 @@
 use std::{fs, path::Path};
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tauri::AppHandle;
 
 use crate::{
@@ -20,7 +20,8 @@ use crate::{
     },
     repo_resource_sync::{
         normalized_optional_identifier, repo_transport_deleted_state,
-        term_id_from_repo_relative_path,
+        term_id_from_repo_relative_path, DiscardOldLayoutReposResponse, EditorRepoSyncResponse,
+        RepoSyncSnapshot,
         REPO_SYNC_STATUS_DIRTY_LOCAL as GLOSSARY_REPO_SYNC_STATUS_DIRTY_LOCAL,
         REPO_SYNC_STATUS_NOT_CLONED as GLOSSARY_REPO_SYNC_STATUS_NOT_CLONED,
         REPO_SYNC_STATUS_OUT_OF_SYNC as GLOSSARY_REPO_SYNC_STATUS_OUT_OF_SYNC,
@@ -76,36 +77,6 @@ pub(crate) struct GlossaryEditorRepoSyncInput {
     pub(crate) status: Option<String>,
 }
 
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct GlossaryRepoSyncSnapshot {
-    pub(crate) repo_name: String,
-    pub(crate) repo_path: String,
-    pub(crate) local_head_oid: Option<String>,
-    pub(crate) remote_head_oid: Option<String>,
-    pub(crate) status: String,
-    pub(crate) message: Option<String>,
-    pub(crate) required_app_version: Option<String>,
-    pub(crate) current_app_version: Option<String>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct DiscardOldLayoutGlossaryReposResponse {
-    pub(crate) resolved_repo_names: Vec<String>,
-    pub(crate) skipped_repo_names: Vec<String>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct GlossaryEditorRepoSyncResponse {
-    pub(crate) old_head_sha: Option<String>,
-    pub(crate) new_head_sha: Option<String>,
-    pub(crate) changed_term_ids: Vec<String>,
-    pub(crate) inserted_term_ids: Vec<String>,
-    pub(crate) deleted_term_ids: Vec<String>,
-}
-
 fn glossary_descriptor_is_deleted(glossary: &GlossaryRepoSyncDescriptor) -> bool {
     repo_transport_deleted_state(glossary.lifecycle_state.as_deref())
         || repo_transport_deleted_state(glossary.record_state.as_deref())
@@ -118,7 +89,7 @@ pub(crate) async fn sync_gtms_glossary_repos(
     app: AppHandle,
     input: GlossaryRepoSyncInput,
     session_token: String,
-) -> Result<Vec<GlossaryRepoSyncSnapshot>, String> {
+) -> Result<Vec<RepoSyncSnapshot>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         sync_gtms_glossary_repos_sync(&app, input, &session_token)
     })
@@ -131,7 +102,7 @@ pub(crate) async fn sync_gtms_glossary_editor_repo(
     app: AppHandle,
     input: GlossaryEditorRepoSyncInput,
     session_token: String,
-) -> Result<GlossaryEditorRepoSyncResponse, String> {
+) -> Result<EditorRepoSyncResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
         sync_gtms_glossary_editor_repo_sync(&app, input, &session_token)
     })
@@ -144,7 +115,7 @@ pub(crate) async fn discard_old_layout_gtms_glossary_repos(
     app: AppHandle,
     input: GlossaryRepoSyncInput,
     session_token: String,
-) -> Result<DiscardOldLayoutGlossaryReposResponse, String> {
+) -> Result<DiscardOldLayoutReposResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
         discard_old_layout_gtms_glossary_repos_sync(&app, input, &session_token)
     })
@@ -156,7 +127,7 @@ fn sync_gtms_glossary_repos_sync(
     app: &AppHandle,
     input: GlossaryRepoSyncInput,
     session_token: &str,
-) -> Result<Vec<GlossaryRepoSyncSnapshot>, String> {
+) -> Result<Vec<RepoSyncSnapshot>, String> {
     let needs_transport = input.glossaries.iter().any(|glossary| {
         let repo_path = resolve_or_desired_glossary_git_repo_path(
             app,
@@ -208,7 +179,7 @@ fn sync_gtms_glossary_repos_sync(
             );
 
             snapshots.push(match sync_result {
-                Ok(local_head_oid) => GlossaryRepoSyncSnapshot {
+                Ok(local_head_oid) => RepoSyncSnapshot {
                     repo_name: glossary.repo_name.clone(),
                     repo_path: repo_path.display().to_string(),
                     local_head_oid: local_head_oid.clone(),
@@ -233,7 +204,7 @@ fn sync_gtms_glossary_editor_repo_sync(
     app: &AppHandle,
     input: GlossaryEditorRepoSyncInput,
     session_token: &str,
-) -> Result<GlossaryEditorRepoSyncResponse, String> {
+) -> Result<EditorRepoSyncResponse, String> {
     let glossary = GlossaryRepoSyncDescriptor {
         glossary_id: input.glossary_id.clone(),
         repo_name: input.repo_name.clone(),
@@ -254,7 +225,7 @@ fn sync_gtms_glossary_editor_repo_sync(
     )?;
     let old_head_sha = read_current_head_oid(&repo_path);
     if glossary_descriptor_is_deleted(&glossary) {
-        return Ok(GlossaryEditorRepoSyncResponse {
+        return Ok(EditorRepoSyncResponse {
             old_head_sha: old_head_sha.clone(),
             new_head_sha: old_head_sha,
             changed_term_ids: Vec::new(),
@@ -294,7 +265,7 @@ fn sync_gtms_glossary_editor_repo_sync(
             _ => (Vec::new(), Vec::new(), Vec::new()),
         };
 
-    Ok(GlossaryEditorRepoSyncResponse {
+    Ok(EditorRepoSyncResponse {
         old_head_sha,
         new_head_sha,
         changed_term_ids,
@@ -307,7 +278,7 @@ fn discard_old_layout_gtms_glossary_repos_sync(
     app: &AppHandle,
     input: GlossaryRepoSyncInput,
     session_token: &str,
-) -> Result<DiscardOldLayoutGlossaryReposResponse, String> {
+) -> Result<DiscardOldLayoutReposResponse, String> {
     let git_transport_token = load_git_transport_token(input.installation_id, session_token)?;
     let git_transport_auth = GitTransportAuth::from_token(&git_transport_token)?;
     let mut resolved_repo_names = Vec::new();
@@ -352,7 +323,7 @@ fn discard_old_layout_gtms_glossary_repos_sync(
         resolved_repo_names.push(glossary.repo_name);
     }
 
-    Ok(DiscardOldLayoutGlossaryReposResponse {
+    Ok(DiscardOldLayoutReposResponse {
         resolved_repo_names,
         skipped_repo_names,
     })
@@ -432,9 +403,9 @@ fn snapshot_from_glossary_sync_error(
     glossary: &GlossaryRepoSyncDescriptor,
     repo_path: &Path,
     error: String,
-) -> GlossaryRepoSyncSnapshot {
+) -> RepoSyncSnapshot {
     if is_remote_migrated_local_old_layout_changes_error(&error) {
-        return GlossaryRepoSyncSnapshot {
+        return RepoSyncSnapshot {
             message: Some(
                 "The server has migrated this glossary to a new data format, but this computer still has old-format local changes."
                     .to_string(),
@@ -445,7 +416,7 @@ fn snapshot_from_glossary_sync_error(
     }
 
     if let Some(requirement) = parse_repo_app_update_requirement_error(&error) {
-        return GlossaryRepoSyncSnapshot {
+        return RepoSyncSnapshot {
             repo_name: glossary.repo_name.clone(),
             repo_path: repo_path.display().to_string(),
             local_head_oid: read_current_head_oid(repo_path),
@@ -457,7 +428,7 @@ fn snapshot_from_glossary_sync_error(
         };
     }
 
-    GlossaryRepoSyncSnapshot {
+    RepoSyncSnapshot {
         message: Some(error),
         status: GLOSSARY_REPO_SYNC_STATUS_SYNC_ERROR.to_string(),
         ..inspect_glossary_repo_state(glossary, repo_path)
@@ -467,8 +438,8 @@ fn snapshot_from_glossary_sync_error(
 fn inspect_glossary_repo_state(
     glossary: &GlossaryRepoSyncDescriptor,
     repo_path: &Path,
-) -> GlossaryRepoSyncSnapshot {
-    let default_snapshot = || GlossaryRepoSyncSnapshot {
+) -> RepoSyncSnapshot {
+    let default_snapshot = || RepoSyncSnapshot {
         repo_name: glossary.repo_name.clone(),
         repo_path: repo_path.display().to_string(),
         local_head_oid: None,
@@ -480,7 +451,7 @@ fn inspect_glossary_repo_state(
     };
 
     if glossary_descriptor_is_deleted(glossary) {
-        return GlossaryRepoSyncSnapshot {
+        return RepoSyncSnapshot {
             local_head_oid: read_current_head_oid(repo_path),
             status: GLOSSARY_REPO_SYNC_STATUS_UP_TO_DATE.to_string(),
             message: Some("Skipped because this glossary is deleted.".to_string()),
@@ -500,7 +471,7 @@ fn inspect_glossary_repo_state(
     let dirty = match git_output(repo_path, &["status", "--porcelain"], None) {
         Ok(value) => !value.trim().is_empty(),
         Err(error) => {
-            return GlossaryRepoSyncSnapshot {
+            return RepoSyncSnapshot {
                 status: GLOSSARY_REPO_SYNC_STATUS_SYNC_ERROR.to_string(),
                 message: Some(error),
                 local_head_oid,
@@ -510,7 +481,7 @@ fn inspect_glossary_repo_state(
     };
 
     if dirty {
-        return GlossaryRepoSyncSnapshot {
+        return RepoSyncSnapshot {
             local_head_oid,
             status: GLOSSARY_REPO_SYNC_STATUS_DIRTY_LOCAL.to_string(),
             message: Some("Local repo has uncommitted changes.".to_string()),
@@ -541,7 +512,7 @@ fn inspect_glossary_repo_state(
         status
     };
 
-    GlossaryRepoSyncSnapshot {
+    RepoSyncSnapshot {
         local_head_oid,
         remote_head_oid,
         status: status.to_string(),
