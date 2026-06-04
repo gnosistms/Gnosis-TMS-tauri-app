@@ -21,18 +21,74 @@ use crate::{
         new_v2_repo_layout_metadata, write_repo_layout_metadata, RepoKind,
         REPO_METADATA_RELATIVE_PATH, STORAGE_LAYOUT_VERSION_V2,
     },
-    short_path_names::allocate_short_folder_name,
     storage_paths::local_qa_list_repo_root,
 };
 
 mod tmx;
 
 use crate::repo_resource_storage::{
-    ensure_gitattributes, git_output, read_json_file, write_json_pretty, write_text_file,
+    ensure_gitattributes, git_output, prepare_repo, purge_repo, read_json_file,
+    resolve_git_repo_path, resolve_initialized_repo_path, rollback_term_upsert, write_json_pretty,
+    write_resource_lifecycle, write_resource_title, write_text_file, RepoResourceStorageDomain,
 };
 use tmx::{parse_tmx_qa_list, serialize_tmx_qa_list};
 
 const QA_LIST_FILE_NAME: &str = "qa-list.json";
+
+/// QA-list-specific values for the shared repo-resource storage scaffolding.
+struct QaListStorageDomain;
+
+impl RepoResourceStorageDomain for QaListStorageDomain {
+    fn resource_file_name(&self) -> &'static str {
+        QA_LIST_FILE_NAME
+    }
+    fn state_kind(&self) -> &'static str {
+        "qa_list"
+    }
+    fn display_noun(&self) -> &'static str {
+        "QA list"
+    }
+    fn local_repo_root(&self, app: &AppHandle, installation_id: i64) -> Result<PathBuf, String> {
+        local_qa_list_repo_root(app, installation_id)
+    }
+    fn read_resource_id(&self, repo_path: &Path) -> Option<String> {
+        read_qa_list_file(repo_path)
+            .ok()
+            .map(|file| file.qa_list_id)
+    }
+}
+
+/// Resolve an initialized local QA-list repo (errors if missing or not initialized).
+fn qa_list_repo_path(
+    app: &AppHandle,
+    installation_id: i64,
+    qa_list_id: Option<&str>,
+    repo_name: Option<&str>,
+) -> Result<PathBuf, String> {
+    resolve_initialized_repo_path(
+        &QaListStorageDomain,
+        app,
+        installation_id,
+        qa_list_id,
+        repo_name,
+    )
+}
+
+/// Resolve the local QA-list git checkout (may be uninitialized).
+fn qa_list_git_repo_path(
+    app: &AppHandle,
+    installation_id: i64,
+    qa_list_id: Option<&str>,
+    repo_name: Option<&str>,
+) -> Result<PathBuf, String> {
+    resolve_git_repo_path(
+        &QaListStorageDomain,
+        app,
+        installation_id,
+        qa_list_id,
+        repo_name,
+    )
+}
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -776,24 +832,7 @@ fn rename_gtms_qa_list_sync(
         input.qa_list_id.as_deref(),
         Some(&input.repo_name),
     )?;
-    let mut qa_list_value = read_qa_list_value(&repo_path)?;
-    let qa_list_object = qa_list_value
-        .as_object_mut()
-        .ok_or_else(|| "qa-list.json is not a JSON object.".to_string())?;
-    let current_title = qa_list_object
-        .get("title")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .trim()
-        .to_string();
-    if current_title == next_title {
-        return build_local_qa_list_summary(&repo_path);
-    }
-
-    qa_list_object.insert("title".to_string(), Value::String(next_title.to_string()));
-    write_json_pretty(&repo_path.join(QA_LIST_FILE_NAME), &qa_list_value)?;
-    git_output(&repo_path, &["add", QA_LIST_FILE_NAME])?;
-    git_commit_as_signed_in_user(app, &repo_path, "Rename QA list", &[QA_LIST_FILE_NAME])?;
+    write_resource_title(&QaListStorageDomain, app, &repo_path, next_title)?;
     build_local_qa_list_summary(&repo_path)
 }
 
@@ -808,34 +847,7 @@ fn update_gtms_qa_list_lifecycle_sync(
         input.qa_list_id.as_deref(),
         Some(&input.repo_name),
     )?;
-    let mut qa_list_value = read_qa_list_value(&repo_path)?;
-    let qa_list_object = qa_list_value
-        .as_object_mut()
-        .ok_or_else(|| "qa-list.json is not a JSON object.".to_string())?;
-    let lifecycle_value = qa_list_object
-        .entry("lifecycle".to_string())
-        .or_insert_with(|| json!({ "state": "active" }));
-    let lifecycle_object = lifecycle_value
-        .as_object_mut()
-        .ok_or_else(|| "The QA list lifecycle is not a JSON object.".to_string())?;
-    let current_state = lifecycle_object
-        .get("state")
-        .and_then(Value::as_str)
-        .unwrap_or("active");
-
-    if current_state == next_state {
-        return build_local_qa_list_summary(&repo_path);
-    }
-
-    lifecycle_object.insert("state".to_string(), Value::String(next_state.to_string()));
-    write_json_pretty(&repo_path.join(QA_LIST_FILE_NAME), &qa_list_value)?;
-    git_output(&repo_path, &["add", QA_LIST_FILE_NAME])?;
-    let commit_message = if next_state == "deleted" {
-        "Mark QA list deleted"
-    } else {
-        "Restore QA list"
-    };
-    git_commit_as_signed_in_user(app, &repo_path, commit_message, &[QA_LIST_FILE_NAME])?;
+    write_resource_lifecycle(&QaListStorageDomain, app, &repo_path, next_state)?;
     build_local_qa_list_summary(&repo_path)
 }
 
@@ -843,22 +855,13 @@ fn purge_local_gtms_qa_list_repo_sync(
     app: &AppHandle,
     input: UpdateQaListLifecycleInput,
 ) -> Result<(), String> {
-    let repo_path = qa_list_git_repo_path(
+    purge_repo(
+        &QaListStorageDomain,
         app,
         input.installation_id,
         input.qa_list_id.as_deref(),
         Some(&input.repo_name),
-    )?;
-    if !repo_path.exists() {
-        return Ok(());
-    }
-
-    fs::remove_dir_all(&repo_path).map_err(|error| {
-        format!(
-            "Could not remove the local QA list repo '{}': {error}",
-            repo_path.display()
-        )
-    })
+    )
 }
 
 fn prepare_local_gtms_qa_list_repo_sync(
@@ -870,69 +873,15 @@ fn prepare_local_gtms_qa_list_repo_sync(
         return Err("Could not determine which QA list repo to prepare.".to_string());
     }
 
-    let repo_path = desired_qa_list_git_repo_path(
+    prepare_repo(
+        &QaListStorageDomain,
         app,
         input.installation_id,
         input.qa_list_id.as_deref(),
         repo_name,
-    )?;
-    fs::create_dir_all(&repo_path).map_err(|error| {
-        format!(
-            "Could not create the local QA list repo '{}': {error}",
-            repo_path.display()
-        )
-    })?;
-
-    if git_output(&repo_path, &["rev-parse", "--git-dir"]).is_err() {
-        let branch_name = input
-            .default_branch_name
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or("main");
-        git_output(&repo_path, &["init", "--initial-branch", branch_name])?;
-    }
-
-    let _ = upsert_local_repo_sync_state(
-        &repo_path,
-        LocalRepoSyncStateUpdate {
-            resource_id: input
-                .qa_list_id
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string),
-            current_repo_name: Some(repo_name.to_string()),
-            kind: Some("qa_list".to_string()),
-            ..Default::default()
-        },
-    );
-
-    let branch_name = input
-        .default_branch_name
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or("main");
-    let _ = git_output(&repo_path, &["checkout", "-B", branch_name]);
-
-    if let Some(remote_url) = input
-        .remote_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        match git_output(&repo_path, &["remote", "get-url", "origin"]) {
-            Ok(existing_url) => {
-                if existing_url.trim() != remote_url {
-                    git_output(&repo_path, &["remote", "set-url", "origin", remote_url])?;
-                }
-            }
-            Err(_) => {
-                git_output(&repo_path, &["remote", "add", "origin", remote_url])?;
-            }
-        }
-    }
-
-    Ok(())
+        input.remote_url.as_deref(),
+        input.default_branch_name.as_deref(),
+    )
 }
 
 fn upsert_gtms_qa_list_term_sync(
@@ -1032,19 +981,14 @@ fn rollback_gtms_qa_list_term_upsert_sync(
     app: &AppHandle,
     input: RollbackQaListTermUpsertInput,
 ) -> Result<(), String> {
-    let repo_path = qa_list_repo_path(
+    rollback_term_upsert(
+        &QaListStorageDomain,
         app,
         input.installation_id,
         input.qa_list_id.as_deref(),
         Some(&input.repo_name),
-    )?;
-    let previous_head_sha = input.previous_head_sha.trim();
-    if previous_head_sha.is_empty() {
-        return Err("The previous QA list repo head is missing.".to_string());
-    }
-
-    git_output(&repo_path, &["reset", "--hard", previous_head_sha])?;
-    Ok(())
+        &input.previous_head_sha,
+    )
 }
 
 fn delete_gtms_qa_list_term_sync(
@@ -1087,171 +1031,6 @@ fn delete_gtms_qa_list_term_sync(
         term_count,
         previous_head_sha,
     })
-}
-
-fn normalized_optional_identifier(value: Option<&str>) -> Option<String> {
-    value
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-}
-
-fn qa_list_repo_matches_identifier(
-    repo_path: &Path,
-    qa_list_id: Option<&str>,
-    repo_name: Option<&str>,
-) -> bool {
-    let normalized_qa_list_id = normalized_optional_identifier(qa_list_id);
-    let normalized_repo_name = normalized_optional_identifier(repo_name);
-    let sync_state = read_local_repo_sync_state(repo_path).ok().flatten();
-
-    if let Some(qa_list_id) = normalized_qa_list_id.as_deref() {
-        if sync_state
-            .as_ref()
-            .and_then(|state| state.resource_id.as_deref())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            == Some(qa_list_id)
-        {
-            return true;
-        }
-
-        if let Ok(qa_list_file) = read_qa_list_file(repo_path) {
-            return qa_list_file.qa_list_id.trim() == qa_list_id;
-        }
-        return false;
-    }
-
-    if let Some(repo_name) = normalized_repo_name.as_deref() {
-        if sync_state
-            .as_ref()
-            .and_then(|state| state.current_repo_name.as_deref())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            == Some(repo_name)
-        {
-            return true;
-        }
-
-        let folder_name = repo_path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .map(str::trim)
-            .unwrap_or_default();
-        return folder_name == repo_name;
-    }
-
-    false
-}
-
-fn find_qa_list_repo_path(
-    app: &AppHandle,
-    installation_id: i64,
-    qa_list_id: Option<&str>,
-    repo_name: Option<&str>,
-) -> Result<Option<PathBuf>, String> {
-    let repo_root = local_qa_list_repo_root(app, installation_id)?;
-    if !repo_root.exists() {
-        return Ok(None);
-    }
-
-    for entry in fs::read_dir(&repo_root)
-        .map_err(|error| format!("Could not read the local QA list repo folder: {error}"))?
-    {
-        let entry =
-            entry.map_err(|error| format!("Could not read a QA list repo entry: {error}"))?;
-        let repo_path = entry.path();
-        if !repo_path.is_dir() || !repo_path.join(QA_LIST_FILE_NAME).exists() {
-            continue;
-        }
-        if git_output(&repo_path, &["rev-parse", "--git-dir"]).is_err() {
-            continue;
-        }
-        if qa_list_repo_matches_identifier(&repo_path, qa_list_id, repo_name) {
-            return Ok(Some(repo_path));
-        }
-    }
-
-    Ok(None)
-}
-
-fn qa_list_repo_path(
-    app: &AppHandle,
-    installation_id: i64,
-    qa_list_id: Option<&str>,
-    repo_name: Option<&str>,
-) -> Result<PathBuf, String> {
-    let repo_path = qa_list_git_repo_path(app, installation_id, qa_list_id, repo_name)?;
-    if !repo_path.join(QA_LIST_FILE_NAME).exists() {
-        return Err("The local QA list repo is missing qa-list.json.".to_string());
-    }
-    Ok(repo_path)
-}
-
-fn qa_list_git_repo_path(
-    app: &AppHandle,
-    installation_id: i64,
-    qa_list_id: Option<&str>,
-    repo_name: Option<&str>,
-) -> Result<PathBuf, String> {
-    if let Some(repo_path) = find_qa_list_repo_path(app, installation_id, qa_list_id, repo_name)? {
-        return Ok(repo_path);
-    }
-
-    if let Some(repo_name) = normalized_optional_identifier(repo_name) {
-        let repo_root = local_qa_list_repo_root(app, installation_id)?;
-        let repo_path = repo_root.join(&repo_name);
-        if repo_path.exists() {
-            if git_output(&repo_path, &["rev-parse", "--git-dir"]).is_err() {
-                return Err("The local QA list repo is missing or invalid.".to_string());
-            }
-            if qa_list_repo_matches_identifier(&repo_path, qa_list_id, Some(&repo_name)) {
-                return Ok(repo_path);
-            }
-        }
-    }
-
-    Err("The local QA list repo is not available yet.".to_string())
-}
-
-fn desired_qa_list_git_repo_path(
-    app: &AppHandle,
-    installation_id: i64,
-    _qa_list_id: Option<&str>,
-    repo_name: &str,
-) -> Result<PathBuf, String> {
-    let normalized_repo_name = repo_name.trim();
-    if normalized_repo_name.is_empty() {
-        return Err("Could not determine which QA list repo to use.".to_string());
-    }
-
-    let repo_root = local_qa_list_repo_root(app, installation_id)?;
-    Ok(repo_root.join(allocate_short_folder_name(
-        normalized_repo_name,
-        local_folder_names(&repo_root)?,
-    )))
-}
-
-fn local_folder_names(repo_root: &Path) -> Result<Vec<String>, String> {
-    if !repo_root.exists() {
-        return Ok(Vec::new());
-    }
-    Ok(fs::read_dir(repo_root)
-        .map_err(|error| format!("Could not read local QA list repo folders: {error}"))?
-        .filter_map(|entry| {
-            entry.ok().and_then(|entry| {
-                entry
-                    .path()
-                    .file_name()
-                    .and_then(|value| value.to_str())
-                    .map(str::to_string)
-            })
-        })
-        .collect())
-}
-
-fn read_qa_list_value(repo_path: &Path) -> Result<Value, String> {
-    read_json_file(&repo_path.join(QA_LIST_FILE_NAME), "qa-list.json")
 }
 
 fn build_local_qa_list_summary(repo_path: &Path) -> Result<LocalQaListSummary, String> {
@@ -1464,7 +1243,8 @@ mod tests {
         )
         .expect("write sync state");
 
-        assert!(!qa_list_repo_matches_identifier(
+        assert!(!crate::repo_resource_storage::repo_matches_identifier(
+            &QaListStorageDomain,
             &stray_repo_path,
             Some("qa-list-live"),
             Some("current-name"),
