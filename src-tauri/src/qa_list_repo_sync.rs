@@ -18,6 +18,17 @@ use crate::{
         is_remote_migrated_local_old_layout_changes_error, repo_requires_0810_migration,
         sync_pending_repo_layout_migration,
     },
+    repo_resource_sync::{
+        normalized_optional_identifier, repo_transport_deleted_state,
+        term_id_from_repo_relative_path,
+        REPO_SYNC_STATUS_DIRTY_LOCAL as QA_LIST_REPO_SYNC_STATUS_DIRTY_LOCAL,
+        REPO_SYNC_STATUS_NOT_CLONED as QA_LIST_REPO_SYNC_STATUS_NOT_CLONED,
+        REPO_SYNC_STATUS_OUT_OF_SYNC as QA_LIST_REPO_SYNC_STATUS_OUT_OF_SYNC,
+        REPO_SYNC_STATUS_REMOTE_MIGRATED_LOCAL_CHANGES as QA_LIST_REPO_SYNC_STATUS_REMOTE_MIGRATED_LOCAL_CHANGES,
+        REPO_SYNC_STATUS_SYNC_ERROR as QA_LIST_REPO_SYNC_STATUS_SYNC_ERROR,
+        REPO_SYNC_STATUS_UPDATE_REQUIRED as QA_LIST_REPO_SYNC_STATUS_UPDATE_REQUIRED,
+        REPO_SYNC_STATUS_UP_TO_DATE as QA_LIST_REPO_SYNC_STATUS_UP_TO_DATE,
+    },
     repo_sync_shared::{
         abort_rebase_after_failed_pull, ensure_repo_local_git_identity,
         git_error_indicates_missing_remote_ref, git_output, load_git_transport_token,
@@ -93,27 +104,6 @@ pub(crate) struct QaListEditorRepoSyncResponse {
     pub(crate) changed_term_ids: Vec<String>,
     pub(crate) inserted_term_ids: Vec<String>,
     pub(crate) deleted_term_ids: Vec<String>,
-}
-
-const QA_LIST_REPO_SYNC_STATUS_NOT_CLONED: &str = "notCloned";
-const QA_LIST_REPO_SYNC_STATUS_DIRTY_LOCAL: &str = "dirtyLocal";
-const QA_LIST_REPO_SYNC_STATUS_UP_TO_DATE: &str = "upToDate";
-const QA_LIST_REPO_SYNC_STATUS_OUT_OF_SYNC: &str = "outOfSync";
-const QA_LIST_REPO_SYNC_STATUS_SYNC_ERROR: &str = "syncError";
-const QA_LIST_REPO_SYNC_STATUS_UPDATE_REQUIRED: &str = "updateRequired";
-const QA_LIST_REPO_SYNC_STATUS_REMOTE_MIGRATED_LOCAL_CHANGES: &str = "remoteMigratedLocalChanges";
-
-fn repo_transport_deleted_state(value: Option<&str>) -> bool {
-    value
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| {
-            matches!(
-                value.to_ascii_lowercase().as_str(),
-                "deleted" | "softdeleted" | "tombstone" | "missing"
-            )
-        })
-        .unwrap_or(false)
 }
 
 fn qa_list_descriptor_is_deleted(qa_list: &QaListRepoSyncDescriptor) -> bool {
@@ -438,20 +428,6 @@ fn qa_list_term_changes_between_commits(
     Ok((changed_term_ids, inserted_term_ids, deleted_term_ids))
 }
 
-fn term_id_from_repo_relative_path(path: &str) -> Option<String> {
-    let normalized = path.trim();
-    if !normalized.ends_with(".json") {
-        return None;
-    }
-
-    Path::new(normalized)
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-}
-
 fn snapshot_from_qa_list_sync_error(
     qa_list: &QaListRepoSyncDescriptor,
     repo_path: &Path,
@@ -571,13 +547,6 @@ fn inspect_qa_list_repo_state(
         status: status.to_string(),
         ..default_snapshot()
     }
-}
-
-fn normalized_optional_identifier(value: Option<&str>) -> Option<String> {
-    value
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
 }
 
 fn qa_list_repo_matches_identifier(
