@@ -41,9 +41,12 @@ src-tauri/src/
 
 Git resolution is platform-specific — never assume a uniform path:
 
-- **macOS**: Always uses a bundled Apple-signed Git. The archive
+- **macOS**: Packaged app builds always use a bundled Apple-signed Git. The archive
   (`resources/macos/git-runtime.tar.gz`) is extracted at startup into
-  `app_config_dir/git/macos-runtime/<hash>/`. Never falls back to system Git.
+  `app_config_dir/git/macos-runtime/<hash>/`. Packaged builds never fall back to
+  system Git. Local debug builds may fall back to system Git only when the archive
+  is absent, so `tauri dev` stays usable; a present but broken archive must still
+  surface the extraction error instead of falling back.
 - **Windows**: Prefers a bundled Git at `resource_dir/git/windows/`; falls back
   through `%LOCALAPPDATA%\Programs\Git`, GitHub Desktop's bundled git,
   `%ProgramFiles%\Git`, and finally `Command::new("git")` (PATH lookup).

@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     repo_layout_metadata::normalize_repo_kind,
     repo_sync_shared::{format_git_spawn_error, git_command},
+    util::atomic_replace,
 };
 
 const LOCAL_REPO_SYNC_STATE_FILE_NAME: &str = "gnosis-sync-state.json";
@@ -143,7 +144,14 @@ pub(crate) fn upsert_local_repo_sync_state(
 
     let bytes = serde_json::to_vec_pretty(&state)
         .map_err(|error| format!("Could not serialize local repo sync state: {error}"))?;
-    fs::write(&state_path, bytes).map_err(|error| {
+    let tmp_path = state_path.with_extension("json.tmp");
+    fs::write(&tmp_path, bytes).map_err(|error| {
+        format!(
+            "Could not write local repo sync state temp file '{}': {error}",
+            tmp_path.display()
+        )
+    })?;
+    atomic_replace(&tmp_path, &state_path).map_err(|error| {
         format!(
             "Could not write local repo sync state '{}': {error}",
             state_path.display()
@@ -182,6 +190,12 @@ fn local_repo_sync_state_path(repo_path: &Path) -> Result<PathBuf, String> {
 
 fn resolve_git_dir(repo_path: &Path) -> Result<PathBuf, String> {
     let output = git_command()
+        .map_err(|error| {
+            format!(
+                "Could not inspect the git directory for '{}': {error}",
+                repo_path.display()
+            )
+        })?
         .args(["rev-parse", "--git-dir"])
         .current_dir(repo_path)
         .output()

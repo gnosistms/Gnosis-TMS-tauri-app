@@ -52,7 +52,7 @@ pub(super) fn ensure_clean_git_repo(repo_path: &Path, dirty_message: &str) -> Re
 }
 
 pub(super) fn git_output(repo_path: &Path, args: &[&str]) -> Result<String, String> {
-    let output = git_command()
+    let output = git_command()?
         .args(args)
         .current_dir(repo_path)
         .output()
@@ -79,7 +79,7 @@ pub(super) fn git_output_with_stdin(
     args: &[&str],
     stdin_contents: &str,
 ) -> Result<Vec<u8>, String> {
-    let mut child = git_command()
+    let mut child = git_command()?
         .args(args)
         .current_dir(repo_path)
         .stdin(Stdio::piped())
