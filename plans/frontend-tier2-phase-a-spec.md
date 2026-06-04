@@ -134,6 +134,43 @@ Pairs, in order (smallest/safest first):
 
 Each pair: Claude reviews GPT's mirror before it lands.
 
+## Lifecycle-flow rulings (RESOLVED — GPT-ready)
+
+Prep on the `lifecycle-flow` pair shows it is **not** a clean mechanical mirror like discovery —
+it has genuine functional/data forks. Both flows already share `resource-lifecycle-engine.js`
+(orchestration); the divergence is in the per-domain glue. **Unlike discovery, the canonical side
+is QA** (more correct/evolved) — the mirror brings *glossary up to QA*. And **QA lifecycle is
+untested** (glossary has 3 tests) → add `qa-list-lifecycle-flow.test.js` characterization tests FIRST.
+
+- **L1 (data fix) — soft-delete metadata `lifecycleState` = `"deleted"`, not `"softDeleted"`.**
+  Canonical per `resource-lifecycle-engine.js` (`project ? "softDeleted" : "deleted"`) and QA.
+  Glossary writes `"softDeleted"` in **both** `glossary-lifecycle-flow.js` (glossaryMetadataRecord,
+  ~line 97) and `glossary-import-flow.js` (~line 148) — fix both to `"deleted"`. Safe today (every
+  reader accepts both), removes a latent inconsistency. **Own commit + test.**
+- **L2 — commit guard throws.** Glossary's commit silently `return`s on a missing resource; QA
+  `throw`s "Could not find…". Adopt throw in glossary.
+- **L3 — non-repo-backed fallback.** QA's commit branches `if (teamSupportsXRepos && repoName) {
+  metadata-first } else { local-only }`; glossary always takes the repo path. Adopt QA's branch.
+- **L4 — trigger repo sync after lifecycle mutations.** QA calls `triggerXRepoSync` after
+  rename/softDelete/restore; glossary doesn't. Adopt in glossary (prompt propagation; parity).
+  Behavior addition → cover with a test.
+- **L5 — `previousRepoNames` in the metadata record.** QA tracks it; glossary doesn't. Add to
+  glossary's metadata record.
+- **L6 — term-model language fields stay per-domain** (glossary `sourceLanguage`/`targetLanguage`;
+  QA `language`). Residue, like discovery R4. Not unified.
+- **L7 — use the `repoBackedXInput` helper.** QA builds invoke input via `repoBackedQaListInput`;
+  glossary inlines `{installationId, glossaryId, repoName}`. Adopt the helper in glossary.
+
+**Prereq helpers (A1/A2-equivalent — add to glossary, mirroring QA, before the L-changes):**
+`repoBackedGlossaryInput`, `triggerGlossaryRepoSync`, `ensureGlossariesQueryDataForTeam` in
+`glossary-top-level-state.js`. (Glossary already has `makeGlossaryDefaultIfFirst`,
+`currentGlossaryTeam`, `selectedGlossaryTeamMatches`, `applyGlossariesQueryDataForTeam`.)
+
+**Order for GPT:** (0) add QA lifecycle characterization tests; (1) add prereq glossary helpers;
+(2) L1 fix + test (own commit, both files); (3) bring glossary commit/record up to QA — L2, L3,
+L4 (+test), L5, L7 as feature-port commits; (4) verify token-substituted diff ~empty apart from
+the L6 residue. `npm test` green per commit. Owner: **GPT with Claude review** (decisions resolved).
+
 ## Definition of done (Phase A)
 
 All four Tier 2 flow pairs are token-substitution mirrors (functional residue only), every step landed
