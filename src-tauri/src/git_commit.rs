@@ -87,7 +87,8 @@ pub(crate) fn git_commit_as_signed_in_user_with_metadata(
     log_git_commit_diagnostic("identity:start", repo_path, message, paths);
     ensure_repo_local_git_identity(app, repo_path)?;
     log_git_commit_diagnostic("git-command:build", repo_path, message, paths);
-    let mut command = git_command();
+    let mut command =
+        git_command().map_err(|error| format!("Could not run git commit: {error}"))?;
     command
         .arg("commit")
         .arg("-m")

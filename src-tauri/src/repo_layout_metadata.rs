@@ -2,6 +2,8 @@ use std::{fs, path::Path};
 
 use serde::{Deserialize, Serialize};
 
+use crate::util::atomic_replace;
+
 pub(crate) const REPO_METADATA_RELATIVE_PATH: &str = ".gtms/repo.json";
 pub(crate) const REPO_METADATA_SCHEMA_VERSION: u32 = 1;
 pub(crate) const STORAGE_LAYOUT_VERSION_V2: u32 = 2;
@@ -95,7 +97,14 @@ pub(crate) fn write_repo_layout_metadata(
         })?;
     }
     let bytes = serialize_repo_layout_metadata(metadata)?;
-    fs::write(&metadata_path, bytes).map_err(|error| {
+    let tmp_path = metadata_path.with_extension("json.tmp");
+    fs::write(&tmp_path, bytes).map_err(|error| {
+        format!(
+            "Could not write repo layout metadata temp file '{}': {error}",
+            tmp_path.display()
+        )
+    })?;
+    atomic_replace(&tmp_path, &metadata_path).map_err(|error| {
         format!(
             "Could not write repo layout metadata '{}': {error}",
             metadata_path.display()

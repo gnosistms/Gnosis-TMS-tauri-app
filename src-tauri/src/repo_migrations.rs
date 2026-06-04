@@ -726,7 +726,7 @@ fn git_tree_paths(repo_path: &Path, treeish: &str) -> Result<Vec<String>, String
 
 fn git_blob_bytes(repo_path: &Path, object: &str) -> Result<Vec<u8>, String> {
     let args = ["show", object];
-    let output = git_command()
+    let output = git_command()?
         .args(args)
         .current_dir(repo_path)
         .output()

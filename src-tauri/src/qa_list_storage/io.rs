@@ -22,7 +22,7 @@ pub(super) fn ensure_gitattributes(path: &Path) -> Result<(), String> {
 }
 
 pub(super) fn git_output(repo_path: &Path, args: &[&str]) -> Result<String, String> {
-    let output = git_command()
+    let output = git_command()?
         .args(args)
         .current_dir(repo_path)
         .output()

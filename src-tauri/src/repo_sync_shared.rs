@@ -88,11 +88,11 @@ pub(crate) fn initialize_git_runtime<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
-pub(crate) fn git_command() -> Command {
+pub(crate) fn git_command() -> Result<Command, String> {
     if let Some(executable) = RESOLVED_GIT_EXECUTABLE.get() {
         let mut command = Command::new(executable);
         configure_git_command(&mut command, executable);
-        return command;
+        return Ok(command);
     }
 
     #[cfg(windows)]
@@ -100,14 +100,26 @@ pub(crate) fn git_command() -> Command {
         let executable = resolved_windows_git_executable();
         let mut command = Command::new(&executable);
         configure_git_command(&mut command, &executable);
-        return command;
+        return Ok(command);
     }
 
-    #[cfg(not(windows))]
+    #[cfg(all(target_os = "macos", test))]
     {
         let mut command = Command::new("git");
         configure_git_isolation(&mut command);
-        command
+        return Ok(command);
+    }
+
+    #[cfg(all(target_os = "macos", not(test)))]
+    {
+        return Err("Git runtime not found. Reinstall Gnosis TMS.".to_string());
+    }
+
+    #[cfg(all(not(windows), not(target_os = "macos")))]
+    {
+        let mut command = Command::new("git");
+        configure_git_isolation(&mut command);
+        Ok(command)
     }
 }
 
@@ -146,7 +158,8 @@ pub(crate) fn git_output(
     args: &[&str],
     auth: Option<&GitTransportAuth>,
 ) -> Result<String, String> {
-    let mut command = git_command();
+    let mut command =
+        git_command().map_err(|error| format!("Could not run git {}: {error}", args.join(" ")))?;
     if let Some(auth) = auth {
         command
             .env("GIT_TERMINAL_PROMPT", "0")
