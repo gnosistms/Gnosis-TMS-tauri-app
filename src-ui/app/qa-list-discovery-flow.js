@@ -20,6 +20,8 @@ import {
 import { queryClient } from "./query-client.js";
 import { setResourcePageRefreshing } from "./resource-page-controller.js";
 import { teamCacheKey } from "./team-cache.js";
+import { classifySyncError } from "./sync-error.js";
+import { handleSyncFailure } from "./sync-recovery.js";
 
 function qaListsPageOwnsTeam(team) {
   const expectedCacheKey = teamCacheKey(team);
@@ -141,6 +143,16 @@ export async function loadTeamQaLists(render, teamId = state.selectedTeamId, opt
     await completePageSync(render);
   } catch (error) {
     if (!isQaListLoadCurrent(team)) {
+      return;
+    }
+    if (
+      await handleSyncFailure(classifySyncError(error), {
+        render,
+        teamId: team?.id ?? null,
+        currentResource: true,
+      })
+    ) {
+      failPageSync();
       return;
     }
     failPageSync();
