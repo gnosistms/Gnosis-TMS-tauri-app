@@ -34,6 +34,12 @@ globalThis.window = {
 
 const { resetSessionState, state } = await import("./state.js");
 const { downloadGlossaryAsTmx } = await import("./glossary-export-flow.js");
+const {
+  glossaryEditorQueryKey,
+  setCachedGlossaryEditorPayload,
+  getCachedGlossaryEditorPayload,
+} = await import("./glossary-editor-query.js");
+const { queryClient } = await import("./query-client.js");
 
 function installExportFixture() {
   resetSessionState();
@@ -50,6 +56,7 @@ function installExportFixture() {
 }
 
 test.afterEach(() => {
+  queryClient.clear();
   resetSessionState();
 });
 
@@ -111,4 +118,27 @@ test("downloadGlossaryAsTmx surfaces export failures", async () => {
   assert.equal(renderCount, 1);
   assert.equal(state.statusBadges.left.visible, true);
   assert.match(state.statusBadges.left.text, /export failed/);
+});
+
+test("glossary editor query adapter preserves cached snapshot context", () => {
+  installExportFixture();
+  const team = state.teams[0];
+  const glossary = {
+    id: "glossary-1",
+    repoName: "gnosis-es-vi",
+    repoId: 7,
+    fullName: "org/gnosis-es-vi",
+    defaultBranchName: "main",
+  };
+
+  assert.deepEqual(
+    glossaryEditorQueryKey(team, glossary),
+    ["glossaryEditor", 42, "glossary-1", "gnosis-es-vi"],
+  );
+
+  setCachedGlossaryEditorPayload(team, glossary, { glossaryId: "cached-glossary" });
+  const cached = getCachedGlossaryEditorPayload(team, glossary);
+  assert.equal(cached.glossaryId, "cached-glossary");
+  assert.equal(cached.repoName, "gnosis-es-vi");
+  assert.equal(cached.installationId, 42);
 });

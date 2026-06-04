@@ -1,13 +1,10 @@
 import { queryClient, subscribeQueryObserver } from "../query-client.js";
 import { showNoticeBadge } from "../status-feedback.js";
 import { teamCacheKey } from "../team-cache.js";
+import { resourceId } from "./resource-descriptor.js";
 
 function collectionItems(snapshot, collectionField) {
   return Array.isArray(snapshot?.[collectionField]) ? snapshot[collectionField] : [];
-}
-
-function resourceId(resource, config) {
-  return config.resourceId?.(resource) ?? resource?.id ?? null;
 }
 
 function removeResourceFromQueryData(queryData, config, id) {
