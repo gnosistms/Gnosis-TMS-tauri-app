@@ -89,8 +89,8 @@ export function primeGlossariesLoadingState(teamId = state.selectedTeamId, optio
   };
 }
 
-function isGlossaryLoadCurrent(teamId, syncVersionAtStart) {
-  return state.selectedTeamId === teamId && state.glossarySyncVersion === syncVersionAtStart;
+function isGlossaryLoadCurrent(teamId) {
+  return state.selectedTeamId === teamId;
 }
 
 export async function loadTeamGlossaries(
@@ -98,7 +98,6 @@ export async function loadTeamGlossaries(
   teamId = state.selectedTeamId,
   options = {},
 ) {
-  const syncVersionAtStart = state.glossarySyncVersion;
   const requestedPreserveVisibleData = options.preserveVisibleData === true;
   const team = selectedTeam(teamId);
   const primeResult = primeGlossariesLoadingState(teamId, {
@@ -125,7 +124,7 @@ export async function loadTeamGlossaries(
   showScopedSyncBadge("glossaries", "Loading glossaries...", render);
   render();
   await waitForNextPaint();
-  if (!isGlossaryLoadCurrent(team?.id ?? teamId, syncVersionAtStart)) {
+  if (!isGlossaryLoadCurrent(team?.id ?? teamId)) {
     clearScopedSyncBadge("glossaries", render);
     return;
   }
@@ -136,13 +135,13 @@ export async function loadTeamGlossaries(
         teamId: team.id,
         render,
       });
-      if (!isGlossaryLoadCurrent(team.id, syncVersionAtStart)) {
+      if (!isGlossaryLoadCurrent(team.id)) {
         clearScopedSyncBadge("glossaries", render);
         return;
       }
       if (localSnapshot) {
         await waitForNextPaint();
-        if (!isGlossaryLoadCurrent(team.id, syncVersionAtStart)) {
+        if (!isGlossaryLoadCurrent(team.id)) {
           clearScopedSyncBadge("glossaries", render);
           return;
         }
@@ -161,7 +160,7 @@ export async function loadTeamGlossaries(
       render,
     });
     const querySnapshot = await queryClient.fetchQuery(queryOptions);
-    if (!isGlossaryLoadCurrent(team.id, syncVersionAtStart)) {
+    if (!isGlossaryLoadCurrent(team.id)) {
       clearScopedSyncBadge("glossaries", render);
       return;
     }
@@ -190,7 +189,7 @@ export async function loadTeamGlossaries(
     state.glossariesPage.isRefreshing = false;
     render();
   } catch (error) {
-    if (!isGlossaryLoadCurrent(team?.id ?? teamId, syncVersionAtStart)) {
+    if (!isGlossaryLoadCurrent(team?.id ?? teamId)) {
       clearScopedSyncBadge("glossaries", render);
       return;
     }

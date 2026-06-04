@@ -90,7 +90,6 @@ function canLeaveTeamFromCurrentState(team) {
 }
 
 function applyOptimisticTeamMutation(render, mutation, debugText) {
-  state.teamSyncVersion += 1;
   const snapshot = applyTeamPendingMutation(
     { items: state.teams, deletedItems: state.deletedTeams },
     mutation,
