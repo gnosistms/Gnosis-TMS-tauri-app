@@ -33,9 +33,11 @@ const {
   loadTeamQaLists,
   primeQaListsLoadingState,
 } = await import("./qa-list-discovery-flow.js");
+const { saveStoredQaListsForTeam } = await import("./qa-list-cache.js");
 const { createResourcePageState } = await import("./resource-page-controller.js");
 const { resetSessionState, state } = await import("./state.js");
 const { teamCacheKey } = await import("./team-cache.js");
+const { setActiveStorageLogin } = await import("./team-storage.js");
 
 function deferred() {
   let resolve;
@@ -72,6 +74,7 @@ test.afterEach(() => {
   resetQaListsQueryObserver();
   invokeHandler = async () => null;
   queryClient.clear();
+  setActiveStorageLogin(null);
   resetSessionState();
 });
 
@@ -140,6 +143,19 @@ test("QA list loading prime preserves visible data for the selected team and cle
   assert.equal(state.selectedQaListId, null);
   assert.equal(state.qaListsPage.visibleTeamId, null);
   assert.equal(state.qaListsPage.visibleCacheKey, null);
+  assert.equal(state.qaListsPage.isRefreshing, true);
+});
+
+test("QA list loading prime can skip seeding from cache", () => {
+  setupQaListLoadState();
+  setActiveStorageLogin("qa-discovery-cache-test");
+  const team = state.teams[0];
+  saveStoredQaListsForTeam(team, [{ id: "cached-qa-list", title: "Cached QA" }]);
+
+  primeQaListsLoadingState(team.id, { seedFromCache: false });
+
+  assert.deepEqual(state.qaLists, []);
+  assert.equal(state.qaListDiscovery.status, "loading");
   assert.equal(state.qaListsPage.isRefreshing, true);
 });
 

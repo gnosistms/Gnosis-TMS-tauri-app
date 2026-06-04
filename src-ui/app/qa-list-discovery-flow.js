@@ -73,9 +73,12 @@ export function primeQaListsLoadingState(teamId = state.selectedTeamId, options 
     recoveryMessage: "",
   };
 
-  const seededSnapshot = seedQaListsQueryFromCache(team, {
-    teamId: team.id,
-  });
+  const seededSnapshot =
+    options.seedFromCache === false
+      ? null
+      : seedQaListsQueryFromCache(team, {
+          teamId: team.id,
+        });
   return {
     preservedVisibleData: false,
     seededFromCache: Boolean(seededSnapshot),
