@@ -156,12 +156,12 @@ No non-fatal **defect signals** requiring a telemetry event.
 
 ## Resolution Status
 
-All findings are **Open / Proposed** as of 2026-06-03.
+All findings are **Resolved** as of 2026-06-04 via PR #21.
 
 | Finding | Status | Notes |
 |---|---|---|
-| m1 | Open | Reconcile macOS system-git fallback with the documented invariant (enforce or document) |
-| m2 | Open | Use `util::atomic_replace` for repo-layout-metadata and local-sync-state writes |
+| m1 | Resolved | PR #21 made `git_command` fallible, keeps packaged macOS builds on the bundled runtime, preserves local debug usability when the archive is absent, and surfaces detailed bundled-runtime extraction errors. |
+| m2 | Resolved | PR #21 writes repo-layout metadata and local sync state through sibling temp files plus `util::atomic_replace`. |
 
 ---
 

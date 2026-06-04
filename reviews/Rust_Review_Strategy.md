@@ -330,7 +330,7 @@ The fix is the same transform applied to Batch 2 M2 (`invite_user_to_organizatio
 | 1 | Auth & Security ★ | 1,470 | 1 | ✅ `2026-06-02-review.md` — all findings resolved 2026-06-03 (see Resolution Status) |
 | 2 | GitHub API | 1,040 | 1 | ✅ PR #7 closed — all findings resolved 2026-06-03 via PRs #10, #11, #12, #13 |
 | 3 | App Shell | 1,790 | 1 | ✅ `2026-06-03-batch-3-review.md` — 0C/0S/1M/4m, all resolved via PRs #15, #16 |
-| 4 | Git Shared | 1,470 | 1 | ✅ `2026-06-03-batch-4-review.md` — 0C/0S/0M/2m, findings open |
+| 4 | Git Shared | 1,470 | 1 | ✅ `2026-06-03-batch-4-review.md` — 0C/0S/0M/2m, all findings resolved via PR #21 |
 | 5 | Project Sync + Migrations | 3,510 | 1 | — |
 | 6 | Glossary & QA Sync | 1,985 | 1 | — |
 | 7 | Content Storage | 4,470 | 2 | — |
