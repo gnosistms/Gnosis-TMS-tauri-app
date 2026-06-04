@@ -819,8 +819,10 @@ This is the JS analogue to the Rust Standard V (blocking the IPC path).
 
 ## Naming Convention
 
-Review files are saved as `reviews/YYYY-MM-DD-review.md`. For batches run on the same
-date, append the batch number: `reviews/2026-06-04-batch-2-review.md`.
+Review files are saved as `reviews/YYYY-MM-DD-review.md`. The first review session on a
+given date uses the date-only name (e.g. `reviews/2026-06-04-review.md`). Additional
+sessions on the same date append a batch number starting at 2 to avoid collisions
+(e.g. `reviews/2026-06-04-batch-2-review.md`).
 
 ---
 
@@ -828,7 +830,7 @@ date, append the batch number: `reviews/2026-06-04-batch-2-review.md`.
 
 | Batch | Domain | Lines | Sessions | Status |
 |---|---|---|---|---|
-| 1 | Auth, Security & Telemetry ★ | ~1,100 | 1 | — |
+| 1 | Auth, Security & Telemetry ★ | ~1,100 | 1 | ✅ [2026-06-04](2026-06-04-review.md) |
 | 2 | Bootstrap & Runtime | ~2,800 | 1 | — |
 | 3 | Navigation, Permissions & Offline | ~1,400 | 1 | — |
 | 4 | Resource Framework | ~2,100 | 1 | — |
