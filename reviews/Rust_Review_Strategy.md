@@ -336,8 +336,8 @@ The fix is the same transform applied to Batch 2 M2 (`invite_user_to_organizatio
 | 2 | GitHub API | 1,040 | 1 | ✅ PR #7 closed — all findings resolved 2026-06-03 via PRs #10, #11, #12, #13 |
 | 3 | App Shell | 1,790 | 1 | ✅ `2026-06-03-batch-3-review.md` — 0C/0S/1M/4m, all resolved via PRs #15, #16 |
 | 4 | Git Shared | 1,470 | 1 | ✅ `2026-06-03-batch-4-review.md` — 0C/0S/0M/2m, all findings resolved via PR #21 |
-| 5 | Project Sync + Migrations | 3,510 | 1 | — |
-| 6 | Glossary & QA Sync | 1,985 | 1 | — |
+| 5 | Project Sync + Migrations | 3,510 | 1 | ✅ `2026-06-03-batch-5-review.md` — 0C/0S/2M/0m, all resolved via PR #22 |
+| 6 | Glossary & QA Sync | 1,985 | 1 | ✅ `2026-06-03-batch-6-review.md` — 0C/0S/1M/0m (parity-symmetric M1), open for fix |
 | 7 | Content Storage | 4,470 | 2 | — |
 | 8 | Team Metadata | 2,475 | 1 | — |
 | 9 | AI Integration | 5,040 | 2 | — |
