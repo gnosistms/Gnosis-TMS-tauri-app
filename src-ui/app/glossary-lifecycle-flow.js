@@ -242,6 +242,8 @@ export async function submitGlossaryRename(render) {
   const nextTitle = String(state.glossaryRename.glossaryName ?? "").trim();
   const allowed = await guardTopLevelResourceAction({
     resource: glossary,
+    isExpectedResource: (currentGlossary) =>
+      Boolean(currentGlossary) && currentGlossary.lifecycleState !== "deleted",
     getBlockedMessage: () =>
       lifecycleActionBlockedMessage(team, { actionLabel: "rename glossaries" }),
     ensureNotTombstoned: (currentGlossary) =>
