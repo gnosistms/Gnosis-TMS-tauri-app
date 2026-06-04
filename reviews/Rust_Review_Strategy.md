@@ -143,6 +143,19 @@ qa_list_storage/io.rs             (60)
 Review 7a then 7b, explicitly checking for parity. TMX import/export in both is
 a format parsing surface worth scrutiny for malformed input handling.
 
+> **📌 Follow-up after Batch 7 — unify glossary + QA under one resource framework.**
+> The glossary and QA-list code is near-mirror-duplicated in both **sync**
+> (`glossary_repo_sync.rs` / `qa_list_repo_sync.rs`, ~2,000 lines — confirmed near-identical
+> in the Batch 6 review) and almost certainly **storage** (this batch's two `*_storage/`
+> trees, ~4,470 lines). That duplication is the reason the "review for parity" rule exists and
+> the reason a single finding (e.g. Batch 6 M1) has to be fixed twice. **Do not start the
+> refactor before Batch 7 is reviewed** — the storage review completes the picture and informs
+> the abstraction. Then: write a `plans/` doc for a trait-parameterized resource framework
+> spanning **sync + storage** (shared engine + thin per-domain Tauri command wrappers; scope
+> boundary vs. the more-complex `project_repo_sync.rs`; test/migration strategy), and implement
+> as a deliberate refactor of the data-integrity-critical layer. The frontend already did this
+> (`src-ui/app/repo-resource/`); the backend hasn't caught up.
+
 ---
 
 ## Batch 8 — Team Metadata
