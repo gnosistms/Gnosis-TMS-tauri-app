@@ -145,7 +145,7 @@ function linkedGlossaryMetadataRecord(glossary, remoteRepo) {
     glossaryId: glossary.id ?? glossary.glossaryId,
     title: glossary.title,
     repoName: remoteRepo.name,
-    lifecycleState: glossary.lifecycleState === "deleted" ? "softDeleted" : "active",
+    lifecycleState: glossary.lifecycleState === "deleted" ? "deleted" : "active",
     previousRepoNames:
       remoteRepo.name !== glossary.repoName ? [glossary.repoName] : [],
     recordState: "live",

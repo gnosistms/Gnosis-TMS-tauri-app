@@ -116,3 +116,70 @@ test("soft-deleting a glossary closes a stale open flag when the deleted section
   assert.equal(state.glossaries[0].lifecycleState, "deleted");
   assert.equal(state.showDeletedGlossaries, false);
 });
+
+test("soft-deleting a glossary writes deleted lifecycle metadata", async () => {
+  setupGlossaryLifecycleState();
+  const metadataWrites = [];
+  invokeHandler = async (command, payload) => {
+    if (command === "upsert_local_gnosis_glossary_metadata_record") {
+      metadataWrites.push(payload.input);
+      return { commitCreated: true };
+    }
+    if (command === "lookup_local_team_metadata_tombstone") {
+      return null;
+    }
+    return {};
+  };
+
+  await deleteGlossary(() => {}, "glossary-1");
+  await flushAsyncWork();
+
+  assert.equal(metadataWrites.length, 1);
+  assert.equal(metadataWrites[0].glossaryId, "glossary-1");
+  assert.equal(metadataWrites[0].lifecycleState, "deleted");
+});
+
+test("soft-deleting a repo-backed glossary triggers a repo sync", async () => {
+  setupGlossaryLifecycleState();
+  state.glossaries[0] = {
+    ...state.glossaries[0],
+    fullName: "team-1/gnosis-es-vi",
+    repoId: 123,
+    defaultBranchName: "main",
+    defaultBranchHeadOid: "abc123",
+  };
+  queryClient.setQueryData(
+    glossaryKeys.byTeam(state.selectedTeamId),
+    createGlossariesQuerySnapshot({ glossaries: state.glossaries }),
+  );
+  const syncInputs = [];
+  invokeHandler = async (command, payload) => {
+    if (command === "lookup_local_team_metadata_tombstone") {
+      return null;
+    }
+    if (command === "sync_gtms_glossary_repos") {
+      syncInputs.push(payload.input);
+      return [];
+    }
+    if (command === "soft_delete_gtms_glossary") {
+      return {
+        ...state.glossaries[0],
+        lifecycleState: "deleted",
+      };
+    }
+    return { commitCreated: true };
+  };
+
+  await deleteGlossary(() => {}, "glossary-1");
+  await flushAsyncWork();
+
+  assert.equal(syncInputs.length, 1);
+  assert.equal(syncInputs[0].installationId, 1);
+  assert.equal(syncInputs[0].glossaries.length, 1);
+  assert.equal(syncInputs[0].glossaries[0].glossaryId, "glossary-1");
+  assert.equal(syncInputs[0].glossaries[0].repoName, "gnosis-es-vi");
+  assert.equal(syncInputs[0].glossaries[0].fullName, "team-1/gnosis-es-vi");
+  assert.equal(syncInputs[0].glossaries[0].repoId, 123);
+  assert.equal(syncInputs[0].glossaries[0].defaultBranchName, "main");
+  assert.equal(syncInputs[0].glossaries[0].defaultBranchHeadOid, "abc123");
+});

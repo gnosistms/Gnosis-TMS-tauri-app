@@ -1,9 +1,11 @@
 import { saveStoredGlossariesForTeam } from "./glossary-cache.js";
 import {
   applyGlossariesQuerySnapshotToState,
+  createGlossariesQuerySnapshot,
   persistGlossariesQueryDataForTeam,
   preserveGlossaryLifecyclePatchesInSnapshot,
 } from "./glossary-query.js";
+import { syncGlossaryReposForTeam, teamSupportsGlossaryRepos } from "./glossary-repo-flow.js";
 import { glossaryKeys, queryClient } from "./query-client.js";
 import { normalizeGlossarySummary, selectedTeam, sortGlossaries } from "./glossary-shared.js";
 import { setResourcePageDataOwner } from "./resource-page-controller.js";
@@ -81,6 +83,25 @@ export function persistGlossariesForTeam(team) {
   saveStoredGlossariesForTeam(team, state.glossaries);
 }
 
+export function ensureGlossariesQueryDataForTeam(team) {
+  if (!team?.id) {
+    return null;
+  }
+  const queryKey = glossaryKeys.byTeam(team.id);
+  let queryData = queryClient.getQueryData(queryKey);
+  if (!queryData) {
+    queryData = createGlossariesQuerySnapshot({
+      glossaries: state.glossaries,
+      status: state.glossaryDiscovery?.status,
+      brokerWarning: state.glossaryDiscovery?.brokerWarning,
+      recoveryMessage: state.glossaryDiscovery?.recoveryMessage,
+      error: state.glossaryDiscovery?.error,
+    });
+    queryClient.setQueryData(queryKey, queryData);
+  }
+  return queryData;
+}
+
 export function applyGlossariesQueryDataForTeam(team, queryData, render, { isFetching = false } = {}) {
   if (!team?.id || !queryData) {
     return null;
@@ -117,4 +138,34 @@ export function removeGlossaryFromState(glossaryId, repoName) {
       terms: [],
     };
   }
+}
+
+export function repoBackedGlossaryInput(team, glossary) {
+  return {
+    installationId: team.installationId,
+    repoName: glossary.repoName,
+    glossaryId: glossary.id,
+  };
+}
+
+export function triggerGlossaryRepoSync(team, glossaryOrRepo) {
+  if (!teamSupportsGlossaryRepos(team)) {
+    return;
+  }
+
+  const repo = glossaryOrRepo?.fullName
+    ? {
+        glossaryId: glossaryOrRepo.id ?? glossaryOrRepo.glossaryId ?? null,
+        name: glossaryOrRepo.repoName ?? glossaryOrRepo.name,
+        fullName: glossaryOrRepo.fullName,
+        repoId: Number.isFinite(glossaryOrRepo.repoId) ? glossaryOrRepo.repoId : null,
+        defaultBranchName: glossaryOrRepo.defaultBranchName || "main",
+        defaultBranchHeadOid: glossaryOrRepo.defaultBranchHeadOid || null,
+      }
+    : null;
+  if (!repo?.name || !repo.fullName) {
+    return;
+  }
+
+  void syncGlossaryReposForTeam(team, [repo]).catch(() => null);
 }
