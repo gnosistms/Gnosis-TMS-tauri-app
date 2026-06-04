@@ -9,6 +9,16 @@
 
 use std::path::Path;
 
+// Repo sync status strings shared by glossary and QA-list sync (single source of truth —
+// previously duplicated identically in both modules).
+pub(crate) const REPO_SYNC_STATUS_NOT_CLONED: &str = "notCloned";
+pub(crate) const REPO_SYNC_STATUS_DIRTY_LOCAL: &str = "dirtyLocal";
+pub(crate) const REPO_SYNC_STATUS_UP_TO_DATE: &str = "upToDate";
+pub(crate) const REPO_SYNC_STATUS_OUT_OF_SYNC: &str = "outOfSync";
+pub(crate) const REPO_SYNC_STATUS_SYNC_ERROR: &str = "syncError";
+pub(crate) const REPO_SYNC_STATUS_UPDATE_REQUIRED: &str = "updateRequired";
+pub(crate) const REPO_SYNC_STATUS_REMOTE_MIGRATED_LOCAL_CHANGES: &str = "remoteMigratedLocalChanges";
+
 /// Whether a transport/lifecycle state string represents a deleted/missing resource.
 pub(crate) fn repo_transport_deleted_state(value: Option<&str>) -> bool {
     value

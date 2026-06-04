@@ -21,6 +21,13 @@ use crate::{
     repo_resource_sync::{
         normalized_optional_identifier, repo_transport_deleted_state,
         term_id_from_repo_relative_path,
+        REPO_SYNC_STATUS_DIRTY_LOCAL as GLOSSARY_REPO_SYNC_STATUS_DIRTY_LOCAL,
+        REPO_SYNC_STATUS_NOT_CLONED as GLOSSARY_REPO_SYNC_STATUS_NOT_CLONED,
+        REPO_SYNC_STATUS_OUT_OF_SYNC as GLOSSARY_REPO_SYNC_STATUS_OUT_OF_SYNC,
+        REPO_SYNC_STATUS_REMOTE_MIGRATED_LOCAL_CHANGES as GLOSSARY_REPO_SYNC_STATUS_REMOTE_MIGRATED_LOCAL_CHANGES,
+        REPO_SYNC_STATUS_SYNC_ERROR as GLOSSARY_REPO_SYNC_STATUS_SYNC_ERROR,
+        REPO_SYNC_STATUS_UP_TO_DATE as GLOSSARY_REPO_SYNC_STATUS_UP_TO_DATE,
+        REPO_SYNC_STATUS_UPDATE_REQUIRED as GLOSSARY_REPO_SYNC_STATUS_UPDATE_REQUIRED,
     },
     repo_sync_shared::{
         abort_rebase_after_failed_pull, ensure_repo_local_git_identity,
@@ -99,13 +106,6 @@ pub(crate) struct GlossaryEditorRepoSyncResponse {
     pub(crate) deleted_term_ids: Vec<String>,
 }
 
-const GLOSSARY_REPO_SYNC_STATUS_NOT_CLONED: &str = "notCloned";
-const GLOSSARY_REPO_SYNC_STATUS_DIRTY_LOCAL: &str = "dirtyLocal";
-const GLOSSARY_REPO_SYNC_STATUS_UP_TO_DATE: &str = "upToDate";
-const GLOSSARY_REPO_SYNC_STATUS_OUT_OF_SYNC: &str = "outOfSync";
-const GLOSSARY_REPO_SYNC_STATUS_SYNC_ERROR: &str = "syncError";
-const GLOSSARY_REPO_SYNC_STATUS_UPDATE_REQUIRED: &str = "updateRequired";
-const GLOSSARY_REPO_SYNC_STATUS_REMOTE_MIGRATED_LOCAL_CHANGES: &str = "remoteMigratedLocalChanges";
 
 fn glossary_descriptor_is_deleted(glossary: &GlossaryRepoSyncDescriptor) -> bool {
     repo_transport_deleted_state(glossary.lifecycle_state.as_deref())
