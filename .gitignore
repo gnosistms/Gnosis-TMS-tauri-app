@@ -24,3 +24,6 @@ signingCerts/
 src-tauri/dmg/*.af~lock~
 src-ui/assets/icons/*.af~lock~
 src-tauri/icons/*.icon/
+
+# Per-user Claude Code local settings (not shared)
+.claude/settings.local.json

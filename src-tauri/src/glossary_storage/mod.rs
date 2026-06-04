@@ -25,11 +25,12 @@ use crate::{
     storage_paths::local_glossary_repo_root,
 };
 
-mod io;
 mod terms;
 mod tmx;
 
-use io::{ensure_gitattributes, git_output, read_json_file, write_json_pretty, write_text_file};
+use crate::repo_resource_storage::{
+    ensure_gitattributes, git_output, read_json_file, write_json_pretty, write_text_file,
+};
 use terms::{
     has_conflicting_source_terms, has_duplicate_term_values, sanitize_target_term_pairs,
     trim_non_empty_term_values,

@@ -21,6 +21,7 @@ mod qa_list_storage;
 mod repo_app_version;
 mod repo_layout_metadata;
 mod repo_migrations;
+mod repo_resource_storage;
 mod repo_resource_sync;
 mod repo_sync_shared;
 mod short_path_names;
