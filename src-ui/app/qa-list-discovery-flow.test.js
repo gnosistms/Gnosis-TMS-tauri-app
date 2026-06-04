@@ -36,6 +36,7 @@ const {
 const { saveStoredQaListsForTeam } = await import("./qa-list-cache.js");
 const { createResourcePageState } = await import("./resource-page-controller.js");
 const { resetSessionState, state } = await import("./state.js");
+const { getNoticeBadgeText } = await import("./status-feedback.js");
 const { teamCacheKey } = await import("./team-cache.js");
 const { setActiveStorageLogin } = await import("./team-storage.js");
 
@@ -186,5 +187,51 @@ test("QA list normal load surfaces a remote failure as an error discovery state"
   assert.deepEqual(state.qaLists, []);
   assert.equal(state.qaListDiscovery.status, "error");
   assert.equal(state.qaListDiscovery.error, "team-1 remote failed");
+  assert.equal(state.qaListsPage.isRefreshing, false);
+});
+
+test("QA list load surfaces sync issues as notice badges", async () => {
+  setupQaListLoadState();
+  invokeHandler = async (command) => {
+    if (command === "list_local_gtms_qa_lists") {
+      return [{
+        id: "qa-1",
+        title: "Team 1 QA",
+        language: { code: "en", name: "English" },
+        repoName: "qa-1",
+        fullName: "team-1/qa-1",
+      }];
+    }
+    if (command === "sync_local_team_metadata_repo" || command === "ensure_local_team_metadata_repo") {
+      return null;
+    }
+    if (command === "list_local_gnosis_qa_list_metadata_records") {
+      return [];
+    }
+    if (command === "inspect_and_migrate_local_repo_bindings") {
+      return { issues: [], autoRepairedCount: 0 };
+    }
+    if (command === "list_gnosis_qa_lists_for_installation") {
+      return [{
+        qaListId: "qa-1",
+        name: "qa-1",
+        fullName: "team-1/qa-1",
+        defaultBranchName: "main",
+      }];
+    }
+    if (command === "sync_gtms_qa_list_repos") {
+      return [{
+        repoName: "qa-1",
+        status: "syncError",
+        message: "Could not sync QA list repo qa-1.",
+      }];
+    }
+    return null;
+  };
+
+  await loadTeamQaLists(() => {}, "team-1");
+
+  assert.equal(getNoticeBadgeText(), "Could not sync QA list repo qa-1.");
+  assert.equal(state.qaListDiscovery.status, "ready");
   assert.equal(state.qaListsPage.isRefreshing, false);
 });

@@ -152,6 +152,18 @@ export async function loadTeamQaLists(render, teamId = state.selectedTeamId, opt
     }
     showScopedSyncBadge("qa", "Refreshing QA lists...", render);
     applyQaListsQueryDataForTeam(team, querySnapshot, null, { isFetching: false });
+    const syncIssueText =
+      typeof querySnapshot.syncIssue?.message === "string"
+        ? querySnapshot.syncIssue.message
+        : typeof querySnapshot.syncIssue === "string"
+          ? querySnapshot.syncIssue
+          : "";
+    const brokerWarning = querySnapshot.discovery?.brokerWarning ?? "";
+    if (syncIssueText) {
+      showNoticeBadge(syncIssueText, render);
+    } else if (brokerWarning) {
+      showNoticeBadge(brokerWarning, render);
+    }
     await completePageSync(render);
   } catch (error) {
     if (!isQaListLoadCurrent(team)) {
