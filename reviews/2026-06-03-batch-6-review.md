@@ -2,7 +2,7 @@
 <!-- vt.idd:local-review:batch-6 -->
 
 **Date**: 2026-06-03
-**Status**: Complete. One Major finding (parity-symmetric across both files), open for fix.
+**Status**: Complete. One Major finding (parity-symmetric across both files), resolved in this branch.
 **Scope**: per-domain glossary and QA-list repo sync, reviewed **together for parity**
 **Files**:
 
@@ -71,17 +71,15 @@ UI's confirmation, can discard local glossary/QA work; and (2) **consistency** â
 gate this exact recovery path, but glossaries and QA lists don't, which is itself a parity
 violation against the just-merged project fix.
 
-**Recommended fix** (apply symmetrically to both files):
-- Add a backend write-access check before the destructive adoption. The `_sync` functions
-  already have `input.installation_id`, so the domain-correct gate is
-  `ensure_installation_allows_glossary_writes(app, input.installation_id)?` /
-  `ensure_installation_allows_qa_list_writes(app, input.installation_id)?` (these exist in
-  `installation_access.rs`; all content-write gates resolve to the same content-write check, so
-  this is functionally equivalent to the `ensure_repo_allows_writes` used by the project fix â€”
-  the resource-named gate is just clearer here). Place it before the loop, or per-repo after
-  path resolution.
-- Add tests covering permission denial for the old-layout discard flow in **both** glossary and
-  QA modules (mirroring the project fix's coverage).
+**Resolution**: fixed in this branch, symmetrically in both files.
+
+- `discard_old_layout_gtms_glossary_repos_sync` now calls
+  `ensure_installation_allows_glossary_writes(app, input.installation_id)?` before origin setup,
+  local identity setup, fetch, and destructive remote adoption.
+- `discard_old_layout_gtms_qa_list_repos_sync` now calls
+  `ensure_installation_allows_qa_list_writes(app, input.installation_id)?` at the same point.
+- Both modules include source-level guard tests asserting that the backend write-access check
+  remains before `discard_local_old_layout_changes_and_adopt_remote`.
 
 ---
 
@@ -102,7 +100,7 @@ violation against the just-merged project fix.
 
 | Finding | Status | Notes |
 |---|---|---|
-| M1 | Open | Add `ensure_installation_allows_glossary_writes` / `_qa_list_writes` before the destructive old-layout discard in both files; add permission-denial tests. Parity-symmetric. |
+| M1 | Resolved | Added `ensure_installation_allows_glossary_writes` / `_qa_list_writes` before destructive old-layout discard in both files, with parity-symmetric guard tests. |
 
 ---
 
