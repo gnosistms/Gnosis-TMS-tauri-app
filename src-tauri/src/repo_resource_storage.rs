@@ -1,3 +1,9 @@
+//! Shared low-level storage I/O for glossary and QA-list repos.
+//!
+//! These helpers (atomic JSON/text writes, a thin `git` runner, `.gitattributes` seeding)
+//! were byte-for-byte duplicated in `glossary_storage/io.rs` and `qa_list_storage/io.rs`,
+//! differing only in a const name. They live here once so a fix lands in one place.
+
 use std::{fs, path::Path};
 
 use serde::{de::DeserializeOwned, Serialize};
@@ -7,24 +13,24 @@ use crate::{
     util::atomic_replace,
 };
 
-const GLOSSARY_GITATTRIBUTES: &str = "* text=auto eol=lf\n";
+const GITATTRIBUTES: &str = "* text=auto eol=lf\n";
 
-pub(super) fn read_json_file<T: DeserializeOwned>(path: &Path, label: &str) -> Result<T, String> {
+pub(crate) fn read_json_file<T: DeserializeOwned>(path: &Path, label: &str) -> Result<T, String> {
     let text = fs::read_to_string(path)
         .map_err(|error| format!("Could not read {} '{}': {error}", label, path.display()))?;
     serde_json::from_str(&text)
         .map_err(|error| format!("Could not parse {} '{}': {error}", label, path.display()))
 }
 
-pub(super) fn ensure_gitattributes(path: &Path) -> Result<(), String> {
+pub(crate) fn ensure_gitattributes(path: &Path) -> Result<(), String> {
     if path.exists() {
         return Ok(());
     }
 
-    write_text_file(path, GLOSSARY_GITATTRIBUTES)
+    write_text_file(path, GITATTRIBUTES)
 }
 
-pub(super) fn git_output(repo_path: &Path, args: &[&str]) -> Result<String, String> {
+pub(crate) fn git_output(repo_path: &Path, args: &[&str]) -> Result<String, String> {
     let output = git_command()?
         .args(args)
         .current_dir(repo_path)
@@ -47,13 +53,13 @@ pub(super) fn git_output(repo_path: &Path, args: &[&str]) -> Result<String, Stri
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-pub(super) fn write_json_pretty<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
+pub(crate) fn write_json_pretty<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
     let json = serde_json::to_string_pretty(value)
         .map_err(|error| format!("Could not serialize '{}': {error}", path.display()))?;
     write_text_file(path, &format!("{json}\n"))
 }
 
-pub(super) fn write_text_file(path: &Path, contents: &str) -> Result<(), String> {
+pub(crate) fn write_text_file(path: &Path, contents: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| format!("Could not create '{}': {error}", parent.display()))?;
@@ -81,14 +87,15 @@ mod tests {
 
     #[test]
     fn write_text_file_replaces_contents_and_removes_temp_file() {
-        let dir = std::env::temp_dir().join(format!("gnosis-glossary-atomic-{}", Uuid::now_v7()));
-        let path = dir.join("glossary.json");
+        let dir =
+            std::env::temp_dir().join(format!("gnosis-repo-resource-atomic-{}", Uuid::now_v7()));
+        let path = dir.join("resource.json");
 
         write_text_file(&path, "old").expect("write old contents");
         write_text_file(&path, "new").expect("write new contents");
 
         assert_eq!(fs::read_to_string(&path).expect("read file"), "new");
-        assert!(!dir.join("glossary.json.tmp").exists());
+        assert!(!dir.join("resource.json.tmp").exists());
 
         let _ = fs::remove_dir_all(dir);
     }

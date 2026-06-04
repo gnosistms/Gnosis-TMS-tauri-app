@@ -25,10 +25,11 @@ use crate::{
     storage_paths::local_qa_list_repo_root,
 };
 
-mod io;
 mod tmx;
 
-use io::{ensure_gitattributes, git_output, read_json_file, write_json_pretty, write_text_file};
+use crate::repo_resource_storage::{
+    ensure_gitattributes, git_output, read_json_file, write_json_pretty, write_text_file,
+};
 use tmx::{parse_tmx_qa_list, serialize_tmx_qa_list};
 
 const QA_LIST_FILE_NAME: &str = "qa-list.json";
