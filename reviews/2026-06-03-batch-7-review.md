@@ -2,7 +2,7 @@
 <!-- vt.idd:local-review:batch-7 -->
 
 **Date**: 2026-06-03
-**Status**: Complete. One minor finding (parity-symmetric), open for fix.
+**Status**: Complete. One minor finding (parity-symmetric), resolved in this branch.
 **Scope**: glossary and QA-list on-disk storage, reviewed **together for parity**; TMX
 import/export scrutinized for malformed-input handling
 **Files**:
@@ -104,7 +104,9 @@ arguably deserve the same crash-safety as the broker/installation snapshots.
 |---|---|---|
 | **A ✓** | In `write_text_file`, write to a sibling `.tmp` then `util::atomic_replace(tmp, path)`. Apply to **both** `io.rs` files. | Crash-safe; consistent with the established atomic-write discipline |
 
-**Recommended**: A (parity-symmetric — both files).
+**Resolution**: fixed in this branch. Both `write_text_file` helpers now write to a sibling
+`.tmp` file and finalize with `util::atomic_replace`, with parity-symmetric regression tests
+covering replacement and temp-file cleanup.
 
 ---
 
@@ -124,7 +126,7 @@ arguably deserve the same crash-safety as the broker/installation snapshots.
 
 | Finding | Status | Notes |
 |---|---|---|
-| m1 | Open | Atomic content-file writes via `util::atomic_replace` in both `*/io.rs`; git-recoverable so low priority |
+| m1 | Resolved | Atomic content-file writes via `util::atomic_replace` in both `*/io.rs`; parity-symmetric tests added. |
 
 ---
 

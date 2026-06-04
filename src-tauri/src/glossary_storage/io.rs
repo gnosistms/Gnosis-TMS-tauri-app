@@ -2,7 +2,10 @@ use std::{fs, path::Path};
 
 use serde::{de::DeserializeOwned, Serialize};
 
-use crate::repo_sync_shared::{format_git_spawn_error, git_command};
+use crate::{
+    repo_sync_shared::{format_git_spawn_error, git_command},
+    util::atomic_replace,
+};
 
 const GLOSSARY_GITATTRIBUTES: &str = "* text=auto eol=lf\n";
 
@@ -55,6 +58,38 @@ pub(super) fn write_text_file(path: &Path, contents: &str) -> Result<(), String>
         fs::create_dir_all(parent)
             .map_err(|error| format!("Could not create '{}': {error}", parent.display()))?;
     }
-    fs::write(path, contents)
-        .map_err(|error| format!("Could not write '{}': {error}", path.display()))
+    let tmp_path = path.with_file_name(format!(
+        "{}.tmp",
+        path.file_name()
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| format!(
+                "Could not determine a temporary path for '{}'.",
+                path.display()
+            ))?
+    ));
+    fs::write(&tmp_path, contents)
+        .map_err(|error| format!("Could not write '{}': {error}", tmp_path.display()))?;
+    atomic_replace(&tmp_path, path)
+        .map_err(|error| format!("Could not finalize '{}': {error}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::write_text_file;
+    use std::fs;
+    use uuid::Uuid;
+
+    #[test]
+    fn write_text_file_replaces_contents_and_removes_temp_file() {
+        let dir = std::env::temp_dir().join(format!("gnosis-glossary-atomic-{}", Uuid::now_v7()));
+        let path = dir.join("glossary.json");
+
+        write_text_file(&path, "old").expect("write old contents");
+        write_text_file(&path, "new").expect("write new contents");
+
+        assert_eq!(fs::read_to_string(&path).expect("read file"), "new");
+        assert!(!dir.join("glossary.json.tmp").exists());
+
+        let _ = fs::remove_dir_all(dir);
+    }
 }
