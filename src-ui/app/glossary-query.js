@@ -1,7 +1,10 @@
 import { glossaryKeys } from "./query-client.js";
 import { createGlossaryDiscoveryState, state } from "./state.js";
 import { createRepoResourceQueryController } from "./repo-resource/query-controller.js";
-import { loadStoredGlossariesForTeam as loadStoredGlossariesFromCache } from "./glossary-cache.js";
+import {
+  loadStoredGlossariesForTeam as loadStoredGlossariesFromCache,
+  saveStoredGlossariesForTeam,
+} from "./glossary-cache.js";
 import {
   listLocalGlossarySummariesForTeam,
   loadRepoBackedGlossariesForTeam,
@@ -480,4 +483,11 @@ export function createGlossaryPermanentDeleteMutationOptions(options = {}) {
 
 export async function invalidateGlossariesQueryAfterMutation(team, options = {}) {
   await glossaryQueryController.invalidateAfterMutation(team, options);
+}
+
+export function persistGlossariesQueryDataForTeam(team, queryData) {
+  if (!team || !queryData) {
+    return;
+  }
+  saveStoredGlossariesForTeam(team, Array.isArray(queryData.glossaries) ? queryData.glossaries : []);
 }
