@@ -91,3 +91,23 @@ pub(crate) fn normalized_optional_identifier(value: Option<&str>) -> Option<Stri
         .filter(|value| !value.is_empty())
         .map(str::to_string)
 }
+
+/// Field-accessor bridge over the per-domain sync descriptors (glossary / QA list), which
+/// are structurally identical apart from their resource-id field name. Implementing this
+/// lets the shared sync logic operate on either descriptor without unifying their types or
+/// changing the frontend JSON contract.
+pub(crate) trait RepoSyncDescriptorLike {
+    fn lifecycle_state(&self) -> Option<&str>;
+    fn record_state(&self) -> Option<&str>;
+    fn remote_state(&self) -> Option<&str>;
+    fn status(&self) -> Option<&str>;
+}
+
+/// Whether a sync descriptor represents a deleted/missing resource (any lifecycle, record,
+/// remote, or transport status flags it as deleted).
+pub(crate) fn descriptor_is_deleted<D: RepoSyncDescriptorLike>(descriptor: &D) -> bool {
+    repo_transport_deleted_state(descriptor.lifecycle_state())
+        || repo_transport_deleted_state(descriptor.record_state())
+        || repo_transport_deleted_state(descriptor.remote_state())
+        || repo_transport_deleted_state(descriptor.status())
+}

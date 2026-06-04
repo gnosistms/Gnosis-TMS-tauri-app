@@ -19,9 +19,9 @@ use crate::{
         sync_pending_repo_layout_migration,
     },
     repo_resource_sync::{
-        normalized_optional_identifier, repo_transport_deleted_state,
+        descriptor_is_deleted, normalized_optional_identifier,
         term_id_from_repo_relative_path, DiscardOldLayoutReposResponse, EditorRepoSyncResponse,
-        RepoSyncSnapshot,
+        RepoSyncDescriptorLike, RepoSyncSnapshot,
         REPO_SYNC_STATUS_DIRTY_LOCAL as QA_LIST_REPO_SYNC_STATUS_DIRTY_LOCAL,
         REPO_SYNC_STATUS_NOT_CLONED as QA_LIST_REPO_SYNC_STATUS_NOT_CLONED,
         REPO_SYNC_STATUS_OUT_OF_SYNC as QA_LIST_REPO_SYNC_STATUS_OUT_OF_SYNC,
@@ -77,11 +77,19 @@ pub(crate) struct QaListEditorRepoSyncInput {
     pub(crate) status: Option<String>,
 }
 
-fn qa_list_descriptor_is_deleted(qa_list: &QaListRepoSyncDescriptor) -> bool {
-    repo_transport_deleted_state(qa_list.lifecycle_state.as_deref())
-        || repo_transport_deleted_state(qa_list.record_state.as_deref())
-        || repo_transport_deleted_state(qa_list.remote_state.as_deref())
-        || repo_transport_deleted_state(qa_list.status.as_deref())
+impl RepoSyncDescriptorLike for QaListRepoSyncDescriptor {
+    fn lifecycle_state(&self) -> Option<&str> {
+        self.lifecycle_state.as_deref()
+    }
+    fn record_state(&self) -> Option<&str> {
+        self.record_state.as_deref()
+    }
+    fn remote_state(&self) -> Option<&str> {
+        self.remote_state.as_deref()
+    }
+    fn status(&self) -> Option<&str> {
+        self.status.as_deref()
+    }
 }
 
 #[tauri::command]
@@ -224,7 +232,7 @@ fn sync_gtms_qa_list_editor_repo_sync(
         &input.repo_name,
     )?;
     let old_head_sha = read_current_head_oid(&repo_path);
-    if qa_list_descriptor_is_deleted(&qa_list) {
+    if descriptor_is_deleted(&qa_list) {
         return Ok(EditorRepoSyncResponse {
             old_head_sha: old_head_sha.clone(),
             new_head_sha: old_head_sha,
@@ -450,7 +458,7 @@ fn inspect_qa_list_repo_state(
         current_app_version: None,
     };
 
-    if qa_list_descriptor_is_deleted(qa_list) {
+    if descriptor_is_deleted(qa_list) {
         return RepoSyncSnapshot {
             local_head_oid: read_current_head_oid(repo_path),
             status: QA_LIST_REPO_SYNC_STATUS_UP_TO_DATE.to_string(),
@@ -632,7 +640,7 @@ fn sync_qa_list_repo(
     remote_head_oid: &str,
     git_transport_token: &str,
 ) -> Result<Option<String>, String> {
-    if qa_list_descriptor_is_deleted(qa_list) {
+    if descriptor_is_deleted(qa_list) {
         return Ok(read_current_head_oid(repo_path));
     }
 

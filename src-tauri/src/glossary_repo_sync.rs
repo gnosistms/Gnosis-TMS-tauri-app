@@ -19,9 +19,9 @@ use crate::{
         sync_pending_repo_layout_migration,
     },
     repo_resource_sync::{
-        normalized_optional_identifier, repo_transport_deleted_state,
+        descriptor_is_deleted, normalized_optional_identifier,
         term_id_from_repo_relative_path, DiscardOldLayoutReposResponse, EditorRepoSyncResponse,
-        RepoSyncSnapshot,
+        RepoSyncDescriptorLike, RepoSyncSnapshot,
         REPO_SYNC_STATUS_DIRTY_LOCAL as GLOSSARY_REPO_SYNC_STATUS_DIRTY_LOCAL,
         REPO_SYNC_STATUS_NOT_CLONED as GLOSSARY_REPO_SYNC_STATUS_NOT_CLONED,
         REPO_SYNC_STATUS_OUT_OF_SYNC as GLOSSARY_REPO_SYNC_STATUS_OUT_OF_SYNC,
@@ -77,11 +77,19 @@ pub(crate) struct GlossaryEditorRepoSyncInput {
     pub(crate) status: Option<String>,
 }
 
-fn glossary_descriptor_is_deleted(glossary: &GlossaryRepoSyncDescriptor) -> bool {
-    repo_transport_deleted_state(glossary.lifecycle_state.as_deref())
-        || repo_transport_deleted_state(glossary.record_state.as_deref())
-        || repo_transport_deleted_state(glossary.remote_state.as_deref())
-        || repo_transport_deleted_state(glossary.status.as_deref())
+impl RepoSyncDescriptorLike for GlossaryRepoSyncDescriptor {
+    fn lifecycle_state(&self) -> Option<&str> {
+        self.lifecycle_state.as_deref()
+    }
+    fn record_state(&self) -> Option<&str> {
+        self.record_state.as_deref()
+    }
+    fn remote_state(&self) -> Option<&str> {
+        self.remote_state.as_deref()
+    }
+    fn status(&self) -> Option<&str> {
+        self.status.as_deref()
+    }
 }
 
 #[tauri::command]
@@ -224,7 +232,7 @@ fn sync_gtms_glossary_editor_repo_sync(
         &input.repo_name,
     )?;
     let old_head_sha = read_current_head_oid(&repo_path);
-    if glossary_descriptor_is_deleted(&glossary) {
+    if descriptor_is_deleted(&glossary) {
         return Ok(EditorRepoSyncResponse {
             old_head_sha: old_head_sha.clone(),
             new_head_sha: old_head_sha,
@@ -450,7 +458,7 @@ fn inspect_glossary_repo_state(
         current_app_version: None,
     };
 
-    if glossary_descriptor_is_deleted(glossary) {
+    if descriptor_is_deleted(glossary) {
         return RepoSyncSnapshot {
             local_head_oid: read_current_head_oid(repo_path),
             status: GLOSSARY_REPO_SYNC_STATUS_UP_TO_DATE.to_string(),
@@ -632,7 +640,7 @@ fn sync_glossary_repo(
     remote_head_oid: &str,
     git_transport_token: &str,
 ) -> Result<Option<String>, String> {
-    if glossary_descriptor_is_deleted(glossary) {
+    if descriptor_is_deleted(glossary) {
         return Ok(read_current_head_oid(repo_path));
     }
 
