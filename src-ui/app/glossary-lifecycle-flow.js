@@ -94,7 +94,7 @@ function glossaryMetadataRecord(glossary, overrides = {}) {
         : "main",
     lifecycleState:
       overrides.lifecycleState
-      ?? (glossary.lifecycleState === "deleted" ? "softDeleted" : "active"),
+      ?? (glossary.lifecycleState === "deleted" ? "deleted" : "active"),
     remoteState: overrides.remoteState ?? glossary.remoteState ?? "linked",
     recordState: overrides.recordState ?? glossary.recordState ?? "live",
     deletedAt: overrides.deletedAt ?? glossary.deletedAt ?? null,

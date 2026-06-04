@@ -116,3 +116,25 @@ test("soft-deleting a glossary closes a stale open flag when the deleted section
   assert.equal(state.glossaries[0].lifecycleState, "deleted");
   assert.equal(state.showDeletedGlossaries, false);
 });
+
+test("soft-deleting a glossary writes deleted lifecycle metadata", async () => {
+  setupGlossaryLifecycleState();
+  const metadataWrites = [];
+  invokeHandler = async (command, payload) => {
+    if (command === "upsert_local_gnosis_glossary_metadata_record") {
+      metadataWrites.push(payload.input);
+      return { commitCreated: true };
+    }
+    if (command === "lookup_local_team_metadata_tombstone") {
+      return null;
+    }
+    return {};
+  };
+
+  await deleteGlossary(() => {}, "glossary-1");
+  await flushAsyncWork();
+
+  assert.equal(metadataWrites.length, 1);
+  assert.equal(metadataWrites[0].glossaryId, "glossary-1");
+  assert.equal(metadataWrites[0].lifecycleState, "deleted");
+});
