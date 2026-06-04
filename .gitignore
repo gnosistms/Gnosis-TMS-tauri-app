@@ -11,6 +11,9 @@ test-results
 # macOS metadata
 .DS_Store
 
+# Per-user Claude Code local settings (not shared)
+.claude/settings.local.json
+
 # Local secret backups
 Backup Github App Secrets/
 .gnosis-tms/secrets/
