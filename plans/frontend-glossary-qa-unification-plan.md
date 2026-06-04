@@ -10,9 +10,14 @@ already done but is not. No implementation started.
 
 Unify the frontend by **growing the shared `src-ui/app/repo-resource/` framework** and folding
 in only the modules that are genuinely duplicated — **not** by merging the paired leaf modules
-wholesale. Most pairs have drifted and are 50–120%+ divergent; the term-editing modules are
-glossary-only. Share the machinery, respect the bilingual-vs-monolingual fork — the same
-conclusion the backend reached.
+wholesale. Most pairs have drifted and are 50–120%+ divergent, but for the Tier 2 candidates
+that divergence is **~90% accidental implementation drift, only ~10% functional** — the
+term-editing modules (the real fork) are glossary-only and stay separate.
+
+Tier 1 pairs are already near-mirrors → collapse them directly. Tier 2 pairs are drifted →
+**mirror them first, then collapse** (infrastructure-first), recreating the precondition that
+made the backend collapse safe. Share the machinery, respect the bilingual-vs-monolingual fork
+— the same conclusion the backend reached.
 
 ## Motivation
 
@@ -55,6 +60,44 @@ QA has **zero** unpaired modules — glossary is strictly the superset. "Unifica
 `>100%` divergence means the diff has more changed lines than the file is long (both sides
 differ) — i.e. these pairs share a *pattern*, not *code*.
 
+### Functional difference vs implementation drift (Tier 2)
+
+The raw divergence above overstates the *real* difference. Measuring what fraction of each
+normalized diff actually touches the term model (source/target/variant/ruby/untranslated vs
+text/notes) shows the Tier 2 dissimilarity is **~90% implementation drift, ~10% functional**:
+
+| Module | term-model diff lines | total diff lines | functional | drift |
+|---|---|---|---|---|
+| `discovery-flow` | 0 | 202 | ~0% | ~100% |
+| `query` | ~0 | 379 | ~0% | ~100% |
+| `lifecycle-flow` | 14 | 289 | ~5% | ~95% |
+| `import-flow` | 44 | 468 | ~9% | ~91% |
+
+Why: Tier 2 modules operate on resource **summaries, lifecycle, discovery, and import
+orchestration** — domain-agnostic concerns. The bilingual-vs-monolingual term model barely
+enters them; that irreducible fork lives in the Tier 3 editor/term modules. The high line
+divergence is overwhelmingly *accidental*:
+
+- **QA was modernized** to newer shared state helpers (`setResourcePageRefreshing`,
+  `apply/persistGlossariesQueryDataForTeam`, `currentGlossaryTeam`/`selectedGlossaryTeamMatches`,
+  a DRY'd lifecycle-mutation factory, `finally`-based cleanup).
+- **Glossary kept older inline patterns** (direct `state.x = …` mutations, repeated cleanup) but
+  also has **extra features QA lacks** — sync-failure recovery (`handleSyncFailure`), a
+  write-intent overlay, cache-seed control.
+- A large chunk is just **import reordering / different helper groupings**, which line-diff
+  over-counts.
+
+The genuinely functional ~10% is small and slots behind a domain descriptor: import **term
+preview** (glossary shows source/target + variant notes; QA shows single text) and **summary
+shape** (glossary source+target language; QA single language).
+
+Two consequences:
+1. The case for Tier 2 unification is *stronger* than the raw percentages suggest — most of the
+   difference is accidental, which is exactly what unification removes.
+2. The drift is **asymmetric** (each side missing the other's improvements) — that asymmetry is
+   the parity-rule cost made visible. Unifying will surface and fix those gaps (e.g. QA likely
+   lacks glossary's sync-failure recovery), so it is *not* a mechanical merge of near-twins.
+
 ## Principles (carried over from the backend)
 
 1. **Share the framework, not the leaves.** Grow `repo-resource/`; keep thin domain modules.
@@ -67,6 +110,10 @@ differ) — i.e. these pairs share a *pattern*, not *code*.
 4. **Preserve module ownership** (`AGENTS.md`): `*-flow` = intent/navigation, `*-query` =
    cache/observers, `*-discovery-flow` = loading via injected publishers. Shared code must not
    blur these roles.
+5. **Mirror before merge (Tier 2).** The backend collapse was safe and near-mechanical only
+   because the two files were already near-mirror images. Drifted pairs must be *converged into
+   mirrors first* (their own phase), then collapsed — see Tier 2. Keep pure refactors and
+   feature-ports as separate, individually test-gated commits.
 
 ## Scope: three tiers
 
@@ -74,34 +121,55 @@ differ) — i.e. these pairs share a *pattern*, not *code*.
 
 `export-flow`, `editor-query`, `write-coordinator`, `old-layout-discard-flow`.
 
-These are real token-mirrors (3–14% divergent). For each pair, extract one shared
-implementation into `repo-resource/` parameterized by a small **frontend resource descriptor**
-(command names, resource-id key `glossaryId`/`qaListId`, cache keys, display noun), and replace
-both domain modules with thin adapters that pass their descriptor. This is the JS analogue of
-the backend's `RepoResourceStorageDomain`.
+These are real token-mirrors (3–14% divergent), so they **skip the mirror phase** and collapse
+directly. For each pair, extract one shared implementation into `repo-resource/` parameterized
+by a small **frontend resource descriptor** (command names, resource-id key
+`glossaryId`/`qaListId`, cache keys, display noun), and replace both domain modules with thin
+adapters that pass their descriptor. This is the JS analogue of the backend's
+`RepoResourceStorageDomain`, and a good warm-up that proves the descriptor pattern before Tier 2.
 
 Deliverable: a `repo-resource/resource-descriptor.js` (or extend `query-controller.js`) plus
 4 collapsed pairs. Each pair lands as its own commit, `npm test` green.
 
-### Tier 2 — extract the shared core, keep domain specifics
+### Tier 2 — mirror, then collapse (two phases, infrastructure-first)
 
 `import-flow`, `lifecycle-flow`, `query`, `discovery-flow`.
 
-Each is ~40–60% common plumbing wrapped around domain-specific bits. Do **not** merge the
-files; instead harvest the shared half into `repo-resource/` helpers and have both domain
-modules call them:
+These are ~90% drift, ~10% functional (see above). Because they are *not* mirrors, do **not**
+attempt a one-shot merge. Converge them first, then collapse — recreating the precondition that
+made the backend collapse safe. This also keeps a no-type-checker refactor bisectable: a test
+failure in Phase A is a reconciliation bug; in Phase B, a collapse bug.
+
+**Phase A — mirror (both files stay; behavior preserved or improved).** Proceed
+**bottom-up**: you cannot mirror a flow module while the two sides call diverged helpers, so
+reconcile the shared infrastructure first.
+
+1. **Reconcile shared infra.** Converge the diverged helper APIs in `*-top-level-state` and
+   `*-query` to one canonical, best-of-both set (adopt QA's cleaner state abstractions; keep
+   glossary's richer features). Each helper change is its own test-gated commit.
+2. **Mirror each pair on top.** Adopt the same helpers, declaration order, and structure until a
+   glossary↔qa token-substituted diff is ~empty. Port missing features **across both
+   directions** (e.g. give QA glossary's sync-failure recovery) as separate, individually tested
+   commits — these are deliberate behavior changes, not de-drift, and must be reviewed as such.
+
+Phase A has standalone value: two mirrored files restore the parity property even if a pair is
+never collapsed, and future drift becomes a visible diff.
+
+**Phase B — collapse.** With each pair now near-identical, extract the shared core into
+`repo-resource/` and replace both modules with thin descriptor adapters:
 
 - `query` / `editor-query`: snapshot application, observer subscription, optimistic-mutation
-  wiring → already partly in `query-controller.js`; widen it.
+  wiring → widen `query-controller.js`.
 - `lifecycle-flow`: soft-delete/restore/rename/purge orchestration + permission gating +
-  optimistic state → shared lifecycle helper; domain supplies labels and the resource shape.
+  optimistic state → shared lifecycle helper; domain supplies labels.
 - `discovery-flow`: repo enumeration, sync-state reconciliation, publish-via-injected-callback
   → shared loader; domain supplies the per-resource normalizer.
 - `import-flow`: file pick, size-limit messaging, TMX inspect/confirm flow, progress, error
-  surfacing → shared; the term-preview rendering and term-shape stay domain-specific.
+  surfacing → shared; the ~10% functional residue (term-preview rendering, term shape) becomes
+  descriptor hooks.
 
-Deliverable: shared helpers in `repo-resource/`; each domain module shrinks to domain glue.
-One module-pair per PR (these are large), `npm test` green per step.
+Deliverable: Phase A converges the pairs (mergeable on its own); Phase B collapses them behind
+the descriptor. One module-pair per PR (these are large), `npm test` green per step.
 
 ### Tier 3 — leave separate (domain-specific or not worth it)
 
@@ -117,10 +185,15 @@ descriptor indirection even though same-shaped.)
 
 ## Sequencing
 
-1. Land Tier 1 first (lowest risk, proves the descriptor pattern). 4 small PRs or one batched.
+1. **Tier 1** first (lowest risk, proves the descriptor pattern). 4 small PRs or one batched.
 2. Reassess: confirm the descriptor abstraction reads well before scaling it.
-3. Tier 2 one pair at a time, largest (`import-flow`, `repo-flow-adjacent query`) last.
-4. Tier 3: explicitly **not** done — record the decision so future agents don't re-litigate.
+3. **Tier 2 Phase A — infra reconcile.** Converge `*-top-level-state` / `*-query` helper APIs
+   (best-of-both). This unblocks mirroring every Tier 2 pair and is valuable on its own.
+4. **Tier 2 Phase A — mirror each pair** (one pair per PR), de-drift + feature-port commits kept
+   separate. Stop here is a coherent state (parity restored).
+5. **Tier 2 Phase B — collapse each mirrored pair** behind the descriptor (one pair per PR),
+   largest (`import-flow`) last.
+6. **Tier 3:** explicitly **not** done — record the decision so future agents don't re-litigate.
 
 ## Out of scope
 
