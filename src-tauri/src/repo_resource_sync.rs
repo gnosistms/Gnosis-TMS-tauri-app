@@ -243,12 +243,17 @@ pub(crate) fn sync_repos(
                 .join(&resource.repo_name)
         });
         matches!(
-            inspect_repo_state(domain, resource, &repo_path).status.as_str(),
+            inspect_repo_state(domain, resource, &repo_path)
+                .status
+                .as_str(),
             REPO_SYNC_STATUS_NOT_CLONED | REPO_SYNC_STATUS_OUT_OF_SYNC
         )
     });
     let git_transport_token = if needs_transport {
-        Some(load_git_transport_token(input.installation_id, session_token)?)
+        Some(load_git_transport_token(
+            input.installation_id,
+            session_token,
+        )?)
     } else {
         None
     };
@@ -773,7 +778,13 @@ fn sync_repo(
         .unwrap_or("main");
     let local_head_oid = read_current_head_oid(repo_path);
     let git_transport_auth = GitTransportAuth::from_token(git_transport_token)?;
-    enforce_remote_app_version(domain, repo_path, resource, branch_name, &git_transport_auth)?;
+    enforce_remote_app_version(
+        domain,
+        repo_path,
+        resource,
+        branch_name,
+        &git_transport_auth,
+    )?;
     if repo_requires_0810_migration(repo_path) {
         sync_pending_repo_layout_migration(
             app,
@@ -889,7 +900,13 @@ fn clone_repo(
         .as_deref()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("main");
-    enforce_remote_app_version(domain, repo_path, resource, branch_name, &git_transport_auth)?;
+    enforce_remote_app_version(
+        domain,
+        repo_path,
+        resource,
+        branch_name,
+        &git_transport_auth,
+    )?;
     if repo_requires_0810_migration(repo_path) {
         sync_pending_repo_layout_migration(
             app,
@@ -984,7 +1001,7 @@ fn mark_repo_synced(
 #[cfg(test)]
 mod tests {
     use super::{
-        snapshot_from_sync_error, RepoResourceDomain, RepoResourceSyncDescriptor, RepoKind,
+        snapshot_from_sync_error, RepoKind, RepoResourceDomain, RepoResourceSyncDescriptor,
         REPO_SYNC_STATUS_REMOTE_MIGRATED_LOCAL_CHANGES, REPO_SYNC_STATUS_UPDATE_REQUIRED,
     };
     use crate::repo_app_version::{encode_repo_app_update_requirement, RepoAppUpdateRequirement};

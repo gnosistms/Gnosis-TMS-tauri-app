@@ -92,5 +92,11 @@ pub(crate) fn find_glossary_repo_path(
     glossary_id: Option<&str>,
     repo_name: Option<&str>,
 ) -> Result<Option<PathBuf>, String> {
-    find_repo_path(&GlossaryDomain, app, installation_id, glossary_id, repo_name)
+    find_repo_path(
+        &GlossaryDomain,
+        app,
+        installation_id,
+        glossary_id,
+        repo_name,
+    )
 }
