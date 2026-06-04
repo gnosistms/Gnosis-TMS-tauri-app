@@ -36,14 +36,23 @@ function qaListsPageOwnsTeam(team) {
   );
 }
 
+function qaListsPageHasDifferentOwner(team) {
+  return Boolean(
+    (state.qaListsPage?.visibleTeamId || state.qaListsPage?.visibleCacheKey)
+      && !qaListsPageOwnsTeam(team),
+  );
+}
+
 export function primeQaListsLoadingState(teamId = state.selectedTeamId, options = {}) {
   const team = state.teams.find((item) => item.id === teamId) ?? currentQaListTeam();
+  const pageOwnsTeam = qaListsPageOwnsTeam(team);
+  const pageHasDifferentOwner = qaListsPageHasDifferentOwner(team);
   const preserveVisibleData =
     options.preserveVisibleData === true
-    && (qaListsPageOwnsTeam(team) || selectedQaListTeamMatches(team))
+    && (pageOwnsTeam || (!pageHasDifferentOwner && selectedQaListTeamMatches(team)))
     && state.qaLists.length > 0;
 
-  if (!team) {
+  if (!team || !Number.isFinite(team?.installationId)) {
     state.qaLists = [];
     state.selectedQaListId = null;
     clearResourcePageDataOwner(state.qaListsPage);
@@ -98,7 +107,7 @@ export async function loadTeamQaLists(render, teamId = state.selectedTeamId, opt
   setResourcePageRefreshing(state.qaListsPage, true);
   render?.();
 
-  if (!team) {
+  if (!team || !Number.isFinite(team?.installationId)) {
     state.qaLists = [];
     state.selectedQaListId = null;
     clearResourcePageDataOwner(state.qaListsPage);
@@ -141,10 +150,16 @@ export async function loadTeamQaLists(render, teamId = state.selectedTeamId, opt
       }
     }
 
-    ensureQaListsQueryObserver(render, team, { teamId: team.id });
+    ensureQaListsQueryObserver(render, team, {
+      teamId: team.id,
+      preserveVisibleData: preservedVisibleData,
+      suppressRecoveryWarning: options.suppressRecoveryWarning === true,
+    });
     const querySnapshot = await queryClient.fetchQuery(createQaListsQueryOptions(team, {
       teamId: team.id,
       preserveVisibleData: preservedVisibleData,
+      suppressRecoveryWarning: options.suppressRecoveryWarning === true,
+      render,
     }));
     if (!isQaListLoadCurrent(team)) {
       clearScopedSyncBadge("qa", render);

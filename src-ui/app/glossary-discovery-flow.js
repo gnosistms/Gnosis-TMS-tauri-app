@@ -6,54 +6,62 @@ import {
   showNoticeBadge,
   showScopedSyncBadge,
 } from "./status-feedback.js";
-import { selectedTeam } from "./glossary-shared.js";
-import { loadStoredGlossariesForTeam } from "./glossary-cache.js";
 import {
-  applyGlossariesQuerySnapshotToState,
+  applyGlossariesQueryDataForTeam,
+  currentGlossaryTeam,
+  selectedGlossaryTeamMatches,
+} from "./glossary-top-level-state.js";
+import {
   createGlossariesQueryOptions,
   ensureGlossariesQueryObserver,
   seedGlossariesQueryFromCache,
   seedGlossariesQueryFromLocal,
 } from "./glossary-query.js";
+import { queryClient } from "./query-client.js";
 import {
   clearResourcePageDataOwner,
+  setResourcePageRefreshing,
 } from "./resource-page-controller.js";
-import { persistGlossariesForTeam } from "./glossary-top-level-state.js";
-import { glossaryKeys, queryClient } from "./query-client.js";
+import { teamCacheKey } from "./team-cache.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
-import { teamCacheKey } from "./team-cache.js";
 
 function glossariesPageOwnsTeam(team) {
   const expectedCacheKey = teamCacheKey(team);
   return Boolean(
     team?.id
-    && expectedCacheKey
-    && state.glossariesPage?.visibleTeamId === team.id
-    && state.glossariesPage?.visibleCacheKey === expectedCacheKey
+      && expectedCacheKey
+      && state.glossariesPage?.visibleTeamId === team.id
+      && state.glossariesPage?.visibleCacheKey === expectedCacheKey,
+  );
+}
+
+function glossariesPageHasDifferentOwner(team) {
+  return Boolean(
+    (state.glossariesPage?.visibleTeamId || state.glossariesPage?.visibleCacheKey)
+      && !glossariesPageOwnsTeam(team),
   );
 }
 
 export function primeGlossariesLoadingState(teamId = state.selectedTeamId, options = {}) {
-  const team = selectedTeam(teamId);
-  state.selectedTeamId = teamId ?? state.selectedTeamId;
+  const team = state.teams.find((item) => item.id === teamId) ?? currentGlossaryTeam();
+  const pageOwnsTeam = glossariesPageOwnsTeam(team);
+  const pageHasDifferentOwner = glossariesPageHasDifferentOwner(team);
   const preserveVisibleData =
     options.preserveVisibleData === true
-    && glossariesPageOwnsTeam(team)
+    && (pageOwnsTeam || (!pageHasDifferentOwner && selectedGlossaryTeamMatches(team)))
     && state.glossaries.length > 0;
   state.glossaryRepoSyncByRepoName = {};
-  state.glossariesPage.isRefreshing = false;
-  state.glossariesPage.writeState = "idle";
 
-  if (!Number.isFinite(team?.installationId)) {
+  if (!team || !Number.isFinite(team?.installationId)) {
     state.glossaries = [];
     state.selectedGlossaryId = null;
     clearResourcePageDataOwner(state.glossariesPage);
+    setResourcePageRefreshing(state.glossariesPage, false);
     state.glossaryRepoSyncByRepoName = {};
     state.glossaryDiscovery = {
       ...createGlossaryDiscoveryState(),
       status: "ready",
-      recoveryMessage: "",
     };
     return;
   }
@@ -62,15 +70,14 @@ export function primeGlossariesLoadingState(teamId = state.selectedTeamId, optio
     state.glossaryDiscovery = {
       ...createGlossaryDiscoveryState(),
       status: "ready",
-      recoveryMessage: "",
     };
-    return;
+    return { preservedVisibleData: true, seededFromCache: false };
   }
 
   state.glossaries = [];
   state.selectedGlossaryId = null;
   clearResourcePageDataOwner(state.glossariesPage);
-  state.glossariesPage.isRefreshing = true;
+  setResourcePageRefreshing(state.glossariesPage, true);
   state.glossaryDiscovery = {
     ...createGlossaryDiscoveryState(),
     status: "loading",
@@ -81,7 +88,6 @@ export function primeGlossariesLoadingState(teamId = state.selectedTeamId, optio
       ? null
       : seedGlossariesQueryFromCache(team, {
           teamId: team.id,
-          loadStoredGlossariesForTeam,
         });
   return {
     preservedVisibleData: false,
@@ -89,42 +95,40 @@ export function primeGlossariesLoadingState(teamId = state.selectedTeamId, optio
   };
 }
 
-function isGlossaryLoadCurrent(teamId) {
-  return state.selectedTeamId === teamId;
+function isGlossaryLoadCurrent(team) {
+  return selectedGlossaryTeamMatches(team);
 }
 
-export async function loadTeamGlossaries(
-  render,
-  teamId = state.selectedTeamId,
-  options = {},
-) {
-  const requestedPreserveVisibleData = options.preserveVisibleData === true;
-  const team = selectedTeam(teamId);
-  const primeResult = primeGlossariesLoadingState(teamId, {
-    preserveVisibleData: requestedPreserveVisibleData,
+export async function loadTeamGlossaries(render, teamId = state.selectedTeamId, options = {}) {
+  const team = state.teams.find((item) => item.id === teamId) ?? currentGlossaryTeam();
+  const primeResult = primeGlossariesLoadingState(team?.id ?? teamId, {
+    preserveVisibleData: options.preserveVisibleData === true,
   });
   const preservedVisibleData = primeResult?.preservedVisibleData === true;
-  state.glossariesPage.isRefreshing = true;
+  setResourcePageRefreshing(state.glossariesPage, true);
   render?.();
 
-  if (!Number.isFinite(team?.installationId)) {
+  if (!team || !Number.isFinite(team?.installationId)) {
     state.glossaries = [];
     state.selectedGlossaryId = null;
+    clearResourcePageDataOwner(state.glossariesPage);
+    setResourcePageRefreshing(state.glossariesPage, false);
     state.glossaryDiscovery = {
       ...createGlossaryDiscoveryState(),
       status: "ready",
+      error: "",
       recoveryMessage: "",
     };
-    state.glossariesPage.isRefreshing = false;
-    render();
+    state.glossaryRepoSyncByRepoName = {};
+    render?.();
     return;
   }
 
   beginPageSync();
   showScopedSyncBadge("glossaries", "Loading glossaries...", render);
-  render();
+  render?.();
   await waitForNextPaint();
-  if (!isGlossaryLoadCurrent(team?.id ?? teamId)) {
+  if (!isGlossaryLoadCurrent(team)) {
     clearScopedSyncBadge("glossaries", render);
     return;
   }
@@ -135,13 +139,13 @@ export async function loadTeamGlossaries(
         teamId: team.id,
         render,
       });
-      if (!isGlossaryLoadCurrent(team.id)) {
+      if (!isGlossaryLoadCurrent(team)) {
         clearScopedSyncBadge("glossaries", render);
         return;
       }
       if (localSnapshot) {
         await waitForNextPaint();
-        if (!isGlossaryLoadCurrent(team.id)) {
+        if (!isGlossaryLoadCurrent(team)) {
           clearScopedSyncBadge("glossaries", render);
           return;
         }
@@ -153,24 +157,18 @@ export async function loadTeamGlossaries(
       preserveVisibleData: preservedVisibleData,
       suppressRecoveryWarning: options.suppressRecoveryWarning === true,
     });
-    const queryOptions = createGlossariesQueryOptions(team, {
+    const querySnapshot = await queryClient.fetchQuery(createGlossariesQueryOptions(team, {
       teamId: team.id,
       preserveVisibleData: preservedVisibleData,
       suppressRecoveryWarning: options.suppressRecoveryWarning === true,
       render,
-    });
-    const querySnapshot = await queryClient.fetchQuery(queryOptions);
-    if (!isGlossaryLoadCurrent(team.id)) {
+    }));
+    if (!isGlossaryLoadCurrent(team)) {
       clearScopedSyncBadge("glossaries", render);
       return;
     }
-    showScopedSyncBadge("glossaries", "Refreshing glossary list...", render);
-    queryClient.setQueryData(glossaryKeys.byTeam(team.id), querySnapshot);
-    applyGlossariesQuerySnapshotToState(querySnapshot, {
-      teamId: team.id,
-      isFetching: false,
-    });
-    persistGlossariesForTeam(team);
+    showScopedSyncBadge("glossaries", "Refreshing glossaries...", render);
+    applyGlossariesQueryDataForTeam(team, querySnapshot, null, { isFetching: false });
 
     const syncIssueText =
       typeof querySnapshot.syncIssue?.message === "string"
@@ -185,12 +183,8 @@ export async function loadTeamGlossaries(
       showNoticeBadge(brokerWarning, render);
     }
     await completePageSync(render);
-    clearScopedSyncBadge("glossaries", render);
-    state.glossariesPage.isRefreshing = false;
-    render();
   } catch (error) {
-    if (!isGlossaryLoadCurrent(team?.id ?? teamId)) {
-      clearScopedSyncBadge("glossaries", render);
+    if (!isGlossaryLoadCurrent(team)) {
       return;
     }
     if (
@@ -201,14 +195,10 @@ export async function loadTeamGlossaries(
       })
     ) {
       failPageSync();
-      clearScopedSyncBadge("glossaries", render);
-      state.glossariesPage.isRefreshing = false;
       return;
     }
 
     failPageSync();
-    clearScopedSyncBadge("glossaries", render);
-    state.glossariesPage.isRefreshing = false;
     state.glossaryRepoSyncByRepoName = {};
     const hasVisibleLocalData = state.glossaries.length > 0;
     if (!preservedVisibleData && !hasVisibleLocalData && state.glossaryDiscovery?.status !== "ready") {
@@ -227,6 +217,11 @@ export async function loadTeamGlossaries(
       };
     }
     showNoticeBadge(error?.message ?? String(error), render);
-    render();
+  } finally {
+    if (isGlossaryLoadCurrent(team)) {
+      clearScopedSyncBadge("glossaries", render);
+      setResourcePageRefreshing(state.glossariesPage, false);
+    }
   }
+  render?.();
 }

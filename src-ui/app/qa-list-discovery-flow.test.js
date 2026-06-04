@@ -34,6 +34,7 @@ const {
   primeQaListsLoadingState,
 } = await import("./qa-list-discovery-flow.js");
 const { saveStoredQaListsForTeam } = await import("./qa-list-cache.js");
+const { loadRepoBackedQaListsForTeam } = await import("./qa-list-repo-flow.js");
 const { createResourcePageState } = await import("./resource-page-controller.js");
 const { resetSessionState, state } = await import("./state.js");
 const { getNoticeBadgeText } = await import("./status-feedback.js");
@@ -138,6 +139,26 @@ test("QA list loading prime preserves visible data for the selected team and cle
   assert.equal(state.qaLists[0].title, "Team 1 QA");
   assert.equal(state.qaListsPage.isRefreshing, false);
 
+  state.qaListsPage = createResourcePageState({
+    visibleTeamId: "team-2",
+    visibleCacheKey: teamCacheKey(state.teams[1]),
+  });
+  state.qaLists = [{ id: "team-2-qa", title: "Team 2 QA" }];
+  state.selectedQaListId = "team-2-qa";
+  primeQaListsLoadingState(team.id, { preserveVisibleData: true });
+  assert.deepEqual(state.qaLists, []);
+  assert.equal(state.selectedQaListId, null);
+  assert.equal(state.qaListsPage.visibleTeamId, null);
+  assert.equal(state.qaListsPage.visibleCacheKey, null);
+  assert.equal(state.qaListsPage.isRefreshing, true);
+
+  state.qaListsPage = createResourcePageState({
+    visibleTeamId: team.id,
+    visibleCacheKey: teamCacheKey(team),
+  });
+  state.qaLists = [{ id: "qa-1", title: "Team 1 QA" }];
+  state.selectedQaListId = "qa-1";
+
   // Non-selected, non-owned team (team-2) -> cleared and marked refreshing.
   primeQaListsLoadingState("team-2", { preserveVisibleData: true });
   assert.deepEqual(state.qaLists, []);
@@ -158,6 +179,50 @@ test("QA list loading prime can skip seeding from cache", () => {
   assert.deepEqual(state.qaLists, []);
   assert.equal(state.qaListDiscovery.status, "loading");
   assert.equal(state.qaListsPage.isRefreshing, true);
+});
+
+test("QA list fallback sync skips repos already deleted in visible state", async () => {
+  setupQaListLoadState();
+  const team = state.teams[0];
+  state.qaLists = [{
+    id: "qa-deleted",
+    qaListId: "qa-deleted",
+    repoName: "qa-deleted",
+    fullName: "team-1/qa-deleted",
+    title: "Deleted QA",
+    language: { code: "en", name: "English" },
+    lifecycleState: "deleted",
+    recordState: "live",
+    remoteState: "linked",
+  }];
+
+  invokeHandler = async (command) => {
+    if (command === "list_local_gtms_qa_lists") {
+      return [];
+    }
+    if (command === "sync_local_team_metadata_repo" || command === "ensure_local_team_metadata_repo") {
+      throw new Error("metadata unavailable");
+    }
+    if (command === "list_local_gnosis_qa_list_metadata_records") {
+      throw new Error("metadata unavailable");
+    }
+    if (command === "list_gnosis_qa_lists_for_installation") {
+      return [{
+        qaListId: "qa-deleted",
+        name: "qa-deleted",
+        fullName: "team-1/qa-deleted",
+        defaultBranchName: "main",
+      }];
+    }
+    if (command === "sync_gtms_qa_list_repos") {
+      assert.fail("known deleted QA list should not be synced");
+    }
+    return null;
+  };
+
+  const result = await loadRepoBackedQaListsForTeam(team);
+
+  assert.equal(result.syncSnapshots.length, 0);
 });
 
 test("QA list normal load surfaces a remote failure as an error discovery state", async () => {
@@ -184,6 +249,42 @@ test("QA list normal load surfaces a remote failure as an error discovery state"
   await loadTeamQaLists(() => {}, "team-1");
 
   assert.equal(state.selectedTeamId, "team-1");
+  assert.deepEqual(state.qaLists, []);
+  assert.equal(state.qaListDiscovery.status, "error");
+  assert.equal(state.qaListDiscovery.error, "team-1 remote failed");
+  assert.equal(state.qaListsPage.isRefreshing, false);
+});
+
+test("QA list load treats unowned preserve requests as normal loads on failure", async () => {
+  setupQaListLoadState();
+  const team1 = state.teams[0];
+  state.qaListsPage = createResourcePageState({
+    visibleTeamId: "team-2",
+    visibleCacheKey: teamCacheKey(state.teams[1]),
+  });
+  state.qaLists = [{ id: "team-2-qa", title: "Team 2 QA" }];
+  invokeHandler = async (command) => {
+    if (command === "list_local_gtms_qa_lists") {
+      return [];
+    }
+    if (command === "sync_local_team_metadata_repo" || command === "ensure_local_team_metadata_repo") {
+      return null;
+    }
+    if (command === "list_local_gnosis_qa_list_metadata_records") {
+      return [];
+    }
+    if (command === "inspect_and_migrate_local_repo_bindings") {
+      return { issues: [], autoRepairedCount: 0 };
+    }
+    if (command === "list_gnosis_qa_lists_for_installation") {
+      throw new Error("team-1 remote failed");
+    }
+    return null;
+  };
+
+  await loadTeamQaLists(() => {}, team1.id, { preserveVisibleData: true });
+
+  assert.equal(state.selectedTeamId, team1.id);
   assert.deepEqual(state.qaLists, []);
   assert.equal(state.qaListDiscovery.status, "error");
   assert.equal(state.qaListDiscovery.error, "team-1 remote failed");
