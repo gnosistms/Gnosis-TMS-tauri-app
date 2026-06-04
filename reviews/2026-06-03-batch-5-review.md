@@ -65,10 +65,17 @@ runs through `overwrite_project_repo_with_remote`, which performs `reset --hard`
 
 Those backend commands only load a Git transport token and do repo setup. They do not call a
 backend write-access guard such as `ensure_repo_allows_writes` or
-`ensure_installation_allows_chapter_writes` before making the destructive local changes. The
-frontend queues these actions, but frontend gating is not a security or integrity boundary. A
-direct Tauri command invocation should not be able to discard local project work unless the
-backend has verified the signed-in user can write project content for that installation/repo.
+`ensure_installation_allows_chapter_writes` before making the destructive local changes.
+
+**Framing — this is a data-integrity issue, not a remote-tampering one.** These operations are
+purely *local*: they reset/clean/checkout the local working copy to match the remote and never
+push or mutate the remote, so a read-only user cannot use them to alter shared data. The real
+risk is twofold: (1) **local data loss** — a direct Tauri invocation (bypassing the UI's
+confirmation/queueing) can discard a user's local committed project work; and (2)
+**consistency** — every other repo mutation gates on write access (`ensure_repo_allows_writes`
+runs inside the shared commit helper per `src-tauri/AGENTS.md`), but these recovery paths reset
+the repo directly and so skip that invariant. Frontend queueing is not an integrity boundary;
+the gate belongs in the backend.
 
 **Recommended fix**: Add backend access checks before the destructive per-repo operation. Prefer
 `ensure_repo_allows_writes(app, &repo_path)` after resolving each repo path, or an installation
@@ -102,6 +109,16 @@ This can happen if a locally initialized project has committed local project/edi
 the remote repo also has a branch head before the first successful local sync. The result is a
 clean "up to date" status after the local branch has been moved to remote, with no backup branch
 for the local commits.
+
+**Likelihood.** This needs a specific combination — a `has_ever_synced: false` repo that has
+local *commits* (not just dirty work, which is already backed up at line 1058) **and** an
+existing remote branch head. That window is plausible rather than theoretical: `src-tauri/AGENTS.md`
+documents that "project create still creates the remote GitHub repo before the metadata record is
+written," so a repo can have remote content before its first local sync — and a second device or
+a retried create can leave local commits on a never-synced checkout. The orphaned commits remain
+in the reflog, but there is no named backup branch and the status is reported as up to date, so
+the loss is silent. That combination of *recoverable-but-silent* + *plausible trigger* is what
+makes this Major rather than minor.
 
 **Recommended fix**: Before `checkout -B` in `attach_unsynced_local_project_repo_to_remote`,
 compare `HEAD` with `origin/<branch>`. If they differ, either:
