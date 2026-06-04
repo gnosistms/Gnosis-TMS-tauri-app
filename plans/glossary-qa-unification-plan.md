@@ -5,6 +5,31 @@
 Proposed — 2026-06-03. Trigger condition met (Batch 6 sync + Batch 7 storage both reviewed).
 Implementation by GPT, phased; reviewed by Claude per phase.
 
+### Progress (2026-06-04)
+
+Phase 1 scaffolding landed in `src-tauri/src/repo_resource_sync.rs` (merged PR #27 + #28),
+green at every step (cargo check clean, 243 tests passing), zero behavior change:
+
+- Domain-independent helpers moved/shared: `repo_transport_deleted_state`,
+  `term_id_from_repo_relative_path`, `normalized_optional_identifier`.
+- Status strings unified to a single `REPO_SYNC_STATUS_*` source of truth.
+- Result types unified: `RepoSyncSnapshot`, `DiscardOldLayoutReposResponse`,
+  `EditorRepoSyncResponse`.
+- `RepoSyncDescriptorLike` bridge trait + generic `descriptor_is_deleted` (both
+  per-domain descriptors implement the trait; local `*_descriptor_is_deleted` removed).
+
+**Remaining (the function-collapse — the bulk, deferred to a focused follow-up):** the
+~600+ lines of near-duplicated function bodies still live in `glossary_repo_sync.rs` /
+`qa_list_repo_sync.rs`. To collapse them onto the bridge: `inspect_repo_state`,
+`snapshot_from_sync_error`, `find/resolve/matches_repo_path`, `sync_repo`, `clone_repo`,
+`ensure_origin_remote`, `enforce_remote_app_version`, `mark_repo_synced`, the term-change
+diff, and the three `_sync` command bodies + editor sync. Each needs the trait extended
+with the accessors it uses + a small per-domain context (repo-root, write-gate, `RepoKind`,
+terms path). Preserve the `find_*_repo_path` callers in `team_repo_migrations.rs`. Note the
+line count won't drop until this step — the scaffolding is paid up front.
+
+Then Phase 2 (storage scaffolding unification) and Phase 3 (optional term-model) per below.
+
 ## Motivation
 
 Glossary and QA-list code is **near-mirror-duplicated** across two layers:
