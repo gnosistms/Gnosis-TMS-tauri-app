@@ -34,6 +34,13 @@ import {
 } from "./repo-transport-eligibility.js";
 import { isSoftDeletedResource } from "./resource-write-policy.js";
 
+export function teamSupportsGlossaryRepos(team) {
+  return Boolean(invoke)
+    && Number.isFinite(team?.installationId)
+    && typeof team?.githubOrg === "string"
+    && team.githubOrg.trim();
+}
+
 function normalizeGlossaryBrokerError(error) {
   if (error instanceof Error) {
     return error;
