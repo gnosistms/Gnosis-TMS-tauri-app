@@ -4,16 +4,31 @@ import {
   resetGlossaryRename,
   state,
 } from "./state.js";
-import {
-  canManageGlossaryResourcesForTeam,
-  canPermanentlyDeleteGlossaries,
-} from "./glossary-shared.js";
 import { showNoticeBadge } from "./status-feedback.js";
+import {
+  createGlossaryPermanentDeleteMutationOptions,
+  createGlossaryRenameMutationOptions,
+  createGlossaryRestoreMutationOptions,
+  createGlossarySoftDeleteMutationOptions,
+  persistGlossariesQueryDataForTeam,
+} from "./glossary-query.js";
+import { createMutationObserver } from "./query-client.js";
+import { removeGlossaryEditorQuery } from "./glossary-editor-query.js";
+import {
+  currentGlossaryTeam,
+  ensureGlossariesQueryDataForTeam,
+  repoBackedGlossaryInput,
+  triggerGlossaryRepoSync,
+} from "./glossary-top-level-state.js";
+import { makeGlossaryDefaultIfFirst, updateDefaultGlossaryAfterDeletion } from "./glossary-default-flow.js";
 import {
   ensureGlossaryNotTombstoned,
   teamSupportsGlossaryRepos,
 } from "./glossary-repo-flow.js";
-import { upsertGlossaryMetadataRecord } from "./team-metadata-flow.js";
+import {
+  canManageGlossaryResourcesForTeam,
+  canPermanentlyDeleteGlossaries,
+} from "./glossary-shared.js";
 import {
   commitMetadataFirstTopLevelMutation,
   guardPermanentDeleteConfirmation,
@@ -25,53 +40,23 @@ import {
   areResourcePageWriteSubmissionsDisabled,
 } from "./resource-page-controller.js";
 import {
-  createGlossaryPermanentDeleteMutationOptions,
-  createGlossaryRenameMutationOptions,
-  createGlossaryRestoreMutationOptions,
-  createGlossarySoftDeleteMutationOptions,
-  persistGlossariesQueryDataForTeam,
-} from "./glossary-query.js";
-import { createMutationObserver } from "./query-client.js";
-import {
   cancelEntityModal,
   entityConfirmationMatches,
   openEntityConfirmationModal,
   updateEntityModalConfirmation,
   updateEntityModalName,
 } from "./resource-entity-modal.js";
-import {
-  currentGlossaryTeam,
-  ensureGlossariesQueryDataForTeam,
-  repoBackedGlossaryInput,
-  triggerGlossaryRepoSync,
-} from "./glossary-top-level-state.js";
-import {
-  anyGlossaryMutatingWriteIsActive,
-} from "./glossary-write-coordinator.js";
-import { makeGlossaryDefaultIfFirst, updateDefaultGlossaryAfterDeletion } from "./glossary-default-flow.js";
-import { removeGlossaryEditorQuery } from "./glossary-editor-query.js";
+import { anyGlossaryMutatingWriteIsActive } from "./glossary-write-coordinator.js";
 import { addLocalHardDeleteTombstone } from "./local-hard-delete-store.js";
+import { upsertGlossaryMetadataRecord } from "./team-metadata-flow.js";
 
 function glossaryById(glossaryId) {
-  return state.glossaries.find((glossary) => glossary.id === glossaryId) ?? null;
-}
-
-function lifecycleActionBlockedMessage(team, { actionLabel, requireOwner = false } = {}) {
-  if (!Number.isFinite(team?.installationId)) {
-    return "This glossary action requires a GitHub App-connected team.";
-  }
-  if (state.offline?.isEnabled === true) {
-    return `You cannot ${actionLabel} while offline.`;
-  }
-  if (requireOwner ? !canPermanentlyDeleteGlossaries(team) : !canManageGlossaryResourcesForTeam(team)) {
-    return `You do not have permission to ${actionLabel} in this team.`;
-  }
-  return "";
+  return state.glossaries.find((item) => item.id === glossaryId) ?? null;
 }
 
 function glossaryMetadataRecord(glossary, overrides = {}) {
   return {
-    glossaryId: glossary.id,
+    glossaryId: glossary.id ?? glossary.glossaryId,
     title: overrides.title ?? glossary.title,
     repoName: overrides.repoName ?? glossary.repoName,
     previousRepoNames: overrides.previousRepoNames ?? glossary.previousRepoNames ?? [],
@@ -86,19 +71,19 @@ function glossaryMetadataRecord(glossary, overrides = {}) {
         ? overrides.githubNodeId.trim()
         : typeof glossary.nodeId === "string" && glossary.nodeId.trim()
           ? glossary.nodeId.trim()
-        : null,
+          : null,
     fullName:
       typeof overrides.fullName === "string" && overrides.fullName.trim()
         ? overrides.fullName.trim()
         : typeof glossary.fullName === "string" && glossary.fullName.trim()
           ? glossary.fullName.trim()
-        : null,
+          : null,
     defaultBranch:
       typeof overrides.defaultBranch === "string" && overrides.defaultBranch.trim()
         ? overrides.defaultBranch.trim()
         : typeof glossary.defaultBranchName === "string" && glossary.defaultBranchName.trim()
           ? glossary.defaultBranchName.trim()
-        : "main",
+          : "main",
     lifecycleState:
       overrides.lifecycleState
       ?? (glossary.lifecycleState === "deleted" ? "deleted" : "active"),
@@ -116,7 +101,7 @@ function glossaryMetadataRecord(glossary, overrides = {}) {
   };
 }
 
-async function commitGlossaryMutationStrict(team, mutation) {
+async function commitGlossaryLifecycleMutation(team, mutation) {
   const glossary = glossaryById(mutation.glossaryId ?? mutation.resourceId);
   if (!glossary) {
     throw new Error("Could not find the selected glossary.");
@@ -176,6 +161,19 @@ async function commitGlossaryMutationStrict(team, mutation) {
   return {};
 }
 
+function glossaryLifecycleActionBlockedMessage(team, { actionLabel, requireOwner = false } = {}) {
+  if (!Number.isFinite(team?.installationId)) {
+    return "This glossary action requires a GitHub App-connected team.";
+  }
+  if (state.offline?.isEnabled === true) {
+    return `You cannot ${actionLabel} while offline.`;
+  }
+  if (requireOwner ? !canPermanentlyDeleteGlossaries(team) : !canManageGlossaryResourcesForTeam(team)) {
+    return `You do not have permission to ${actionLabel} in this team.`;
+  }
+  return "";
+}
+
 function glossaryWriteBlockedMessage() {
   return "Wait for the current glossary refresh or write to finish.";
 }
@@ -204,12 +202,13 @@ export function openGlossaryRename(render, glossaryId) {
     showNoticeBadge(glossaryLifecycleWriteBlockedMessage(), render);
     return;
   }
+
   openTopLevelRenameModal({
     resource: glossary,
     isExpectedResource: (currentGlossary) =>
       Boolean(currentGlossary) && currentGlossary.lifecycleState !== "deleted",
     getBlockedMessage: () =>
-      lifecycleActionBlockedMessage(team, { actionLabel: "rename glossaries" }),
+      glossaryLifecycleActionBlockedMessage(team, { actionLabel: "rename glossaries" }),
     ensureNotTombstoned: (currentGlossary) =>
       ensureGlossaryNotTombstoned(render, team, currentGlossary),
     onMissing: () => {
@@ -238,8 +237,8 @@ export function cancelGlossaryRename(render) {
 
 export async function submitGlossaryRename(render) {
   const rename = state.glossaryRename;
-  const nextTitle = String(rename.glossaryName ?? "").trim();
-  if (!nextTitle) {
+  const title = String(rename.glossaryName ?? "").trim();
+  if (!title) {
     state.glossaryRename = { ...rename, error: "Enter a glossary name." };
     render();
     return;
@@ -252,7 +251,7 @@ export async function submitGlossaryRename(render) {
     isExpectedResource: (currentGlossary) =>
       Boolean(currentGlossary) && currentGlossary.lifecycleState !== "deleted",
     getBlockedMessage: () =>
-      lifecycleActionBlockedMessage(team, { actionLabel: "rename glossaries" }),
+      glossaryLifecycleActionBlockedMessage(team, { actionLabel: "rename glossaries" }),
     ensureNotTombstoned: (currentGlossary) =>
       ensureGlossaryNotTombstoned(render, team, currentGlossary),
     onMissing: () => {
@@ -283,8 +282,8 @@ export async function submitGlossaryRename(render) {
     await createMutationObserver(createGlossaryRenameMutationOptions({
       team,
       glossary,
-      nextTitle,
-      commitMutation: commitGlossaryMutationStrict,
+      nextTitle: title,
+      commitMutation: commitGlossaryLifecycleMutation,
       onOptimisticApplied: () => {
         resetGlossaryRename();
       },
@@ -296,7 +295,7 @@ export async function submitGlossaryRename(render) {
         state.glossaryRename = {
           isOpen: true,
           glossaryId: glossary.id,
-          glossaryName: nextTitle,
+          glossaryName: title,
           status: "idle",
           error: error?.message ?? String(error),
         };
@@ -314,7 +313,7 @@ export async function deleteGlossary(render, glossaryId) {
     isExpectedResource: (currentGlossary) =>
       Boolean(currentGlossary) && currentGlossary.lifecycleState !== "deleted",
     getBlockedMessage: () =>
-      lifecycleActionBlockedMessage(team, { actionLabel: "delete glossaries" }),
+      glossaryLifecycleActionBlockedMessage(team, { actionLabel: "delete glossaries" }),
     ensureNotTombstoned: (currentGlossary) =>
       ensureGlossaryNotTombstoned(render, team, currentGlossary),
     onMissing: () => {
@@ -340,7 +339,7 @@ export async function deleteGlossary(render, glossaryId) {
     await createMutationObserver(createGlossarySoftDeleteMutationOptions({
       team,
       glossary,
-      commitMutation: commitGlossaryMutationStrict,
+      commitMutation: commitGlossaryLifecycleMutation,
       onOptimisticApplied: () => {
         state.showDeletedGlossaries = keepDeletedSectionOpen;
       },
@@ -356,13 +355,13 @@ export async function deleteGlossary(render, glossaryId) {
 
 export async function restoreGlossary(render, glossaryId) {
   const team = currentGlossaryTeam();
-  const glossary = glossaryById(glossaryId);
+  const restored = glossaryById(glossaryId);
   const allowed = await guardTopLevelResourceAction({
-    resource: glossary,
+    resource: restored,
     isExpectedResource: (currentGlossary) =>
       Boolean(currentGlossary) && currentGlossary.lifecycleState === "deleted",
     getBlockedMessage: () =>
-      lifecycleActionBlockedMessage(team, { actionLabel: "restore glossaries" }),
+      glossaryLifecycleActionBlockedMessage(team, { actionLabel: "restore glossaries" }),
     ensureNotTombstoned: (currentGlossary) =>
       ensureGlossaryNotTombstoned(render, team, currentGlossary),
     onMissing: () => {
@@ -384,11 +383,11 @@ export async function restoreGlossary(render, glossaryId) {
   try {
     await createMutationObserver(createGlossaryRestoreMutationOptions({
       team,
-      glossary,
-      commitMutation: commitGlossaryMutationStrict,
+      glossary: restored,
+      commitMutation: commitGlossaryLifecycleMutation,
       onSuccessApplied: (queryData) => {
-        removeGlossaryEditorQuery(team, glossary);
-        makeGlossaryDefaultIfFirst(team, glossary.id);
+        removeGlossaryEditorQuery(team, restored);
+        makeGlossaryDefaultIfFirst(team, restored.id);
         persistGlossariesQueryDataForTeam(team, queryData);
       },
       render,
@@ -403,6 +402,7 @@ export function openGlossaryPermanentDeletion(render, glossaryId) {
     showNoticeBadge(glossaryWriteBlockedMessage(), render);
     return;
   }
+
   void guardTopLevelResourceAction({
     resource: glossary,
     isExpectedResource: (currentGlossary) =>
@@ -452,6 +452,7 @@ export async function confirmGlossaryPermanentDeletion(render) {
     render();
     return;
   }
+
   const allowed = await guardPermanentDeleteConfirmation({
     resource: glossary,
     modalState: state.glossaryPermanentDeletion,
