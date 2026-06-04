@@ -42,14 +42,13 @@ import {
 import {
   currentGlossaryTeam,
   ensureGlossariesQueryDataForTeam,
-  persistGlossariesForTeam,
   repoBackedGlossaryInput,
   triggerGlossaryRepoSync,
 } from "./glossary-top-level-state.js";
 import {
   anyGlossaryMutatingWriteIsActive,
 } from "./glossary-write-coordinator.js";
-import { updateDefaultGlossaryAfterDeletion } from "./glossary-default-flow.js";
+import { makeGlossaryDefaultIfFirst, updateDefaultGlossaryAfterDeletion } from "./glossary-default-flow.js";
 import { removeGlossaryEditorQuery } from "./glossary-editor-query.js";
 import { addLocalHardDeleteTombstone } from "./local-hard-delete-store.js";
 
@@ -385,6 +384,7 @@ export async function restoreGlossary(render, glossaryId) {
       commitMutation: commitGlossaryMutationStrict,
       onSuccessApplied: (queryData) => {
         removeGlossaryEditorQuery(team, glossary);
+        makeGlossaryDefaultIfFirst(team, glossary.id);
         persistGlossariesQueryDataForTeam(team, queryData);
       },
       render,
@@ -480,31 +480,29 @@ export async function confirmGlossaryPermanentDeletion(render) {
       team,
       glossary,
       commitMutation: async () => {
-        await invoke("purge_local_gtms_glossary_repo", {
-          input: {
-            installationId: team.installationId,
-            glossaryId: glossary.id,
-            repoName: glossary.repoName,
-          },
-        });
+        if (teamSupportsGlossaryRepos(team) && glossary?.repoName) {
+          await invoke("purge_local_gtms_glossary_repo", {
+            input: repoBackedGlossaryInput(team, glossary),
+          });
+        }
         addLocalHardDeleteTombstone(team, "glossary", glossary);
       },
       onOptimisticApplied: () => {
         resetGlossaryPermanentDeletion();
       },
-      onSuccessApplied: () => {
+      onSuccessApplied: (queryData) => {
         removeGlossaryEditorQuery(team, glossary);
         if (state.selectedGlossaryId === glossary.id) {
           state.selectedGlossaryId = null;
         }
         updateDefaultGlossaryAfterDeletion(team, glossary.id);
-        persistGlossariesForTeam(team);
+        persistGlossariesQueryDataForTeam(team, queryData);
       },
       onErrorApplied: (error) => {
         state.glossaryPermanentDeletion = {
           ...deletionState,
           status: "idle",
-          error: error?.message ?? String(error),
+          error: error?.message ?? "Could not permanently delete this glossary.",
         };
       },
       render,
