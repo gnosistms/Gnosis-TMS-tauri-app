@@ -5,7 +5,11 @@ import {
   listLocalQaListsForTeam,
 } from "./qa-list-repo-flow.js";
 import { normalizeQaList, sortQaLists } from "./qa-list-shared.js";
-import { createRepoResourceQueryController } from "./repo-resource/query-controller.js";
+import {
+  createRepoResourceDiscoverySnapshot,
+  createRepoResourceQueryController,
+  repoSyncByRepoName,
+} from "./repo-resource/query-controller.js";
 import { setResourcePageDataOwner, setResourcePageRefreshing } from "./resource-page-controller.js";
 import { createQaListDiscoveryState, state } from "./state.js";
 import { teamCacheKey } from "./team-cache.js";
@@ -15,17 +19,7 @@ import {
 } from "./qa-list-write-coordinator.js";
 import { runTeamResourceMigrationSync } from "./team-resource-migration-flow.js";
 
-function qaListRepoSyncByRepoName(syncSnapshots = []) {
-  return Object.fromEntries(
-    (Array.isArray(syncSnapshots) ? syncSnapshots : [])
-      .map((snapshot) => [
-        typeof snapshot?.repoName === "string" ? snapshot.repoName : "",
-        snapshot,
-      ])
-      .filter(([repoName]) => repoName),
-  );
-}
-
+// Residue: QA-list snapshot shaping stays local because normalization/sorting is term-model specific.
 function normalizeQaLists(qaLists = []) {
   return sortQaLists(
     (Array.isArray(qaLists) ? qaLists : [])
@@ -59,17 +53,7 @@ function assertUniqueQaListSnapshotIds(snapshot, context = "QA list query data")
 }
 
 function createQaListDiscoverySnapshot(discovery = {}) {
-  return {
-    ...createQaListDiscoveryState(),
-    status:
-      typeof discovery?.status === "string" && discovery.status.trim()
-        ? discovery.status.trim()
-        : "ready",
-    error: typeof discovery?.error === "string" ? discovery.error : "",
-    brokerWarning: typeof discovery?.brokerWarning === "string" ? discovery.brokerWarning : "",
-    recoveryMessage:
-      typeof discovery?.recoveryMessage === "string" ? discovery.recoveryMessage : "",
-  };
+  return createRepoResourceDiscoverySnapshot(createQaListDiscoveryState, discovery);
 }
 
 export function createQaListsQuerySnapshot({
@@ -84,7 +68,7 @@ export function createQaListsQuerySnapshot({
 } = {}) {
   return {
     qaLists: validatedQaLists(qaLists, "QA list query snapshot"),
-    repoSyncByRepoName: qaListRepoSyncByRepoName(syncSnapshots),
+    repoSyncByRepoName: repoSyncByRepoName(syncSnapshots),
     syncIssue,
     discovery: createQaListDiscoverySnapshot({
       status,
@@ -102,6 +86,7 @@ export function applyQaListsQuerySnapshotToState(snapshot, {
   cacheKey,
   cacheUpdatedAt = null,
 } = {}) {
+  // Residue: R3 state application and cache ownership are intentionally per-domain.
   if (state.selectedTeamId !== teamId) {
     return false;
   }
@@ -160,6 +145,7 @@ export function patchQaListQueryData(queryData, qaListId, patch) {
 }
 
 export function upsertQaListQueryData(queryData, qaList) {
+  // Residue: Q-FEAT-2 create preservation uses the domain normalizer and snapshot factory.
   if (!queryData || typeof queryData !== "object") {
     return createQaListsQuerySnapshot({ qaLists: [qaList] });
   }
@@ -232,6 +218,7 @@ function patchQaListInList(qaLists, qaListId, patch, fallbackQaList = null) {
 }
 
 export function preserveQaListLifecyclePatchesInSnapshot(nextSnapshot, previousSnapshot) {
+  // Residue: pending create/upsert preservation stays local until import-flow create callers converge.
   if (!nextSnapshot || typeof nextSnapshot !== "object") {
     return nextSnapshot;
   }
@@ -322,10 +309,8 @@ const qaListQueryController = createRepoResourceQueryController({
   validateSnapshot: assertUniqueQaListSnapshotIds,
   patchQueryData: patchQaListQueryData,
   loadCacheEntry: loadStoredQaListsForTeam,
-  cacheEntryItems: (entry) => entry.qaLists,
   loadLocalItems: listLocalQaListsForTeam,
   canSeedFromLocal: (team) => Number.isFinite(team?.installationId),
-  localSnapshotInput: () => ({ discovery: { status: "ready" } }),
   persistSnapshot: (team, snapshot) => saveStoredQaListsForTeam(team, snapshot.qaLists),
   setRefreshing: (isRefreshing) => setResourcePageRefreshing(state.qaListsPage, isRefreshing),
   isRefreshing: () => state.qaListsPage?.isRefreshing === true,
