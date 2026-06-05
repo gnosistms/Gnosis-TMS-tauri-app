@@ -42,6 +42,10 @@ import { loadTeamGlossaries } from "./glossary-discovery-flow.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
 import { makeGlossaryDefaultIfFirst } from "./glossary-default-flow.js";
+import {
+  selectedGlossaryTeamMatches,
+  upsertGlossaryForTeam,
+} from "./glossary-top-level-state.js";
 
 export const GLOSSARY_IMPORT_ACCEPT = ".tmx,text/xml,application/xml";
 
@@ -157,6 +161,23 @@ function linkedGlossaryMetadataRecord(glossary, remoteRepo) {
     sourceLanguage: glossary.sourceLanguage ?? null,
     targetLanguage: glossary.targetLanguage ?? null,
     termCount: Number.isFinite(glossary.termCount) ? glossary.termCount : 0,
+  };
+}
+
+function linkedGlossarySummary(glossary, glossaryId, remoteRepo) {
+  return {
+    ...glossary,
+    id: glossary?.id ?? glossary?.glossaryId ?? glossaryId,
+    glossaryId: glossary?.glossaryId ?? glossary?.id ?? glossaryId,
+    repoName: remoteRepo.name,
+    repoId: remoteRepo.repoId ?? null,
+    nodeId: remoteRepo.nodeId ?? null,
+    fullName: remoteRepo.fullName ?? null,
+    htmlUrl: remoteRepo.htmlUrl ?? "",
+    defaultBranchName: remoteRepo.defaultBranchName ?? "main",
+    defaultBranchHeadOid: remoteRepo.defaultBranchHeadOid ?? null,
+    remoteState: "linked",
+    resolutionState: "",
   };
 }
 
@@ -417,12 +438,7 @@ async function completeGlossaryCreateSynchronously(team, input, render) {
       },
     });
 
-    const linkedGlossary = {
-      ...glossary,
-      repoName: remoteRepo.name,
-      remoteState: "linked",
-      resolutionState: "",
-    };
+    const linkedGlossary = linkedGlossarySummary(glossary, glossaryId, remoteRepo);
     showResourceCreateProgress(render, "Saving team metadata...");
     await upsertGlossaryMetadataRecord(
       team,
@@ -445,6 +461,7 @@ async function completeGlossaryCreateSynchronously(team, input, render) {
       finalRepoName: remoteRepo.name,
       localRepoName,
       localNameCollisionResolved: remoteCreateResult.collisionResolved,
+      glossary: linkedGlossary,
     };
   } catch (error) {
     if (localRepoName || remoteRepo?.name) {
@@ -604,6 +621,9 @@ export async function submitGlossaryCreation(render) {
       clearResourceCreateProgress();
       resetGlossaryCreation();
       state.selectedGlossaryId = result.glossaryId;
+      if (selectedGlossaryTeamMatches(team) && result.glossary) {
+        upsertGlossaryForTeam(team, result.glossary, null, { preserveCreate: true });
+      }
       const refreshedGlossary = state.glossaries.find((item) => item.id === result.glossaryId) ?? null;
       makeGlossaryDefaultIfFirst(team, result.glossaryId);
       showNoticeBadge(
@@ -779,12 +799,7 @@ export async function importGlossaryFile(render, selectedFile) {
           },
         });
 
-        const linkedGlossary = {
-          ...glossary,
-          repoName: remoteRepo.name,
-          remoteState: "linked",
-          resolutionState: "",
-        };
+        const linkedGlossary = linkedGlossarySummary(glossary, glossaryId, remoteRepo);
         showResourceCreateProgress(render, "Saving team metadata...");
         await upsertGlossaryMetadataRecord(
           team,
@@ -819,6 +834,7 @@ export async function importGlossaryFile(render, selectedFile) {
           localRepoName,
           localNameCollisionResolved: remoteCreateResult.collisionResolved,
           fileName: sourceFileName,
+          glossary: linkedGlossary,
         };
       } catch (error) {
         if (localRepoName || remoteRepo?.name) {
@@ -853,6 +869,9 @@ export async function importGlossaryFile(render, selectedFile) {
         error: "",
       };
       state.selectedGlossaryId = result.glossaryId;
+      if (selectedGlossaryTeamMatches(team) && result.glossary) {
+        upsertGlossaryForTeam(team, result.glossary, null, { preserveCreate: true });
+      }
       const refreshedGlossary = state.glossaries.find((item) => item.id === result.glossaryId) ?? null;
       makeGlossaryDefaultIfFirst(team, result.glossaryId);
       showNoticeBadge(

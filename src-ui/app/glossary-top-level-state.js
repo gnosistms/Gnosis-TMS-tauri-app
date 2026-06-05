@@ -4,6 +4,7 @@ import {
   createGlossariesQuerySnapshot,
   persistGlossariesQueryDataForTeam,
   preserveGlossaryLifecyclePatchesInSnapshot,
+  upsertGlossaryQueryData,
 } from "./glossary-query.js";
 import { syncGlossaryReposForTeam, teamSupportsGlossaryRepos } from "./glossary-repo-flow.js";
 import { glossaryKeys, queryClient } from "./query-client.js";
@@ -119,6 +120,26 @@ export function applyGlossariesQueryDataForTeam(team, queryData, render, { isFet
   persistGlossariesQueryDataForTeam(team, reconciledQueryData);
   render?.();
   return reconciledQueryData;
+}
+
+export function upsertGlossaryForTeam(team, glossary, render, options = {}) {
+  const currentQueryData = ensureGlossariesQueryDataForTeam(team);
+  const existingGlossaries = Array.isArray(currentQueryData?.glossaries) ? currentQueryData.glossaries : [];
+  const normalizedGlossary = normalizeGlossarySummary(glossary);
+  const shouldPreserveCreate =
+    options.preserveCreate === true
+    && normalizedGlossary
+    && !existingGlossaries.some((item) => item?.id === normalizedGlossary.id);
+  const nextQueryData = upsertGlossaryQueryData(currentQueryData, {
+    ...glossary,
+    ...(shouldPreserveCreate
+      ? {
+          localLifecycleIntent: "create",
+          pendingMutation: null,
+        }
+      : {}),
+  });
+  return applyGlossariesQueryDataForTeam(team, nextQueryData, render);
 }
 
 export function removeGlossaryFromState(glossaryId, repoName) {
