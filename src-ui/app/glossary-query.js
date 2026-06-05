@@ -11,7 +11,11 @@ import {
   normalizeGlossarySummary,
   sortGlossaries,
 } from "./glossary-shared.js";
-import { createRepoResourceQueryController } from "./repo-resource/query-controller.js";
+import {
+  createRepoResourceDiscoverySnapshot,
+  createRepoResourceQueryController,
+  repoSyncByRepoName,
+} from "./repo-resource/query-controller.js";
 import { setResourcePageDataOwner, setResourcePageRefreshing } from "./resource-page-controller.js";
 import { createGlossaryDiscoveryState, state } from "./state.js";
 import { teamCacheKey } from "./team-cache.js";
@@ -21,17 +25,7 @@ import {
 } from "./glossary-write-coordinator.js";
 import { runTeamResourceMigrationSync } from "./team-resource-migration-flow.js";
 
-function glossaryRepoSyncByRepoName(syncSnapshots = []) {
-  return Object.fromEntries(
-    (Array.isArray(syncSnapshots) ? syncSnapshots : [])
-      .map((snapshot) => [
-        typeof snapshot?.repoName === "string" ? snapshot.repoName : "",
-        snapshot,
-      ])
-      .filter(([repoName]) => repoName),
-  );
-}
-
+// Residue: glossary snapshot shaping stays local because normalization/sorting is term-model specific.
 function normalizeGlossaries(glossaries = []) {
   return sortGlossaries(
     (Array.isArray(glossaries) ? glossaries : [])
@@ -65,17 +59,7 @@ function assertUniqueGlossarySnapshotIds(snapshot, context = "glossary query dat
 }
 
 function createGlossaryDiscoverySnapshot(discovery = {}) {
-  return {
-    ...createGlossaryDiscoveryState(),
-    status:
-      typeof discovery?.status === "string" && discovery.status.trim()
-        ? discovery.status.trim()
-        : "ready",
-    error: typeof discovery?.error === "string" ? discovery.error : "",
-    brokerWarning: typeof discovery?.brokerWarning === "string" ? discovery.brokerWarning : "",
-    recoveryMessage:
-      typeof discovery?.recoveryMessage === "string" ? discovery.recoveryMessage : "",
-  };
+  return createRepoResourceDiscoverySnapshot(createGlossaryDiscoveryState, discovery);
 }
 
 export function createGlossariesQuerySnapshot({
@@ -90,7 +74,7 @@ export function createGlossariesQuerySnapshot({
 } = {}) {
   return {
     glossaries: validatedGlossaries(glossaries, "glossary query snapshot"),
-    repoSyncByRepoName: glossaryRepoSyncByRepoName(syncSnapshots),
+    repoSyncByRepoName: repoSyncByRepoName(syncSnapshots),
     syncIssue,
     discovery: createGlossaryDiscoverySnapshot({
       status,
@@ -108,6 +92,7 @@ export function applyGlossariesQuerySnapshotToState(snapshot, {
   cacheKey,
   cacheUpdatedAt = null,
 } = {}) {
+  // Residue: R3 state application and cache ownership are intentionally per-domain.
   if (state.selectedTeamId !== teamId) {
     return false;
   }
@@ -166,6 +151,7 @@ export function patchGlossaryQueryData(queryData, glossaryId, patch) {
 }
 
 export function upsertGlossaryQueryData(queryData, glossary) {
+  // Residue: Q-FEAT-2 create preservation uses the domain normalizer and snapshot factory.
   if (!queryData || typeof queryData !== "object") {
     return createGlossariesQuerySnapshot({ glossaries: [glossary] });
   }
@@ -238,6 +224,7 @@ function patchGlossaryInList(glossaries, glossaryId, patch, fallbackGlossary = n
 }
 
 export function preserveGlossaryLifecyclePatchesInSnapshot(nextSnapshot, previousSnapshot) {
+  // Residue: pending create/upsert preservation stays local until import-flow create callers converge.
   if (!nextSnapshot || typeof nextSnapshot !== "object") {
     return nextSnapshot;
   }
@@ -328,9 +315,7 @@ const glossaryQueryController = createRepoResourceQueryController({
   validateSnapshot: assertUniqueGlossarySnapshotIds,
   patchQueryData: patchGlossaryQueryData,
   loadCacheEntry: loadStoredGlossariesForTeam,
-  cacheEntryItems: (entry) => entry.glossaries,
   loadLocalItems: listLocalGlossarySummariesForTeam,
-  localSnapshotInput: () => ({ discovery: { status: "ready" } }),
   persistSnapshot: (team, snapshot) => saveStoredGlossariesForTeam(team, snapshot.glossaries),
   setRefreshing: (isRefreshing) => setResourcePageRefreshing(state.glossariesPage, isRefreshing),
   isRefreshing: () => state.glossariesPage?.isRefreshing === true,
@@ -340,18 +325,6 @@ const glossaryQueryController = createRepoResourceQueryController({
       error: error?.message ?? String(error),
     });
     setResourcePageRefreshing(state.glossariesPage, isFetching === true);
-  },
-  createLifecycleMutationPayload: ({ resource, mutationType, optimisticData }) => {
-    const mutation = {
-      type: mutationType,
-      resourceId: resource.id,
-      glossaryId: resource.id,
-    };
-    if (mutationType === "rename") {
-      mutation.title = optimisticData.title;
-      mutation.previousTitle = resource.title;
-    }
-    return mutation;
   },
   loadRemoteSnapshot: async (team, options = {}) => {
     const teamId = options.teamId ?? team?.id ?? null;

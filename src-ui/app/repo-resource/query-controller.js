@@ -7,6 +7,31 @@ function collectionItems(snapshot, collectionField) {
   return Array.isArray(snapshot?.[collectionField]) ? snapshot[collectionField] : [];
 }
 
+export function repoSyncByRepoName(syncSnapshots = []) {
+  return Object.fromEntries(
+    (Array.isArray(syncSnapshots) ? syncSnapshots : [])
+      .map((snapshot) => [
+        typeof snapshot?.repoName === "string" ? snapshot.repoName : "",
+        snapshot,
+      ])
+      .filter(([repoName]) => repoName),
+  );
+}
+
+export function createRepoResourceDiscoverySnapshot(createDefaultDiscoveryState, discovery = {}) {
+  return {
+    ...createDefaultDiscoveryState(),
+    status:
+      typeof discovery?.status === "string" && discovery.status.trim()
+        ? discovery.status.trim()
+        : "ready",
+    error: typeof discovery?.error === "string" ? discovery.error : "",
+    brokerWarning: typeof discovery?.brokerWarning === "string" ? discovery.brokerWarning : "",
+    recoveryMessage:
+      typeof discovery?.recoveryMessage === "string" ? discovery.recoveryMessage : "",
+  };
+}
+
 function removeResourceFromQueryData(queryData, config, id) {
   if (!queryData || typeof queryData !== "object") {
     return queryData;
