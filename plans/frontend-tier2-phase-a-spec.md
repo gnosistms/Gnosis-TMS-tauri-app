@@ -200,47 +200,48 @@ separate from the L8/L9 behavior changes.
 > are caught *before* handoff — and make "align imports + helper names/positions to a clean
 > token-diff" an explicit itemized instruction rather than relying on the "~empty diff" criterion.
 
-## Query-flow prep findings (the highest-blast-radius pair — NOT yet GPT-ready)
+## Query-flow rulings (RESOLVED — GPT-ready)
 
-Deep-prep pass on `glossary-query.js` (493) vs `qa-list-query.js` (510). **Good news:** both are
-well-tested (16 / 15 tests) — no QA-coverage front-load. **But** the divergence here is *architectural*
-(two different optimistic-state designs), not the mostly-mechanical drift of discovery/lifecycle.
-Three genuine forks need decisions before handoff; the first is high-stakes:
+Deep read of `glossary-query.js` (493) vs `qa-list-query.js` (510). Both are well-tested (16 / 15) —
+no QA-coverage front-load. **Crucial correction to the first prep pass:** the query layer is far more
+unified than feared — **both modules are built on the shared `createRepoResourceQueryController`**, so
+divergence is in the per-domain controller *config* + a few helpers, not two competing engines.
 
-- **Q-FEAT-1 (high stakes) — `preservePendingLifecyclePatches`.** QA defines it as a one-line alias:
-  `export const preservePendingQaListLifecyclePatches = preserveQaListLifecyclePatchesInSnapshot;`.
-  Glossary has a **distinct ~88-line `preservePendingGlossaryLifecyclePatches`** that is *not* the
-  same as `preserveGlossaryLifecyclePatchesInSnapshot`. So glossary runs two different
-  optimistic-patch-preservation paths where QA runs one. This is core write-intent / optimistic-UI
-  behavior. **Open question:** is glossary's distinct "pending" logic a real behavior QA is missing,
-  or redundant divergence that should collapse to the single preserve fn (QA's model)? Must be
-  answered by reading both glossary preserve fns end-to-end + their call sites before ruling. Do
-  **not** let GPT guess this.
-- **Q-FEAT-2 — create/import optimistic upsert (QA-only, cross-cutting).** QA has
-  `upsertQaListQueryData` + `upsertQaListForTeam`, wired into `qa-list-import-flow.js` and
-  `qa-list-editor-flow.js` to optimistically insert a newly created/imported QA list into query data.
-  **Glossary has no upsert path.** This spans import/create flows, so it's broader than the query
-  pair. **Ruling direction (tentative):** treat as a separate feature-parity item (glossary gains an
-  upsert path) handled with `import-flow`, not folded into the query mirror.
-- **Q-FEAT-3 — `selectedId` fallback on query-snapshot apply.** Glossary's
-  `applyGlossariesQuerySnapshotToState` *delegates* to `top-level-state.applyGlossarySnapshotToState`,
-  which auto-selects the first active glossary (`fallbackToFirstActive`). QA's
-  `applyQaListsQuerySnapshotToState` *inlines* a simpler version that does **not** set
-  `selectedQaListId`. So after a query-path apply, glossary auto-selects first-active and QA leaves
-  the selection as-is — a real UX divergence. **Open question:** canonical behavior? (Both
-  `top-level-state.apply*SnapshotToState` set the fallback; only the *query-path* inline QA version
-  skips it.)
+- **Q-FEAT-1 — RESOLVED as trivial drift (earlier "high-stakes" call was a misread).**
+  `preservePendingGlossaryLifecyclePatches` is **not** an 88-line distinct function — it's a **3-line
+  wrapper** (`return preserveGlossaryLifecyclePatchesInSnapshot(...)`); QA uses a 1-line `const` alias.
+  Cosmetic. The two `preserve…InSnapshot` fns are otherwise near-identical (softDelete/restore/rename)
+  — the **only** real difference is QA's extra **`create`** intent branch, which belongs to Q-FEAT-2.
+  *Ruling:* make `preservePending…` a const alias in glossary too (match QA); the preserve fns are
+  already mirrors once the `create` branch is added (see Q-FEAT-2).
+- **Q-FEAT-2 — the one genuine feature gap: glossary lacks QA's optimistic-create/upsert path.**
+  QA has `upsertQaListQueryData`, `upsertQaListForTeam`, the `create` branch in its preserve fn, and
+  call sites in `qa-list-import-flow.js` / `qa-list-editor-flow.js`. Glossary has none. *Ruling, split
+  in two:* **(a) in the query mirror, additively add** `upsertGlossaryQueryData` + the `create` intent
+  branch to `glossary-query`'s preserve fn — inert without callers (glossary has no `create` intent
+  yet), so it's safe parity that makes the two query modules mirror; **(b) defer the call-site wiring**
+  (`upsertGlossaryForTeam` in glossary import/editor flows) to the **`import-flow`** pair, where the
+  create/import path lives.
+- **Q-FEAT-3 — `selectedId` on query-snapshot apply: canonical = QA (no fallback in the query path).**
+  Glossary's `applyGlossariesQuerySnapshotToState` *delegates* to `top-level-state.applyGlossarySnapshotToState`,
+  which auto-selects the first active glossary; QA's *inlines* and does **not** touch `selectedQaListId`.
+  Not yanking the user's selection during a background observer refresh is the safer behavior, and the
+  `selectedId` reset is already owned by `prime` (R2) and `removeFromState`. *Ruling: glossary adopts
+  QA's inline apply* (set `state.glossaries` directly, `setResourcePageDataOwner`, the showDeleted
+  check, **no** `selectedId` fallback). This is a behavior change → **add a glossary characterization
+  test first** asserting the query-apply path no longer re-selects first-active.
 
-Reconcilable drift (mechanical, decide canonical = QA's cleaner form): write-intent overlay extracted
-to a helper (glossary) vs inlined (QA); `createDiscoverySnapshot` extracted (QA) vs inlined
-(glossary); QA's DRY'd `createLifecycleMutationOptions` base factory vs glossary's 4 separate mutation
-factories; and the delegate-vs-inline apply-snapshot structure (tied to the query↔top-level-state
-layering). Plus the usual import/naming/position alignment.
+Reconcilable drift (align to QA's cleaner form): persist source (glossary's `persistSnapshot:
+persistGlossariesForTeam` off `state` vs QA's `(team, snapshot) => save…(team, snapshot.qaLists)`);
+`setRefreshing` inline vs `setResourcePageRefreshing` helper; the `applyWriteIntentOverlay` controller
+hook (glossary passes it; QA folds the overlay into `applySnapshotToState`); `createDiscoverySnapshot`
+extracted (QA) vs inlined (glossary); plus the usual import/naming/position alignment to a ~empty diff.
 
-**Status: query is NOT ready for GPT.** It needs a dedicated focused pass to resolve Q-FEAT-1 (read
-the two glossary preserve fns + call sites and decide one-vs-two preserve paths) and Q-FEAT-3, and to
-split out Q-FEAT-2 to the import-flow track. Recommend doing that as its own session, not at the tail
-of a long one — Q-FEAT-1 is optimistic-UI/write-intent behavior where a wrong call is a subtle bug.
+**Status: query is GPT-ready.** Order: (0) confirm both test suites green; (1) reconcilable-drift
+refactor (align config + helpers + apply-snapshot to QA's inline form) — Q-FEAT-3 char test lands
+before the apply-snapshot change; (2) Q-FEAT-2(a) additive `upsertGlossaryQueryData` + `create` branch;
+(3) `preservePending` alias; (4) structural alignment to ~empty token-diff. Q-FEAT-2(b) is explicitly
+out of scope (import-flow). Owner: GPT with Claude review.
 
 ## Definition of done (Phase A)
 
