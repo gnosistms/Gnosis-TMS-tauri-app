@@ -4,8 +4,8 @@ import {
   saveStoredGlossariesForTeam,
 } from "./glossary-cache.js";
 import {
-  listLocalGlossarySummariesForTeam,
   loadRepoBackedGlossariesForTeam,
+  listLocalGlossarySummariesForTeam,
 } from "./glossary-repo-flow.js";
 import {
   normalizeGlossarySummary,
@@ -32,7 +32,7 @@ function glossaryRepoSyncByRepoName(syncSnapshots = []) {
   );
 }
 
-function normalizeGlossarySummaries(glossaries = []) {
+function normalizeGlossaries(glossaries = []) {
   return sortGlossaries(
     (Array.isArray(glossaries) ? glossaries : [])
       .map((glossary) => normalizeGlossarySummary(glossary))
@@ -40,7 +40,7 @@ function normalizeGlossarySummaries(glossaries = []) {
   );
 }
 
-function assertUniqueGlossarySummaryIds(glossaries = [], context = "glossary query data") {
+function assertUniqueGlossaryIds(glossaries = [], context = "glossary query data") {
   const seen = new Set();
   for (const glossary of Array.isArray(glossaries) ? glossaries : []) {
     const id = typeof glossary?.id === "string" ? glossary.id.trim() : "";
@@ -54,14 +54,14 @@ function assertUniqueGlossarySummaryIds(glossaries = [], context = "glossary que
   }
 }
 
-function validatedGlossarySummaries(glossaries = [], context = "glossary query data") {
-  const summaries = normalizeGlossarySummaries(glossaries);
-  assertUniqueGlossarySummaryIds(summaries, context);
-  return summaries;
+function validatedGlossaries(glossaries = [], context = "glossary query data") {
+  const normalized = normalizeGlossaries(glossaries);
+  assertUniqueGlossaryIds(normalized, context);
+  return normalized;
 }
 
 function assertUniqueGlossarySnapshotIds(snapshot, context = "glossary query data") {
-  assertUniqueGlossarySummaryIds(normalizeGlossariesSnapshotInput(snapshot), context);
+  assertUniqueGlossaryIds(Array.isArray(snapshot?.glossaries) ? snapshot.glossaries : [], context);
 }
 
 function createGlossaryDiscoverySnapshot(discovery = {}) {
@@ -89,7 +89,7 @@ export function createGlossariesQuerySnapshot({
   discovery = {},
 } = {}) {
   return {
-    glossaries: validatedGlossarySummaries(glossaries, "glossary query snapshot"),
+    glossaries: validatedGlossaries(glossaries, "glossary query snapshot"),
     repoSyncByRepoName: glossaryRepoSyncByRepoName(syncSnapshots),
     syncIssue,
     discovery: createGlossaryDiscoverySnapshot({
@@ -115,7 +115,7 @@ export function applyGlossariesQuerySnapshotToState(snapshot, {
   if (snapshot) {
     clearConfirmedGlossaryWriteIntents(snapshot);
     const visibleSnapshot = applyGlossaryWriteIntentsToSnapshot(snapshot);
-    state.glossaries = validatedGlossarySummaries(visibleSnapshot?.glossaries, "glossary state snapshot");
+    state.glossaries = validatedGlossaries(visibleSnapshot?.glossaries, "glossary state snapshot");
     state.glossaryRepoSyncByRepoName =
       snapshot.repoSyncByRepoName && typeof snapshot.repoSyncByRepoName === "object"
         ? snapshot.repoSyncByRepoName
@@ -143,22 +143,24 @@ export function patchGlossaryQueryData(queryData, glossaryId, patch) {
 
   let changed = false;
   const currentGlossaries = Array.isArray(queryData.glossaries) ? queryData.glossaries : [];
-  assertUniqueGlossarySummaryIds(currentGlossaries, "glossary query patch input");
-  const nextGlossaries = currentGlossaries.map((glossary) => {
-    if (glossary?.id !== glossaryId) {
-      return glossary;
-    }
-    changed = true;
-    return {
-      ...glossary,
-      ...patch,
-    };
-  });
+  assertUniqueGlossaryIds(currentGlossaries, "glossary query patch input");
+  const glossaries = currentGlossaries
+    .map((glossary) => {
+      if (glossary?.id !== glossaryId) {
+        return glossary;
+      }
+      changed = true;
+      return normalizeGlossarySummary({
+        ...glossary,
+        ...patch,
+      });
+    })
+    .filter(Boolean);
 
   return changed
     ? {
       ...queryData,
-      glossaries: validatedGlossarySummaries(nextGlossaries, "glossary query patch result"),
+      glossaries: validatedGlossaries(glossaries, "glossary query patch result"),
     }
     : queryData;
 }
@@ -172,27 +174,17 @@ export function upsertGlossaryQueryData(queryData, glossary) {
     return queryData;
   }
   const glossaries = Array.isArray(queryData.glossaries) ? queryData.glossaries : [];
-  assertUniqueGlossarySummaryIds(glossaries, "glossary query upsert input");
+  assertUniqueGlossaryIds(glossaries, "glossary query upsert input");
   const exists = glossaries.some((item) => item?.id === normalized.id);
   return {
     ...queryData,
-    glossaries: validatedGlossarySummaries(
+    glossaries: validatedGlossaries(
       exists
         ? glossaries.map((item) => (item?.id === normalized.id ? normalized : item))
         : [...glossaries, normalized],
       "glossary query upsert result",
     ),
   };
-}
-
-function normalizeGlossariesSnapshotInput(snapshot) {
-  if (Array.isArray(snapshot?.glossaries)) {
-    return snapshot.glossaries;
-  }
-  if (Array.isArray(snapshot)) {
-    return snapshot;
-  }
-  return [];
 }
 
 function glossaryLifecycleIntent(glossary) {
@@ -206,7 +198,8 @@ function glossaryLifecycleIntent(glossary) {
 }
 
 function glossaryInSnapshot(snapshot, glossaryId) {
-  return normalizeGlossariesSnapshotInput(snapshot).find((glossary) => glossary?.id === glossaryId) ?? null;
+  return (Array.isArray(snapshot?.glossaries) ? snapshot.glossaries : [])
+    .find((glossary) => glossary?.id === glossaryId) ?? null;
 }
 
 function glossaryLocation(snapshot, glossaryId) {
@@ -223,25 +216,25 @@ function glossaryTitleInSnapshot(snapshot, glossaryId) {
 
 function patchGlossaryInList(glossaries, glossaryId, patch, fallbackGlossary = null) {
   const currentGlossaries = Array.isArray(glossaries) ? glossaries : [];
-  assertUniqueGlossarySummaryIds(currentGlossaries, "glossary lifecycle patch input");
+  assertUniqueGlossaryIds(currentGlossaries, "glossary lifecycle patch input");
   let found = false;
   const patchedGlossaries = currentGlossaries.map((glossary) => {
     if (glossary?.id !== glossaryId) {
       return glossary;
     }
     found = true;
-    return {
+    return normalizeGlossarySummary({
       ...glossary,
       ...patch,
-    };
+    });
   });
   if (!found && fallbackGlossary) {
-    patchedGlossaries.push({
+    patchedGlossaries.push(normalizeGlossarySummary({
       ...fallbackGlossary,
       ...patch,
-    });
+    }));
   }
-  return validatedGlossarySummaries(patchedGlossaries, "glossary lifecycle patch result");
+  return validatedGlossaries(patchedGlossaries, "glossary lifecycle patch result");
 }
 
 export function preserveGlossaryLifecyclePatchesInSnapshot(nextSnapshot, previousSnapshot) {
@@ -249,8 +242,8 @@ export function preserveGlossaryLifecyclePatchesInSnapshot(nextSnapshot, previou
     return nextSnapshot;
   }
 
-  const previousGlossaries = normalizeGlossariesSnapshotInput(previousSnapshot);
-  assertUniqueGlossarySummaryIds(previousGlossaries, "previous glossary lifecycle snapshot");
+  const previousGlossaries = Array.isArray(previousSnapshot?.glossaries) ? previousSnapshot.glossaries : [];
+  assertUniqueGlossaryIds(previousGlossaries, "previous glossary lifecycle snapshot");
   const intentById = new Map(
     previousGlossaries
       .filter((glossary) => typeof glossary?.id === "string" && glossaryLifecycleIntent(glossary))
@@ -260,8 +253,8 @@ export function preserveGlossaryLifecyclePatchesInSnapshot(nextSnapshot, previou
     return nextSnapshot;
   }
 
-  let nextGlossaries = normalizeGlossariesSnapshotInput(nextSnapshot);
-  assertUniqueGlossarySummaryIds(nextGlossaries, "next glossary lifecycle snapshot");
+  let nextGlossaries = Array.isArray(nextSnapshot.glossaries) ? nextSnapshot.glossaries : [];
+  assertUniqueGlossaryIds(nextGlossaries, "next glossary lifecycle snapshot");
   for (const previousGlossary of intentById.values()) {
     const intent = glossaryLifecycleIntent(previousGlossary);
     const isPending = typeof previousGlossary?.pendingMutation === "string"
@@ -317,7 +310,7 @@ export function preserveGlossaryLifecyclePatchesInSnapshot(nextSnapshot, previou
 
   return {
     ...nextSnapshot,
-    glossaries: validatedGlossarySummaries(nextGlossaries, "preserved glossary lifecycle snapshot"),
+    glossaries: validatedGlossaries(nextGlossaries, "preserved glossary lifecycle snapshot"),
   };
 }
 
@@ -440,6 +433,36 @@ export function ensureGlossariesQueryObserver(render, team, options = {}) {
   return glossaryQueryController.ensureObserver(render, team, options);
 }
 
+export async function invalidateGlossariesQueryAfterMutation(team, options = {}) {
+  await glossaryQueryController.invalidateAfterMutation(team, options);
+}
+
+function createGlossaryLifecycleMutationOptions({
+  team,
+  glossary,
+  mutationType,
+  optimisticData = {},
+  settledData = {},
+  commitMutation,
+  onOptimisticApplied,
+  onSuccessApplied,
+  onErrorApplied,
+  render,
+} = {}) {
+  return glossaryQueryController.createLifecycleMutationOptions({
+    team,
+    resource: glossary,
+    mutationType,
+    optimisticData,
+    settledData,
+    commitMutation,
+    onOptimisticApplied,
+    onSuccessApplied,
+    onErrorApplied,
+    render,
+  });
+}
+
 export function createGlossaryRenameMutationOptions({
   team,
   glossary,
@@ -450,9 +473,9 @@ export function createGlossaryRenameMutationOptions({
   onErrorApplied,
   render,
 } = {}) {
-  return glossaryQueryController.createLifecycleMutationOptions({
+  return createGlossaryLifecycleMutationOptions({
     team,
-    resource: glossary,
+    glossary,
     mutationType: "rename",
     optimisticData: {
       title: nextTitle,
@@ -472,9 +495,8 @@ export function createGlossaryRenameMutationOptions({
 }
 
 export function createGlossarySoftDeleteMutationOptions(options = {}) {
-  return glossaryQueryController.createLifecycleMutationOptions({
+  return createGlossaryLifecycleMutationOptions({
     ...options,
-    resource: options.glossary,
     mutationType: "softDelete",
     optimisticData: {
       lifecycleState: "deleted",
@@ -489,9 +511,8 @@ export function createGlossarySoftDeleteMutationOptions(options = {}) {
 }
 
 export function createGlossaryRestoreMutationOptions(options = {}) {
-  return glossaryQueryController.createLifecycleMutationOptions({
+  return createGlossaryLifecycleMutationOptions({
     ...options,
-    resource: options.glossary,
     mutationType: "restore",
     optimisticData: {
       lifecycleState: "active",
@@ -506,15 +527,10 @@ export function createGlossaryRestoreMutationOptions(options = {}) {
 }
 
 export function createGlossaryPermanentDeleteMutationOptions(options = {}) {
-  return glossaryQueryController.createLifecycleMutationOptions({
+  return createGlossaryLifecycleMutationOptions({
     ...options,
-    resource: options.glossary,
     mutationType: "permanentDelete",
   });
-}
-
-export async function invalidateGlossariesQueryAfterMutation(team, options = {}) {
-  await glossaryQueryController.invalidateAfterMutation(team, options);
 }
 
 export function persistGlossariesQueryDataForTeam(team, queryData) {
