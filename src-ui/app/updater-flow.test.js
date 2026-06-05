@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { installMockNavigator } from "../test/mock-navigator.mjs";
 
 const localStorageState = new Map();
 let invokeHandler = async () => null;
@@ -46,10 +47,10 @@ const fakeLocalStorage = {
 };
 
 globalThis.document = fakeDocument;
-globalThis.navigator = {
+installMockNavigator({
   platform: "Win32",
   userAgentData: null,
-};
+});
 globalThis.performance = {
   now() {
     return 0;

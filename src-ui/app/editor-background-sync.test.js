@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { installMockNavigator } from "../test/mock-navigator.mjs";
 
 const cloneValue = (value) => {
   if (value === undefined) {
@@ -112,7 +113,7 @@ globalThis.window = {
   },
   open() {},
 };
-globalThis.navigator = globalThis.window.navigator;
+installMockNavigator(globalThis.window.navigator);
 
 const {
   createEditorChapterState,
