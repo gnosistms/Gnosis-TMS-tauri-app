@@ -200,6 +200,48 @@ separate from the L8/L9 behavior changes.
 > are caught *before* handoff — and make "align imports + helper names/positions to a clean
 > token-diff" an explicit itemized instruction rather than relying on the "~empty diff" criterion.
 
+## Query-flow prep findings (the highest-blast-radius pair — NOT yet GPT-ready)
+
+Deep-prep pass on `glossary-query.js` (493) vs `qa-list-query.js` (510). **Good news:** both are
+well-tested (16 / 15 tests) — no QA-coverage front-load. **But** the divergence here is *architectural*
+(two different optimistic-state designs), not the mostly-mechanical drift of discovery/lifecycle.
+Three genuine forks need decisions before handoff; the first is high-stakes:
+
+- **Q-FEAT-1 (high stakes) — `preservePendingLifecyclePatches`.** QA defines it as a one-line alias:
+  `export const preservePendingQaListLifecyclePatches = preserveQaListLifecyclePatchesInSnapshot;`.
+  Glossary has a **distinct ~88-line `preservePendingGlossaryLifecyclePatches`** that is *not* the
+  same as `preserveGlossaryLifecyclePatchesInSnapshot`. So glossary runs two different
+  optimistic-patch-preservation paths where QA runs one. This is core write-intent / optimistic-UI
+  behavior. **Open question:** is glossary's distinct "pending" logic a real behavior QA is missing,
+  or redundant divergence that should collapse to the single preserve fn (QA's model)? Must be
+  answered by reading both glossary preserve fns end-to-end + their call sites before ruling. Do
+  **not** let GPT guess this.
+- **Q-FEAT-2 — create/import optimistic upsert (QA-only, cross-cutting).** QA has
+  `upsertQaListQueryData` + `upsertQaListForTeam`, wired into `qa-list-import-flow.js` and
+  `qa-list-editor-flow.js` to optimistically insert a newly created/imported QA list into query data.
+  **Glossary has no upsert path.** This spans import/create flows, so it's broader than the query
+  pair. **Ruling direction (tentative):** treat as a separate feature-parity item (glossary gains an
+  upsert path) handled with `import-flow`, not folded into the query mirror.
+- **Q-FEAT-3 — `selectedId` fallback on query-snapshot apply.** Glossary's
+  `applyGlossariesQuerySnapshotToState` *delegates* to `top-level-state.applyGlossarySnapshotToState`,
+  which auto-selects the first active glossary (`fallbackToFirstActive`). QA's
+  `applyQaListsQuerySnapshotToState` *inlines* a simpler version that does **not** set
+  `selectedQaListId`. So after a query-path apply, glossary auto-selects first-active and QA leaves
+  the selection as-is — a real UX divergence. **Open question:** canonical behavior? (Both
+  `top-level-state.apply*SnapshotToState` set the fallback; only the *query-path* inline QA version
+  skips it.)
+
+Reconcilable drift (mechanical, decide canonical = QA's cleaner form): write-intent overlay extracted
+to a helper (glossary) vs inlined (QA); `createDiscoverySnapshot` extracted (QA) vs inlined
+(glossary); QA's DRY'd `createLifecycleMutationOptions` base factory vs glossary's 4 separate mutation
+factories; and the delegate-vs-inline apply-snapshot structure (tied to the query↔top-level-state
+layering). Plus the usual import/naming/position alignment.
+
+**Status: query is NOT ready for GPT.** It needs a dedicated focused pass to resolve Q-FEAT-1 (read
+the two glossary preserve fns + call sites and decide one-vs-two preserve paths) and Q-FEAT-3, and to
+split out Q-FEAT-2 to the import-flow track. Recommend doing that as its own session, not at the tail
+of a long one — Q-FEAT-1 is optimistic-UI/write-intent behavior where a wrong call is a subtle bug.
+
 ## Definition of done (Phase A)
 
 All four Tier 2 flow pairs are token-substitution mirrors (functional residue only), every step landed
