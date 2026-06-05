@@ -25,6 +25,7 @@ const {
   seedGlossariesQueryFromCache,
   upsertGlossaryQueryData,
 } = await import("./glossary-query.js");
+const { upsertGlossaryForTeam } = await import("./glossary-top-level-state.js");
 const { glossaryKeys, queryClient } = await import("./query-client.js");
 const { teamCacheKey } = await import("./team-cache.js");
 const {
@@ -507,6 +508,31 @@ test("upsertGlossaryQueryData adds and replaces glossary summaries", () => {
     withUpdated.glossaries.find((item) => item.id === "existing-glossary").title,
     "Updated Glossary",
   );
+});
+
+test("upsertGlossaryForTeam preserves create intent for newly created glossaries", () => {
+  resetSessionState();
+  const team = { id: "team-1", installationId: 1 };
+  state.selectedTeamId = team.id;
+  state.teams = [team];
+  state.glossariesPage = createResourcePageState();
+  queryClient.setQueryData(
+    glossaryKeys.byTeam(team.id),
+    createGlossariesQuerySnapshot({
+      glossaries: [glossary({ id: "existing-glossary", title: "Existing Glossary" })],
+    }),
+  );
+
+  const updated = upsertGlossaryForTeam(team, glossary({
+    id: "created-glossary",
+    glossaryId: "created-glossary",
+    title: "Created Glossary",
+  }), null, { preserveCreate: true });
+
+  const created = updated.glossaries.find((item) => item.id === "created-glossary");
+  assert.equal(created.localLifecycleIntent, "create");
+  assert.equal(created.pendingMutation, null);
+  assert.equal(state.glossaries.find((item) => item.id === "created-glossary").localLifecycleIntent, "create");
 });
 
 test("mutation settle invalidates active glossary query once without explicit fetch", async () => {
