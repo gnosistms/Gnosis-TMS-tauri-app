@@ -321,9 +321,7 @@ export function preserveGlossaryLifecyclePatchesInSnapshot(nextSnapshot, previou
   };
 }
 
-export function preservePendingGlossaryLifecyclePatches(nextSnapshot, previousSnapshot) {
-  return preserveGlossaryLifecyclePatchesInSnapshot(nextSnapshot, previousSnapshot);
-}
+export const preservePendingGlossaryLifecyclePatches = preserveGlossaryLifecyclePatchesInSnapshot;
 
 const glossaryQueryController = createRepoResourceQueryController({
   kind: "glossary",
