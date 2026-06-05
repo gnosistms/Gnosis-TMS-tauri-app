@@ -243,6 +243,40 @@ before the apply-snapshot change; (2) Q-FEAT-2(a) additive `upsertGlossaryQueryD
 (3) `preservePending` alias; (4) structural alignment to ~empty token-diff. Q-FEAT-2(b) is explicitly
 out of scope (import-flow). Owner: GPT with Claude review.
 
+## Import-flow prep findings (largest + most term-model-heavy pair)
+
+First-pass map of `glossary-import-flow.js` (905) vs `qa-list-import-flow.js` (827). Normalized diff
+is **468 lines** — by far the largest — but dominated by *legitimate term-model residue* (bilingual
+source/target vs monolingual), so even a clean mirror here keeps a **larger residue than the other
+pairs by design**.
+
+- **QA import-flow is UNTESTED** (glossary has 5) → add `qa-list-import-flow.test.js` characterization
+  tests FIRST (front-load, as with discovery/lifecycle).
+- **Q-FEAT-2b (the deferred query item) lives here.** QA's create/import `onSuccess` does
+  `upsertQaListForTeam(team, result.qaList, null, { preserveCreate: true })` + `makeQaListDefaultIfFirst`
+  (optimistic insert) at **two** call sites (~477, ~705); glossary reloads instead. **Plan:** add
+  `upsertGlossaryForTeam` to `glossary-top-level-state.js` (mirror QA's, using the `upsertGlossaryQueryData`
+  shipped in #53), then wire glossary's create/import `onSuccess`. Behavior change (glossary gains
+  optimistic insert) → cover with tests.
+- **Term-model residue (large, stays per-domain — the R4/L6 class):** TMX bilingual (source+target
+  languages, two-column preview) vs monolingual (single language) across init/create payloads, preview,
+  and inspect/import. PLUS QA has ~50 lines of **JS-side TMX parsing** (`parseTmx`,
+  `tmxNodeLanguageCode`, `normalizeTmxLanguageCode` via `DOMParser`) that glossary lacks (glossary parses
+  TMX only in the backend via `inspect_tmx_glossary_import`). **OPEN QUESTION for the detailed pass:** is
+  QA's JS-side TMX parsing term-model residue (a monolingual parse) or a QA-only *feature* (e.g. a
+  paste/preview path) that glossary should also gain? This decides residue-vs-parity and is the main
+  unresolved ruling.
+- **Reconcilable plumbing (align to QA):** file pick, size-limit messaging, inspect/confirm flow,
+  progress (`setPageProgress`), error surfacing, `prepareLocalRepo`, `reloadAfterWrite`.
+
+**Status: import-flow needs one more focused read pass before GPT handoff.** It's the largest and most
+term-model-heavy pair, QA is untested, and two things must be read end-to-end first: (1) classify QA's
+JS-side TMX parsing (residue vs parity); (2) scan the create/import success+error+rollback+name-collision
+paths for hidden behavioral forks (lifecycle's L8/L9 and the query-prep correction both showed inventory
+reads mislead). Then: QA characterization tests → Q-FEAT-2b (`upsertGlossaryForTeam` + 2 call sites, +test)
+→ reconcilable-plumbing refactor → structural alignment (with the large term-model residue documented).
+Owner: Claude finishes the read pass + rulings, then GPT with review.
+
 ## Definition of done (Phase A)
 
 All four Tier 2 flow pairs are token-substitution mirrors (functional residue only), every step landed
