@@ -235,3 +235,67 @@ test("renaming a glossary validates an empty title before lifecycle guards", asy
   assert.equal(state.glossaryRename.error, "Enter a glossary name.");
   assert.deepEqual(commands, []);
 });
+
+test("renaming the open glossary updates the editor title", async () => {
+  setupGlossaryLifecycleState();
+  state.glossaryEditor = {
+    ...state.glossaryEditor,
+    glossaryId: "glossary-1",
+    title: "Gnosis ES-VI",
+  };
+  state.glossaryRename = {
+    ...state.glossaryRename,
+    isOpen: true,
+    glossaryId: "glossary-1",
+    glossaryName: "Renamed Glossary",
+  };
+  invokeHandler = async (command) => {
+    if (command === "lookup_local_team_metadata_tombstone") {
+      return null;
+    }
+    if (command === "rename_gtms_glossary") {
+      return { ...state.glossaries[0], title: "Renamed Glossary" };
+    }
+    if (command === "sync_gtms_glossary_repos") {
+      return [];
+    }
+    return { commitCreated: true };
+  };
+
+  await submitGlossaryRename(() => {});
+  await flushAsyncWork();
+
+  assert.equal(state.glossaryEditor.title, "Renamed Glossary");
+});
+
+test("renaming a glossary leaves a different open editor's title untouched", async () => {
+  setupGlossaryLifecycleState();
+  state.glossaryEditor = {
+    ...state.glossaryEditor,
+    glossaryId: "other-glossary",
+    title: "Other Glossary",
+  };
+  state.glossaryRename = {
+    ...state.glossaryRename,
+    isOpen: true,
+    glossaryId: "glossary-1",
+    glossaryName: "Renamed Glossary",
+  };
+  invokeHandler = async (command) => {
+    if (command === "lookup_local_team_metadata_tombstone") {
+      return null;
+    }
+    if (command === "rename_gtms_glossary") {
+      return { ...state.glossaries[0], title: "Renamed Glossary" };
+    }
+    if (command === "sync_gtms_glossary_repos") {
+      return [];
+    }
+    return { commitCreated: true };
+  };
+
+  await submitGlossaryRename(() => {});
+  await flushAsyncWork();
+
+  assert.equal(state.glossaryEditor.title, "Other Glossary");
+});

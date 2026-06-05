@@ -285,6 +285,12 @@ export async function submitGlossaryRename(render) {
       nextTitle: title,
       commitMutation: commitGlossaryLifecycleMutation,
       onOptimisticApplied: () => {
+        if (state.glossaryEditor.glossaryId === rename.glossaryId) {
+          state.glossaryEditor = {
+            ...state.glossaryEditor,
+            title,
+          };
+        }
         resetGlossaryRename();
       },
       onSuccessApplied: (queryData) => {
