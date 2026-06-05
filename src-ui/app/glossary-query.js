@@ -1,8 +1,6 @@
 import { glossaryKeys } from "./query-client.js";
-import { createGlossaryDiscoveryState, state } from "./state.js";
-import { createRepoResourceQueryController } from "./repo-resource/query-controller.js";
 import {
-  loadStoredGlossariesForTeam as loadStoredGlossariesFromCache,
+  loadStoredGlossariesForTeam,
   saveStoredGlossariesForTeam,
 } from "./glossary-cache.js";
 import {
@@ -13,11 +11,10 @@ import {
   normalizeGlossarySummary,
   sortGlossaries,
 } from "./glossary-shared.js";
-import {
-  applyGlossarySnapshotToState,
-  glossarySnapshotFromList,
-  persistGlossariesForTeam,
-} from "./glossary-top-level-state.js";
+import { createRepoResourceQueryController } from "./repo-resource/query-controller.js";
+import { setResourcePageDataOwner, setResourcePageRefreshing } from "./resource-page-controller.js";
+import { createGlossaryDiscoveryState, state } from "./state.js";
+import { teamCacheKey } from "./team-cache.js";
 import {
   applyGlossaryWriteIntentsToSnapshot,
   clearConfirmedGlossaryWriteIntents,
@@ -67,6 +64,20 @@ function assertUniqueGlossarySnapshotIds(snapshot, context = "glossary query dat
   assertUniqueGlossarySummaryIds(normalizeGlossariesSnapshotInput(snapshot), context);
 }
 
+function createGlossaryDiscoverySnapshot(discovery = {}) {
+  return {
+    ...createGlossaryDiscoveryState(),
+    status:
+      typeof discovery?.status === "string" && discovery.status.trim()
+        ? discovery.status.trim()
+        : "ready",
+    error: typeof discovery?.error === "string" ? discovery.error : "",
+    brokerWarning: typeof discovery?.brokerWarning === "string" ? discovery.brokerWarning : "",
+    recoveryMessage:
+      typeof discovery?.recoveryMessage === "string" ? discovery.recoveryMessage : "",
+  };
+}
+
 export function createGlossariesQuerySnapshot({
   glossaries = [],
   syncSnapshots = [],
@@ -75,30 +86,25 @@ export function createGlossariesQuerySnapshot({
   recoveryMessage = "",
   error = "",
   status = "ready",
+  discovery = {},
 } = {}) {
   return {
     glossaries: validatedGlossarySummaries(glossaries, "glossary query snapshot"),
     repoSyncByRepoName: glossaryRepoSyncByRepoName(syncSnapshots),
     syncIssue,
-    discovery: {
-      ...createGlossaryDiscoveryState(),
+    discovery: createGlossaryDiscoverySnapshot({
       status,
       brokerWarning: typeof brokerWarning === "string" ? brokerWarning : "",
       recoveryMessage: typeof recoveryMessage === "string" ? recoveryMessage : "",
       error: typeof error === "string" ? error : "",
-    },
+      ...discovery,
+    }),
   };
-}
-
-function applyGlossaryWriteIntentOverlay(snapshot) {
-  clearConfirmedGlossaryWriteIntents(snapshot);
-  return applyGlossaryWriteIntentsToSnapshot(snapshot);
 }
 
 export function applyGlossariesQuerySnapshotToState(snapshot, {
   teamId = state.selectedTeamId,
   isFetching = false,
-  fallbackToFirstActive = true,
   cacheKey,
   cacheUpdatedAt = null,
 } = {}) {
@@ -107,28 +113,26 @@ export function applyGlossariesQuerySnapshotToState(snapshot, {
   }
 
   if (snapshot) {
-    const visibleSnapshot = applyGlossaryWriteIntentOverlay(snapshot);
-    const visibleGlossaries = validatedGlossarySummaries(
-      visibleSnapshot?.glossaries,
-      "glossary state snapshot",
-    );
-    applyGlossarySnapshotToState(glossarySnapshotFromList(visibleGlossaries), {
-      teamId,
-      fallbackToFirstActive,
-      cacheKey,
-      cacheUpdatedAt,
-    });
+    clearConfirmedGlossaryWriteIntents(snapshot);
+    const visibleSnapshot = applyGlossaryWriteIntentsToSnapshot(snapshot);
+    state.glossaries = validatedGlossarySummaries(visibleSnapshot?.glossaries, "glossary state snapshot");
     state.glossaryRepoSyncByRepoName =
       snapshot.repoSyncByRepoName && typeof snapshot.repoSyncByRepoName === "object"
         ? snapshot.repoSyncByRepoName
         : {};
-    state.glossaryDiscovery = {
-      ...createGlossaryDiscoveryState(),
-      ...(snapshot.discovery ?? {}),
-    };
+    state.glossaryDiscovery = createGlossaryDiscoverySnapshot(snapshot.discovery);
+    const team = state.teams.find((item) => item?.id === teamId);
+    setResourcePageDataOwner(state.glossariesPage, {
+      teamId,
+      cacheKey: cacheKey ?? teamCacheKey(team),
+      cacheUpdatedAt,
+    });
+    if (!state.glossaries.some((glossary) => glossary.lifecycleState === "deleted")) {
+      state.showDeletedGlossaries = false;
+    }
   }
 
-  state.glossariesPage.isRefreshing = isFetching === true;
+  setResourcePageRefreshing(state.glossariesPage, isFetching === true);
   return true;
 }
 
@@ -295,26 +299,22 @@ const glossaryQueryController = createRepoResourceQueryController({
   getSelectedTeamId: () => state.selectedTeamId,
   createSnapshot: createGlossariesQuerySnapshot,
   applySnapshotToState: applyGlossariesQuerySnapshotToState,
-  applyWriteIntentOverlay: applyGlossaryWriteIntentOverlay,
-  preserveSnapshot: preservePendingGlossaryLifecyclePatches,
+  preserveSnapshot: preserveGlossaryLifecyclePatchesInSnapshot,
   validateSnapshot: assertUniqueGlossarySnapshotIds,
   patchQueryData: patchGlossaryQueryData,
-  loadCacheEntry: loadStoredGlossariesFromCache,
+  loadCacheEntry: loadStoredGlossariesForTeam,
   cacheEntryItems: (entry) => entry.glossaries,
   loadLocalItems: listLocalGlossarySummariesForTeam,
-  localSnapshotInput: () => ({ status: "ready" }),
-  persistSnapshot: persistGlossariesForTeam,
-  setRefreshing: (isRefreshing) => {
-    state.glossariesPage.isRefreshing = isRefreshing === true;
-  },
+  localSnapshotInput: () => ({ discovery: { status: "ready" } }),
+  persistSnapshot: (team, snapshot) => saveStoredGlossariesForTeam(team, snapshot.glossaries),
+  setRefreshing: (isRefreshing) => setResourcePageRefreshing(state.glossariesPage, isRefreshing),
   isRefreshing: () => state.glossariesPage?.isRefreshing === true,
   applyObserverError: (error, { isFetching } = {}) => {
-    state.glossaryDiscovery = {
-      ...createGlossaryDiscoveryState(),
+    state.glossaryDiscovery = createGlossaryDiscoverySnapshot({
       status: "error",
       error: error?.message ?? String(error),
-    };
-    state.glossariesPage.isRefreshing = isFetching === true;
+    });
+    setResourcePageRefreshing(state.glossariesPage, isFetching === true);
   },
   createLifecycleMutationPayload: ({ resource, mutationType, optimisticData }) => {
     const mutation = {

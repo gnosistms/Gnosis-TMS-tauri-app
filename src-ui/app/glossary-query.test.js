@@ -84,6 +84,25 @@ test("glossary query adapter maps snapshots into glossary page state", () => {
   assert.equal(state.glossariesPage.visibleTeamId, "team-1");
 });
 
+test("glossary query adapter does not select the first active glossary", () => {
+  resetSessionState();
+  state.selectedTeamId = "team-1";
+  state.teams = [{ id: "team-1", installationId: 1 }];
+  state.glossariesPage = createResourcePageState();
+  state.selectedGlossaryId = "missing-glossary";
+  const snapshot = createGlossariesQuerySnapshot({
+    glossaries: [
+      glossary({ id: "glossary-1", title: "First Active" }),
+      glossary({ id: "glossary-2", title: "Second Active" }),
+    ],
+  });
+
+  const applied = applyGlossariesQuerySnapshotToState(snapshot, { teamId: "team-1" });
+
+  assert.equal(applied, true);
+  assert.equal(state.selectedGlossaryId, "missing-glossary");
+});
+
 test("glossary query snapshots reject duplicate summary ids", () => {
   assert.throws(() => createGlossariesQuerySnapshot({
     glossaries: [
