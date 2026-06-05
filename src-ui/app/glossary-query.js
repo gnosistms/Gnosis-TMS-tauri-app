@@ -163,6 +163,28 @@ export function patchGlossaryQueryData(queryData, glossaryId, patch) {
     : queryData;
 }
 
+export function upsertGlossaryQueryData(queryData, glossary) {
+  if (!queryData || typeof queryData !== "object") {
+    return createGlossariesQuerySnapshot({ glossaries: [glossary] });
+  }
+  const normalized = normalizeGlossarySummary(glossary);
+  if (!normalized) {
+    return queryData;
+  }
+  const glossaries = Array.isArray(queryData.glossaries) ? queryData.glossaries : [];
+  assertUniqueGlossarySummaryIds(glossaries, "glossary query upsert input");
+  const exists = glossaries.some((item) => item?.id === normalized.id);
+  return {
+    ...queryData,
+    glossaries: validatedGlossarySummaries(
+      exists
+        ? glossaries.map((item) => (item?.id === normalized.id ? normalized : item))
+        : [...glossaries, normalized],
+      "glossary query upsert result",
+    ),
+  };
+}
+
 function normalizeGlossariesSnapshotInput(snapshot) {
   if (Array.isArray(snapshot?.glossaries)) {
     return snapshot.glossaries;
@@ -277,6 +299,18 @@ export function preserveGlossaryLifecyclePatchesInSnapshot(nextSnapshot, previou
         title: previousGlossary.title,
         pendingMutation: isPending ? "rename" : null,
         localLifecycleIntent: "rename",
+      }, previousGlossary);
+      continue;
+    }
+
+    if (intent === "create") {
+      if (glossaryInSnapshot({ glossaries: nextGlossaries }, previousGlossary.id)) {
+        continue;
+      }
+      nextGlossaries = patchGlossaryInList(nextGlossaries, previousGlossary.id, {
+        lifecycleState: "active",
+        pendingMutation: isPending ? "create" : null,
+        localLifecycleIntent: "create",
       }, previousGlossary);
     }
   }

@@ -23,6 +23,7 @@ const {
   invalidateGlossariesQueryAfterMutation,
   preservePendingGlossaryLifecyclePatches,
   seedGlossariesQueryFromCache,
+  upsertGlossaryQueryData,
 } = await import("./glossary-query.js");
 const { glossaryKeys, queryClient } = await import("./query-client.js");
 const { teamCacheKey } = await import("./team-cache.js");
@@ -435,6 +436,77 @@ test("refresh snapshots preserve settled local glossary lifecycle intent until s
   assert.equal(merged.glossaries.find((item) => item.id === "rename-glossary").title, "Local Rename");
   assert.equal(merged.glossaries.find((item) => item.id === "delete-glossary").localLifecycleIntent, "softDelete");
   assert.equal(merged.glossaries.find((item) => item.id === "restore-glossary").localLifecycleIntent, "restore");
+});
+
+test("refresh snapshots preserve locally created glossaries omitted by stale refreshes", () => {
+  const previousSnapshot = createGlossariesQuerySnapshot({
+    glossaries: [
+      glossary({ id: "existing-glossary", title: "Existing Glossary" }),
+      glossary({
+        id: "created-glossary",
+        title: "Created Glossary",
+        localLifecycleIntent: "create",
+      }),
+    ],
+  });
+  const staleRefreshSnapshot = createGlossariesQuerySnapshot({
+    glossaries: [
+      glossary({ id: "existing-glossary", title: "Existing Glossary" }),
+    ],
+  });
+
+  const merged = preservePendingGlossaryLifecyclePatches(staleRefreshSnapshot, previousSnapshot);
+
+  assert.equal(merged.glossaries.some((item) => item.id === "created-glossary"), true);
+  assert.equal(
+    merged.glossaries.find((item) => item.id === "created-glossary").localLifecycleIntent,
+    "create",
+  );
+});
+
+test("refresh snapshots clear locally created glossary intent after refresh includes the glossary", () => {
+  const previousSnapshot = createGlossariesQuerySnapshot({
+    glossaries: [
+      glossary({
+        id: "created-glossary",
+        title: "Created Glossary",
+        localLifecycleIntent: "create",
+      }),
+    ],
+  });
+  const settledRefreshSnapshot = createGlossariesQuerySnapshot({
+    glossaries: [
+      glossary({ id: "created-glossary", title: "Created Glossary" }),
+    ],
+  });
+
+  const merged = preservePendingGlossaryLifecyclePatches(settledRefreshSnapshot, previousSnapshot);
+
+  assert.equal(
+    merged.glossaries.find((item) => item.id === "created-glossary").localLifecycleIntent,
+    null,
+  );
+});
+
+test("upsertGlossaryQueryData adds and replaces glossary summaries", () => {
+  const snapshot = createGlossariesQuerySnapshot({
+    glossaries: [glossary({ id: "existing-glossary", title: "Existing Glossary" })],
+  });
+
+  const withCreated = upsertGlossaryQueryData(snapshot, glossary({
+    id: "created-glossary",
+    title: "Created Glossary",
+  }));
+  const withUpdated = upsertGlossaryQueryData(withCreated, glossary({
+    id: "existing-glossary",
+    title: "Updated Glossary",
+  }));
+
+  assert.equal(withCreated.glossaries.length, 2);
+  assert.equal(
+    withUpdated.glossaries.find((item) => item.id === "existing-glossary").title,
+    "Updated Glossary",
+  );
 });
 
 test("mutation settle invalidates active glossary query once without explicit fetch", async () => {
