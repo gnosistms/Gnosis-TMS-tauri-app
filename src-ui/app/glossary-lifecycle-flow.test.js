@@ -25,7 +25,7 @@ globalThis.window = {
 };
 
 const { createResourcePageState } = await import("./resource-page-controller.js");
-const { deleteGlossary } = await import("./glossary-lifecycle-flow.js");
+const { deleteGlossary, submitGlossaryRename } = await import("./glossary-lifecycle-flow.js");
 const {
   createGlossariesQuerySnapshot,
   resetGlossariesQueryObserver,
@@ -182,4 +182,56 @@ test("soft-deleting a repo-backed glossary triggers a repo sync", async () => {
   assert.equal(syncInputs[0].glossaries[0].repoId, 123);
   assert.equal(syncInputs[0].glossaries[0].defaultBranchName, "main");
   assert.equal(syncInputs[0].glossaries[0].defaultBranchHeadOid, "abc123");
+});
+
+test("renaming a deleted glossary is blocked before writing metadata", async () => {
+  setupGlossaryLifecycleState();
+  state.glossaries[0] = {
+    ...state.glossaries[0],
+    lifecycleState: "deleted",
+  };
+  state.glossaryRename = {
+    ...state.glossaryRename,
+    isOpen: true,
+    glossaryId: "glossary-1",
+    glossaryName: "Renamed glossary",
+  };
+  const metadataWrites = [];
+  invokeHandler = async (command, payload) => {
+    if (command === "upsert_local_gnosis_glossary_metadata_record") {
+      metadataWrites.push(payload.input);
+    }
+    return {};
+  };
+
+  await submitGlossaryRename(() => {});
+  await flushAsyncWork();
+
+  assert.equal(metadataWrites.length, 0);
+  assert.equal(state.glossaryRename.error, "Could not find the selected glossary.");
+});
+
+test("renaming a glossary validates an empty title before lifecycle guards", async () => {
+  setupGlossaryLifecycleState();
+  state.glossaries[0] = {
+    ...state.glossaries[0],
+    lifecycleState: "deleted",
+  };
+  state.glossaryRename = {
+    ...state.glossaryRename,
+    isOpen: true,
+    glossaryId: "glossary-1",
+    glossaryName: "   ",
+  };
+  const commands = [];
+  invokeHandler = async (command) => {
+    commands.push(command);
+    return {};
+  };
+
+  await submitGlossaryRename(() => {});
+  await flushAsyncWork();
+
+  assert.equal(state.glossaryRename.error, "Enter a glossary name.");
+  assert.deepEqual(commands, []);
 });
