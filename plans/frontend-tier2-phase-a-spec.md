@@ -243,39 +243,47 @@ before the apply-snapshot change; (2) Q-FEAT-2(a) additive `upsertGlossaryQueryD
 (3) `preservePending` alias; (4) structural alignment to ~empty token-diff. Q-FEAT-2(b) is explicitly
 out of scope (import-flow). Owner: GPT with Claude review.
 
-## Import-flow prep findings (largest + most term-model-heavy pair)
+## Import-flow rulings (RESOLVED — GPT-ready)
 
-First-pass map of `glossary-import-flow.js` (905) vs `qa-list-import-flow.js` (827). Normalized diff
-is **468 lines** — by far the largest — but dominated by *legitimate term-model residue* (bilingual
-source/target vs monolingual), so even a clean mirror here keeps a **larger residue than the other
-pairs by design**.
+Detailed read of `glossary-import-flow.js` (905) vs `qa-list-import-flow.js` (827). Normalized diff is
+**468 lines** — by far the largest — and the read confirms it is **dominated by legitimate term-model
+residue**, not reconcilable drift. **Architecture decision: do NOT force a full token-mirror on this
+pair.** Goal = targeted parity (one real gap) + coverage; accept the large term-model residue. This
+matches the original frontend plan's tiering (import-flow is the most divergent pair).
 
-- **QA import-flow is UNTESTED** (glossary has 5) → add `qa-list-import-flow.test.js` characterization
-  tests FIRST (front-load, as with discovery/lifecycle).
-- **Q-FEAT-2b (the deferred query item) lives here.** QA's create/import `onSuccess` does
-  `upsertQaListForTeam(team, result.qaList, null, { preserveCreate: true })` + `makeQaListDefaultIfFirst`
-  (optimistic insert) at **two** call sites (~477, ~705); glossary reloads instead. **Plan:** add
-  `upsertGlossaryForTeam` to `glossary-top-level-state.js` (mirror QA's, using the `upsertGlossaryQueryData`
-  shipped in #53), then wire glossary's create/import `onSuccess`. Behavior change (glossary gains
-  optimistic insert) → cover with tests.
-- **Term-model residue (large, stays per-domain — the R4/L6 class):** TMX bilingual (source+target
-  languages, two-column preview) vs monolingual (single language) across init/create payloads, preview,
-  and inspect/import. PLUS QA has ~50 lines of **JS-side TMX parsing** (`parseTmx`,
-  `tmxNodeLanguageCode`, `normalizeTmxLanguageCode` via `DOMParser`) that glossary lacks (glossary parses
-  TMX only in the backend via `inspect_tmx_glossary_import`). **OPEN QUESTION for the detailed pass:** is
-  QA's JS-side TMX parsing term-model residue (a monolingual parse) or a QA-only *feature* (e.g. a
-  paste/preview path) that glossary should also gain? This decides residue-vs-parity and is the main
-  unresolved ruling.
-- **Reconcilable plumbing (align to QA):** file pick, size-limit messaging, inspect/confirm flow,
-  progress (`setPageProgress`), error surfacing, `prepareLocalRepo`, `reloadAfterWrite`.
+- **I1 (open question RESOLVED) — QA's JS-side TMX parsing is per-domain residue, NOT a parity gap.**
+  Both domains have drag-drop import (`handleDropped{Glossary,QaList}ImportFile/Path`, wired in
+  `events/native-drops.js`). QA parses TMX **client-side** (`parseQaListTmx`, ~80 lines: DOMParser,
+  rejects multi-language, builds a single-language list) for a snappy optimistic drag-drop; glossary
+  routes TMX through the **backend** (`inspect_tmx_glossary_import` / `import_tmx_to_gtms_glossary_repo`,
+  bilingual source+target). A JS *bilingual* parser in glossary would duplicate backend logic (incl.
+  gnosis props) — **don't add it.** Leave the JS-parse + drag-drop + bilingual-vs-mono preview + 2-language
+  init as documented residue. This is the bulk of the 468.
+- **Hidden-forks scan — clean.** The non-term-model behavioral diff is structural drift (prepare
+  base-vs-`prepareLinked…`-wrapper; `reloadAfterWrite` operation params; the `…SummariesForTeam`
+  naming suffix from `glossary-shared`) plus two glossary-only link/repair helpers
+  (`linkedGlossaryMetadataRecord`, `repairIssueMatchesImportedGlossary`). **No new L8/L9-style "one
+  validates, the other doesn't" forks.** None block the one parity fix.
+- **I2 / Q-FEAT-2b (the single genuine parity gap) — glossary gains optimistic create/import insert.**
+  QA's create/import `onSuccess` does `upsertQaListForTeam(team, result.qaList, null, { preserveCreate:
+  true })` + `makeQaListDefaultIfFirst`; glossary only `makeGlossaryDefaultIfFirst` + reloads. Prereqs
+  confirmed present: `ensureGlossariesQueryDataForTeam`, `upsertGlossaryQueryData` (#53),
+  `applyGlossariesQueryDataForTeam`, `makeGlossaryDefaultIfFirst`. **Only `upsertGlossaryForTeam` is
+  missing.** Steps: (1) add `upsertGlossaryForTeam(team, glossary, render, options)` to
+  `glossary-top-level-state.js`, a direct mirror of QA's `upsertQaListForTeam`; (2) wire glossary's two
+  `onSuccess` sites (~603 create, ~847 import) to also `upsertGlossaryForTeam(team, <glossary result>,
+  null, { preserveCreate: true })`. **Caveat to verify during impl:** glossary's create `onSuccess` uses
+  `result.glossaryId` — confirm the result also carries the full glossary summary object (QA uses
+  `result.qaList`); if not, build it before upserting. Behavior change → test.
+- **I3 — QA import-flow is UNTESTED** (glossary has 5) → add `qa-list-import-flow.test.js`
+  characterization tests FIRST.
+- **De-scoped (low ROI):** the structural/import-naming drift and a full token-mirror. Most of the diff
+  is legitimate residue; collapsing import-flow in Phase B will use a thin per-domain hook, not a merge.
 
-**Status: import-flow needs one more focused read pass before GPT handoff.** It's the largest and most
-term-model-heavy pair, QA is untested, and two things must be read end-to-end first: (1) classify QA's
-JS-side TMX parsing (residue vs parity); (2) scan the create/import success+error+rollback+name-collision
-paths for hidden behavioral forks (lifecycle's L8/L9 and the query-prep correction both showed inventory
-reads mislead). Then: QA characterization tests → Q-FEAT-2b (`upsertGlossaryForTeam` + 2 call sites, +test)
-→ reconcilable-plumbing refactor → structural alignment (with the large term-model residue documented).
-Owner: Claude finishes the read pass + rulings, then GPT with review.
+**Status: import-flow is GPT-ready** with a *narrow* scope. Order: (1) QA characterization tests; (2)
+Q-FEAT-2b — `upsertGlossaryForTeam` + the two `onSuccess` sites (+test); done. The term-model residue
+and structural drift are accepted, not mirrored. Owner: GPT with Claude review. **This closes the last
+Tier 2 pair's Phase-A judgment work** (Q-FEAT-2b also closes the query deferral).
 
 ## Definition of done (Phase A)
 
