@@ -17,7 +17,8 @@
     "lint:rust:strict": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
     "format:rust:check": "cargo fmt --manifest-path src-tauri/Cargo.toml --all --check",
     "lint:js": "eslint \"src-ui/app/**/*.js\" \"src-ui/screens/**/*.js\"",
-    "lint:js:fix": "eslint \"src-ui/app/**/*.js\" \"src-ui/screens/**/*.js\" --fix"
+    "lint:js:fix": "eslint \"src-ui/app/**/*.js\" \"src-ui/screens/**/*.js\" --fix",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

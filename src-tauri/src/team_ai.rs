@@ -476,7 +476,7 @@ mod tests {
 
             let response = format!(
                 "{status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                response_text.as_bytes().len(),
+                response_text.len(),
                 response_text
             );
             stream

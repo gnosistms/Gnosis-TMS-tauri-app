@@ -628,6 +628,7 @@ pub(super) fn upsert_local_record(
     })
 }
 
+#[allow(clippy::items_after_test_module)]
 #[cfg(test)]
 mod tests {
     use super::*;

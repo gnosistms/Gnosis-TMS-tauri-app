@@ -70,6 +70,7 @@ fn deserialize_tolerant_broker_list<T: DeserializeOwned>(
     Ok((items, skipped_count))
 }
 
+#[allow(clippy::items_after_test_module)]
 #[cfg(test)]
 mod tests {
     use super::{deserialize_tolerant_broker_list, encode_broker_path_segment};

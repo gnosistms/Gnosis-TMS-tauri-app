@@ -456,6 +456,7 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
     })
 }
 
+#[allow(clippy::items_after_test_module)]
 #[cfg(test)]
 mod tests {
     use super::*;
