@@ -1,6 +1,7 @@
 import { requireBrokerSession } from "./auth-flow.js";
 import { appendRepoNameSuffix, slugifyRepoName } from "./repo-names.js";
 import { invoke } from "./runtime.js";
+import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
 import { normalizeQaList, sortQaLists } from "./qa-list-shared.js";
 import { state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
@@ -8,6 +9,7 @@ import {
   listLocalQaListMetadataRecords,
   listQaListMetadataRecords,
   lookupLocalMetadataTombstone,
+  repairLocalRepoBinding,
   upsertQaListMetadataRecord,
 } from "./team-metadata-flow.js";
 import {
@@ -16,7 +18,10 @@ import {
   isLocalHardDeletedResource,
 } from "./local-hard-delete-store.js";
 import { isSoftDeletedResource } from "./resource-write-policy.js";
-import { loadStoredQaListsForTeam } from "./qa-list-cache.js";
+import { loadStoredQaListsForTeam, saveStoredQaListsForTeam } from "./qa-list-cache.js";
+import { removeQaListFromState } from "./qa-list-top-level-state.js";
+import { areResourcePageWritesDisabled } from "./resource-page-controller.js";
+import { ensureResourceNotTombstoned } from "./resource-lifecycle-engine.js";
 import {
   filterKnownDeletedRepoResources,
   isDeletedRepoResource,
@@ -492,6 +497,51 @@ function applyLocalQaListHardDeleteState(team, qaLists) {
   });
 }
 
+function qaListMetadataRecordIsTombstone(record) {
+  return record?.recordState === "tombstone" || record?.remoteState === "deleted";
+}
+
+function qaListMatchesMetadataRecord(qaList, record) {
+  return repoResourcesMatch(qaList, record);
+}
+
+function persistVisibleQaLists(team) {
+  saveStoredQaListsForTeam(team, state.qaLists);
+}
+
+async function purgeLocalQaListRepo(team, qaListId, repoName) {
+  if (!Number.isFinite(team?.installationId) || !String(repoName ?? "").trim()) {
+    return;
+  }
+
+  await invoke("purge_local_gtms_qa_list_repo", {
+    input: {
+      installationId: team.installationId,
+      qaListId,
+      repoName,
+    },
+  });
+}
+
+async function runQaListRepoPageSync(render, operation) {
+  state.qaListsPage.isRefreshing = true;
+  beginPageSync();
+  render?.();
+
+  try {
+    const result = await operation();
+    state.qaListsPage.isRefreshing = false;
+    await completePageSync(render);
+    render?.();
+    return result;
+  } catch (error) {
+    state.qaListsPage.isRefreshing = false;
+    failPageSync();
+    render?.();
+    throw error;
+  }
+}
+
 function filterDeletedQaListSyncTargets(team, localQaLists, remoteRepos) {
   const deletedRepoNames = new Set(
     (Array.isArray(localQaLists) ? localQaLists : [])
@@ -684,28 +734,66 @@ export async function loadRepoBackedQaListsForTeam(team, options = {}) {
 }
 
 export async function ensureQaListNotTombstoned(render, team, qaList) {
-  if (!Number.isFinite(team?.installationId) || !qaList?.id) {
-    return false;
+  return ensureResourceNotTombstoned({
+    installationId: team?.installationId,
+    resource: qaList,
+    resourceId: qaList?.id ?? qaList?.qaListId ?? "",
+    render,
+    resourceLabel: "QA list",
+    lookupMetadataTombstone: (resourceId) => lookupLocalMetadataTombstone(team, "qaList", resourceId),
+    listMetadataRecords: () => listQaListMetadataRecords(team),
+    isTombstoneRecord: qaListMetadataRecordIsTombstone,
+    matchesMetadataRecord: qaListMatchesMetadataRecord,
+    purgeLocalRepo: () => purgeLocalQaListRepo(team, qaList.id ?? qaList.qaListId ?? null, qaList.repoName),
+    removeVisibleResource: () => removeQaListFromState(qaList.id ?? qaList.qaListId ?? null, qaList.repoName),
+    persistVisibleState: () => persistVisibleQaLists(team),
+  });
+}
+
+export async function repairQaListRepoBinding(render, team, qaListId) {
+  if (!Number.isFinite(team?.installationId) || typeof qaListId !== "string" || !qaListId.trim()) {
+    return;
+  }
+  if (areResourcePageWritesDisabled(state.qaListsPage)) {
+    showNoticeBadge("Wait for the current QA list refresh or write to finish.", render);
+    return;
   }
 
-  let tombstoned = qaList.recordState === "tombstone" || qaList.remoteState === "deleted";
-  if (!tombstoned) {
-    try {
-      tombstoned = await lookupLocalMetadataTombstone(team, "qaList", qaList.id);
-    } catch {
-      const metadataRecords = await listQaListMetadataRecords(team).catch(() => []);
-      tombstoned = metadataRecords.some((record) =>
-        isDeletedRepoResource(record) && repoResourcesMatch(qaList, record)
-      );
-    }
+  try {
+    await runQaListRepoPageSync(render, async () => {
+      await repairLocalRepoBinding(team, "qaList", qaListId);
+      const result = await loadRepoBackedQaListsForTeam(team, {
+        offlineMode: state.offline?.isEnabled === true,
+      });
+      state.qaLists = result.qaLists;
+    });
+    showNoticeBadge("The QA list repo binding was repaired.", render, 2200);
+    render();
+  } catch (error) {
+    showNoticeBadge(error?.message ?? String(error), render, 3200);
+    render();
+  }
+}
+
+export async function rebuildQaListLocalRepo(render, team, qaListId) {
+  if (!Number.isFinite(team?.installationId) || typeof qaListId !== "string" || !qaListId.trim()) {
+    return;
+  }
+  if (areResourcePageWritesDisabled(state.qaListsPage)) {
+    showNoticeBadge("Wait for the current QA list refresh or write to finish.", render);
+    return;
   }
 
-  if (tombstoned) {
-    state.qaLists = state.qaLists.filter((item) => item?.id !== qaList.id);
-    showNoticeBadge("This QA list has already been permanently deleted.", render);
-    render?.();
-    return true;
+  showNoticeBadge("Rebuilding the local QA list repo from metadata and GitHub...", render, 2200);
+  try {
+    await runQaListRepoPageSync(render, async () => {
+      const result = await loadRepoBackedQaListsForTeam(team, {
+        offlineMode: state.offline?.isEnabled === true,
+      });
+      state.qaLists = result.qaLists;
+    });
+  } catch (error) {
+    showNoticeBadge(error?.message ?? String(error), render, 3200);
+    render();
   }
-
-  return false;
 }
