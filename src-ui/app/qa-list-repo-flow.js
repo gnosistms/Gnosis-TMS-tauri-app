@@ -562,6 +562,14 @@ function applyLocalQaListHardDeleteState(team, qaLists) {
   });
 }
 
+function countRecoverableQaListMetadataRecords(records) {
+  return (Array.isArray(records) ? records : []).filter((record) =>
+    record?.recordState === "live"
+    && record?.remoteState === "linked"
+    && record?.lifecycleState === "active"
+  ).length;
+}
+
 function qaListMetadataRecordIsTombstone(record) {
   return record?.recordState === "tombstone" || record?.remoteState === "deleted";
 }
@@ -722,6 +730,11 @@ async function filterKnownDeletedQaListSyncTargets(team, syncTargets, localQaLis
 
 export async function loadRepoBackedQaListsForTeam(team, options = {}) {
   const offlineMode = options.offlineMode === true;
+  const suppressRecoveryWarning = options.suppressRecoveryWarning === true;
+  const onRecoveryDetected =
+    typeof options.onRecoveryDetected === "function"
+      ? options.onRecoveryDetected
+      : null;
   const emptyResult = {
     qaLists: [],
     remoteRepos: [],
@@ -759,6 +772,14 @@ export async function loadRepoBackedQaListsForTeam(team, options = {}) {
     metadataRecords = await backfillQaListMetadataRecords(team, localQaLists, remoteRepos, metadataRecords);
   } catch (error) {
     brokerWarning = error?.message ?? String(error);
+  }
+  const recoverableMetadataCount = countRecoverableQaListMetadataRecords(metadataRecords);
+  const installationRecoveryDetected =
+    metadataLoaded
+    && recoverableMetadataCount > 0
+    && localQaLists.length === 0;
+  if (installationRecoveryDetected && !suppressRecoveryWarning) {
+    onRecoveryDetected?.("Local installation data was missing. Rebuilding QA list repos from GitHub.");
   }
   let syncTargets = [];
   if (metadataLoaded) {
@@ -798,7 +819,10 @@ export async function loadRepoBackedQaListsForTeam(team, options = {}) {
     syncSnapshots,
     syncIssue,
     brokerWarning,
-    recoveryMessage: "",
+    recoveryMessage:
+      installationRecoveryDetected && !suppressRecoveryWarning
+        ? "Local installation data was missing. Rebuilt QA list repos from GitHub."
+        : "",
   };
 }
 

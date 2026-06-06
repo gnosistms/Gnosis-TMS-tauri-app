@@ -499,6 +499,77 @@ test("repo-backed QA list load repairs metadata after a remote repo rename", asy
   assert.equal(result.syncSnapshots.length, 1);
 });
 
+test("repo-backed QA list load reports recovery when local repos are rebuilt from metadata", async () => {
+  setupQaTeams();
+  const qaList = repoBackedQaList({
+    id: "qa-list-recovered",
+    title: "Recovered QA",
+    repoName: "qa-list-recovered",
+    fullName: "team-1/qa-list-recovered",
+    repoId: 77,
+    nodeId: "repo-node-77",
+  });
+  const metadataRecords = [{
+    id: qaList.id,
+    kind: "qaList",
+    title: qaList.title,
+    repoName: qaList.repoName,
+    previousRepoNames: [],
+    githubRepoId: qaList.repoId,
+    githubNodeId: qaList.nodeId,
+    fullName: qaList.fullName,
+    defaultBranch: "main",
+    lifecycleState: "active",
+    remoteState: "linked",
+    recordState: "live",
+    deletedAt: null,
+    language: qaList.language,
+    termCount: qaList.termCount,
+  }];
+  let localQaLists = [];
+  let recoveryMessage = "";
+
+  invokeHandler = async (command) => {
+    if (command === "list_local_gtms_qa_lists") {
+      return localQaLists;
+    }
+    if (command === "list_gnosis_qa_lists_for_installation") {
+      return [{
+        name: qaList.repoName,
+        fullName: qaList.fullName,
+        repoId: qaList.repoId,
+        nodeId: qaList.nodeId,
+        defaultBranchName: "main",
+        defaultBranchHeadOid: qaList.defaultBranchHeadOid,
+      }];
+    }
+    if (command === "list_local_gnosis_qa_list_metadata_records") {
+      return metadataRecords;
+    }
+    if (command === "sync_gtms_qa_list_repos") {
+      localQaLists = [qaList];
+      return [{ repoName: qaList.repoName, status: "upToDate" }];
+    }
+    return { commitCreated: false };
+  };
+
+  const result = await loadRepoBackedQaListsForTeam(state.teams[0], {
+    onRecoveryDetected: (message) => {
+      recoveryMessage = message;
+    },
+  });
+
+  assert.equal(
+    recoveryMessage,
+    "Local installation data was missing. Rebuilding QA list repos from GitHub.",
+  );
+  assert.equal(
+    result.recoveryMessage,
+    "Local installation data was missing. Rebuilt QA list repos from GitHub.",
+  );
+  assert.equal(result.qaLists[0].id, qaList.id);
+});
+
 test("repairQaListRepoBinding repairs the local binding and reloads QA lists", async () => {
   setupQaTeams();
   const team = state.teams[0];
