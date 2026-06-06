@@ -1,0 +1,131 @@
+#!/bin/sh
+# Gnosis TMS — Pre-push Hook (Tier 2: Lint + Format, ~1-2min)
+#
+# Runs compilation-dependent checks that are too slow for pre-commit
+# but must pass before sharing code. Full test execution is delegated
+# to CI — branch protection enforces it.
+#
+# RUST POSTURE: clippy runs with -D warnings (fail on any warning).
+# The current baseline has 54 clippy warnings + 7 files failing rustfmt.
+# This hook will red-light until the baseline cleanup is done:
+#   cargo fmt --manifest-path src-tauri/Cargo.toml --all
+#   cargo clippy --fix --manifest-path src-tauri/Cargo.toml --all-targets
+# See reviews/ for the full remediation plan.
+#
+# JS POSTURE: ESLint runs only on the changed files pushed in this
+# branch (delta mode). Pre-existing violations in untouched files do
+# not block. Run `npm run lint:js` to audit the full source tree.
+
+# Capture the ref list git feeds on stdin ONCE. Both the secret scan
+# (delta mode, below) and any future lfs hook consume it; stdin can
+# only be read once, so we buffer it here.
+PREPUSH_STDIN="$(cat)"
+
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+echo "Running pre-push quality checks..."
+
+# ── Detect changed files ──────────────────────────────────────────────
+
+UPSTREAM_REF=$(git rev-parse --abbrev-ref --symbolic-full-name @{upstream} 2>/dev/null || true)
+
+if [ -n "$UPSTREAM_REF" ]; then
+  CHANGED_FILES=$(git diff --name-only "$UPSTREAM_REF"...HEAD)
+else
+  DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|.*/||' || echo "main")
+  MERGE_BASE=$(git merge-base "origin/$DEFAULT_BRANCH" HEAD 2>/dev/null || true)
+  if [ -n "$MERGE_BASE" ]; then
+    CHANGED_FILES=$(git diff --name-only "$MERGE_BASE"..HEAD)
+  else
+    CHANGED_FILES=$(git diff --name-only HEAD~1..HEAD 2>/dev/null || git diff --name-only)
+  fi
+fi
+
+RUN_RUST_CHECKS=false
+RUN_JS_CHECKS=false
+
+if echo "$CHANGED_FILES" | grep -Eq '(src-tauri/|.*\.rs$|Cargo\.toml|Cargo\.lock)'; then
+  RUN_RUST_CHECKS=true
+fi
+
+if echo "$CHANGED_FILES" | grep -Eq '(src-ui/|.*\.js$|eslint\.config\.js|package\.json)'; then
+  RUN_JS_CHECKS=true
+fi
+
+# ── Rust: clippy + fmt ───────────────────────────────────────────────
+
+if [ "$RUN_RUST_CHECKS" = true ]; then
+  echo "Running Rust checks..."
+  echo "  - cargo fmt --check"
+  npm run format:rust:check
+  echo "  - cargo clippy (strict: -D warnings)"
+  echo "    NOTE: fails on current baseline (54 warnings). Cleanup required"
+  echo "    before this gate is green. Run 'npm run lint:rust:strict' to see all."
+  npm run lint:rust:strict
+  echo "Rust checks passed."
+fi
+
+# ── JS: ESLint (delta — changed files only) ──────────────────────────
+
+if [ "$RUN_JS_CHECKS" = true ]; then
+  echo "Running JS checks (changed files only)..."
+  CHANGED_JS=$(echo "$CHANGED_FILES" | grep -E 'src-ui/.+\.js$' | grep -v 'src-ui/lib/vendor/' || true)
+  if [ -n "$CHANGED_JS" ]; then
+    echo "$CHANGED_JS" | tr '\n' '\0' | xargs -0 npx eslint
+    echo "ESLint passed."
+  else
+    echo "No changed JS files to lint."
+  fi
+fi
+
+if [ "$RUN_RUST_CHECKS" = false ] && [ "$RUN_JS_CHECKS" = false ]; then
+  echo "No Rust or JS changes detected — skipping quality checks."
+fi
+
+# ── Secret scanning (push delta only) ────────────────────────────────
+#
+# Scans ONLY the commits being pushed, not full history. Full-history
+# scanning re-reports pre-existing findings on every push.
+# NOTE: gitleaks is not yet installed on this machine; scanning is
+# currently a no-op that degrades gracefully.
+
+echo "Scanning pushed commits for secrets..."
+if command -v gitleaks >/dev/null 2>&1; then
+  ZERO=$(printf '0%.0s' $(seq 1 40))
+  secret_scan_failed=0
+
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    local_ref=$(echo "$line" | awk '{print $1}')
+    local_sha=$(echo "$line" | awk '{print $2}')
+    remote_sha=$(echo "$line" | awk '{print $4}')
+
+    [ -z "$local_sha" ] && continue
+    [ "$local_sha" = "$ZERO" ] && continue
+
+    if [ "$remote_sha" = "$ZERO" ]; then
+      log_opts="$local_sha --not --remotes"
+    else
+      log_opts="$remote_sha..$local_sha"
+    fi
+
+    echo "  - scanning $log_opts"
+    if ! gitleaks git --no-banner --log-opts="$log_opts" .; then
+      secret_scan_failed=1
+    fi
+  done <<EOF
+$PREPUSH_STDIN
+EOF
+
+  if [ "$secret_scan_failed" -ne 0 ]; then
+    echo "Secret scan found secrets in pushed commits. Remove them before pushing."
+    exit 1
+  fi
+  echo "Secret scan passed."
+else
+  echo "gitleaks not installed — secret scanning skipped."
+  echo "  Install: https://github.com/gitleaks/gitleaks"
+  echo "  WARNING: There is no secret scan in CI — this hook is the only automated gate."
+fi
+
+echo "Pre-push checks passed."

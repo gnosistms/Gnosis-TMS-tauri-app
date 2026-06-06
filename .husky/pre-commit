@@ -1,0 +1,35 @@
+#!/bin/sh
+# Gnosis TMS — Pre-commit Hook (Tier 1: Fast, <5s)
+#
+# Runs only cheap, file-level checks. Compilation-dependent checks
+# (clippy, fmt, ESLint) run in pre-push where the cost is amortised
+# across the whole branch, not every individual commit.
+
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+STAGED_FILES=$(git diff --cached --name-only)
+
+if [ -z "$STAGED_FILES" ]; then
+  echo "No staged files — skipping checks."
+  exit 0
+fi
+
+# ── Secret scanning (staged files only) ──────────────────────────────
+#
+# Scans only what is actually being committed. gitleaks v8.19+ uses
+# `git --staged`; the old `detect --staged` flag is rejected by current
+# versions and blocks all commits as false positives.
+
+if command -v gitleaks >/dev/null 2>&1; then
+  echo "Scanning staged changes for secrets..."
+  if ! gitleaks git --staged --no-banner; then
+    echo "Secret scan failed. Remove secrets before committing."
+    exit 1
+  fi
+  echo "Secret scan passed."
+else
+  echo "gitleaks not installed — secret scanning deferred to pre-push."
+  echo "  Install: https://github.com/gitleaks/gitleaks"
+fi
+
+echo "Pre-commit checks passed."
