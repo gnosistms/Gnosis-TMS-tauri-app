@@ -669,11 +669,7 @@ pub(super) fn find_project_repo_for_record(
                 .as_ref()
                 .and_then(|state| state.current_repo_name.as_deref())
                 .map(str::trim)
-                .is_some_and(|repo_name| {
-                    candidate_repo_names
-                        .iter()
-                        .any(|candidate| *candidate == repo_name)
-                })
+                .is_some_and(|repo_name| candidate_repo_names.contains(&repo_name))
             || candidate_repo_names
                 .iter()
                 .any(|candidate| *candidate == folder_name);
@@ -732,11 +728,7 @@ pub(super) fn find_glossary_repo_for_record(
                 .as_ref()
                 .and_then(|state| state.current_repo_name.as_deref())
                 .map(str::trim)
-                .is_some_and(|repo_name| {
-                    candidate_repo_names
-                        .iter()
-                        .any(|candidate| *candidate == repo_name)
-                })
+                .is_some_and(|repo_name| candidate_repo_names.contains(&repo_name))
             || candidate_repo_names
                 .iter()
                 .any(|candidate| *candidate == folder_name);
@@ -795,11 +787,7 @@ pub(super) fn find_qa_list_repo_for_record(
                 .as_ref()
                 .and_then(|state| state.current_repo_name.as_deref())
                 .map(str::trim)
-                .is_some_and(|repo_name| {
-                    candidate_repo_names
-                        .iter()
-                        .any(|candidate| *candidate == repo_name)
-                })
+                .is_some_and(|repo_name| candidate_repo_names.contains(&repo_name))
             || candidate_repo_names
                 .iter()
                 .any(|candidate| *candidate == folder_name);

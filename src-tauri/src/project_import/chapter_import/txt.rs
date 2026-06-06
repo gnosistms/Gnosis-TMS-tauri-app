@@ -94,7 +94,7 @@ pub(super) fn decode_text_file(bytes: &[u8]) -> Result<String, String> {
 }
 
 fn decode_utf16_bytes(bytes: &[u8], little_endian: bool) -> Result<String, ()> {
-    if bytes.len() % 2 != 0 {
+    if !bytes.len().is_multiple_of(2) {
         return Err(());
     }
 

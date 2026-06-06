@@ -627,6 +627,7 @@ fn snapshot_from_project_sync_error(
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn chapter_row_changes_between_commits(
     repo_path: &Path,
     chapter_rows_relative_path: &str,

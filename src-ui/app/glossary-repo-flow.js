@@ -681,9 +681,8 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
     onRecoveryDetected?.("Local installation data was missing. Rebuilding glossary repos from GitHub.");
   }
 
-  let remoteRepos;
   let remoteLoaded = false;
-  remoteRepos = await listRemoteGlossaryReposForTeam(team);
+  const remoteRepos = await listRemoteGlossaryReposForTeam(team);
   remoteLoaded = true;
   if (metadataLoaded) {
     const metadataRepaired = await repairGlossaryMetadataFromRemoteRename(team, metadataRecords, remoteRepos);

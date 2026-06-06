@@ -76,10 +76,7 @@ pub(crate) fn broker_put_json_with_session<T: DeserializeOwned>(
     body: &serde_json::Value,
     session_token: &str,
 ) -> Result<T, String> {
-    let response = broker_send(
-        client.put(broker_path_url(path)?).json(body),
-        session_token,
-    )?;
+    let response = broker_send(client.put(broker_path_url(path)?).json(body), session_token)?;
     parse_json_response(response)
 }
 
@@ -136,10 +133,7 @@ pub(crate) fn broker_delete_no_content_with_session(
     parse_empty_response(response)
 }
 
-fn broker_send(
-    request_builder: RequestBuilder,
-    session_token: &str,
-) -> Result<Response, String> {
+fn broker_send(request_builder: RequestBuilder, session_token: &str) -> Result<Response, String> {
     request_builder
         .header("Accept", "application/json")
         .bearer_auth(session_token)

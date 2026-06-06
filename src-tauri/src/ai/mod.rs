@@ -234,10 +234,7 @@ fn parse_review_structured_response(text: &str) -> Result<AiReviewResponse, Stri
         .find('{')
         .and_then(|start| trimmed.rfind('}').map(|end| &trimmed[start..=end]));
 
-    for candidate in [trimmed, stripped]
-        .into_iter()
-        .chain(object_slice.into_iter())
-    {
+    for candidate in [trimmed, stripped].into_iter().chain(object_slice) {
         if let Ok(mut parsed) = serde_json::from_str::<AiReviewStructuredResponse>(candidate) {
             if parsed.reviewed {
                 parsed.suggested_text.clear();
@@ -272,10 +269,7 @@ fn parse_translation_sections_response(text: &str) -> Result<AiTranslationRespon
         .find('{')
         .and_then(|start| trimmed.rfind('}').map(|end| &trimmed[start..=end]));
 
-    for candidate in [trimmed, stripped]
-        .into_iter()
-        .chain(object_slice.into_iter())
-    {
+    for candidate in [trimmed, stripped].into_iter().chain(object_slice) {
         if let Ok(parsed) =
             serde_json::from_str::<AiTranslationSectionsStructuredResponse>(candidate)
         {
@@ -366,7 +360,11 @@ pub(crate) fn build_translation_prompt(request: &AiTranslationRequest) -> String
             ),
         );
     }
-    push_tagged_prompt_section(&mut sections, "reference_translations", reference_translations);
+    push_tagged_prompt_section(
+        &mut sections,
+        "reference_translations",
+        reference_translations,
+    );
     sections.push(format!("<source_text>\n{}\n</source_text>", request.text));
     if let Some(section) =
         format_optional_tagged_section("source_footnote", &request.source_footnote)
@@ -791,9 +789,7 @@ fn format_assistant_user_action(request: &AiAssistantTurnRequest) -> String {
         return format!("<user_request>\n{user_message}\n</user_request>");
     }
 
-    format!(
-        "<instruction>\nTranslate source_text to target_language, taking into account the source_context and glossary information provided above.\n</instruction>"
-    )
+    "<instruction>\nTranslate source_text to target_language, taking into account the source_context and glossary information provided above.\n</instruction>".to_string()
 }
 
 fn build_assistant_prompt(request: &AiAssistantTurnRequest, draft_response: bool) -> String {
@@ -973,10 +969,7 @@ fn parse_assistant_structured_response(
         .find('{')
         .and_then(|start| trimmed.rfind('}').map(|end| &trimmed[start..=end]));
 
-    for candidate in [trimmed, stripped]
-        .into_iter()
-        .chain(object_slice.into_iter())
-    {
+    for candidate in [trimmed, stripped].into_iter().chain(object_slice) {
         if let Ok(parsed) = serde_json::from_str::<AiAssistantStructuredResponse>(candidate) {
             let has_draft_translation_text = parsed
                 .draft_translation_text

@@ -1,5 +1,5 @@
 use std::{
-    env, fs,
+    fs,
     io::ErrorKind,
     path::{Path, PathBuf},
     process::Command,
@@ -7,8 +7,6 @@ use std::{
 };
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
@@ -62,7 +60,7 @@ impl GitTransportAuth {
 pub(crate) fn initialize_git_runtime<R: Runtime>(app: &AppHandle<R>) {
     let app_config_dir = app.path().app_config_dir().ok();
     if let Some(app_config_dir) = app_config_dir.as_deref() {
-        if let Ok(environment) = prepare_app_git_environment(&app_config_dir) {
+        if let Ok(environment) = prepare_app_git_environment(app_config_dir) {
             let _ = APP_GIT_HOME_DIR.set(environment.home_dir);
             let _ = APP_GIT_XDG_CONFIG_HOME.set(environment.xdg_config_home);
             let _ = APP_GIT_GLOBAL_CONFIG.set(environment.global_config);
@@ -339,7 +337,7 @@ fn resolved_windows_git_executable() -> PathBuf {
     PathBuf::from("git")
 }
 
-fn configure_git_command(command: &mut Command, executable: &Path) {
+fn configure_git_command(command: &mut Command, _executable: &Path) {
     configure_git_isolation(command);
 
     #[cfg(windows)]

@@ -28,6 +28,7 @@ pub(crate) struct UpdateMetadata {
     message: Option<String>,
 }
 
+#[allow(clippy::large_enum_variant)]
 enum ResolvedUpdate {
     Available(Update),
     Unavailable { message: Option<String> },

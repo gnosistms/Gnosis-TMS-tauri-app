@@ -292,10 +292,8 @@ fn parse_docx_document_xml(
                         paragraph_position += 1;
                         paragraph = Some(DocxParagraphState::default());
                     }
-                    "t" => {
-                        if paragraph.is_some() {
-                            in_text = true;
-                        }
+                    "t" if paragraph.is_some() => {
+                        in_text = true;
                     }
                     "tab" => append_to_docx_paragraph(&mut paragraph, "\t"),
                     "br" => append_to_docx_paragraph(&mut paragraph, "\n"),

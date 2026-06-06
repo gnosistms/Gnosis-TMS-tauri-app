@@ -55,10 +55,8 @@ pub(super) fn parse_tmx_qa_list(file_name: &str, bytes: &[u8]) -> Result<ParsedT
         {
             Event::Eof => break,
             Event::Start(event) => match event.name().as_ref() {
-                b"header" | b"headers" => {
-                    if header_language_code.is_none() {
-                        header_language_code = read_tmx_attr(&reader, &event, b"srclang")?;
-                    }
+                b"header" | b"headers" if header_language_code.is_none() => {
+                    header_language_code = read_tmx_attr(&reader, &event, b"srclang")?;
                 }
                 b"tu" => {
                     current_unit = Some(WorkingTmxUnit {
@@ -86,10 +84,8 @@ pub(super) fn parse_tmx_qa_list(file_name: &str, bytes: &[u8]) -> Result<ParsedT
                 _ => {}
             },
             Event::Empty(event) => match event.name().as_ref() {
-                b"header" | b"headers" => {
-                    if header_language_code.is_none() {
-                        header_language_code = read_tmx_attr(&reader, &event, b"srclang")?;
-                    }
+                b"header" | b"headers" if header_language_code.is_none() => {
+                    header_language_code = read_tmx_attr(&reader, &event, b"srclang")?;
                 }
                 _ => {}
             },

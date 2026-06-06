@@ -55,7 +55,7 @@ pub(super) fn import_parsed_workbook_to_gtms_sync(
     commit_written_imports(
         app,
         &context,
-        &[written.relative_chapter_path.clone()],
+        std::slice::from_ref(&written.relative_chapter_path),
         &format!("Import {}", written.response.source_file_name),
     )?;
 
@@ -114,7 +114,7 @@ pub(super) fn write_parsed_workbook_chapter(
             build_chapter_file(&parsed, &chapter_id, &chapter_slug, default_glossary);
         write_json_pretty(&chapter_path.join("chapter.json"), &chapter_file)?;
 
-        let unit_count = write_row_files(&parsed, &repo_path, &rows_path, &chapter_slug)?;
+        let unit_count = write_row_files(&parsed, repo_path, &rows_path, &chapter_slug)?;
 
         let relative_chapter_path = repo_relative_path(repo_path, &chapter_path)?;
         let source_word_counts = build_source_word_counts_from_import(&parsed);
@@ -521,13 +521,13 @@ fn detected_imported_image_extension(bytes: &[u8]) -> Option<&'static str> {
     if bytes.starts_with(&[0x00, 0x00, 0x01, 0x00]) {
         return Some("ico");
     }
-    if bytes.len() >= 12 && &bytes[4..8] == b"ftyp" {
-        if bytes
+    if bytes.len() >= 12
+        && &bytes[4..8] == b"ftyp"
+        && bytes
             .windows(4)
             .any(|window| window == b"avif" || window == b"avis")
-        {
-            return Some("avif");
-        }
+    {
+        return Some("avif");
     }
     if svg_document_root_is_svg(bytes) {
         return Some("svg");

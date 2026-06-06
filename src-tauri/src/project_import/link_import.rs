@@ -91,7 +91,7 @@ fn resolve_google_export(
         .headers()
         .get(CONTENT_DISPOSITION)
         .and_then(|value| value.to_str().ok())
-        .and_then(|value| content_disposition_file_name(value))
+        .and_then(content_disposition_file_name)
         .map(|value| ensure_extension(&value, file_type))
         .unwrap_or_else(|| fallback_file_name.to_string());
     let bytes = response
@@ -249,7 +249,7 @@ fn html_file_name(url: &Url, data: &[u8]) -> String {
     let title = html_title(data)
         .or_else(|| {
             url.path_segments()
-                .and_then(|segments| segments.filter(|segment| !segment.trim().is_empty()).last())
+                .and_then(|mut segments| segments.rfind(|segment| !segment.trim().is_empty()))
                 .map(|segment| segment.trim().to_string())
         })
         .unwrap_or_else(|| "web-page".to_string());
