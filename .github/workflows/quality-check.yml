@@ -1,8 +1,5 @@
 # Gnosis TMS — Quality Check
 #
-# DISABLED: This workflow lives in workflows-disabled/ and will not fire.
-# To enable: move this file to .github/workflows/ and open a PR for review.
-#
 # Fires on:
 #   - Push to main
 #   - Pull requests marked Ready for Review (drafts are skipped)
