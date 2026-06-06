@@ -108,6 +108,49 @@ async function repairQaListMetadataFromRemoteRename(team, metadataRecords, remot
   return false;
 }
 
+async function finalizeMissingQaListsForTeam(team, metadataRecords, remoteRepos) {
+  const missingRecords = findConfirmedMissingQaListRecords(metadataRecords, remoteRepos);
+  if (!Number.isFinite(team?.installationId) || missingRecords.length === 0) {
+    return metadataRecords;
+  }
+
+  const deletedAt = new Date().toISOString();
+
+  for (const record of missingRecords) {
+    await upsertQaListMetadataRecord(team, {
+      qaListId: record.id,
+      title: record.title,
+      repoName: record.repoName,
+      previousRepoNames: Array.isArray(record.previousRepoNames) ? record.previousRepoNames : [],
+      githubRepoId: Number.isFinite(record.githubRepoId) ? record.githubRepoId : null,
+      githubNodeId:
+        typeof record.githubNodeId === "string" && record.githubNodeId.trim()
+          ? record.githubNodeId.trim()
+          : null,
+      fullName:
+        typeof record.fullName === "string" && record.fullName.trim()
+          ? record.fullName.trim()
+          : null,
+      defaultBranch:
+        typeof record.defaultBranch === "string" && record.defaultBranch.trim()
+          ? record.defaultBranch.trim()
+          : "main",
+      lifecycleState: "deleted",
+      remoteState: "deleted",
+      recordState: "tombstone",
+      deletedAt,
+      language: record.language ?? null,
+      termCount: Number.isFinite(record.termCount) ? record.termCount : 0,
+    }, { requirePushSuccess: true });
+
+    try {
+      await purgeLocalQaListRepo(team, record.id, record.repoName);
+    } catch {}
+  }
+
+  return listQaListMetadataRecords(team).catch(() => metadataRecords);
+}
+
 export function teamSupportsQaListRepos(team) {
   return Boolean(invoke)
     && Number.isFinite(team?.installationId)
@@ -211,11 +254,69 @@ function qaListRepoSyncDescriptor(repo) {
   };
 }
 
-function findMatchingRemoteQaList(record, remoteByRepoName, remoteByFullName) {
-  return (
-    remoteByRepoName.get(record?.repoName)
-    ?? remoteByFullName.get(record?.fullName)
-    ?? null
+function findMatchingRemoteQaList(
+  record,
+  remoteByRepoName,
+  remoteByFullName,
+  remoteByRepoId,
+  remoteByNodeId,
+) {
+  if (Number.isFinite(record?.githubRepoId) && remoteByRepoId.has(record.githubRepoId)) {
+    return remoteByRepoId.get(record.githubRepoId);
+  }
+
+  if (record?.githubNodeId && remoteByNodeId.has(record.githubNodeId)) {
+    return remoteByNodeId.get(record.githubNodeId);
+  }
+
+  if (record?.fullName && remoteByFullName.has(record.fullName)) {
+    return remoteByFullName.get(record.fullName);
+  }
+
+  const repoNames = [
+    record?.repoName,
+    ...(Array.isArray(record?.previousRepoNames) ? record.previousRepoNames : []),
+  ];
+  for (const repoName of repoNames) {
+    if (!repoName) {
+      continue;
+    }
+    const match = remoteByRepoName.get(repoName);
+    if (match) {
+      return match;
+    }
+  }
+
+  return null;
+}
+
+function findConfirmedMissingQaListRecords(metadataRecords = [], remoteRepos = []) {
+  const normalizedRemotes = (Array.isArray(remoteRepos) ? remoteRepos : [])
+    .map(normalizeRemoteQaListRepo)
+    .filter(Boolean);
+  const remoteByRepoId = new Map(
+    normalizedRemotes
+      .filter((repo) => Number.isFinite(repo.repoId))
+      .map((repo) => [repo.repoId, repo]),
+  );
+  const remoteByNodeId = new Map(
+    normalizedRemotes
+      .filter((repo) => typeof repo.nodeId === "string" && repo.nodeId.trim())
+      .map((repo) => [repo.nodeId, repo]),
+  );
+  const remoteByRepoName = new Map(normalizedRemotes.map((repo) => [repo.name, repo]));
+  const remoteByFullName = new Map(normalizedRemotes.map((repo) => [repo.fullName, repo]));
+
+  return (Array.isArray(metadataRecords) ? metadataRecords : []).filter((record) =>
+    record?.recordState === "live"
+    && (record?.remoteState ?? "linked") === "linked"
+    && !findMatchingRemoteQaList(
+      record,
+      remoteByRepoName,
+      remoteByFullName,
+      remoteByRepoId,
+      remoteByNodeId,
+    )
   );
 }
 
@@ -489,18 +590,21 @@ function mergeMetadataBackedQaLists(localQaLists, metadataRecords, remoteRepos) 
   const normalizedLocals = (Array.isArray(localQaLists) ? localQaLists : [])
     .map(normalizeQaList)
     .filter(Boolean);
-  const remoteByName = new Map(
-    (Array.isArray(remoteRepos) ? remoteRepos : [])
-      .map(normalizeRemoteQaListRepo)
-      .filter(Boolean)
-      .map((repo) => [repo.name, repo]),
+  const normalizedRemotes = (Array.isArray(remoteRepos) ? remoteRepos : [])
+    .map(normalizeRemoteQaListRepo)
+    .filter(Boolean);
+  const remoteByRepoId = new Map(
+    normalizedRemotes
+      .filter((repo) => Number.isFinite(repo.repoId))
+      .map((repo) => [repo.repoId, repo]),
   );
-  const remoteByFullName = new Map(
-    (Array.isArray(remoteRepos) ? remoteRepos : [])
-      .map(normalizeRemoteQaListRepo)
-      .filter(Boolean)
-      .map((repo) => [repo.fullName, repo]),
+  const remoteByNodeId = new Map(
+    normalizedRemotes
+      .filter((repo) => typeof repo.nodeId === "string" && repo.nodeId.trim())
+      .map((repo) => [repo.nodeId, repo]),
   );
+  const remoteByName = new Map(normalizedRemotes.map((repo) => [repo.name, repo]));
+  const remoteByFullName = new Map(normalizedRemotes.map((repo) => [repo.fullName, repo]));
   const localById = new Map(normalizedLocals.map((qaList) => [qaList.id, qaList]));
   const localByRepoName = new Map(normalizedLocals.map((qaList) => [qaList.repoName, qaList]));
   const matchedLocalIds = new Set();
@@ -511,7 +615,13 @@ function mergeMetadataBackedQaLists(localQaLists, metadataRecords, remoteRepos) 
       continue;
     }
     const localQaList = localById.get(record.id) ?? localByRepoName.get(record.repoName) ?? null;
-    const remoteQaList = findMatchingRemoteQaList(record, remoteByName, remoteByFullName);
+    const remoteQaList = findMatchingRemoteQaList(
+      record,
+      remoteByName,
+      remoteByFullName,
+      remoteByRepoId,
+      remoteByNodeId,
+    );
     if (localQaList) {
       matchedLocalIds.add(localQaList.id);
     }
@@ -635,18 +745,21 @@ function filterDeletedQaListSyncTargets(team, localQaLists, remoteRepos) {
 }
 
 function buildMetadataQaListSyncTargets(team, metadataRecords, remoteRepos) {
-  const remoteByName = new Map(
-    (Array.isArray(remoteRepos) ? remoteRepos : [])
-      .map(normalizeRemoteQaListRepo)
-      .filter(Boolean)
-      .map((repo) => [repo.name, repo]),
+  const normalizedRemotes = (Array.isArray(remoteRepos) ? remoteRepos : [])
+    .map(normalizeRemoteQaListRepo)
+    .filter(Boolean);
+  const remoteByRepoId = new Map(
+    normalizedRemotes
+      .filter((repo) => Number.isFinite(repo.repoId))
+      .map((repo) => [repo.repoId, repo]),
   );
-  const remoteByFullName = new Map(
-    (Array.isArray(remoteRepos) ? remoteRepos : [])
-      .map(normalizeRemoteQaListRepo)
-      .filter(Boolean)
-      .map((repo) => [repo.fullName, repo]),
+  const remoteByNodeId = new Map(
+    normalizedRemotes
+      .filter((repo) => typeof repo.nodeId === "string" && repo.nodeId.trim())
+      .map((repo) => [repo.nodeId, repo]),
   );
+  const remoteByName = new Map(normalizedRemotes.map((repo) => [repo.name, repo]));
+  const remoteByFullName = new Map(normalizedRemotes.map((repo) => [repo.fullName, repo]));
   return (Array.isArray(metadataRecords) ? metadataRecords : [])
     .filter((record) =>
       record?.recordState === "live"
@@ -655,7 +768,13 @@ function buildMetadataQaListSyncTargets(team, metadataRecords, remoteRepos) {
       && !isDeletedRepoResource(record)
     )
     .map((record) => {
-      const remote = findMatchingRemoteQaList(record, remoteByName, remoteByFullName);
+      const remote = findMatchingRemoteQaList(
+        record,
+        remoteByName,
+        remoteByFullName,
+        remoteByRepoId,
+        remoteByNodeId,
+      );
       const fullName = remote?.fullName ?? record.fullName;
       if (!record.repoName || !fullName) {
         return null;
@@ -787,6 +906,7 @@ export async function loadRepoBackedQaListsForTeam(team, options = {}) {
     if (metadataRepaired) {
       metadataRecords = await listQaListMetadataRecords(team).catch(() => metadataRecords);
     }
+    metadataRecords = await finalizeMissingQaListsForTeam(team, metadataRecords, remoteRepos);
     const metadataSyncTargets = buildMetadataQaListSyncTargets(team, metadataRecords, remoteRepos);
     const untrackedRemoteSyncTargets = await filterKnownDeletedQaListSyncTargets(
       team,
