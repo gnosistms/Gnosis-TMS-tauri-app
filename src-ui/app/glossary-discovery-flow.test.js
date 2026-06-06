@@ -189,6 +189,92 @@ test("glossary fallback sync skips repos already deleted in visible state", asyn
   assert.equal(result.syncSnapshots.length, 0);
 });
 
+test("repo-backed glossary load backfills missing metadata records for local repos", async () => {
+  setupGlossaryLoadState();
+  const team = state.teams[0];
+  const remoteRepo = {
+    name: "glossary-spanish-vietnamese",
+    fullName: "team-1/glossary-spanish-vietnamese",
+    repoId: 22,
+    nodeId: "repo-node-22",
+    defaultBranchName: "main",
+    defaultBranchHeadOid: "head-remote",
+  };
+  const localGlossary = {
+    glossaryId: "glossary-spanish-vietnamese-id",
+    id: "glossary-spanish-vietnamese-id",
+    title: "Spanish Vietnamese Glossary",
+    repoName: remoteRepo.name,
+    fullName: remoteRepo.fullName,
+    sourceLanguage: { code: "es", name: "Spanish" },
+    targetLanguage: { code: "vi", name: "Vietnamese" },
+    lifecycleState: "active",
+    termCount: 3,
+  };
+  let metadataRecords = [];
+  let didSyncGlossaryRepo = false;
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "list_local_gtms_glossaries") {
+      return [localGlossary];
+    }
+    if (command === "list_gnosis_glossaries_for_installation") {
+      return [remoteRepo];
+    }
+    if (command === "sync_local_team_metadata_repo" || command === "ensure_local_team_metadata_repo") {
+      return { commitCreated: false };
+    }
+    if (command === "list_local_gnosis_glossary_metadata_records") {
+      return metadataRecords;
+    }
+    if (command === "inspect_and_migrate_local_repo_bindings") {
+      return { issues: [], autoRepairedCount: 0 };
+    }
+    if (command === "upsert_local_gnosis_glossary_metadata_record") {
+      metadataRecords = [{
+        id: payload.input.glossaryId,
+        kind: "glossary",
+        title: payload.input.title,
+        repoName: payload.input.repoName,
+        previousRepoNames: payload.input.previousRepoNames,
+        githubRepoId: payload.input.githubRepoId,
+        githubNodeId: payload.input.githubNodeId,
+        fullName: payload.input.fullName,
+        defaultBranch: payload.input.defaultBranch,
+        lifecycleState: payload.input.lifecycleState,
+        remoteState: payload.input.remoteState,
+        recordState: payload.input.recordState,
+        deletedAt: payload.input.deletedAt,
+        sourceLanguage: payload.input.sourceLanguage,
+        targetLanguage: payload.input.targetLanguage,
+        termCount: localGlossary.termCount,
+      }];
+      return { commitCreated: true };
+    }
+    if (command === "sync_gtms_glossary_repos") {
+      didSyncGlossaryRepo = true;
+      assert.deepEqual(
+        payload.input.glossaries.map((glossary) => glossary.repoName),
+        [remoteRepo.name],
+      );
+      return [{ repoName: remoteRepo.name, status: "upToDate" }];
+    }
+    return { commitCreated: false };
+  };
+
+  const result = await loadRepoBackedGlossariesForTeam(team);
+
+  assert.equal(didSyncGlossaryRepo, true);
+  assert.equal(metadataRecords.length, 1);
+  assert.equal(metadataRecords[0].id, localGlossary.id);
+  assert.equal(metadataRecords[0].githubRepoId, remoteRepo.repoId);
+  assert.equal(metadataRecords[0].githubNodeId, remoteRepo.nodeId);
+  assert.deepEqual(metadataRecords[0].sourceLanguage, localGlossary.sourceLanguage);
+  assert.deepEqual(metadataRecords[0].targetLanguage, localGlossary.targetLanguage);
+  assert.equal(result.glossaries.length, 1);
+  assert.equal(result.glossaries[0].id, localGlossary.id);
+});
+
 test("glossary load treats unowned preserve requests as normal loads on failure", async () => {
   setupGlossaryLoadState();
   const team1 = state.teams[0];
