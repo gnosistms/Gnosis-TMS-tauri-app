@@ -43,6 +43,114 @@ function normalizeQaListBrokerError(error) {
   return new Error(String(error ?? "Unknown QA list broker error."));
 }
 
+async function repairQaListMetadataFromRemoteRename(team, metadataRecords, remoteRepos) {
+  const remoteByRepoId = new Map(
+    (Array.isArray(remoteRepos) ? remoteRepos : [])
+      .filter((repo) => Number.isFinite(repo?.repoId))
+      .map((repo) => [repo.repoId, repo]),
+  );
+  const remoteByNodeId = new Map(
+    (Array.isArray(remoteRepos) ? remoteRepos : [])
+      .filter((repo) => typeof repo?.nodeId === "string" && repo.nodeId.trim())
+      .map((repo) => [repo.nodeId, repo]),
+  );
+  const repairWrites = [];
+
+  for (const record of Array.isArray(metadataRecords) ? metadataRecords : []) {
+    if (record?.recordState !== "live" || record?.remoteState !== "linked") {
+      continue;
+    }
+
+    const remoteRepo =
+      (Number.isFinite(record?.githubRepoId) ? remoteByRepoId.get(record.githubRepoId) : null)
+      ?? ((typeof record?.githubNodeId === "string" && record.githubNodeId.trim()) ? remoteByNodeId.get(record.githubNodeId) : null)
+      ?? null;
+    if (!remoteRepo) {
+      continue;
+    }
+
+    const repoNameChanged = typeof remoteRepo.name === "string" && remoteRepo.name.trim() && remoteRepo.name !== record.repoName;
+    const fullNameChanged = typeof remoteRepo.fullName === "string" && remoteRepo.fullName.trim() && remoteRepo.fullName !== record.fullName;
+    const branchChanged = typeof remoteRepo.defaultBranchName === "string" && remoteRepo.defaultBranchName.trim() && remoteRepo.defaultBranchName !== record.defaultBranch;
+    if (!repoNameChanged && !fullNameChanged && !branchChanged) {
+      continue;
+    }
+
+    const previousRepoNames = [
+      ...(Array.isArray(record.previousRepoNames) ? record.previousRepoNames : []),
+      ...(repoNameChanged ? [record.repoName] : []),
+    ];
+    repairWrites.push(
+      upsertQaListMetadataRecord(team, {
+        qaListId: record.id,
+        title: record.title,
+        repoName: remoteRepo.name ?? record.repoName,
+        previousRepoNames,
+        githubRepoId: remoteRepo.repoId ?? record.githubRepoId ?? null,
+        githubNodeId: remoteRepo.nodeId ?? record.githubNodeId ?? null,
+        fullName: remoteRepo.fullName ?? record.fullName ?? null,
+        defaultBranch: remoteRepo.defaultBranchName ?? record.defaultBranch ?? "main",
+        lifecycleState: record.lifecycleState,
+        remoteState: record.remoteState,
+        recordState: record.recordState,
+        deletedAt: record.deletedAt ?? null,
+        language: record.language ?? null,
+        termCount: Number.isFinite(record.termCount) ? record.termCount : 0,
+      }).catch(() => null),
+    );
+  }
+
+  if (repairWrites.length > 0) {
+    await Promise.all(repairWrites);
+    return true;
+  }
+
+  return false;
+}
+
+async function finalizeMissingQaListsForTeam(team, metadataRecords, remoteRepos) {
+  const missingRecords = findConfirmedMissingQaListRecords(metadataRecords, remoteRepos);
+  if (!Number.isFinite(team?.installationId) || missingRecords.length === 0) {
+    return metadataRecords;
+  }
+
+  const deletedAt = new Date().toISOString();
+
+  for (const record of missingRecords) {
+    await upsertQaListMetadataRecord(team, {
+      qaListId: record.id,
+      title: record.title,
+      repoName: record.repoName,
+      previousRepoNames: Array.isArray(record.previousRepoNames) ? record.previousRepoNames : [],
+      githubRepoId: Number.isFinite(record.githubRepoId) ? record.githubRepoId : null,
+      githubNodeId:
+        typeof record.githubNodeId === "string" && record.githubNodeId.trim()
+          ? record.githubNodeId.trim()
+          : null,
+      fullName:
+        typeof record.fullName === "string" && record.fullName.trim()
+          ? record.fullName.trim()
+          : null,
+      defaultBranch:
+        typeof record.defaultBranch === "string" && record.defaultBranch.trim()
+          ? record.defaultBranch.trim()
+          : "main",
+      lifecycleState: "deleted",
+      remoteState: "deleted",
+      recordState: "tombstone",
+      deletedAt,
+      language: record.language ?? null,
+      termCount: Number.isFinite(record.termCount) ? record.termCount : 0,
+    }, { requirePushSuccess: true });
+
+    try {
+      await purgeLocalQaListRepo(team, record.id, record.repoName);
+    } catch {}
+  }
+
+  return listQaListMetadataRecords(team).catch(() => metadataRecords);
+}
+
 export function teamSupportsQaListRepos(team) {
   return Boolean(invoke)
     && Number.isFinite(team?.installationId)
@@ -146,11 +254,69 @@ function qaListRepoSyncDescriptor(repo) {
   };
 }
 
-function findMatchingRemoteQaList(record, remoteByRepoName, remoteByFullName) {
-  return (
-    remoteByRepoName.get(record?.repoName)
-    ?? remoteByFullName.get(record?.fullName)
-    ?? null
+function findMatchingRemoteQaList(
+  record,
+  remoteByRepoName,
+  remoteByFullName,
+  remoteByRepoId,
+  remoteByNodeId,
+) {
+  if (Number.isFinite(record?.githubRepoId) && remoteByRepoId.has(record.githubRepoId)) {
+    return remoteByRepoId.get(record.githubRepoId);
+  }
+
+  if (record?.githubNodeId && remoteByNodeId.has(record.githubNodeId)) {
+    return remoteByNodeId.get(record.githubNodeId);
+  }
+
+  if (record?.fullName && remoteByFullName.has(record.fullName)) {
+    return remoteByFullName.get(record.fullName);
+  }
+
+  const repoNames = [
+    record?.repoName,
+    ...(Array.isArray(record?.previousRepoNames) ? record.previousRepoNames : []),
+  ];
+  for (const repoName of repoNames) {
+    if (!repoName) {
+      continue;
+    }
+    const match = remoteByRepoName.get(repoName);
+    if (match) {
+      return match;
+    }
+  }
+
+  return null;
+}
+
+function findConfirmedMissingQaListRecords(metadataRecords = [], remoteRepos = []) {
+  const normalizedRemotes = (Array.isArray(remoteRepos) ? remoteRepos : [])
+    .map(normalizeRemoteQaListRepo)
+    .filter(Boolean);
+  const remoteByRepoId = new Map(
+    normalizedRemotes
+      .filter((repo) => Number.isFinite(repo.repoId))
+      .map((repo) => [repo.repoId, repo]),
+  );
+  const remoteByNodeId = new Map(
+    normalizedRemotes
+      .filter((repo) => typeof repo.nodeId === "string" && repo.nodeId.trim())
+      .map((repo) => [repo.nodeId, repo]),
+  );
+  const remoteByRepoName = new Map(normalizedRemotes.map((repo) => [repo.name, repo]));
+  const remoteByFullName = new Map(normalizedRemotes.map((repo) => [repo.fullName, repo]));
+
+  return (Array.isArray(metadataRecords) ? metadataRecords : []).filter((record) =>
+    record?.recordState === "live"
+    && (record?.remoteState ?? "linked") === "linked"
+    && !findMatchingRemoteQaList(
+      record,
+      remoteByRepoName,
+      remoteByFullName,
+      remoteByRepoId,
+      remoteByNodeId,
+    )
   );
 }
 
@@ -424,18 +590,21 @@ function mergeMetadataBackedQaLists(localQaLists, metadataRecords, remoteRepos) 
   const normalizedLocals = (Array.isArray(localQaLists) ? localQaLists : [])
     .map(normalizeQaList)
     .filter(Boolean);
-  const remoteByName = new Map(
-    (Array.isArray(remoteRepos) ? remoteRepos : [])
-      .map(normalizeRemoteQaListRepo)
-      .filter(Boolean)
-      .map((repo) => [repo.name, repo]),
+  const normalizedRemotes = (Array.isArray(remoteRepos) ? remoteRepos : [])
+    .map(normalizeRemoteQaListRepo)
+    .filter(Boolean);
+  const remoteByRepoId = new Map(
+    normalizedRemotes
+      .filter((repo) => Number.isFinite(repo.repoId))
+      .map((repo) => [repo.repoId, repo]),
   );
-  const remoteByFullName = new Map(
-    (Array.isArray(remoteRepos) ? remoteRepos : [])
-      .map(normalizeRemoteQaListRepo)
-      .filter(Boolean)
-      .map((repo) => [repo.fullName, repo]),
+  const remoteByNodeId = new Map(
+    normalizedRemotes
+      .filter((repo) => typeof repo.nodeId === "string" && repo.nodeId.trim())
+      .map((repo) => [repo.nodeId, repo]),
   );
+  const remoteByName = new Map(normalizedRemotes.map((repo) => [repo.name, repo]));
+  const remoteByFullName = new Map(normalizedRemotes.map((repo) => [repo.fullName, repo]));
   const localById = new Map(normalizedLocals.map((qaList) => [qaList.id, qaList]));
   const localByRepoName = new Map(normalizedLocals.map((qaList) => [qaList.repoName, qaList]));
   const matchedLocalIds = new Set();
@@ -446,7 +615,13 @@ function mergeMetadataBackedQaLists(localQaLists, metadataRecords, remoteRepos) 
       continue;
     }
     const localQaList = localById.get(record.id) ?? localByRepoName.get(record.repoName) ?? null;
-    const remoteQaList = findMatchingRemoteQaList(record, remoteByName, remoteByFullName);
+    const remoteQaList = findMatchingRemoteQaList(
+      record,
+      remoteByName,
+      remoteByFullName,
+      remoteByRepoId,
+      remoteByNodeId,
+    );
     if (localQaList) {
       matchedLocalIds.add(localQaList.id);
     }
@@ -495,6 +670,14 @@ function applyLocalQaListHardDeleteState(team, qaLists) {
   return filterLocalHardDeletedResources(team, "qaList", items, {
     isDeleted: (qaList) => isSoftDeletedResource(qaList, "qaList"),
   });
+}
+
+function countRecoverableQaListMetadataRecords(records) {
+  return (Array.isArray(records) ? records : []).filter((record) =>
+    record?.recordState === "live"
+    && record?.remoteState === "linked"
+    && record?.lifecycleState === "active"
+  ).length;
 }
 
 function qaListMetadataRecordIsTombstone(record) {
@@ -562,18 +745,21 @@ function filterDeletedQaListSyncTargets(team, localQaLists, remoteRepos) {
 }
 
 function buildMetadataQaListSyncTargets(team, metadataRecords, remoteRepos) {
-  const remoteByName = new Map(
-    (Array.isArray(remoteRepos) ? remoteRepos : [])
-      .map(normalizeRemoteQaListRepo)
-      .filter(Boolean)
-      .map((repo) => [repo.name, repo]),
+  const normalizedRemotes = (Array.isArray(remoteRepos) ? remoteRepos : [])
+    .map(normalizeRemoteQaListRepo)
+    .filter(Boolean);
+  const remoteByRepoId = new Map(
+    normalizedRemotes
+      .filter((repo) => Number.isFinite(repo.repoId))
+      .map((repo) => [repo.repoId, repo]),
   );
-  const remoteByFullName = new Map(
-    (Array.isArray(remoteRepos) ? remoteRepos : [])
-      .map(normalizeRemoteQaListRepo)
-      .filter(Boolean)
-      .map((repo) => [repo.fullName, repo]),
+  const remoteByNodeId = new Map(
+    normalizedRemotes
+      .filter((repo) => typeof repo.nodeId === "string" && repo.nodeId.trim())
+      .map((repo) => [repo.nodeId, repo]),
   );
+  const remoteByName = new Map(normalizedRemotes.map((repo) => [repo.name, repo]));
+  const remoteByFullName = new Map(normalizedRemotes.map((repo) => [repo.fullName, repo]));
   return (Array.isArray(metadataRecords) ? metadataRecords : [])
     .filter((record) =>
       record?.recordState === "live"
@@ -582,7 +768,13 @@ function buildMetadataQaListSyncTargets(team, metadataRecords, remoteRepos) {
       && !isDeletedRepoResource(record)
     )
     .map((record) => {
-      const remote = findMatchingRemoteQaList(record, remoteByName, remoteByFullName);
+      const remote = findMatchingRemoteQaList(
+        record,
+        remoteByName,
+        remoteByFullName,
+        remoteByRepoId,
+        remoteByNodeId,
+      );
       const fullName = remote?.fullName ?? record.fullName;
       if (!record.repoName || !fullName) {
         return null;
@@ -657,6 +849,11 @@ async function filterKnownDeletedQaListSyncTargets(team, syncTargets, localQaLis
 
 export async function loadRepoBackedQaListsForTeam(team, options = {}) {
   const offlineMode = options.offlineMode === true;
+  const suppressRecoveryWarning = options.suppressRecoveryWarning === true;
+  const onRecoveryDetected =
+    typeof options.onRecoveryDetected === "function"
+      ? options.onRecoveryDetected
+      : null;
   const emptyResult = {
     qaLists: [],
     remoteRepos: [],
@@ -695,8 +892,21 @@ export async function loadRepoBackedQaListsForTeam(team, options = {}) {
   } catch (error) {
     brokerWarning = error?.message ?? String(error);
   }
+  const recoverableMetadataCount = countRecoverableQaListMetadataRecords(metadataRecords);
+  const installationRecoveryDetected =
+    metadataLoaded
+    && recoverableMetadataCount > 0
+    && localQaLists.length === 0;
+  if (installationRecoveryDetected && !suppressRecoveryWarning) {
+    onRecoveryDetected?.("Local installation data was missing. Rebuilding QA list repos from GitHub.");
+  }
   let syncTargets = [];
   if (metadataLoaded) {
+    const metadataRepaired = await repairQaListMetadataFromRemoteRename(team, metadataRecords, remoteRepos);
+    if (metadataRepaired) {
+      metadataRecords = await listQaListMetadataRecords(team).catch(() => metadataRecords);
+    }
+    metadataRecords = await finalizeMissingQaListsForTeam(team, metadataRecords, remoteRepos);
     const metadataSyncTargets = buildMetadataQaListSyncTargets(team, metadataRecords, remoteRepos);
     const untrackedRemoteSyncTargets = await filterKnownDeletedQaListSyncTargets(
       team,
@@ -729,7 +939,10 @@ export async function loadRepoBackedQaListsForTeam(team, options = {}) {
     syncSnapshots,
     syncIssue,
     brokerWarning,
-    recoveryMessage: "",
+    recoveryMessage:
+      installationRecoveryDetected && !suppressRecoveryWarning
+        ? "Local installation data was missing. Rebuilt QA list repos from GitHub."
+        : "",
   };
 }
 

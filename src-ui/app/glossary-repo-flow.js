@@ -301,6 +301,63 @@ function findMatchingRemoteGlossary(record, remoteByRepoName, remoteByFullName) 
   return null;
 }
 
+function glossaryMetadataRecordFromSummary(glossary, remote = null) {
+  return {
+    glossaryId: glossary.id ?? glossary.glossaryId,
+    title: glossary.title,
+    repoName: glossary.repoName,
+    previousRepoNames: glossary.previousRepoNames ?? [],
+    githubRepoId: remote?.repoId ?? glossary.repoId ?? null,
+    githubNodeId: remote?.nodeId ?? glossary.nodeId ?? null,
+    fullName: remote?.fullName ?? glossary.fullName ?? null,
+    defaultBranch: remote?.defaultBranchName ?? glossary.defaultBranchName ?? "main",
+    lifecycleState: glossary.lifecycleState === "deleted" ? "deleted" : "active",
+    remoteState: glossary.remoteState ?? "linked",
+    recordState: glossary.recordState ?? "live",
+    deletedAt: glossary.deletedAt ?? null,
+    sourceLanguage: glossary.sourceLanguage ?? null,
+    targetLanguage: glossary.targetLanguage ?? null,
+    termCount: Number.isFinite(glossary.termCount) ? glossary.termCount : 0,
+  };
+}
+
+async function backfillGlossaryMetadataRecords(team, localSummaries, remoteRepos, metadataRecords) {
+  if (!Number.isFinite(team?.installationId) || state.offline?.isEnabled === true) {
+    return metadataRecords;
+  }
+  const existingIds = new Set((Array.isArray(metadataRecords) ? metadataRecords : []).map((record) => record.id));
+  const remoteByName = new Map(
+    (Array.isArray(remoteRepos) ? remoteRepos : [])
+      .map(normalizeRemoteGlossaryRepo)
+      .filter(Boolean)
+      .map((repo) => [repo.name, repo]),
+  );
+  let wroteRecord = false;
+  for (const glossary of (Array.isArray(localSummaries) ? localSummaries : []).map(normalizeGlossarySummary).filter(Boolean)) {
+    if (
+      !glossary.id
+      || existingIds.has(glossary.id)
+      || !glossary.repoName
+      || !glossary.sourceLanguage
+      || !glossary.targetLanguage
+    ) {
+      continue;
+    }
+    try {
+      await upsertGlossaryMetadataRecord(
+        team,
+        glossaryMetadataRecordFromSummary(glossary, remoteByName.get(glossary.repoName) ?? null),
+        { requirePushSuccess: true },
+      );
+      wroteRecord = true;
+      existingIds.add(glossary.id);
+    } catch (error) {
+      console.warn(`Could not backfill glossary metadata: ${error?.message ?? String(error)}`);
+    }
+  }
+  return wroteRecord ? await listGlossaryMetadataRecords(team) : metadataRecords;
+}
+
 function buildMetadataBackedGlossarySyncRepos(metadataRecords, remoteRepos, options = {}) {
   const remoteLoaded = options.remoteLoaded === true;
   const remoteByRepoName = new Map(
@@ -348,6 +405,38 @@ function buildMetadataBackedGlossarySyncRepos(metadataRecords, remoteRepos, opti
   }
 
   return syncRepos;
+}
+
+function buildUntrackedRemoteGlossaryBootstrapTargets(team, metadataRecords, remoteRepos) {
+  const trackedRepoNames = new Set();
+  const trackedFullNames = new Set();
+  for (const record of Array.isArray(metadataRecords) ? metadataRecords : []) {
+    if (typeof record?.repoName === "string" && record.repoName.trim()) {
+      trackedRepoNames.add(record.repoName.trim().toLowerCase());
+    }
+    if (typeof record?.fullName === "string" && record.fullName.trim()) {
+      trackedFullNames.add(record.fullName.trim().toLowerCase());
+    }
+    for (const previousRepoName of Array.isArray(record?.previousRepoNames) ? record.previousRepoNames : []) {
+      if (typeof previousRepoName === "string" && previousRepoName.trim()) {
+        trackedRepoNames.add(previousRepoName.trim().toLowerCase());
+      }
+    }
+  }
+
+  return (Array.isArray(remoteRepos) ? remoteRepos : [])
+    .map(normalizeRemoteGlossaryRepo)
+    .filter((repo) =>
+      repo
+      && !trackedRepoNames.has(String(repo.name ?? "").trim().toLowerCase())
+      && !trackedFullNames.has(String(repo.fullName ?? "").trim().toLowerCase())
+      && !isLocalHardDeletedResource(team, "glossary", {
+        repoName: repo.name,
+        fullName: repo.fullName,
+        repoId: repo.repoId,
+        nodeId: repo.nodeId,
+      })
+    );
 }
 
 function applyLocalGlossaryHardDeleteState(team, glossaries) {
@@ -686,6 +775,7 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
   remoteRepos = await listRemoteGlossaryReposForTeam(team);
   remoteLoaded = true;
   if (metadataLoaded) {
+    metadataRecords = await backfillGlossaryMetadataRecords(team, localSummaries, remoteRepos, metadataRecords);
     const metadataRepaired = await repairGlossaryMetadataFromRemoteRename(team, metadataRecords, remoteRepos);
     if (metadataRepaired) {
       metadataRecords = await listGlossaryMetadataRecords(team).catch(() => metadataRecords);
@@ -693,14 +783,26 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
     metadataRecords = await finalizeMissingGlossariesForTeam(team, metadataRecords, remoteRepos);
     localSummaries = await purgeTombstonedGlossariesForTeam(team, localSummaries, metadataRecords);
   }
-  const syncTargets = metadataRecords.length > 0
-    ? buildMetadataBackedGlossarySyncRepos(metadataRecords, remoteRepos, { remoteLoaded })
-    : await filterKnownDeletedGlossarySyncTargets(team, remoteRepos, localSummaries);
+  let syncTargets = [];
+  if (metadataLoaded) {
+    const metadataSyncTargets = buildMetadataBackedGlossarySyncRepos(metadataRecords, remoteRepos, { remoteLoaded });
+    const untrackedRemoteSyncTargets = await filterKnownDeletedGlossarySyncTargets(
+      team,
+      buildUntrackedRemoteGlossaryBootstrapTargets(team, metadataRecords, remoteRepos),
+      localSummaries,
+    );
+    syncTargets = [...metadataSyncTargets, ...untrackedRemoteSyncTargets];
+  } else {
+    syncTargets = await filterKnownDeletedGlossarySyncTargets(team, remoteRepos, localSummaries);
+  }
   const syncSnapshots = syncTargets.length > 0
     ? await syncGlossaryReposForTeam(team, syncTargets)
     : [];
   const refreshedLocalSummaries = await listLocalGlossarySummariesForTeam(team);
   const syncIssue = getGlossarySyncIssueMessage(syncSnapshots);
+  if (metadataLoaded) {
+    metadataRecords = await backfillGlossaryMetadataRecords(team, refreshedLocalSummaries, remoteRepos, metadataRecords);
+  }
 
   const mergedGlossaries = metadataLoaded
     ? mergeMetadataBackedGlossarySummaries(
