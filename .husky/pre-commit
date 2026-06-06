@@ -1,9 +1,8 @@
 #!/bin/sh
 # Gnosis TMS — Pre-commit Hook (Tier 1: Fast, <5s)
 #
-# Runs only cheap, file-level checks. Compilation-dependent checks
-# (clippy, fmt, ESLint) run in pre-push where the cost is amortised
-# across the whole branch, not every individual commit.
+# Runs cheap, file-level checks. Compilation-dependent checks
+# (clippy, fmt) run in pre-push.
 
 cd "$(git rev-parse --show-toplevel)" || exit 1
 
@@ -12,6 +11,15 @@ STAGED_FILES=$(git diff --cached --name-only)
 if [ -z "$STAGED_FILES" ]; then
   echo "No staged files — skipping checks."
   exit 0
+fi
+
+# ── ESLint (staged JS files only) ────────────────────────────────────
+
+STAGED_JS=$(echo "$STAGED_FILES" | grep -E 'src-ui/.+\.js$' | grep -v 'src-ui/lib/vendor/' || true)
+if [ -n "$STAGED_JS" ]; then
+  echo "Running ESLint on staged JS files..."
+  echo "$STAGED_JS" | tr '\n' '\0' | xargs -0 npx eslint
+  echo "ESLint passed."
 fi
 
 # ── Secret scanning (staged files only) ──────────────────────────────

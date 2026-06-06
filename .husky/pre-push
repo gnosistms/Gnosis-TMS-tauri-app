@@ -1,9 +1,9 @@
 #!/bin/sh
-# Gnosis TMS — Pre-push Hook (Tier 2: Lint + Format, ~1-2min)
+# Gnosis TMS — Pre-push Hook (Tier 2: Rust Format + Lint, ~1-2min)
 #
 # Runs compilation-dependent checks that are too slow for pre-commit
-# but must pass before sharing code. Full test execution is delegated
-# to CI — branch protection enforces it.
+# but must pass before sharing code. ESLint runs at pre-commit (fast,
+# staged files only). Full test execution is delegated to CI.
 #
 # RUST POSTURE: clippy runs with -D warnings (fail on any warning).
 # The current baseline has 54 clippy warnings + 7 files failing rustfmt.
@@ -11,10 +11,6 @@
 #   cargo fmt --manifest-path src-tauri/Cargo.toml --all
 #   cargo clippy --fix --manifest-path src-tauri/Cargo.toml --all-targets
 # See reviews/ for the full remediation plan.
-#
-# JS POSTURE: ESLint runs only on the changed files pushed in this
-# branch (delta mode). Pre-existing violations in untouched files do
-# not block. Run `npm run lint:js` to audit the full source tree.
 
 # Capture the ref list git feeds on stdin ONCE. Both the secret scan
 # (delta mode, below) and any future lfs hook consume it; stdin can
@@ -42,14 +38,9 @@ else
 fi
 
 RUN_RUST_CHECKS=false
-RUN_JS_CHECKS=false
 
 if echo "$CHANGED_FILES" | grep -Eq '(src-tauri/|.*\.rs$|Cargo\.toml|Cargo\.lock)'; then
   RUN_RUST_CHECKS=true
-fi
-
-if echo "$CHANGED_FILES" | grep -Eq '(src-ui/|.*\.js$|eslint\.config\.js|package\.json)'; then
-  RUN_JS_CHECKS=true
 fi
 
 # ── Rust: clippy + fmt ───────────────────────────────────────────────
@@ -65,21 +56,8 @@ if [ "$RUN_RUST_CHECKS" = true ]; then
   echo "Rust checks passed."
 fi
 
-# ── JS: ESLint (delta — changed files only) ──────────────────────────
-
-if [ "$RUN_JS_CHECKS" = true ]; then
-  echo "Running JS checks (changed files only)..."
-  CHANGED_JS=$(echo "$CHANGED_FILES" | grep -E 'src-ui/.+\.js$' | grep -v 'src-ui/lib/vendor/' || true)
-  if [ -n "$CHANGED_JS" ]; then
-    echo "$CHANGED_JS" | tr '\n' '\0' | xargs -0 npx eslint
-    echo "ESLint passed."
-  else
-    echo "No changed JS files to lint."
-  fi
-fi
-
-if [ "$RUN_RUST_CHECKS" = false ] && [ "$RUN_JS_CHECKS" = false ]; then
-  echo "No Rust or JS changes detected — skipping quality checks."
+if [ "$RUN_RUST_CHECKS" = false ]; then
+  echo "No Rust changes detected — skipping Rust checks."
 fi
 
 # ── Secret scanning (push delta only) ────────────────────────────────
