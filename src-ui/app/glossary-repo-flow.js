@@ -729,9 +729,20 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
     typeof options.onRecoveryDetected === "function"
       ? options.onRecoveryDetected
       : null;
+  const emptyResult = {
+    glossaries: [],
+    remoteRepos: [],
+    syncSnapshots: [],
+    syncIssue: "",
+    brokerWarning: "",
+    recoveryMessage: "",
+  };
+  if (!Number.isFinite(team?.installationId) || (!teamSupportsGlossaryRepos(team) && !invoke)) {
+    return emptyResult;
+  }
   let localSummaries = await listLocalGlossarySummariesForTeam(team);
 
-  if (offlineMode || !Number.isFinite(team?.installationId)) {
+  if (offlineMode || !teamSupportsGlossaryRepos(team)) {
     return {
       glossaries: sortGlossaries(
         applyLocalGlossaryHardDeleteState(
@@ -743,6 +754,7 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
       syncSnapshots: [],
       syncIssue: "",
       brokerWarning: "",
+      recoveryMessage: "",
     };
   }
 
