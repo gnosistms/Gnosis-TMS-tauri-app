@@ -785,6 +785,38 @@ async function purgeLocalQaListRepo(team, qaListId, repoName) {
   });
 }
 
+async function purgeTombstonedQaListsForTeam(team, localQaLists, metadataRecords) {
+  const normalizedQaLists = (Array.isArray(localQaLists) ? localQaLists : [])
+    .map(normalizeQaList)
+    .filter(Boolean);
+  const tombstoneRecords = (Array.isArray(metadataRecords) ? metadataRecords : []).filter(qaListMetadataRecordIsTombstone);
+  if (!Number.isFinite(team?.installationId) || tombstoneRecords.length === 0) {
+    return normalizedQaLists;
+  }
+
+  let changed = false;
+  for (const record of tombstoneRecords) {
+    if (typeof record?.repoName === "string" && record.repoName.trim()) {
+      try {
+        await purgeLocalQaListRepo(team, record.id, record.repoName);
+      } catch {}
+    }
+
+    for (const qaList of normalizedQaLists) {
+      if (!qaListMatchesMetadataRecord(qaList, record)) {
+        continue;
+      }
+      removeQaListFromState(qaList.id, qaList.repoName);
+      changed = true;
+    }
+  }
+  if (changed) {
+    persistVisibleQaLists(team);
+  }
+
+  return listLocalQaListsForTeam(team);
+}
+
 async function runQaListRepoPageSync(render, operation) {
   state.qaListsPage.isRefreshing = true;
   beginPageSync();
@@ -975,6 +1007,7 @@ export async function loadRepoBackedQaListsForTeam(team, options = {}) {
       await repairAutoRepairableRepoBindings(team, repairIssues);
       repairIssues = (await inspectAndMigrateLocalRepoBindings(team).catch(() => null))?.issues ?? repairIssues;
     }
+    localQaLists = await purgeTombstonedQaListsForTeam(team, localQaLists, metadataRecords);
     metadataRecords = await backfillQaListMetadataRecords(team, localQaLists, remoteRepos, metadataRecords);
   } catch (error) {
     brokerWarning = error?.message ?? String(error);
@@ -994,6 +1027,7 @@ export async function loadRepoBackedQaListsForTeam(team, options = {}) {
       metadataRecords = await listQaListMetadataRecords(team).catch(() => metadataRecords);
     }
     metadataRecords = await finalizeMissingQaListsForTeam(team, metadataRecords, remoteRepos);
+    localQaLists = await purgeTombstonedQaListsForTeam(team, localQaLists, metadataRecords);
     const metadataSyncTargets = buildMetadataQaListSyncTargets(team, metadataRecords, remoteRepos);
     const untrackedRemoteSyncTargets = await filterKnownDeletedQaListSyncTargets(
       team,

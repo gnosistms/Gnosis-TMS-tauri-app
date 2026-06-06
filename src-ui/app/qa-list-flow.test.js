@@ -693,6 +693,80 @@ test("repo-backed QA list load surfaces unrepaired local repo binding issues", a
   assert.equal(result.qaLists[0].repairIssueMessage, "Origin remote points at a different repo.");
 });
 
+test("repo-backed QA list load purges local checkout for tombstoned metadata records", async () => {
+  setupQaTeams();
+  const qaList = repoBackedQaList();
+  let localQaLists = [qaList];
+  let purgedLocalRepo = false;
+  state.qaLists = [qaList];
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "list_local_gtms_qa_lists") {
+      return localQaLists;
+    }
+    if (command === "list_gnosis_qa_lists_for_installation") {
+      return [];
+    }
+    if (command === "list_local_gnosis_qa_list_metadata_records") {
+      return [qaListMetadataRecord({
+        lifecycleState: "deleted",
+        remoteState: "deleted",
+        recordState: "tombstone",
+        deletedAt: "2026-06-01T00:00:00.000Z",
+      })];
+    }
+    if (command === "purge_local_gtms_qa_list_repo") {
+      purgedLocalRepo = true;
+      assert.deepEqual(payload.input, {
+        installationId: 1,
+        qaListId: qaList.id,
+        repoName: qaList.repoName,
+      });
+      localQaLists = [];
+    }
+    return { commitCreated: false };
+  };
+
+  const result = await loadRepoBackedQaListsForTeam(state.teams[0]);
+
+  assert.equal(purgedLocalRepo, true);
+  assert.deepEqual(result.qaLists, []);
+  assert.deepEqual(state.qaLists, []);
+});
+
+test("repo-backed QA list load does not purge local checkout for live metadata records", async () => {
+  setupQaTeams();
+  const qaList = repoBackedQaList();
+  let purgedLocalRepo = false;
+
+  invokeHandler = async (command) => {
+    if (command === "list_local_gtms_qa_lists") {
+      return [qaList];
+    }
+    if (command === "list_gnosis_qa_lists_for_installation") {
+      return [{
+        name: qaList.repoName,
+        fullName: qaList.fullName,
+        repoId: qaList.repoId,
+        nodeId: qaList.nodeId,
+        defaultBranchName: "main",
+      }];
+    }
+    if (command === "list_local_gnosis_qa_list_metadata_records") {
+      return [qaListMetadataRecord()];
+    }
+    if (command === "purge_local_gtms_qa_list_repo") {
+      purgedLocalRepo = true;
+    }
+    return { commitCreated: false };
+  };
+
+  const result = await loadRepoBackedQaListsForTeam(state.teams[0]);
+
+  assert.equal(purgedLocalRepo, false);
+  assert.deepEqual(result.qaLists.map((item) => item.id), [qaList.id]);
+});
+
 test("repo-backed QA list load does not finalize missing metadata when the remote matches by repo id only", async () => {
   setupQaTeams();
   const remoteRepo = {
