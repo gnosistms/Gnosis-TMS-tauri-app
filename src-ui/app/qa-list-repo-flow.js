@@ -6,9 +6,11 @@ import { normalizeQaList, sortQaLists } from "./qa-list-shared.js";
 import { state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import {
+  inspectAndMigrateLocalRepoBindings,
   listLocalQaListMetadataRecords,
   listQaListMetadataRecords,
   lookupLocalMetadataTombstone,
+  repairAutoRepairableRepoBindings,
   repairLocalRepoBinding,
   upsertQaListMetadataRecord,
 } from "./team-metadata-flow.js";
@@ -41,6 +43,46 @@ function normalizeQaListBrokerError(error) {
   }
 
   return new Error(String(error ?? "Unknown QA list broker error."));
+}
+
+function createQaListRepairIssueMaps(repairIssues = []) {
+  const byResourceId = new Map();
+  const byRepoName = new Map();
+
+  for (const issue of Array.isArray(repairIssues) ? repairIssues : []) {
+    if (issue?.kind !== "qaList") {
+      continue;
+    }
+    if (typeof issue.resourceId === "string" && issue.resourceId.trim()) {
+      byResourceId.set(issue.resourceId, issue);
+    }
+    if (typeof issue.repoName === "string" && issue.repoName.trim()) {
+      byRepoName.set(issue.repoName, issue);
+    }
+    if (typeof issue.expectedRepoName === "string" && issue.expectedRepoName.trim()) {
+      byRepoName.set(issue.expectedRepoName, issue);
+    }
+  }
+
+  return { byResourceId, byRepoName };
+}
+
+function matchingQaListRepairIssue(qaList, repairIssueMaps) {
+  if (!qaList || !repairIssueMaps) {
+    return null;
+  }
+  if (repairIssueMaps.byResourceId.has(qaList.id)) {
+    return repairIssueMaps.byResourceId.get(qaList.id);
+  }
+  if (repairIssueMaps.byRepoName.has(qaList.repoName)) {
+    return repairIssueMaps.byRepoName.get(qaList.repoName);
+  }
+  return null;
+}
+
+function supportsUnmatchedLocalQaList(qaList, repairIssueMaps) {
+  const repairIssue = matchingQaListRepairIssue(qaList, repairIssueMaps);
+  return repairIssue?.issueType === "strayLocalRepo";
 }
 
 async function repairQaListMetadataFromRemoteRename(team, metadataRecords, remoteRepos) {
@@ -586,7 +628,10 @@ function mergeQaListRepoMetadata(localQaLists, remoteRepos) {
   );
 }
 
-function mergeMetadataBackedQaLists(localQaLists, metadataRecords, remoteRepos) {
+function mergeMetadataBackedQaLists(localQaLists, metadataRecords, remoteRepos, options = {}) {
+  const metadataLoaded = options.metadataLoaded === true;
+  const repairLoaded = options.repairLoaded === true;
+  const repairIssueMaps = createQaListRepairIssueMaps(options.repairIssues);
   const normalizedLocals = (Array.isArray(localQaLists) ? localQaLists : [])
     .map(normalizeQaList)
     .filter(Boolean);
@@ -608,10 +653,20 @@ function mergeMetadataBackedQaLists(localQaLists, metadataRecords, remoteRepos) 
   const localById = new Map(normalizedLocals.map((qaList) => [qaList.id, qaList]));
   const localByRepoName = new Map(normalizedLocals.map((qaList) => [qaList.repoName, qaList]));
   const matchedLocalIds = new Set();
+  const matchedLocalRepoNames = new Set();
   const merged = [];
 
   for (const record of Array.isArray(metadataRecords) ? metadataRecords : []) {
-    if (record?.recordState !== "live") {
+    if (record?.recordState !== "live" && record?.recordState !== "tombstone") {
+      continue;
+    }
+    if (record?.recordState === "tombstone") {
+      if (typeof record?.id === "string" && record.id.trim()) {
+        matchedLocalIds.add(record.id);
+      }
+      if (typeof record?.repoName === "string" && record.repoName.trim()) {
+        matchedLocalRepoNames.add(record.repoName);
+      }
       continue;
     }
     const localQaList = localById.get(record.id) ?? localByRepoName.get(record.repoName) ?? null;
@@ -624,7 +679,9 @@ function mergeMetadataBackedQaLists(localQaLists, metadataRecords, remoteRepos) 
     );
     if (localQaList) {
       matchedLocalIds.add(localQaList.id);
+      matchedLocalRepoNames.add(localQaList.repoName);
     }
+    const repairIssue = matchingQaListRepairIssue({ id: record.id, repoName: record.repoName }, repairIssueMaps);
     merged.push(normalizeQaList({
       ...localQaList,
       id: record.id,
@@ -634,6 +691,9 @@ function mergeMetadataBackedQaLists(localQaLists, metadataRecords, remoteRepos) 
       lifecycleState: record.lifecycleState,
       remoteState: record.remoteState,
       recordState: record.recordState,
+      resolutionState: repairIssue ? "repair" : "",
+      repairIssueType: repairIssue?.issueType ?? "",
+      repairIssueMessage: repairIssue?.message ?? "",
       deletedAt: record.deletedAt,
       language: localQaList?.language ?? record.language,
       termCount: localQaList?.termCount ?? record.termCount ?? 0,
@@ -654,9 +714,28 @@ function mergeMetadataBackedQaLists(localQaLists, metadataRecords, remoteRepos) 
   }
 
   for (const qaList of normalizedLocals) {
-    if (!matchedLocalIds.has(qaList.id)) {
-      merged.push(qaList);
+    if (matchedLocalIds.has(qaList.id) || matchedLocalRepoNames.has(qaList.repoName)) {
+      continue;
     }
+    if (qaList?.recordState === "tombstone") {
+      continue;
+    }
+    const repairIssue = matchingQaListRepairIssue(qaList, repairIssueMaps);
+    if (metadataLoaded && repairLoaded && !supportsUnmatchedLocalQaList(qaList, repairIssueMaps)) {
+      continue;
+    }
+    merged.push(normalizeQaList({
+      ...qaList,
+      resolutionState:
+        repairIssue
+          ? "repair"
+          : metadataLoaded
+            && qaList.recordState !== "tombstone"
+              ? "unregisteredLocal"
+              : qaList.resolutionState ?? "",
+      repairIssueType: repairIssue?.issueType ?? "",
+      repairIssueMessage: repairIssue?.message ?? "",
+    }));
   }
 
   return sortQaLists(merged.filter(Boolean));
@@ -883,11 +962,19 @@ export async function loadRepoBackedQaListsForTeam(team, options = {}) {
 
   const remoteRepos = await listRemoteQaListReposForTeam(team);
   let metadataRecords = [];
+  let repairIssues = [];
   let metadataLoaded = false;
+  let repairLoaded = false;
   let brokerWarning = "";
   try {
     metadataRecords = await listQaListMetadataRecords(team);
     metadataLoaded = true;
+    repairIssues = (await inspectAndMigrateLocalRepoBindings(team))?.issues ?? [];
+    repairLoaded = true;
+    if (repairIssues.length > 0) {
+      await repairAutoRepairableRepoBindings(team, repairIssues);
+      repairIssues = (await inspectAndMigrateLocalRepoBindings(team).catch(() => null))?.issues ?? repairIssues;
+    }
     metadataRecords = await backfillQaListMetadataRecords(team, localQaLists, remoteRepos, metadataRecords);
   } catch (error) {
     brokerWarning = error?.message ?? String(error);
@@ -930,7 +1017,12 @@ export async function loadRepoBackedQaListsForTeam(team, options = {}) {
     metadataRecords = await backfillQaListMetadataRecords(team, localQaLists, remoteRepos, metadataRecords);
   }
   const mergedQaLists = metadataLoaded
-    ? mergeMetadataBackedQaLists(localQaLists, metadataRecords, remoteRepos)
+    ? mergeMetadataBackedQaLists(
+        localQaLists,
+        metadataRecords,
+        remoteRepos,
+        { metadataLoaded, repairLoaded, repairIssues },
+      )
     : mergeQaListRepoMetadata(localQaLists, remoteRepos);
 
   return {

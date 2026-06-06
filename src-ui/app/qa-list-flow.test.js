@@ -591,6 +591,108 @@ test("repo-backed QA list load reports recovery when local repos are rebuilt fro
   assert.equal(result.qaLists[0].id, qaList.id);
 });
 
+test("repo-backed QA list load auto-repairs repairable local repo bindings", async () => {
+  setupQaTeams();
+  const qaList = repoBackedQaList();
+  let inspectCount = 0;
+  let repairedBinding = null;
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "list_local_gtms_qa_lists") {
+      return [qaList];
+    }
+    if (command === "list_gnosis_qa_lists_for_installation") {
+      return [{
+        name: qaList.repoName,
+        fullName: qaList.fullName,
+        repoId: qaList.repoId,
+        nodeId: qaList.nodeId,
+        defaultBranchName: "main",
+      }];
+    }
+    if (command === "list_local_gnosis_qa_list_metadata_records") {
+      return [qaListMetadataRecord()];
+    }
+    if (command === "inspect_and_migrate_local_repo_bindings") {
+      inspectCount += 1;
+      return inspectCount === 1
+        ? {
+            issues: [{
+              kind: "qaList",
+              resourceId: qaList.id,
+              repoName: qaList.repoName,
+              issueType: "missingOrigin",
+              canAutoRepair: true,
+              message: "Missing origin remote.",
+            }],
+          }
+        : { issues: [] };
+    }
+    if (command === "repair_local_repo_binding") {
+      repairedBinding = payload.input;
+      return {
+        kind: payload.input.kind,
+        resourceId: payload.input.resourceId,
+        repoName: qaList.repoName,
+        issueType: "",
+        canAutoRepair: false,
+      };
+    }
+    return { commitCreated: false };
+  };
+
+  await loadRepoBackedQaListsForTeam(state.teams[0]);
+
+  assert.equal(inspectCount, 2);
+  assert.deepEqual(repairedBinding, {
+    installationId: 1,
+    kind: "qaList",
+    resourceId: qaList.id,
+  });
+});
+
+test("repo-backed QA list load surfaces unrepaired local repo binding issues", async () => {
+  setupQaTeams();
+  const qaList = repoBackedQaList();
+
+  invokeHandler = async (command) => {
+    if (command === "list_local_gtms_qa_lists") {
+      return [qaList];
+    }
+    if (command === "list_gnosis_qa_lists_for_installation") {
+      return [{
+        name: qaList.repoName,
+        fullName: qaList.fullName,
+        repoId: qaList.repoId,
+        nodeId: qaList.nodeId,
+        defaultBranchName: "main",
+      }];
+    }
+    if (command === "list_local_gnosis_qa_list_metadata_records") {
+      return [qaListMetadataRecord()];
+    }
+    if (command === "inspect_and_migrate_local_repo_bindings") {
+      return {
+        issues: [{
+          kind: "qaList",
+          resourceId: qaList.id,
+          repoName: qaList.repoName,
+          issueType: "invalidOrigin",
+          canAutoRepair: false,
+          message: "Origin remote points at a different repo.",
+        }],
+      };
+    }
+    return { commitCreated: false };
+  };
+
+  const result = await loadRepoBackedQaListsForTeam(state.teams[0]);
+
+  assert.equal(result.qaLists[0].resolutionState, "repair");
+  assert.equal(result.qaLists[0].repairIssueType, "invalidOrigin");
+  assert.equal(result.qaLists[0].repairIssueMessage, "Origin remote points at a different repo.");
+});
+
 test("repo-backed QA list load does not finalize missing metadata when the remote matches by repo id only", async () => {
   setupQaTeams();
   const remoteRepo = {
@@ -853,10 +955,23 @@ test("repairQaListRepoBinding repairs the local binding and reloads QA lists", a
       return [repairedQaList];
     }
     if (command === "list_gnosis_qa_lists_for_installation") {
-      return [];
+      return [{
+        name: repairedQaList.repoName,
+        fullName: repairedQaList.fullName,
+        repoId: repairedQaList.repoId,
+        nodeId: repairedQaList.nodeId,
+        defaultBranchName: "main",
+      }];
     }
     if (command === "list_local_gnosis_qa_list_metadata_records") {
-      return [];
+      return [qaListMetadataRecord({
+        id: repairedQaList.id,
+        title: repairedQaList.title,
+        repoName: repairedQaList.repoName,
+        fullName: repairedQaList.fullName,
+        githubRepoId: repairedQaList.repoId,
+        githubNodeId: repairedQaList.nodeId,
+      })];
     }
     if (command === "upsert_local_gnosis_qa_list_metadata_record") {
       return { commitCreated: true };
@@ -886,10 +1001,23 @@ test("rebuildQaListLocalRepo reloads QA lists without repairing metadata", async
       return [rebuiltQaList];
     }
     if (command === "list_gnosis_qa_lists_for_installation") {
-      return [];
+      return [{
+        name: rebuiltQaList.repoName,
+        fullName: rebuiltQaList.fullName,
+        repoId: rebuiltQaList.repoId,
+        nodeId: rebuiltQaList.nodeId,
+        defaultBranchName: "main",
+      }];
     }
     if (command === "list_local_gnosis_qa_list_metadata_records") {
-      return [];
+      return [qaListMetadataRecord({
+        id: rebuiltQaList.id,
+        title: rebuiltQaList.title,
+        repoName: rebuiltQaList.repoName,
+        fullName: rebuiltQaList.fullName,
+        githubRepoId: rebuiltQaList.repoId,
+        githubNodeId: rebuiltQaList.nodeId,
+      })];
     }
     if (command === "upsert_local_gnosis_qa_list_metadata_record") {
       return { commitCreated: true };
