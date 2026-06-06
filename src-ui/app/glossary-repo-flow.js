@@ -159,7 +159,7 @@ async function finalizeMissingGlossariesForTeam(team, metadataRecords, remoteRep
   return listGlossaryMetadataRecords(team).catch(() => metadataRecords);
 }
 
-function normalizeRemoteGlossaryRepo(repo) {
+export function normalizeRemoteGlossaryRepo(repo) {
   if (!repo || typeof repo !== "object") {
     return null;
   }
@@ -236,6 +236,22 @@ function glossaryRepoSyncDescriptor(repo) {
     defaultBranchName: repo.defaultBranchName || "main",
     defaultBranchHeadOid: repo.defaultBranchHeadOid || null,
     ...repoTransportLifecycleFields(repo),
+  };
+}
+
+export function glossaryRepoDescriptor(glossary) {
+  if (!glossary?.repoName || !glossary?.fullName) {
+    return null;
+  }
+
+  return {
+    glossaryId: glossary.id ?? glossary.glossaryId ?? null,
+    repoName: glossary.repoName,
+    fullName: glossary.fullName,
+    repoId: Number.isFinite(glossary.repoId) ? glossary.repoId : null,
+    defaultBranchName: glossary.defaultBranchName || "main",
+    defaultBranchHeadOid: glossary.defaultBranchHeadOid || null,
+    ...repoTransportLifecycleFields(glossary),
   };
 }
 
@@ -713,7 +729,7 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
   };
 }
 
-export async function createRemoteGlossaryRepoForTeam(team, repoName) {
+export async function createRemoteGlossaryRepoWithName(team, repoName) {
   let createdRepo;
   try {
     createdRepo = await invoke("create_gnosis_glossary_repo", {
@@ -733,6 +749,10 @@ export async function createRemoteGlossaryRepoForTeam(team, repoName) {
     throw new Error("Could not determine the new glossary repo metadata.");
   }
   return remoteRepo;
+}
+
+export async function createRemoteGlossaryRepoForTeam(team, repoName) {
+  return createRemoteGlossaryRepoWithName(team, repoName);
 }
 
 export async function permanentlyDeleteRemoteGlossaryRepoForTeam(team, repoName) {
@@ -799,32 +819,26 @@ export async function rebuildGlossaryLocalRepo(render, team, glossaryId) {
 }
 
 export async function syncSingleGlossaryForTeam(team, glossary) {
-  const repo =
-    glossary && typeof glossary === "object"
-      ? normalizeRemoteGlossaryRepo({
-          name: glossary.repoName ?? glossary.name,
-          fullName: glossary.fullName,
-          htmlUrl: glossary.htmlUrl,
-          private: glossary.private,
-          description: glossary.description,
-          defaultBranchName: glossary.defaultBranchName,
-          defaultBranchHeadOid: glossary.defaultBranchHeadOid,
-          repoId: glossary.repoId,
-          nodeId: glossary.nodeId,
-        })
-      : null;
+  const descriptor = glossaryRepoDescriptor(glossary);
+  const repo = descriptor
+    ? normalizeRemoteGlossaryRepo({
+        glossaryId: descriptor.glossaryId,
+        name: descriptor.repoName,
+        fullName: descriptor.fullName,
+        htmlUrl: glossary.htmlUrl,
+        private: glossary.private,
+        description: glossary.description,
+        defaultBranchName: descriptor.defaultBranchName,
+        defaultBranchHeadOid: descriptor.defaultBranchHeadOid,
+        repoId: descriptor.repoId,
+        nodeId: glossary.nodeId,
+        ...repoTransportLifecycleFields(descriptor),
+      })
+    : null;
 
   if (!repo) {
     return [];
   }
 
-  return syncGlossaryReposForTeam(team, [{
-    ...repo,
-    glossaryId:
-      typeof glossary?.id === "string" && glossary.id.trim()
-        ? glossary.id.trim()
-        : typeof glossary?.glossaryId === "string" && glossary.glossaryId.trim()
-          ? glossary.glossaryId.trim()
-          : null,
-  }]);
+  return syncGlossaryReposForTeam(team, [repo]);
 }
