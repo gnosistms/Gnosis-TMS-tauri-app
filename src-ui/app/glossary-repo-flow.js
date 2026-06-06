@@ -407,6 +407,38 @@ function buildMetadataBackedGlossarySyncRepos(metadataRecords, remoteRepos, opti
   return syncRepos;
 }
 
+function buildUntrackedRemoteGlossaryBootstrapTargets(team, metadataRecords, remoteRepos) {
+  const trackedRepoNames = new Set();
+  const trackedFullNames = new Set();
+  for (const record of Array.isArray(metadataRecords) ? metadataRecords : []) {
+    if (typeof record?.repoName === "string" && record.repoName.trim()) {
+      trackedRepoNames.add(record.repoName.trim().toLowerCase());
+    }
+    if (typeof record?.fullName === "string" && record.fullName.trim()) {
+      trackedFullNames.add(record.fullName.trim().toLowerCase());
+    }
+    for (const previousRepoName of Array.isArray(record?.previousRepoNames) ? record.previousRepoNames : []) {
+      if (typeof previousRepoName === "string" && previousRepoName.trim()) {
+        trackedRepoNames.add(previousRepoName.trim().toLowerCase());
+      }
+    }
+  }
+
+  return (Array.isArray(remoteRepos) ? remoteRepos : [])
+    .map(normalizeRemoteGlossaryRepo)
+    .filter((repo) =>
+      repo
+      && !trackedRepoNames.has(String(repo.name ?? "").trim().toLowerCase())
+      && !trackedFullNames.has(String(repo.fullName ?? "").trim().toLowerCase())
+      && !isLocalHardDeletedResource(team, "glossary", {
+        repoName: repo.name,
+        fullName: repo.fullName,
+        repoId: repo.repoId,
+        nodeId: repo.nodeId,
+      })
+    );
+}
+
 function applyLocalGlossaryHardDeleteState(team, glossaries) {
   const items = Array.isArray(glossaries) ? glossaries : [];
   clearRestoredLocalHardDeleteTombstones(team, "glossary", items, {
@@ -751,9 +783,18 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
     metadataRecords = await finalizeMissingGlossariesForTeam(team, metadataRecords, remoteRepos);
     localSummaries = await purgeTombstonedGlossariesForTeam(team, localSummaries, metadataRecords);
   }
-  const syncTargets = metadataRecords.length > 0
-    ? buildMetadataBackedGlossarySyncRepos(metadataRecords, remoteRepos, { remoteLoaded })
-    : await filterKnownDeletedGlossarySyncTargets(team, remoteRepos, localSummaries);
+  let syncTargets = [];
+  if (metadataLoaded) {
+    const metadataSyncTargets = buildMetadataBackedGlossarySyncRepos(metadataRecords, remoteRepos, { remoteLoaded });
+    const untrackedRemoteSyncTargets = await filterKnownDeletedGlossarySyncTargets(
+      team,
+      buildUntrackedRemoteGlossaryBootstrapTargets(team, metadataRecords, remoteRepos),
+      localSummaries,
+    );
+    syncTargets = [...metadataSyncTargets, ...untrackedRemoteSyncTargets];
+  } else {
+    syncTargets = await filterKnownDeletedGlossarySyncTargets(team, remoteRepos, localSummaries);
+  }
   const syncSnapshots = syncTargets.length > 0
     ? await syncGlossaryReposForTeam(team, syncTargets)
     : [];

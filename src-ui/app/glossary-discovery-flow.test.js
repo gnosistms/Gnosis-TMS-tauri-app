@@ -275,6 +275,87 @@ test("repo-backed glossary load backfills missing metadata records for local rep
   assert.equal(result.glossaries[0].id, localGlossary.id);
 });
 
+test("repo-backed glossary load bootstraps remote repos that do not have metadata yet", async () => {
+  setupGlossaryLoadState();
+  const team = state.teams[0];
+  const remoteRepo = {
+    name: "glossary-japanese-vietnamese",
+    fullName: "team-1/glossary-japanese-vietnamese",
+    repoId: 33,
+    nodeId: "repo-node-33",
+    defaultBranchName: "main",
+    defaultBranchHeadOid: "head-remote",
+  };
+  const syncedGlossary = {
+    glossaryId: "glossary-japanese-vietnamese-id",
+    id: "glossary-japanese-vietnamese-id",
+    title: "Japanese Vietnamese Glossary",
+    repoName: remoteRepo.name,
+    fullName: remoteRepo.fullName,
+    sourceLanguage: { code: "ja", name: "Japanese" },
+    targetLanguage: { code: "vi", name: "Vietnamese" },
+    lifecycleState: "active",
+    termCount: 0,
+  };
+  let metadataRecords = [];
+  let didSyncGlossaryRepo = false;
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "list_local_gtms_glossaries") {
+      return didSyncGlossaryRepo ? [syncedGlossary] : [];
+    }
+    if (command === "list_gnosis_glossaries_for_installation") {
+      return [remoteRepo];
+    }
+    if (command === "sync_local_team_metadata_repo" || command === "ensure_local_team_metadata_repo") {
+      return { commitCreated: false };
+    }
+    if (command === "list_local_gnosis_glossary_metadata_records") {
+      return metadataRecords;
+    }
+    if (command === "inspect_and_migrate_local_repo_bindings") {
+      return { issues: [], autoRepairedCount: 0 };
+    }
+    if (command === "sync_gtms_glossary_repos") {
+      didSyncGlossaryRepo = true;
+      assert.deepEqual(
+        payload.input.glossaries.map((glossary) => glossary.repoName),
+        [remoteRepo.name],
+      );
+      return [{ repoName: remoteRepo.name, status: "upToDate" }];
+    }
+    if (command === "upsert_local_gnosis_glossary_metadata_record") {
+      metadataRecords = [{
+        id: payload.input.glossaryId,
+        kind: "glossary",
+        title: payload.input.title,
+        repoName: payload.input.repoName,
+        previousRepoNames: payload.input.previousRepoNames,
+        githubRepoId: payload.input.githubRepoId,
+        githubNodeId: payload.input.githubNodeId,
+        fullName: payload.input.fullName,
+        defaultBranch: payload.input.defaultBranch,
+        lifecycleState: payload.input.lifecycleState,
+        remoteState: payload.input.remoteState,
+        recordState: payload.input.recordState,
+        deletedAt: payload.input.deletedAt,
+        sourceLanguage: payload.input.sourceLanguage,
+        targetLanguage: payload.input.targetLanguage,
+        termCount: syncedGlossary.termCount,
+      }];
+      return { commitCreated: true };
+    }
+    return { commitCreated: false };
+  };
+
+  const result = await loadRepoBackedGlossariesForTeam(team);
+
+  assert.equal(didSyncGlossaryRepo, true);
+  assert.equal(result.glossaries.length, 1);
+  assert.equal(result.glossaries[0].id, syncedGlossary.id);
+  assert.equal(metadataRecords.length, 1);
+});
+
 test("glossary load treats unowned preserve requests as normal loads on failure", async () => {
   setupGlossaryLoadState();
   const team1 = state.teams[0];
