@@ -72,6 +72,45 @@ Each commit mirrors the proven counterpart, keeps public exports/signatures stab
 After all five, the two `loadRepoBacked*` paths should mirror (token-substituted diff near-empty apart
 from language residue), unblocking the Phase B collapse into `repo-resource/repo-flow.js`.
 
+## Part 3 — additional gaps found after PR #64 (spec correction)
+
+PR #64 correctly and safely landed RF1–RF5 (all faithful mirrors; RF2 with its full safety-test
+matrix). But the `loadRepoBacked*` paths still diverge ~92 normalized lines — the original inventory
+under-scoped. Two more genuine, term-model-agnostic capability gaps plus structural drift remain.
+Honor the "full reconcile first" decision by closing these before Phase B.
+
+| # | Behavior | Has it | Lacks it | Safety class |
+|---|---|---|---|---|
+| RF6 | **Automatic** repo-binding `inspectAndMigrateLocalRepoBindings` + `repairAutoRepairableRepoBindings` **during load** (not just the manual button) | glossary | QA | safe (repair/migrate) |
+| RF7 | `purgeTombstoned…ForTeam` **during load** — remove local checkouts of already-tombstoned records | glossary | QA | **mild data-touch** (purges checkouts of records *already* tombstoned — lower risk than RF2, but still deletes local data; mirror glossary exactly) |
+
+Both underlying helpers (`inspectAndMigrateLocalRepoBindings`, `repairAutoRepairableRepoBindings` in
+`team-metadata-flow.js`) are already shared/term-model-agnostic — QA's load just never calls them.
+
+### Structural convergence (required for a clean collapse)
+RF6 is the **keystone**: glossary threads `repairIssues`/`repairLoaded` from RF6 into its merge-tail
+(`mergeMetadataBackedGlossarySummaries(..., {metadataLoaded, remoteLoaded, repairLoaded, repairIssues})`).
+Porting RF6 to QA lets QA's `mergeMetadataBackedQaLists` adopt the same signature, converging the tail.
+After RF6/RF7, converge the remaining drift (each behavior-preserving, its own commit):
+- sync-target builder shape (`buildMetadataBacked*SyncRepos(records, remote, {remoteLoaded})` vs
+  `buildMetadata*SyncTargets(team, records, remote)`) — pick one.
+- early-return gating (`!teamSupportsQaListRepos` + `emptyResult` vs `!Number.isFinite(installationId)`).
+- `brokerWarning` surfacing (QA returns it; glossary returns `""`) — QA's is arguably better; port to glossary.
+- the still-uncanonicalized `listLocalGlossarySummariesForTeam` vs `listLocalQaListsForTeam` naming.
+
+### Flag for Claude (possible latent bug — investigate, don't guess)
+The return shape differs: glossary returns `remoteRepos: syncTargets` while QA returns
+`remoteRepos: remoteRepos` (raw remote list). Same-named field, different contents. Trace what consumes
+`loadRepoBacked*ForTeam(...).remoteRepos` on each side and converge to the correct one — this may be a
+real bug, not just drift.
+
+### Sequencing (part 3)
+1. **RF6** (keystone — brings merge-tail convergence). 2. **RF7** (mirror glossary's purgeTombstoned
+exactly; tests for "tombstoned record's local checkout is purged on load" + "live record is not").
+3. Structural convergence commits (sync-target builder, gating, brokerWarning, naming). 4. Resolve the
+`remoteRepos` return-shape question. Target: token-substituted load-path diff near-empty (language
+residue only), then Phase B.
+
 ## Phase B note (after this spec lands)
 
 The now-symmetric reconciliation primitives (currently `glossary-discovery.js` + the QA equivalents
