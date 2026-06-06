@@ -762,6 +762,7 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
   let repairIssues = [];
   let metadataLoaded = false;
   let repairLoaded = false;
+  let brokerWarning = "";
   try {
     metadataRecords = await listGlossaryMetadataRecords(team);
     metadataLoaded = true;
@@ -772,7 +773,9 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
       repairIssues = (await inspectAndMigrateLocalRepoBindings(team).catch(() => null))?.issues ?? repairIssues;
     }
     localSummaries = await purgeTombstonedGlossariesForTeam(team, localSummaries, metadataRecords);
-  } catch {}
+  } catch (error) {
+    brokerWarning = error?.message ?? String(error);
+  }
   const recoverableMetadataCount = countRecoverableGlossaryMetadataRecords(metadataRecords);
   const installationRecoveryDetected =
     metadataLoaded
@@ -835,7 +838,7 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
     remoteRepos: syncTargets,
     syncSnapshots,
     syncIssue,
-    brokerWarning: "",
+    brokerWarning,
     recoveryMessage:
       installationRecoveryDetected && !suppressRecoveryWarning
         ? "Local installation data was missing. Rebuilt glossary repos from GitHub."

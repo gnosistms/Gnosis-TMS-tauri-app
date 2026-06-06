@@ -187,6 +187,10 @@ test("glossary fallback sync skips repos already deleted in visible state", asyn
   const result = await loadRepoBackedGlossariesForTeam(team);
 
   assert.equal(result.syncSnapshots.length, 0);
+  assert.equal(
+    result.brokerWarning,
+    "Glossary metadata could not be loaded from the local team-metadata repo. metadata unavailable",
+  );
 });
 
 test("repo-backed glossary load backfills missing metadata records for local repos", async () => {
