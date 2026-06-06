@@ -8,8 +8,6 @@ import {
   canCreateGlossaries,
   selectedTeam,
 } from "./glossary-shared.js";
-import { openLocalFilePicker } from "./local-file-picker.js";
-import { enforceImportFileSizeLimit } from "./import-file-limit.js";
 import {
   createRemoteGlossaryRepoForTeam,
   getGlossarySyncIssueMessage,
@@ -30,13 +28,11 @@ import {
   updateEntityFormField,
 } from "./resource-entity-modal.js";
 import {
-  clearResourceCreateProgress,
   guardResourceCreateStart,
   showResourceCreateProgress,
 } from "./resource-create-flow.js";
 import {
   areResourcePageWritesDisabled,
-  submitResourcePageWrite,
 } from "./resource-page-controller.js";
 import { loadTeamGlossaries } from "./glossary-discovery-flow.js";
 import { classifySyncError } from "./sync-error.js";
@@ -46,6 +42,11 @@ import {
   selectedGlossaryTeamMatches,
   upsertGlossaryForTeam,
 } from "./glossary-top-level-state.js";
+import {
+  createRepoResourceImportFlow,
+  importFileBytes,
+  importFileName,
+} from "./repo-resource/import-flow.js";
 
 export const GLOSSARY_IMPORT_ACCEPT = ".tmx,text/xml,application/xml";
 
@@ -55,50 +56,6 @@ export function detectGlossaryImportFileType(fileName) {
     return "tmx";
   }
   return null;
-}
-
-function readableImportFileLike(value) {
-  return value && typeof value === "object" && typeof value.arrayBuffer === "function";
-}
-
-function droppedPathFileLike(value) {
-  return value && typeof value === "object" && typeof value.dataBase64 === "string";
-}
-
-function importFileName(value, fallback = "file") {
-  const name = typeof value?.name === "string" ? value.name.trim() : "";
-  return name || fallback;
-}
-
-function decodeBase64ToBytes(dataBase64) {
-  const normalized = typeof dataBase64 === "string" ? dataBase64.trim() : "";
-  if (!normalized) {
-    throw new Error("The file could not be read.");
-  }
-
-  if (typeof globalThis.atob === "function") {
-    const binary = globalThis.atob(normalized);
-    return Array.from(binary, (character) => character.charCodeAt(0));
-  }
-
-  if (typeof Buffer === "function") {
-    return Array.from(Buffer.from(normalized, "base64"));
-  }
-
-  throw new Error("Base64 decoding is unavailable.");
-}
-
-async function importFileBytes(file) {
-  if (readableImportFileLike(file)) {
-    enforceImportFileSizeLimit(file.size, importFileName(file));
-    return Array.from(new Uint8Array(await file.arrayBuffer()));
-  }
-
-  if (droppedPathFileLike(file)) {
-    return decodeBase64ToBytes(file.dataBase64);
-  }
-
-  throw new Error("The file could not be read.");
 }
 
 function glossaryImportModalState(overrides = {}) {
@@ -487,6 +444,21 @@ async function reloadGlossariesAfterWrite(render, team, options = {}) {
   return state.glossaries;
 }
 
+const glossaryImportFlow = createRepoResourceImportFlow({
+  accept: GLOSSARY_IMPORT_ACCEPT,
+  pageState: () => state.glossariesPage,
+  syncController: glossaryPageSyncController,
+  setProgress: setGlossariesPageProgress,
+  clearProgress: clearNoticeBadge,
+  isImportModalOpen: () => state.glossaryImport.isOpen,
+  isImporting: () => state.glossaryImport.status === "importing",
+  importFile: importGlossaryFile,
+  setImportError: setGlossaryImportError,
+  selectedTeamMatches: selectedGlossaryTeamMatches,
+  upsertForTeam: upsertGlossaryForTeam,
+  resultResourceField: "glossary",
+});
+
 export function openGlossaryCreation(render) {
   const team = selectedTeam();
   if (areResourcePageWritesDisabled(state.glossariesPage)) {
@@ -593,12 +565,7 @@ export async function submitGlossaryCreation(render) {
   state.glossaryCreation.status = "loading";
   state.glossaryCreation.error = "";
   render();
-  await submitResourcePageWrite({
-    pageState: state.glossariesPage,
-    syncController: glossaryPageSyncController,
-    setProgress: (text) => setGlossariesPageProgress(render, text),
-    clearProgress: clearNoticeBadge,
-    render,
+  await glossaryImportFlow.submitImportWrite(render, {
     onBlocked: async () => {
       state.glossaryCreation.status = "idle";
       state.glossaryCreation.error = "Wait for the current glossary refresh or write to finish.";
@@ -611,19 +578,12 @@ export async function submitGlossaryCreation(render) {
         sourceLanguage,
         targetLanguage,
       }, render),
-    refreshOptions: {
-      loadData: async () => {
-        showResourceCreateProgress(render, "Refreshing glossary list...");
-        return reloadGlossariesAfterWrite(render, team, { suppressRecoveryWarning: true });
-      },
-    },
+    refreshProgressText: "Refreshing glossary list...",
+    loadData: async () => reloadGlossariesAfterWrite(render, team, { suppressRecoveryWarning: true }),
     onSuccess: async (result) => {
-      clearResourceCreateProgress();
       resetGlossaryCreation();
       state.selectedGlossaryId = result.glossaryId;
-      if (selectedGlossaryTeamMatches(team) && result.glossary) {
-        upsertGlossaryForTeam(team, result.glossary, null, { preserveCreate: true });
-      }
+      glossaryImportFlow.upsertCreatedResourceForTeam(team, result);
       const refreshedGlossary = state.glossaries.find((item) => item.id === result.glossaryId) ?? null;
       makeGlossaryDefaultIfFirst(team, result.glossaryId);
       showNoticeBadge(
@@ -637,7 +597,6 @@ export async function submitGlossaryCreation(render) {
       });
     },
     onError: async (error) => {
-      clearResourceCreateProgress();
       if (await handleSyncFailure(classifySyncError(error), { render })) {
         return;
       }
@@ -712,14 +671,7 @@ export async function selectGlossaryImportFile(render) {
     return;
   }
 
-  const selectedFile = await openLocalFilePicker({
-    accept: GLOSSARY_IMPORT_ACCEPT,
-  });
-  if (!selectedFile) {
-    return;
-  }
-
-  await importGlossaryFile(render, selectedFile);
+  await glossaryImportFlow.selectImportFile(render);
 }
 
 export async function importGlossaryFile(render, selectedFile) {
@@ -748,12 +700,7 @@ export async function importGlossaryFile(render, selectedFile) {
   });
   render();
 
-  await submitResourcePageWrite({
-    pageState: state.glossariesPage,
-    syncController: glossaryPageSyncController,
-    setProgress: (text) => setGlossariesPageProgress(render, text),
-    clearProgress: clearNoticeBadge,
-    render,
+  await glossaryImportFlow.submitImportWrite(render, {
     onBlocked: async () => {
       showNoticeBadge("Wait for the current glossary refresh or write to finish.", render);
     },
@@ -854,14 +801,9 @@ export async function importGlossaryFile(render, selectedFile) {
         throw error;
       }
     },
-    refreshOptions: {
-      loadData: async () => {
-        showResourceCreateProgress(render, "Refreshing glossary list...");
-        return reloadGlossariesAfterWrite(render, team, { suppressRecoveryWarning: true });
-      },
-    },
+    refreshProgressText: "Refreshing glossary list...",
+    loadData: async () => reloadGlossariesAfterWrite(render, team, { suppressRecoveryWarning: true }),
     onSuccess: async (result) => {
-      clearResourceCreateProgress();
       state.glossaryImport = {
         ...state.glossaryImport,
         isOpen: false,
@@ -869,9 +811,7 @@ export async function importGlossaryFile(render, selectedFile) {
         error: "",
       };
       state.selectedGlossaryId = result.glossaryId;
-      if (selectedGlossaryTeamMatches(team) && result.glossary) {
-        upsertGlossaryForTeam(team, result.glossary, null, { preserveCreate: true });
-      }
+      glossaryImportFlow.upsertCreatedResourceForTeam(team, result);
       const refreshedGlossary = state.glossaries.find((item) => item.id === result.glossaryId) ?? null;
       makeGlossaryDefaultIfFirst(team, result.glossaryId);
       showNoticeBadge(
@@ -883,7 +823,6 @@ export async function importGlossaryFile(render, selectedFile) {
       await openGlossaryEditor(render, result.glossaryId, { preferredGlossary: refreshedGlossary });
     },
     onError: async (error) => {
-      clearResourceCreateProgress();
       state.glossaryImport = glossaryImportModalState({
         status: "error",
         error: error instanceof Error ? error.message : String(error),

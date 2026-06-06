@@ -1,6 +1,4 @@
 import { findIsoLanguageOption, normalizeSupportedLanguageCode } from "../lib/language-options.js";
-import { enforceImportFileSizeLimit } from "./import-file-limit.js";
-import { openLocalFilePicker } from "./local-file-picker.js";
 import { appendRepoNameSuffix, slugifyRepoName } from "./repo-names.js";
 import { invoke } from "./runtime.js";
 import {
@@ -34,18 +32,21 @@ import {
 import { makeQaListDefaultIfFirst } from "./qa-list-default-flow.js";
 import { loadTeamQaLists } from "./qa-list-discovery-flow.js";
 import {
-  clearResourceCreateProgress,
   guardResourceCreateStart,
   showResourceCreateProgress,
 } from "./resource-create-flow.js";
 import {
   areResourcePageWritesDisabled,
-  submitResourcePageWrite,
 } from "./resource-page-controller.js";
 import {
   openEntityFormModal,
   updateEntityFormField,
 } from "./resource-entity-modal.js";
+import {
+  createRepoResourceImportFlow,
+  importFileBytes,
+  importFileName,
+} from "./repo-resource/import-flow.js";
 
 export const QA_LIST_IMPORT_ACCEPT = ".tmx,text/xml,application/xml";
 
@@ -55,50 +56,6 @@ export function detectQaListImportFileType(fileName) {
     return "tmx";
   }
   return null;
-}
-
-function readableImportFileLike(value) {
-  return value && typeof value === "object" && typeof value.arrayBuffer === "function";
-}
-
-function droppedPathFileLike(value) {
-  return value && typeof value === "object" && typeof value.dataBase64 === "string";
-}
-
-function importFileName(value, fallback = "file") {
-  const name = typeof value?.name === "string" ? value.name.trim() : "";
-  return name || fallback;
-}
-
-function decodeBase64ToBytes(dataBase64) {
-  const normalized = typeof dataBase64 === "string" ? dataBase64.trim() : "";
-  if (!normalized) {
-    throw new Error("The file could not be read.");
-  }
-
-  if (typeof globalThis.atob === "function") {
-    const binary = globalThis.atob(normalized);
-    return Array.from(binary, (character) => character.charCodeAt(0));
-  }
-
-  if (typeof Buffer === "function") {
-    return Array.from(Buffer.from(normalized, "base64"));
-  }
-
-  throw new Error("Base64 decoding is unavailable.");
-}
-
-async function importFileBytes(file) {
-  if (readableImportFileLike(file)) {
-    enforceImportFileSizeLimit(file.size, importFileName(file));
-    return Array.from(new Uint8Array(await file.arrayBuffer()));
-  }
-
-  if (droppedPathFileLike(file)) {
-    return decodeBase64ToBytes(file.dataBase64);
-  }
-
-  throw new Error("The file could not be read.");
 }
 
 function qaListImportModalState(overrides = {}) {
@@ -352,6 +309,21 @@ async function reloadQaListsAfterWrite(render, team) {
   return state.qaLists;
 }
 
+const qaListImportFlow = createRepoResourceImportFlow({
+  accept: QA_LIST_IMPORT_ACCEPT,
+  pageState: () => state.qaListsPage,
+  syncController: qaListsPageSyncController,
+  setProgress: setQaListsPageProgress,
+  clearProgress: clearNoticeBadge,
+  isImportModalOpen: () => state.qaListImport.isOpen,
+  isImporting: () => state.qaListImport.status === "importing",
+  importFile: importQaListFile,
+  setImportError: setQaListImportError,
+  selectedTeamMatches: selectedQaListTeamMatches,
+  upsertForTeam: upsertQaListForTeam,
+  resultResourceField: "qaList",
+});
+
 export function openQaListCreation(render) {
   const team = currentQaListTeam();
   if (areResourcePageWritesDisabled(state.qaListsPage)) {
@@ -447,12 +419,7 @@ export async function submitQaListCreation(render) {
   state.qaListCreation.status = "loading";
   state.qaListCreation.error = "";
   render();
-  await submitResourcePageWrite({
-    pageState: state.qaListsPage,
-    syncController: qaListsPageSyncController,
-    setProgress: (text) => setQaListsPageProgress(render, text),
-    clearProgress: clearNoticeBadge,
-    render,
+  await qaListImportFlow.submitImportWrite(render, {
     onBlocked: async () => {
       state.qaListCreation.status = "idle";
       state.qaListCreation.error = "Wait for the current QA list refresh or write to finish.";
@@ -464,17 +431,11 @@ export async function submitQaListCreation(render) {
         repoName,
         language,
       }, render),
-    refreshOptions: {
-      loadData: async () => {
-        showResourceCreateProgress(render, "Refreshing QA list...");
-        return reloadQaListsAfterWrite(render, team);
-      },
-    },
+    refreshProgressText: "Refreshing QA list...",
+    loadData: async () => reloadQaListsAfterWrite(render, team),
     onSuccess: async (result) => {
-      clearResourceCreateProgress();
       resetQaListCreation();
-      if (selectedQaListTeamMatches(team) && result.qaList) {
-        upsertQaListForTeam(team, result.qaList, null, { preserveCreate: true });
+      if (qaListImportFlow.upsertCreatedResourceForTeam(team, result)) {
         makeQaListDefaultIfFirst(team, result.qaList);
       }
       showNoticeBadge(
@@ -485,7 +446,6 @@ export async function submitQaListCreation(render) {
       );
     },
     onError: async (error) => {
-      clearResourceCreateProgress();
       state.qaListCreation.status = "idle";
       state.qaListCreation.error = error?.message ?? String(error);
     },
@@ -555,14 +515,7 @@ export async function selectQaListImportFile(render) {
     return;
   }
 
-  const selectedFile = await openLocalFilePicker({
-    accept: QA_LIST_IMPORT_ACCEPT,
-  });
-  if (!selectedFile) {
-    return;
-  }
-
-  await importQaListFile(render, selectedFile);
+  await qaListImportFlow.selectImportFile(render);
 }
 
 export async function importQaListFile(render, selectedFile) {
@@ -591,12 +544,7 @@ export async function importQaListFile(render, selectedFile) {
   });
   render();
 
-  await submitResourcePageWrite({
-    pageState: state.qaListsPage,
-    syncController: qaListsPageSyncController,
-    setProgress: (text) => setQaListsPageProgress(render, text),
-    clearProgress: clearNoticeBadge,
-    render,
+  await qaListImportFlow.submitImportWrite(render, {
     onBlocked: async () => {
       showNoticeBadge("Wait for the current QA list refresh or write to finish.", render);
     },
@@ -687,22 +635,16 @@ export async function importQaListFile(render, selectedFile) {
         throw error;
       }
     },
-    refreshOptions: {
-      loadData: async () => {
-        showResourceCreateProgress(render, "Refreshing QA list...");
-        return reloadQaListsAfterWrite(render, team);
-      },
-    },
+    refreshProgressText: "Refreshing QA list...",
+    loadData: async () => reloadQaListsAfterWrite(render, team),
     onSuccess: async (result) => {
-      clearResourceCreateProgress();
       state.qaListImport = {
         ...state.qaListImport,
         isOpen: false,
         status: "ready",
         error: "",
       };
-      if (selectedQaListTeamMatches(team) && result.qaList) {
-        upsertQaListForTeam(team, result.qaList, null, { preserveCreate: true });
+      if (qaListImportFlow.upsertCreatedResourceForTeam(team, result)) {
         makeQaListDefaultIfFirst(team, result.qaList);
       }
       showNoticeBadge(
@@ -713,7 +655,6 @@ export async function importQaListFile(render, selectedFile) {
       );
     },
     onError: async (error) => {
-      clearResourceCreateProgress();
       state.qaListImport = qaListImportModalState({
         status: "error",
         error: error instanceof Error ? error.message : String(error),
