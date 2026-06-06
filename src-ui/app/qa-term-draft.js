@@ -3,7 +3,7 @@ import {
   createQaTermEditorState,
   state,
 } from "./state.js";
-import { extractGlossaryRubyBaseText } from "./glossary-ruby.js";
+import { extractGlossaryRubyBaseText, sanitizeGlossaryRubyMarkup } from "./glossary-ruby.js";
 import { normalizeQaTerm, selectedQaList } from "./qa-list-shared.js";
 import {
   applyQaListsQueryDataForTeam,
@@ -150,7 +150,9 @@ function persistQaListEditorTerms(terms) {
 
 export async function submitQaTermEditor(render) {
   const editor = state.qaTermEditor;
-  const text = String(editor.text ?? "").trim();
+  // Ruby parity with glossary: sanitize before persisting so the stored term-text carries only
+  // allowed <ruby>/<rt> markup (mirrors glossary's sanitizeEditableTerms on submit).
+  const text = sanitizeGlossaryRubyMarkup(String(editor.text ?? "")).trim();
   const notes = String(editor.notes ?? "").trim();
   if (!text) {
     state.qaTermEditor = {

@@ -1,4 +1,5 @@
 import { findIsoLanguageOption } from "../lib/language-options.js";
+import { sanitizeGlossaryRubyMarkup } from "./glossary-ruby.js";
 import {
   canManageQaListResources,
   canWriteQaLists,
@@ -49,7 +50,9 @@ export function canPermanentlyDeleteQaLists(team = selectedTeam()) {
 
 export function normalizeQaTerm(value) {
   const termId = normalizeId(value?.termId ?? value?.id, createFallbackId());
-  const text = String(value?.text ?? value?.term ?? "").trim();
+  // Ruby parity with glossary: sanitize term-text ruby markup on normalize so persisted/loaded
+  // QA terms only carry allowed <ruby>/<rt> tags (mirrors normalizeGlossaryTerm). Notes stay plain.
+  const text = sanitizeGlossaryRubyMarkup(String(value?.text ?? value?.term ?? "")).trim();
   const notes = String(value?.notes ?? value?.note ?? "").trim();
 
   if (!text && !notes) {
