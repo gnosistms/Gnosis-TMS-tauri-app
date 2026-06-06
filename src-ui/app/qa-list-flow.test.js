@@ -427,6 +427,78 @@ test("repo-backed QA list load trusts restored metadata over local hard-delete t
   }
 });
 
+test("repo-backed QA list load repairs metadata after a remote repo rename", async () => {
+  setupQaTeams();
+  const oldRepoName = "qa-list-old";
+  const remoteRepo = {
+    name: "qa-list-renamed",
+    fullName: "team-1/qa-list-renamed",
+    repoId: 55,
+    nodeId: "repo-node-55",
+    defaultBranchName: "main",
+    defaultBranchHeadOid: "head-renamed",
+  };
+  let metadataRecords = [{
+    id: "qa-list-renamed-id",
+    kind: "qaList",
+    title: "Renamed QA",
+    repoName: oldRepoName,
+    previousRepoNames: [],
+    githubRepoId: remoteRepo.repoId,
+    githubNodeId: remoteRepo.nodeId,
+    fullName: "team-1/qa-list-old",
+    defaultBranch: "main",
+    lifecycleState: "active",
+    remoteState: "linked",
+    recordState: "live",
+    deletedAt: null,
+    language: { code: "vi", name: "Vietnamese" },
+    termCount: 0,
+  }];
+  let didSyncQaRepo = false;
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "list_local_gtms_qa_lists") {
+      return [];
+    }
+    if (command === "list_gnosis_qa_lists_for_installation") {
+      return [remoteRepo];
+    }
+    if (command === "list_local_gnosis_qa_list_metadata_records") {
+      return metadataRecords;
+    }
+    if (command === "upsert_local_gnosis_qa_list_metadata_record") {
+      metadataRecords = [{
+        ...metadataRecords[0],
+        repoName: payload.input.repoName,
+        previousRepoNames: payload.input.previousRepoNames,
+        githubRepoId: payload.input.githubRepoId,
+        githubNodeId: payload.input.githubNodeId,
+        fullName: payload.input.fullName,
+        defaultBranch: payload.input.defaultBranch,
+      }];
+      return { commitCreated: true };
+    }
+    if (command === "sync_gtms_qa_list_repos") {
+      didSyncQaRepo = true;
+      assert.deepEqual(
+        payload.input.qaLists.map((qaList) => qaList.repoName),
+        [remoteRepo.name],
+      );
+      return [{ repoName: remoteRepo.name, status: "upToDate" }];
+    }
+    return { commitCreated: false };
+  };
+
+  const result = await loadRepoBackedQaListsForTeam(state.teams[0]);
+
+  assert.equal(didSyncQaRepo, true);
+  assert.equal(metadataRecords[0].repoName, remoteRepo.name);
+  assert.deepEqual(metadataRecords[0].previousRepoNames, [oldRepoName]);
+  assert.equal(metadataRecords[0].fullName, remoteRepo.fullName);
+  assert.equal(result.syncSnapshots.length, 1);
+});
+
 test("repairQaListRepoBinding repairs the local binding and reloads QA lists", async () => {
   setupQaTeams();
   const team = state.teams[0];

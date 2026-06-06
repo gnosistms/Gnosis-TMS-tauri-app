@@ -43,6 +43,71 @@ function normalizeQaListBrokerError(error) {
   return new Error(String(error ?? "Unknown QA list broker error."));
 }
 
+async function repairQaListMetadataFromRemoteRename(team, metadataRecords, remoteRepos) {
+  const remoteByRepoId = new Map(
+    (Array.isArray(remoteRepos) ? remoteRepos : [])
+      .filter((repo) => Number.isFinite(repo?.repoId))
+      .map((repo) => [repo.repoId, repo]),
+  );
+  const remoteByNodeId = new Map(
+    (Array.isArray(remoteRepos) ? remoteRepos : [])
+      .filter((repo) => typeof repo?.nodeId === "string" && repo.nodeId.trim())
+      .map((repo) => [repo.nodeId, repo]),
+  );
+  const repairWrites = [];
+
+  for (const record of Array.isArray(metadataRecords) ? metadataRecords : []) {
+    if (record?.recordState !== "live" || record?.remoteState !== "linked") {
+      continue;
+    }
+
+    const remoteRepo =
+      (Number.isFinite(record?.githubRepoId) ? remoteByRepoId.get(record.githubRepoId) : null)
+      ?? ((typeof record?.githubNodeId === "string" && record.githubNodeId.trim()) ? remoteByNodeId.get(record.githubNodeId) : null)
+      ?? null;
+    if (!remoteRepo) {
+      continue;
+    }
+
+    const repoNameChanged = typeof remoteRepo.name === "string" && remoteRepo.name.trim() && remoteRepo.name !== record.repoName;
+    const fullNameChanged = typeof remoteRepo.fullName === "string" && remoteRepo.fullName.trim() && remoteRepo.fullName !== record.fullName;
+    const branchChanged = typeof remoteRepo.defaultBranchName === "string" && remoteRepo.defaultBranchName.trim() && remoteRepo.defaultBranchName !== record.defaultBranch;
+    if (!repoNameChanged && !fullNameChanged && !branchChanged) {
+      continue;
+    }
+
+    const previousRepoNames = [
+      ...(Array.isArray(record.previousRepoNames) ? record.previousRepoNames : []),
+      ...(repoNameChanged ? [record.repoName] : []),
+    ];
+    repairWrites.push(
+      upsertQaListMetadataRecord(team, {
+        qaListId: record.id,
+        title: record.title,
+        repoName: remoteRepo.name ?? record.repoName,
+        previousRepoNames,
+        githubRepoId: remoteRepo.repoId ?? record.githubRepoId ?? null,
+        githubNodeId: remoteRepo.nodeId ?? record.githubNodeId ?? null,
+        fullName: remoteRepo.fullName ?? record.fullName ?? null,
+        defaultBranch: remoteRepo.defaultBranchName ?? record.defaultBranch ?? "main",
+        lifecycleState: record.lifecycleState,
+        remoteState: record.remoteState,
+        recordState: record.recordState,
+        deletedAt: record.deletedAt ?? null,
+        language: record.language ?? null,
+        termCount: Number.isFinite(record.termCount) ? record.termCount : 0,
+      }).catch(() => null),
+    );
+  }
+
+  if (repairWrites.length > 0) {
+    await Promise.all(repairWrites);
+    return true;
+  }
+
+  return false;
+}
+
 export function teamSupportsQaListRepos(team) {
   return Boolean(invoke)
     && Number.isFinite(team?.installationId)
@@ -697,6 +762,10 @@ export async function loadRepoBackedQaListsForTeam(team, options = {}) {
   }
   let syncTargets = [];
   if (metadataLoaded) {
+    const metadataRepaired = await repairQaListMetadataFromRemoteRename(team, metadataRecords, remoteRepos);
+    if (metadataRepaired) {
+      metadataRecords = await listQaListMetadataRecords(team).catch(() => metadataRecords);
+    }
     const metadataSyncTargets = buildMetadataQaListSyncTargets(team, metadataRecords, remoteRepos);
     const untrackedRemoteSyncTargets = await filterKnownDeletedQaListSyncTargets(
       team,
