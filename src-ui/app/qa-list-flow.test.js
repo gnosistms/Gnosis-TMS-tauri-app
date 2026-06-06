@@ -43,7 +43,11 @@ const {
   submitQaListCreation,
   submitQaTermEditor,
 } = await import("./qa-list-flow.js");
-const { loadRepoBackedQaListsForTeam } = await import("./qa-list-repo-flow.js");
+const {
+  loadRepoBackedQaListsForTeam,
+  rebuildQaListLocalRepo,
+  repairQaListRepoBinding,
+} = await import("./qa-list-repo-flow.js");
 const {
   addLocalHardDeleteTombstone,
   clearLocalHardDeleteTombstoneForResource,
@@ -421,6 +425,77 @@ test("repo-backed QA list load trusts restored metadata over local hard-delete t
   } finally {
     clearLocalHardDeleteTombstoneForResource(state.teams[0], "qaList", tombstonedResource);
   }
+});
+
+test("repairQaListRepoBinding repairs the local binding and reloads QA lists", async () => {
+  setupQaTeams();
+  const team = state.teams[0];
+  const qaList = repoBackedQaList();
+  const repairedQaList = repoBackedQaList({ title: "Repaired QA" });
+  state.qaLists = [qaList];
+  let localListCalls = 0;
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "repair_local_repo_binding") {
+      assert.deepEqual(payload.input, {
+        installationId: team.installationId,
+        kind: "qaList",
+        resourceId: qaList.id,
+      });
+      return null;
+    }
+    if (command === "list_local_gtms_qa_lists") {
+      localListCalls += 1;
+      return [repairedQaList];
+    }
+    if (command === "list_gnosis_qa_lists_for_installation") {
+      return [];
+    }
+    if (command === "list_local_gnosis_qa_list_metadata_records") {
+      return [];
+    }
+    if (command === "upsert_local_gnosis_qa_list_metadata_record") {
+      return { commitCreated: true };
+    }
+    return { commitCreated: false };
+  };
+
+  await repairQaListRepoBinding(() => {}, team, qaList.id);
+
+  assert.equal(localListCalls >= 1, true);
+  assert.deepEqual(state.qaLists.map((item) => item.title), ["Repaired QA"]);
+  assert.equal(getNoticeBadgeText(), "The QA list repo binding was repaired.");
+});
+
+test("rebuildQaListLocalRepo reloads QA lists without repairing metadata", async () => {
+  setupQaTeams();
+  const team = state.teams[0];
+  const qaList = repoBackedQaList();
+  const rebuiltQaList = repoBackedQaList({ title: "Rebuilt QA" });
+  state.qaLists = [qaList];
+
+  invokeHandler = async (command) => {
+    if (command === "repair_local_repo_binding") {
+      assert.fail("rebuild should not invoke the metadata repair command");
+    }
+    if (command === "list_local_gtms_qa_lists") {
+      return [rebuiltQaList];
+    }
+    if (command === "list_gnosis_qa_lists_for_installation") {
+      return [];
+    }
+    if (command === "list_local_gnosis_qa_list_metadata_records") {
+      return [];
+    }
+    if (command === "upsert_local_gnosis_qa_list_metadata_record") {
+      return { commitCreated: true };
+    }
+    return { commitCreated: false };
+  };
+
+  await rebuildQaListLocalRepo(() => {}, team, qaList.id);
+
+  assert.deepEqual(state.qaLists.map((item) => item.title), ["Rebuilt QA"]);
 });
 
 test("editor QA navigation renders a loading editor before QA list discovery finishes", async () => {
