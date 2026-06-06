@@ -105,7 +105,7 @@ function metadataRecord(overrides = {}) {
 
 function verifierOperations(overrides = {}) {
   return {
-    listLocalGlossarySummariesForTeam: async () => [localSummary()],
+    listLocalGlossariesForTeam: async () => [localSummary()],
     listRemoteGlossaryReposForTeam: async () => [remoteRepo()],
     refreshGlossaryMetadataRecords: async () => [metadataRecord()],
     inspectAndMigrateLocalRepoBindings: async () => ({ issues: [] }),

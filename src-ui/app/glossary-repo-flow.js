@@ -557,7 +557,7 @@ function openRequiredAppUpdatePromptFromGlossarySnapshots(snapshots, render = nu
   );
 }
 
-export async function listLocalGlossarySummariesForTeam(team) {
+export async function listLocalGlossariesForTeam(team) {
   if (!Number.isFinite(team?.installationId)) {
     return [];
   }
@@ -719,7 +719,7 @@ async function purgeTombstonedGlossariesForTeam(team, localSummaries, metadataRe
     persistVisibleGlossaries(team);
   }
 
-  return listLocalGlossarySummariesForTeam(team);
+  return listLocalGlossariesForTeam(team);
 }
 
 export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
@@ -740,7 +740,7 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
   if (!Number.isFinite(team?.installationId) || (!teamSupportsGlossaryRepos(team) && !invoke)) {
     return emptyResult;
   }
-  let localSummaries = await listLocalGlossarySummariesForTeam(team);
+  let localSummaries = await listLocalGlossariesForTeam(team);
 
   if (offlineMode || !teamSupportsGlossaryRepos(team)) {
     return {
@@ -813,7 +813,7 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
   const syncSnapshots = syncTargets.length > 0
     ? await syncGlossaryReposForTeam(team, syncTargets)
     : [];
-  const refreshedLocalSummaries = await listLocalGlossarySummariesForTeam(team);
+  const refreshedLocalSummaries = await listLocalGlossariesForTeam(team);
   const syncIssue = getGlossarySyncIssueMessage(syncSnapshots);
   if (metadataLoaded) {
     metadataRecords = await backfillGlossaryMetadataRecords(team, refreshedLocalSummaries, remoteRepos, metadataRecords);
