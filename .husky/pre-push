@@ -1,16 +1,11 @@
 #!/bin/sh
-# Gnosis TMS — Pre-push Hook (Tier 2: Rust Format + Lint, ~1-2min)
+# Gnosis TMS — Pre-push Hook (Tier 2: Clippy, ~1-2min)
 #
-# Runs compilation-dependent checks that are too slow for pre-commit
-# but must pass before sharing code. ESLint runs at pre-commit (fast,
-# staged files only). Full test execution is delegated to CI.
+# Runs compilation-dependent checks that are too slow for pre-commit.
+# cargo fmt and ESLint run at pre-commit (both <1s).
+# Full test execution is delegated to CI.
 #
 # RUST POSTURE: clippy runs with -D warnings (fail on any warning).
-# The current baseline has 54 clippy warnings + 7 files failing rustfmt.
-# This hook will red-light until the baseline cleanup is done:
-#   cargo fmt --manifest-path src-tauri/Cargo.toml --all
-#   cargo clippy --fix --manifest-path src-tauri/Cargo.toml --all-targets
-# See reviews/ for the full remediation plan.
 
 # Capture the ref list git feeds on stdin ONCE. Both the secret scan
 # (delta mode, below) and any future lfs hook consume it; stdin can
@@ -47,11 +42,7 @@ fi
 
 if [ "$RUN_RUST_CHECKS" = true ]; then
   echo "Running Rust checks..."
-  echo "  - cargo fmt --check"
-  npm run format:rust:check
   echo "  - cargo clippy (strict: -D warnings)"
-  echo "    NOTE: fails on current baseline (54 warnings). Cleanup required"
-  echo "    before this gate is green. Run 'npm run lint:rust:strict' to see all."
   npm run lint:rust:strict
   echo "Rust checks passed."
 fi

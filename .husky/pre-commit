@@ -2,7 +2,7 @@
 # Gnosis TMS — Pre-commit Hook (Tier 1: Fast, <5s)
 #
 # Runs cheap, file-level checks. Compilation-dependent checks
-# (clippy, fmt) run in pre-push.
+# (clippy) run in pre-push.
 
 cd "$(git rev-parse --show-toplevel)" || exit 1
 
@@ -11,6 +11,17 @@ STAGED_FILES=$(git diff --cached --name-only)
 if [ -z "$STAGED_FILES" ]; then
   echo "No staged files — skipping checks."
   exit 0
+fi
+
+# ── Rust: fmt --check (staged .rs / Cargo files only) ─────────────────
+#
+# rustfmt is a formatter check, not a compiler pass — runs in <1s.
+
+STAGED_RUST=$(echo "$STAGED_FILES" | grep -E '\.(rs)$|^src-tauri/Cargo\.toml$' || true)
+if [ -n "$STAGED_RUST" ]; then
+  echo "Running cargo fmt --check..."
+  npm run format:rust:check
+  echo "Rust format check passed."
 fi
 
 # ── ESLint (staged JS files only) ────────────────────────────────────
