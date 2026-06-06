@@ -381,6 +381,30 @@ function qaListMetadataRecordFromSummary(qaList, remote = null) {
   };
 }
 
+function metadataBackedQaListRepo(record) {
+  if (
+    !record
+    || record.recordState !== "live"
+    || record.remoteState !== "linked"
+    || isDeletedRepoResource(record)
+    || typeof record.repoName !== "string"
+    || !record.repoName.trim()
+    || typeof record.fullName !== "string"
+    || !record.fullName.trim()
+  ) {
+    return null;
+  }
+
+  return normalizeRemoteQaListRepo({
+    qaListId: record.id,
+    repoId: record.githubRepoId,
+    nodeId: record.githubNodeId,
+    name: record.repoName,
+    fullName: record.fullName,
+    defaultBranchName: record.defaultBranch || "main",
+  });
+}
+
 async function backfillQaListMetadataRecords(team, localQaLists, remoteRepos, metadataRecords) {
   if (!Number.isFinite(team?.installationId) || state.offline?.isEnabled === true) {
     return metadataRecords;
@@ -855,7 +879,8 @@ function filterDeletedQaListSyncTargets(team, localQaLists, remoteRepos) {
   );
 }
 
-function buildMetadataQaListSyncTargets(team, metadataRecords, remoteRepos) {
+function buildMetadataBackedQaListSyncRepos(metadataRecords, remoteRepos, options = {}) {
+  const remoteLoaded = options.remoteLoaded === true;
   const normalizedRemotes = (Array.isArray(remoteRepos) ? remoteRepos : [])
     .map(normalizeRemoteQaListRepo)
     .filter(Boolean);
@@ -885,6 +910,10 @@ function buildMetadataQaListSyncTargets(team, metadataRecords, remoteRepos) {
         remoteByFullName,
         remoteByRepoId,
         remoteByNodeId,
+      ) ?? (
+        remoteLoaded
+          ? null
+          : metadataBackedQaListRepo(record)
       );
       const fullName = remote?.fullName ?? record.fullName;
       if (!record.repoName || !fullName) {
@@ -1028,7 +1057,7 @@ export async function loadRepoBackedQaListsForTeam(team, options = {}) {
     }
     metadataRecords = await finalizeMissingQaListsForTeam(team, metadataRecords, remoteRepos);
     localQaLists = await purgeTombstonedQaListsForTeam(team, localQaLists, metadataRecords);
-    const metadataSyncTargets = buildMetadataQaListSyncTargets(team, metadataRecords, remoteRepos);
+    const metadataSyncTargets = buildMetadataBackedQaListSyncRepos(metadataRecords, remoteRepos, { remoteLoaded: true });
     const untrackedRemoteSyncTargets = await filterKnownDeletedQaListSyncTargets(
       team,
       buildUntrackedRemoteQaListBootstrapTargets(team, metadataRecords, remoteRepos),
