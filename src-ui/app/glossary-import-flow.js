@@ -9,7 +9,7 @@ import {
   selectedTeam,
 } from "./glossary-shared.js";
 import {
-  createRemoteGlossaryRepoForTeam,
+  createRemoteGlossaryRepoWithName,
   getGlossarySyncIssueMessage,
   listLocalGlossarySummariesForTeam,
   listRemoteGlossaryReposForTeam,
@@ -345,7 +345,7 @@ async function createRemoteGlossaryRepoForAvailableName(team, baseRepoName) {
     }
 
     try {
-      const remoteRepo = await createRemoteGlossaryRepoForTeam(team, candidateRepoName);
+      const remoteRepo = await createRemoteGlossaryRepoWithName(team, candidateRepoName);
       return {
         remoteRepo,
         repoName: candidateRepoName,
