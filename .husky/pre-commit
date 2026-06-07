@@ -37,6 +37,20 @@ if [ -n "$STAGED_JS" ]; then
   echo "ESLint passed."
 fi
 
+# ── ShellCheck (staged shell files) ──────────────────────────────────
+
+STAGED_SHELL=$(echo "$STAGED_FILES" | grep -E '\.sh$|^\.husky/' || true)
+if [ -n "$STAGED_SHELL" ]; then
+  if command -v shellcheck >/dev/null 2>&1; then
+    echo "Running ShellCheck..."
+    echo "$STAGED_SHELL" | tr '\n' '\0' | xargs -0 shellcheck
+    echo "ShellCheck passed."
+  else
+    echo "shellcheck not installed — shell static analysis skipped."
+    echo "  Install: https://www.shellcheck.net"
+  fi
+fi
+
 # ── Secret scanning (staged files only) ──────────────────────────────
 #
 # Scans only what is actually being committed. gitleaks v8.19+ uses
