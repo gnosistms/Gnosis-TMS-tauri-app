@@ -33,7 +33,7 @@ fi
 STAGED_JS=$(echo "$STAGED_FILES" | grep -E 'src-ui/.+\.js$' | grep -v 'src-ui/lib/vendor/' || true)
 if [ -n "$STAGED_JS" ]; then
   echo "Running ESLint on staged JS files..."
-  echo "$STAGED_JS" | tr '\n' '\0' | xargs -0 npx eslint
+  echo "$STAGED_JS" | tr '\n' '\0' | xargs -0 npx eslint --
   echo "ESLint passed."
 fi
 
@@ -43,7 +43,7 @@ STAGED_SHELL=$(echo "$STAGED_FILES" | grep -E '\.sh$|^\.husky/' || true)
 if [ -n "$STAGED_SHELL" ]; then
   if command -v shellcheck >/dev/null 2>&1; then
     echo "Running ShellCheck..."
-    echo "$STAGED_SHELL" | tr '\n' '\0' | xargs -0 shellcheck
+    echo "$STAGED_SHELL" | tr '\n' '\0' | xargs -0 shellcheck --
     echo "ShellCheck passed."
   else
     echo "shellcheck not installed — shell static analysis skipped."
