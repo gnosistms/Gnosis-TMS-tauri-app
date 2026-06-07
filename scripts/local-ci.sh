@@ -5,7 +5,7 @@
 # or marking a PR ready for review to catch failures without a CI round-trip.
 #
 # Usage: ./scripts/local-ci.sh [--fast]
-#   --fast  Skip cargo test (~1 min); runs format and lint only.
+#   --fast  Skip Rust tests (~1 min); JS lint and unit tests still run.
 #
 # All checks invoke the npm scripts defined in package.json so the commands
 # stay in sync with what CI runs.
