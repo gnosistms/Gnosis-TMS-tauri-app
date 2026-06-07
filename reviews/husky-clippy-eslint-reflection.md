@@ -16,9 +16,9 @@ gitleaks. Files created or modified:
 
 ---
 
-## Baseline measurements (run on 2026-06-06)
+## Baseline measurements
 
-### Rust
+### Rust — before cleanup (2026-06-06)
 
 | Check | Result |
 |---|---|
@@ -39,7 +39,18 @@ glossary/QA commits. None of the warnings appear to be logic errors; the two
 "unsigned subtraction never < 0" warnings noted in the Batch 1 review remain and
 should be investigated before auto-fixing.
 
-### JavaScript
+### Rust — after cleanup (this branch)
+
+| Check | Result |
+|---|---|
+| `cargo fmt --check` | **Passes** |
+| `cargo clippy --all-targets -- -D warnings` | **Passes** |
+
+Cleanup applied: `cargo fmt --all`, `cargo clippy --fix --all-targets`, plus manual
+review of remaining warnings. Suppressions added via `#[allow(...)]` where Clippy's
+suggestion would reduce clarity (e.g. complex type aliases, tests-after-module ordering).
+
+### JavaScript — before cleanup (2026-06-06)
 
 | Check | Result |
 |---|---|
@@ -58,27 +69,17 @@ _local_ variable scope that knip misses.
 
 ## Posture decisions
 
-### Rust: strict mode wired, baseline cleanup required
+### Rust: strict mode wired, baseline clean
 
 The pre-push hook runs `cargo clippy -- -D warnings` unconditionally when Rust files
-change. This means the hook **red-lights on any Rust push** until the baseline is
-cleaned.
+change. The baseline cleanup has been completed on this branch (see measurements above),
+so the hook passes on the current HEAD.
 
 **Why strict over delta**: Clippy compiles the whole crate; there is no practical
 per-file delta. The alternatives were (A) grandfather existing warnings and only fail
 on regressions (requires a baseline snapshot file and `--baseline` tooling that
 doesn't exist out of the box) or (B) run with `-W` only (allow warnings through). Both
-weaken the gate. Strict mode with an explicit cleanup task is the honest posture.
-
-**Cleanup path** (prerequisite before merging this hook to main):
-1. `cargo fmt --manifest-path src-tauri/Cargo.toml --all` — formats the 7 files
-2. `cargo clippy --fix --manifest-path src-tauri/Cargo.toml --all-targets` — applies
-   the ~43 auto-fixable warnings
-3. Manually review ~11 remaining warnings, particularly the two unsigned subtraction
-   warnings in `project_search/scoring.rs`
-4. Add `[workspace.lints.clippy]` to `src-tauri/Cargo.toml` if targeted overrides
-   are needed (one existing `#[allow(clippy::too_many_arguments)]` in indexer.rs is
-   already present; leave it)
+weaken the gate. Strict mode with a completed cleanup is the correct posture.
 
 ### ESLint: delta mode, full tree clean before expanding scope
 

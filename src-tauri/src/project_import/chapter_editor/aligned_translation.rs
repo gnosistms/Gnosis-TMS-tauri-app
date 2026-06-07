@@ -2174,10 +2174,10 @@ fn mismatch_metrics(job: &AlignmentJob) -> MismatchMetrics {
     let total_source = job.source_sections.len().max(1);
     let total_target = job.target_sections.len().max(1);
     MismatchMetrics {
-        source_unmatched_percent: ((total_source - matched_source.len()) as f64
+        source_unmatched_percent: (total_source.saturating_sub(matched_source.len()) as f64
             / total_source as f64)
             * 100.0,
-        target_unmatched_percent: ((total_target - matched_target.len()) as f64
+        target_unmatched_percent: (total_target.saturating_sub(matched_target.len()) as f64
             / total_target as f64)
             * 100.0,
         matched_source_sections: matched_source.len(),

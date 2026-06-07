@@ -7,6 +7,8 @@ use std::{
 };
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+#[cfg(any(windows, target_os = "macos"))]
+use std::env;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
@@ -337,7 +339,7 @@ fn resolved_windows_git_executable() -> PathBuf {
     PathBuf::from("git")
 }
 
-fn configure_git_command(command: &mut Command, _executable: &Path) {
+fn configure_git_command(command: &mut Command, executable: &Path) {
     configure_git_isolation(command);
 
     #[cfg(windows)]
@@ -345,6 +347,9 @@ fn configure_git_command(command: &mut Command, _executable: &Path) {
 
     #[cfg(target_os = "macos")]
     configure_macos_git_command(command, executable);
+
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let _ = executable;
 }
 
 fn configure_git_isolation(command: &mut Command) {
