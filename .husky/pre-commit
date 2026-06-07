@@ -13,9 +13,11 @@ if [ -z "$STAGED_FILES" ]; then
   exit 0
 fi
 
-# ── Rust: fmt --check (staged .rs / Cargo files only) ─────────────────
+# ── Rust: fmt --check (triggered by staged .rs / Cargo files) ────────────
 #
-# rustfmt is a formatter check, not a compiler pass — runs in <1s.
+# Trigger is staged Rust files, but the check runs on the whole workspace
+# (cargo fmt has no per-file mode). rustfmt is a formatter check, not a
+# compiler pass — runs in <1s.
 
 STAGED_RUST=$(echo "$STAGED_FILES" | grep -E '\.(rs)$|^src-tauri/Cargo\.toml$' || true)
 if [ -n "$STAGED_RUST" ]; then

@@ -27,7 +27,7 @@ export default [
       "no-eval": "error",
     },
   },
-  // Test files — node test runner globals, relax unused-vars (mocks/stubs)
+  // Test files — node test runner globals; same unused-vars rule as app config
   {
     files: ["src-ui/**/*.test.js", "src-ui/test/**/*.js"],
     ...js.configs.recommended,

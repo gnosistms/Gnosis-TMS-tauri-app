@@ -23,7 +23,8 @@ UPSTREAM_REF=$(git rev-parse --abbrev-ref --symbolic-full-name @{upstream} 2>/de
 if [ -n "$UPSTREAM_REF" ]; then
   CHANGED_FILES=$(git diff --name-only "$UPSTREAM_REF"...HEAD)
 else
-  DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|.*/||' || echo "main")
+  DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|.*/||')
+  DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"
   MERGE_BASE=$(git merge-base "origin/$DEFAULT_BRANCH" HEAD 2>/dev/null || true)
   if [ -n "$MERGE_BASE" ]; then
     CHANGED_FILES=$(git diff --name-only "$MERGE_BASE"..HEAD)
@@ -55,12 +56,11 @@ fi
 #
 # Scans ONLY the commits being pushed, not full history. Full-history
 # scanning re-reports pre-existing findings on every push.
-# NOTE: gitleaks is not yet installed on this machine; scanning is
-# currently a no-op that degrades gracefully.
+# gitleaks is optional — the hook degrades gracefully when not installed.
 
 echo "Scanning pushed commits for secrets..."
 if command -v gitleaks >/dev/null 2>&1; then
-  ZERO=$(printf '0%.0s' $(seq 1 40))
+  ZERO="0000000000000000000000000000000000000000"
   secret_scan_failed=0
 
   while IFS= read -r line; do

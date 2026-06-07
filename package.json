@@ -30,6 +30,9 @@
     "knip": "^5.88.1",
     "vite": "^5.4.19"
   },
+  "engines": {
+    "node": "^20.19.0 || ^22.13.0 || >=24"
+  },
   "dependencies": {
     "@sentry/browser": "^10.56.0",
     "@tanstack/query-core": "^5.100.5",
