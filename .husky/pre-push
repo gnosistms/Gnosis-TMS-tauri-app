@@ -67,7 +67,6 @@ if command -v gitleaks >/dev/null 2>&1; then
 
   while IFS= read -r line; do
     [ -z "$line" ] && continue
-    local_ref=$(echo "$line" | awk '{print $1}')
     local_sha=$(echo "$line" | awk '{print $2}')
     remote_sha=$(echo "$line" | awk '{print $4}')
 
