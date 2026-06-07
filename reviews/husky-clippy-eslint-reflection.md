@@ -8,9 +8,9 @@ gitleaks. Files created or modified:
 
 | File | Purpose |
 |---|---|
-| `.husky/pre-commit` | Tier 1: gitleaks staged scan (fast, <5s) |
-| `.husky/pre-push` | Tier 2: clippy + fmt + ESLint delta + gitleaks push-delta |
-| `eslint.config.js` | ESLint 9 flat config for vanilla JS source and tests |
+| `.husky/pre-commit` | Tier 1: cargo fmt check + ESLint (staged JS) + gitleaks staged scan |
+| `.husky/pre-push` | Tier 2: clippy + gitleaks push-delta |
+| `eslint.config.js` | ESLint 10 flat config for vanilla JS source and tests |
 | `package.json` | Added `lint:rust:strict`, `format:rust:check`, `lint:js`, `lint:js:fix`, `prepare` scripts |
 | `devDependencies` | husky, eslint, @eslint/js, globals |
 
