@@ -18,8 +18,15 @@ let nowMsClock = () => Date.now();
 let scheduleOverdueCheck = (callback, delayMs) => setTimeout(callback, delayMs);
 let cancelOverdueCheck = (handle) => clearTimeout(handle);
 let reportRepoWriteOverdue = (payload) => reportBackendNonfatalError(payload);
+let reportRepoWriteReentrancy = (payload) => reportBackendNonfatalError(payload);
 
 const DEBUG_REPO_WRITE = false;
+
+// Tracks scopes whose running operation is *synchronously* executing its run() callback,
+// keyed by depth so nested re-entrancy is counted correctly. Any enqueueRepoWrite called
+// during that synchronous window targets a scope whose queue is already held, which would
+// deadlock if queued normally — those operations are executed inline instead.
+const scopeRunDepth = new Map();
 
 const queuesByScope = new Map();
 const operationsById = new Map();
@@ -339,6 +346,82 @@ function normalizeQueueError(details = {}) {
   };
 }
 
+async function runSingleOperation(queue, operation) {
+  // Preserve any operation already marked running on this scope so an inline
+  // (re-entrant) operation restores, rather than clears, the outer running id.
+  const priorRunningOperationId = queue.runningOperationId;
+  queue.runningOperationId = operation.operationId;
+  operation.status = "running";
+  operation.startedAt = nowIso();
+  operation.error = "";
+  operation.overdueTimer = scheduleOverdueCheck(() => {
+    if (operation.status !== "running" || operation.overdueReported === true) {
+      return;
+    }
+    operation.overdueReported = true;
+    reportRepoWriteOverdue({
+      operation: "repo_write_overdue",
+      reason: operation.operationType || operation.kind,
+    });
+    emitQueueChanged();
+  }, thresholdFor(operation.operationType));
+  logRepoWriteDiagnostic("running", operation, { queuedCount: queue.items.length });
+  emitQueueChanged();
+
+  try {
+    const permissionCheck = runPermissionCheck(operation);
+    if (permissionCheck) {
+      await permissionCheck;
+    }
+    // Mark the scope held for the synchronous portion of run(): a same-scope enqueue
+    // made here is re-entrant and must run inline instead of deadlocking behind us.
+    scopeRunDepth.set(operation.scope, (scopeRunDepth.get(operation.scope) ?? 0) + 1);
+    let runPromise;
+    try {
+      runPromise = operation.run(snapshotOperation(operation));
+    } finally {
+      const depth = (scopeRunDepth.get(operation.scope) ?? 0) - 1;
+      if (depth <= 0) {
+        scopeRunDepth.delete(operation.scope);
+      } else {
+        scopeRunDepth.set(operation.scope, depth);
+      }
+    }
+    const result = await runPromise;
+    operation.status = "succeeded";
+    operation.finishedAt = nowIso();
+    logRepoWriteDiagnostic("succeeded", operation, { finishedAt: operation.finishedAt });
+    operation.resolve(result);
+  } catch (error) {
+    operation.status = "failed";
+    operation.finishedAt = nowIso();
+    operation.error = error?.message ?? String(error);
+    logRepoWriteDiagnostic("failed", operation, {
+      finishedAt: operation.finishedAt,
+      error: operation.error,
+    });
+    if (operation.recordFailure !== false) {
+      recordRepoQueueError({
+        ...(operation.errorTarget ?? {}),
+        repoScope: operation.scope,
+        operationId: operation.operationId,
+        kind: operation.kind,
+        message: operation.error,
+        error,
+        sourceScreen: operation.sourceScreen,
+        metadata: operation.metadata,
+      });
+    }
+    operation.reject(error);
+  } finally {
+    clearOperationOverdueTimer(operation);
+    queue.runningOperationId = priorRunningOperationId;
+    emitQueueChanged();
+    cleanupCompletedOperation(operation);
+    emitQueueChanged();
+  }
+}
+
 async function processScopeQueue(queue) {
   if (queue.processing) {
     return;
@@ -355,62 +438,7 @@ async function processScopeQueue(queue) {
         continue;
       }
 
-      queue.runningOperationId = operationId;
-      operation.status = "running";
-      operation.startedAt = nowIso();
-      operation.error = "";
-      operation.overdueTimer = scheduleOverdueCheck(() => {
-        if (operation.status !== "running" || operation.overdueReported === true) {
-          return;
-        }
-        operation.overdueReported = true;
-        reportRepoWriteOverdue({
-          operation: "repo_write_overdue",
-          reason: operation.operationType || operation.kind,
-        });
-        emitQueueChanged();
-      }, thresholdFor(operation.operationType));
-      logRepoWriteDiagnostic("running", operation, { queuedCount: queue.items.length });
-      emitQueueChanged();
-
-      try {
-        const permissionCheck = runPermissionCheck(operation);
-        if (permissionCheck) {
-          await permissionCheck;
-        }
-        const result = await operation.run(snapshotOperation(operation));
-        operation.status = "succeeded";
-        operation.finishedAt = nowIso();
-        logRepoWriteDiagnostic("succeeded", operation, { finishedAt: operation.finishedAt });
-        operation.resolve(result);
-      } catch (error) {
-        operation.status = "failed";
-        operation.finishedAt = nowIso();
-        operation.error = error?.message ?? String(error);
-        logRepoWriteDiagnostic("failed", operation, {
-          finishedAt: operation.finishedAt,
-          error: operation.error,
-        });
-        if (operation.recordFailure !== false) {
-          recordRepoQueueError({
-            ...(operation.errorTarget ?? {}),
-            repoScope: operation.scope,
-            operationId: operation.operationId,
-            kind: operation.kind,
-            message: operation.error,
-            error,
-            sourceScreen: operation.sourceScreen,
-            metadata: operation.metadata,
-          });
-        }
-        operation.reject(error);
-      } finally {
-        clearOperationOverdueTimer(operation);
-        queue.runningOperationId = null;
-        emitQueueChanged();
-        cleanupCompletedOperation(operation);
-        emitQueueChanged();
-      }
+      await runSingleOperation(queue, operation);
     }
   } finally {
     queue.processing = false;
@@ -565,6 +593,21 @@ export function enqueueRepoWrite(options = {}) {
     insertedAt: insertIndex === -1 ? queue.items.length - 1 : insertIndex,
   });
   emitQueueChanged();
+
+  if ((scopeRunDepth.get(scope) ?? 0) > 0) {
+    // Re-entrant enqueue from within this scope's running operation. Queuing it would
+    // deadlock (the in-flight op is waiting on this one), so run it inline now and
+    // surface the smell so the offending call path can be removed.
+    queue.items = queue.items.filter((queuedOperationId) => queuedOperationId !== operation.operationId);
+    logRepoWriteDiagnostic("reentrant", operation, { scope });
+    reportRepoWriteReentrancy({
+      operation: "repo_write_reentrant_scope",
+      reason: operation.kind || operation.operationType,
+    });
+    void runSingleOperation(queue, operation);
+    return promise;
+  }
+
   void processScopeQueue(queue);
   return promise;
 }
@@ -622,6 +665,12 @@ export function __setRepoWriteOverdueScheduler(schedule, cancel) {
 
 export function __setRepoWriteOverdueReporter(reporter) {
   reportRepoWriteOverdue = typeof reporter === "function"
+    ? reporter
+    : ((payload) => reportBackendNonfatalError(payload));
+}
+
+export function __setRepoWriteReentrancyReporter(reporter) {
+  reportRepoWriteReentrancy = typeof reporter === "function"
     ? reporter
     : ((payload) => reportBackendNonfatalError(payload));
 }
@@ -755,6 +804,7 @@ export function resetRepoWriteQueue() {
   }
   queuesByScope.clear();
   operationsById.clear();
+  scopeRunDepth.clear();
   repoQueueErrors.splice(0, repoQueueErrors.length);
   repoInvalidations.splice(0, repoInvalidations.length);
   nextRepoWriteOperationId = 1;
@@ -764,5 +814,6 @@ export function resetRepoWriteQueue() {
   scheduleOverdueCheck = (callback, delayMs) => setTimeout(callback, delayMs);
   cancelOverdueCheck = (handle) => clearTimeout(handle);
   reportRepoWriteOverdue = (payload) => reportBackendNonfatalError(payload);
+  reportRepoWriteReentrancy = (payload) => reportBackendNonfatalError(payload);
   emitQueueChanged();
 }
