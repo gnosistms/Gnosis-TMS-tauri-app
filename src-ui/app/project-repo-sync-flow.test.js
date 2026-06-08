@@ -107,6 +107,7 @@ test("project repo sync waits behind an existing repo queue write for the same r
   await delay(5);
 
   assert.deepEqual(events, ["editor:start"]);
+  assert.equal(state.statusBadges.right.text, "Waiting for local saves in 1 project repo...");
 
   releaseEditorWrite.resolve();
   await Promise.all([editorWrite, sync]);
@@ -114,6 +115,37 @@ test("project repo sync waits behind an existing repo queue write for the same r
   assert.deepEqual(events, [
     "editor:start",
     "editor:end",
+    "reconcile_project_repo_sync_states:project-1",
+  ]);
+});
+
+test("project repo sync does not label active repo operations as local saves", async () => {
+  const events = [];
+  setupProjectRepoSyncTest(events);
+  const releaseRepoOperation = deferred();
+  const repoOperation = enqueueRepoWrite({
+    scope: "1:project-1:repo-one",
+    kind: "projectRepoSync",
+    run: async () => {
+      events.push("repo-operation:start");
+      await releaseRepoOperation.promise;
+      events.push("repo-operation:end");
+    },
+  });
+  await delay(0);
+
+  const sync = reconcileProjectRepoSyncStates(() => {}, team(), [project()]);
+  await delay(5);
+
+  assert.deepEqual(events, ["repo-operation:start"]);
+  assert.equal(state.statusBadges.right.text, "Waiting for project repo operation in 1 project repo...");
+
+  releaseRepoOperation.resolve();
+  await Promise.all([repoOperation, sync]);
+
+  assert.deepEqual(events, [
+    "repo-operation:start",
+    "repo-operation:end",
     "reconcile_project_repo_sync_states:project-1",
   ]);
 });
