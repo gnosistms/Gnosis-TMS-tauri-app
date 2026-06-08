@@ -11,7 +11,7 @@ import {
 import {
   createRemoteGlossaryRepoWithName,
   getGlossarySyncIssueMessage,
-  listLocalGlossarySummariesForTeam,
+  listLocalGlossariesForTeam,
   listRemoteGlossaryReposForTeam,
   permanentlyDeleteRemoteGlossaryRepoForTeam,
   syncGlossaryReposForTeam,
@@ -194,7 +194,7 @@ export async function verifyImportedGlossaryState(team, expected, operations = {
     throw importedGlossarySafetyError("The imported glossary identity could not be verified.");
   }
 
-  const listLocal = operations.listLocalGlossarySummariesForTeam ?? listLocalGlossarySummariesForTeam;
+  const listLocal = operations.listLocalGlossariesForTeam ?? listLocalGlossariesForTeam;
   const listRemote = operations.listRemoteGlossaryReposForTeam ?? listRemoteGlossaryReposForTeam;
   const refreshMetadata = operations.refreshGlossaryMetadataRecords ?? refreshGlossaryMetadataRecords;
   const inspectRepairs = operations.inspectAndMigrateLocalRepoBindings ?? inspectAndMigrateLocalRepoBindings;
@@ -331,7 +331,7 @@ async function rollbackStrictGlossaryCreate(team, glossaryId, localRepoName, rem
 }
 
 async function createRemoteGlossaryRepoForAvailableName(team, baseRepoName) {
-  const localGlossaries = await listLocalGlossarySummariesForTeam(team);
+  const localGlossaries = await listLocalGlossariesForTeam(team);
   const usedRepoNames = new Set(
     (Array.isArray(localGlossaries) ? localGlossaries : [])
       .map((glossary) => String(glossary?.repoName ?? "").trim())

@@ -557,7 +557,7 @@ function openRequiredAppUpdatePromptFromGlossarySnapshots(snapshots, render = nu
   );
 }
 
-export async function listLocalGlossarySummariesForTeam(team) {
+export async function listLocalGlossariesForTeam(team) {
   if (!Number.isFinite(team?.installationId)) {
     return [];
   }
@@ -719,7 +719,7 @@ async function purgeTombstonedGlossariesForTeam(team, localSummaries, metadataRe
     persistVisibleGlossaries(team);
   }
 
-  return listLocalGlossarySummariesForTeam(team);
+  return listLocalGlossariesForTeam(team);
 }
 
 export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
@@ -729,9 +729,20 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
     typeof options.onRecoveryDetected === "function"
       ? options.onRecoveryDetected
       : null;
-  let localSummaries = await listLocalGlossarySummariesForTeam(team);
+  const emptyResult = {
+    glossaries: [],
+    remoteRepos: [],
+    syncSnapshots: [],
+    syncIssue: "",
+    brokerWarning: "",
+    recoveryMessage: "",
+  };
+  if (!Number.isFinite(team?.installationId) || (!teamSupportsGlossaryRepos(team) && !invoke)) {
+    return emptyResult;
+  }
+  let localSummaries = await listLocalGlossariesForTeam(team);
 
-  if (offlineMode || !Number.isFinite(team?.installationId)) {
+  if (offlineMode || !teamSupportsGlossaryRepos(team)) {
     return {
       glossaries: sortGlossaries(
         applyLocalGlossaryHardDeleteState(
@@ -743,6 +754,7 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
       syncSnapshots: [],
       syncIssue: "",
       brokerWarning: "",
+      recoveryMessage: "",
     };
   }
 
@@ -750,6 +762,7 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
   let repairIssues = [];
   let metadataLoaded = false;
   let repairLoaded = false;
+  let brokerWarning = "";
   try {
     metadataRecords = await listGlossaryMetadataRecords(team);
     metadataLoaded = true;
@@ -760,7 +773,9 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
       repairIssues = (await inspectAndMigrateLocalRepoBindings(team).catch(() => null))?.issues ?? repairIssues;
     }
     localSummaries = await purgeTombstonedGlossariesForTeam(team, localSummaries, metadataRecords);
-  } catch {}
+  } catch (error) {
+    brokerWarning = error?.message ?? String(error);
+  }
   const recoverableMetadataCount = countRecoverableGlossaryMetadataRecords(metadataRecords);
   const installationRecoveryDetected =
     metadataLoaded
@@ -798,7 +813,7 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
   const syncSnapshots = syncTargets.length > 0
     ? await syncGlossaryReposForTeam(team, syncTargets)
     : [];
-  const refreshedLocalSummaries = await listLocalGlossarySummariesForTeam(team);
+  const refreshedLocalSummaries = await listLocalGlossariesForTeam(team);
   const syncIssue = getGlossarySyncIssueMessage(syncSnapshots);
   if (metadataLoaded) {
     metadataRecords = await backfillGlossaryMetadataRecords(team, refreshedLocalSummaries, remoteRepos, metadataRecords);
@@ -823,7 +838,7 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
     remoteRepos: syncTargets,
     syncSnapshots,
     syncIssue,
-    brokerWarning: "",
+    brokerWarning,
     recoveryMessage:
       installationRecoveryDetected && !suppressRecoveryWarning
         ? "Local installation data was missing. Rebuilt glossary repos from GitHub."

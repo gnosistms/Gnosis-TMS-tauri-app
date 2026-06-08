@@ -5,7 +5,7 @@ import {
 } from "./glossary-cache.js";
 import {
   loadRepoBackedGlossariesForTeam,
-  listLocalGlossarySummariesForTeam,
+  listLocalGlossariesForTeam,
 } from "./glossary-repo-flow.js";
 import {
   normalizeGlossarySummary,
@@ -315,7 +315,7 @@ const glossaryQueryController = createRepoResourceQueryController({
   validateSnapshot: assertUniqueGlossarySnapshotIds,
   patchQueryData: patchGlossaryQueryData,
   loadCacheEntry: loadStoredGlossariesForTeam,
-  loadLocalItems: listLocalGlossarySummariesForTeam,
+  loadLocalItems: listLocalGlossariesForTeam,
   persistSnapshot: (team, snapshot) => saveStoredGlossariesForTeam(team, snapshot.glossaries),
   setRefreshing: (isRefreshing) => setResourcePageRefreshing(state.glossariesPage, isRefreshing),
   isRefreshing: () => state.glossariesPage?.isRefreshing === true,
@@ -353,7 +353,7 @@ const glossaryQueryController = createRepoResourceQueryController({
 
     let nextGlossaries = Array.isArray(glossaries) ? glossaries : [];
     if (options.preserveVisibleData === true && nextGlossaries.length === 0) {
-      const localGlossaries = await listLocalGlossarySummariesForTeam(team);
+      const localGlossaries = await listLocalGlossariesForTeam(team);
       if (localGlossaries.length > 0) {
         nextGlossaries = localGlossaries;
       }
