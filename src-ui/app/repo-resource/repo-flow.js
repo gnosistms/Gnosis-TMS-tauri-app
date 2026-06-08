@@ -25,10 +25,6 @@ import {
   repairLocalRepoBinding,
 } from "../team-metadata-flow.js";
 
-function identityValue(value) {
-  return String(value ?? "").trim();
-}
-
 function normalizeBrokerError(error, fallback) {
   if (error instanceof Error) {
     return error;
@@ -410,6 +406,7 @@ export function createRepoResourceRepoFlow(descriptor) {
     upsertMetadataRecord,
     ensureRuntime = null,
     afterSyncSnapshots = null,
+    formatMetadataWarning = null,
     commands,
     messages,
   } = descriptor;
@@ -948,7 +945,11 @@ export function createRepoResourceRepoFlow(descriptor) {
       localSummaries = await purgeTombstonedForTeam(team, localSummaries, metadataRecords);
       metadataRecords = await backfillMetadataRecords(team, localSummaries, remoteRepos, metadataRecords);
     } catch (error) {
-      brokerWarning = error?.message ?? String(error);
+      const message = error?.message ?? String(error);
+      brokerWarning =
+        typeof formatMetadataWarning === "function"
+          ? formatMetadataWarning(message)
+          : message;
     }
 
     const recoverableMetadataCount = countRecoverableMetadataRecords(metadataRecords);
