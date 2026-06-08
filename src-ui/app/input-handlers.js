@@ -799,6 +799,24 @@ function handleProjectExportLanguageInput(event, render) {
   return true;
 }
 
+function syncProjectAddTranslationPasteControls(input) {
+  const root = input.closest?.(".modal-backdrop") ?? globalThis.document;
+  const continueButton = root?.querySelector?.('[data-action="submit-project-add-translation-paste"]');
+  if (continueButton) {
+    const disabled = !String(input.value ?? "").trim();
+    continueButton.disabled = disabled;
+    if (disabled) {
+      continueButton.setAttribute?.("disabled", "");
+    } else {
+      continueButton.removeAttribute?.("disabled");
+    }
+  }
+
+  root
+    ?.querySelector?.(".project-import-modal__error-badge")
+    ?.remove?.();
+}
+
 function handleProjectAddTranslationInput(event, render) {
   const input = event.target.closest("[data-project-add-translation-textarea]");
   if (!input) {
@@ -806,6 +824,7 @@ function handleProjectAddTranslationInput(event, render) {
   }
 
   updateProjectAddTranslationPaste(render, input.value);
+  syncProjectAddTranslationPasteControls(input);
   return true;
 }
 

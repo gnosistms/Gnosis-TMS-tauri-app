@@ -144,7 +144,6 @@ export function updateProjectAddTranslationPaste(render, value) {
     pastedText: typeof value === "string" ? value : "",
     error: "",
   };
-  render();
 }
 
 export function cancelProjectAddTranslation(render) {
