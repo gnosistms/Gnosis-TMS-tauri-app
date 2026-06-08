@@ -60,6 +60,7 @@ function finishProjectAddTranslationApply(render, response, expectedJobId = "") 
     error: "",
   };
   resetProjectAddTranslation();
+  render?.();
   showNoticeBadge(applyProjectAddTranslationNotice(response), render, 2600);
   return true;
 }

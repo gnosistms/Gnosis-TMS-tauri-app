@@ -220,10 +220,10 @@ test("add translation progress listener claims the first job event and ignores o
     targetLanguageCode: "vi",
     jobId: "",
   };
-  let renderCount = 0;
+  const renderCalls = [];
 
-  registerProjectAddTranslationProgress(() => {
-    renderCount += 1;
+  registerProjectAddTranslationProgress((options) => {
+    renderCalls.push(options);
   });
   await Promise.resolve();
   assert.equal(typeof alignedTranslationProgressHandler, "function");
@@ -243,7 +243,7 @@ test("add translation progress listener claims the first job event and ignores o
   assert.equal(state.projectAddTranslation.jobId, "job-1");
   assert.equal(state.projectAddTranslation.flow, "single");
   assert.equal(state.projectAddTranslation.progress.stageId, "prepare_units");
-  assert.equal(renderCount, 1);
+  assert.deepEqual(renderCalls, [undefined]);
 
   alignedTranslationProgressHandler({
     payload: {
@@ -260,7 +260,7 @@ test("add translation progress listener claims the first job event and ignores o
   assert.equal(state.projectAddTranslation.jobId, "job-1");
   assert.equal(state.projectAddTranslation.flow, "single");
   assert.equal(state.projectAddTranslation.progress.stageId, "prepare_units");
-  assert.equal(renderCount, 1);
+  assert.deepEqual(renderCalls, [undefined]);
 
   alignedTranslationProgressHandler({
     payload: {
@@ -276,6 +276,7 @@ test("add translation progress listener claims the first job event and ignores o
 
   assert.equal(state.projectAddTranslation.isOpen, false);
   assert.equal(state.statusBadges.left.text, "Added translation.");
+  assert.deepEqual(renderCalls, [undefined, undefined, { scope: "status-surface" }]);
 });
 
 test("add translation language Continue requires a selected language", async () => {
