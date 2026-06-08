@@ -45,6 +45,12 @@ globalThis.window = {
     callback?.();
     return 1;
   },
+  setTimeout(...args) {
+    return globalThis.setTimeout(...args);
+  },
+  clearTimeout(...args) {
+    return globalThis.clearTimeout(...args);
+  },
 };
 
 globalThis.requestAnimationFrame = (callback) => {
@@ -255,6 +261,46 @@ test("add translation progress listener claims the first job event and ignores o
   assert.equal(state.projectAddTranslation.flow, "single");
   assert.equal(state.projectAddTranslation.progress.stageId, "prepare_units");
   assert.equal(renderCount, 1);
+
+  const originalSetTimeout = globalThis.window.setTimeout;
+  const originalClearTimeout = globalThis.window.clearTimeout;
+  const timers = [];
+  globalThis.window.setTimeout = (callback, delayMs) => {
+    const timer = { callback, delayMs, cleared: false };
+    timers.push(timer);
+    return timer;
+  };
+  globalThis.window.clearTimeout = (timer) => {
+    if (timer) {
+      timer.cleared = true;
+    }
+  };
+  try {
+    alignedTranslationProgressHandler({
+      payload: {
+        jobId: "job-1",
+        flow: "single",
+        stageId: "apply",
+        status: "complete",
+        message: "Aligned translation was applied",
+        completed: 1,
+        total: 1,
+      },
+    });
+
+    assert.equal(state.projectAddTranslation.step, "applying");
+    assert.equal(state.projectAddTranslation.progress.stageId, "apply");
+    assert.equal(timers.length, 1);
+    assert.equal(timers[0].delayMs, 2000);
+
+    timers[0].callback();
+
+    assert.equal(state.projectAddTranslation.isOpen, false);
+    assert.equal(state.statusBadges.left.text, "Added translation.");
+  } finally {
+    globalThis.window.setTimeout = originalSetTimeout;
+    globalThis.window.clearTimeout = originalClearTimeout;
+  }
 });
 
 test("add translation language Continue requires a selected language", async () => {
