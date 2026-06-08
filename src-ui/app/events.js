@@ -1,4 +1,4 @@
-import { handleInputEvent } from "./input-handlers.js";
+import { handleInputEvent, handlePasteEvent } from "./input-handlers.js";
 import { handleNavigation } from "./navigation.js";
 import { createActionDispatcher } from "./action-dispatcher.js";
 import { checkForAppUpdate } from "./updater-flow.js";
@@ -74,6 +74,7 @@ export function registerAppEvents(render) {
 
   document.addEventListener("input", (event) => handleInputEvent(event, render));
   document.addEventListener("change", (event) => handleInputEvent(event, render));
+  document.addEventListener("paste", (event) => handlePasteEvent(event, render));
 
   document.addEventListener("mousedown", (event) => {
     if (event.target instanceof Element && event.target.closest("[data-glossary-inline-style-button]")) {

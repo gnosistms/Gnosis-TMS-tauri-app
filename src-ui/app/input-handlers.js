@@ -805,10 +805,15 @@ function syncProjectAddTranslationPasteControls(input) {
   if (continueButton) {
     const disabled = !String(input.value ?? "").trim();
     continueButton.disabled = disabled;
+    continueButton.classList?.toggle?.("is-disabled", disabled);
     if (disabled) {
       continueButton.setAttribute?.("disabled", "");
+      continueButton.setAttribute?.("aria-disabled", "true");
+      continueButton.setAttribute?.("data-offline-blocked", "true");
     } else {
       continueButton.removeAttribute?.("disabled");
+      continueButton.removeAttribute?.("aria-disabled");
+      continueButton.removeAttribute?.("data-offline-blocked");
     }
   }
 
@@ -825,6 +830,25 @@ function handleProjectAddTranslationInput(event, render) {
 
   updateProjectAddTranslationPaste(render, input.value);
   syncProjectAddTranslationPasteControls(input);
+  return true;
+}
+
+export function handlePasteEvent(event, render) {
+  const input = event.target.closest("[data-project-add-translation-textarea]");
+  if (!input) {
+    return false;
+  }
+
+  const schedule =
+    typeof globalThis.requestAnimationFrame === "function"
+      ? globalThis.requestAnimationFrame.bind(globalThis)
+      : typeof globalThis.window?.requestAnimationFrame === "function"
+        ? globalThis.window.requestAnimationFrame.bind(globalThis.window)
+        : (callback) => setTimeout(callback, 0);
+
+  schedule(() => {
+    handleProjectAddTranslationInput({ target: input }, render);
+  });
   return true;
 }
 

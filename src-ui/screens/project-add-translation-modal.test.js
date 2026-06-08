@@ -110,6 +110,7 @@ test("add translation progress modal shows full staged progress", () => {
     projectAddTranslation: {
       isOpen: true,
       step: "aligning",
+      flow: "multi",
       progress: {
         stageId: "row_alignment",
         stageLabel: "Summarizing sections",
@@ -140,11 +141,43 @@ test("add translation progress modal shows full staged progress", () => {
   assert.match(html, /Working 2 \/ 4/);
 });
 
+test("add translation progress modal shows single-block staged progress", () => {
+  const html = renderProjectAddTranslationModal({
+    projectAddTranslation: {
+      isOpen: true,
+      step: "aligning",
+      flow: "single",
+      progress: {
+        stageId: "row_alignment",
+        status: "running",
+        stageLabel: "Aligning translation",
+        message: "Aligning your translation",
+        completed: 0,
+        total: 1,
+        percent: 0,
+      },
+      error: "",
+    },
+  });
+
+  assert.match(html, /Preparing text/);
+  assert.match(html, /Aligning translation/);
+  assert.match(html, /Applying translation/);
+  assert.doesNotMatch(html, /Preparing text units/);
+  assert.doesNotMatch(html, /Summarizing sections/);
+  assert.doesNotMatch(html, /Finding section matches/);
+  assert.doesNotMatch(html, /Choosing the best matches/);
+  assert.match(html, /add-translation-progress__step--indeterminate/);
+  assert.match(html, /aria-label="Aligning translation"[\s\S]*aria-valuenow="0"/);
+  assert.match(html, /class="add-translation-progress__bar-fill"><\/span>/);
+});
+
 test("add translation progress modal treats cached preflight as aligned", () => {
   const html = renderProjectAddTranslationModal({
     projectAddTranslation: {
       isOpen: true,
       step: "applying",
+      flow: "multi",
       progress: {
         stageId: "preflight",
         status: "complete",

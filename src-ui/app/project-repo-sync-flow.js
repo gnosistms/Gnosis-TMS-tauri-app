@@ -15,8 +15,8 @@ import {
 import { requireAppUpdate } from "./updater-flow.js";
 import {
   enqueueRepoWrite,
+  getRepoWriteQueueSnapshot,
   projectRepoScope,
-  repoWriteQueueHasActiveWrites,
 } from "./repo-write-queue.js";
 
 const PROJECT_REPO_SYNC_POLL_DELAY_MS = 1400;
@@ -130,14 +130,23 @@ function projectRepoSyncScope(team, descriptor) {
   });
 }
 
-function queuedSyncBadgeText(waitingCount, totalCount) {
-  if (waitingCount <= 0) {
+function queuedSyncBadgeText(localWaitingCount, repoOperationWaitingCount, totalCount) {
+  if (localWaitingCount <= 0 && repoOperationWaitingCount <= 0) {
     return "Checking local repos...";
   }
-  if (waitingCount === totalCount) {
-    return `Waiting for local saves in ${waitingCount} project repo${waitingCount === 1 ? "" : "s"}...`;
+  if (localWaitingCount > 0 && repoOperationWaitingCount <= 0) {
+    if (localWaitingCount === totalCount) {
+      return `Waiting for local saves in ${localWaitingCount} project repo${localWaitingCount === 1 ? "" : "s"}...`;
+    }
+    return `Checking ${totalCount} project repos; waiting for local saves in ${localWaitingCount}...`;
   }
-  return `Checking ${totalCount} project repos; waiting for local saves in ${waitingCount}...`;
+  if (localWaitingCount <= 0) {
+    if (repoOperationWaitingCount === totalCount) {
+      return `Waiting for project repo operation in ${repoOperationWaitingCount} project repo${repoOperationWaitingCount === 1 ? "" : "s"}...`;
+    }
+    return `Checking ${totalCount} project repos; waiting for project repo operation in ${repoOperationWaitingCount}...`;
+  }
+  return `Checking ${totalCount} project repos; waiting for local saves in ${localWaitingCount} and project repo operation in ${repoOperationWaitingCount}...`;
 }
 
 async function reconcileOneProjectRepoSyncState({
@@ -266,10 +275,20 @@ export async function reconcileProjectRepoSyncStates(render, team, projects, opt
     render();
     return;
   }
-  const waitingCount = input.projects
-    .filter((project) => repoWriteQueueHasActiveWrites(projectRepoSyncScope(team, project)))
-    .length;
-  showScopedSyncBadge("projects", queuedSyncBadgeText(waitingCount, input.projects.length), render);
+  const waitingSummary = input.projects.reduce((summary, project) => {
+    const snapshot = getRepoWriteQueueSnapshot(projectRepoSyncScope(team, project));
+    if (snapshot.hasActiveLocalWrites) {
+      summary.local += 1;
+    } else if (snapshot.hasActiveWrites) {
+      summary.repoOperation += 1;
+    }
+    return summary;
+  }, { local: 0, repoOperation: 0 });
+  showScopedSyncBadge(
+    "projects",
+    queuedSyncBadgeText(waitingSummary.local, waitingSummary.repoOperation, input.projects.length),
+    render,
+  );
 
   const snapshotResults = await Promise.all(
     input.projects.map((descriptor) =>
