@@ -19,6 +19,17 @@ import { ensureSelectedTeamAiProviderReady } from "./team-ai-flow.js";
 export const ALIGNED_TRANSLATION_PROGRESS_EVENT = "aligned-translation-progress";
 
 let progressUnlistenPromise = null;
+let applyCompletionFallbackTimer = null;
+
+function clearApplyCompletionFallbackTimer() {
+  if (applyCompletionFallbackTimer) {
+    const clearTimer = globalThis.window?.clearTimeout ?? globalThis.clearTimeout;
+    if (typeof clearTimer === "function") {
+      clearTimer(applyCompletionFallbackTimer);
+    }
+    applyCompletionFallbackTimer = null;
+  }
+}
 
 function selectedSourceLanguageCode(chapter) {
   const languages = normalizeChapterLanguages(chapter?.languages);
@@ -34,7 +45,57 @@ function selectedSourceLanguageCode(chapter) {
 }
 
 function resetProjectAddTranslation() {
+  clearApplyCompletionFallbackTimer();
   state.projectAddTranslation = createProjectAddTranslationState();
+}
+
+function applyProjectAddTranslationNotice(response) {
+  const updated = Number(response?.updatedRowCount ?? 0);
+  const inserted = Number(response?.insertedRowCount ?? 0);
+  const total = updated + inserted;
+  if (total > 0) {
+    return `Added translation to ${total} row${total === 1 ? "" : "s"}.`;
+  }
+  return "Added translation.";
+}
+
+function finishProjectAddTranslationApply(render, response, expectedJobId = "") {
+  const modal = state.projectAddTranslation;
+  if (expectedJobId && (!modal?.isOpen || modal.jobId !== expectedJobId)) {
+    return false;
+  }
+  state.projectAddTranslation = {
+    ...modal,
+    step: "done",
+    status: "complete",
+    result: response ?? null,
+    error: "",
+  };
+  resetProjectAddTranslation();
+  showNoticeBadge(applyProjectAddTranslationNotice(response), render, 2600);
+  return true;
+}
+
+function scheduleApplyCompletionFallback(render, jobId) {
+  clearApplyCompletionFallbackTimer();
+  const setTimer = globalThis.window?.setTimeout ?? globalThis.setTimeout;
+  if (typeof setTimer !== "function") {
+    return;
+  }
+  applyCompletionFallbackTimer = setTimer(() => {
+    applyCompletionFallbackTimer = null;
+    const modal = state.projectAddTranslation;
+    if (
+      !modal?.isOpen
+      || modal.jobId !== jobId
+      || modal.step !== "applying"
+      || modal.progress?.stageId !== "apply"
+      || modal.progress?.status !== "complete"
+    ) {
+      return;
+    }
+    finishProjectAddTranslationApply(render, null, jobId);
+  }, 2000);
 }
 
 function currentProjectAddTranslationLanguageScrollTop() {
@@ -98,15 +159,33 @@ export function registerProjectAddTranslationProgress(render) {
   progressUnlistenPromise = listen(ALIGNED_TRANSLATION_PROGRESS_EVENT, (event) => {
     const payload = event?.payload ?? {};
     const modal = state.projectAddTranslation;
-    if (!modal?.isOpen || !payload?.jobId || payload.jobId !== modal.jobId) {
+    const payloadJobId = typeof payload?.jobId === "string" ? payload.jobId.trim() : "";
+    const modalJobId = typeof modal?.jobId === "string" ? modal.jobId.trim() : "";
+    const canClaimJob =
+      !modalJobId
+      && payloadJobId
+      && (modal?.step === "aligning" || modal?.step === "applying");
+    if (
+      !modal?.isOpen
+      || !payloadJobId
+      || (modalJobId && payloadJobId !== modalJobId)
+      || (!modalJobId && !canClaimJob)
+    ) {
       return;
     }
+    const nextStep =
+      payload.stageId === "apply" || modal.step === "applying" ? "applying" : "aligning";
     state.projectAddTranslation = {
       ...modal,
+      jobId: modalJobId || payloadJobId,
+      flow: payload.flow ? payload.flow : modal.flow,
       progress: payload,
-      step: modal.step === "applying" ? "applying" : "aligning",
+      step: nextStep,
     };
     render?.();
+    if (payload.stageId === "apply" && payload.status === "complete") {
+      scheduleApplyCompletionFallback(render, payloadJobId);
+    }
   }).catch(() => null);
 }
 
@@ -305,6 +384,7 @@ export async function runProjectAddTranslationPreflight(render) {
     error: "",
     providerId,
     modelId,
+    flow: state.projectAddTranslation.flow,
     progress: {
       stageId: "prepare_units",
       stageLabel: "Preparing text units",
@@ -337,6 +417,7 @@ export async function runProjectAddTranslationPreflight(render) {
           ? response.targetLanguageCode.trim()
           : state.projectAddTranslation.targetLanguageCode,
       targetLanguageExists: response?.targetLanguageExists === true,
+      flow: response?.flow || state.projectAddTranslation.flow || "",
       progress: response?.progress ?? state.projectAddTranslation.progress,
       error: "",
     };
@@ -374,6 +455,7 @@ export async function applyProjectAddTranslation(render, options = {}) {
   if (!modal?.isOpen || !modal.jobId) {
     return;
   }
+  const applyJobId = modal.jobId;
   state.projectAddTranslation = {
     ...modal,
     step: "applying",
@@ -390,20 +472,16 @@ export async function applyProjectAddTranslation(render, options = {}) {
         writeMode: "fillEmptyOnly",
       }),
     });
-    state.projectAddTranslation = {
-      ...state.projectAddTranslation,
-      step: "done",
-      status: "complete",
-      result: response,
-      error: "",
-    };
-    const updated = Number(response?.updatedRowCount ?? 0);
-    const inserted = Number(response?.insertedRowCount ?? 0);
-    resetProjectAddTranslation();
-    showNoticeBadge(`Added translation to ${updated + inserted} row${updated + inserted === 1 ? "" : "s"}.`, render, 2600);
+    finishProjectAddTranslationApply(render, response, applyJobId);
   } catch (error) {
+    clearApplyCompletionFallbackTimer();
+    const current = state.projectAddTranslation;
+    if (!current?.isOpen || (current.jobId && current.jobId !== applyJobId)) {
+      showNoticeBadge(formatErrorForDisplay(error), render, 3200);
+      return;
+    }
     state.projectAddTranslation = {
-      ...state.projectAddTranslation,
+      ...current,
       step: "applying",
       status: "idle",
       error: formatErrorForDisplay(error),

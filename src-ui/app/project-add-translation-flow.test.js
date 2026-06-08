@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 let invokeHandler = async () => null;
+let alignedTranslationProgressHandler = null;
 
 globalThis.document = {
   testScrollList: null,
@@ -21,7 +22,19 @@ globalThis.window = {
       invoke: async (...args) => invokeHandler(...args),
     },
     event: {
-      listen: async () => () => {},
+      listen: async (eventName, handler) => {
+        if (eventName === "aligned-translation-progress") {
+          alignedTranslationProgressHandler = handler;
+        }
+        return () => {
+          if (
+            eventName === "aligned-translation-progress"
+            && alignedTranslationProgressHandler === handler
+          ) {
+            alignedTranslationProgressHandler = null;
+          }
+        };
+      },
     },
   },
   localStorage: null,
@@ -32,6 +45,12 @@ globalThis.window = {
     callback?.();
     return 1;
   },
+  setTimeout(...args) {
+    return globalThis.setTimeout(...args);
+  },
+  clearTimeout(...args) {
+    return globalThis.clearTimeout(...args);
+  },
 };
 
 globalThis.requestAnimationFrame = (callback) => {
@@ -41,6 +60,7 @@ globalThis.requestAnimationFrame = (callback) => {
 
 const {
   continueProjectAddTranslationLanguage,
+  registerProjectAddTranslationProgress,
   selectProjectAddTranslationLanguage,
   updateProjectAddTranslationPaste,
 } = await import("./project-add-translation-flow.js");
@@ -156,6 +176,131 @@ test("add translation language Continue runs preflight after selection", async (
   ]);
   assert.equal(state.projectAddTranslation.step, "mismatchWarning");
   assert.equal(commands[1].payload.input.targetLanguageCode, "vi");
+});
+
+test("add translation language Continue shows progress modal before preflight response", async () => {
+  resetProjectAddTranslationTestState();
+  state.projectAddTranslation = {
+    ...state.projectAddTranslation,
+    targetLanguageCode: "vi",
+  };
+  let preflightStarted = false;
+  invokeHandler = async (command) => {
+    if (command === "load_ai_provider_secret") {
+      return "openai-key";
+    }
+    if (command === "preflight_aligned_translation_to_gtms_chapter") {
+      preflightStarted = true;
+      assert.equal(state.projectAddTranslation.step, "aligning");
+      assert.equal(state.projectAddTranslation.status, "running");
+      assert.equal(state.projectAddTranslation.progress.stageId, "prepare_units");
+      return {
+        status: "mismatch",
+        jobId: "job-1",
+        flow: "single",
+        mismatch: { score: 0.2 },
+        existingTranslationCount: 0,
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await continueProjectAddTranslationLanguage(() => {});
+
+  assert.equal(preflightStarted, true);
+  assert.equal(state.projectAddTranslation.flow, "single");
+  assert.equal(state.projectAddTranslation.step, "mismatchWarning");
+});
+
+test("add translation progress listener claims the first job event and ignores other jobs", async () => {
+  resetProjectAddTranslationTestState();
+  state.projectAddTranslation = {
+    ...state.projectAddTranslation,
+    step: "aligning",
+    targetLanguageCode: "vi",
+    jobId: "",
+  };
+  let renderCount = 0;
+
+  registerProjectAddTranslationProgress(() => {
+    renderCount += 1;
+  });
+  await Promise.resolve();
+  assert.equal(typeof alignedTranslationProgressHandler, "function");
+
+  alignedTranslationProgressHandler({
+    payload: {
+      jobId: "job-1",
+      flow: "single",
+      stageId: "prepare_units",
+      status: "complete",
+      message: "Prepared source and target units",
+      completed: 1,
+      total: 1,
+    },
+  });
+
+  assert.equal(state.projectAddTranslation.jobId, "job-1");
+  assert.equal(state.projectAddTranslation.flow, "single");
+  assert.equal(state.projectAddTranslation.progress.stageId, "prepare_units");
+  assert.equal(renderCount, 1);
+
+  alignedTranslationProgressHandler({
+    payload: {
+      jobId: "other-job",
+      flow: "multi",
+      stageId: "apply",
+      status: "running",
+      message: "Wrong job",
+      completed: 0,
+      total: 1,
+    },
+  });
+
+  assert.equal(state.projectAddTranslation.jobId, "job-1");
+  assert.equal(state.projectAddTranslation.flow, "single");
+  assert.equal(state.projectAddTranslation.progress.stageId, "prepare_units");
+  assert.equal(renderCount, 1);
+
+  const originalSetTimeout = globalThis.window.setTimeout;
+  const originalClearTimeout = globalThis.window.clearTimeout;
+  const timers = [];
+  globalThis.window.setTimeout = (callback, delayMs) => {
+    const timer = { callback, delayMs, cleared: false };
+    timers.push(timer);
+    return timer;
+  };
+  globalThis.window.clearTimeout = (timer) => {
+    if (timer) {
+      timer.cleared = true;
+    }
+  };
+  try {
+    alignedTranslationProgressHandler({
+      payload: {
+        jobId: "job-1",
+        flow: "single",
+        stageId: "apply",
+        status: "complete",
+        message: "Aligned translation was applied",
+        completed: 1,
+        total: 1,
+      },
+    });
+
+    assert.equal(state.projectAddTranslation.step, "applying");
+    assert.equal(state.projectAddTranslation.progress.stageId, "apply");
+    assert.equal(timers.length, 1);
+    assert.equal(timers[0].delayMs, 2000);
+
+    timers[0].callback();
+
+    assert.equal(state.projectAddTranslation.isOpen, false);
+    assert.equal(state.statusBadges.left.text, "Added translation.");
+  } finally {
+    globalThis.window.setTimeout = originalSetTimeout;
+    globalThis.window.clearTimeout = originalClearTimeout;
+  }
 });
 
 test("add translation language Continue requires a selected language", async () => {

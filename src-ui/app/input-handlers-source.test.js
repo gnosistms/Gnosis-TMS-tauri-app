@@ -39,3 +39,28 @@ test("editor source and target language handlers open the language manager inste
     /function handleEditorTargetLanguageInput[\s\S]*input\.value === MANAGE_CHAPTER_LANGUAGES_OPTION_VALUE[\s\S]*openTargetLanguageManager\(render\)[\s\S]*return true;[\s\S]*updateEditorTargetLanguage\(render, input\.value\);/,
   );
 });
+
+test("add translation paste input sync clears all disabled button state", () => {
+  const handlerSource = sourceBetween(
+    "function syncProjectAddTranslationPasteControls",
+    "function handleProjectAddTranslationInput",
+  );
+
+  assert.match(handlerSource, /continueButton\.disabled = disabled;/);
+  assert.match(handlerSource, /classList\?\.toggle\?\.\("is-disabled", disabled\)/);
+  assert.match(handlerSource, /setAttribute\?\.\("aria-disabled", "true"\)/);
+  assert.match(handlerSource, /setAttribute\?\.\("data-offline-blocked", "true"\)/);
+  assert.match(handlerSource, /removeAttribute\?\.\("aria-disabled"\)/);
+  assert.match(handlerSource, /removeAttribute\?\.\("data-offline-blocked"\)/);
+});
+
+test("add translation paste event schedules a post-paste input sync", () => {
+  const handlerSource = sourceBetween(
+    "export function handlePasteEvent",
+    "function handleProjectImportLinkInput",
+  );
+
+  assert.match(handlerSource, /\[data-project-add-translation-textarea\]/);
+  assert.match(handlerSource, /requestAnimationFrame/);
+  assert.match(handlerSource, /handleProjectAddTranslationInput\(\{ target: input \}, render\);/);
+});

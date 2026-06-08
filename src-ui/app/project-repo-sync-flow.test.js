@@ -149,6 +149,37 @@ test("project repo sync waits behind an existing repo queue write for the same r
   ]);
 });
 
+test("project repo sync does not label active repo operations as local saves", async () => {
+  const events = [];
+  setupProjectRepoSyncTest(events);
+  const releaseRepoOperation = deferred();
+  const repoOperation = enqueueRepoWrite({
+    scope: "1:project-1:repo-one",
+    kind: "projectRepoMaintenance",
+    run: async () => {
+      events.push("repo-operation:start");
+      await releaseRepoOperation.promise;
+      events.push("repo-operation:end");
+    },
+  });
+  await delay(0);
+
+  const sync = reconcileProjectRepoSyncStates(() => {}, team(), [project()]);
+  await delay(5);
+
+  assert.deepEqual(events, ["repo-operation:start"]);
+  assert.equal(state.statusBadges.right.text, "Waiting for project repo operation in 1 project repo...");
+
+  releaseRepoOperation.resolve();
+  await Promise.all([repoOperation, sync]);
+
+  assert.deepEqual(events, [
+    "repo-operation:start",
+    "repo-operation:end",
+    "reconcile_project_repo_sync_states:project-1",
+  ]);
+});
+
 test("project repo sync for another repo can run while an editor write is active", async () => {
   const events = [];
   setupProjectRepoSyncTest(events);
