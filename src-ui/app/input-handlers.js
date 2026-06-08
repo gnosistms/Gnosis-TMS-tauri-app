@@ -805,10 +805,15 @@ function syncProjectAddTranslationPasteControls(input) {
   if (continueButton) {
     const disabled = !String(input.value ?? "").trim();
     continueButton.disabled = disabled;
+    continueButton.classList?.toggle?.("is-disabled", disabled);
     if (disabled) {
       continueButton.setAttribute?.("disabled", "");
+      continueButton.setAttribute?.("aria-disabled", "true");
+      continueButton.setAttribute?.("data-offline-blocked", "true");
     } else {
       continueButton.removeAttribute?.("disabled");
+      continueButton.removeAttribute?.("aria-disabled");
+      continueButton.removeAttribute?.("data-offline-blocked");
     }
   }
 
