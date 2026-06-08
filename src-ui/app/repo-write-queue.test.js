@@ -2,6 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  __setRepoWriteOverdueReporter,
+  __setRepoWriteOverdueScheduler,
+  __setRepoWriteQueueClock,
   clearRepoQueueErrors,
   consumeRepoInvalidations,
   enqueueRepoWrite,
@@ -259,6 +262,105 @@ test("repo queue snapshots expose local write and remote sync state separately",
 
   releaseLocalWrite.resolve();
   await localWrite;
+});
+
+test("repo queue watchdog surfaces overdue writes without settling the operation", async () => {
+  const releaseLocalWrite = deferred();
+  const reports = [];
+  const timers = [];
+  let currentTimeMs = Date.now();
+  __setRepoWriteQueueClock(() => currentTimeMs);
+  __setRepoWriteOverdueReporter((payload) => {
+    reports.push(payload);
+  });
+  __setRepoWriteOverdueScheduler(
+    (callback, delayMs) => {
+      const timer = { callback, delayMs, cancelled: false };
+      timers.push(timer);
+      return timer;
+    },
+    (timer) => {
+      if (timer) {
+        timer.cancelled = true;
+      }
+    },
+  );
+
+  let settled = false;
+  const localWrite = enqueueRepoWrite({
+    scope: "7:project-1:repo-one",
+    kind: "editor:rowText",
+    operationType: "localEditorWrite",
+    run: async () => {
+      await releaseLocalWrite.promise;
+    },
+  });
+  localWrite.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
+
+  await delay(0);
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0].delayMs, 15_000);
+
+  const running = getRepoWriteQueueSnapshot("7:project-1:repo-one").operations[0];
+  currentTimeMs = Date.parse(running.startedAt) + 15_000;
+  timers[0].callback();
+  timers[0].callback();
+  await delay(0);
+
+  const overdueSnapshot = getRepoWriteQueueSnapshot("7:project-1:repo-one");
+  assert.equal(overdueSnapshot.hasOverdueWrites, true);
+  assert.equal(overdueSnapshot.operations[0].overdue, true);
+  assert.equal(overdueSnapshot.oldestActiveOperation.operationId, overdueSnapshot.operations[0].operationId);
+  assert.equal(overdueSnapshot.scopes[0].hasOverdueWrites, true);
+  assert.equal(overdueSnapshot.scopes[0].oldestActiveOperation.operationId, overdueSnapshot.operations[0].operationId);
+  assert.equal(settled, false);
+  assert.deepEqual(reports, [{
+    operation: "repo_write_overdue",
+    reason: "localEditorWrite",
+  }]);
+
+  releaseLocalWrite.resolve();
+  await localWrite;
+  assert.equal(timers[0].cancelled, true);
+  assert.equal(getRepoWriteQueueSnapshot("7:project-1:repo-one").hasActiveWrites, false);
+});
+
+test("repo queue clears overdue timers when operations finish before the threshold", async () => {
+  const timers = [];
+  __setRepoWriteOverdueReporter(() => {
+    throw new Error("Completed operations should not report overdue.");
+  });
+  __setRepoWriteOverdueScheduler(
+    (callback, delayMs) => {
+      const timer = { callback, delayMs, cancelled: false };
+      timers.push(timer);
+      return timer;
+    },
+    (timer) => {
+      if (timer) {
+        timer.cancelled = true;
+      }
+    },
+  );
+
+  const write = enqueueRepoWrite({
+    scope: "7:project-1:repo-one",
+    kind: "quick",
+    run: async () => "done",
+  });
+
+  await write;
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0].cancelled, true);
+  timers[0].callback();
+  assert.equal(getRepoWriteQueueSnapshot("7:project-1:repo-one").hasActiveWrites, false);
 });
 
 test("different repo scopes run concurrently", async () => {

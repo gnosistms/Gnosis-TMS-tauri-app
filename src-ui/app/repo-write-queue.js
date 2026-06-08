@@ -1,10 +1,23 @@
+import { reportBackendNonfatalError } from "./telemetry.js";
+
 const ACTIVE_REPO_WRITE_STATUSES = new Set(["queued", "running"]);
 const LOCAL_REPO_WRITE_OPERATION_TYPES = new Set(["localEditorWrite", "localMetadataWrite"]);
 const REMOTE_REPO_WRITE_OPERATION_TYPES = new Set(["remoteSync"]);
+const OVERDUE_THRESHOLDS_MS = {
+  localEditorWrite: 15_000,
+  localMetadataWrite: 15_000,
+  remoteSync: 120_000,
+  repoMaintenance: 120_000,
+};
+const DEFAULT_OVERDUE_THRESHOLD_MS = 60_000;
 
 let nextRepoWriteOperationId = 1;
 let nextRepoQueueErrorId = 1;
 let nextRepoInvalidationId = 1;
+let nowMsClock = () => Date.now();
+let scheduleOverdueCheck = (callback, delayMs) => setTimeout(callback, delayMs);
+let cancelOverdueCheck = (handle) => clearTimeout(handle);
+let reportRepoWriteOverdue = (payload) => reportBackendNonfatalError(payload);
 
 const DEBUG_REPO_WRITE = false;
 
@@ -17,6 +30,33 @@ const invalidationListeners = new Set();
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function thresholdFor(operationType) {
+  return OVERDUE_THRESHOLDS_MS[operationType] ?? DEFAULT_OVERDUE_THRESHOLD_MS;
+}
+
+function parseIsoMs(value) {
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function activeOperationStartMs(operation) {
+  if (operation.status === "running") {
+    return parseIsoMs(operation.startedAt) ?? parseIsoMs(operation.queuedAt);
+  }
+  if (operation.status === "queued") {
+    return parseIsoMs(operation.queuedAt);
+  }
+  return null;
+}
+
+function activeOperationElapsedMs(operation) {
+  const startedMs = activeOperationStartMs(operation);
+  if (!Number.isFinite(startedMs)) {
+    return 0;
+  }
+  return Math.max(0, nowMsClock() - startedMs);
 }
 
 function cloneQueueValue(value) {
@@ -154,6 +194,10 @@ function normalizeRepoScope(scope) {
 }
 
 function snapshotOperation(operation) {
+  const elapsedMs = activeOperationElapsedMs(operation);
+  const overdue =
+    ACTIVE_REPO_WRITE_STATUSES.has(operation.status)
+    && (operation.overdueReported === true || elapsedMs >= thresholdFor(operation.operationType));
   return {
     operationId: operation.operationId,
     scope: operation.scope,
@@ -167,7 +211,26 @@ function snapshotOperation(operation) {
     startedAt: operation.startedAt,
     finishedAt: operation.finishedAt,
     error: operation.error,
+    elapsedMs,
+    overdue,
   };
+}
+
+function oldestActiveOperation(operations) {
+  let oldest = null;
+  let oldestStart = Infinity;
+  for (const operation of operations) {
+    if (!ACTIVE_REPO_WRITE_STATUSES.has(operation.status)) {
+      continue;
+    }
+    const startMs = activeOperationStartMs(operation);
+    if (!Number.isFinite(startMs) || startMs >= oldestStart) {
+      continue;
+    }
+    oldest = operation;
+    oldestStart = startMs;
+  }
+  return oldest ? snapshotOperation(oldest) : null;
 }
 
 function snapshotQueue(queue) {
@@ -191,6 +254,7 @@ function snapshotQueue(queue) {
     ACTIVE_REPO_WRITE_STATUSES.has(operation.status)
     && REMOTE_REPO_WRITE_OPERATION_TYPES.has(operation.operationType),
   );
+  const snapshotOperations = operations.map(snapshotOperation);
 
   return {
     scope: queue.scope,
@@ -203,11 +267,14 @@ function snapshotQueue(queue) {
     hasActiveLocalWrites: activeLocalOperations.length > 0,
     hasActiveRemoteSync: activeRemoteOperations.length > 0,
     hasRunningRemoteSync: activeRemoteOperations.some((operation) => operation.status === "running"),
-    operations: operations.map(snapshotOperation),
+    hasOverdueWrites: snapshotOperations.some((operation) => operation.overdue),
+    oldestActiveOperation: oldestActiveOperation(operations),
+    operations: snapshotOperations,
   };
 }
 
 function cleanupCompletedOperation(operation) {
+  clearOperationOverdueTimer(operation);
   if (ACTIVE_REPO_WRITE_STATUSES.has(operation.status)) {
     return;
   }
@@ -221,6 +288,14 @@ function cleanupCompletedOperation(operation) {
   if (!queue.processing && !queue.runningOperationId && queue.items.length === 0) {
     queuesByScope.delete(operation.scope);
   }
+}
+
+function clearOperationOverdueTimer(operation) {
+  if (!operation?.overdueTimer) {
+    return;
+  }
+  cancelOverdueCheck(operation.overdueTimer);
+  operation.overdueTimer = null;
 }
 
 function permissionDeniedError(result) {
@@ -284,6 +359,17 @@ async function processScopeQueue(queue) {
       operation.status = "running";
       operation.startedAt = nowIso();
       operation.error = "";
+      operation.overdueTimer = scheduleOverdueCheck(() => {
+        if (operation.status !== "running" || operation.overdueReported === true) {
+          return;
+        }
+        operation.overdueReported = true;
+        reportRepoWriteOverdue({
+          operation: "repo_write_overdue",
+          reason: operation.operationType || operation.kind,
+        });
+        emitQueueChanged();
+      }, thresholdFor(operation.operationType));
       logRepoWriteDiagnostic("running", operation, { queuedCount: queue.items.length });
       emitQueueChanged();
 
@@ -319,6 +405,7 @@ async function processScopeQueue(queue) {
         }
         operation.reject(error);
       } finally {
+        clearOperationOverdueTimer(operation);
         queue.runningOperationId = null;
         emitQueueChanged();
         cleanupCompletedOperation(operation);
@@ -453,6 +540,8 @@ export function enqueueRepoWrite(options = {}) {
     checkPermission: options.checkPermission,
     resolve: null,
     reject: null,
+    overdueReported: false,
+    overdueTimer: null,
   };
 
   const promise = new Promise((resolve, reject) => {
@@ -497,6 +586,11 @@ export function getRepoWriteQueueSnapshot(scope = null) {
     ACTIVE_REPO_WRITE_STATUSES.has(operation.status)
     && REMOTE_REPO_WRITE_OPERATION_TYPES.has(operation.operationType),
   );
+  const oldestOperation = oldestActiveOperation(
+    queues.flatMap((queue) => [
+      ...queue.operations,
+    ]),
+  );
 
   return {
     queuedCount,
@@ -506,9 +600,30 @@ export function getRepoWriteQueueSnapshot(scope = null) {
     hasActiveLocalWrites: activeLocalWrites.length > 0,
     hasActiveRemoteSync: activeRemoteSync.length > 0,
     hasRunningRemoteSync: activeRemoteSync.some((operation) => operation.status === "running"),
+    hasOverdueWrites: operations.some((operation) => operation.overdue),
+    oldestActiveOperation: oldestOperation,
     scopes: queues,
     operations,
   };
+}
+
+export function __setRepoWriteQueueClock(fn) {
+  nowMsClock = typeof fn === "function" ? fn : (() => Date.now());
+}
+
+export function __setRepoWriteOverdueScheduler(schedule, cancel) {
+  scheduleOverdueCheck = typeof schedule === "function"
+    ? schedule
+    : ((callback, delayMs) => setTimeout(callback, delayMs));
+  cancelOverdueCheck = typeof cancel === "function"
+    ? cancel
+    : ((handle) => clearTimeout(handle));
+}
+
+export function __setRepoWriteOverdueReporter(reporter) {
+  reportRepoWriteOverdue = typeof reporter === "function"
+    ? reporter
+    : ((payload) => reportBackendNonfatalError(payload));
 }
 
 export function repoWriteQueueHasActiveWrites(scope = null) {
@@ -635,6 +750,9 @@ export function subscribeRepoInvalidations(listener) {
 }
 
 export function resetRepoWriteQueue() {
+  for (const operation of operationsById.values()) {
+    clearOperationOverdueTimer(operation);
+  }
   queuesByScope.clear();
   operationsById.clear();
   repoQueueErrors.splice(0, repoQueueErrors.length);
@@ -642,5 +760,9 @@ export function resetRepoWriteQueue() {
   nextRepoWriteOperationId = 1;
   nextRepoQueueErrorId = 1;
   nextRepoInvalidationId = 1;
+  nowMsClock = () => Date.now();
+  scheduleOverdueCheck = (callback, delayMs) => setTimeout(callback, delayMs);
+  cancelOverdueCheck = (handle) => clearTimeout(handle);
+  reportRepoWriteOverdue = (payload) => reportBackendNonfatalError(payload);
   emitQueueChanged();
 }

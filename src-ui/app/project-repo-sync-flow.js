@@ -15,14 +15,20 @@ import {
 import { requireAppUpdate } from "./updater-flow.js";
 import {
   enqueueRepoWrite,
+  getRepoWriteQueueSnapshot,
   projectRepoScope,
-  repoWriteQueueHasActiveWrites,
+  subscribeRepoWriteQueue,
 } from "./repo-write-queue.js";
 
 const PROJECT_REPO_SYNC_POLL_DELAY_MS = 1400;
+const PROJECT_REPO_SYNC_MAX_POLL_MS = 180_000;
+const PROJECT_REPO_SYNC_NO_PROGRESS_POLLS = 8;
+
+let projectRepoSyncNow = () => Date.now();
+let projectRepoSyncDelay = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
 function delay(ms) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
+  return projectRepoSyncDelay(ms);
 }
 
 function applyProjectRepoSyncSnapshots(snapshots) {
@@ -48,6 +54,7 @@ function summarizeSnapshots(snapshots = []) {
     dirty: 0,
     notCloned: 0,
     syncErrors: 0,
+    stalled: 0,
   };
 
   for (const snapshot of snapshots) {
@@ -74,12 +81,17 @@ function summarizeSnapshots(snapshots = []) {
     if (
       snapshot?.status === "syncError"
       || snapshot?.status === "missingRemoteHead"
+      || snapshot?.status === "syncStalled"
+      || snapshot?.syncStalled === true
       || snapshot?.status === PROJECT_REPO_SYNC_STATUS_UNRESOLVED_CONFLICT
       || snapshot?.status === PROJECT_REPO_SYNC_STATUS_IMPORTED_EDITOR_CONFLICTS
       || snapshot?.status === PROJECT_REPO_SYNC_STATUS_UPDATE_REQUIRED
     ) {
       summary.issues += 1;
       summary.syncErrors += 1;
+      if (snapshot?.status === "syncStalled" || snapshot?.syncStalled === true) {
+        summary.stalled += 1;
+      }
     }
   }
 
@@ -114,6 +126,9 @@ function issueNoticeText(snapshots) {
   if (summary.dirty > 0 && summary.syncErrors === 0 && summary.notCloned === 0) {
     return `${summary.dirty} repo${summary.dirty === 1 ? " has" : "s have"} local changes and could not be auto-synced`;
   }
+  if (summary.stalled > 0 && summary.stalled === summary.issues) {
+    return `${summary.stalled} project repo sync ${summary.stalled === 1 ? "is" : "are"} taking longer than expected; try refreshing again`;
+  }
 
   return `${summary.issues} project repo${summary.issues === 1 ? " needs" : "s need"} attention`;
 }
@@ -130,14 +145,90 @@ function projectRepoSyncScope(team, descriptor) {
   });
 }
 
-function queuedSyncBadgeText(waitingCount, totalCount) {
-  if (waitingCount <= 0) {
+function queuedSyncBadgeText(waitingSummary, totalCount) {
+  const localWaitingCount = waitingSummary?.local ?? 0;
+  const repoOperationWaitingCount = waitingSummary?.repoOperation ?? 0;
+  const overdueCount = waitingSummary?.overdue ?? 0;
+  const overdueSuffix = overdueCount > 0 ? " (taking longer than expected)" : "";
+
+  if (localWaitingCount <= 0 && repoOperationWaitingCount <= 0) {
     return "Checking local repos...";
   }
-  if (waitingCount === totalCount) {
-    return `Waiting for local saves in ${waitingCount} project repo${waitingCount === 1 ? "" : "s"}...`;
+  if (localWaitingCount > 0 && repoOperationWaitingCount <= 0) {
+    if (localWaitingCount === totalCount) {
+      return `Waiting for local saves in ${localWaitingCount} project repo${localWaitingCount === 1 ? "" : "s"}...${overdueSuffix}`;
+    }
+    return `Checking ${totalCount} project repos; waiting for local saves in ${localWaitingCount}...${overdueSuffix}`;
   }
-  return `Checking ${totalCount} project repos; waiting for local saves in ${waitingCount}...`;
+  if (localWaitingCount <= 0) {
+    if (repoOperationWaitingCount === totalCount) {
+      return `Waiting for project repo operation in ${repoOperationWaitingCount} project repo${repoOperationWaitingCount === 1 ? "" : "s"}...${overdueSuffix}`;
+    }
+    return `Checking ${totalCount} project repos; waiting for project repo operation in ${repoOperationWaitingCount}...${overdueSuffix}`;
+  }
+  return `Checking ${totalCount} project repos; waiting for local saves in ${localWaitingCount} and project repo operation in ${repoOperationWaitingCount}...${overdueSuffix}`;
+}
+
+function waitingSummaryForProjectSync(team, projects) {
+  return projects.reduce((summary, project) => {
+    const snapshot = getRepoWriteQueueSnapshot(projectRepoSyncScope(team, project));
+    if (snapshot.hasOverdueWrites) {
+      summary.overdue += 1;
+    }
+    if (snapshot.hasActiveLocalWrites) {
+      summary.local += 1;
+    } else if (snapshot.hasActiveWrites) {
+      summary.repoOperation += 1;
+    }
+    return summary;
+  }, { local: 0, repoOperation: 0, overdue: 0 });
+}
+
+function stableValue(value) {
+  if (Array.isArray(value)) {
+    return value.map(stableValue);
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, stableValue(value[key])]),
+    );
+  }
+  return value;
+}
+
+function projectRepoSyncSignature(snapshots) {
+  return JSON.stringify(stableValue(Array.isArray(snapshots) ? snapshots : []));
+}
+
+function markProjectRepoSyncStalled(snapshots, descriptor, reason) {
+  const list = Array.isArray(snapshots) && snapshots.length > 0
+    ? snapshots
+    : [{
+      projectId: descriptor?.projectId ?? "",
+      repoName: descriptor?.repoName ?? "",
+      status: "syncing",
+    }];
+  return list.map((snapshot) => {
+    const projectId = snapshot?.projectId ?? descriptor?.projectId;
+    const repoName = snapshot?.repoName ?? descriptor?.repoName;
+    const isDescriptor =
+      projectId === descriptor?.projectId
+      || (repoName && repoName === descriptor?.repoName);
+    if (!isDescriptor && list.length !== 1) {
+      return snapshot;
+    }
+    return {
+      ...snapshot,
+      projectId,
+      repoName,
+      status: "syncStalled",
+      syncStalled: true,
+      stallReason: reason,
+      message: "Project repo sync is taking longer than expected. Try refreshing again.",
+    };
+  });
 }
 
 async function reconcileOneProjectRepoSyncState({
@@ -187,6 +278,9 @@ async function reconcileOneProjectRepoSyncState({
       render();
 
       let snapshots = initialSnapshots;
+      const pollingStartedAt = projectRepoSyncNow();
+      let previousSignature = projectRepoSyncSignature(snapshots);
+      let noProgressPolls = 0;
       while (hasSyncingRepos(snapshots)) {
         await delay(PROJECT_REPO_SYNC_POLL_DELAY_MS);
         if (shouldAbort?.() || state.selectedTeamId !== team.id) {
@@ -195,6 +289,26 @@ async function reconcileOneProjectRepoSyncState({
         snapshots = await invoke("list_project_repo_sync_states", { input });
         if (shouldAbort?.()) {
           return Array.isArray(snapshots) ? snapshots : [];
+        }
+        const signature = projectRepoSyncSignature(snapshots);
+        noProgressPolls = signature === previousSignature ? noProgressPolls + 1 : 0;
+        previousSignature = signature;
+        const elapsedMs = Math.max(0, projectRepoSyncNow() - pollingStartedAt);
+        if (
+          elapsedMs >= PROJECT_REPO_SYNC_MAX_POLL_MS
+          || noProgressPolls >= PROJECT_REPO_SYNC_NO_PROGRESS_POLLS
+        ) {
+          snapshots = markProjectRepoSyncStalled(
+            snapshots,
+            descriptor,
+            elapsedMs >= PROJECT_REPO_SYNC_MAX_POLL_MS ? "maxDuration" : "noProgress",
+          );
+          mergeSnapshots(snapshots);
+          onSnapshots?.(snapshots, descriptor);
+          openRequiredAppUpdatePromptFromProjectSnapshots(snapshots, render);
+          showScopedSyncBadge("projects", "Project repo sync is taking longer than expected.", render);
+          render();
+          break;
         }
         mergeSnapshots(snapshots);
         onSnapshots?.(snapshots, descriptor);
@@ -266,23 +380,33 @@ export async function reconcileProjectRepoSyncStates(render, team, projects, opt
     render();
     return;
   }
-  const waitingCount = input.projects
-    .filter((project) => repoWriteQueueHasActiveWrites(projectRepoSyncScope(team, project)))
-    .length;
-  showScopedSyncBadge("projects", queuedSyncBadgeText(waitingCount, input.projects.length), render);
+  const updateQueuedSyncBadge = () => {
+    showScopedSyncBadge(
+      "projects",
+      queuedSyncBadgeText(waitingSummaryForProjectSync(team, input.projects), input.projects.length),
+      render,
+    );
+  };
+  updateQueuedSyncBadge();
 
-  const snapshotResults = await Promise.all(
-    input.projects.map((descriptor) =>
-      reconcileOneProjectRepoSyncState({
-        render,
-        team,
-        installationId: input.installationId,
-        descriptor,
-        shouldAbort,
-        onSnapshots,
-        mergeSnapshots,
-      })),
-  );
+  let snapshotResults = [];
+  const unsubscribeRepoQueue = subscribeRepoWriteQueue(updateQueuedSyncBadge);
+  try {
+    snapshotResults = await Promise.all(
+      input.projects.map((descriptor) =>
+        reconcileOneProjectRepoSyncState({
+          render,
+          team,
+          installationId: input.installationId,
+          descriptor,
+          shouldAbort,
+          onSnapshots,
+          mergeSnapshots,
+        })),
+    );
+  } finally {
+    unsubscribeRepoQueue();
+  }
   const snapshots = snapshotResults.flat();
 
   if (shouldAbort?.()) {
@@ -301,4 +425,11 @@ export async function reconcileProjectRepoSyncStates(render, team, projects, opt
   }
 
   return Array.isArray(snapshots) ? snapshots : [];
+}
+
+export function __setProjectRepoSyncTiming(options = {}) {
+  projectRepoSyncNow = typeof options.now === "function" ? options.now : (() => Date.now());
+  projectRepoSyncDelay = typeof options.delay === "function"
+    ? options.delay
+    : ((ms) => new Promise((resolve) => window.setTimeout(resolve, ms)));
 }
