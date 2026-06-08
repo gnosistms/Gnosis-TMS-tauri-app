@@ -71,6 +71,8 @@ pub(crate) struct AlignmentProgressEvent {
     warning_count: usize,
     api_call_count: usize,
     cache_hit_count: usize,
+    #[serde(default)]
+    flow: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -97,6 +99,7 @@ pub(crate) struct AlignedTranslationPreflightResponse {
     existing_translation_count: usize,
     mismatch: Option<MismatchMetrics>,
     progress: AlignmentProgressEvent,
+    flow: String,
     #[serde(default)]
     error: String,
 }
@@ -212,6 +215,8 @@ struct AlignmentJob {
     split_targets: Vec<SplitTarget>,
     mismatch: Option<MismatchMetrics>,
     final_checks: Vec<FinalCheck>,
+    #[serde(default)]
+    single_block: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -332,6 +337,7 @@ pub(crate) fn preflight_aligned_translation_to_gtms_chapter_sync(
     if target_units.is_empty() {
         return Err("Paste translation text before adding translation.".to_string());
     }
+    let single_block = is_single_block_unit_counts(source_units.len(), target_units.len());
     let existing_translation_count =
         count_existing_translation_rows(&context.rows, &target_language_code);
 
@@ -351,6 +357,7 @@ pub(crate) fn preflight_aligned_translation_to_gtms_chapter_sync(
         Some(1),
         "Prepared source and target units",
     );
+    progress.flow = if single_block { "single" } else { "multi" }.to_string();
     emit_progress(app, &progress);
 
     let job_path = job_path(app, input.installation_id, &job_id)?;
@@ -412,6 +419,7 @@ pub(crate) fn preflight_aligned_translation_to_gtms_chapter_sync(
         split_targets: Vec::new(),
         mismatch: None,
         final_checks: Vec::new(),
+        single_block,
     };
     save_job(&job_path, &job)?;
 
@@ -794,7 +802,18 @@ fn run_mismatch_preflight(
     job: &mut AlignmentJob,
     api_key: &str,
 ) -> Result<bool, String> {
-    if job.source_units.len() <= SECTION_SIZE && job.target_units.len() <= SECTION_SIZE {
+    if is_single_block_job(job) {
+        let mut progress = progress_event(
+            &job.job_id,
+            "row_alignment",
+            "Aligning translation",
+            "running",
+            Some(0),
+            Some(1),
+            "Aligning your translation",
+        );
+        progress.flow = flow_label(job).to_string();
+        emit_progress(app, &progress);
         let matches = short_text_compatibility(job, api_key)?;
         job.mismatch = Some(if matches {
             MismatchMetrics {
@@ -828,13 +847,29 @@ fn run_mismatch_preflight(
     Ok(mismatch)
 }
 
+fn is_single_block_unit_counts(source_units_len: usize, target_units_len: usize) -> bool {
+    source_units_len <= SECTION_SIZE && target_units_len <= SECTION_SIZE
+}
+
+fn is_single_block_job(job: &AlignmentJob) -> bool {
+    is_single_block_unit_counts(job.source_units.len(), job.target_units.len())
+}
+
+fn flow_label(job: &AlignmentJob) -> &'static str {
+    if is_single_block_job(job) {
+        "single"
+    } else {
+        "multi"
+    }
+}
+
 fn run_remaining_alignment(
     app: &AppHandle,
     job: &mut AlignmentJob,
     api_key: &str,
 ) -> Result<(), String> {
     if job.corridor.is_empty() {
-        if job.source_units.len() <= SECTION_SIZE && job.target_units.len() <= SECTION_SIZE {
+        if is_single_block_job(job) {
             job.corridor.push(SectionMatch {
                 source_section_id: 1,
                 target_section_id: 1,
@@ -2293,6 +2328,7 @@ fn preflight_response(
         existing_translation_count: job.existing_translation_count,
         mismatch: job.mismatch.clone(),
         progress,
+        flow: flow_label(job).to_string(),
         error: String::new(),
     }
 }
@@ -2324,6 +2360,7 @@ fn progress_event(
         warning_count: usize::from(status == "warning"),
         api_call_count: 0,
         cache_hit_count: 0,
+        flow: String::new(),
     }
 }
 
@@ -2485,6 +2522,13 @@ mod tests {
         assert_eq!(units[0].text, "one");
         assert_eq!(units[0].original_line_number, 1);
         assert_eq!(units[1].original_line_number, 3);
+    }
+
+    #[test]
+    fn single_block_flow_uses_section_size_boundary() {
+        assert!(is_single_block_unit_counts(SECTION_SIZE, SECTION_SIZE));
+        assert!(!is_single_block_unit_counts(SECTION_SIZE + 1, SECTION_SIZE));
+        assert!(!is_single_block_unit_counts(SECTION_SIZE, SECTION_SIZE + 1));
     }
 
     #[test]

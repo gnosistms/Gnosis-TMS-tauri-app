@@ -375,6 +375,7 @@ export function createProjectAddTranslationState() {
     providerId: "",
     modelId: "",
     jobId: "",
+    flow: "",
     status: "idle",
     error: "",
     progress: null,

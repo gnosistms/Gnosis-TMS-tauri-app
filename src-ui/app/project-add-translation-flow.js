@@ -98,11 +98,24 @@ export function registerProjectAddTranslationProgress(render) {
   progressUnlistenPromise = listen(ALIGNED_TRANSLATION_PROGRESS_EVENT, (event) => {
     const payload = event?.payload ?? {};
     const modal = state.projectAddTranslation;
-    if (!modal?.isOpen || !payload?.jobId || payload.jobId !== modal.jobId) {
+    const payloadJobId = typeof payload?.jobId === "string" ? payload.jobId.trim() : "";
+    const modalJobId = typeof modal?.jobId === "string" ? modal.jobId.trim() : "";
+    const canClaimJob =
+      !modalJobId
+      && payloadJobId
+      && (modal?.step === "aligning" || modal?.step === "applying");
+    if (
+      !modal?.isOpen
+      || !payloadJobId
+      || (modalJobId && payloadJobId !== modalJobId)
+      || (!modalJobId && !canClaimJob)
+    ) {
       return;
     }
     state.projectAddTranslation = {
       ...modal,
+      jobId: modalJobId || payloadJobId,
+      flow: payload.flow ? payload.flow : modal.flow,
       progress: payload,
       step: modal.step === "applying" ? "applying" : "aligning",
     };
@@ -305,6 +318,7 @@ export async function runProjectAddTranslationPreflight(render) {
     error: "",
     providerId,
     modelId,
+    flow: state.projectAddTranslation.flow,
     progress: {
       stageId: "prepare_units",
       stageLabel: "Preparing text units",
@@ -337,6 +351,7 @@ export async function runProjectAddTranslationPreflight(render) {
           ? response.targetLanguageCode.trim()
           : state.projectAddTranslation.targetLanguageCode,
       targetLanguageExists: response?.targetLanguageExists === true,
+      flow: response?.flow || state.projectAddTranslation.flow || "",
       progress: response?.progress ?? state.projectAddTranslation.progress,
       error: "",
     };

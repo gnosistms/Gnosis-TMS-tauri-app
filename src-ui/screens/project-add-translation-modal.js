@@ -93,17 +93,38 @@ function progressLabel(progress) {
   return Number.isFinite(percent) ? `${Math.round(percent)}%` : "";
 }
 
-const ALIGNMENT_PROGRESS_STEPS = [
-  { id: "prepare_units", label: "Preparing text units" },
-  { id: "summarize_sections", label: "Summarizing sections" },
-  { id: "find_section_matches", label: "Finding section matches" },
-  { id: "select_corridor", label: "Choosing the best matches" },
-  { id: "row_alignment", label: "Aligning paragraphs" },
-  { id: "resolve_conflicts", label: "Resolving conflicts" },
-  { id: "split_targets", label: "Splitting combined target rows" },
-  { id: "final_checks", label: "Final checks" },
-  { id: "apply", label: "Applying translation" },
+const MULTI_ALIGNMENT_PROGRESS_STEPS = [
+  { id: "prepare_units", label: "Preparing text units", stageIds: ["prepare_units"] },
+  { id: "summarize_sections", label: "Summarizing sections", stageIds: ["summarize_sections"] },
+  { id: "find_section_matches", label: "Finding section matches", stageIds: ["find_section_matches"] },
+  { id: "select_corridor", label: "Choosing the best matches", stageIds: ["select_corridor"] },
+  { id: "row_alignment", label: "Aligning paragraphs", stageIds: ["row_alignment"] },
+  { id: "resolve_conflicts", label: "Resolving conflicts", stageIds: ["resolve_conflicts"] },
+  { id: "split_targets", label: "Splitting combined target rows", stageIds: ["split_targets"] },
+  { id: "final_checks", label: "Final checks", stageIds: ["final_checks", "preflight", "mismatch_gate"] },
+  { id: "apply", label: "Applying translation", stageIds: ["apply"] },
 ];
+
+const SINGLE_ALIGNMENT_PROGRESS_STEPS = [
+  { id: "prepare_units", label: "Preparing text", stageIds: ["prepare_units"] },
+  {
+    id: "aligning",
+    label: "Aligning translation",
+    stageIds: [
+      "row_alignment",
+      "resolve_conflicts",
+      "split_targets",
+      "final_checks",
+      "preflight",
+      "mismatch_gate",
+    ],
+  },
+  { id: "apply", label: "Applying translation", stageIds: ["apply"] },
+];
+
+function progressStepsForFlow(flow) {
+  return flow === "single" ? SINGLE_ALIGNMENT_PROGRESS_STEPS : MULTI_ALIGNMENT_PROGRESS_STEPS;
+}
 
 function progressPercent(progress) {
   const percent = Number(progress?.percent);
@@ -144,8 +165,10 @@ function renderProgressStep(step, progress, index, activeIndex) {
   const roundedPercent = Math.round(percent);
   const isActive = index === activeIndex && progress?.status !== "complete";
   const isComplete = percent >= 100;
+  const isIndeterminate = isActive && progress?.status === "running" && percent <= 0;
+  const fillStyle = isIndeterminate ? "" : ` style="width: ${roundedPercent}%"`;
   return `
-    <li class="add-translation-progress__step${isActive ? " is-active" : ""}${isComplete ? " is-complete" : ""}">
+    <li class="add-translation-progress__step${isActive ? " is-active" : ""}${isComplete ? " is-complete" : ""}${isIndeterminate ? " add-translation-progress__step--indeterminate" : ""}">
       <div class="add-translation-progress__step-header">
         <span class="add-translation-progress__step-number">${index + 1}</span>
         <span class="add-translation-progress__step-label">${escapeHtml(step.label)}</span>
@@ -159,32 +182,27 @@ function renderProgressStep(step, progress, index, activeIndex) {
         aria-valuemax="100"
         aria-valuenow="${roundedPercent}"
       >
-        <span class="add-translation-progress__bar-fill" style="width: ${roundedPercent}%"></span>
+        <span class="add-translation-progress__bar-fill"${fillStyle}></span>
       </div>
     </li>
   `;
 }
 
-function resolveActiveProgressStepIndex(progress) {
+function resolveActiveProgressStepIndex(progress, steps) {
   const stageId = typeof progress?.stageId === "string" ? progress.stageId : "";
-  const activeIndex = ALIGNMENT_PROGRESS_STEPS.findIndex((step) => step.id === stageId);
-  if (activeIndex >= 0) {
-    return activeIndex;
+  if (!stageId) {
+    return -1;
   }
-  if (stageId === "preflight") {
-    return progress?.status === "complete"
-      ? ALIGNMENT_PROGRESS_STEPS.findIndex((step) => step.id === "final_checks")
-      : 0;
+  if (stageId === "preflight" && progress?.status !== "complete") {
+    return steps.findIndex((step) => step.id === "prepare_units");
   }
-  if (stageId === "mismatch_gate") {
-    return ALIGNMENT_PROGRESS_STEPS.findIndex((step) => step.id === "final_checks");
-  }
-  return -1;
+  return steps.findIndex((step) => step.stageIds.includes(stageId));
 }
 
 function renderProgressModal(modal) {
   const progress = modal.progress ?? {};
-  const activeIndex = resolveActiveProgressStepIndex(progress);
+  const steps = progressStepsForFlow(modal.flow);
+  const activeIndex = resolveActiveProgressStepIndex(progress, steps);
   const detail = [progress.message, progressLabel(progress)].filter(Boolean).join(" ");
   return `
     <div class="modal-backdrop">
@@ -194,7 +212,7 @@ function renderProgressModal(modal) {
           <h2 class="modal__title">Please wait</h2>
           <p class="modal__supporting">Aligning your pasted translation with this file. This may take a few minutes.</p>
           <ol class="add-translation-progress" aria-label="Alignment and insertion progress">
-            ${ALIGNMENT_PROGRESS_STEPS.map((step, index) => renderProgressStep(step, progress, index, activeIndex)).join("")}
+            ${steps.map((step, index) => renderProgressStep(step, progress, index, activeIndex)).join("")}
           </ol>
           ${detail ? `<p class="modal__supporting add-translation-progress__detail">${escapeHtml(detail)}</p>` : ""}
           ${renderError(modal.error)}

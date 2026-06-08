@@ -254,10 +254,6 @@ export function createProjectActions(render) {
     "select-project-import-file": () => selectProjectImportFile(render),
     "submit-project-import-link": () => submitProjectImportLink(render),
     "submit-project-import-pasted-text": () => submitProjectImportPastedText(render),
-    "submit-project-add-translation-paste": () => submitProjectAddTranslationPaste(render),
-    "continue-project-add-translation-language": () => continueProjectAddTranslationLanguage(render),
-    "continue-project-add-translation-existing": () => continueProjectAddTranslationWithExistingText(render),
-    "continue-project-add-translation-mismatch": () => continueProjectAddTranslationAfterMismatch(render),
     "load-more-project-search-results": () => loadMoreProjectSearchResults(render),
     "overwrite-conflicted-project-repos": () => overwriteConflictedProjectRepos(render),
     "toggle-deleted-projects": () => toggleDeletedProjects(render),
@@ -373,6 +369,30 @@ export function createProjectActions(render) {
       return true;
     }
 
+    if (action === "submit-project-add-translation-paste") {
+      await runWithImmediateLoading(event, "Continue...", () =>
+        submitProjectAddTranslationPaste(render),
+      );
+      return true;
+    }
+    if (action === "continue-project-add-translation-language") {
+      await runWithImmediateLoading(event, "Aligning...", () =>
+        continueProjectAddTranslationLanguage(render),
+      );
+      return true;
+    }
+    if (action === "continue-project-add-translation-existing") {
+      await runWithImmediateLoading(event, "Inserting...", () =>
+        continueProjectAddTranslationWithExistingText(render),
+      );
+      return true;
+    }
+    if (action === "continue-project-add-translation-mismatch") {
+      await runWithImmediateLoading(event, "Inserting...", () =>
+        continueProjectAddTranslationAfterMismatch(render),
+      );
+      return true;
+    }
     if (action === "submit-project-creation") {
       await runWithImmediateLoading(event, "Creating...", () => submitProjectCreation(render));
       return true;
