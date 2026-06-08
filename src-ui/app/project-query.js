@@ -4,6 +4,7 @@ import { state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { applyProjectSnapshotToState } from "./project-top-level-state.js";
 import {
+  applyLocalProjectSnapshotHardDeleteState,
   loadProjectSnapshotForTeam,
 } from "./project-discovery-flow.js";
 import {
@@ -54,6 +55,10 @@ function projectSnapshotIsEmpty(snapshot) {
   const items = Array.isArray(snapshot?.items) ? snapshot.items : [];
   const deletedItems = Array.isArray(snapshot?.deletedItems) ? snapshot.deletedItems : [];
   return items.length === 0 && deletedItems.length === 0;
+}
+
+function teamForProjectSnapshot(teamId) {
+  return state.teams.find((item) => item?.id === teamId) ?? null;
 }
 
 function projectCollectionsHaveChapter(projectCollections, chapterId) {
@@ -145,7 +150,11 @@ export function applyProjectsQuerySnapshotToState(snapshot, {
   if (snapshot) {
     const expectedCacheKey = cacheKeyForTeamId(teamId, cacheKey);
     clearConfirmedProjectWriteIntents(snapshot.snapshot);
-    const visibleProjectSnapshot = applyProjectWriteIntentsToSnapshot(snapshot.snapshot);
+    const selectedTeam = teamForProjectSnapshot(teamId);
+    const visibleProjectSnapshot = applyLocalProjectSnapshotHardDeleteState(
+      selectedTeam,
+      applyProjectWriteIntentsToSnapshot(snapshot.snapshot),
+    );
     const preserveCurrentProjects =
       (
         isFetching === true
@@ -276,7 +285,10 @@ export function seedProjectsQueryFromCache(team, {
     },
   });
   clearConfirmedProjectWriteIntents(snapshot.snapshot);
-  snapshot.snapshot = applyProjectWriteIntentsToSnapshot(snapshot.snapshot);
+  snapshot.snapshot = applyLocalProjectSnapshotHardDeleteState(
+    team,
+    applyProjectWriteIntentsToSnapshot(snapshot.snapshot),
+  );
   queryClient.setQueryData(projectKeys.byTeam(teamId), snapshot);
   applyProjectsQuerySnapshotToState(snapshot, {
     teamId,
@@ -653,7 +665,10 @@ export function createProjectsQueryOptions(team, options = {}) {
       }
       const nextSnapshot = createProjectsQuerySnapshot(result);
       clearConfirmedProjectWriteIntents(nextSnapshot.snapshot);
-      nextSnapshot.snapshot = applyProjectWriteIntentsToSnapshot(nextSnapshot.snapshot);
+      nextSnapshot.snapshot = applyLocalProjectSnapshotHardDeleteState(
+        team,
+        applyProjectWriteIntentsToSnapshot(nextSnapshot.snapshot),
+      );
       return preservePendingProjectLifecyclePatches(
         nextSnapshot,
         queryClient.getQueryData(projectKeys.byTeam(teamId)),

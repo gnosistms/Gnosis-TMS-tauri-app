@@ -21,6 +21,10 @@ globalThis.window.removeEventListener = globalThis.window.removeEventListener ??
 const { createResourcePageState } = await import("./resource-page-controller.js");
 const { resetSessionState, state } = await import("./state.js");
 const {
+  addLocalHardDeleteTombstone,
+  isLocalHardDeletedResource,
+} = await import("./local-hard-delete-store.js");
+const {
   applyProjectsQuerySnapshotToState,
   createProjectRenameMutationOptions,
   createProjectRestoreMutationOptions,
@@ -33,6 +37,7 @@ const {
   upsertProjectChapterInQueryData,
 } = await import("./project-query.js");
 const { glossaryKeys, projectKeys, queryClient } = await import("./query-client.js");
+const { setActiveStorageLogin } = await import("./team-storage.js");
 const { teamCacheKey } = await import("./team-cache.js");
 const {
   chapterGlossaryIntentKey,
@@ -89,6 +94,7 @@ test.afterEach(() => {
   queryClient.clear();
   resetProjectWriteCoordinator();
   resetSessionState();
+  setActiveStorageLogin(null);
 });
 
 test("project query adapter maps snapshots into project page state", () => {
@@ -117,6 +123,104 @@ test("project query adapter maps snapshots into project page state", () => {
   assert.equal(state.pendingChapterMutations[0].id, "mutation-1");
   assert.equal(state.projectDiscovery.glossaryWarning, "Glossary warning");
   assert.equal(state.projectsPage.isRefreshing, true);
+});
+
+test("project query adapter hides locally hard-deleted deleted chapters from incoming snapshots", () => {
+  resetSessionState();
+  setActiveStorageLogin("project-query-hard-delete-chapter-test");
+  const team = { id: "team-1", installationId: 1 };
+  state.teams = [team];
+  state.selectedTeamId = team.id;
+  state.projectsPage = createResourcePageState();
+  addLocalHardDeleteTombstone(team, "chapter", {
+    id: "deleted-chapter",
+    name: "Deleted Chapter",
+    status: "deleted",
+  });
+
+  applyProjectsQuerySnapshotToState(
+    createProjectsQuerySnapshot({
+      items: [
+        project({
+          chapters: [
+            chapter({ id: "active-chapter", name: "Active Chapter", status: "active" }),
+            chapter({ id: "deleted-chapter", name: "Deleted Chapter", status: "deleted" }),
+          ],
+        }),
+      ],
+    }),
+    { teamId: team.id },
+  );
+
+  assert.deepEqual(
+    state.projects[0].chapters.map((item) => item.id),
+    ["active-chapter"],
+  );
+});
+
+test("project query adapter clears a chapter hard-delete tombstone when the chapter is active again", () => {
+  resetSessionState();
+  setActiveStorageLogin("project-query-hard-delete-restore-test");
+  const team = { id: "team-1", installationId: 1 };
+  const restoredChapter = chapter({
+    id: "restored-chapter",
+    name: "Restored Chapter",
+    status: "active",
+  });
+  state.teams = [team];
+  state.selectedTeamId = team.id;
+  state.projectsPage = createResourcePageState();
+  addLocalHardDeleteTombstone(team, "chapter", {
+    ...restoredChapter,
+    status: "deleted",
+  });
+
+  applyProjectsQuerySnapshotToState(
+    createProjectsQuerySnapshot({
+      items: [project({ chapters: [restoredChapter] })],
+    }),
+    { teamId: team.id },
+  );
+
+  assert.equal(state.projects[0].chapters[0].id, "restored-chapter");
+  assert.equal(isLocalHardDeletedResource(team, "chapter", restoredChapter), false);
+});
+
+test("project query seed writes locally hard-deleted chapter overlays into query cache", () => {
+  resetSessionState();
+  setActiveStorageLogin("project-query-hard-delete-cache-test");
+  const team = { id: "team-1", installationId: 1 };
+  state.teams = [team];
+  state.selectedTeamId = team.id;
+  state.projectsPage = createResourcePageState();
+  addLocalHardDeleteTombstone(team, "chapter", {
+    id: "deleted-chapter",
+    name: "Deleted Chapter",
+    status: "deleted",
+  });
+
+  seedProjectsQueryFromCache(team, {
+    loadStoredProjectsForTeam: () => ({
+      exists: true,
+      cacheKey: teamCacheKey(team),
+      updatedAt: "2026-06-08T00:00:00.000Z",
+      projects: [
+        project({
+          chapters: [
+            chapter({ id: "active-chapter", name: "Active Chapter", status: "active" }),
+            chapter({ id: "deleted-chapter", name: "Deleted Chapter", status: "deleted" }),
+          ],
+        }),
+      ],
+      deletedProjects: [],
+    }),
+  });
+
+  const queryData = queryClient.getQueryData(projectKeys.byTeam(team.id));
+  assert.deepEqual(
+    queryData.snapshot.items[0].chapters.map((item) => item.id),
+    ["active-chapter"],
+  );
 });
 
 test("project query adapter ignores stale team snapshots", () => {
