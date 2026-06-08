@@ -53,6 +53,13 @@ test("events open project export selects on the first pointer interaction", asyn
   assert.match(source, /if \(openProjectExportSelectOnFirstPointer\(event\)\) \{/);
 });
 
+test("events route paste events through the add translation paste fallback", async () => {
+  const source = await readFile(new URL("./events.js", import.meta.url), "utf8");
+
+  assert.match(source, /import \{ handleInputEvent, handlePasteEvent \} from "\.\/input-handlers\.js";/);
+  assert.match(source, /document\.addEventListener\("paste", \(event\) => handlePasteEvent\(event, render\)\);/);
+});
+
 test("editor footnote collapse preserves the row viewport anchor", async () => {
   const keyboardSource = await readFile(new URL("./events/keyboard-shortcuts.js", import.meta.url), "utf8");
   const translateEventsSource = await readFile(new URL("./translate-editor-dom-events.js", import.meta.url), "utf8");

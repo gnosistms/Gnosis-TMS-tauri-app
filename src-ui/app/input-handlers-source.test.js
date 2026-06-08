@@ -53,3 +53,14 @@ test("add translation paste input sync clears all disabled button state", () => 
   assert.match(handlerSource, /removeAttribute\?\.\("aria-disabled"\)/);
   assert.match(handlerSource, /removeAttribute\?\.\("data-offline-blocked"\)/);
 });
+
+test("add translation paste event schedules a post-paste input sync", () => {
+  const handlerSource = sourceBetween(
+    "export function handlePasteEvent",
+    "function handleProjectImportLinkInput",
+  );
+
+  assert.match(handlerSource, /\[data-project-add-translation-textarea\]/);
+  assert.match(handlerSource, /requestAnimationFrame/);
+  assert.match(handlerSource, /handleProjectAddTranslationInput\(\{ target: input \}, render\);/);
+});

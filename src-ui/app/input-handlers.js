@@ -833,6 +833,25 @@ function handleProjectAddTranslationInput(event, render) {
   return true;
 }
 
+export function handlePasteEvent(event, render) {
+  const input = event.target.closest("[data-project-add-translation-textarea]");
+  if (!input) {
+    return false;
+  }
+
+  const schedule =
+    typeof globalThis.requestAnimationFrame === "function"
+      ? globalThis.requestAnimationFrame.bind(globalThis)
+      : typeof globalThis.window?.requestAnimationFrame === "function"
+        ? globalThis.window.requestAnimationFrame.bind(globalThis.window)
+        : (callback) => setTimeout(callback, 0);
+
+  schedule(() => {
+    handleProjectAddTranslationInput({ target: input }, render);
+  });
+  return true;
+}
+
 function handleProjectImportLinkInput(event, render) {
   const input = event.target.closest("[data-project-import-link-input]");
   if (!input) {
