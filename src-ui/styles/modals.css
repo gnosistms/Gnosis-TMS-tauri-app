@@ -141,9 +141,9 @@
 }
 
 .add-translation-progress__step.is-complete .add-translation-progress__step-number {
-  border-color: rgba(49, 118, 86, 0.34);
-  background: rgba(49, 118, 86, 0.12);
-  color: rgb(40, 109, 78);
+  border-color: rgba(198, 113, 0, 0.34);
+  background: rgba(240, 142, 0, 0.12);
+  color: rgb(166, 91, 0);
 }
 
 .add-translation-progress__detail {
