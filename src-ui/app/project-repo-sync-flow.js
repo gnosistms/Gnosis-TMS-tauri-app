@@ -23,6 +23,8 @@ import {
 const PROJECT_REPO_SYNC_POLL_DELAY_MS = 1400;
 const PROJECT_REPO_SYNC_MAX_POLL_MS = 180_000;
 const PROJECT_REPO_SYNC_NO_PROGRESS_POLLS = 8;
+const PROJECT_REPO_SYNC_KIND = "projectRepoSync";
+const LOCAL_REPO_WRITE_OPERATION_TYPES = new Set(["localEditorWrite", "localMetadataWrite"]);
 
 let projectRepoSyncNow = () => Date.now();
 let projectRepoSyncDelay = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -172,34 +174,45 @@ function queuedSyncBadgeText(waitingSummary, totalCount) {
 function waitingSummaryForProjectSync(team, projects) {
   return projects.reduce((summary, project) => {
     const snapshot = getRepoWriteQueueSnapshot(projectRepoSyncScope(team, project));
-    if (snapshot.hasOverdueWrites) {
+    // Only count work that is *blocking* sync. Exclude this reconcile's own
+    // projectRepoSync operations, otherwise the badge would report the sync we just
+    // started as something we are waiting on.
+    const blockingOperations = snapshot.operations.filter(
+      (operation) => operation.kind !== PROJECT_REPO_SYNC_KIND,
+    );
+    if (blockingOperations.length === 0) {
+      return summary;
+    }
+    if (blockingOperations.some((operation) => operation.overdue)) {
       summary.overdue += 1;
     }
-    if (snapshot.hasActiveLocalWrites) {
+    const hasLocalWrites = blockingOperations.some((operation) =>
+      LOCAL_REPO_WRITE_OPERATION_TYPES.has(operation.operationType),
+    );
+    if (hasLocalWrites) {
       summary.local += 1;
-    } else if (snapshot.hasActiveWrites) {
+    } else {
       summary.repoOperation += 1;
     }
     return summary;
   }, { local: 0, repoOperation: 0, overdue: 0 });
 }
 
-function stableValue(value) {
-  if (Array.isArray(value)) {
-    return value.map(stableValue);
-  }
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.keys(value)
-        .sort()
-        .map((key) => [key, stableValue(value[key])]),
-    );
-  }
-  return value;
-}
-
 function projectRepoSyncSignature(snapshots) {
-  return JSON.stringify(stableValue(Array.isArray(snapshots) ? snapshots : []));
+  // Key the no-progress detector on the fields that change as a sync genuinely
+  // advances (head OIDs move, message/status update). Pinning an explicit allowlist
+  // keeps the detector robust if a volatile field (e.g. a timestamp) is ever added to
+  // the snapshot shape, which would otherwise make every poll look like progress.
+  const list = Array.isArray(snapshots) ? snapshots : [];
+  return JSON.stringify(
+    list.map((snapshot) => [
+      snapshot?.projectId ?? "",
+      snapshot?.status ?? "",
+      snapshot?.message ?? "",
+      snapshot?.localHeadOid ?? "",
+      snapshot?.remoteHeadOid ?? "",
+    ]),
+  );
 }
 
 function markProjectRepoSyncStalled(snapshots, descriptor, reason) {
@@ -248,11 +261,11 @@ async function reconcileOneProjectRepoSyncState({
 
   return enqueueRepoWrite({
     scope,
-    kind: "projectRepoSync",
+    kind: PROJECT_REPO_SYNC_KIND,
     sourceScreen: "projects",
     errorTarget: {
       projectId: descriptor.projectId,
-      kind: "projectRepoSync",
+      kind: PROJECT_REPO_SYNC_KIND,
     },
     metadata: {
       projectId: descriptor.projectId,

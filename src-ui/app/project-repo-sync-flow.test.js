@@ -215,6 +215,34 @@ test("whole-page project repo sync fans out and only waits for blocked repos", a
   ]);
 });
 
+test("project repo sync does not report its own sync operation as a waiting repo operation", async () => {
+  const events = [];
+  setupProjectRepoSyncTest(events);
+  const releaseReconcile = deferred();
+  invokeHandler = async (command, payload) => {
+    const projectId = payload?.input?.projects?.[0]?.projectId ?? "unknown";
+    events.push(`${command}:${projectId}`);
+    if (command === "reconcile_project_repo_sync_states") {
+      await releaseReconcile.promise;
+    }
+    return [{
+      projectId,
+      repoName: payload?.input?.projects?.[0]?.repoName ?? "",
+      status: "clean",
+    }];
+  };
+
+  const sync = reconcileProjectRepoSyncStates(() => {}, team(), [project()]);
+  await delay(5);
+
+  // The in-flight projectRepoSync op is running on the repo scope, but the badge must
+  // not label it as a repo operation we are waiting on.
+  assert.equal(state.statusBadges.right.text, "Checking local repos...");
+
+  releaseReconcile.resolve();
+  await sync;
+});
+
 test("project repo sync polling exits and marks a repo stalled after no progress", async () => {
   const events = [];
   setupProjectRepoSyncTest(events);
