@@ -71,6 +71,23 @@ GPT implements on its own branch, Claude reviews + merges.
    agnostic — glossary likely should have them). Reconcile discovery-snapshot shaping. Then collapse.
 5. **cache** — trivial; fold in once a descriptor exists from the above.
 
+### term-write-coordinator — RULED: justified, do NOT collapse (investigated)
+
+Looks like 29-line drift but isn't. QA **dead-wraps** `createWriteIntentCoordinator` — its
+`qaTermSaveIntentKey`/`qaTermWriteScope`/`requestQaTermWriteIntent`/`getQaTermWriteIntent` are unused
+(in the `audit:unused` baseline); QA tracks writes with a manual `begin/end` counter. Glossary genuinely
+uses the coordinator (`requestGlossaryTermWriteIntent`) for scope-queueing + per-key dedup + optimistic
+intent-rollback. Investigation conclusion: **not a robustness hole.** QA edits one term at a time in a
+modal with the save button disabled mid-write, and — the root cause — **QA's editor has no background
+sync** (`qaListEditorHasActiveBackgroundSync() => false`), whereas glossary's editor runs
+`glossary-background-sync.js` mid-edit. Glossary's coordinator sophistication exists to reconcile user
+writes with background-sync snapshots; QA faces no such race, so the counter suffices.
+
+Actions: (a) **do not collapse this pair** — justified Tier 3; (b) clean up QA's 4 dead intent exports
+(the coordinator wrapper is vestigial in QA); (c) the genuine upstream parity question is **"should the
+QA editor have background sync?"** — a `glossary-background-sync.js`-sized feature, tracked separately,
+not part of repo-flow/term collapses.
+
 ### Stream 2 — Partial collapse (term-model residue as hooks)
 6. **term-inline-markup-flow** — share the markup toggle orchestration; leave textarea/lane detection
    (bilingual source/target lanes vs single field) as a descriptor hook. Low ratio by design.
