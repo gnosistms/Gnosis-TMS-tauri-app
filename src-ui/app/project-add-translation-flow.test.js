@@ -42,6 +42,7 @@ globalThis.requestAnimationFrame = (callback) => {
 const {
   continueProjectAddTranslationLanguage,
   selectProjectAddTranslationLanguage,
+  updateProjectAddTranslationPaste,
 } = await import("./project-add-translation-flow.js");
 const {
   createAiSettingsState,
@@ -80,6 +81,25 @@ function resetProjectAddTranslationTestState() {
   globalThis.document.testScrollList = null;
   invokeHandler = async () => null;
 }
+
+test("add translation paste input updates state without rerendering the focused textarea", () => {
+  resetProjectAddTranslationTestState();
+  state.projectAddTranslation = {
+    ...state.projectAddTranslation,
+    step: "pasteText",
+    pastedText: "",
+    error: "Paste your translation text before continuing.",
+  };
+  let renderCount = 0;
+
+  updateProjectAddTranslationPaste(() => {
+    renderCount += 1;
+  }, "Translated paragraph");
+
+  assert.equal(state.projectAddTranslation.pastedText, "Translated paragraph");
+  assert.equal(state.projectAddTranslation.error, "");
+  assert.equal(renderCount, 0);
+});
 
 test("add translation language selection preserves scroll and waits for Continue", async () => {
   resetProjectAddTranslationTestState();
