@@ -43,17 +43,70 @@ function countRecoverableProjectMetadataRecords(records) {
   ).length;
 }
 
-function applyLocalProjectHardDeleteState(selectedTeam, snapshot) {
+function sameArrayItems(left, right) {
+  return (
+    left.length === right.length
+    && left.every((item, index) => item === right[index])
+  );
+}
+
+function preserveArrayIdentity(original, next) {
+  return sameArrayItems(original, next) ? original : next;
+}
+
+function filterLocalHardDeletedChapters(selectedTeam, chapters) {
+  const normalizedChapters = Array.isArray(chapters) ? chapters : [];
+  clearRestoredLocalHardDeleteTombstones(selectedTeam, "chapter", normalizedChapters, {
+    isActive: (chapter) => chapter?.status !== "deleted",
+  });
+  return preserveArrayIdentity(
+    normalizedChapters,
+    filterLocalHardDeletedResources(selectedTeam, "chapter", normalizedChapters, {
+      isDeleted: (chapter) => chapter?.status === "deleted",
+    }),
+  );
+}
+
+function applyLocalChapterHardDeleteState(selectedTeam, project) {
+  if (!project || !Array.isArray(project.chapters)) {
+    return project;
+  }
+
+  const chapters = filterLocalHardDeletedChapters(selectedTeam, project.chapters);
+  return chapters === project.chapters
+    ? project
+    : {
+        ...project,
+        chapters,
+      };
+}
+
+function applyLocalChapterHardDeleteStateToProjects(selectedTeam, projects) {
+  const normalizedProjects = Array.isArray(projects) ? projects : [];
+  const nextProjects = normalizedProjects.map((project) =>
+    applyLocalChapterHardDeleteState(selectedTeam, project)
+  );
+  return preserveArrayIdentity(normalizedProjects, nextProjects);
+}
+
+export function applyLocalProjectSnapshotHardDeleteState(selectedTeam, snapshot) {
   const items = Array.isArray(snapshot?.items) ? snapshot.items : [];
   const deletedItems = Array.isArray(snapshot?.deletedItems) ? snapshot.deletedItems : [];
+  if (!selectedTeam) {
+    return { items, deletedItems };
+  }
   clearRestoredLocalHardDeleteTombstones(selectedTeam, "project", [...items, ...deletedItems], {
     isActive: (project) => !isSoftDeletedResource(project, "project"),
   });
-  return {
-    items,
-    deletedItems: filterLocalHardDeletedResources(selectedTeam, "project", deletedItems, {
+  const visibleDeletedItems = preserveArrayIdentity(
+    deletedItems,
+    filterLocalHardDeletedResources(selectedTeam, "project", deletedItems, {
       isDeleted: (project) => isSoftDeletedResource(project, "project"),
     }),
+  );
+  return {
+    items: applyLocalChapterHardDeleteStateToProjects(selectedTeam, items),
+    deletedItems: applyLocalChapterHardDeleteStateToProjects(selectedTeam, visibleDeletedItems),
   };
 }
 
@@ -156,10 +209,10 @@ function publishProjectLoadSnapshot({
   progressPayload = {},
   persist = false,
 } = {}) {
-  const normalizedSnapshot = {
+  const normalizedSnapshot = applyLocalProjectSnapshotHardDeleteState(selectedTeam, {
     items: Array.isArray(snapshot?.items) ? snapshot.items : [],
     deletedItems: Array.isArray(snapshot?.deletedItems) ? snapshot.deletedItems : [],
-  };
+  });
   const nextResult = createProjectLoadResult({
     snapshot: normalizedSnapshot,
     discovery,
@@ -457,12 +510,7 @@ function mergeProjectsWithLocalFiles(snapshot, listings = [], targets = [], opti
     const normalizedChapters = Array.isArray(listing.chapters)
       ? listing.chapters.map(normalizeListedChapter).filter(Boolean)
       : [];
-    clearRestoredLocalHardDeleteTombstones(selectedTeam, "chapter", normalizedChapters, {
-      isActive: (chapter) => chapter?.status !== "deleted",
-    });
-    const visibleChapters = filterLocalHardDeletedResources(selectedTeam, "chapter", normalizedChapters, {
-      isDeleted: (chapter) => chapter?.status === "deleted",
-    });
+    const visibleChapters = filterLocalHardDeletedChapters(selectedTeam, normalizedChapters);
 
     if (typeof listing.projectId === "string" && listing.projectId.trim()) {
       listingByProjectId.set(listing.projectId, visibleChapters);
@@ -640,7 +688,7 @@ export async function loadLocalProjectSnapshotForTeam(selectedTeam, options = {}
     { ...options, selectedTeam },
   );
 
-  const filteredSnapshot = applyLocalProjectHardDeleteState(selectedTeam, {
+  const filteredSnapshot = applyLocalProjectSnapshotHardDeleteState(selectedTeam, {
     ...localSnapshot,
   });
   return {
@@ -711,10 +759,11 @@ export async function refreshProjectFilesFromDisk(render, selectedTeam, projects
     typeof options.preserveProjectLifecyclePatches === "function"
       ? options.preserveProjectLifecyclePatches(nextSnapshot)
       : nextSnapshot;
+  const visibleSnapshot = applyLocalProjectSnapshotHardDeleteState(selectedTeam, preservedSnapshot);
   publishProjectLoadSnapshot({
     render,
     selectedTeam,
-    snapshot: preservedSnapshot,
+    snapshot: visibleSnapshot,
     options,
     pendingChapterMutations,
     repoSyncByProjectId:
@@ -723,7 +772,7 @@ export async function refreshProjectFilesFromDisk(render, selectedTeam, projects
         : {},
     persist: true,
   });
-  return preservedSnapshot;
+  return visibleSnapshot;
 }
 
 export async function loadProjectSnapshotForTeam(render, teamId = state.selectedTeamId, options = {}) {
@@ -774,7 +823,7 @@ export async function loadProjectSnapshotForTeam(render, teamId = state.selected
     currentLoadResult = publishProjectLoadSnapshot({
       render,
       selectedTeam,
-      snapshot: applyLocalProjectHardDeleteState(selectedTeam, preservedSnapshot),
+      snapshot: applyLocalProjectSnapshotHardDeleteState(selectedTeam, preservedSnapshot),
       options,
       previousResult: currentLoadResult,
       glossaries: glossaryResult?.glossaries ?? [],
@@ -1003,7 +1052,7 @@ export async function loadProjectSnapshotForTeam(render, teamId = state.selected
       typeof options.preserveProjectLifecyclePatches === "function"
         ? options.preserveProjectLifecyclePatches(nextSnapshot)
         : nextSnapshot;
-    const visibleSnapshot = applyLocalProjectHardDeleteState(selectedTeam, preservedSnapshot);
+    const visibleSnapshot = applyLocalProjectSnapshotHardDeleteState(selectedTeam, preservedSnapshot);
     mappedProjects = [...visibleSnapshot.items, ...visibleSnapshot.deletedItems];
     const glossaryWarning =
       glossaryDiscoveryResult.status === "fulfilled"
@@ -1139,7 +1188,7 @@ export async function loadProjectSnapshotForTeam(render, teamId = state.selected
         typeof options.preserveProjectLifecyclePatches === "function"
           ? options.preserveProjectLifecyclePatches(repairedSnapshot)
           : repairedSnapshot;
-      const visibleRepairedSnapshot = applyLocalProjectHardDeleteState(selectedTeam, preservedRepairedSnapshot);
+      const visibleRepairedSnapshot = applyLocalProjectSnapshotHardDeleteState(selectedTeam, preservedRepairedSnapshot);
       mappedProjects = [...visibleRepairedSnapshot.items, ...visibleRepairedSnapshot.deletedItems];
       currentLoadResult = publishProjectLoadSnapshot({
         render,
