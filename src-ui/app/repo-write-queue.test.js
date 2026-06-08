@@ -2,6 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  __setRepoWriteOverdueReporter,
+  __setRepoWriteOverdueScheduler,
+  __setRepoWriteQueueClock,
+  __setRepoWriteReentrancyReporter,
   clearRepoQueueErrors,
   consumeRepoInvalidations,
   enqueueRepoWrite,
@@ -259,6 +263,179 @@ test("repo queue snapshots expose local write and remote sync state separately",
 
   releaseLocalWrite.resolve();
   await localWrite;
+});
+
+test("repo queue watchdog surfaces overdue writes without settling the operation", async () => {
+  const releaseLocalWrite = deferred();
+  const reports = [];
+  const timers = [];
+  let currentTimeMs = Date.now();
+  __setRepoWriteQueueClock(() => currentTimeMs);
+  __setRepoWriteOverdueReporter((payload) => {
+    reports.push(payload);
+  });
+  __setRepoWriteOverdueScheduler(
+    (callback, delayMs) => {
+      const timer = { callback, delayMs, cancelled: false };
+      timers.push(timer);
+      return timer;
+    },
+    (timer) => {
+      if (timer) {
+        timer.cancelled = true;
+      }
+    },
+  );
+
+  let settled = false;
+  const localWrite = enqueueRepoWrite({
+    scope: "7:project-1:repo-one",
+    kind: "editor:rowText",
+    operationType: "localEditorWrite",
+    run: async () => {
+      await releaseLocalWrite.promise;
+    },
+  });
+  localWrite.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
+
+  await delay(0);
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0].delayMs, 15_000);
+
+  const running = getRepoWriteQueueSnapshot("7:project-1:repo-one").operations[0];
+  currentTimeMs = Date.parse(running.startedAt) + 15_000;
+  timers[0].callback();
+  timers[0].callback();
+  await delay(0);
+
+  const overdueSnapshot = getRepoWriteQueueSnapshot("7:project-1:repo-one");
+  assert.equal(overdueSnapshot.hasOverdueWrites, true);
+  assert.equal(overdueSnapshot.operations[0].overdue, true);
+  assert.equal(overdueSnapshot.oldestActiveOperation.operationId, overdueSnapshot.operations[0].operationId);
+  assert.equal(overdueSnapshot.scopes[0].hasOverdueWrites, true);
+  assert.equal(overdueSnapshot.scopes[0].oldestActiveOperation.operationId, overdueSnapshot.operations[0].operationId);
+  assert.equal(settled, false);
+  assert.deepEqual(reports, [{
+    operation: "repo_write_overdue",
+    reason: "localEditorWrite",
+  }]);
+
+  releaseLocalWrite.resolve();
+  await localWrite;
+  assert.equal(timers[0].cancelled, true);
+  assert.equal(getRepoWriteQueueSnapshot("7:project-1:repo-one").hasActiveWrites, false);
+});
+
+test("repo queue clears overdue timers when operations finish before the threshold", async () => {
+  const timers = [];
+  __setRepoWriteOverdueReporter(() => {
+    throw new Error("Completed operations should not report overdue.");
+  });
+  __setRepoWriteOverdueScheduler(
+    (callback, delayMs) => {
+      const timer = { callback, delayMs, cancelled: false };
+      timers.push(timer);
+      return timer;
+    },
+    (timer) => {
+      if (timer) {
+        timer.cancelled = true;
+      }
+    },
+  );
+
+  const write = enqueueRepoWrite({
+    scope: "7:project-1:repo-one",
+    kind: "quick",
+    run: async () => "done",
+  });
+
+  await write;
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0].cancelled, true);
+  timers[0].callback();
+  assert.equal(getRepoWriteQueueSnapshot("7:project-1:repo-one").hasActiveWrites, false);
+});
+
+test("re-entrant same-scope enqueue runs inline instead of deadlocking", async () => {
+  const order = [];
+  const reentrancyReports = [];
+  __setRepoWriteReentrancyReporter((payload) => {
+    reentrancyReports.push(payload);
+  });
+
+  const outer = enqueueRepoWrite({
+    scope: "9:project-1:repo-one",
+    kind: "projectRepoSync",
+    run: async () => {
+      order.push("outer:start");
+      // Simulates reconcileProjectRepoSyncStates enqueueing on the same scope from
+      // inside a running operation, which previously deadlocked.
+      const inner = enqueueRepoWrite({
+        scope: "9:project-1:repo-one",
+        kind: "projectRepoSync",
+        run: async () => {
+          order.push("inner:run");
+          return "inner-done";
+        },
+      });
+      order.push(`outer:after-inner:${await inner}`);
+      return "outer-done";
+    },
+  });
+
+  const settled = await Promise.race([
+    outer.then((value) => `resolved:${value}`),
+    delay(1000).then(() => "deadlock"),
+  ]);
+
+  assert.equal(settled, "resolved:outer-done");
+  assert.deepEqual(order, ["outer:start", "inner:run", "outer:after-inner:inner-done"]);
+  assert.deepEqual(reentrancyReports, [{
+    operation: "repo_write_reentrant_scope",
+    reason: "projectRepoSync",
+  }]);
+  assert.equal(getRepoWriteQueueSnapshot("9:project-1:repo-one").hasActiveWrites, false);
+});
+
+test("a non-re-entrant same-scope enqueue still serializes behind the running op", async () => {
+  const order = [];
+  const releaseFirst = deferred();
+
+  const first = enqueueRepoWrite({
+    scope: "9:project-2:repo-two",
+    kind: "editor:rowText",
+    operationType: "localEditorWrite",
+    run: async () => {
+      order.push("first:start");
+      await releaseFirst.promise;
+      order.push("first:end");
+    },
+  });
+  await delay(0);
+
+  // Enqueued from outside any run() on this scope: must wait, not run inline.
+  const second = enqueueRepoWrite({
+    scope: "9:project-2:repo-two",
+    kind: "editor:rowText",
+    operationType: "localEditorWrite",
+    run: async () => {
+      order.push("second:run");
+    },
+  });
+  await delay(0);
+  assert.deepEqual(order, ["first:start"]);
+
+  releaseFirst.resolve();
+  await Promise.all([first, second]);
+  assert.deepEqual(order, ["first:start", "first:end", "second:run"]);
 });
 
 test("different repo scopes run concurrently", async () => {

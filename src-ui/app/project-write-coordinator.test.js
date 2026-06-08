@@ -21,7 +21,9 @@ const {
   teamMetadataWriteScope,
 } = await import("./project-write-coordinator.js");
 const {
+  __setRepoWriteReentrancyReporter,
   enqueueRepoWrite,
+  getRepoWriteQueueSnapshot,
   resetRepoWriteQueue,
 } = await import("./repo-write-queue.js");
 
@@ -62,6 +64,47 @@ function chapter(overrides = {}) {
 test.afterEach(() => {
   resetProjectWriteCoordinator();
   resetRepoWriteQueue();
+});
+
+test("useRepoWriteQueue:false intent can enqueue on its own scope without re-entrancy", async () => {
+  const reentrancyReports = [];
+  __setRepoWriteReentrancyReporter((payload) => reentrancyReports.push(payload));
+  const order = [];
+  const runCompleted = deferred();
+  const scope = projectRepoWriteScope({ installationId: 1 }, project());
+
+  // Mirrors scheduleProjectRepoSyncAfterLocalWrite: a coordination intent whose run
+  // enqueues a repo-queue op on the same scope and awaits it. With useRepoWriteQueue
+  // the intent would hold the scope and deadlock; useRepoWriteQueue:false runs it
+  // outside the queue so the inner op runs through the normal (non-re-entrant) path.
+  requestProjectWriteIntent({
+    key: projectRepoSyncIntentKey("project-1"),
+    scope,
+    teamId: "team-1",
+    projectId: "project-1",
+    type: "projectRepoSync",
+    value: { requestedAt: 1 },
+  }, {
+    useRepoWriteQueue: false,
+    run: async () => {
+      order.push("intent:start");
+      await enqueueRepoWrite({
+        scope,
+        kind: "projectRepoSync",
+        run: async () => {
+          order.push("inner:run");
+        },
+      });
+      order.push("intent:end");
+      runCompleted.resolve();
+    },
+  });
+
+  await Promise.race([runCompleted.promise, delay(1000).then(() => { throw new Error("deadlock"); })]);
+
+  assert.deepEqual(order, ["intent:start", "inner:run", "intent:end"]);
+  assert.deepEqual(reentrancyReports, []);
+  assert.equal(getRepoWriteQueueSnapshot(scope).hasActiveWrites, false);
 });
 
 test("project repo scope uses full repo identity with fallback scopes", () => {

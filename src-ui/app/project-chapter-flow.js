@@ -537,6 +537,11 @@ function scheduleProjectRepoSyncAfterLocalWrite(render, selectedTeam, project, o
     },
   }, {
     clearOnSuccess: true,
+    // This intent only coordinates a sync; the actual repo work is serialized by the
+    // reconcile operations it enqueues. Running it inside the repo write queue would
+    // deadlock, because reconcileProjectRepoSyncStates enqueues on this same scope and
+    // would wait behind this intent.
+    useRepoWriteQueue: false,
     run: async () => {
       if (state.selectedTeamId !== teamId) {
         return;
