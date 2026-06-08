@@ -215,8 +215,6 @@ struct AlignmentJob {
     split_targets: Vec<SplitTarget>,
     mismatch: Option<MismatchMetrics>,
     final_checks: Vec<FinalCheck>,
-    #[serde(default)]
-    single_block: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -419,7 +417,6 @@ pub(crate) fn preflight_aligned_translation_to_gtms_chapter_sync(
         split_targets: Vec::new(),
         mismatch: None,
         final_checks: Vec::new(),
-        single_block,
     };
     save_job(&job_path, &job)?;
 
