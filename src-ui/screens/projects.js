@@ -340,8 +340,7 @@ export function renderProjectsScreen(state) {
       titleAction: buildPageRefreshAction(state, state.projectsPageSync, "refresh-page", {
         backgroundRefreshing:
           state.projectsPage?.isRefreshing === true
-          || anyProjectWriteIsActive()
-          || projectRepoQueueActive,
+          || discoveryLoading,
         backgroundRefreshStartedAt: state.projectsPage?.refreshStartedAt,
         disableWhileSpinning: false,
       }),

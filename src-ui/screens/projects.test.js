@@ -954,11 +954,11 @@ test("coordinator writes keep file actions and local hard-delete controls enable
   assert.doesNotMatch(actionButtonHtml(html, "clear-deleted-files:project-1"), /disabled/);
   assert.doesNotMatch(actionButtonHtml(html, "delete-deleted-file:deleted-chapter-1"), /disabled/);
   assert.doesNotMatch(actionButtonHtml(html, "delete-deleted-project:deleted-project"), /disabled/);
-  assert.match(actionButtonHtml(html, "refresh-page"), /\bis-spinning\b/);
+  assert.doesNotMatch(actionButtonHtml(html, "refresh-page"), /\bis-spinning\b/);
   assert.doesNotMatch(actionButtonHtml(html, "refresh-page"), /aria-disabled="true"/);
 });
 
-test("repo sync intents do not globally disable new project or add files", () => {
+test("repo sync intents do not globally disable new project, add files, or keep page refresh spinning", () => {
   requestProjectWriteIntent({
     key: projectRepoSyncIntentKey("project-1"),
     scope: projectRepoWriteScope({ installationId: 1 }, "project-1"),
@@ -970,10 +970,14 @@ test("repo sync intents do not globally disable new project or add files", () =>
     run: async () => new Promise((resolve) => setTimeout(resolve, 10)),
   });
 
-  const html = renderProjectsScreen(projectsState());
+  const html = renderProjectsScreen(projectsState({
+    projectsPageSync: {
+      status: "upToDate",
+    },
+  }));
 
   assert.doesNotMatch(actionButtonHtml(html, "open-new-project"), /disabled/);
   assert.doesNotMatch(actionButtonHtml(html, "add-project-files:project-1"), /disabled/);
-  assert.match(actionButtonHtml(html, "refresh-page"), /\bis-spinning\b/);
+  assert.doesNotMatch(actionButtonHtml(html, "refresh-page"), /\bis-spinning\b/);
   assert.doesNotMatch(actionButtonHtml(html, "refresh-page"), /aria-disabled="true"/);
 });
