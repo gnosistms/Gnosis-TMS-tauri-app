@@ -11,16 +11,20 @@ const sentryReady = uploadRequested
   && Boolean(process.env.SENTRY_ORG)
   && Boolean(process.env.SENTRY_PROJECT);
 
-function commandName(name) {
-  return process.platform === "win32" ? `${name}.cmd` : name;
-}
-
 function run(command, args, options = {}) {
-  const result = spawnSync(commandName(command), args, {
+  const result = spawnSync(command, args, {
     cwd: rootDir,
     env: options.env ?? process.env,
+    shell: process.platform === "win32",
     stdio: "inherit",
   });
+
+  if (result.error) {
+    console.error(`Failed to run ${command}: ${result.error.message}`);
+    if (!options.allowFailure) {
+      process.exit(1);
+    }
+  }
 
   if (result.status !== 0 && !options.allowFailure) {
     process.exit(result.status ?? 1);
