@@ -9,5 +9,8 @@
   "project": [
     "**/*.{js,mjs}"
   ],
+  "ignore": [
+    "alignment-lab/**"
+  ],
   "ignoreExportsUsedInFile": true
 }
