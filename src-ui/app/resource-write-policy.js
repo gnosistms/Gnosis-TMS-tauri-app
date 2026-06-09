@@ -68,10 +68,6 @@ export function canLocalHardDeleteResource(team) {
   return Boolean(team);
 }
 
-export function canRestoreResource(team) {
-  return canManageProjects(team);
-}
-
 export function findSoftDeletedAncestor({
   team = null,
   project = null,
@@ -190,25 +186,4 @@ export function getQaListWritePolicy({
     return blocked("softDeleted", "qaList");
   }
   return roleAllowsQaListWrite(team) ? allowed() : blocked("viewer", "qaList");
-}
-
-export function getTeamWritePolicy({
-  team = null,
-  actionKind = "sharedWrite",
-} = {}) {
-  if (actionKind === "localHardDelete") {
-    return canLocalHardDeleteResource(team) ? allowed() : blocked("missing", "team");
-  }
-  if (!team) {
-    return blocked("missing", "team");
-  }
-  if (actionKind === "restoreTeam") {
-    return canManageTeam(team)
-      ? allowed()
-      : blocked("viewer", "team");
-  }
-  if (isSoftDeletedResource(team, "team")) {
-    return blocked("softDeleted", "team");
-  }
-  return canManageTeam(team) ? allowed() : blocked("viewer", "team");
 }

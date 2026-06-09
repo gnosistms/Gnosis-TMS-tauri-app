@@ -679,14 +679,6 @@ export function repoWriteQueueHasActiveWrites(scope = null) {
   return getRepoWriteQueueSnapshot(scope).hasActiveWrites;
 }
 
-export function repoWriteQueueHasActiveLocalWrites(scope = null) {
-  return getRepoWriteQueueSnapshot(scope).hasActiveLocalWrites;
-}
-
-export function repoWriteQueueHasRunningRemoteSync(scope = null) {
-  return getRepoWriteQueueSnapshot(scope).hasRunningRemoteSync;
-}
-
 export function subscribeRepoWriteQueue(listener) {
   if (typeof listener !== "function") {
     return () => {};

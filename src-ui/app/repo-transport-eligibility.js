@@ -97,12 +97,6 @@ export function repoResourcesMatch(left, right) {
   );
 }
 
-export function isKnownDeletedRepoResource(resource, knownResources = []) {
-  return (Array.isArray(knownResources) ? knownResources : []).some((knownResource) =>
-    isDeletedRepoResource(knownResource) && repoResourcesMatch(resource, knownResource)
-  );
-}
-
 export function filterKnownDeletedRepoResources(resources = [], knownResources = []) {
   const deletedResources = (Array.isArray(knownResources) ? knownResources : [])
     .filter(isDeletedRepoResource);
@@ -113,8 +107,4 @@ export function filterKnownDeletedRepoResources(resources = [], knownResources =
   return (Array.isArray(resources) ? resources : []).filter((resource) =>
     !deletedResources.some((deletedResource) => repoResourcesMatch(resource, deletedResource))
   );
-}
-
-export function repoResourceIsTransportEligible(resource, knownResources = []) {
-  return !isDeletedRepoResource(resource) && !isKnownDeletedRepoResource(resource, knownResources);
 }

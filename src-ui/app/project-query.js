@@ -19,12 +19,6 @@ import { teamCacheKey } from "./team-cache.js";
 
 let activeProjectsQuerySubscription = null;
 
-export function resetProjectsQueryObserver() {
-  activeProjectsQuerySubscription?.unsubscribe?.();
-  activeProjectsQuerySubscription?.observer?.destroy?.();
-  activeProjectsQuerySubscription = null;
-}
-
 function cacheKeyForTeamId(teamId, cacheKey) {
   if (typeof cacheKey === "string" && cacheKey.trim()) {
     return cacheKey.trim();

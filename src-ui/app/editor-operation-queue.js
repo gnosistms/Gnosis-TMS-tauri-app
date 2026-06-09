@@ -375,16 +375,8 @@ export function requestEditorOperation(intent = {}, handlers = {}) {
   return defaultEditorOperationQueue.requestOperation(intent, handlers);
 }
 
-export function getEditorOperation(operationId) {
-  return defaultEditorOperationQueue.getOperation(operationId);
-}
-
 export function getEditorOperationQueueSnapshot(filter = {}) {
   return defaultEditorOperationQueue.getSnapshot(filter);
-}
-
-export function editorOperationIsActive(operationId) {
-  return defaultEditorOperationQueue.operationIsActive(operationId);
 }
 
 export function anyEditorOperationIsActive(predicate = null) {
@@ -393,14 +385,6 @@ export function anyEditorOperationIsActive(predicate = null) {
 
 export function waitForEditorOperationQueueIdle(predicate = null) {
   return defaultEditorOperationQueue.waitForIdle(predicate);
-}
-
-export function subscribeEditorOperationQueue(listener) {
-  return defaultEditorOperationQueue.subscribe(listener);
-}
-
-export function clearEditorOperationsWhere(predicate) {
-  return defaultEditorOperationQueue.clearOperationsWhere(predicate);
 }
 
 export function resetEditorOperationQueue() {
