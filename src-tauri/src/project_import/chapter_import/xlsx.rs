@@ -41,12 +41,31 @@ pub(super) fn parse_xlsx_workbook(input: ImportXlsxInput) -> Result<ParsedWorkbo
         .next()
         .ok_or_else(|| "The first worksheet is missing a header row. Add supported language codes to row 1, such as es, en, vi, zh-Hans, or zh-Hant.".to_string())?;
 
-    let header_blob = trim_trailing_empty_headers(
-        header_row
-            .iter()
-            .map(cell_to_trimmed_string)
-            .collect::<Vec<_>>(),
-    );
+    let header_cells = header_row
+        .iter()
+        .map(cell_to_trimmed_string)
+        .collect::<Vec<_>>();
+
+    // calamine pads every row to the worksheet's used-range width, so the header row can pick up
+    // trailing empty columns when the used range is wider than the real data (a common spreadsheet
+    // export artifact). Only ignore a trailing column when it is WHOLLY empty — a blank header AND no
+    // data in any row. A trailing column that has data but a blank/invalid header is kept so
+    // validation refuses the file, rather than silently dropping a column the user meant to import.
+    let mut column_has_data = vec![false; header_cells.len()];
+    for row in range.rows().skip(1) {
+        for (column_index, present) in column_has_data.iter_mut().enumerate() {
+            if !*present
+                && row
+                    .get(column_index)
+                    .map(|cell| !cell_to_trimmed_string(cell).is_empty())
+                    .unwrap_or(false)
+            {
+                *present = true;
+            }
+        }
+    }
+    let effective_width = effective_header_width(&header_cells, &column_has_data);
+    let header_blob = header_cells[..effective_width].to_vec();
     let bindings = allocate_duplicate_language_columns(classify_header_row(&header_blob)?);
     let languages = bindings
         .iter()
@@ -140,15 +159,23 @@ pub(super) fn parse_xlsx_workbook(input: ImportXlsxInput) -> Result<ParsedWorkbo
 /// include trailing empty-but-formatted columns — a common spreadsheet export artifact. Drop trailing
 /// blank header cells so a stray wide range is not mistaken for a real column with a missing language
 /// code. Interior blank headers are preserved so `classify_header_row` still rejects genuine gaps.
-fn trim_trailing_empty_headers(mut headers: Vec<String>) -> Vec<String> {
-    while headers
-        .last()
-        .map(|header| header.trim().is_empty())
-        .unwrap_or(false)
-    {
-        headers.pop();
+/// Number of leading columns to validate/import: drop only the contiguous trailing columns that are
+/// WHOLLY empty (blank header AND no data in any row) — calamine's used-range padding. A trailing
+/// column with data but a blank header is retained so `classify_header_row` rejects it instead of the
+/// importer silently discarding a column the user intended to import. Interior blank-header columns
+/// are likewise retained (and rejected), since a gap between populated columns signals a real mistake.
+fn effective_header_width(header_cells: &[String], column_has_data: &[bool]) -> usize {
+    let mut width = header_cells.len();
+    while width > 0 {
+        let column_index = width - 1;
+        let header_blank = header_cells[column_index].trim().is_empty();
+        let has_data = column_has_data.get(column_index).copied().unwrap_or(false);
+        if !header_blank || has_data {
+            break;
+        }
+        width -= 1;
     }
-    headers
+    width
 }
 
 pub(super) fn classify_header_row(headers: &[String]) -> Result<Vec<ColumnBinding>, String> {
@@ -273,7 +300,7 @@ pub(super) fn split_xlsx_cell_text_and_footnote(value: &str) -> ImportedField {
 #[cfg(test)]
 mod tests {
     use super::{
-        allocate_duplicate_language_columns, classify_header_row, trim_trailing_empty_headers,
+        allocate_duplicate_language_columns, classify_header_row, effective_header_width,
         ColumnBinding,
     };
 
@@ -282,38 +309,72 @@ mod tests {
     }
 
     #[test]
-    fn trim_trailing_empty_headers_drops_padding_but_keeps_interior_gaps() {
-        // Trailing blank/whitespace columns (calamine range padding) are dropped.
+    fn effective_header_width_drops_only_wholly_empty_trailing_columns() {
+        // Trailing column with a blank header AND no data (calamine used-range padding) is dropped.
         assert_eq!(
-            trim_trailing_empty_headers(headers(&["es", "en", "ja", ""])),
-            headers(&["es", "en", "ja"]),
+            effective_header_width(&headers(&["es", "en", "ja", ""]), &[true, true, true, false]),
+            3,
+        );
+        // Several trailing wholly-empty columns are all dropped.
+        assert_eq!(
+            effective_header_width(
+                &headers(&["es", "en", "ja", "", ""]),
+                &[true, true, true, false, false],
+            ),
+            3,
+        );
+        // Nothing to drop when the last column is real.
+        assert_eq!(
+            effective_header_width(&headers(&["es", "en", "ja"]), &[true, true, true]),
+            3,
+        );
+        // An interior blank header is not trailing, so it is retained (and later rejected).
+        assert_eq!(
+            effective_header_width(&headers(&["es", "", "ja"]), &[true, false, true]),
+            3,
         );
         assert_eq!(
-            trim_trailing_empty_headers(headers(&["es", "en", "  ", ""])),
-            headers(&["es", "en"]),
+            effective_header_width(&headers(&["", "", ""]), &[false, false, false]),
+            0,
         );
-        // An interior blank is a genuine gap and must be preserved for validation.
-        assert_eq!(
-            trim_trailing_empty_headers(headers(&["es", "", "ja"])),
-            headers(&["es", "", "ja"]),
-        );
-        assert!(trim_trailing_empty_headers(headers(&["", ""])).is_empty());
     }
 
     #[test]
-    fn trailing_empty_header_column_does_not_error() {
+    fn effective_header_width_keeps_trailing_column_that_has_data() {
+        // A trailing column with a blank header BUT data must NOT be dropped — it has to reach
+        // validation so the file is refused rather than silently losing the column.
+        assert_eq!(
+            effective_header_width(&headers(&["es", "en", "ja", ""]), &[true, true, true, true]),
+            4,
+        );
+    }
+
+    #[test]
+    fn wholly_empty_trailing_column_imports_without_error() {
         // Regression: a stray empty trailing column must not be mistaken for a blank language header
         // (the "Column 4 in row 1 is blank" false positive on otherwise-valid 3-column sheets).
-        let bindings = classify_header_row(&trim_trailing_empty_headers(headers(&[
-            "es", "en", "ja", "",
-        ])))
-        .expect("trailing-padded headers should classify");
+        let cells = headers(&["es", "en", "ja", ""]);
+        let width = effective_header_width(&cells, &[true, true, true, false]);
+        let bindings =
+            classify_header_row(&cells[..width]).expect("padded headers should classify");
         assert_eq!(bindings.len(), 3);
     }
 
     #[test]
+    fn trailing_column_with_data_but_blank_header_is_refused() {
+        // Data under a blank header must be refused, not silently dropped.
+        let cells = headers(&["es", "en", "ja", ""]);
+        let width = effective_header_width(&cells, &[true, true, true, true]);
+        let error = classify_header_row(&cells[..width])
+            .expect_err("a column with data but no header must be rejected");
+        assert!(error.contains("Column 4 in row 1 is blank"));
+    }
+
+    #[test]
     fn interior_blank_header_still_errors() {
-        let error = classify_header_row(&trim_trailing_empty_headers(headers(&["es", "", "ja"])))
+        let cells = headers(&["es", "", "ja"]);
+        let width = effective_header_width(&cells, &[true, false, true]);
+        let error = classify_header_row(&cells[..width])
             .expect_err("an interior blank header must still be rejected");
         assert!(error.contains("Column 2 in row 1 is blank"));
     }
