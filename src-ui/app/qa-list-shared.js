@@ -28,8 +28,8 @@ function normalizeLanguage(value) {
     : null;
 }
 
-export function selectedTeam() {
-  return state.teams.find((team) => team.id === state.selectedTeamId) ?? state.teams[0] ?? null;
+export function selectedTeam(teamId = state.selectedTeamId) {
+  return state.teams.find((team) => team.id === teamId) ?? null;
 }
 
 export function canManageQaLists(team = selectedTeam()) {
