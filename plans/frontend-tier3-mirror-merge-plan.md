@@ -4,6 +4,28 @@ Extends `frontend-glossary-qa-unification-plan.md`. Tier 1 (descriptor collapses
 (the four flow pairs: discovery, lifecycle, query, import) are **done** and on `main`. This plan
 re-opens **Tier 3**, which the original plan deferred as "too dissimilar / domain-specific."
 
+## Status: ✅ COMPLETE
+
+All Tier 3 work landed on `main`. Outcomes:
+
+| Item | Outcome | PRs |
+|---|---|---|
+| repo-flow | **collapsed** behind `repo-resource/repo-flow.js` (after full metadata reconciliation RF1–RF7, incl. data-loss-sensitive confirmed-missing) | #63, #64, #66, #67 |
+| term-sync | **collapsed** behind `repo-resource/term-sync.js` (single `buildTermFields` hook) | #77 |
+| top-level-state | **collapsed** behind `repo-resource/top-level-state.js` (QA write-residue kept adapter-local) | #78 |
+| cache | **factory** `createRepoResourceCache` (adapters → 13 lines) | #80 |
+| term-inline-markup-flow | **collapsed** behind `repo-resource/term-inline-markup-flow.js` (5 hooks isolate variant-lane vs single-field) | #81 |
+| ruby sanitization | **parity gap closed** (QA sanitizes on persist) | #62 |
+| QA editor background sync | **parity gap closed** (mirror of `glossary-background-sync.js`) | #76 |
+| `selectedTeam()` | **latent bug fixed** (no `teams[0]` fallback) | #79 |
+| term-write-coordinator | **ruled justified — NOT collapsed**; later cleaned of the vestigial write-intent coordinator (QA uses a plain in-flight counter) | (closeout) |
+
+**Permanently separate (term-model core, do not re-litigate):** `editor-flow`, `shared` (term shapes),
+`term-draft`, `default-flow`/`default-cache` (product-confirmed per-language vs per-team), `flow`
+(re-export manifest), and the glossary-only `glossary-editor-navigation-source` / `glossary-discovery`
+(`glossary-background-sync` and `glossary-ruby` are now mirrored/shared). The glossary↔QA frontend is
+single-sourced behind `repo-resource/` except this irreducible term-model core.
+
 ## Why re-open Tier 3
 
 The Tier 2 lesson holds here too: **diff-distance ≠ functional distance.** A pair can look very

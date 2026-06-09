@@ -1,30 +1,11 @@
-import { createWriteIntentCoordinator } from "./write-intent-coordinator.js";
-
-const writeIntents = createWriteIntentCoordinator({
-  defaultScope: "qa-term-writes:default",
-  label: "QA term",
-});
-
+// QA term writes are synchronous and gated one-at-a-time by the editor modal, so a simple
+// in-flight counter is sufficient. (Glossary uses the write-intent coordinator because its
+// editor has background sync; QA's save path does not race a background sync — see
+// plans/frontend-tier3-mirror-merge-plan.md.)
 let activeQaListTermWriteCount = 0;
 
-export function qaTermSaveIntentKey(qaListId, termIdOrClientId) {
-  return `qa-term:save:${qaListId ?? "unknown"}:${termIdOrClientId ?? "unknown"}`;
-}
-
-export function qaTermWriteScope(team, repoName) {
-  return `qa-list-repo:${team?.installationId ?? "unknown"}:${repoName || "unknown"}`;
-}
-
-export function requestQaTermWriteIntent(intent, operations = {}) {
-  return writeIntents.request(intent, operations);
-}
-
-export function getQaTermWriteIntent(key) {
-  return writeIntents.getIntent(key);
-}
-
 export function anyQaTermWriteIsActive() {
-  return activeQaListTermWriteCount > 0 || writeIntents.anyActive();
+  return activeQaListTermWriteCount > 0;
 }
 
 export function beginQaTermWrite() {
@@ -41,5 +22,4 @@ export function qaListTermWriteIsActive() {
 
 export function resetQaTermWriteCoordinator() {
   activeQaListTermWriteCount = 0;
-  writeIntents.reset();
 }
