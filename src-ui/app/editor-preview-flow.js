@@ -6,6 +6,7 @@ import {
   EDITOR_MODE_TRANSLATE,
   normalizeEditorMode,
   normalizeEditorPreviewSearchState,
+  selectedEditorPreviewLanguageCode,
   serializeEditorPreviewHtml,
   stepEditorPreviewSearchState,
 } from "./editor-preview.js";
@@ -26,7 +27,7 @@ function currentEditorMode() {
 function currentPreviewBlocks(chapterState = state.editorChapter) {
   return buildEditorPreviewDocument(
     chapterState?.rows,
-    chapterState?.selectedTargetLanguageCode,
+    selectedEditorPreviewLanguageCode(chapterState),
   );
 }
 
@@ -138,6 +139,28 @@ export function refreshEditorPreviewAfterTargetLanguageChange(render) {
   renderPreviewMode(render);
 }
 
+export function updateEditorPreviewLanguage(render, nextCode) {
+  if (currentEditorMode() !== EDITOR_MODE_PREVIEW) {
+    return;
+  }
+
+  const languages = Array.isArray(state.editorChapter?.languages) ? state.editorChapter.languages : [];
+  const languageCode = String(nextCode ?? "").trim();
+  if (!languageCode || !languages.some((language) => language?.code === languageCode)) {
+    return;
+  }
+
+  const nextEditorChapter = {
+    ...state.editorChapter,
+    previewLanguageCode: languageCode,
+  };
+  state.editorChapter = {
+    ...nextEditorChapter,
+    previewSearch: previewSearchStateWithTotal(nextEditorChapter),
+  };
+  renderPreviewMode(render);
+}
+
 export function setEditorMode(render, nextMode) {
   const normalizedMode = normalizeEditorMode(nextMode);
   const previousMode = currentEditorMode();
@@ -152,6 +175,10 @@ export function setEditorMode(render, nextMode) {
   state.editorChapter = {
     ...state.editorChapter,
     mode: normalizedMode,
+    previewLanguageCode:
+      normalizedMode === EDITOR_MODE_PREVIEW
+        ? selectedEditorPreviewLanguageCode(state.editorChapter)
+        : state.editorChapter.previewLanguageCode ?? null,
     previewSearch:
       normalizedMode === EDITOR_MODE_PREVIEW
         ? previewSearchStateWithTotal()

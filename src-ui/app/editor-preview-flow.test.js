@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { EDITOR_MODE_PREVIEW } from "./editor-preview.js";
 import {
   copyEditorPreviewHtml,
+  updateEditorPreviewLanguage,
   writeHtmlToClipboard,
 } from "./editor-preview-flow.js";
 import {
@@ -113,4 +114,59 @@ test("copyEditorPreviewHtml publishes serialized preview HTML through rich clipb
   assert.match(html, /<sup data-fn="[0-9a-f-]{36}" class="fn"><a id="[0-9a-f-]{36}-link" href="#[0-9a-f-]{36}">1<\/a><\/sup>/);
   assert.match(html, /<!-- wp:footnotes \/-->/);
   assert.doesNotMatch(html, /<ol class="wp-block-footnotes">/);
+});
+
+test("preview language selection can copy every chapter language without changing editor selections", async () => {
+  const writes = [];
+  installWindow();
+  installNavigator({
+    async write(items) {
+      writes.push(items);
+    },
+  });
+  globalThis.ClipboardItem = TestClipboardItem;
+  state.editorChapter = {
+    ...createEditorChapterState(),
+    mode: EDITOR_MODE_PREVIEW,
+    languages: [
+      { code: "es", name: "Spanish", role: "source" },
+      { code: "vi", name: "Vietnamese", role: "target" },
+      { code: "ja", name: "Japanese", role: "target" },
+    ],
+    selectedSourceLanguageCode: "es",
+    selectedTargetLanguageCode: "vi",
+    rows: [{
+      rowId: "row-1",
+      lifecycleState: "active",
+      textStyle: "paragraph",
+      fields: {
+        es: "Texto fuente",
+        vi: "Translated text",
+        ja: "Japanese preview text",
+      },
+    }],
+  };
+
+  const previewCases = [
+    { code: "es", expected: /Texto fuente/, absent: [/Translated text/, /Japanese preview text/] },
+    { code: "vi", expected: /Translated text/, absent: [/Texto fuente/, /Japanese preview text/] },
+    { code: "ja", expected: /Japanese preview text/, absent: [/Texto fuente/, /Translated text/] },
+  ];
+
+  for (const previewCase of previewCases) {
+    updateEditorPreviewLanguage(() => {}, previewCase.code);
+    await copyEditorPreviewHtml(() => {});
+
+    assert.equal(state.editorChapter.previewLanguageCode, previewCase.code);
+    assert.equal(state.editorChapter.selectedSourceLanguageCode, "es");
+    assert.equal(state.editorChapter.selectedTargetLanguageCode, "vi");
+
+    const html = await writes.at(-1)[0].items["text/html"].text();
+    assert.match(html, previewCase.expected);
+    for (const absentPattern of previewCase.absent) {
+      assert.doesNotMatch(html, absentPattern);
+    }
+  }
+
+  assert.equal(writes.length, previewCases.length);
 });

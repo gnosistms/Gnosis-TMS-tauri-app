@@ -15,6 +15,7 @@ import {
   EDITOR_MODE_TRANSLATE,
   normalizeEditorMode,
   normalizeEditorPreviewSearchState,
+  selectedEditorPreviewLanguageCode,
 } from "./editor-preview.js";
 import { normalizeEditorReplaceState } from "./editor-replace.js";
 import { normalizeEditorRowTextStyle } from "./editor-row-text-style.js";
@@ -96,6 +97,17 @@ function preserveEditorPreviewSearch(previousEditorChapter, isSameChapter) {
   }
 
   return normalizeEditorPreviewSearchState(previousEditorChapter?.previewSearch);
+}
+
+function preserveEditorPreviewLanguage(nextEditorChapter, previousEditorChapter, isSameChapter) {
+  if (!isSameChapter) {
+    return null;
+  }
+
+  return selectedEditorPreviewLanguageCode({
+    ...nextEditorChapter,
+    previewLanguageCode: previousEditorChapter?.previewLanguageCode,
+  });
 }
 
 function normalizeImportedConflictRemoteRow(row) {
@@ -266,6 +278,7 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
         : nextEditorChapter?.writeLock,
     ),
     mode: preserveEditorMode(previousEditorChapter, isSameChapter),
+    previewLanguageCode: preserveEditorPreviewLanguage(nextEditorChapter, previousEditorChapter, isSameChapter),
     previewSearch: preserveEditorPreviewSearch(previousEditorChapter, isSameChapter),
     fontSizePx: coerceEditorFontSizePx(previousEditorChapter?.fontSizePx),
     collapsedLanguageCodes: cloneCollapsedLanguageCodes(previousEditorChapter?.collapsedLanguageCodes),

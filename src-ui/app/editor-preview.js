@@ -50,6 +50,31 @@ export function normalizeEditorPreviewSearchState(value) {
   };
 }
 
+export function selectedEditorPreviewLanguageCode(chapterState) {
+  const languages = Array.isArray(chapterState?.languages) ? chapterState.languages : [];
+  const codes = new Set(languages.map((language) => language?.code).filter(Boolean));
+  // Preview is read-only display/copy, so it intentionally allows selecting any
+  // chapter language, including the source language. Do not route this through
+  // normalizeLanguageSelections, which correctly rejects source == target for
+  // translate-mode editing.
+  const previewCode = String(chapterState?.previewLanguageCode ?? "").trim();
+  if (previewCode && (codes.size === 0 || codes.has(previewCode))) {
+    return previewCode;
+  }
+
+  const targetCode = String(chapterState?.selectedTargetLanguageCode ?? "").trim();
+  if (targetCode && (codes.size === 0 || codes.has(targetCode))) {
+    return targetCode;
+  }
+
+  const sourceCode = String(chapterState?.selectedSourceLanguageCode ?? "").trim();
+  if (sourceCode && (codes.size === 0 || codes.has(sourceCode))) {
+    return sourceCode;
+  }
+
+  return languages[0]?.code ?? null;
+}
+
 function previewSearchQuery(searchState) {
   return String(normalizeEditorPreviewSearchState(searchState).query ?? "").trim();
 }
