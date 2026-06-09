@@ -103,6 +103,7 @@ function verifierOperations(overrides = {}) {
     listLocalQaListsForTeam: async () => [localQaList()],
     listRemoteQaListReposForTeam: async () => [remoteRepo()],
     refreshQaListMetadataRecords: async () => [metadataRecord()],
+    inspectAndMigrateLocalRepoBindings: async () => ({ issues: [] }),
     ...overrides,
   };
 }
@@ -158,6 +159,24 @@ test("verifyImportedQaListState rejects a remote QA list repo with a mismatched 
   );
 });
 
+test("verifyImportedQaListState rejects a remote QA list repo with a mismatched GitHub repo id", async () => {
+  await assert.rejects(
+    verifyImportedQaListState(team, expectedQaList, verifierOperations({
+      listRemoteQaListReposForTeam: async () => [remoteRepo({ repoId: 99999 })],
+    })),
+    /remote QA list repo id does not match/,
+  );
+});
+
+test("verifyImportedQaListState rejects a remote QA list repo with a mismatched full name", async () => {
+  await assert.rejects(
+    verifyImportedQaListState(team, expectedQaList, verifierOperations({
+      listRemoteQaListReposForTeam: async () => [remoteRepo({ fullName: "gnosis-vn/other-qa-list" })],
+    })),
+    /remote QA list repo full name does not match/,
+  );
+});
+
 test("verifyImportedQaListState rejects a missing team metadata record", async () => {
   await assert.rejects(
     verifyImportedQaListState(team, expectedQaList, verifierOperations({
@@ -173,5 +192,40 @@ test("verifyImportedQaListState rejects a team metadata record with a mismatched
       refreshQaListMetadataRecords: async () => [metadataRecord({ language: { code: "es", name: "Spanish" } })],
     })),
     /team metadata language does not match/,
+  );
+});
+
+test("verifyImportedQaListState rejects a team metadata record with a mismatched GitHub repo id", async () => {
+  await assert.rejects(
+    verifyImportedQaListState(team, expectedQaList, verifierOperations({
+      refreshQaListMetadataRecords: async () => [metadataRecord({ githubRepoId: 99999 })],
+    })),
+    /team metadata record has a different GitHub repo id/,
+  );
+});
+
+test("verifyImportedQaListState rejects a team metadata record with a mismatched full name", async () => {
+  await assert.rejects(
+    verifyImportedQaListState(team, expectedQaList, verifierOperations({
+      refreshQaListMetadataRecords: async () => [metadataRecord({ fullName: "gnosis-vn/other-qa-list" })],
+    })),
+    /team metadata record points at a different GitHub repo/,
+  );
+});
+
+test("verifyImportedQaListState rejects an imported QA list with a matching local repo repair issue", async () => {
+  await assert.rejects(
+    verifyImportedQaListState(team, expectedQaList, verifierOperations({
+      inspectAndMigrateLocalRepoBindings: async () => ({
+        issues: [{
+          kind: "qaList",
+          issueType: "strayLocalRepo",
+          resourceId: expectedQaList.qaListId,
+          repoName: expectedQaList.repoName,
+          message: "This local QA list repo has no matching team-metadata record.",
+        }],
+      }),
+    })),
+    /no matching team-metadata record/,
   );
 });
