@@ -157,13 +157,17 @@ function ensureChapterMutationAllowed(
     localOnly = false,
   } = {},
 ) {
-  const writesDisabled = allowDuringRefresh
+  // Local-only mutations (e.g. local hard-delete) don't touch the remote, so — like
+  // explicitly refresh-safe lifecycle actions — they only need to wait for in-flight
+  // write submissions, not a background refresh.
+  const allowDuringRefreshEffective = allowDuringRefresh || localOnly;
+  const writesDisabled = allowDuringRefreshEffective
     ? areResourcePageWriteSubmissionsDisabled(state.projectsPage)
     : areResourcePageWritesDisabled(state.projectsPage);
   if (writesDisabled) {
     setProjectDiscoveryError(
       render,
-      allowDuringRefresh ? chapterLifecycleWriteBlockedMessage() : chapterWriteBlockedMessage(),
+      allowDuringRefreshEffective ? chapterLifecycleWriteBlockedMessage() : chapterWriteBlockedMessage(),
     );
     return false;
   }
@@ -1142,8 +1146,9 @@ export async function openProjectClearDeletedFiles(render, projectId) {
     return;
   }
 
-  if (areResourcePageWritesDisabled(state.projectsPage)) {
-    setProjectDiscoveryError(render, chapterWriteBlockedMessage());
+  // Local hard-delete is local-only; allow it during a background refresh (like Restore).
+  if (areResourcePageWriteSubmissionsDisabled(state.projectsPage)) {
+    setProjectDiscoveryError(render, chapterLifecycleWriteBlockedMessage());
     return;
   }
 
@@ -1200,9 +1205,10 @@ export async function confirmProjectClearDeletedFiles(render) {
   const modal = state.projectClearDeletedFiles;
   const project = findProjectForRepoSync(modal.projectId);
 
-  if (areResourcePageWritesDisabled(state.projectsPage)) {
+  // Local hard-delete is local-only; allow it during a background refresh (like Restore).
+  if (areResourcePageWriteSubmissionsDisabled(state.projectsPage)) {
     modal.status = "idle";
-    modal.error = chapterWriteBlockedMessage();
+    modal.error = chapterLifecycleWriteBlockedMessage();
     render();
     return;
   }
@@ -1737,9 +1743,10 @@ export async function confirmChapterPermanentDeletion(render) {
   const selectedTeam = selectedProjectsTeam();
   const context = findChapterContext(state.chapterPermanentDeletion.chapterId);
 
-  if (areResourcePageWritesDisabled(state.projectsPage)) {
+  // Local hard-delete is local-only; allow it during a background refresh (like Restore).
+  if (areResourcePageWriteSubmissionsDisabled(state.projectsPage)) {
     state.chapterPermanentDeletion.status = "idle";
-    state.chapterPermanentDeletion.error = chapterWriteBlockedMessage();
+    state.chapterPermanentDeletion.error = chapterLifecycleWriteBlockedMessage();
     render();
     return;
   }

@@ -35,7 +35,10 @@ export function renderProjectCard(project, expanded, options = {}) {
   const lifecycleActionsDisabled = options.lifecycleActionsDisabled === true;
   const pageWritesDisabled = options.pageWritesDisabled === true;
   const heavyActionsDisabled = options.heavyActionsDisabled === true || pageWritesDisabled;
-  const localHardDeleteActionsDisabled = options.localHardDeleteActionsDisabled === true || pageWritesDisabled;
+  // Local hard-delete must stay available during a background refresh (like Restore), so
+  // fall back to the write-submissions gate, not pageWritesDisabled (which blocks while refreshing).
+  const localHardDeleteActionsDisabled =
+    options.localHardDeleteActionsDisabled === true || lifecycleActionsDisabled;
   const addFilesWriteDisabled =
     options.addFilesWriteDisabled === undefined
       ? heavyActionsDisabled

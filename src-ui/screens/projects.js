@@ -231,8 +231,11 @@ export function renderProjectsScreen(state) {
   const heavyActionsDisabled = pageWritesDisabled || anyProjectWriteIsActive() || projectRepoQueueActive;
   const mutatingWriteActionsDisabled =
     pageWritesDisabled || anyProjectMutatingWriteIsActive() || projectMutatingRepoQueueActive;
-  const localHardDeleteActionsDisabled = pageWritesDisabled;
   const lifecycleActionsDisabled = areResourcePageWriteSubmissionsDisabled(state.projectsPage);
+  // Local hard-delete (clear/remove deleted files) is a local-only action; like Restore
+  // it must stay available during a background refresh. Gate it on write submissions
+  // (writeState), not on the broader pageWritesDisabled which also blocks while refreshing.
+  const localHardDeleteActionsDisabled = lifecycleActionsDisabled;
   const importInProgress = state.projectImport?.status === "importing";
   const refreshInProgress =
     state.projectsPage?.isRefreshing === true
