@@ -1236,6 +1236,7 @@ export async function confirmProjectPermanentDeletion(render) {
     resetProjectPermanentDeletion();
     clearProjectsStatus(render);
     showProjectsNotice(render, "Local project copy removed.");
+    render();
   } catch (error) {
     clearProjectsStatus(render);
     state.projectPermanentDeletion.status = "idle";
