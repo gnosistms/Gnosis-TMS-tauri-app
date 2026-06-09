@@ -25,6 +25,10 @@ import {
   endQaTermWrite,
   qaListTermWriteIsActive,
 } from "./qa-term-write-coordinator.js";
+import {
+  markQaListBackgroundSyncDirty,
+  maybeStartQaListBackgroundSync,
+} from "./qa-background-sync.js";
 
 const QA_TERM_DUPLICATE_WARNING =
   "This QA term is redundant with another QA term in this QA list. Please change it before saving.";
@@ -180,6 +184,8 @@ export async function submitQaTermEditor(render) {
     return;
   }
   beginQaTermWrite();
+  let didSave = false;
+  let didSaveRepoBackedTerm = false;
   try {
     if (teamSupportsQaListRepos(team) && qaList?.repoName) {
       const previousTerm = editor.termId
@@ -246,6 +252,7 @@ export async function submitQaTermEditor(render) {
         ? terms.map((term) => (term.termId === editor.termId ? nextTerm : term))
         : [...terms, nextTerm];
       persistQaListEditorTerms(nextTerms.filter(Boolean));
+      didSaveRepoBackedTerm = true;
     } else {
       const nextTerm = normalizeQaTerm({
         termId: editor.termId ?? createQaResourceId("qa-term"),
@@ -260,6 +267,7 @@ export async function submitQaTermEditor(render) {
       persistQaListEditorTerms(nextTerms.filter(Boolean));
     }
     state.qaTermEditor = createQaTermEditorState();
+    didSave = true;
   } catch (error) {
     state.qaTermEditor = {
       ...editor,
@@ -268,12 +276,17 @@ export async function submitQaTermEditor(render) {
   } finally {
     endQaTermWrite();
   }
+  if (didSave && didSaveRepoBackedTerm) {
+    markQaListBackgroundSyncDirty();
+    await maybeStartQaListBackgroundSync(render, { force: true });
+  }
   render();
 }
 
 export async function deleteQaTerm(render, termId) {
   const team = currentQaListTeam();
   const qaList = selectedQaList();
+  const isRepoBackedQaList = teamSupportsQaListRepos(team) && Boolean(qaList?.repoName);
   const policy = getQaListWritePolicy({ team, qaList });
   if (!policy.allowed) {
     state.qaListEditor = {
@@ -286,7 +299,7 @@ export async function deleteQaTerm(render, termId) {
   }
   beginQaTermWrite();
   try {
-    if (teamSupportsQaListRepos(team) && qaList?.repoName) {
+    if (isRepoBackedQaList) {
       await syncAndRefreshQaListEditorSnapshot(team, qaList);
       if (!selectedQaListEditorMatches(team, qaList)) {
         return;
@@ -318,6 +331,9 @@ export async function deleteQaTerm(render, termId) {
     }
     const terms = (state.qaListEditor.terms ?? []).filter((term) => term.termId !== termId);
     persistQaListEditorTerms(terms);
+    if (isRepoBackedQaList) {
+      markQaListBackgroundSyncDirty();
+    }
   } catch (error) {
     state.qaListEditor = {
       ...state.qaListEditor,
