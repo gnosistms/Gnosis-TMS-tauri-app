@@ -1,7 +1,27 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { normalizeQaTerm } from "./qa-list-shared.js";
+import { normalizeQaTerm, selectedTeam } from "./qa-list-shared.js";
+import { state } from "./state.js";
+
+test("selectedTeam returns null when the selected id matches no team (parity with glossary, no teams[0] fallback)", () => {
+  state.teams = [{ id: "team-1" }, { id: "team-2" }];
+  state.selectedTeamId = "team-1";
+  assert.equal(selectedTeam()?.id, "team-1");
+
+  // Stale/cleared selection must NOT silently fall back to teams[0].
+  state.selectedTeamId = "missing";
+  assert.equal(selectedTeam(), null);
+
+  state.selectedTeamId = null;
+  assert.equal(selectedTeam(), null);
+
+  // Explicit teamId arg is honored (matches glossary signature).
+  assert.equal(selectedTeam("team-2")?.id, "team-2");
+
+  state.teams = [];
+  state.selectedTeamId = null;
+});
 
 test("normalizeQaTerm sanitizes ruby markup in term text (parity with glossary)", () => {
   const normalized = normalizeQaTerm({
