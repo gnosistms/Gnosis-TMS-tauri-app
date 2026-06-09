@@ -6,158 +6,79 @@ import {
   preserveQaListLifecyclePatchesInSnapshot,
   upsertQaListQueryData,
 } from "./qa-list-query.js";
-import { syncSingleQaListForTeam, syncQaListReposForTeam, teamSupportsQaListRepos, getQaListSyncIssueMessage } from "./qa-list-repo-flow.js";
-import { qaListKeys, queryClient } from "./query-client.js";
+import {
+  getQaListSyncIssueMessage,
+  syncQaListReposForTeam,
+  syncSingleQaListForTeam,
+  teamSupportsQaListRepos,
+} from "./qa-list-repo-flow.js";
 import { normalizeQaList, selectedTeam, sortQaLists } from "./qa-list-shared.js";
-import { setResourcePageDataOwner } from "./resource-page-controller.js";
-import { state } from "./state.js";
-import { teamCacheKey } from "./team-cache.js";
+import { qaListKeys } from "./query-client.js";
+import { createRepoResourceTopLevelState } from "./repo-resource/top-level-state.js";
+
+const qaListTopLevelState = createRepoResourceTopLevelState({
+  identity: {
+    collectionField: "qaLists",
+    selectedIdField: "selectedQaListId",
+    editorField: "qaListEditor",
+    queryKeys: qaListKeys,
+  },
+  normalizeSummary: normalizeQaList,
+  sortSummaries: sortQaLists,
+  createQuerySnapshot(appState) {
+    return createQaListsQuerySnapshot({
+      qaLists: appState.qaLists,
+      discovery: appState.qaListDiscovery,
+    });
+  },
+  selectedTeam,
+  saveStoredForTeam: saveStoredQaListsForTeam,
+  applyQuerySnapshotToState: applyQaListsQuerySnapshotToState,
+  persistQueryDataForTeam: persistQaListsQueryDataForTeam,
+  preserveLifecyclePatchesInSnapshot: preserveQaListLifecyclePatchesInSnapshot,
+  upsertQueryData: upsertQaListQueryData,
+  teamSupportsRepos: teamSupportsQaListRepos,
+  syncReposForTeam: syncQaListReposForTeam,
+});
 
 export function createQaResourceId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 export function currentQaListTeam() {
-  return selectedTeam();
+  return qaListTopLevelState.currentTeam();
 }
 
 export function selectedQaListTeamMatches(team) {
-  const selected = currentQaListTeam();
-  return Boolean(
-    team
-      && selected
-      && selected.id === team.id
-      && selected.installationId === team.installationId,
-  );
+  return qaListTopLevelState.selectedTeamMatches(team);
 }
 
 export function qaListSnapshotFromList(qaLists = []) {
-  const normalized = sortQaLists(
-    (Array.isArray(qaLists) ? qaLists : [])
-      .map(normalizeQaList)
-      .filter(Boolean),
-  );
-  return {
-    items: normalized.filter((qaList) => qaList.lifecycleState !== "deleted"),
-    deletedItems: normalized.filter((qaList) => qaList.lifecycleState === "deleted"),
-  };
+  return qaListTopLevelState.snapshotFromList(qaLists);
 }
 
-export function applyQaListSnapshotToState(
-  snapshot,
-  {
-    teamId = state.selectedTeamId,
-    fallbackToFirstActive = true,
-    cacheKey,
-    cacheUpdatedAt = null,
-  } = {},
-) {
-  if (state.selectedTeamId !== teamId) {
-    return;
-  }
-
-  const nextQaLists = sortQaLists([
-    ...(Array.isArray(snapshot?.items) ? snapshot.items : []),
-    ...(Array.isArray(snapshot?.deletedItems) ? snapshot.deletedItems : []),
-  ]);
-  const normalizedQaLists = nextQaLists
-    .map(normalizeQaList)
-    .filter(Boolean);
-  state.qaLists = normalizedQaLists;
-  const team = state.teams.find((item) => item?.id === teamId);
-  setResourcePageDataOwner(state.qaListsPage, {
-    teamId,
-    cacheKey: cacheKey ?? teamCacheKey(team),
-    cacheUpdatedAt,
-  });
-  if (
-    fallbackToFirstActive
-    && !normalizedQaLists.some(
-      (qaList) => qaList.lifecycleState !== "deleted" && qaList.id === state.selectedQaListId,
-    )
-  ) {
-    state.selectedQaListId =
-      normalizedQaLists.find((qaList) => qaList.lifecycleState !== "deleted")?.id ?? null;
-  }
-  if (!normalizedQaLists.some((qaList) => qaList.lifecycleState === "deleted")) {
-    state.showDeletedQaLists = false;
-  }
+export function applyQaListSnapshotToState(snapshot, options = {}) {
+  return qaListTopLevelState.applySnapshotToState(snapshot, options);
 }
 
 export function persistQaListsForTeam(team) {
-  saveStoredQaListsForTeam(team, state.qaLists);
+  return qaListTopLevelState.persistForTeam(team);
 }
 
 export function removeQaListFromState(qaListId, repoName) {
-  state.qaLists = (Array.isArray(state.qaLists) ? state.qaLists : []).filter((qaList) =>
-    qaList?.id !== qaListId && qaList?.repoName !== repoName
-  );
-  if (state.selectedQaListId === qaListId) {
-    state.selectedQaListId = null;
-  }
-  if (state.qaListEditor?.qaListId === qaListId || state.qaListEditor?.repoName === repoName) {
-    state.qaListEditor = {
-      ...state.qaListEditor,
-      qaListId: null,
-      repoName: "",
-      status: "idle",
-      error: "",
-      terms: [],
-    };
-  }
+  return qaListTopLevelState.removeFromState(qaListId, repoName);
 }
 
 export function ensureQaListsQueryDataForTeam(team) {
-  if (!team?.id) {
-    return null;
-  }
-  const queryKey = qaListKeys.byTeam(team.id);
-  let queryData = queryClient.getQueryData(queryKey);
-  if (!queryData) {
-    queryData = createQaListsQuerySnapshot({
-      qaLists: state.qaLists,
-      discovery: state.qaListDiscovery,
-    });
-    queryClient.setQueryData(queryKey, queryData);
-  }
-  return queryData;
+  return qaListTopLevelState.ensureQueryDataForTeam(team);
 }
 
-export function applyQaListsQueryDataForTeam(team, queryData, render, { isFetching = false } = {}) {
-  if (!team?.id || !queryData) {
-    return null;
-  }
-  const queryKey = qaListKeys.byTeam(team.id);
-  const reconciledQueryData = preserveQaListLifecyclePatchesInSnapshot(
-    queryData,
-    queryClient.getQueryData(queryKey),
-  );
-  queryClient.setQueryData(queryKey, reconciledQueryData);
-  applyQaListsQuerySnapshotToState(reconciledQueryData, {
-    teamId: team.id,
-    isFetching,
-  });
-  persistQaListsQueryDataForTeam(team, reconciledQueryData);
-  render?.();
-  return reconciledQueryData;
+export function applyQaListsQueryDataForTeam(team, queryData, render, options = {}) {
+  return qaListTopLevelState.applyQueryDataForTeam(team, queryData, render, options);
 }
 
 export function upsertQaListForTeam(team, qaList, render, options = {}) {
-  const currentQueryData = ensureQaListsQueryDataForTeam(team);
-  const existingQaLists = Array.isArray(currentQueryData?.qaLists) ? currentQueryData.qaLists : [];
-  const shouldPreserveCreate =
-    options.preserveCreate === true
-    && !existingQaLists.some((item) => item?.id === qaList?.id);
-  const nextQueryData = upsertQaListQueryData(currentQueryData, {
-    ...qaList,
-    ...(shouldPreserveCreate
-      ? {
-          localLifecycleIntent: "create",
-          pendingMutation: null,
-        }
-      : {}),
-  });
-  return applyQaListsQueryDataForTeam(team, nextQueryData, render);
+  return qaListTopLevelState.upsertForTeam(team, qaList, render, options);
 }
 
 export function saveCurrentTeamQaLists() {
@@ -168,11 +89,7 @@ export function saveCurrentTeamQaLists() {
 }
 
 export function repoBackedQaListInput(team, qaList) {
-  return {
-    installationId: team.installationId,
-    repoName: qaList.repoName,
-    qaListId: qaList.id,
-  };
+  return qaListTopLevelState.repoBackedInput(team, qaList);
 }
 
 export function repoBackedQaTermRollbackInput(team, qaList, previousHeadSha) {
@@ -183,25 +100,7 @@ export function repoBackedQaTermRollbackInput(team, qaList, previousHeadSha) {
 }
 
 export function triggerQaListRepoSync(team, qaListOrRepo) {
-  if (!teamSupportsQaListRepos(team)) {
-    return;
-  }
-
-  const repo = qaListOrRepo?.fullName
-    ? {
-        qaListId: qaListOrRepo.id ?? qaListOrRepo.qaListId ?? null,
-        name: qaListOrRepo.repoName ?? qaListOrRepo.name,
-        fullName: qaListOrRepo.fullName,
-        repoId: Number.isFinite(qaListOrRepo.repoId) ? qaListOrRepo.repoId : null,
-        defaultBranchName: qaListOrRepo.defaultBranchName || "main",
-        defaultBranchHeadOid: qaListOrRepo.defaultBranchHeadOid || null,
-      }
-    : null;
-  if (!repo?.name || !repo.fullName) {
-    return;
-  }
-
-  void syncQaListReposForTeam(team, [repo]).catch(() => null);
+  return qaListTopLevelState.triggerRepoSync(team, qaListOrRepo);
 }
 
 export async function syncSingleQaListOrThrow(team, qaList) {
