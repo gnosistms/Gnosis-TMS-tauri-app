@@ -84,3 +84,15 @@ export function removeStoredResourceCollectionForTeam(team, { storageKey }) {
   delete cacheMap[cacheKey];
   saveTeamScopedCacheMap(storageKey, cacheMap);
 }
+
+// Bind a per-domain cache descriptor (storage key + collection field + normalizer/sort) once,
+// so glossary/QA cache modules are pure descriptor adapters instead of repeating the config.
+export function createRepoResourceCache({ storageKey, collectionField, normalizeItem, sortItems }) {
+  const config = { storageKey, collectionField, normalizeItem, sortItems };
+  return {
+    loadForTeam: (team) => loadStoredResourceCollectionForTeam(team, config),
+    saveForTeam: (team, items = []) =>
+      saveStoredResourceCollectionForTeam(team, items, config),
+    removeForTeam: (team) => removeStoredResourceCollectionForTeam(team, { storageKey }),
+  };
+}
