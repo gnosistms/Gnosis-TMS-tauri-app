@@ -230,17 +230,6 @@ export function setEditorPermissionWriteLock({
   };
 }
 
-export function clearEditorPermissionWriteLock() {
-  if (!state.editorChapter?.chapterId) {
-    return;
-  }
-
-  state.editorChapter = {
-    ...state.editorChapter,
-    writeLock: createEditorWriteLockState(),
-  };
-}
-
 export function applyEditorPermissionLockToPendingRows(rows = [], message = EDITOR_PERMISSION_DENIED_MESSAGE) {
   return (Array.isArray(rows) ? rows : []).map((row) => {
     if (!row || typeof row !== "object") {
