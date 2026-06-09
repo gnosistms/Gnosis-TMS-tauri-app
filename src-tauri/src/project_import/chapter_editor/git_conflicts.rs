@@ -333,6 +333,37 @@ pub(crate) fn resolve_chapter_json_git_conflict_from_stage_texts(
             .and_then(|value| value.linked_glossaries.as_ref())
             .and_then(|value| value.glossary.as_ref()),
     )?;
+    // Merge per-chapter publish status. Normalize first so an absent field (older schema) and an
+    // explicit "none" compare equal, then take remote on overlap (consistent with title/lifecycle):
+    // a local-only status edit is preserved, a remote-only edit wins, and a true conflict favors the
+    // shared remote value.
+    let base_workflow_status = normalize_chapter_workflow_status(
+        base_typed
+            .as_ref()
+            .and_then(|value| value.settings.as_ref())
+            .and_then(|value| value.workflow_status.as_deref()),
+    );
+    let local_workflow_status = normalize_chapter_workflow_status(
+        local_typed
+            .settings
+            .as_ref()
+            .and_then(|value| value.workflow_status.as_deref()),
+    );
+    let remote_workflow_status = normalize_chapter_workflow_status(
+        remote_typed
+            .settings
+            .as_ref()
+            .and_then(|value| value.workflow_status.as_deref()),
+    );
+    set_json_string_field(
+        &mut merged_value,
+        &["settings", "workflow_status"],
+        &merge_scalar_remote_wins_on_overlap(
+            Some(&base_workflow_status),
+            Some(&local_workflow_status),
+            Some(&remote_workflow_status),
+        ),
+    )?;
 
     serialize_json_with_trailing_newline(path, &merged_value)
 }
@@ -1052,6 +1083,7 @@ fn strip_supported_chapter_merge_keys(value: &mut Value) -> Result<(), String> {
     {
         settings_object.remove("default_source_language");
         settings_object.remove("default_target_language");
+        settings_object.remove("workflow_status");
         if let Some(linked_glossaries_object) = settings_object
             .get_mut("linked_glossaries")
             .and_then(Value::as_object_mut)
@@ -1456,5 +1488,131 @@ mod tests {
         let merged_value: Value =
             serde_json::from_str(&merged).expect("merged chapter should parse");
         assert_eq!(merged_value["title"], json!("Remote"));
+    }
+
+    #[test]
+    fn chapter_conflicts_take_remote_workflow_status_when_remote_changed() {
+        // Regression: a remote publish-status change over an older local "none" (or absent) status
+        // must auto-resolve instead of refusing with "unsupported local-only changes".
+        let merged = resolve_chapter_json_git_conflict_from_stage_texts(
+            "chapters/ch-1/chapter.json",
+            Some(
+                r#"{
+  "chapter_id": "chapter-1",
+  "title": "Chapter",
+  "lifecycle": { "state": "active" },
+  "languages": [],
+  "source_files": []
+}"#,
+            ),
+            Some(
+                r#"{
+  "chapter_id": "chapter-1",
+  "title": "Chapter",
+  "lifecycle": { "state": "active" },
+  "languages": [],
+  "source_files": [],
+  "settings": { "workflow_status": "publish" }
+}"#,
+            ),
+            Some(
+                r#"{
+  "chapter_id": "chapter-1",
+  "title": "Chapter",
+  "lifecycle": { "state": "active" },
+  "languages": [],
+  "source_files": [],
+  "settings": { "workflow_status": "none" }
+}"#,
+            ),
+        )
+        .expect("workflow_status conflict should resolve");
+        let merged_value: Value =
+            serde_json::from_str(&merged).expect("merged chapter should parse");
+        assert_eq!(merged_value["settings"]["workflow_status"], json!("publish"));
+    }
+
+    #[test]
+    fn chapter_conflicts_keep_local_workflow_status_when_local_only_changed() {
+        // A local-only publish edit must be preserved, not overwritten by the unchanged remote.
+        let merged = resolve_chapter_json_git_conflict_from_stage_texts(
+            "chapters/ch-1/chapter.json",
+            Some(
+                r#"{
+  "chapter_id": "chapter-1",
+  "title": "Chapter",
+  "lifecycle": { "state": "active" },
+  "languages": [],
+  "source_files": [],
+  "settings": { "workflow_status": "none" }
+}"#,
+            ),
+            Some(
+                r#"{
+  "chapter_id": "chapter-1",
+  "title": "Chapter",
+  "lifecycle": { "state": "active" },
+  "languages": [],
+  "source_files": [],
+  "settings": { "workflow_status": "none" }
+}"#,
+            ),
+            Some(
+                r#"{
+  "chapter_id": "chapter-1",
+  "title": "Chapter",
+  "lifecycle": { "state": "active" },
+  "languages": [],
+  "source_files": [],
+  "settings": { "workflow_status": "publish" }
+}"#,
+            ),
+        )
+        .expect("workflow_status conflict should resolve");
+        let merged_value: Value =
+            serde_json::from_str(&merged).expect("merged chapter should parse");
+        assert_eq!(merged_value["settings"]["workflow_status"], json!("publish"));
+    }
+
+    #[test]
+    fn chapter_conflicts_keep_remote_workflow_status_on_overlap() {
+        // Both sides moved the status from the base: remote wins (consistent with title/lifecycle).
+        let merged = resolve_chapter_json_git_conflict_from_stage_texts(
+            "chapters/ch-1/chapter.json",
+            Some(
+                r#"{
+  "chapter_id": "chapter-1",
+  "title": "Chapter",
+  "lifecycle": { "state": "active" },
+  "languages": [],
+  "source_files": [],
+  "settings": { "workflow_status": "none" }
+}"#,
+            ),
+            Some(
+                r#"{
+  "chapter_id": "chapter-1",
+  "title": "Chapter",
+  "lifecycle": { "state": "active" },
+  "languages": [],
+  "source_files": [],
+  "settings": { "workflow_status": "publish" }
+}"#,
+            ),
+            Some(
+                r#"{
+  "chapter_id": "chapter-1",
+  "title": "Chapter",
+  "lifecycle": { "state": "active" },
+  "languages": [],
+  "source_files": [],
+  "settings": { "workflow_status": "translating" }
+}"#,
+            ),
+        )
+        .expect("workflow_status conflict should resolve");
+        let merged_value: Value =
+            serde_json::from_str(&merged).expect("merged chapter should parse");
+        assert_eq!(merged_value["settings"]["workflow_status"], json!("publish"));
     }
 }
