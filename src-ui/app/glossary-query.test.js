@@ -21,7 +21,7 @@ const {
   createGlossarySoftDeleteMutationOptions,
   createGlossariesQuerySnapshot,
   invalidateGlossariesQueryAfterMutation,
-  preservePendingGlossaryLifecyclePatches,
+  preserveGlossaryLifecyclePatchesInSnapshot,
   seedGlossariesQueryFromCache,
   upsertGlossaryQueryData,
 } = await import("./glossary-query.js");
@@ -438,7 +438,7 @@ test("refresh snapshots preserve pending glossary lifecycle patches", () => {
     ],
   });
 
-  const merged = preservePendingGlossaryLifecyclePatches(staleRefreshSnapshot, previousSnapshot);
+  const merged = preserveGlossaryLifecyclePatchesInSnapshot(staleRefreshSnapshot, previousSnapshot);
 
   assert.equal(merged.glossaries.find((item) => item.id === "rename-glossary").title, "Optimistic Rename");
   assert.equal(merged.glossaries.find((item) => item.id === "delete-glossary").lifecycleState, "deleted");
@@ -461,7 +461,7 @@ test("refresh snapshots preserve settled local glossary lifecycle intent until s
     ],
   });
 
-  const merged = preservePendingGlossaryLifecyclePatches(staleRefreshSnapshot, previousSnapshot);
+  const merged = preserveGlossaryLifecyclePatchesInSnapshot(staleRefreshSnapshot, previousSnapshot);
 
   assert.equal(merged.glossaries.find((item) => item.id === "rename-glossary").title, "Local Rename");
   assert.equal(merged.glossaries.find((item) => item.id === "delete-glossary").localLifecycleIntent, "softDelete");
@@ -485,7 +485,7 @@ test("refresh snapshots preserve locally created glossaries omitted by stale ref
     ],
   });
 
-  const merged = preservePendingGlossaryLifecyclePatches(staleRefreshSnapshot, previousSnapshot);
+  const merged = preserveGlossaryLifecyclePatchesInSnapshot(staleRefreshSnapshot, previousSnapshot);
 
   assert.equal(merged.glossaries.some((item) => item.id === "created-glossary"), true);
   assert.equal(
@@ -510,7 +510,7 @@ test("refresh snapshots clear locally created glossary intent after refresh incl
     ],
   });
 
-  const merged = preservePendingGlossaryLifecyclePatches(settledRefreshSnapshot, previousSnapshot);
+  const merged = preserveGlossaryLifecyclePatchesInSnapshot(settledRefreshSnapshot, previousSnapshot);
 
   assert.equal(
     merged.glossaries.find((item) => item.id === "created-glossary").localLifecycleIntent,

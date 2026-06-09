@@ -295,8 +295,6 @@ export function preserveQaListLifecyclePatchesInSnapshot(nextSnapshot, previousS
   };
 }
 
-export const preservePendingQaListLifecyclePatches = preserveQaListLifecyclePatchesInSnapshot;
-
 const qaListQueryController = createRepoResourceQueryController({
   kind: "qaList",
   collectionField: "qaLists",
@@ -385,10 +383,6 @@ export async function seedQaListsQueryFromLocal(team, {
 
 export function ensureQaListsQueryObserver(render, team, options = {}) {
   return qaListQueryController.ensureObserver(render, team, options);
-}
-
-export async function invalidateQaListsQueryAfterMutation(team, options = {}) {
-  await qaListQueryController.invalidateAfterMutation(team, options);
 }
 
 function createQaListLifecycleMutationOptions({

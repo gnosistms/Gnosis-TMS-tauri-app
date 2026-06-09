@@ -77,18 +77,6 @@ export function deriveTeamCapabilities(team) {
   };
 }
 
-export function withDerivedTeamCapabilities(team) {
-  if (!team || typeof team !== "object") {
-    return team;
-  }
-  const capabilities = deriveTeamCapabilities(team);
-  return {
-    ...team,
-    ...capabilities,
-    canDelete: capabilities.canManageTeam,
-  };
-}
-
 export function canDownload(team) {
   return deriveTeamCapabilities(team).canDownload;
 }

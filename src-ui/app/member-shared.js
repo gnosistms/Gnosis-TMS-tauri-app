@@ -42,10 +42,6 @@ export function ownerCountAfterRoleChange(users = [], username, nextRole) {
   }).length;
 }
 
-export function isViewerRole(user) {
-  return normalizeOrganizationMemberRole(user?.role) === "Viewer";
-}
-
 export function normalizeOrganizationMember(member, options = {}) {
   const username = typeof member?.login === "string" && member.login.trim()
     ? member.login.trim()

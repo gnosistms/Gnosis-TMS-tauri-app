@@ -45,15 +45,6 @@ export function editorFootnotesPlainText(footnotes) {
     .join("\n\n");
 }
 
-export function editorFootnotesHaveText(footnotes) {
-  return normalizeEditorFootnotes(footnotes)
-    .some((entry) => entry.text.trim().length > 0);
-}
-
-export function rowFootnoteMarkerText(marker) {
-  return `[${normalizeFootnoteMarker(marker, 1)}]`;
-}
-
 export function unescapeLiteralFootnoteMarkers(text) {
   return String(text ?? "")
     .replaceAll(/\\\[(\d+)\\\]/g, "[$1]")

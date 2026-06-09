@@ -303,10 +303,6 @@ export function sanitizeEditableTerms(terms) {
     .filter(Boolean);
 }
 
-export function sanitizeEditableTargetTerms(terms) {
-  return sanitizeEditableTargetTermPairs(terms, []).targetTerms;
-}
-
 export function sanitizeEditableTargetTermPairs(terms, notes) {
   const sanitized = [];
   const sanitizedNotes = [];
