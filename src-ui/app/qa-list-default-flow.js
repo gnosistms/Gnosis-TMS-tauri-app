@@ -41,14 +41,6 @@ export function activeDefaultQaListIdsForTeam(team = selectedTeam()) {
   return activeByLanguage;
 }
 
-export function isDefaultQaList(qaList, team = selectedTeam()) {
-  if (!qaList?.id || !qaList?.language?.code) {
-    return false;
-  }
-
-  return activeDefaultQaListIdsForTeam(team)[qaList.language.code] === qaList.id;
-}
-
 export function makeQaListDefault(render, qaListId) {
   const team = selectedTeam();
   const qaList = state.qaLists.find((item) => item.id === qaListId);

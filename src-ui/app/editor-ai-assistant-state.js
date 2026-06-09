@@ -276,20 +276,6 @@ export function applyEditorAssistantThinking(chapterState, threadKey, requestKey
   });
 }
 
-export function applyEditorAssistantFailed(chapterState, threadKey, requestKey, error) {
-  const assistant = normalizeEditorAssistantState(chapterState?.assistant);
-  if (assistant.requestKey !== requestKey || assistant.activeThreadKey !== threadKey) {
-    return chapterState;
-  }
-
-  return replaceAssistantState(chapterState, {
-    ...assistant,
-    status: "idle",
-    error: typeof error === "string" ? error : "",
-    requestKey: null,
-  });
-}
-
 export function clearEditorAssistantPending(chapterState, threadKey, requestKey) {
   const assistant = normalizeEditorAssistantState(chapterState?.assistant);
   if (assistant.requestKey !== requestKey || assistant.activeThreadKey !== threadKey) {

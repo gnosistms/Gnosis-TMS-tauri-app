@@ -19,7 +19,6 @@ import {
 import {
   canCreateQaLists,
   normalizeQaList,
-  normalizeQaTerm,
 } from "./qa-list-shared.js";
 import {
   createQaResourceId,
@@ -665,81 +664,6 @@ export async function importQaListFile(render, selectedFile) {
   });
 }
 
-function textContent(node, selector) {
-  return String(node?.querySelector?.(selector)?.textContent ?? "").trim();
-}
-
-function normalizeTmxLanguageCode(value) {
-  return String(value ?? "").trim().replaceAll("_", "-").toLowerCase();
-}
-
-function tmxNodeLanguageCode(node) {
-  return normalizeTmxLanguageCode(
-    node?.getAttribute?.("xml:lang")
-      ?? node?.getAttribute?.("lang")
-      ?? "",
-  );
-}
-
-export function parseQaListTmx(text, fileName) {
-  if (typeof DOMParser === "undefined") {
-    throw new Error("TMX import is not available in this runtime.");
-  }
-
-  const doc = new DOMParser().parseFromString(text, "application/xml");
-  if (doc.querySelector("parsererror")) {
-    throw new Error("This TMX file could not be parsed.");
-  }
-
-  const detectedLanguageCodes = new Set();
-  const headerLanguageCode = normalizeTmxLanguageCode(doc.querySelector("header")?.getAttribute("srclang"));
-  if (headerLanguageCode) {
-    detectedLanguageCodes.add(headerLanguageCode);
-  }
-  for (const tuv of Array.from(doc.querySelectorAll("tuv"))) {
-    const languageCode = tmxNodeLanguageCode(tuv);
-    if (languageCode) {
-      detectedLanguageCodes.add(languageCode);
-    }
-  }
-  if (detectedLanguageCodes.size > 1) {
-    throw new Error("QA list TMX import only supports single-language TMX files.");
-  }
-
-  const languageCode = [...detectedLanguageCodes][0] ?? "";
-  const language = findIsoLanguageOption(languageCode);
-  if (!language) {
-    throw new Error("The TMX file does not include a supported language.");
-  }
-
-  const terms = Array.from(doc.querySelectorAll("tu"))
-    .map((tu) => {
-      const segment = Array.from(tu.querySelectorAll("tuv"))
-        .find((tuv) => {
-          const segmentLanguageCode = tmxNodeLanguageCode(tuv);
-          return !segmentLanguageCode || segmentLanguageCode === languageCode;
-        })
-        ?.querySelector("seg");
-      return normalizeQaTerm({
-        termId: createQaResourceId("qa-term"),
-        text: String(segment?.textContent ?? textContent(tu, "seg")).trim(),
-        notes: textContent(tu, 'prop[type="notes"], note'),
-      });
-    })
-    .filter(Boolean);
-  const fileTitle = String(fileName ?? "")
-    .replace(/\.[^.]+$/, "")
-    .replaceAll(/[-_]+/g, " ")
-    .trim();
-
-  return normalizeQaList({
-    id: createQaResourceId("qa-list"),
-    title: fileTitle || `QA List (${language.name})`,
-    language,
-    lifecycleState: "active",
-    terms,
-  });
-}
 
 export async function handleDroppedQaListImportFile(render, file) {
   if (!state.qaListImport.isOpen || state.qaListImport.status === "importing") {
