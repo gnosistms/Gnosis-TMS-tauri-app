@@ -16,6 +16,9 @@ export function normalizeLanguageSelections(languages, sourceCode, targetCode) {
   const fallbackSource =
     options.find((language) => language.role === "source")?.code ?? options[0]?.code ?? null;
   const nextSource = codes.has(sourceCode) ? sourceCode : fallbackSource;
+  // Translate-mode editing persists a source/target pair. Keep these distinct so
+  // write, translation, and review flows never treat one language as both sides.
+  // Preview mode has its own language selection and must not reuse this rule.
   const fallbackTarget =
     options.find((language) => language.code !== nextSource && language.role === "target")?.code
     ?? options.find((language) => language.code !== nextSource)?.code

@@ -463,14 +463,14 @@ export function renderTranslateToolbar({
 
 export function renderPreviewToolbar({
   languages,
-  targetCode,
+  previewCode,
   previewSearchState,
 }) {
   return `
     <div class="translate-toolbar__body translate-toolbar__body--header">
       <div class="toolbar-row toolbar-row--between">
         <div class="toolbar-search toolbar-search--preview">
-          ${renderLanguageSelect("Target", "editor-target-language-select", targetCode, languages)}
+          ${renderLanguageSelect("Preview", "editor-preview-language-select", previewCode, languages)}
           ${renderPreviewSearchField(previewSearchState)}
           ${renderPreviewSearchNavigation(previewSearchState)}
         </div>

@@ -7,9 +7,28 @@ import {
   EDITOR_MODE_PREVIEW,
   normalizeEditorPreviewSearchForDocument,
   renderEditorPreviewDocumentHtml,
+  selectedEditorPreviewLanguageCode,
   serializeEditorPreviewHtml,
   stepEditorPreviewSearchState,
 } from "./editor-preview.js";
+
+test("selectedEditorPreviewLanguageCode allows previewing the source language", () => {
+  const chapterState = {
+    languages: [
+      { code: "es", name: "Spanish", role: "source" },
+      { code: "vi", name: "Vietnamese", role: "target" },
+    ],
+    selectedSourceLanguageCode: "es",
+    selectedTargetLanguageCode: "vi",
+    previewLanguageCode: "es",
+  };
+
+  assert.equal(selectedEditorPreviewLanguageCode(chapterState), "es");
+  assert.equal(selectedEditorPreviewLanguageCode({
+    ...chapterState,
+    previewLanguageCode: "missing",
+  }), "vi");
+});
 
 test("buildEditorPreviewDocument attaches target-language footnotes to text blocks", () => {
   const blocks = buildEditorPreviewDocument([{

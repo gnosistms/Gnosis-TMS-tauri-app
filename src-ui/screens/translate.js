@@ -10,6 +10,7 @@ import {
   EDITOR_MODE_PREVIEW,
   normalizeEditorMode,
   renderEditorPreviewDocumentHtml,
+  selectedEditorPreviewLanguageCode,
 } from "../app/editor-preview.js";
 import { buildEditorScreenViewModel } from "../app/editor-screen-model.js";
 import { renderTranslationContentRows } from "../app/editor-row-render.js";
@@ -95,6 +96,7 @@ function buildTranslateScreenFrame(state) {
   const authSession = state.auth?.session ?? null;
   const titleText = chapter?.name ?? editorChapter?.fileTitle ?? "Translate";
   const displayTitle = middleTruncateTitle(titleText);
+  const previewCode = selectedEditorPreviewLanguageCode(editorChapter);
 
   let translateBody = "";
   if (editorChapter?.status === "loading") {
@@ -121,7 +123,7 @@ function buildTranslateScreenFrame(state) {
 
   const previewBlocks =
     (editorChapter?.status === "ready" || editorChapter?.status === "refreshing")
-      ? buildEditorPreviewDocument(editorChapter.rows, targetCode)
+      ? buildEditorPreviewDocument(editorChapter.rows, previewCode)
       : [];
   const previewRender = renderEditorPreviewDocumentHtml(previewBlocks, {
     searchState: editorChapter?.previewSearch,
@@ -147,6 +149,7 @@ function buildTranslateScreenFrame(state) {
     languages,
     sourceCode,
     targetCode,
+    previewCode,
     actionConfig: state.aiSettings.actionConfig,
     contentRows,
     editorFilters,
@@ -234,6 +237,7 @@ export function renderTranslateHeaderDetail(state) {
     languages,
     sourceCode,
     targetCode,
+    previewCode,
     editorFilters,
     editorReplace,
     editorFontSizePx,
@@ -254,7 +258,7 @@ export function renderTranslateHeaderDetail(state) {
   if (mode === EDITOR_MODE_PREVIEW) {
     return renderPreviewToolbar({
       languages,
-      targetCode,
+      previewCode,
       previewSearchState,
     });
   }

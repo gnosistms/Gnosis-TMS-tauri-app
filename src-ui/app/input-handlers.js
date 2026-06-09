@@ -81,6 +81,7 @@ import {
   updateEditorFontSize,
   updateEditorCommentDraft,
   updateEditorAssistantComposerDraft,
+  updateEditorPreviewLanguage,
   updateEditorAiTranslateAllLanguageSelection,
   updateEditorAiReviewAllMode,
   updateEditorClearTranslationsLanguageSelection,
@@ -509,6 +510,20 @@ function handleEditorTargetLanguageInput(event, render) {
   }
 
   updateEditorTargetLanguage(render, input.value);
+  return true;
+}
+
+function handleEditorPreviewLanguageInput(event, render) {
+  if (event.type !== "change") {
+    return false;
+  }
+
+  const input = event.target.closest("[data-editor-preview-language-select]");
+  if (!input) {
+    return false;
+  }
+
+  updateEditorPreviewLanguage(render, input.value);
   return true;
 }
 
@@ -971,6 +986,7 @@ const inputHandlers = [
   handleQaTermNotesInput,
   handleEditorSourceLanguageInput,
   handleEditorTargetLanguageInput,
+  handleEditorPreviewLanguageInput,
   handleEditorFontSizeInput,
   handleEditorFilterSelectInput,
   handleEditorSearchInput,

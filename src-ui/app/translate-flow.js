@@ -160,6 +160,7 @@ import {
   refreshEditorPreviewAfterTargetLanguageChange,
   resetEditorPreviewModeScrollSnapshot,
   setEditorMode as setEditorModeFlow,
+  updateEditorPreviewLanguage as updateEditorPreviewLanguageFlow,
   updateEditorPreviewSearchQuery as updateEditorPreviewSearchQueryFlow,
 } from "./editor-preview-flow.js";
 import {
@@ -672,6 +673,10 @@ export function updateEditorTargetLanguage(render, nextCode) {
   });
 
   refreshEditorPreviewAfterTargetLanguageChange(render);
+}
+
+export function updateEditorPreviewLanguage(render, nextCode) {
+  updateEditorPreviewLanguageFlow(render, nextCode);
 }
 
 export function updateEditorFontSize(nextValue) {

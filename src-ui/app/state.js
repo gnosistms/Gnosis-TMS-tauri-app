@@ -434,6 +434,7 @@ export function createEditorChapterState() {
       lockedAt: null,
     },
     mode: EDITOR_MODE_TRANSLATE,
+    previewLanguageCode: null,
     previewSearch: createEditorPreviewSearchState(),
     fontSizePx: DEFAULT_EDITOR_FONT_SIZE_PX,
     collapsedLanguageCodes: new Set(),
