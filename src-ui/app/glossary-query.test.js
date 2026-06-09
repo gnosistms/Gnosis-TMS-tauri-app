@@ -25,7 +25,12 @@ const {
   seedGlossariesQueryFromCache,
   upsertGlossaryQueryData,
 } = await import("./glossary-query.js");
-const { upsertGlossaryForTeam } = await import("./glossary-top-level-state.js");
+const {
+  applyGlossarySnapshotToState,
+  glossarySnapshotFromList,
+  persistGlossariesForTeam,
+  upsertGlossaryForTeam,
+} = await import("./glossary-top-level-state.js");
 const { glossaryKeys, queryClient } = await import("./query-client.js");
 const { teamCacheKey } = await import("./team-cache.js");
 const {
@@ -84,6 +89,30 @@ test("glossary query adapter maps snapshots into glossary page state", () => {
   assert.equal(state.glossaryDiscovery.brokerWarning, "Broker warning");
   assert.equal(state.glossariesPage.isRefreshing, true);
   assert.equal(state.glossariesPage.visibleTeamId, "team-1");
+});
+
+test("glossary top-level adapter applies snapshots and persists current collection", () => {
+  resetSessionState();
+  const team = { id: "team-1", installationId: 1 };
+  state.selectedTeamId = team.id;
+  state.teams = [team];
+  state.glossariesPage = createResourcePageState();
+  state.selectedGlossaryId = "missing-glossary";
+  state.showDeletedGlossaries = true;
+
+  const snapshot = glossarySnapshotFromList([
+    glossary({ id: "glossary-2", title: "Second Glossary" }),
+    glossary({ id: "glossary-1", title: "First Glossary" }),
+  ]);
+
+  applyGlossarySnapshotToState(snapshot);
+  persistGlossariesForTeam(team);
+
+  assert.equal(snapshot.items.length, 2);
+  assert.equal(snapshot.deletedItems.length, 0);
+  assert.equal(state.glossaries.length, 2);
+  assert.equal(state.selectedGlossaryId, "glossary-1");
+  assert.equal(state.showDeletedGlossaries, false);
 });
 
 test("glossary query adapter does not select the first active glossary", () => {
