@@ -31,6 +31,7 @@ import {
 import { makeQaListDefaultIfFirst } from "./qa-list-default-flow.js";
 import {
   deleteQaListMetadataRecord,
+  inspectAndMigrateLocalRepoBindings,
   refreshQaListMetadataRecords,
   upsertQaListMetadataRecord,
 } from "./team-metadata-flow.js";
@@ -135,6 +136,20 @@ function findImportedRemoteRepo(remoteRepos, expectedRemoteRepo) {
   }) ?? null;
 }
 
+function repairIssueMatchesImportedQaList(issue, expected) {
+  if (issue?.kind !== "qaList") {
+    return false;
+  }
+
+  const qaListId = normalizedText(expected.qaListId);
+  const repoName = normalizedText(expected.repoName);
+  return (
+    (qaListId && normalizedText(issue.resourceId) === qaListId)
+    || (repoName && normalizedText(issue.repoName) === repoName)
+    || (repoName && normalizedText(issue.expectedRepoName) === repoName)
+  );
+}
+
 export async function verifyImportedQaListState(team, expected, operations = {}) {
   const qaListId = normalizedText(expected?.qaListId);
   const repoName = normalizedText(expected?.repoName);
@@ -146,6 +161,7 @@ export async function verifyImportedQaListState(team, expected, operations = {})
   const listLocal = operations.listLocalQaListsForTeam ?? listLocalQaListsForTeam;
   const listRemote = operations.listRemoteQaListReposForTeam ?? listRemoteQaListReposForTeam;
   const refreshMetadata = operations.refreshQaListMetadataRecords ?? refreshQaListMetadataRecords;
+  const inspectRepairs = operations.inspectAndMigrateLocalRepoBindings ?? inspectAndMigrateLocalRepoBindings;
   const localQaLists = await listLocal(team);
   const localQaList = (Array.isArray(localQaLists) ? localQaLists : []).find((qaList) =>
     normalizedText(qaList?.qaListId ?? qaList?.id) === qaListId
@@ -179,6 +195,20 @@ export async function verifyImportedQaListState(team, expected, operations = {})
   if (normalizedText(remoteRepo.name) !== repoName) {
     throw importedQaListSafetyError("The remote QA list repo name does not match the imported QA list.");
   }
+  if (
+    normalizedText(expected.remoteRepo?.fullName)
+    && normalizedText(remoteRepo.fullName)
+    && normalizedText(remoteRepo.fullName) !== normalizedText(expected.remoteRepo.fullName)
+  ) {
+    throw importedQaListSafetyError("The remote QA list repo full name does not match the imported QA list.");
+  }
+  if (
+    Number.isFinite(expected.remoteRepo?.repoId)
+    && Number.isFinite(remoteRepo.repoId)
+    && remoteRepo.repoId !== expected.remoteRepo.repoId
+  ) {
+    throw importedQaListSafetyError("The remote QA list repo id does not match the imported QA list.");
+  }
 
   const metadataRecords = await refreshMetadata(team);
   const metadataRecord = (Array.isArray(metadataRecords) ? metadataRecords : []).find((record) =>
@@ -190,11 +220,34 @@ export async function verifyImportedQaListState(team, expected, operations = {})
   if (normalizedText(metadataRecord.repoName) !== normalizedText(remoteRepo.name)) {
     throw importedQaListSafetyError("The team metadata record points at a different QA list repo.");
   }
+  if (
+    normalizedText(metadataRecord.fullName)
+    && normalizedText(remoteRepo.fullName)
+    && normalizedText(metadataRecord.fullName) !== normalizedText(remoteRepo.fullName)
+  ) {
+    throw importedQaListSafetyError("The team metadata record points at a different GitHub repo.");
+  }
+  if (
+    Number.isFinite(metadataRecord.githubRepoId)
+    && Number.isFinite(remoteRepo.repoId)
+    && metadataRecord.githubRepoId !== remoteRepo.repoId
+  ) {
+    throw importedQaListSafetyError("The team metadata record has a different GitHub repo id.");
+  }
   if (normalizedText(metadataRecord.title) !== title) {
     throw importedQaListSafetyError("The team metadata title does not match the imported file.");
   }
   if (!languageMatches(metadataRecord.language, expected.language)) {
     throw importedQaListSafetyError("The team metadata language does not match the imported file.");
+  }
+
+  const repairIssues = (await inspectRepairs(team))?.issues ?? [];
+  const matchingRepairIssue = repairIssues.find((issue) => repairIssueMatchesImportedQaList(issue, {
+    qaListId,
+    repoName,
+  }));
+  if (matchingRepairIssue) {
+    throw importedQaListSafetyError(matchingRepairIssue.message || "The imported QA list still needs local repo repair.");
   }
 }
 
