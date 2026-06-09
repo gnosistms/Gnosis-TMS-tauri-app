@@ -158,6 +158,53 @@ test("project query adapter hides locally hard-deleted deleted chapters from inc
   );
 });
 
+test("a hard delete during an in-flight project refresh stays hidden when the refresh settles", () => {
+  resetSessionState();
+  setActiveStorageLogin("project-query-hard-delete-inflight-test");
+  const team = { id: "team-1", installationId: 1 };
+  state.teams = [team];
+  state.selectedTeamId = team.id;
+  state.projectsPage = createResourcePageState();
+
+  // The refresh was fetched before the hard delete, so its snapshot still contains the
+  // soft-deleted chapter. Both this in-flight apply and the final settle use it.
+  const refreshSnapshot = () =>
+    createProjectsQuerySnapshot({
+      items: [
+        project({
+          chapters: [
+            chapter({ id: "active-chapter", name: "Active Chapter", status: "active" }),
+            chapter({ id: "deleted-chapter", name: "Deleted Chapter", status: "deleted" }),
+          ],
+        }),
+      ],
+    });
+
+  // 1. Refresh is in flight: no tombstone yet, so the deleted chapter is still shown.
+  applyProjectsQuerySnapshotToState(refreshSnapshot(), { teamId: team.id, isFetching: true });
+  assert.equal(state.projectsPage.isRefreshing, true);
+  assert.deepEqual(
+    state.projects[0].chapters.map((item) => item.id),
+    ["active-chapter", "deleted-chapter"],
+  );
+
+  // 2. User hard-deletes the deleted files mid-refresh (writes the tombstone).
+  addLocalHardDeleteTombstone(team, "chapter", {
+    id: "deleted-chapter",
+    name: "Deleted Chapter",
+    status: "deleted",
+  });
+
+  // 3. The in-flight refresh settles with its pre-delete snapshot; the apply-time filter
+  //    reads the live tombstone and keeps the hard-deleted chapter hidden.
+  applyProjectsQuerySnapshotToState(refreshSnapshot(), { teamId: team.id, isFetching: false });
+  assert.equal(state.projectsPage.isRefreshing, false);
+  assert.deepEqual(
+    state.projects[0].chapters.map((item) => item.id),
+    ["active-chapter"],
+  );
+});
+
 test("project query adapter clears a chapter hard-delete tombstone when the chapter is active again", () => {
   resetSessionState();
   setActiveStorageLogin("project-query-hard-delete-restore-test");

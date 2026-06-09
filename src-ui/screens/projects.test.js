@@ -635,7 +635,7 @@ test("disabled project glossary selectors show assigned repo label when the glos
   assert.doesNotMatch(html, /select-pill__value">no glossary</);
 });
 
-test("project refresh keeps top-level lifecycle actions enabled and heavy actions disabled", () => {
+test("project refresh keeps lifecycle and local hard-delete actions enabled and heavy actions disabled", () => {
   const html = renderProjectsScreen(projectsState({
     projectsPage: {
       isRefreshing: true,
@@ -684,9 +684,10 @@ test("project refresh keeps top-level lifecycle actions enabled and heavy action
 
   assert.match(actionButtonHtml(html, "open-new-project"), /disabled/);
   assert.doesNotMatch(actionButtonHtml(html, "add-project-files:project-1"), /disabled/);
-  assert.match(actionButtonHtml(html, "clear-deleted-files:project-1"), /disabled/);
-  assert.match(actionButtonHtml(html, "delete-deleted-file:deleted-chapter-1"), /disabled/);
-  assert.match(actionButtonHtml(html, "delete-deleted-project:deleted-project"), /disabled/);
+  // Local hard-delete is local-only and stays available during a background refresh.
+  assert.doesNotMatch(actionButtonHtml(html, "clear-deleted-files:project-1"), /disabled/);
+  assert.doesNotMatch(actionButtonHtml(html, "delete-deleted-file:deleted-chapter-1"), /disabled/);
+  assert.doesNotMatch(actionButtonHtml(html, "delete-deleted-project:deleted-project"), /disabled/);
 });
 
 test("project write in progress disables top-level lifecycle actions", () => {

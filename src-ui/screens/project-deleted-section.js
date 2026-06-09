@@ -43,8 +43,10 @@ export function renderDeletedProjectsSection(state) {
     (operation) => !String(operation.kind ?? "").startsWith("editor:"),
   );
   const heavyActionsDisabled = pageWritesDisabled || anyProjectWriteIsActive() || projectRepoQueueActive;
-  const localHardDeleteActionsDisabled = pageWritesDisabled;
   const lifecycleActionsDisabled = areResourcePageWriteSubmissionsDisabled(state.projectsPage);
+  // Local hard-delete stays available during a background refresh (gated on write
+  // submissions only), matching Restore — see projects.js for rationale.
+  const localHardDeleteActionsDisabled = lifecycleActionsDisabled;
   const syncSnapshotsByProjectId = state.projectRepoSyncByProjectId ?? {};
   const glossaryChangesDisabled = state.projectImport?.status === "importing";
   const discovery = state.projectDiscovery ?? {};
