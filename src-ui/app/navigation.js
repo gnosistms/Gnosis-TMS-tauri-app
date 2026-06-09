@@ -29,6 +29,12 @@ import {
   syncAndStopGlossaryBackgroundSyncSession,
 } from "./glossary-background-sync.js";
 import {
+  maybeStartQaListBackgroundSync,
+  qaListBackgroundSyncNeedsExitSync,
+  startQaListBackgroundSyncSession,
+  syncAndStopQaListBackgroundSyncSession,
+} from "./qa-background-sync.js";
+import {
   loadTeamProjects,
   primeProjectsLoadingState,
 } from "./project-flow.js";
@@ -168,8 +174,13 @@ export async function handleNavigation(navTarget, render) {
     previousScreen === "glossaryEditor"
     && navTarget !== "glossaryEditor"
     && glossaryBackgroundSyncNeedsExitSync();
+  const qaListNeedsExitSync =
+    previousScreen === "qaListEditor"
+    && navTarget !== "qaListEditor"
+    && qaListBackgroundSyncNeedsExitSync();
   const leaveLoading = resolveNavigationLeaveLoading(previousScreen, navTarget, {
     glossaryNeedsExitSync,
+    qaListNeedsExitSync,
   });
   const navigationLoadingToken = leaveLoading
     ? showNavigationLoadingModal(leaveLoading.title, leaveLoading.message)
@@ -201,6 +212,9 @@ export async function handleNavigation(navTarget, render) {
     }
     if (state.screen === "glossaryEditor" && navTarget !== "glossaryEditor") {
       await syncAndStopGlossaryBackgroundSyncSession(render);
+    }
+    if (state.screen === "qaListEditor" && navTarget !== "qaListEditor") {
+      await syncAndStopQaListBackgroundSyncSession(render);
     }
 
     if (navTarget === "start") {
@@ -311,6 +325,13 @@ export async function handleNavigation(navTarget, render) {
       void waitForNextPaint().then(async () => {
         await refreshVisibleTeamAccess(render);
         await loadSelectedQaListEditorData(render);
+        if (
+          state.screen === "qaListEditor"
+          && state.qaListEditor?.repoName
+          && state.qaListEditor?.status === "ready"
+        ) {
+          startQaListBackgroundSyncSession(render);
+        }
       });
     }
     if (navTarget === "translate" && state.selectedChapterId) {
@@ -399,7 +420,8 @@ export async function refreshCurrentScreen(render) {
   if (screen === "qaListEditor") {
     try {
       await refreshVisibleTeamAccess(render);
-      await loadSelectedQaListEditorData(render);
+      await maybeStartQaListBackgroundSync(render, { force: true });
+      await loadSelectedQaListEditorData(render, { preserveVisibleData: true });
     } catch (error) {
       failRefreshButtonFeedback(screen, render);
       throw error;

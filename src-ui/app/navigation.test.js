@@ -30,9 +30,22 @@ test("resolveNavigationLeaveLoading returns the glossary leave modal copy", () =
   );
 });
 
+test("resolveNavigationLeaveLoading returns the QA list leave modal copy", () => {
+  assert.deepEqual(
+    resolveNavigationLeaveLoading("qaListEditor", "qa", {
+      qaListNeedsExitSync: true,
+    }),
+    {
+      title: "Saving and syncing...",
+      message: "Please wait before leaving the QA list.",
+    },
+  );
+});
+
 test("resolveNavigationLeaveLoading stays inactive when not leaving an editing screen", () => {
   assert.equal(resolveNavigationLeaveLoading("glossaryEditor", "glossaryEditor"), null);
   assert.equal(resolveNavigationLeaveLoading("glossaryEditor", "glossaries"), null);
+  assert.equal(resolveNavigationLeaveLoading("qaListEditor", "qa"), null);
   assert.equal(resolveNavigationLeaveLoading("projects", "glossaries"), null);
 });
 
@@ -47,6 +60,7 @@ test("team-scoped screen refreshes update team access before loading page data",
   assert.match(source, /if \(screen === "projects"\) \{[\s\S]*?await loadTeamProjects\(render, state\.selectedTeamId\);[\s\S]*?setResourcePageRefreshing\(state\.projectsPage, false\);[\s\S]*?clearScopedSyncBadge\("projects", render\);/);
   assert.match(source, /if \(screen === "glossaries"\) \{[\s\S]*?await refreshVisibleTeamAccess\(render\);[\s\S]*?await loadTeamGlossaries/);
   assert.match(source, /if \(screen === "glossaryEditor"\) \{[\s\S]*?await refreshVisibleTeamAccess\(render\);[\s\S]*?await maybeStartGlossaryBackgroundSync/);
+  assert.match(source, /if \(screen === "qaListEditor"\) \{[\s\S]*?await refreshVisibleTeamAccess\(render\);[\s\S]*?await maybeStartQaListBackgroundSync/);
   assert.match(source, /if \(screen === "users"\) \{[\s\S]*?await refreshVisibleTeamAccess\(render\);[\s\S]*?await loadTeamUsers/);
   assert.match(source, /if \(screen === "translate"\) \{[\s\S]*?await refreshVisibleTeamAccess\(render\);[\s\S]*?startEditorBackgroundSyncSession/);
 });

@@ -28,6 +28,12 @@ import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
 import { queryClient } from "./query-client.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { qaListTermWriteIsActive } from "./qa-term-write-coordinator.js";
+import {
+  qaListBackgroundSyncIsActive,
+  qaListBackgroundSyncNeedsExitSync,
+  startQaListBackgroundSyncSession,
+  syncAndStopQaListBackgroundSyncSession,
+} from "./qa-background-sync.js";
 
 function selectedQaListEditorMatches(team, qaList) {
   return Boolean(
@@ -112,7 +118,7 @@ export function qaListEditorHasActiveTermWrite() {
 }
 
 export function qaListEditorHasActiveBackgroundSync() {
-  return false;
+  return qaListBackgroundSyncIsActive() || qaListBackgroundSyncNeedsExitSync();
 }
 
 export function qaListEditorHasPendingLocalTerms() {
@@ -231,6 +237,14 @@ export async function syncAndRefreshQaListEditorSnapshot(team, qaList) {
 }
 
 export async function openQaListEditor(render, qaListId, options = {}) {
+  if (
+    state.screen === "qaListEditor"
+    && state.qaListEditor?.qaListId
+    && state.qaListEditor.qaListId !== qaListId
+  ) {
+    await syncAndStopQaListBackgroundSyncSession(render);
+  }
+
   state.selectedQaListId = qaListId;
   const qaList =
     resolveQaListForEditor(qaListId, options.preferredQaList ?? null)
@@ -260,6 +274,14 @@ export async function openQaListEditor(render, qaListId, options = {}) {
       preferredQaList: options.preferredQaList ?? null,
       preserveVisibleData: cachedPayload != null,
     });
+  }
+  if (
+    state.screen === "qaListEditor"
+    && state.qaListEditor?.qaListId === qaListId
+    && state.qaListEditor?.repoName
+    && state.qaListEditor.status === "ready"
+  ) {
+    startQaListBackgroundSyncSession(render);
   }
 }
 
@@ -344,6 +366,13 @@ export async function openEditorQaList(render, options = {}) {
     render();
   }
   await loadSelectedQaListEditorData(render);
+  if (
+    state.screen === "qaListEditor"
+    && state.qaListEditor?.repoName
+    && state.qaListEditor?.status === "ready"
+  ) {
+    startQaListBackgroundSyncSession(render);
+  }
 }
 
 function applyQaListEditorSummary(qaList, options = {}) {

@@ -17,5 +17,16 @@ export function resolveNavigationLeaveLoading(previousScreen, navTarget, options
     };
   }
 
+  if (
+    previousScreen === "qaListEditor"
+    && navTarget !== "qaListEditor"
+    && options.qaListNeedsExitSync === true
+  ) {
+    return {
+      title: "Saving and syncing...",
+      message: "Please wait before leaving the QA list.",
+    };
+  }
+
   return null;
 }

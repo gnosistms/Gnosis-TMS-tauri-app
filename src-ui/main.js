@@ -74,6 +74,7 @@ import {
   state,
 } from "./app/state.js";
 import { noteGlossaryBackgroundSyncScrollActivity } from "./app/glossary-background-sync.js";
+import { noteQaListBackgroundSyncScrollActivity } from "./app/qa-background-sync.js";
 import {
   startEditorBackgroundSyncSession,
   syncEditorBackgroundNow,
@@ -670,6 +671,9 @@ function renderWithOptions(options = {}) {
 app.addEventListener("scroll", (event) => {
   if (state.screen === "glossaryEditor") {
     noteGlossaryBackgroundSyncScrollActivity();
+  }
+  if (state.screen === "qaListEditor") {
+    noteQaListBackgroundSyncScrollActivity();
   }
 
   const container = event.target instanceof Element ? event.target.closest(".translate-main-scroll") : null;

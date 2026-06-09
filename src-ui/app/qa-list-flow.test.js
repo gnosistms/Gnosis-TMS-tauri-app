@@ -24,6 +24,10 @@ globalThis.window = {
   requestAnimationFrame(callback) {
     return setTimeout(callback, 0);
   },
+  setInterval() {
+    return 0;
+  },
+  clearInterval() {},
   setTimeout,
   clearTimeout,
 };
