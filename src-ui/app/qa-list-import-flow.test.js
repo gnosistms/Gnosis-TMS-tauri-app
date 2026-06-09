@@ -85,10 +85,24 @@ function remoteRepo(overrides = {}) {
   };
 }
 
+function metadataRecord(overrides = {}) {
+  return {
+    id: expectedQaList.qaListId,
+    repoName: expectedQaList.remoteRepo.name,
+    fullName: expectedQaList.remoteRepo.fullName,
+    githubRepoId: expectedQaList.remoteRepo.repoId,
+    title: expectedQaList.title,
+    recordState: "live",
+    language: expectedQaList.language,
+    ...overrides,
+  };
+}
+
 function verifierOperations(overrides = {}) {
   return {
     listLocalQaListsForTeam: async () => [localQaList()],
     listRemoteQaListReposForTeam: async () => [remoteRepo()],
+    refreshQaListMetadataRecords: async () => [metadataRecord()],
     ...overrides,
   };
 }
@@ -141,5 +155,23 @@ test("verifyImportedQaListState rejects a remote QA list repo with a mismatched 
       listRemoteQaListReposForTeam: async () => [remoteRepo({ name: "other-qa-list" })],
     })),
     /remote QA list repo name does not match/,
+  );
+});
+
+test("verifyImportedQaListState rejects a missing team metadata record", async () => {
+  await assert.rejects(
+    verifyImportedQaListState(team, expectedQaList, verifierOperations({
+      refreshQaListMetadataRecords: async () => [],
+    })),
+    /team metadata record could not be found/,
+  );
+});
+
+test("verifyImportedQaListState rejects a team metadata record with a mismatched language", async () => {
+  await assert.rejects(
+    verifyImportedQaListState(team, expectedQaList, verifierOperations({
+      refreshQaListMetadataRecords: async () => [metadataRecord({ language: { code: "es", name: "Spanish" } })],
+    })),
+    /team metadata language does not match/,
   );
 });
