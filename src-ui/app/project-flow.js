@@ -1214,21 +1214,17 @@ export async function confirmProjectPermanentDeletion(render) {
   render();
 
   try {
-    await enqueueRepoWrite({
-      scope: projectRepoScope({ team: selectedTeam, project }),
-      kind: "projectLocalHardDelete",
-      sourceScreen: "projects",
-      errorTarget: {
+    // Removing the local copy is a purely local, idempotent file deletion. The project is
+    // already soft-deleted, so the transport-eligibility rule guarantees nothing is syncing
+    // this repo — there is no concurrent writer to serialize against. Routing it through the
+    // repo-write queue only let an unrelated stuck remote op on this scope wedge the delete
+    // (the "Deleting…" modal that never finished). Invoke directly so it always settles.
+    await invoke("purge_local_gtms_project_repo", {
+      input: {
+        installationId: selectedTeam.installationId,
         projectId: project.id,
-        kind: "projectLocalHardDelete",
+        repoName: project.name,
       },
-      run: () => invoke("purge_local_gtms_project_repo", {
-        input: {
-          installationId: selectedTeam.installationId,
-          projectId: project.id,
-          repoName: project.name,
-        },
-      }),
     });
     addLocalHardDeleteTombstone(selectedTeam, "project", project);
     removeVisibleProject(project.id);
