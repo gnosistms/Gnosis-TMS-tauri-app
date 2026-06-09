@@ -337,6 +337,12 @@ pub(crate) fn write_resource_lifecycle(
 }
 
 /// Remove the local checkout for a resource (no-op if it does not exist).
+///
+/// Purge is a cleanup/rollback operation, so an absent local repo is already the
+/// desired end state and must succeed, not error. This deliberately does NOT use
+/// [`resolve_git_repo_path`]: that helper errors with "not available yet" before its
+/// own `exists()` guard can run, which turned never-created (or already-purged) repos
+/// into failed commands — and, on rollback paths, masked the original failure.
 pub(crate) fn purge_repo(
     domain: &dyn RepoResourceStorageDomain,
     app: &AppHandle,
@@ -344,10 +350,11 @@ pub(crate) fn purge_repo(
     resource_id: Option<&str>,
     repo_name: Option<&str>,
 ) -> Result<(), String> {
-    let repo_path = resolve_git_repo_path(domain, app, installation_id, resource_id, repo_name)?;
-    if !repo_path.exists() {
+    let Some(repo_path) =
+        find_purgeable_repo_path(domain, app, installation_id, resource_id, repo_name)?
+    else {
         return Ok(());
-    }
+    };
 
     fs::remove_dir_all(&repo_path).map_err(|error| {
         format!(
@@ -356,6 +363,38 @@ pub(crate) fn purge_repo(
             repo_path.display()
         )
     })
+}
+
+/// Locate the local checkout to purge, or `None` when there is nothing to remove.
+///
+/// Mirrors [`resolve_git_repo_path`]'s resolution (id-based discovery, then the
+/// `<root>/<repo_name>` fallback) but never errors: a missing root, an unmatched
+/// resource, or a non-git directory at the fallback path all resolve to `None`. A
+/// non-git directory is intentionally left untouched rather than removed, so purge
+/// can never delete a folder it does not recognize as this resource's repo.
+fn find_purgeable_repo_path(
+    domain: &dyn RepoResourceStorageDomain,
+    app: &AppHandle,
+    installation_id: i64,
+    resource_id: Option<&str>,
+    repo_name: Option<&str>,
+) -> Result<Option<PathBuf>, String> {
+    if let Some(repo_path) = find_repo_path(domain, app, installation_id, resource_id, repo_name)? {
+        return Ok(Some(repo_path));
+    }
+
+    if let Some(repo_name) = normalized_optional_identifier(repo_name) {
+        let repo_root = domain.local_repo_root(app, installation_id)?;
+        let repo_path = repo_root.join(&repo_name);
+        if repo_path.exists()
+            && git_output(&repo_path, &["rev-parse", "--git-dir"]).is_ok()
+            && repo_matches_identifier(domain, &repo_path, resource_id, Some(&repo_name))
+        {
+            return Ok(Some(repo_path));
+        }
+    }
+
+    Ok(None)
 }
 
 /// Create (and minimally configure) a local checkout for a resource repo: init if needed,

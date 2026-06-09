@@ -182,7 +182,16 @@ pub(super) fn pull_local_metadata_repo(
 ) -> Result<(), String> {
     let git_transport_token = load_git_transport_token(installation_id, session_token)?;
     let git_transport_auth = GitTransportAuth::from_token(&git_transport_token)?;
-    let pull_result = git_output(repo_path, &["pull", "--ff-only"], Some(&git_transport_auth));
+    // Pull the current branch explicitly. A bare `git pull --ff-only` relies on local
+    // upstream tracking; when that is missing or ambiguous, git tries to merge every
+    // fetched head and fails with "Cannot fast-forward to multiple branches." Naming the
+    // branch resolves to a single merge target.
+    let branch_name = current_branch_name(repo_path);
+    let pull_result = git_output(
+        repo_path,
+        &["pull", "--ff-only", "origin", &branch_name],
+        Some(&git_transport_auth),
+    );
     pull_result
         .map(|_| ())
         .map_err(|error| abort_rebase_after_failed_pull(repo_path, error))
