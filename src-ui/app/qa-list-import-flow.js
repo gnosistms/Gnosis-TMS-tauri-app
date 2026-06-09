@@ -29,6 +29,11 @@ import {
   upsertQaListForTeam,
 } from "./qa-list-top-level-state.js";
 import { makeQaListDefaultIfFirst } from "./qa-list-default-flow.js";
+import {
+  deleteQaListMetadataRecord,
+  refreshQaListMetadataRecords,
+  upsertQaListMetadataRecord,
+} from "./team-metadata-flow.js";
 import { loadTeamQaLists } from "./qa-list-discovery-flow.js";
 import {
   guardResourceCreateStart,
@@ -140,6 +145,7 @@ export async function verifyImportedQaListState(team, expected, operations = {})
 
   const listLocal = operations.listLocalQaListsForTeam ?? listLocalQaListsForTeam;
   const listRemote = operations.listRemoteQaListReposForTeam ?? listRemoteQaListReposForTeam;
+  const refreshMetadata = operations.refreshQaListMetadataRecords ?? refreshQaListMetadataRecords;
   const localQaLists = await listLocal(team);
   const localQaList = (Array.isArray(localQaLists) ? localQaLists : []).find((qaList) =>
     normalizedText(qaList?.qaListId ?? qaList?.id) === qaListId
@@ -173,6 +179,23 @@ export async function verifyImportedQaListState(team, expected, operations = {})
   if (normalizedText(remoteRepo.name) !== repoName) {
     throw importedQaListSafetyError("The remote QA list repo name does not match the imported QA list.");
   }
+
+  const metadataRecords = await refreshMetadata(team);
+  const metadataRecord = (Array.isArray(metadataRecords) ? metadataRecords : []).find((record) =>
+    normalizedText(record?.id) === qaListId
+  );
+  if (!metadataRecord || metadataRecord.recordState !== "live") {
+    throw importedQaListSafetyError("The team metadata record could not be found after import.");
+  }
+  if (normalizedText(metadataRecord.repoName) !== normalizedText(remoteRepo.name)) {
+    throw importedQaListSafetyError("The team metadata record points at a different QA list repo.");
+  }
+  if (normalizedText(metadataRecord.title) !== title) {
+    throw importedQaListSafetyError("The team metadata title does not match the imported file.");
+  }
+  if (!languageMatches(metadataRecord.language, expected.language)) {
+    throw importedQaListSafetyError("The team metadata language does not match the imported file.");
+  }
 }
 
 async function rollbackStrictQaListCreate(team, qaListId, localRepoName, remoteRepoName = "") {
@@ -198,6 +221,12 @@ async function rollbackStrictQaListCreate(team, qaListId, localRepoName, remoteR
     } catch (error) {
       rollbackError ??= error;
     }
+  }
+
+  try {
+    await deleteQaListMetadataRecord(team, qaListId, { requirePushSuccess: true });
+  } catch (error) {
+    rollbackError ??= error;
   }
 
   if (rollbackError) {
@@ -237,6 +266,25 @@ async function createRemoteQaListRepoForAvailableName(team, baseRepoName) {
   throw new Error("Could not determine an available repo name.");
 }
 
+function linkedQaListMetadataRecord(qaList, remoteRepo) {
+  return {
+    qaListId: qaList.id ?? qaList.qaListId,
+    title: qaList.title,
+    repoName: remoteRepo.name,
+    lifecycleState: qaList.lifecycleState === "deleted" ? "deleted" : "active",
+    previousRepoNames:
+      remoteRepo.name !== qaList.repoName ? [qaList.repoName] : [],
+    recordState: "live",
+    githubRepoId: remoteRepo.repoId ?? null,
+    githubNodeId: remoteRepo.nodeId ?? null,
+    fullName: remoteRepo.fullName ?? null,
+    defaultBranch: remoteRepo.defaultBranchName || "main",
+    remoteState: "linked",
+    language: qaList.language ?? null,
+    termCount: Number.isFinite(qaList.termCount) ? qaList.termCount : 0,
+  };
+}
+
 async function completeQaListCreateSynchronously(team, input, render) {
   const qaListId = globalThis.crypto?.randomUUID?.() ?? createQaResourceId("qa-list");
   let remoteRepo = null;
@@ -274,6 +322,13 @@ async function completeQaListCreateSynchronously(team, input, render) {
       remoteState: "linked",
       resolutionState: "",
     });
+
+    showResourceCreateProgress(render, "Saving team metadata...");
+    await upsertQaListMetadataRecord(
+      team,
+      linkedQaListMetadataRecord(linkedQaList, remoteRepo),
+      { requirePushSuccess: true },
+    );
 
     showResourceCreateProgress(render, "Linking local QA list repo...");
     await prepareLinkedLocalQaListRepo(team, remoteRepo, qaListId);
@@ -595,6 +650,13 @@ export async function importQaListFile(render, selectedFile) {
           remoteState: "linked",
           resolutionState: "",
         });
+        showResourceCreateProgress(render, "Saving team metadata...");
+        await upsertQaListMetadataRecord(
+          team,
+          linkedQaListMetadataRecord(linkedQaList, remoteRepo),
+          { requirePushSuccess: true },
+        );
+
         showResourceCreateProgress(render, "Linking local QA list repo...");
         await prepareLinkedLocalQaListRepo(team, remoteRepo, qaListId);
 
