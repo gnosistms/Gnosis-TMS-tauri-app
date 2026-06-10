@@ -102,6 +102,41 @@ pub(in crate::project_import) fn write_row_files_and_commit(
     Ok(commit_output)
 }
 
+/// Write and commit a single chapter.json change through the shared row-commit
+/// helper so a failed commit gate (expired session, lost write access) cannot strand a
+/// dirty, staged chapter.json that would break the next pull.
+pub(in crate::project_import) fn commit_chapter_json_update(
+    app: &AppHandle,
+    repo_path: &Path,
+    chapter_json_path: &Path,
+    chapter_value: &Value,
+    commit_message: &str,
+) -> Result<(), String> {
+    let updated_text = format!(
+        "{}\n",
+        serde_json::to_string_pretty(chapter_value)
+            .map_err(|error| format!("Could not serialize chapter.json: {error}"))?
+    );
+    write_row_files_and_commit(
+        app,
+        repo_path,
+        commit_message,
+        CommitMetadata {
+            operation: None,
+            migration: None,
+            status_note: None,
+            ai_model: None,
+        },
+        &[PreparedRowFileWrite {
+            relative_path: repo_relative_path(repo_path, chapter_json_path)?,
+            original_text: fs::read_to_string(chapter_json_path).ok(),
+            path: chapter_json_path.to_path_buf(),
+            updated_text,
+        }],
+    )?;
+    Ok(())
+}
+
 pub(super) fn load_editor_rows(rows_path: &Path) -> Result<Vec<StoredRowFile>, String> {
     if !rows_path.exists() {
         return Ok(Vec::new());

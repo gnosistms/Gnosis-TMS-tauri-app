@@ -7,9 +7,10 @@ use tauri::AppHandle;
 use crate::git_commit::git_commit_as_signed_in_user;
 use crate::project_repo_paths::resolve_project_git_repo_path;
 
+use super::chapter_editor::commit_chapter_json_update;
 use super::project_git::{
     ensure_repo_exists, ensure_valid_git_repo, find_chapter_path_by_id, git_output, read_json_file,
-    repo_relative_path, write_json_pretty,
+    repo_relative_path,
 };
 
 #[derive(Deserialize)]
@@ -193,15 +194,12 @@ pub(super) fn rename_gtms_chapter_sync(
     }
 
     chapter_object.insert("title".to_string(), Value::String(next_title.to_string()));
-    write_json_pretty(&chapter_json_path, &chapter_value)?;
-
-    let relative_chapter_json = repo_relative_path(&repo_path, &chapter_json_path)?;
-    git_output(&repo_path, &["add", &relative_chapter_json])?;
-    git_commit_as_signed_in_user(
+    commit_chapter_json_update(
         app,
         &repo_path,
+        &chapter_json_path,
+        &chapter_value,
         &format!("Rename file to {}", next_title),
-        &[&relative_chapter_json],
     )?;
 
     Ok(RenameChapterResponse {
@@ -251,16 +249,18 @@ pub(super) fn update_gtms_chapter_lifecycle_sync(
     }
 
     lifecycle_object.insert("state".to_string(), Value::String(next_state.to_string()));
-    write_json_pretty(&chapter_json_path, &chapter_value)?;
-
-    let relative_chapter_json = repo_relative_path(&repo_path, &chapter_json_path)?;
-    git_output(&repo_path, &["add", &relative_chapter_json])?;
     let commit_action = if next_state == "deleted" {
         "Delete file"
     } else {
         "Restore file"
     };
-    git_commit_as_signed_in_user(app, &repo_path, commit_action, &[&relative_chapter_json])?;
+    commit_chapter_json_update(
+        app,
+        &repo_path,
+        &chapter_json_path,
+        &chapter_value,
+        commit_action,
+    )?;
 
     Ok(UpdateChapterLifecycleResponse {
         chapter_id: input.chapter_id,
@@ -365,6 +365,7 @@ pub(super) fn clear_deleted_gtms_chapters_sync(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::project_import::project_git::write_json_pretty;
     use std::path::PathBuf;
     use uuid::Uuid;
 
