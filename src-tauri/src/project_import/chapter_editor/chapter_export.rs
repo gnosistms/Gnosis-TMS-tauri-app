@@ -1,12 +1,17 @@
 use super::*;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use reqwest::blocking::Client as BlockingClient;
-use std::io::{Cursor, Write};
+use std::io::{Cursor, Read, Write};
+use std::net::{IpAddr, ToSocketAddrs};
 use std::time::Duration;
 use zip::{write::SimpleFileOptions, ZipWriter};
 
 const UNSUPPORTED_FUNCTION_MESSAGE: &str =
     "Contact the developers if you need this feature and ask them to implement it.";
+
+// Cap embedded-image downloads so a hostile or accidental URL cannot buffer an unbounded
+// body into memory during export.
+const MAX_EXPORT_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -870,15 +875,28 @@ fn read_local_docx_image(path: &Path) -> Option<DocxImage> {
 }
 
 fn download_docx_image(url: &str) -> Option<DocxImage> {
+    // Image URLs are row content that can arrive over git from other team members, so an
+    // export must not let one of them point this fetch at the exporting machine's own
+    // network. Reject non-public hosts, refuse redirects (a public URL could otherwise 302
+    // into a private range), and cap the body size.
+    if !is_public_export_image_url(url) {
+        return None;
+    }
     let client = BlockingClient::builder()
         .timeout(Duration::from_secs(8))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .ok()?;
     let response = client.get(url).send().ok()?;
     if !response.status().is_success() {
         return None;
     }
-    let data = response.bytes().ok()?.to_vec();
+    let mut limited = response.take(MAX_EXPORT_IMAGE_BYTES + 1);
+    let mut data = Vec::new();
+    limited.read_to_end(&mut data).ok()?;
+    if data.len() as u64 > MAX_EXPORT_IMAGE_BYTES {
+        return None;
+    }
     let (extension, width_px, height_px) = docx_image_info(&data)?;
     Some(DocxImage {
         data,
@@ -886,6 +904,65 @@ fn download_docx_image(url: &str) -> Option<DocxImage> {
         width_px,
         height_px,
     })
+}
+
+fn is_public_export_image_url(url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false;
+    };
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return false;
+    }
+    let port = parsed.port_or_known_default().unwrap_or(0);
+    match parsed.host() {
+        // Literal IP hosts are classified directly (no DNS).
+        Some(url::Host::Ipv4(addr)) => is_public_ip(IpAddr::V4(addr)),
+        Some(url::Host::Ipv6(addr)) => is_public_ip(IpAddr::V6(addr)),
+        // Resolve the domain and reject if any address it maps to is non-public, so a
+        // hostname that points at a private/loopback/link-local/ULA address is refused.
+        Some(url::Host::Domain(host)) => {
+            if host.eq_ignore_ascii_case("localhost") {
+                return false;
+            }
+            let Ok(addresses) = (host, port).to_socket_addrs() else {
+                return false;
+            };
+            let mut resolved_any = false;
+            for address in addresses {
+                resolved_any = true;
+                if !is_public_ip(address.ip()) {
+                    return false;
+                }
+            }
+            resolved_any
+        }
+        None => false,
+    }
+}
+
+fn is_public_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            !(v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || v4.is_documentation()
+                // Carrier-grade NAT 100.64.0.0/10.
+                || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xc0) == 0x40))
+        }
+        IpAddr::V6(v6) => {
+            !(v6.is_loopback()
+                || v6.is_unspecified()
+                // Unique local addresses fc00::/7.
+                || (v6.segments()[0] & 0xfe00) == 0xfc00
+                // Link-local unicast fe80::/10.
+                || (v6.segments()[0] & 0xffc0) == 0xfe80
+                // IPv4-mapped: classify by the embedded v4 address.
+                || v6.to_ipv4_mapped().map(|v4| !is_public_ip(IpAddr::V4(v4))).unwrap_or(false))
+        }
+    }
 }
 
 fn docx_image_info(data: &[u8]) -> Option<(String, u32, u32)> {
@@ -1067,6 +1144,47 @@ mod tests {
             0xff,
             0xd9,
         ]
+    }
+
+    #[test]
+    fn export_image_host_check_rejects_non_public_targets() {
+        for blocked in [
+            "http://localhost/image.png",
+            "http://127.0.0.1/image.png",
+            "https://127.0.0.1:8443/image.png",
+            "http://10.0.0.5/image.png",
+            "http://192.168.1.20/image.png",
+            "http://169.254.169.254/latest/meta-data",
+            "http://[::1]/image.png",
+            "http://[fd00::1]/image.png",
+            "http://[fe80::1]/image.png",
+            "ftp://example.com/image.png",
+            "file:///etc/passwd",
+            "not a url",
+        ] {
+            assert!(
+                !is_public_export_image_url(blocked),
+                "'{blocked}' should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn export_image_host_check_allows_public_hosts() {
+        // Literal public addresses so the check does not depend on DNS in tests.
+        assert!(is_public_export_image_url("http://8.8.8.8/image.png"));
+        assert!(is_public_export_image_url(
+            "https://[2001:4860:4860::8888]/image.png"
+        ));
+    }
+
+    #[test]
+    fn export_image_ip_classifier_marks_public_and_private_ranges() {
+        assert!(is_public_ip("8.8.8.8".parse().expect("ipv4")));
+        assert!(is_public_ip("2606:4700:4700::1111".parse().expect("ipv6")));
+        assert!(!is_public_ip("10.1.2.3".parse().expect("ipv4")));
+        assert!(!is_public_ip("100.64.0.1".parse().expect("ipv4")));
+        assert!(!is_public_ip("::ffff:127.0.0.1".parse().expect("ipv6")));
     }
 
     #[test]
