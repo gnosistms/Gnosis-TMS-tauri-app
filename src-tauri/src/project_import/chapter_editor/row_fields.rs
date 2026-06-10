@@ -227,9 +227,7 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
     }
     let chapter_file: StoredChapterFile =
         read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
-    let row_json_path = chapter_path
-        .join("rows")
-        .join(format!("{}.json", input.row_id));
+    let row_json_path = validated_row_json_path(&chapter_path, &input.row_id)?;
     let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
     let languages = sanitize_chapter_languages(&chapter_file.languages);
     let word_counts = load_word_counts(&chapter_path.join("rows"), &languages)?;
@@ -595,7 +593,7 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
         let fields = batch_row.fields;
         let footnotes = batch_row.footnotes;
         let image_captions = batch_row.image_captions;
-        let row_json_path = chapter_path.join("rows").join(format!("{row_id}.json"));
+        let row_json_path = validated_row_json_path(&chapter_path, &row_id)?;
         let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
             format!(
                 "Could not read row file '{}': {error}",
@@ -714,9 +712,8 @@ pub(crate) fn update_gtms_editor_row_field_flag_sync(
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
     let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
-    let row_json_path = chapter_path
-        .join("rows")
-        .join(format!("{}.json", input.row_id));
+    let row_json_path = validated_row_json_path(&chapter_path, &input.row_id)?;
+    let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
     let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
         format!(
             "Could not read row file '{}': {error}",
@@ -746,7 +743,6 @@ pub(crate) fn update_gtms_editor_row_field_flag_sync(
         let updated_row_text = format!("{updated_row_json}\n");
         write_text_file(&row_json_path, &updated_row_text)?;
 
-        let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
         let status_note = status_note_for_field_flag(
             normalize_editor_field_flag_key(&input.flag)?,
             input.enabled,
@@ -774,10 +770,7 @@ pub(crate) fn update_gtms_editor_row_field_flag_sync(
         language_code: input.language_code,
         reviewed,
         please_check,
-        last_update: load_latest_row_version_metadata(
-            &repo_path,
-            &repo_relative_path(&repo_path, &row_json_path)?,
-        )?,
+        last_update: load_latest_row_version_metadata(&repo_path, &relative_row_json)?,
         chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
 }
@@ -796,9 +789,8 @@ pub(crate) fn apply_gtms_editor_ai_review_result_sync(
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
     let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
-    let row_json_path = chapter_path
-        .join("rows")
-        .join(format!("{}.json", input.row_id));
+    let row_json_path = validated_row_json_path(&chapter_path, &input.row_id)?;
+    let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
     let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
         format!(
             "Could not read row file '{}': {error}",
@@ -864,7 +856,6 @@ pub(crate) fn apply_gtms_editor_ai_review_result_sync(
 
     if changed {
         write_text_file(&row_json_path, &updated_row_text)?;
-        let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
         git_output(&repo_path, &["add", &relative_row_json])?;
         let ai_model = input.ai_model.trim();
         git_commit_as_signed_in_user_with_metadata(
@@ -916,10 +907,7 @@ pub(crate) fn apply_gtms_editor_ai_review_result_sync(
         image_caption,
         reviewed,
         please_check,
-        last_update: load_latest_row_version_metadata(
-            &repo_path,
-            &repo_relative_path(&repo_path, &row_json_path)?,
-        )?,
+        last_update: load_latest_row_version_metadata(&repo_path, &relative_row_json)?,
         chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
 }
@@ -938,9 +926,8 @@ pub(crate) fn update_gtms_editor_row_text_style_sync(
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
     let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
-    let row_json_path = chapter_path
-        .join("rows")
-        .join(format!("{}.json", input.row_id));
+    let row_json_path = validated_row_json_path(&chapter_path, &input.row_id)?;
+    let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
     let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
         format!(
             "Could not read row file '{}': {error}",
@@ -965,7 +952,6 @@ pub(crate) fn update_gtms_editor_row_text_style_sync(
         let updated_row_text = format!("{updated_row_json}\n");
         write_text_file(&row_json_path, &updated_row_text)?;
 
-        let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
         git_output(&repo_path, &["add", &relative_row_json])?;
         git_commit_as_signed_in_user_with_metadata(
             app,
@@ -984,10 +970,7 @@ pub(crate) fn update_gtms_editor_row_text_style_sync(
     Ok(UpdateEditorRowTextStyleResponse {
         row_id: input.row_id,
         text_style,
-        last_update: load_latest_row_version_metadata(
-            &repo_path,
-            &repo_relative_path(&repo_path, &row_json_path)?,
-        )?,
+        last_update: load_latest_row_version_metadata(&repo_path, &relative_row_json)?,
         chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
 }
@@ -1016,7 +999,7 @@ pub(crate) fn clear_gtms_editor_reviewed_markers_sync(
             continue;
         }
 
-        let row_json_path = rows_path.join(format!("{row_id}.json"));
+        let row_json_path = validated_row_json_path(&chapter_path, &row_id)?;
         let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
             format!(
                 "Could not read row file '{}': {error}",

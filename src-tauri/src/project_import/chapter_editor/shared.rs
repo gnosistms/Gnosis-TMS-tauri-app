@@ -6,6 +6,27 @@ pub(super) fn current_repo_head_sha(repo_path: &Path) -> Option<String> {
     git_output(repo_path, &["rev-parse", "--verify", "HEAD"]).ok()
 }
 
+/// Row ids come straight from IPC input and end up in `Path::join`, `fs::write`, and
+/// `fs::remove_file`. `Path::strip_prefix` is lexical, so a `..` component would survive
+/// the repo-relative check downstream — reject anything outside a plain single-component
+/// file name here. Mirrors `validated_resource_id` in `team_metadata_local/repo.rs`.
+pub(super) fn validated_row_json_path(
+    chapter_path: &Path,
+    row_id: &str,
+) -> Result<PathBuf, String> {
+    let normalized = row_id.trim();
+    if normalized.is_empty()
+        || normalized == "."
+        || normalized == ".."
+        || !normalized
+            .chars()
+            .all(|value| value.is_ascii_alphanumeric() || matches!(value, '.' | '_' | '-'))
+    {
+        return Err(format!("'{normalized}' is not a valid row id."));
+    }
+    Ok(chapter_path.join("rows").join(format!("{normalized}.json")))
+}
+
 pub(super) fn load_editor_rows(rows_path: &Path) -> Result<Vec<StoredRowFile>, String> {
     if !rows_path.exists() {
         return Ok(Vec::new());
@@ -762,4 +783,43 @@ fn count_words(value: &str) -> usize {
         .split_whitespace()
         .filter(|segment| !segment.is_empty())
         .count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validated_row_json_path_accepts_plain_ids_and_trims() {
+        let chapter = Path::new("/repos/project/chapters/chapter-1");
+        let path = validated_row_json_path(chapter, " 0196a7e2-aa11-7def-8000-1234abcd5678 ")
+            .expect("plain id should resolve");
+        assert_eq!(
+            path,
+            chapter
+                .join("rows")
+                .join("0196a7e2-aa11-7def-8000-1234abcd5678.json")
+        );
+        assert!(validated_row_json_path(chapter, "Row_1.v2").is_ok());
+    }
+
+    #[test]
+    fn validated_row_json_path_rejects_traversal_and_empty_ids() {
+        let chapter = Path::new("/repos/project/chapters/chapter-1");
+        for invalid in [
+            "",
+            "   ",
+            ".",
+            "..",
+            "../../chapter.json",
+            "../../../../../etc/target",
+            "nested/row",
+            "nested\\row",
+        ] {
+            assert!(
+                validated_row_json_path(chapter, invalid).is_err(),
+                "'{invalid}' should be rejected"
+            );
+        }
+    }
 }

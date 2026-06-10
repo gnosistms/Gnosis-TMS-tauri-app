@@ -105,6 +105,7 @@ use self::shared::{
     normalize_editor_text_style_value, refresh_cached_chapter_source_word_count,
     row_fields_object_mut, row_footnote_map, row_image_caption_map, row_object_mut,
     row_plain_text_map, row_text_style, sanitize_chapter_languages, set_editor_field_flags,
+    validated_row_json_path,
 };
 
 const ORDER_KEY_SPACING: u128 = 1u128 << 104;
@@ -1017,9 +1018,7 @@ pub(super) fn load_gtms_editor_row_sync(
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
     let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
-    let row_json_path = chapter_path
-        .join("rows")
-        .join(format!("{}.json", input.row_id));
+    let row_json_path = validated_row_json_path(&chapter_path, &input.row_id)?;
     let relative_row_json = if row_json_path.exists() {
         Some(repo_relative_path(&repo_path, &row_json_path)?)
     } else {

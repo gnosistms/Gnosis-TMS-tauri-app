@@ -97,9 +97,8 @@ pub(crate) fn update_gtms_editor_row_lifecycle_sync(
     let chapter_file: StoredChapterFile =
         read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
     let languages = sanitize_chapter_languages(&chapter_file.languages);
-    let row_json_path = chapter_path
-        .join("rows")
-        .join(format!("{}.json", input.row_id));
+    let row_json_path = validated_row_json_path(&chapter_path, &input.row_id)?;
+    let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
     let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
         format!(
             "Could not read row file '{}': {error}",
@@ -167,7 +166,6 @@ pub(crate) fn update_gtms_editor_row_lifecycle_sync(
     let updated_row_text = format!("{updated_row_json}\n");
     write_text_file(&row_json_path, &updated_row_text)?;
 
-    let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
     let commit_message = if next_state == "deleted" {
         format!("Delete row {}", input.row_id)
     } else {
@@ -216,9 +214,8 @@ pub(crate) fn permanently_delete_gtms_editor_row_sync(
     let chapter_file: StoredChapterFile =
         read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
     let languages = sanitize_chapter_languages(&chapter_file.languages);
-    let row_json_path = chapter_path
-        .join("rows")
-        .join(format!("{}.json", input.row_id));
+    let row_json_path = validated_row_json_path(&chapter_path, &input.row_id)?;
+    let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
     let row_file: StoredRowFile = read_json_file(&row_json_path, "row file")?;
     if row_file.lifecycle.state != "deleted" {
         return Err("Only soft-deleted rows can be permanently deleted.".to_string());
@@ -246,7 +243,6 @@ pub(crate) fn permanently_delete_gtms_editor_row_sync(
         )?;
     }
 
-    let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
     git_output(
         &repo_path,
         &["rm", "--cached", "--ignore-unmatch", &relative_row_json],
