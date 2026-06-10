@@ -594,26 +594,11 @@ pub(super) fn upsert_local_record(
     message: &str,
     operation: &str,
 ) -> Result<LocalTeamMetadataMutationResult, String> {
-    let parent = record_path.parent().ok_or_else(|| {
-        format!(
-            "Could not resolve the local metadata folder for '{}'.",
-            record_path.display()
-        )
-    })?;
-    fs::create_dir_all(parent).map_err(|error| {
-        format!(
-            "Could not create the local metadata folder '{}': {error}",
-            parent.display()
-        )
-    })?;
     let contents = serde_json::to_string_pretty(record_value)
         .map_err(|error| format!("Could not encode the local team-metadata record: {error}"))?;
-    fs::write(record_path, format!("{contents}\n")).map_err(|error| {
-        format!(
-            "Could not write the local team-metadata file '{}': {error}",
-            record_path.display()
-        )
-    })?;
+    // Atomic write (sibling .tmp + rename) so a crash mid-write can't leave a torn
+    // record file; the helper creates the parent folder.
+    crate::repo_resource_storage::write_text_file(record_path, &format!("{contents}\n"))?;
 
     let relative_path = relative_repo_path(repo_path, record_path)?;
     let _ = git_output(repo_path, &["add", "--", &relative_path], None)?;

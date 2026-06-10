@@ -1,6 +1,7 @@
 import { requireBrokerSession } from "./auth-flow.js";
 import { invoke } from "./runtime.js";
 import { queryClient, teamMetadataSyncKeys } from "./query-client.js";
+import { reportBackendNonfatalError } from "./telemetry.js";
 
 const METADATA_WRITE_RETRY_DELAYS_MS = [180, 420];
 const teamMetadataWriteQueues = new Map();
@@ -347,14 +348,18 @@ async function commitLocalMetadataMutation(team, operation, options = {}) {
           if (options.requirePushSuccess === true) {
             throw pushError;
           }
+          // The local commit succeeded but the team hasn't seen it yet; the next
+          // sync/push retries (the backend now rebases diverged clones). Surface the
+          // swallowed failure to telemetry so wedged repos are visible to developers.
+          const reason = localMetadataPushConflict(pushError) ? "push_conflict" : "push_failed";
+          reportBackendNonfatalError({ operation: "team-metadata.push", reason });
           console.warn(
-            localMetadataPushConflict(pushError)
-              ? `team-metadata push conflict after local commit: ${pushError?.message ?? String(pushError)}`
-              : `team-metadata push failed after local commit: ${pushError?.message ?? String(pushError)}`,
+            `team-metadata ${reason} after local commit: ${pushError?.message ?? String(pushError)}`,
           );
         }
       }
       if (syncError) {
+        reportBackendNonfatalError({ operation: "team-metadata.sync", reason: "best_effort_pull_failed" });
         console.warn(`Best-effort team-metadata sync failed before local commit: ${syncError?.message ?? String(syncError)}`);
       }
       return result;

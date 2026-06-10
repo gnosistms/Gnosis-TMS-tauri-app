@@ -65,6 +65,19 @@ use self::repo::{
     resource_record_path,
 };
 
+/// A skipped record means a corrupt/unreadable record file degraded to one missing row
+/// instead of failing the listing (and the repair scan with it). Developers still need
+/// visibility, so report it through the consent-gated non-fatal telemetry event.
+fn report_skipped_metadata_records(app: &AppHandle, skipped_record_files: &[String]) {
+    if !skipped_record_files.is_empty() {
+        crate::github::report_backend_nonfatal_error(
+            app,
+            "team-metadata.records.list",
+            "record_parse_failed",
+        );
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LocalTeamMetadataRepoInfo {
@@ -157,8 +170,10 @@ pub(crate) async fn list_local_gnosis_project_metadata_records(
 ) -> Result<Vec<GithubProjectMetadataRecord>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let repo_path = require_local_metadata_repo(&app, installation_id)?;
-        let mut records =
+        let listing =
             list_local_metadata_records::<GithubProjectMetadataRecord>(&repo_path, "project")?;
+        report_skipped_metadata_records(&app, &listing.skipped_record_files);
+        let mut records = listing.records;
         // One folder scan for the whole record set — per-record rescans spawned a git
         // subprocess per (record × folder) pair and dominated the projects refresh.
         let repo_folders =
@@ -183,8 +198,10 @@ pub(crate) async fn list_local_gnosis_glossary_metadata_records(
 ) -> Result<Vec<GithubGlossaryMetadataRecord>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let repo_path = require_local_metadata_repo(&app, installation_id)?;
-        let mut records =
+        let listing =
             list_local_metadata_records::<GithubGlossaryMetadataRecord>(&repo_path, "glossary")?;
+        report_skipped_metadata_records(&app, &listing.skipped_record_files);
+        let mut records = listing.records;
         let repo_folders =
             scan_local_glossary_repo_folders(&app, installation_id).unwrap_or_default();
         for record in &mut records {
@@ -207,8 +224,10 @@ pub(crate) async fn list_local_gnosis_qa_list_metadata_records(
 ) -> Result<Vec<GithubQaListMetadataRecord>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let repo_path = require_local_metadata_repo(&app, installation_id)?;
-        let mut records =
+        let listing =
             list_local_metadata_records::<GithubQaListMetadataRecord>(&repo_path, "qaList")?;
+        report_skipped_metadata_records(&app, &listing.skipped_record_files);
+        let mut records = listing.records;
         let repo_folders =
             scan_local_qa_list_repo_folders(&app, installation_id).unwrap_or_default();
         for record in &mut records {
@@ -257,12 +276,18 @@ pub(crate) async fn inspect_and_migrate_local_repo_bindings(
 ) -> Result<LocalRepoRepairScanResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let repo_path = require_local_metadata_repo(&app, installation_id)?;
-        let project_records =
+        let project_listing =
             list_local_metadata_records::<GithubProjectMetadataRecord>(&repo_path, "project")?;
-        let glossary_records =
+        let glossary_listing =
             list_local_metadata_records::<GithubGlossaryMetadataRecord>(&repo_path, "glossary")?;
-        let qa_list_records =
+        let qa_list_listing =
             list_local_metadata_records::<GithubQaListMetadataRecord>(&repo_path, "qaList")?;
+        report_skipped_metadata_records(&app, &project_listing.skipped_record_files);
+        report_skipped_metadata_records(&app, &glossary_listing.skipped_record_files);
+        report_skipped_metadata_records(&app, &qa_list_listing.skipped_record_files);
+        let project_records = project_listing.records;
+        let glossary_records = glossary_listing.records;
+        let qa_list_records = qa_list_listing.records;
 
         let project_scan = inspect_project_repo_repairs(&app, installation_id, &project_records)?;
         let glossary_scan =
@@ -300,10 +325,12 @@ pub(crate) async fn repair_local_repo_binding(
 
         match normalized_kind {
             "project" => {
-                let records = list_local_metadata_records::<GithubProjectMetadataRecord>(
+                let listing = list_local_metadata_records::<GithubProjectMetadataRecord>(
                     &repo_path, "project",
                 )?;
-                let record = records
+                report_skipped_metadata_records(&app, &listing.skipped_record_files);
+                let record = listing
+                    .records
                     .into_iter()
                     .find(|record| record.id.trim() == normalized_resource_id)
                     .ok_or_else(|| {
@@ -345,10 +372,12 @@ pub(crate) async fn repair_local_repo_binding(
                 })
             }
             "glossary" => {
-                let records = list_local_metadata_records::<GithubGlossaryMetadataRecord>(
+                let listing = list_local_metadata_records::<GithubGlossaryMetadataRecord>(
                     &repo_path, "glossary",
                 )?;
-                let record = records
+                report_skipped_metadata_records(&app, &listing.skipped_record_files);
+                let record = listing
+                    .records
                     .into_iter()
                     .find(|record| record.id.trim() == normalized_resource_id)
                     .ok_or_else(|| {
@@ -390,10 +419,12 @@ pub(crate) async fn repair_local_repo_binding(
                 })
             }
             "qaList" => {
-                let records = list_local_metadata_records::<GithubQaListMetadataRecord>(
+                let listing = list_local_metadata_records::<GithubQaListMetadataRecord>(
                     &repo_path, "qaList",
                 )?;
-                let record = records
+                report_skipped_metadata_records(&app, &listing.skipped_record_files);
+                let record = listing
+                    .records
                     .into_iter()
                     .find(|record| record.id.trim() == normalized_resource_id)
                     .ok_or_else(|| {
@@ -458,7 +489,7 @@ pub(crate) async fn upsert_local_gnosis_project_metadata_record(
             &input.org_login,
             &session_token,
         )?;
-        let record_path = resource_record_path(&repo_path, "project", &input.project_id);
+        let record_path = resource_record_path(&repo_path, "project", &input.project_id)?;
         let current = read_json_object(&record_path)?;
         let actor_login = actor_login(&app)?;
         let record_value = build_project_record_value(current, &input, actor_login.as_deref())?;
@@ -489,7 +520,7 @@ pub(crate) async fn delete_local_gnosis_project_metadata_record(
             &input.org_login,
             &session_token,
         )?;
-        let record_path = resource_record_path(&repo_path, "project", &input.project_id);
+        let record_path = resource_record_path(&repo_path, "project", &input.project_id)?;
         delete_local_record(
             &app,
             &repo_path,
@@ -516,7 +547,7 @@ pub(crate) async fn upsert_local_gnosis_glossary_metadata_record(
             &input.org_login,
             &session_token,
         )?;
-        let record_path = resource_record_path(&repo_path, "glossary", &input.glossary_id);
+        let record_path = resource_record_path(&repo_path, "glossary", &input.glossary_id)?;
         let current = read_json_object(&record_path)?;
         let actor_login = actor_login(&app)?;
         let record_value = build_glossary_record_value(current, &input, actor_login.as_deref())?;
@@ -547,7 +578,7 @@ pub(crate) async fn delete_local_gnosis_glossary_metadata_record(
             &input.org_login,
             &session_token,
         )?;
-        let record_path = resource_record_path(&repo_path, "glossary", &input.glossary_id);
+        let record_path = resource_record_path(&repo_path, "glossary", &input.glossary_id)?;
         delete_local_record(
             &app,
             &repo_path,
@@ -574,7 +605,7 @@ pub(crate) async fn upsert_local_gnosis_qa_list_metadata_record(
             &input.org_login,
             &session_token,
         )?;
-        let record_path = resource_record_path(&repo_path, "qaList", &input.qa_list_id);
+        let record_path = resource_record_path(&repo_path, "qaList", &input.qa_list_id)?;
         let current = read_json_object(&record_path)?;
         let actor_login = actor_login(&app)?;
         let record_value = build_qa_list_record_value(current, &input, actor_login.as_deref())?;
@@ -605,7 +636,7 @@ pub(crate) async fn delete_local_gnosis_qa_list_metadata_record(
             &input.org_login,
             &session_token,
         )?;
-        let record_path = resource_record_path(&repo_path, "qaList", &input.qa_list_id);
+        let record_path = resource_record_path(&repo_path, "qaList", &input.qa_list_id)?;
         delete_local_record(
             &app,
             &repo_path,
@@ -626,7 +657,16 @@ pub(crate) async fn push_local_team_metadata_repo(
     session_token: String,
 ) -> Result<LocalTeamMetadataPushResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_project_management(&app, installation_id)?;
+        // The push publishes commits from all three resource domains, so any one
+        // management capability is enough — a glossary-only manager must still be able
+        // to publish the glossary metadata commits they were allowed to create.
+        ensure_installation_allows_project_management(&app, installation_id)
+            .or_else(|_| ensure_installation_allows_glossary_management(&app, installation_id))
+            .or_else(|_| ensure_installation_allows_qa_list_management(&app, installation_id))
+            .map_err(|_| {
+                "The GitHub App installation does not allow publishing team-metadata changes."
+                    .to_string()
+            })?;
         let repo_path =
             ensure_local_repo_exists(&app, installation_id, &org_login, &session_token)?;
         push_local_metadata_repo(&repo_path, installation_id, &session_token)

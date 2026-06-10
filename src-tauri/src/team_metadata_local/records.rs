@@ -1,12 +1,26 @@
 use super::*;
 
-pub(super) fn list_local_metadata_records<T>(repo_path: &Path, kind: &str) -> Result<Vec<T>, String>
+pub(super) struct TolerantRecordListing<T> {
+    pub(super) records: Vec<T>,
+    /// File stems of record files that could not be read or parsed. A corrupt record
+    /// must not take down the whole listing (or the repair scan, which uses the same
+    /// listing) — callers report these through the non-fatal telemetry event.
+    pub(super) skipped_record_files: Vec<String>,
+}
+
+pub(super) fn list_local_metadata_records<T>(
+    repo_path: &Path,
+    kind: &str,
+) -> Result<TolerantRecordListing<T>, String>
 where
     T: DeserializeOwned,
 {
     let directory_path = resource_directory_path(repo_path, kind);
     if !directory_path.exists() {
-        return Ok(Vec::new());
+        return Ok(TolerantRecordListing {
+            records: Vec::new(),
+            skipped_record_files: Vec::new(),
+        });
     }
 
     let mut file_paths = fs::read_dir(&directory_path)
@@ -22,23 +36,27 @@ where
         .collect::<Vec<_>>();
     file_paths.sort();
 
-    file_paths
-        .into_iter()
-        .map(|path| {
-            let contents = fs::read_to_string(&path).map_err(|error| {
-                format!(
-                    "Could not read the local team-metadata file '{}': {error}",
-                    path.display()
-                )
-            })?;
-            serde_json::from_str::<T>(&contents).map_err(|error| {
-                format!(
-                    "Could not parse the local team-metadata file '{}': {error}",
-                    path.display()
-                )
-            })
-        })
-        .collect()
+    let mut records = Vec::with_capacity(file_paths.len());
+    let mut skipped_record_files = Vec::new();
+    for path in file_paths {
+        let parsed = fs::read_to_string(&path)
+            .ok()
+            .and_then(|contents| serde_json::from_str::<T>(&contents).ok());
+        match parsed {
+            Some(record) => records.push(record),
+            None => skipped_record_files.push(
+                path.file_stem()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or_default()
+                    .to_string(),
+            ),
+        }
+    }
+
+    Ok(TolerantRecordListing {
+        records,
+        skipped_record_files,
+    })
 }
 
 pub(super) fn local_record_has_tombstone(
@@ -51,7 +69,7 @@ pub(super) fn local_record_has_tombstone(
         return Err("Could not determine which team-metadata record to inspect.".to_string());
     }
 
-    let record_path = resource_record_path(repo_path, kind, normalized_resource_id);
+    let record_path = resource_record_path(repo_path, kind, normalized_resource_id)?;
     if !record_path.exists() {
         return Ok(false);
     }
@@ -100,5 +118,44 @@ pub(super) fn read_json_object(path: &Path) -> Result<Option<Map<String, Value>>
             "The local team-metadata file '{}' does not contain a JSON object.",
             path.display()
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    #[test]
+    fn listing_skips_corrupt_record_files_and_reports_them() {
+        let repo_path =
+            std::env::temp_dir().join(format!("gnosis-team-metadata-records-{}", Uuid::now_v7()));
+        let records_dir = resource_directory_path(&repo_path, "project");
+        fs::create_dir_all(&records_dir).expect("create records dir");
+        fs::write(
+            records_dir.join("good.json"),
+            r#"{"id":"good","name":"Project"}"#,
+        )
+        .expect("write good record");
+        fs::write(records_dir.join("torn.json"), r#"{"id":"to"#).expect("write torn record");
+
+        #[derive(serde::Deserialize)]
+        struct TestRecord {
+            id: String,
+        }
+
+        let listing = list_local_metadata_records::<TestRecord>(&repo_path, "project")
+            .expect("listing should tolerate the corrupt record");
+        assert_eq!(
+            listing
+                .records
+                .iter()
+                .map(|record| record.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["good"]
+        );
+        assert_eq!(listing.skipped_record_files, vec!["torn".to_string()]);
+
+        let _ = fs::remove_dir_all(repo_path);
     }
 }

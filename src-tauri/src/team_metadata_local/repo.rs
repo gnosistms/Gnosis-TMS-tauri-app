@@ -105,8 +105,33 @@ pub(super) fn resource_directory_path(repo_path: &Path, kind: &str) -> PathBuf {
     }
 }
 
-pub(super) fn resource_record_path(repo_path: &Path, kind: &str, resource_id: &str) -> PathBuf {
-    resource_directory_path(repo_path, kind).join(format!("{resource_id}.json"))
+/// Resource ids come straight from IPC input and end up in `Path::join`, `fs::write`,
+/// and `fs::remove_file`. `Path::strip_prefix` is lexical, so a `..` component would
+/// survive the repo-relative check downstream — reject anything outside a plain
+/// single-component file name here.
+fn validated_resource_id(resource_id: &str) -> Result<String, String> {
+    let normalized = resource_id.trim();
+    if normalized.is_empty()
+        || normalized == "."
+        || normalized == ".."
+        || !normalized
+            .chars()
+            .all(|value| value.is_ascii_alphanumeric() || matches!(value, '.' | '_' | '-'))
+    {
+        return Err(format!(
+            "'{normalized}' is not a valid team-metadata resource id."
+        ));
+    }
+    Ok(normalized.to_string())
+}
+
+pub(super) fn resource_record_path(
+    repo_path: &Path,
+    kind: &str,
+    resource_id: &str,
+) -> Result<PathBuf, String> {
+    let resource_id = validated_resource_id(resource_id)?;
+    Ok(resource_directory_path(repo_path, kind).join(format!("{resource_id}.json")))
 }
 
 pub(super) fn build_local_team_metadata_repo_info(
@@ -192,9 +217,49 @@ pub(super) fn pull_local_metadata_repo(
         &["pull", "--ff-only", "origin", &branch_name],
         Some(&git_transport_auth),
     );
-    pull_result
-        .map(|_| ())
-        .map_err(|error| abort_rebase_after_failed_pull(repo_path, error))
+    match pull_result {
+        Ok(_) => Ok(()),
+        Err(error) if git_error_indicates_diverged(&error) => {
+            rebase_diverged_metadata_repo(repo_path, &branch_name, error)
+        }
+        Err(error) => Err(abort_rebase_after_failed_pull(repo_path, error)),
+    }
+}
+
+/// The metadata repo is multi-writer (every manager on the team), so a teammate pushing
+/// in the window between our pull and push leaves this clone diverged — and a
+/// `--ff-only` pull can never recover from that on its own. Records live one file per
+/// resource, so concurrent edits to *different* resources rebase cleanly; only
+/// same-record edits conflict, and then we abort and surface a distinct error.
+fn rebase_diverged_metadata_repo(
+    repo_path: &Path,
+    branch_name: &str,
+    pull_error: String,
+) -> Result<(), String> {
+    // The failed `pull --ff-only` already fetched, so origin/<branch> is current and
+    // the rebase needs no network access.
+    match git_output(
+        repo_path,
+        &["rebase", &format!("origin/{branch_name}")],
+        None,
+    ) {
+        Ok(_) => Ok(()),
+        Err(rebase_error) => Err(abort_rebase_after_failed_pull(
+            repo_path,
+            format!(
+                "The local team-metadata repo has diverged from GitHub and could not be \
+                 rebased automatically: {rebase_error} (fast-forward pull failed first: \
+                 {pull_error})"
+            ),
+        )),
+    }
+}
+
+fn git_error_indicates_diverged(error: &str) -> bool {
+    let normalized = error.trim().to_ascii_lowercase();
+    normalized.contains("not possible to fast-forward")
+        || normalized.contains("diverging branches")
+        || normalized.contains("have diverged")
 }
 
 fn current_branch_name(repo_path: &Path) -> String {
@@ -223,4 +288,59 @@ pub(super) fn push_local_metadata_repo(
         repo_path: repo_path.display().to_string(),
         current_head_oid: read_current_head_oid(repo_path),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resource_record_path_accepts_plain_ids_and_trims() {
+        let repo = Path::new("/repos/team-metadata");
+        let path = resource_record_path(repo, "project", " 0196a7e2-aa11-7def-8000-1234abcd5678 ")
+            .expect("plain id should resolve");
+        assert_eq!(
+            path,
+            repo.join("resources")
+                .join("projects")
+                .join("0196a7e2-aa11-7def-8000-1234abcd5678.json")
+        );
+        assert!(resource_record_path(repo, "glossary", "Glossary_1.v2").is_ok());
+    }
+
+    #[test]
+    fn diverged_pull_errors_are_classified() {
+        assert!(git_error_indicates_diverged(
+            "fatal: Not possible to fast-forward, aborting."
+        ));
+        assert!(git_error_indicates_diverged(
+            "hint: Diverging branches can't be fast-forwarded, you need to either:"
+        ));
+        assert!(!git_error_indicates_diverged(
+            "fatal: unable to access 'https://github.com/org/team-metadata.git/': Could not resolve host"
+        ));
+        assert!(!git_error_indicates_diverged(
+            "fatal: couldn't find remote ref main"
+        ));
+    }
+
+    #[test]
+    fn resource_record_path_rejects_traversal_and_empty_ids() {
+        let repo = Path::new("/repos/team-metadata");
+        for invalid in [
+            "",
+            "   ",
+            ".",
+            "..",
+            "../../manifest",
+            "../../../../etc/target",
+            "nested/record",
+            "nested\\record",
+        ] {
+            assert!(
+                resource_record_path(repo, "project", invalid).is_err(),
+                "id '{invalid}' should be rejected"
+            );
+        }
+    }
 }
