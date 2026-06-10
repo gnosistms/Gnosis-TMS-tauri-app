@@ -30,6 +30,9 @@ const APPLY_DEBUG_LOG_DIR: &str = "logs";
 const APPLY_DEBUG_LOG_FILE: &str = "aligned-translation-apply.log";
 const APPLY_DEBUG_LOG_MAX_BYTES: u64 = 1_000_000;
 const APPLY_PROGRESS_TOTAL: usize = 6;
+// Cached alignment jobs hold the pasted translation and source text, so reclaim abandoned
+// previews after a week and delete a job as soon as it has been applied.
+const ALIGNMENT_JOB_TTL_SECS: u64 = 7 * 24 * 60 * 60;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -297,6 +300,7 @@ pub(crate) fn preflight_aligned_translation_to_gtms_chapter_sync(
     if input.model_id.trim().is_empty() {
         return Err("Select an OpenAI model before adding translation.".to_string());
     }
+    prune_stale_alignment_jobs(app, input.installation_id);
 
     let context = load_alignment_context(
         app,
@@ -579,6 +583,8 @@ pub(crate) fn apply_aligned_translation_to_gtms_chapter_sync(
         ),
     }
     let result = result?;
+    // The alignment is now committed, so drop its cached source/target text.
+    remove_alignment_job_file(&job_path);
     emit_progress(
         app,
         &progress_event(
@@ -1727,7 +1733,7 @@ fn apply_job_to_chapter(
     );
 
     let rows_path = context.chapter_path.join("rows");
-    let mut changed_paths = Vec::new();
+    let mut prepared_writes = Vec::new();
     emit_apply_progress(app, &job.job_id, 3, "Writing row files");
     log_alignment_apply_checkpoint(
         app,
@@ -1736,11 +1742,17 @@ fn apply_job_to_chapter(
         &format!("row_values={}", row_values.len()),
     );
     if !target_exists {
-        write_json_pretty(&context.chapter_json_path, &context.chapter_file)?;
-        changed_paths.push(repo_relative_path(
-            &context.repo_path,
-            &context.chapter_json_path,
-        )?);
+        let updated_text = format!(
+            "{}\n",
+            serde_json::to_string_pretty(&context.chapter_file)
+                .map_err(|error| format!("Could not serialize chapter.json: {error}"))?
+        );
+        prepared_writes.push(PreparedRowFileWrite {
+            relative_path: repo_relative_path(&context.repo_path, &context.chapter_json_path)?,
+            original_text: fs::read_to_string(&context.chapter_json_path).ok(),
+            path: context.chapter_json_path.clone(),
+            updated_text,
+        });
     }
 
     for (row_id, row_value) in row_values {
@@ -1750,63 +1762,53 @@ fn apply_job_to_chapter(
             serde_json::to_string_pretty(&row_value)
                 .map_err(|error| format!("Could not serialize row '{row_id}': {error}"))?
         );
-        let current_text = fs::read_to_string(&row_path).unwrap_or_default();
-        if current_text != next_text {
-            write_text_file(&row_path, &next_text)?;
-            changed_paths.push(repo_relative_path(&context.repo_path, &row_path)?);
+        let original_text = fs::read_to_string(&row_path).ok();
+        if original_text.as_deref() == Some(next_text.as_str()) {
+            continue;
         }
+        prepared_writes.push(PreparedRowFileWrite {
+            relative_path: repo_relative_path(&context.repo_path, &row_path)?,
+            path: row_path,
+            original_text,
+            updated_text: next_text,
+        });
     }
+    let changed = !prepared_writes.is_empty();
     log_alignment_apply_checkpoint(
         app,
         &job.job_id,
-        "apply-job:files-write-complete",
-        &format!("changed_paths={}", changed_paths.len()),
+        "apply-job:files-prepared",
+        &format!("changed_paths={}", prepared_writes.len()),
     );
 
-    if !changed_paths.is_empty() {
-        emit_apply_progress(app, &job.job_id, 4, "Staging aligned translation");
-        log_alignment_apply_checkpoint(
-            app,
-            &job.job_id,
-            "apply-job:git-add-start",
-            &format!("changed_paths={}", changed_paths.len()),
-        );
-        let mut add_args = vec!["add"];
-        for path in &changed_paths {
-            add_args.push(path.as_str());
-        }
-        git_output(&context.repo_path, &add_args)?;
-        log_alignment_apply_checkpoint(
-            app,
-            &job.job_id,
-            "apply-job:git-add-complete",
-            &format!("changed_paths={}", changed_paths.len()),
-        );
+    if changed {
+        // write_row_files_and_commit preflights the write/session gates before the first
+        // write and rolls every file back (restore or remove) if a later step fails, so a
+        // failed commit cannot strand this multi-file apply as a dirty working tree.
         emit_apply_progress(app, &job.job_id, 5, "Saving aligned translation");
         log_alignment_apply_checkpoint(
             app,
             &job.job_id,
-            "apply-job:git-commit-start",
-            &format!("changed_paths={}", changed_paths.len()),
+            "apply-job:write-commit-start",
+            &format!("changed_paths={}", prepared_writes.len()),
         );
-        let commit_paths = changed_paths.iter().map(String::as_str).collect::<Vec<_>>();
-        git_commit_as_signed_in_user_with_metadata(
+        write_row_files_and_commit(
             app,
             &context.repo_path,
             &format!("Add aligned {} translation", job.target_language_code),
-            &commit_paths,
             CommitMetadata {
                 operation: Some("add-aligned-translation"),
                 migration: None,
                 status_note: None,
                 ai_model: Some(job.model_id.as_str()),
             },
+            &prepared_writes,
         )?;
         log_alignment_apply_checkpoint(
             app,
             &job.job_id,
-            "apply-job:git-commit-complete",
-            &format!("changed_paths={}", changed_paths.len()),
+            "apply-job:write-commit-complete",
+            &format!("changed_paths={}", prepared_writes.len()),
         );
     } else {
         emit_apply_progress(app, &job.job_id, 5, "No local changes to save");
@@ -1823,23 +1825,23 @@ fn apply_job_to_chapter(
         "apply-job:rows-reload-complete",
         &format!("refreshed_rows={}", refreshed_rows.len()),
     );
-    let commit_sha = if changed_paths.is_empty() {
-        None
-    } else {
+    let commit_sha = if changed {
         log_alignment_apply_checkpoint(app, &job.job_id, "apply-job:head-read-start", "");
         Some(git_output(
             &context.repo_path,
             &["rev-parse", "--short", "HEAD"],
         )?)
+    } else {
+        None
     };
     log_alignment_apply_checkpoint(
         app,
         &job.job_id,
         "apply-job:complete",
         &format!(
-            "elapsed_ms={} changed_paths={} commit_sha={}",
+            "elapsed_ms={} changed={} commit_sha={}",
             apply_started.elapsed().as_millis(),
-            changed_paths.len(),
+            changed,
             commit_sha.as_deref().unwrap_or("none")
         ),
     );
@@ -2608,11 +2610,68 @@ fn emit_progress(app: &AppHandle, event: &AlignmentProgressEvent) {
     let _ = app.emit(EVENT_NAME, event);
 }
 
+/// Job ids come from IPC input on apply and are joined into a cache path. They are
+/// `hash_json` SHA-256 hex in normal use; validate as a plain single-component token so a
+/// crafted `..`/separator id can never escape the alignment-jobs directory.
+fn validated_alignment_job_id(job_id: &str) -> Result<&str, String> {
+    let normalized = job_id.trim();
+    if normalized.is_empty()
+        || normalized == "."
+        || normalized == ".."
+        || !normalized
+            .chars()
+            .all(|value| value.is_ascii_alphanumeric() || matches!(value, '_' | '-'))
+    {
+        return Err("The alignment job id is not valid.".to_string());
+    }
+    Ok(normalized)
+}
+
 fn job_path(app: &AppHandle, installation_id: i64, job_id: &str) -> Result<PathBuf, String> {
+    let job_id = validated_alignment_job_id(job_id)?;
     let root = installation_data_dir(app, installation_id)?.join("alignment-jobs");
     fs::create_dir_all(&root)
         .map_err(|error| format!("Could not create alignment cache folder: {error}"))?;
     Ok(root.join(format!("{job_id}.json")))
+}
+
+/// Best-effort removal of a consumed/abandoned alignment job so its cached source and
+/// pasted-translation text does not linger on disk.
+fn remove_alignment_job_file(path: &Path) {
+    if let Err(error) = fs::remove_file(path) {
+        if path.exists() && cfg!(debug_assertions) {
+            eprintln!("[gtms alignment-jobs] could not remove job file: {error}");
+        }
+    }
+}
+
+/// Best-effort sweep of alignment jobs older than the TTL. Runs at preflight so abandoned
+/// previews (created but never applied) are reclaimed without a dedicated background task.
+fn prune_stale_alignment_jobs(app: &AppHandle, installation_id: i64) {
+    let Ok(data_dir) = installation_data_dir(app, installation_id) else {
+        return;
+    };
+    let root = data_dir.join("alignment-jobs");
+    let Ok(entries) = fs::read_dir(&root) else {
+        return;
+    };
+    let now = SystemTime::now();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        let aged_out = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|modified| now.duration_since(modified).ok())
+            .map(|age| age.as_secs() > ALIGNMENT_JOB_TTL_SECS)
+            .unwrap_or(false);
+        if aged_out {
+            let _ = fs::remove_file(&path);
+        }
+    }
 }
 
 fn load_cached_job(path: &Path, signature: &Value) -> Result<Option<AlignmentJob>, String> {
@@ -2762,6 +2821,24 @@ mod tests {
         assert_eq!(units[0].text, "one");
         assert_eq!(units[0].original_line_number, 1);
         assert_eq!(units[1].original_line_number, 3);
+    }
+
+    #[test]
+    fn validated_alignment_job_id_accepts_hex_and_rejects_traversal() {
+        assert!(validated_alignment_job_id(
+            "a3f1c8e29b7d4f6018245e9bc0a7d3f1a3f1c8e29b7d4f6018245e9bc0a7d3f1"
+        )
+        .is_ok());
+        assert_eq!(
+            validated_alignment_job_id(" job-1_2 ").as_deref(),
+            Ok("job-1_2")
+        );
+        for invalid in ["", "   ", ".", "..", "../escape", "a/b", "a\\b", "job.json"] {
+            assert!(
+                validated_alignment_job_id(invalid).is_err(),
+                "'{invalid}' should be rejected"
+            );
+        }
     }
 
     #[test]
