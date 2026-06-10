@@ -23,11 +23,44 @@ import {
   createTeamResourceMigrationModalState,
   state,
 } from "./state.js";
+import {
+  loadTeamScopedCacheMap,
+  saveTeamScopedCacheMap,
+  teamCacheKey,
+} from "./team-cache.js";
 
 export const TEAM_REPO_LAYOUT_MIGRATION_TARGET_VERSION = "0.8.10";
 
+const MIGRATION_VERDICT_STORAGE_KEY = "gnosis-tms-team-migration-clean-verdict";
+
 const activeTeamMigrationPromises = new Map();
 let nextMigrationModalToken = 1;
+
+// The migration scan re-lists every resource from the broker, which is far too slow to
+// repeat on every refresh. Once a team scans clean for the current target version the
+// verdict is persisted and the scan skipped; a new target version (an app update that
+// introduces another migration) uses a different key and triggers a fresh scan.
+function hasStoredCleanMigrationVerdict(team) {
+  const cacheKey = teamCacheKey(team);
+  if (!cacheKey) {
+    return false;
+  }
+  const verdicts = loadTeamScopedCacheMap(MIGRATION_VERDICT_STORAGE_KEY);
+  return verdicts[cacheKey]?.targetVersion === TEAM_REPO_LAYOUT_MIGRATION_TARGET_VERSION;
+}
+
+function storeCleanMigrationVerdict(team) {
+  const cacheKey = teamCacheKey(team);
+  if (!cacheKey) {
+    return;
+  }
+  const verdicts = loadTeamScopedCacheMap(MIGRATION_VERDICT_STORAGE_KEY);
+  verdicts[cacheKey] = {
+    targetVersion: TEAM_REPO_LAYOUT_MIGRATION_TARGET_VERSION,
+    completedAt: new Date().toISOString(),
+  };
+  saveTeamScopedCacheMap(MIGRATION_VERDICT_STORAGE_KEY, verdicts);
+}
 
 function normalizedText(value) {
   return typeof value === "string" && value.trim() ? value.trim() : "";
@@ -344,6 +377,10 @@ async function runTeamResourceMigrationSyncInternal(render, team, options = {}) 
     return false;
   }
 
+  if (hasStoredCleanMigrationVerdict(team)) {
+    return false;
+  }
+
   let resources;
   let pendingScan;
   try {
@@ -358,6 +395,7 @@ async function runTeamResourceMigrationSyncInternal(render, team, options = {}) 
     ? pendingScan.migrations.filter(isActionableMigrationItem)
     : [];
   if (!Array.isArray(pending) || pending.length === 0) {
+    storeCleanMigrationVerdict(team);
     return false;
   }
 
@@ -379,6 +417,7 @@ async function runTeamResourceMigrationSyncInternal(render, team, options = {}) 
         ? currentPendingScan.migrations.filter(isActionableMigrationItem)
         : [];
       if (currentPending.length === 0) {
+        storeCleanMigrationVerdict(team);
         return true;
       }
 
