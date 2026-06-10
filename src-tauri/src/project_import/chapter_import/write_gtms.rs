@@ -110,18 +110,27 @@ pub(super) fn write_parsed_workbook_chapter(
 
         ensure_gitattributes(&repo_path.join(".gitattributes"))?;
 
-        let chapter_file =
+        let mut chapter_file =
             build_chapter_file(&parsed, &chapter_id, &chapter_slug, default_glossary);
-        write_json_pretty(&chapter_path.join("chapter.json"), &chapter_file)?;
-
-        let unit_count = write_row_files(&parsed, &repo_path, &rows_path, &chapter_slug)?;
-
-        let relative_chapter_path = repo_relative_path(repo_path, &chapter_path)?;
         let word_counts = build_word_counts_from_import(&parsed);
         let selected_source_language_code = parsed
             .languages
             .first()
             .map(|language| language.code.clone());
+        // Seed the projects-page word-count cache at creation. Only the source language has a
+        // "source word count"; the summary reads this instead of re-reading every row.
+        chapter_file.source_word_count = Some(
+            selected_source_language_code
+                .as_deref()
+                .and_then(|code| word_counts.get(code))
+                .copied()
+                .unwrap_or(0),
+        );
+        write_json_pretty(&chapter_path.join("chapter.json"), &chapter_file)?;
+
+        let unit_count = write_row_files(&parsed, &repo_path, &rows_path, &chapter_slug)?;
+
+        let relative_chapter_path = repo_relative_path(repo_path, &chapter_path)?;
         let selected_target_language_code = chapter_file.settings.default_target_language.clone();
 
         Ok(WrittenImport {
@@ -295,6 +304,8 @@ pub(super) fn build_chapter_file(
                 None
             },
         },
+        // Populated by the caller after word counts are computed (see import_xlsx_into_repo).
+        source_word_count: None,
     }
 }
 

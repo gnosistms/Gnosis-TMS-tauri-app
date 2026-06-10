@@ -1302,6 +1302,7 @@ mod tests {
                 base_code: None,
             }],
             settings: None,
+            source_word_count: None,
         };
         let document = build_export_document(
             Path::new("/repo"),

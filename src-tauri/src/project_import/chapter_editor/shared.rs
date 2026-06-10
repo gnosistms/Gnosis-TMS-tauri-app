@@ -31,6 +31,58 @@ pub(super) fn load_editor_rows(rows_path: &Path) -> Result<Vec<StoredRowFile>, S
     Ok(rows)
 }
 
+/// Best-effort: refresh the cached `source_word_count` in a chapter's `chapter.json` and commit it,
+/// but only when the value actually changed — so opening or saving an unchanged chapter does not
+/// churn git history. The cache is a projects-page read optimization, so any failure (most notably a
+/// viewer without write access) is swallowed; the summary simply falls back to recomputing the count
+/// from rows. Call this where the source word count is already known for free (e.g. editor load).
+pub(super) fn refresh_cached_chapter_source_word_count(
+    app: &AppHandle,
+    repo_path: &Path,
+    chapter_json_path: &Path,
+    cached_source_word_count: Option<usize>,
+    source_word_count: usize,
+) {
+    if cached_source_word_count == Some(source_word_count) {
+        return;
+    }
+    if let Err(error) =
+        persist_chapter_source_word_count(app, repo_path, chapter_json_path, source_word_count)
+    {
+        if cfg!(debug_assertions) {
+            eprintln!("[gtms word-count cache] skipped persisting source word count: {error}");
+        }
+    }
+}
+
+fn persist_chapter_source_word_count(
+    app: &AppHandle,
+    repo_path: &Path,
+    chapter_json_path: &Path,
+    source_word_count: usize,
+) -> Result<(), String> {
+    // Read as a Value so unknown chapter.json keys round-trip untouched.
+    let mut value: serde_json::Value = read_json_file(chapter_json_path, "chapter.json")?;
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| "chapter.json is not a JSON object".to_string())?;
+    object.insert(
+        "source_word_count".to_string(),
+        serde_json::json!(source_word_count),
+    );
+    write_json_pretty(chapter_json_path, &value)?;
+
+    let relative_chapter_json = repo_relative_path(repo_path, chapter_json_path)?;
+    git_output(repo_path, &["add", &relative_chapter_json])?;
+    crate::git_commit::git_commit_as_signed_in_user(
+        app,
+        repo_path,
+        "Update cached source word count",
+        &[&relative_chapter_json],
+    )?;
+    Ok(())
+}
+
 pub(super) fn load_project_chapter_summaries(
     repo_path: &Path,
 ) -> Result<Vec<ProjectChapterSummary>, String> {

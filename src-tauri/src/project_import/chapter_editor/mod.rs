@@ -101,6 +101,7 @@ use self::shared::{
     clear_editor_html_preview_cache, current_repo_head_sha, editor_row_from_stored_row_file,
     editor_row_from_stored_row_file_with_update, ensure_editor_field_object_defaults,
     load_editor_rows, load_project_chapter_summaries, load_word_counts,
+    refresh_cached_chapter_source_word_count,
     normalize_editor_footnote_value, normalize_editor_image_caption_value,
     normalize_editor_text_style_value, row_fields_object_mut, row_footnote_map,
     row_image_caption_map, row_object_mut, row_plain_text_map, row_text_style,
@@ -937,6 +938,7 @@ pub(super) fn load_gtms_chapter_editor_data_sync(
     let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
     let chapter_file: StoredChapterFile =
         read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
+    let cached_source_word_count = chapter_file.source_word_count;
     let rows = load_editor_rows(&chapter_path.join("rows"))?;
     let languages = sanitize_chapter_languages(&chapter_file.languages);
     let word_counts = build_word_counts_from_stored_rows(&rows, &languages);
@@ -959,6 +961,22 @@ pub(super) fn load_gtms_chapter_editor_data_sync(
         &chapter_file,
         &languages,
         selected_source_language_code.as_deref(),
+    );
+
+    // Backfill / refresh the projects-page word-count cache now that the rows have been read for the
+    // editor (so the count is free here). Best-effort and only-if-changed; a viewer without write
+    // access is a no-op. The projects summary reads this instead of re-reading every row per refresh.
+    let current_source_word_count = selected_source_language_code
+        .as_deref()
+        .and_then(|code| word_counts.get(code))
+        .copied()
+        .unwrap_or(0);
+    refresh_cached_chapter_source_word_count(
+        app,
+        &repo_path,
+        &chapter_path.join("chapter.json"),
+        cached_source_word_count,
+        current_source_word_count,
     );
 
     Ok(LoadChapterEditorResponse {
@@ -1537,6 +1555,7 @@ mod tests {
             source_files: Vec::new(),
             languages: Vec::new(),
             settings: None,
+            source_word_count: None,
         };
         let row_value = create_inserted_row_file("row-1", "0001", &chapter, &[]);
 
@@ -1588,6 +1607,7 @@ mod tests {
                 default_target_language: Some("en".to_string()),
                 workflow_status: None,
             }),
+            source_word_count: None,
         };
 
         let selected_target = preferred_target_language_code(&chapter, &languages, Some("es"));

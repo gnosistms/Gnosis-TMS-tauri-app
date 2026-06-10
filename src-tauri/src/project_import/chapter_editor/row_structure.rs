@@ -443,6 +443,7 @@ pub(super) fn create_inserted_editor_row(
                     source_files: Vec::new(),
                     languages: languages.to_vec(),
                     settings: None,
+                    source_word_count: None,
                 },
                 languages,
             ))
