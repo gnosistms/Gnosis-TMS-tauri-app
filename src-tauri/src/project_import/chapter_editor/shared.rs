@@ -31,6 +31,74 @@ pub(super) fn load_editor_rows(rows_path: &Path) -> Result<Vec<StoredRowFile>, S
     Ok(rows)
 }
 
+/// Best-effort: refresh the cached `source_word_count` in a chapter's `chapter.json` and commit it,
+/// but only when the value actually changed — so opening or saving an unchanged chapter does not
+/// churn git history. The cache is a projects-page read optimization, so any failure (most notably a
+/// viewer without write access) is swallowed; the summary simply falls back to recomputing the count
+/// from rows. Call this where the source word count is already known for free (e.g. editor load).
+pub(super) fn refresh_cached_chapter_source_word_count(
+    app: &AppHandle,
+    repo_path: &Path,
+    chapter_json_path: &Path,
+    cached_source_word_count: Option<usize>,
+    source_word_count: usize,
+) {
+    if cached_source_word_count == Some(source_word_count) {
+        return;
+    }
+    if let Err(error) =
+        persist_chapter_source_word_count(app, repo_path, chapter_json_path, source_word_count)
+    {
+        if cfg!(debug_assertions) {
+            eprintln!("[gtms word-count cache] skipped persisting source word count: {error}");
+        }
+    }
+}
+
+fn persist_chapter_source_word_count(
+    app: &AppHandle,
+    repo_path: &Path,
+    chapter_json_path: &Path,
+    source_word_count: usize,
+) -> Result<(), String> {
+    // This runs from a read path (editor load), so it must not be able to leave the repo dirty:
+    // the commit helper commits everything staged (no pathspec), and a leftover modified/staged
+    // chapter.json would be swept into the next unrelated commit or break a later pull. Check the
+    // commit preconditions before touching the file, and roll back if the commit still fails.
+    crate::installation_access::ensure_repo_allows_writes(app, repo_path)?;
+
+    let original_text = fs::read_to_string(chapter_json_path)
+        .map_err(|error| format!("Could not read chapter.json: {error}"))?;
+    // Edit as a Value so unknown chapter.json keys round-trip untouched.
+    let mut value: serde_json::Value = serde_json::from_str(&original_text)
+        .map_err(|error| format!("Could not parse chapter.json: {error}"))?;
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| "chapter.json is not a JSON object".to_string())?;
+    object.insert(
+        "source_word_count".to_string(),
+        serde_json::json!(source_word_count),
+    );
+    write_json_pretty(chapter_json_path, &value)?;
+
+    let relative_chapter_json = repo_relative_path(repo_path, chapter_json_path)?;
+    let commit_result = git_output(repo_path, &["add", &relative_chapter_json]).and_then(|_| {
+        crate::git_commit::git_commit_as_signed_in_user(
+            app,
+            repo_path,
+            "Update cached source word count",
+            &[&relative_chapter_json],
+        )
+        .map(|_| ())
+    });
+    if let Err(error) = commit_result {
+        let _ = fs::write(chapter_json_path, &original_text);
+        let _ = git_output(repo_path, &["reset", "-q", "--", &relative_chapter_json]);
+        return Err(error);
+    }
+    Ok(())
+}
+
 pub(super) fn load_project_chapter_summaries(
     repo_path: &Path,
 ) -> Result<Vec<ProjectChapterSummary>, String> {
@@ -66,10 +134,21 @@ pub(super) fn load_project_chapter_summaries(
 
         let chapter_file: StoredChapterFile = read_json_file(&chapter_json_path, "chapter.json")?;
         let languages = sanitize_chapter_languages(&chapter_file.languages);
-        let rows = load_editor_rows(&path.join("rows"))?;
-        let word_counts = build_word_counts_from_stored_rows(&rows, &languages);
         let selected_source_language_code =
             preferred_source_language_code(&chapter_file, &languages);
+        // Use the cached source-language word count when present so the projects-page file list does
+        // not have to read every row of every chapter. Legacy chapters (no cached value) fall back to
+        // computing from rows; the editor-load path then backfills and persists the cache.
+        let word_counts = match chapter_file.source_word_count {
+            Some(count) => match selected_source_language_code.as_deref() {
+                Some(code) => BTreeMap::from([(code.to_string(), count)]),
+                None => BTreeMap::new(),
+            },
+            None => {
+                let rows = load_editor_rows(&path.join("rows"))?;
+                build_word_counts_from_stored_rows(&rows, &languages)
+            }
+        };
         let selected_target_language_code = preferred_target_language_code(
             &chapter_file,
             &languages,

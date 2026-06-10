@@ -365,6 +365,13 @@ pub(crate) fn resolve_chapter_json_git_conflict_from_stage_texts(
         ),
     )?;
 
+    // source_word_count is derived from the rows, which merge separately. Drop any cached value from
+    // the merged chapter so the next editor load recomputes it from the merged rows instead of
+    // carrying a stale count (or a wrong side's count) across the merge.
+    if let Some(merged_object) = merged_value.as_object_mut() {
+        merged_object.remove("source_word_count");
+    }
+
     serialize_json_with_trailing_newline(path, &merged_value)
 }
 
@@ -1066,6 +1073,9 @@ fn strip_supported_chapter_merge_keys(value: &mut Value) -> Result<(), String> {
     };
 
     chapter_object.remove("title");
+    // Derived from the rows, not a user edit: never let a source_word_count-only local change be
+    // treated as an unsupported conflict. The merged chapter drops it so it is recomputed on load.
+    chapter_object.remove("source_word_count");
 
     if let Some(lifecycle_object) = chapter_object
         .get_mut("lifecycle")
@@ -1614,5 +1624,54 @@ mod tests {
         let merged_value: Value =
             serde_json::from_str(&merged).expect("merged chapter should parse");
         assert_eq!(merged_value["settings"]["workflow_status"], json!("publish"));
+    }
+
+    #[test]
+    fn chapter_conflicts_drop_cached_source_word_count_for_recompute() {
+        // source_word_count is derived data: a divergence in it must never block the merge, and the
+        // merged chapter must omit it so the next editor load recomputes it from the merged rows.
+        let merged = resolve_chapter_json_git_conflict_from_stage_texts(
+            "chapters/ch-1/chapter.json",
+            Some(
+                r#"{
+  "chapter_id": "chapter-1",
+  "title": "Chapter",
+  "lifecycle": { "state": "active" },
+  "languages": [],
+  "source_files": [],
+  "settings": { "workflow_status": "none" },
+  "source_word_count": 100
+}"#,
+            ),
+            Some(
+                r#"{
+  "chapter_id": "chapter-1",
+  "title": "Chapter",
+  "lifecycle": { "state": "active" },
+  "languages": [],
+  "source_files": [],
+  "settings": { "workflow_status": "none" },
+  "source_word_count": 200
+}"#,
+            ),
+            Some(
+                r#"{
+  "chapter_id": "chapter-1",
+  "title": "Chapter",
+  "lifecycle": { "state": "active" },
+  "languages": [],
+  "source_files": [],
+  "settings": { "workflow_status": "none" },
+  "source_word_count": 150
+}"#,
+            ),
+        )
+        .expect("source_word_count divergence should resolve, not block");
+        let merged_value: Value =
+            serde_json::from_str(&merged).expect("merged chapter should parse");
+        assert!(
+            merged_value.get("source_word_count").is_none(),
+            "merged chapter should drop the cached source_word_count so it is recomputed"
+        );
     }
 }

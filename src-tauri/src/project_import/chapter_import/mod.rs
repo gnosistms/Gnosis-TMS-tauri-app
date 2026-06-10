@@ -239,6 +239,11 @@ struct ChapterFile {
     languages: Vec<ChapterLanguage>,
     #[serde(default)]
     settings: ChapterSettings,
+    // Cached source-language word count for the projects-page file list (set at import so new
+    // chapters are fast without a backfill read). Kept in sync on editor load; derived data the
+    // chapter-merge resolver ignores. See chapter_editor/shared.rs and git_conflicts.rs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_word_count: Option<usize>,
 }
 
 #[derive(Serialize, Deserialize)]
