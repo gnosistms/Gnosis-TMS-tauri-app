@@ -26,7 +26,11 @@ fn encode_broker_path_segment(segment: &str) -> String {
     url::form_urlencoded::byte_serialize(segment.as_bytes()).collect()
 }
 
-fn report_backend_nonfatal_error(app: &AppHandle, operation: &'static str, reason: &'static str) {
+pub(crate) fn report_backend_nonfatal_error(
+    app: &AppHandle,
+    operation: &'static str,
+    reason: &'static str,
+) {
     let _ = app.emit(
         BACKEND_NONFATAL_TELEMETRY_EVENT,
         BackendNonfatalTelemetryEvent { operation, reason },
