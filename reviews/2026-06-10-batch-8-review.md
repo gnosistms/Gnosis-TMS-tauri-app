@@ -2,7 +2,8 @@
 <!-- vt.idd:local-review:batch-8 -->
 
 **Date**: 2026-06-10
-**Status**: Complete. Findings reported; fixes not yet applied.
+**Status**: Complete. All five findings resolved on `fix/batch-8-review-findings`
+(see `plans/batch-8-review-fixes-plan.md`).
 **Scope**: local team-metadata repo management — the metadata-first mutation lifecycle,
 record building, repair/tombstone resolution, and the metadata repo's own git lifecycle
 **Files**:
@@ -225,11 +226,11 @@ defense-in-depth (transport-token auth is the real boundary), so severity is min
 
 | Finding | Status | Notes |
 |---|---|---|
-| S1 | Open | Central id validation in `resource_record_path` |
-| M1 | Open | Tolerant listing + telemetry event + repair-issue surfacing |
-| M2 | Open | Rebase-based divergence recovery + surface push conflicts |
-| m1 | Open | `util::atomic_replace` in `upsert_local_record` |
-| m2 | Open | Domain-agnostic gate for the metadata push |
+| S1 | Resolved | `resource_record_path` validates ids against a single-component allowlist and returns `Result`; traversal regression tests added. |
+| M1 | Resolved | Tolerant listing (`TolerantRecordListing`) skips corrupt record files; skips reported via the existing `backend-nonfatal-telemetry` event (`team-metadata.records.list` / `record_parse_failed`). |
+| M2 | Resolved | Diverged `--ff-only` pulls retry with a local `git rebase origin/<branch>` (verified against a scratch diverged-clone setup); rebase conflicts abort with a distinct error. Frontend reports swallowed push/sync failures through `telemetry.js`. A visible "metadata out of sync" UI indicator was deferred — with rebase recovery the wedge self-heals on the next pull. |
+| m1 | Resolved | `upsert_local_record` writes through the shared atomic `write_text_file` helper. |
+| m2 | Resolved | Push accepts any of the three management capabilities with one clear all-denied message. |
 
 ---
 
