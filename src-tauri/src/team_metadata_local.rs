@@ -657,7 +657,16 @@ pub(crate) async fn push_local_team_metadata_repo(
     session_token: String,
 ) -> Result<LocalTeamMetadataPushResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_project_management(&app, installation_id)?;
+        // The push publishes commits from all three resource domains, so any one
+        // management capability is enough — a glossary-only manager must still be able
+        // to publish the glossary metadata commits they were allowed to create.
+        ensure_installation_allows_project_management(&app, installation_id)
+            .or_else(|_| ensure_installation_allows_glossary_management(&app, installation_id))
+            .or_else(|_| ensure_installation_allows_qa_list_management(&app, installation_id))
+            .map_err(|_| {
+                "The GitHub App installation does not allow publishing team-metadata changes."
+                    .to_string()
+            })?;
         let repo_path =
             ensure_local_repo_exists(&app, installation_id, &org_login, &session_token)?;
         push_local_metadata_repo(&repo_path, installation_id, &session_token)
