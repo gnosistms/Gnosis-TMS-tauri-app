@@ -5,6 +5,20 @@ use super::images::{
 };
 use super::*;
 
+/// Commit shas come straight from IPC input and are spliced into git revision
+/// arguments (`show`, `rev-parse`, `log <sha>..HEAD`). Require a plain hex object id
+/// so a `-`-leading or otherwise crafted value can never be parsed as a git option.
+fn validated_commit_sha(commit_sha: &str) -> Result<String, String> {
+    let normalized = commit_sha.trim();
+    if normalized.len() < 7
+        || normalized.len() > 64
+        || !normalized.chars().all(|value| value.is_ascii_hexdigit())
+    {
+        return Err("The selected history commit id is not valid.".to_string());
+    }
+    Ok(normalized.to_string())
+}
+
 pub(crate) fn load_gtms_editor_field_history_sync(
     app: &AppHandle,
     input: LoadEditorFieldHistoryInput,
@@ -57,6 +71,7 @@ pub(crate) fn restore_gtms_editor_field_from_history_sync(
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
+    let commit_sha = validated_commit_sha(&input.commit_sha)?;
     let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
     let chapter_file: StoredChapterFile =
         read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
@@ -72,7 +87,7 @@ pub(crate) fn restore_gtms_editor_field_from_history_sync(
     let historical_field_value = load_historical_row_field_value(
         &repo_path,
         &relative_row_json,
-        &input.commit_sha,
+        &commit_sha,
         &input.language_code,
     )?
     .ok_or_else(|| {
@@ -190,8 +205,7 @@ pub(crate) fn restore_gtms_editor_field_from_history_sync(
     push_repo_file_snapshot(&mut rollback_snapshots, &repo_path, &relative_row_json)?;
 
     if let Some(relative_path) = historical_uploaded_path.as_deref() {
-        let historical_bytes =
-            load_historical_blob_bytes(&repo_path, &input.commit_sha, relative_path)?;
+        let historical_bytes = load_historical_blob_bytes(&repo_path, &commit_sha, relative_path)?;
         let absolute_path = repo_path.join(relative_path);
         if !file_bytes_equal(&absolute_path, &historical_bytes) {
             push_repo_file_snapshot(&mut rollback_snapshots, &repo_path, relative_path)?;
@@ -226,7 +240,7 @@ pub(crate) fn restore_gtms_editor_field_from_history_sync(
             &updated_row_file,
             &languages,
         );
-        let short_commit = short_commit_sha(&input.commit_sha);
+        let short_commit = short_commit_sha(&commit_sha);
         with_repo_file_rollback(&repo_path, &rollback_snapshots, || {
             if let Some((relative_path, historical_bytes)) = historical_asset_update.as_ref() {
                 let absolute_path = repo_path.join(relative_path);
@@ -312,25 +326,24 @@ pub(crate) fn reverse_gtms_editor_batch_replace_commit_sync(
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
+    let commit_sha = validated_commit_sha(&input.commit_sha)?;
     let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
     let chapter_file: StoredChapterFile =
         read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
     let languages = sanitize_chapter_languages(&chapter_file.languages);
-    let selected_operation = load_git_commit_operation_type(&repo_path, &input.commit_sha)?;
+    let selected_operation = load_git_commit_operation_type(&repo_path, &commit_sha)?;
     if selected_operation.as_deref() != Some("editor-replace") {
         return Err("Only batch replace commits can be undone from history.".to_string());
     }
 
-    let parent_commit_sha = git_output(
-        &repo_path,
-        &["rev-parse", &format!("{}^", input.commit_sha)],
-    )
-    .map_err(|_| {
-        "The selected batch replace commit does not have a previous version to restore.".to_string()
-    })?;
+    let parent_commit_sha = git_output(&repo_path, &["rev-parse", &format!("{commit_sha}^")])
+        .map_err(|_| {
+            "The selected batch replace commit does not have a previous version to restore."
+                .to_string()
+        })?;
     let relative_chapter_path = repo_relative_path(&repo_path, &chapter_path)?;
     let relative_row_paths =
-        load_commit_row_paths_for_chapter(&repo_path, &input.commit_sha, &relative_chapter_path)?;
+        load_commit_row_paths_for_chapter(&repo_path, &commit_sha, &relative_chapter_path)?;
     if relative_row_paths.is_empty() {
         return Err(
             "The selected batch replace commit does not contain any rows in this file.".to_string(),
@@ -348,7 +361,7 @@ pub(crate) fn reverse_gtms_editor_batch_replace_commit_sync(
                 relative_row_path
             )
         })?;
-        if commit_has_later_changes_for_path(&repo_path, &input.commit_sha, &relative_row_path)? {
+        if commit_has_later_changes_for_path(&repo_path, &commit_sha, &relative_row_path)? {
             skipped_row_ids.push(row_id);
             continue;
         }
@@ -1038,6 +1051,38 @@ mod tests {
         HistoricalFieldVersion {
             field_value: history_field(plain_text, reviewed, please_check),
             text_style: text_style.to_string(),
+        }
+    }
+
+    #[test]
+    fn validated_commit_sha_accepts_short_and_full_hex_ids_and_trims() {
+        assert_eq!(
+            validated_commit_sha(" 8aadf21d ").as_deref(),
+            Ok("8aadf21d")
+        );
+        assert!(validated_commit_sha("8aadf21").is_ok());
+        assert!(validated_commit_sha(
+            "8aadf21d8aadf21d8aadf21d8aadf21d8aadf21d8aadf21d8aadf21d8aadf21d"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn validated_commit_sha_rejects_option_looking_and_non_hex_values() {
+        for invalid in [
+            "",
+            "8aadf2",
+            "--output=/tmp/x",
+            "-S8aadf21d",
+            "HEAD",
+            "main..HEAD",
+            "8aadf21z",
+            "8aadf21d8aadf21d8aadf21d8aadf21d8aadf21d8aadf21d8aadf21d8aadf21d0",
+        ] {
+            assert!(
+                validated_commit_sha(invalid).is_err(),
+                "'{invalid}' should be rejected"
+            );
         }
     }
 
