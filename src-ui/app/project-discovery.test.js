@@ -683,6 +683,23 @@ test("project loading clears stale missing-local-repo repair after repo sync clo
   assert.equal(state.projects[0].chapters.length, 1);
 });
 
+test("an expired session during the remote phase routes to the sign-in screen", async () => {
+  setupProjectDiscoveryFlowTest();
+  // Local data exists, so the local-first tolerance would normally swallow the broker
+  // failure — auth death must escalate instead of degrading silently.
+  installProjectDiscoveryInvokeMock({
+    remoteProjectsPromise: Promise.reject(
+      new Error("AUTH_REQUIRED:Your GitHub session expired. Please log in with GitHub again to continue."),
+    ),
+  });
+
+  await loadProjectSnapshotForTeam(() => {}, "team-1", projectDiscoveryOptions());
+
+  assert.equal(state.screen, "start");
+  assert.equal(state.auth.status, "expired");
+  assert.equal(state.auth.session, null);
+});
+
 test("project loading stays loading when local metadata is empty and remote is pending", async () => {
   setupProjectDiscoveryFlowTest();
   const remoteProjects = deferred();
