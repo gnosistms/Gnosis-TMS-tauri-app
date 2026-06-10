@@ -121,7 +121,7 @@ pub(super) fn load_gtms_editor_row_comments_sync(
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
-    let row_json_path = resolve_row_json_path(&repo_path, &input.chapter_id, &input.row_id)?;
+    let row_json_path = resolve_row_json_path(app, &repo_path, &input.chapter_id, &input.row_id)?;
     let row_file: StoredEditorCommentsRowFile = read_json_file(&row_json_path, "row file")?;
 
     Ok(build_load_editor_row_comments_response(
@@ -149,7 +149,7 @@ pub(super) fn save_gtms_editor_row_comment_sync(
         return Err("Enter a comment before saving.".to_string());
     }
 
-    let row_json_path = resolve_row_json_path(&repo_path, &input.chapter_id, &input.row_id)?;
+    let row_json_path = resolve_row_json_path(app, &repo_path, &input.chapter_id, &input.row_id)?;
     let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
         format!(
             "Could not read row file '{}': {error}",
@@ -229,7 +229,7 @@ pub(super) fn delete_gtms_editor_row_comment_sync(
         return Err("Could not determine which comment to delete.".to_string());
     }
 
-    let row_json_path = resolve_row_json_path(&repo_path, &input.chapter_id, &input.row_id)?;
+    let row_json_path = resolve_row_json_path(app, &repo_path, &input.chapter_id, &input.row_id)?;
     let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
         format!(
             "Could not read row file '{}': {error}",
@@ -285,11 +285,12 @@ pub(super) fn delete_gtms_editor_row_comment_sync(
 }
 
 fn resolve_row_json_path(
+    app: &AppHandle,
     repo_path: &std::path::Path,
     chapter_id: &str,
     row_id: &str,
 ) -> Result<std::path::PathBuf, String> {
-    let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), chapter_id)?;
+    let chapter_path = find_chapter_path_by_id(app, &repo_path.join("chapters"), chapter_id)?;
     validated_row_json_path(&chapter_path, row_id)
 }
 

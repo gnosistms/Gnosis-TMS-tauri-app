@@ -10,7 +10,7 @@ use crate::project_repo_paths::resolve_project_git_repo_path;
 use super::chapter_editor::commit_chapter_json_update;
 use super::project_git::{
     ensure_repo_exists, ensure_valid_git_repo, find_chapter_path_by_id, git_output, read_json_file,
-    repo_relative_path,
+    repo_relative_path, try_find_chapter_path_by_id,
 };
 
 #[derive(Deserialize)]
@@ -64,6 +64,10 @@ pub(crate) struct ClearDeletedChaptersResponse {
 struct ClearDeletedChaptersChanges {
     chapter_ids: Vec<String>,
     relative_paths: Vec<String>,
+    /// chapter.json files that could not be read or parsed. Their folders are left
+    /// untouched (never delete what cannot be inspected); the caller reports them
+    /// through the non-fatal telemetry event.
+    skipped_chapter_files: usize,
 }
 
 fn chapter_lifecycle_state(chapter_value: &Value) -> &str {
@@ -102,6 +106,7 @@ fn clear_deleted_chapters_in_repo(repo_path: &Path) -> Result<ClearDeletedChapte
         return Ok(ClearDeletedChaptersChanges {
             chapter_ids: Vec::new(),
             relative_paths: Vec::new(),
+            skipped_chapter_files: 0,
         });
     }
 
@@ -112,6 +117,7 @@ fn clear_deleted_chapters_in_repo(repo_path: &Path) -> Result<ClearDeletedChapte
         )
     })?;
     let mut deleted_chapters = Vec::new();
+    let mut skipped_chapter_files = 0usize;
 
     for entry in entries {
         let entry =
@@ -126,7 +132,10 @@ fn clear_deleted_chapters_in_repo(repo_path: &Path) -> Result<ClearDeletedChapte
             continue;
         }
 
-        let chapter_value: Value = read_json_file(&chapter_json_path, "chapter.json")?;
+        let Ok(chapter_value) = read_json_file::<Value>(&chapter_json_path, "chapter.json") else {
+            skipped_chapter_files += 1;
+            continue;
+        };
         if chapter_lifecycle_state(&chapter_value) != "deleted" {
             continue;
         }
@@ -186,6 +195,7 @@ fn clear_deleted_chapters_in_repo(repo_path: &Path) -> Result<ClearDeletedChapte
     Ok(ClearDeletedChaptersChanges {
         chapter_ids,
         relative_paths,
+        skipped_chapter_files,
     })
 }
 
@@ -207,7 +217,8 @@ pub(super) fn rename_gtms_chapter_sync(
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
-    let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+    let chapter_path =
+        find_chapter_path_by_id(app, &repo_path.join("chapters"), &input.chapter_id)?;
     let chapter_json_path = chapter_path.join("chapter.json");
     let mut chapter_value: Value = read_json_file(&chapter_json_path, "chapter.json")?;
     let chapter_object = chapter_value
@@ -256,7 +267,8 @@ pub(super) fn update_gtms_chapter_lifecycle_sync(
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
-    let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+    let chapter_path =
+        find_chapter_path_by_id(app, &repo_path.join("chapters"), &input.chapter_id)?;
     let chapter_json_path = chapter_path.join("chapter.json");
 
     let mut chapter_value: Value = read_json_file(&chapter_json_path, "chapter.json")?;
@@ -315,22 +327,14 @@ pub(super) fn permanently_delete_gtms_chapter_sync(
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
-    let chapter_path = match find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)
-    {
-        Ok(path) => path,
-        Err(error)
-            if error
-                == format!(
-                    "Could not find chapter '{}' in the local project repo.",
-                    input.chapter_id
-                ) =>
-        {
-            return Ok(UpdateChapterLifecycleResponse {
-                chapter_id: input.chapter_id,
-                lifecycle_state: "deleted".to_string(),
-            });
-        }
-        Err(error) => return Err(error),
+    // A chapter that is already gone makes the permanent delete a no-op success.
+    let Some(chapter_path) =
+        try_find_chapter_path_by_id(app, &repo_path.join("chapters"), &input.chapter_id)?
+    else {
+        return Ok(UpdateChapterLifecycleResponse {
+            chapter_id: input.chapter_id,
+            lifecycle_state: "deleted".to_string(),
+        });
     };
     let chapter_json_path = chapter_path.join("chapter.json");
     let chapter_value: Value = read_json_file(&chapter_json_path, "chapter.json")?;
@@ -403,6 +407,13 @@ pub(super) fn clear_deleted_gtms_chapters_sync(
     ensure_local_commit_preconditions(app, &repo_path)?;
 
     let changes = clear_deleted_chapters_in_repo(&repo_path)?;
+    if changes.skipped_chapter_files > 0 {
+        crate::github::report_backend_nonfatal_error(
+            app,
+            "project-import.chapter-scan",
+            "chapter_json_read_failed",
+        );
+    }
     if !changes.relative_paths.is_empty() {
         let relative_paths = changes
             .relative_paths
@@ -493,6 +504,7 @@ mod tests {
                     "chapters/deleted-one".to_string(),
                     "chapters/deleted-two".to_string(),
                 ],
+                skipped_chapter_files: 0,
             }
         );
         assert!(repo_path.join("chapters/active/chapter.json").exists());
@@ -501,6 +513,33 @@ mod tests {
 
         git_output(&repo_path, &["commit", "-m", "Clear deleted files"])?;
         assert_eq!(commit_count(&repo_path)?, initial_commit_count + 1);
+        let _ = fs::remove_dir_all(&repo_path);
+        Ok(())
+    }
+
+    #[test]
+    fn clear_deleted_chapters_skips_corrupt_chapter_files_instead_of_failing() -> Result<(), String>
+    {
+        let repo_path = create_test_repo()?;
+        write_chapter(&repo_path, "deleted-one", "deleted-one", "deleted")?;
+        let corrupt_path = repo_path.join("chapters").join("corrupt");
+        fs::create_dir_all(&corrupt_path)
+            .map_err(|error| format!("Could not create test chapter: {error}"))?;
+        fs::write(corrupt_path.join("chapter.json"), "not json {")
+            .map_err(|error| format!("Could not write corrupt chapter.json: {error}"))?;
+        commit_all(&repo_path, "Initial project")?;
+
+        let changes = clear_deleted_chapters_in_repo(&repo_path)?;
+        assert_eq!(
+            changes,
+            ClearDeletedChaptersChanges {
+                chapter_ids: vec!["deleted-one".to_string()],
+                relative_paths: vec!["chapters/deleted-one".to_string()],
+                skipped_chapter_files: 1,
+            }
+        );
+        // The unreadable chapter is left untouched — never delete what cannot be inspected.
+        assert!(corrupt_path.join("chapter.json").exists());
         let _ = fs::remove_dir_all(&repo_path);
         Ok(())
     }
@@ -548,6 +587,7 @@ mod tests {
             ClearDeletedChaptersChanges {
                 chapter_ids: Vec::new(),
                 relative_paths: Vec::new(),
+                skipped_chapter_files: 0,
             }
         );
         assert!(repo_path.join("chapters/active/chapter.json").exists());

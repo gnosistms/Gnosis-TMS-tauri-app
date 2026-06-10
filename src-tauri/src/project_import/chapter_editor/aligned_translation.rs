@@ -620,7 +620,7 @@ fn load_alignment_context(
         resolve_project_git_repo_path(app, installation_id, project_id, Some(repo_name))?;
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
-    let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), chapter_id)?;
+    let chapter_path = find_chapter_path_by_id(app, &repo_path.join("chapters"), chapter_id)?;
     let chapter_json_path = chapter_path.join("chapter.json");
     let chapter_file: StoredChapterFile = read_json_file(&chapter_json_path, "chapter.json")?;
     let rows = load_editor_rows(&chapter_path.join("rows"))?

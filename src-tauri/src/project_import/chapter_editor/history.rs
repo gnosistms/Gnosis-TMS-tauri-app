@@ -32,7 +32,8 @@ pub(crate) fn load_gtms_editor_field_history_sync(
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
-    let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+    let chapter_path =
+        find_chapter_path_by_id(app, &repo_path.join("chapters"), &input.chapter_id)?;
     let row_json_path = validated_row_json_path(&chapter_path, &input.row_id)?;
     if !row_json_path.exists() {
         return Err(format!(
@@ -72,7 +73,8 @@ pub(crate) fn restore_gtms_editor_field_from_history_sync(
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
     let commit_sha = validated_commit_sha(&input.commit_sha)?;
-    let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+    let chapter_path =
+        find_chapter_path_by_id(app, &repo_path.join("chapters"), &input.chapter_id)?;
     let chapter_file: StoredChapterFile =
         read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
     let row_json_path = validated_row_json_path(&chapter_path, &input.row_id)?;
@@ -327,7 +329,8 @@ pub(crate) fn reverse_gtms_editor_batch_replace_commit_sync(
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
     let commit_sha = validated_commit_sha(&input.commit_sha)?;
-    let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+    let chapter_path =
+        find_chapter_path_by_id(app, &repo_path.join("chapters"), &input.chapter_id)?;
     let chapter_file: StoredChapterFile =
         read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
     let languages = sanitize_chapter_languages(&chapter_file.languages);
