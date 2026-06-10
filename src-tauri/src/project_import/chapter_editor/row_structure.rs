@@ -151,8 +151,7 @@ pub(crate) fn update_gtms_editor_row_lifecycle_sync(
                 row_json_path.display()
             )
         })?;
-    let existing_word_counts =
-        load_word_counts(&chapter_path.join("rows"), &languages)?;
+    let existing_word_counts = load_word_counts(&chapter_path.join("rows"), &languages)?;
     let word_counts = apply_word_count_delta(
         &existing_word_counts,
         &original_row_file,
@@ -225,8 +224,7 @@ pub(crate) fn permanently_delete_gtms_editor_row_sync(
         return Err("Only soft-deleted rows can be permanently deleted.".to_string());
     }
 
-    let existing_word_counts =
-        load_word_counts(&chapter_path.join("rows"), &languages)?;
+    let existing_word_counts = load_word_counts(&chapter_path.join("rows"), &languages)?;
     let word_counts = apply_word_count_delta(
         &existing_word_counts,
         &row_file,

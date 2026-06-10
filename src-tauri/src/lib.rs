@@ -77,15 +77,14 @@ use crate::{
         invite_user_to_organization_for_installation, leave_organization_for_installation,
         list_accessible_github_app_installations, list_gnosis_glossaries_for_installation,
         list_gnosis_projects_for_installation, list_gnosis_qa_lists_for_installation,
-        list_gnosis_resources_for_installation,
-        list_organization_members_for_installation, mark_gnosis_project_repo_deleted,
-        promote_organization_owner_for_installation, purge_local_installation_data,
-        remove_organization_member_for_installation, rename_gnosis_project_repo,
-        restore_gnosis_project_repo, revoke_organization_admin_for_installation,
-        rollback_created_gnosis_glossary_repo, rollback_created_gnosis_project_repo,
-        rollback_created_gnosis_qa_list_repo, search_github_users_for_installation,
-        set_organization_member_role_for_installation, setup_organization_for_installation,
-        update_organization_description_for_installation,
+        list_gnosis_resources_for_installation, list_organization_members_for_installation,
+        mark_gnosis_project_repo_deleted, promote_organization_owner_for_installation,
+        purge_local_installation_data, remove_organization_member_for_installation,
+        rename_gnosis_project_repo, restore_gnosis_project_repo,
+        revoke_organization_admin_for_installation, rollback_created_gnosis_glossary_repo,
+        rollback_created_gnosis_project_repo, rollback_created_gnosis_qa_list_repo,
+        search_github_users_for_installation, set_organization_member_role_for_installation,
+        setup_organization_for_installation, update_organization_description_for_installation,
         update_organization_name_for_installation,
     },
     glossary_repo_sync::{
@@ -453,7 +452,7 @@ fn build_app_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result
 
         let help_menu = Submenu::with_items(app, "Help", true, &[])?;
 
-        return Menu::with_items(
+        Menu::with_items(
             app,
             &[
                 &app_menu,
@@ -463,7 +462,7 @@ fn build_app_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result
                 &window_menu,
                 &help_menu,
             ],
-        );
+        )
     }
 
     #[cfg(not(target_os = "macos"))]

@@ -1539,7 +1539,10 @@ mod tests {
         .expect("workflow_status conflict should resolve");
         let merged_value: Value =
             serde_json::from_str(&merged).expect("merged chapter should parse");
-        assert_eq!(merged_value["settings"]["workflow_status"], json!("publish"));
+        assert_eq!(
+            merged_value["settings"]["workflow_status"],
+            json!("publish")
+        );
     }
 
     #[test]
@@ -1581,7 +1584,10 @@ mod tests {
         .expect("workflow_status conflict should resolve");
         let merged_value: Value =
             serde_json::from_str(&merged).expect("merged chapter should parse");
-        assert_eq!(merged_value["settings"]["workflow_status"], json!("publish"));
+        assert_eq!(
+            merged_value["settings"]["workflow_status"],
+            json!("publish")
+        );
     }
 
     #[test]
@@ -1623,7 +1629,10 @@ mod tests {
         .expect("workflow_status conflict should resolve");
         let merged_value: Value =
             serde_json::from_str(&merged).expect("merged chapter should parse");
-        assert_eq!(merged_value["settings"]["workflow_status"], json!("publish"));
+        assert_eq!(
+            merged_value["settings"]["workflow_status"],
+            json!("publish")
+        );
     }
 
     #[test]

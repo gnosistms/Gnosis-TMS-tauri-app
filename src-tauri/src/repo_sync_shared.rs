@@ -9,6 +9,8 @@ use std::{
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 #[cfg(any(windows, target_os = "macos"))]
 use std::env;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
@@ -124,7 +126,7 @@ pub(crate) fn git_command() -> Result<Command, String> {
         }
         let mut command = Command::new("git");
         configure_git_isolation(&mut command);
-        return Ok(command);
+        Ok(command)
     }
 
     #[cfg(all(target_os = "macos", not(debug_assertions)))]

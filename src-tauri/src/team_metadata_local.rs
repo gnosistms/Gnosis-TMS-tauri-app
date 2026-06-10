@@ -161,7 +161,8 @@ pub(crate) async fn list_local_gnosis_project_metadata_records(
             list_local_metadata_records::<GithubProjectMetadataRecord>(&repo_path, "project")?;
         // One folder scan for the whole record set — per-record rescans spawned a git
         // subprocess per (record × folder) pair and dominated the projects refresh.
-        let repo_folders = scan_local_project_repo_folders(&app, installation_id).unwrap_or_default();
+        let repo_folders =
+            scan_local_project_repo_folders(&app, installation_id).unwrap_or_default();
         for record in &mut records {
             record.chapter_count = find_project_repo_in_scan(&repo_folders, record)
                 .ok()

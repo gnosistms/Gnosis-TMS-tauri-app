@@ -626,9 +626,7 @@ fn local_file_names(path: &Path) -> Result<Vec<String>, String> {
         .collect())
 }
 
-pub(super) fn build_word_counts_from_import(
-    parsed: &ParsedWorkbook,
-) -> BTreeMap<String, usize> {
+pub(super) fn build_word_counts_from_import(parsed: &ParsedWorkbook) -> BTreeMap<String, usize> {
     let mut counts = parsed
         .languages
         .iter()
