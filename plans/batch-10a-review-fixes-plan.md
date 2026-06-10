@@ -1,5 +1,8 @@
 # Batch 10a Review Fixes — Chapter Editor Core
 
+**Status: complete (2026-06-10).** S1, M1, m1 landed on
+`fix/batch-10a-review-findings`; m2 deferred as documented below.
+
 Resolves the findings from `reviews/2026-06-10-batch-10a-review.md` (S1, M1, m1; m2
 deferred). Branch: `fix/batch-10a-review-findings`. One focused commit per finding.
 

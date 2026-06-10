@@ -2,7 +2,8 @@
 <!-- vt.idd:local-review:batch-10a -->
 
 **Date**: 2026-06-10
-**Status**: Review complete. Findings not yet resolved.
+**Status**: Complete. S1, M1, m1 resolved on `fix/batch-10a-review-findings`;
+m2 deferred (see Resolution status).
 **Scope**: editor load/save command bodies, row field three-way merge, row structure
 (insert/lifecycle/permanent delete, order-key allocation), and the shared editor
 helpers (word counts, language sanitization, row projection).
@@ -228,10 +229,10 @@ counts. Not urgent; flagged so the cost is a decision, not an accident.
 
 | Finding | Status | Notes |
 |---|---|---|
-| S1 | Open | |
-| M1 | Open | |
-| m1 | Open | |
-| m2 | Open | |
+| S1 | Resolved | `validated_row_json_path` (single-component allowlist, mirrors the Batch 8 fix) routes all row-path constructions; the repo-relative escape check now runs before the first write in the late-check commands. Unit tests added. |
+| M1 | Resolved | New `ensure_local_commit_preconditions` (write access + session) runs before the first write via `write_row_files_and_commit`, which also rolls back written files and unstages on any later failure. Batch and clear-reviewed-markers prepare all updates before writing; permanent delete preflights and restores deletions from the index on commit failure. |
+| m1 | Resolved | `persist_chapter_source_word_counts_batch` refactored onto `write_row_files_and_commit`; comment now states the real hazard (stranded dirty chapter.json breaks pulls). |
+| m2 | Deferred | Needs a design decision (chapter-level count cache or response-contract change so saves return deltas) — both touch the frontend contract. Out of scope for a findings branch; revisit if large-chapter save latency surfaces. |
 
 ---
 
