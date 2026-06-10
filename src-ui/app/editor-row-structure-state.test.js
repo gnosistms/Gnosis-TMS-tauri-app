@@ -94,7 +94,7 @@ test("applyInsertedEditorRowState inserts a normalized row and activates it", ()
   assert.equal(nextState.activeRowId, "row-2");
   assert.equal(nextState.activeLanguageCode, "es");
   assert.equal(nextState.insertRowModal.isOpen, false);
-  assert.deepEqual(nextState.sourceWordCounts, { en: 42 });
+  assert.deepEqual(nextState.wordCounts, { en: 42 });
 });
 
 test("applySoftDeletedEditorRowState clears the active field and anchors to a closed deleted group", () => {
@@ -141,7 +141,7 @@ test("applySoftDeletedEditorRowState clears the active field and anchors to a cl
   assert.equal(result.chapterState.activeLanguageCode, null);
   assert.equal(result.chapterState.history.status, "idle");
   assert.deepEqual([...result.chapterState.expandedDeletedRowGroupIds], []);
-  assert.deepEqual(result.chapterState.sourceWordCounts, { en: 9 });
+  assert.deepEqual(result.chapterState.wordCounts, { en: 9 });
   assert.deepEqual(result.anchorSnapshot, {
     type: "deleted-group",
     rowId: "deleted-group:row-2",
@@ -229,7 +229,7 @@ test("applyPermanentlyDeletedEditorRowState removes the row, clears dirty tracki
   assert.equal(nextState.activeLanguageCode, null);
   assert.equal(nextState.history.status, "idle");
   assert.equal(nextState.rowPermanentDeletionModal.isOpen, false);
-  assert.deepEqual(nextState.sourceWordCounts, { en: 7 });
+  assert.deepEqual(nextState.wordCounts, { en: 7 });
   assert.deepEqual(result.anchorSnapshot, {
     type: "row",
     rowId: "row-3",

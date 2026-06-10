@@ -166,7 +166,7 @@ export async function confirmInsertEditorRow(render, position, operations = {}) 
           payload?.row,
           modal.rowId,
           position === "before",
-          payload?.sourceWordCounts,
+          payload?.wordCounts,
         ),
         chapterBaseCommitSha,
       };
@@ -288,7 +288,7 @@ export async function softDeleteEditorRow(render, rowId, triggerAnchorSnapshot =
         state.editorChapter,
         value.rowId,
         payload?.lifecycleState ?? "deleted",
-        payload?.sourceWordCounts,
+        payload?.wordCounts,
         value.triggerAnchorSnapshot,
       );
       const chapterBaseCommitSha = nextChapterBaseCommitSha(state.editorChapter, payload);
@@ -402,7 +402,7 @@ export async function restoreEditorRow(render, rowId, operations = {}) {
         state.editorChapter,
         value.rowId,
         payload?.lifecycleState ?? "active",
-        payload?.sourceWordCounts,
+        payload?.wordCounts,
         value.triggerAnchorSnapshot,
       );
       const chapterBaseCommitSha = nextChapterBaseCommitSha(state.editorChapter, payload);

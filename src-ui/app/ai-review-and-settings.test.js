@@ -3992,7 +3992,7 @@ test("loadSelectedChapterEditorData refreshes shared team action preferences whi
         ],
         selectedSourceLanguageCode: "es",
         selectedTargetLanguageCode: "vi",
-        sourceWordCounts: { es: 1 },
+        wordCounts: { es: 1 },
         rows: [{
           rowId: "row-1",
           fields: {
@@ -4097,7 +4097,7 @@ test("loadSelectedChapterEditorData starts on the conflict filter for chapters w
         ],
         selectedSourceLanguageCode: "es",
         selectedTargetLanguageCode: "vi",
-        sourceWordCounts: { es: 1 },
+        wordCounts: { es: 1 },
         rows: [{
           rowId: "row-1",
           fields: {

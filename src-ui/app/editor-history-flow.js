@@ -361,10 +361,10 @@ export async function restoreEditorFieldHistory(render, commitSha, operations = 
 
         state.editorChapter = applyEditorHistoryRestoreSucceeded({
           ...state.editorChapter,
-          sourceWordCounts:
-            payload?.sourceWordCounts && typeof payload.sourceWordCounts === "object"
-              ? payload.sourceWordCounts
-              : state.editorChapter.sourceWordCounts,
+          wordCounts:
+            payload?.wordCounts && typeof payload.wordCounts === "object"
+              ? payload.wordCounts
+              : state.editorChapter.wordCounts,
           chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
         });
         reconcileDirtyTrackedEditorRows([value.rowId]);
@@ -484,7 +484,7 @@ export async function confirmEditorReplaceUndo(render, operations = {}) {
         if (updatedRows.length > 0) {
           markEditorRowsPersisted(
             updatedRows,
-            payload?.sourceWordCounts,
+            payload?.wordCounts,
             nextChapterBaseCommitSha(payload, state.editorChapter),
           );
         } else {

@@ -238,9 +238,9 @@ export function normalizeListedChapter(chapter) {
         ? "deleted"
         : "active",
     languages: Array.isArray(chapter.languages) ? chapter.languages : [],
-    sourceWordCounts:
-      chapter.sourceWordCounts && typeof chapter.sourceWordCounts === "object"
-        ? chapter.sourceWordCounts
+    wordCounts:
+      chapter.wordCounts && typeof chapter.wordCounts === "object"
+        ? chapter.wordCounts
         : {},
     selectedSourceLanguageCode:
       typeof chapter.selectedSourceLanguageCode === "string" && chapter.selectedSourceLanguageCode.trim()

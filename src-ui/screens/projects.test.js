@@ -404,7 +404,7 @@ test("projects page marks chapter files with imported editor conflicts", () => {
         status: "active",
         linkedGlossary: null,
         selectedSourceLanguageCode: "es",
-        sourceWordCounts: { es: 10 },
+        wordCounts: { es: 10 },
         hasImportedEditorConflicts: true,
       }],
     }],

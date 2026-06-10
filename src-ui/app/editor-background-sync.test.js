@@ -220,7 +220,7 @@ function createRemoteChapterLoadPayload(rows, overrides = {}) {
     chapterBaseCommitSha: "head-2",
     fileTitle: "Chapter 1",
     languages: [{ code: "es", name: "Spanish" }, { code: "en", name: "English" }],
-    sourceWordCounts: {},
+    wordCounts: {},
     rows: nextRows.map((row) => createRemoteRowPayload(row.rowId, {
       orderKey: row.orderKey,
       fields: {
@@ -998,7 +998,7 @@ test("background sync reloads the current chapter when semantic git resolution i
         chapterBaseCommitSha: "head-2",
         fileTitle: "Chapter 1",
         languages: [{ code: "es", name: "Spanish" }, { code: "en", name: "English" }],
-        sourceWordCounts: {},
+        wordCounts: {},
         rows: [{
           rowId: "row-1",
           orderKey: "00001",

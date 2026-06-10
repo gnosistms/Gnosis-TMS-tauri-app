@@ -335,7 +335,7 @@ export function applyEditorRegressionFixture(appState, options = {}) {
     name: fileTitle,
     status: "active",
     languages,
-    sourceWordCounts: { [sourceCode]: rowCount * 3 },
+    wordCounts: { [sourceCode]: rowCount * 3 },
     sourceWordCount: rowCount * 3,
     selectedSourceLanguageCode: sourceCode,
     selectedTargetLanguageCode: targetCode,
@@ -365,7 +365,7 @@ export function applyEditorRegressionFixture(appState, options = {}) {
     chapterId,
     fileTitle,
     languages,
-    sourceWordCounts: { [sourceCode]: rowCount * 3 },
+    wordCounts: { [sourceCode]: rowCount * 3 },
     selectedSourceLanguageCode: sourceCode,
     selectedTargetLanguageCode: targetCode,
     persistedSourceLanguageCode: sourceCode,
@@ -638,9 +638,9 @@ export function readEditorRegressionSnapshot(appState) {
       Array.isArray(appState.editorChapter?.languages)
         ? appState.editorChapter.languages.map((language) => ({ ...language }))
         : [],
-    sourceWordCounts:
-      appState.editorChapter?.sourceWordCounts && typeof appState.editorChapter.sourceWordCounts === "object"
-        ? { ...appState.editorChapter.sourceWordCounts }
+    wordCounts:
+      appState.editorChapter?.wordCounts && typeof appState.editorChapter.wordCounts === "object"
+        ? { ...appState.editorChapter.wordCounts }
         : {},
     rows,
     activeRowId: appState.editorChapter?.activeRowId ?? null,

@@ -177,7 +177,7 @@ pub(crate) fn restore_gtms_editor_field_from_history_sync(
     })?;
     let updated_row_text = format!("{updated_row_json}\n");
     let languages = sanitize_chapter_languages(&chapter_file.languages);
-    let mut source_word_counts = load_source_word_counts(&chapter_path.join("rows"), &languages)?;
+    let mut word_counts = load_word_counts(&chapter_path.join("rows"), &languages)?;
     let historical_uploaded_path = historical_image
         .as_ref()
         .filter(|image| image.kind == "upload")
@@ -224,8 +224,8 @@ pub(crate) fn restore_gtms_editor_field_from_history_sync(
                     row_json_path.display()
                 )
             })?;
-        source_word_counts = apply_source_word_count_delta(
-            &source_word_counts,
+        word_counts = apply_word_count_delta(
+            &word_counts,
             &original_row_file,
             &updated_row_file,
             &languages,
@@ -298,7 +298,7 @@ pub(crate) fn restore_gtms_editor_field_from_history_sync(
         text_style: historical_text_style,
         reviewed: historical_field_value.field_value.editor_flags.reviewed,
         please_check: historical_field_value.field_value.editor_flags.please_check,
-        source_word_counts,
+        word_counts,
         chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
 }
@@ -397,18 +397,18 @@ pub(crate) fn reverse_gtms_editor_batch_replace_commit_sync(
     }
 
     if updated_rows.is_empty() {
-        let source_word_counts = load_source_word_counts(&chapter_path.join("rows"), &languages)?;
+        let word_counts = load_word_counts(&chapter_path.join("rows"), &languages)?;
         return Ok(ReverseEditorBatchReplaceCommitResponse {
             updated_rows,
             skipped_row_ids,
-            source_word_counts,
+            word_counts,
             commit_sha: None,
             chapter_base_commit_sha: current_repo_head_sha(&repo_path),
         });
     }
 
     let rows = load_editor_rows(&chapter_path.join("rows"))?;
-    let source_word_counts = build_source_word_counts_from_stored_rows(&rows, &languages);
+    let word_counts = build_word_counts_from_stored_rows(&rows, &languages);
 
     let mut add_args = vec!["add"];
     for path in &relative_paths_to_add {
@@ -446,7 +446,7 @@ pub(crate) fn reverse_gtms_editor_batch_replace_commit_sync(
     Ok(ReverseEditorBatchReplaceCommitResponse {
         updated_rows,
         skipped_row_ids,
-        source_word_counts,
+        word_counts,
         commit_sha,
         chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })

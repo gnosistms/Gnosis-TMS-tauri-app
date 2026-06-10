@@ -117,7 +117,7 @@ pub(super) fn write_parsed_workbook_chapter(
         let unit_count = write_row_files(&parsed, &repo_path, &rows_path, &chapter_slug)?;
 
         let relative_chapter_path = repo_relative_path(repo_path, &chapter_path)?;
-        let source_word_counts = build_source_word_counts_from_import(&parsed);
+        let word_counts = build_word_counts_from_import(&parsed);
         let selected_source_language_code = parsed
             .languages
             .first()
@@ -134,7 +134,7 @@ pub(super) fn write_parsed_workbook_chapter(
                 worksheet_name: parsed.worksheet_name,
                 unit_count,
                 languages: chapter_file.languages.clone(),
-                source_word_counts,
+                word_counts,
                 selected_source_language_code,
                 selected_target_language_code,
                 language_codes: parsed
@@ -615,7 +615,7 @@ fn local_file_names(path: &Path) -> Result<Vec<String>, String> {
         .collect())
 }
 
-pub(super) fn build_source_word_counts_from_import(
+pub(super) fn build_word_counts_from_import(
     parsed: &ParsedWorkbook,
 ) -> BTreeMap<String, usize> {
     let mut counts = parsed

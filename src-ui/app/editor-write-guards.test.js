@@ -354,7 +354,7 @@ test("non-durable dirty row flush enqueues row text save without waiting for the
           fields: payload.input?.fields,
           fieldStates: { es: { reviewed: false, pleaseCheck: false } },
         },
-        sourceWordCounts: {},
+        wordCounts: {},
         chapterBaseCommitSha: "head-2",
       };
     }
@@ -431,7 +431,7 @@ test("queued repeated row saves rebase on the previous save instead of conflicti
           images: {},
           fieldStates: { es: { reviewed: false, pleaseCheck: false } },
         },
-        sourceWordCounts: {},
+        wordCounts: {},
         chapterBaseCommitSha: `head-${capturedInputs.length + 1}`,
       };
     }
@@ -528,7 +528,7 @@ test("queued repeated footnote saves preserve marker bases instead of conflictin
           images: {},
           fieldStates: { es: { reviewed: false, pleaseCheck: false } },
         },
-        sourceWordCounts: {},
+        wordCounts: {},
         chapterBaseCommitSha: `head-footnote-${capturedInputs.length + 1}`,
       };
     }
@@ -609,7 +609,7 @@ test("delete-all footnote save retries a mergeable stale-base conflict instead o
           baseFields: { es: "hola [1]" },
           baseFootnotes: { es: "nota" },
           baseImageCaptions: {},
-          sourceWordCounts: {},
+          wordCounts: {},
           chapterBaseCommitSha: "head-delete-marker",
         };
       }
@@ -624,7 +624,7 @@ test("delete-all footnote save retries a mergeable stale-base conflict instead o
           images: {},
           fieldStates: { es: { reviewed: false, pleaseCheck: false } },
         },
-        sourceWordCounts: {},
+        wordCounts: {},
         chapterBaseCommitSha: "head-delete-footnote",
       };
     }
@@ -698,7 +698,7 @@ test("successful active row save clears optimistic history while committed histo
           images: {},
           fieldStates: { es: { reviewed: false, pleaseCheck: false } },
         },
-        sourceWordCounts: {},
+        wordCounts: {},
         chapterBaseCommitSha: "head-2",
       };
     }
@@ -1031,7 +1031,7 @@ test("toggleEditorRowFieldMarker flushes other dirty rows before saving the mark
           fields: { es: "hola guardado" },
           fieldStates: { es: { reviewed: false, pleaseCheck: false } },
         },
-        sourceWordCounts: {},
+        wordCounts: {},
         chapterBaseCommitSha: "head-1",
       };
     }
@@ -1367,7 +1367,7 @@ test("updateEditorRowTextStyle stays clickable while row text save is pending", 
           fields: payload.input?.fields,
           fieldStates: { es: { reviewed: false, pleaseCheck: false } },
         },
-        sourceWordCounts: {},
+        wordCounts: {},
         chapterBaseCommitSha: "head-2",
       };
     }
@@ -1530,7 +1530,7 @@ test("replace selected queues behind active repo writes and captures the selecte
     if (command === "update_gtms_editor_row_fields_batch") {
       return {
         rowIds: payload.input?.rows?.map((row) => row.rowId) ?? [],
-        sourceWordCounts: {},
+        wordCounts: {},
         chapterBaseCommitSha: "head-replace",
       };
     }
@@ -1673,7 +1673,7 @@ test("restore history coalesces queued repeated restores to the latest commit", 
         textStyle: "paragraph",
         reviewed: false,
         pleaseCheck: false,
-        sourceWordCounts: {},
+        wordCounts: {},
         chapterBaseCommitSha: `head-${payload.input?.commitSha}`,
       };
     }
@@ -1796,7 +1796,7 @@ test("unreview all queues behind dirty row text instead of blocking on the save"
           fields: payload.input?.fields,
           fieldStates: { es: { reviewed: true, pleaseCheck: true } },
         },
-        sourceWordCounts: {},
+        wordCounts: {},
         chapterBaseCommitSha: "head-row",
       };
     }
@@ -1856,14 +1856,14 @@ test("clear translations queues behind dirty row text instead of blocking on the
           fields: payload.input?.fields,
           fieldStates: { es: { reviewed: false, pleaseCheck: false } },
         },
-        sourceWordCounts: {},
+        wordCounts: {},
         chapterBaseCommitSha: "head-row",
       };
     }
     if (command === "update_gtms_editor_row_fields_batch") {
       return {
         rowIds: payload.input?.rows?.map((row) => row.rowId) ?? [],
-        sourceWordCounts: {},
+        wordCounts: {},
         chapterBaseCommitSha: "head-clear",
       };
     }
@@ -2041,7 +2041,7 @@ test("soft delete row queues while an existing row save is pending", async () =>
       assert.equal(payload.input?.rowId, "row-1");
       return {
         lifecycleState: "deleted",
-        sourceWordCounts: {},
+        wordCounts: {},
         chapterBaseCommitSha: "head-delete",
       };
     }
@@ -2105,7 +2105,7 @@ test("target language manager queues after dirty row saves", async () => {
           fields: payload.input?.fields,
           fieldStates: { es: { reviewed: false, pleaseCheck: false } },
         },
-        sourceWordCounts: {},
+        wordCounts: {},
         chapterBaseCommitSha: "head-row",
       };
     }

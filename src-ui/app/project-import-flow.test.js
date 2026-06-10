@@ -96,7 +96,7 @@ function importedResult(fileName, index = 1) {
     sourceFileName: fileName,
     unitCount: 1,
     languages: [{ code: "en", name: "English", role: "source" }],
-    sourceWordCounts: { en: 1 },
+    wordCounts: { en: 1 },
     selectedSourceLanguageCode: "en",
     selectedTargetLanguageCode: null,
   };
@@ -1064,7 +1064,7 @@ test("imported TXT chapter entry does not fall back to source as target", () => 
     chapterId: "chapter-1",
     fileTitle: "Chapter",
     languages: [{ code: "en", name: "English", role: "source" }],
-    sourceWordCounts: { en: 3 },
+    wordCounts: { en: 3 },
     selectedSourceLanguageCode: "en",
     selectedTargetLanguageCode: null,
   });
