@@ -61,8 +61,17 @@ fn persist_chapter_source_word_count(
     chapter_json_path: &Path,
     source_word_count: usize,
 ) -> Result<(), String> {
-    // Read as a Value so unknown chapter.json keys round-trip untouched.
-    let mut value: serde_json::Value = read_json_file(chapter_json_path, "chapter.json")?;
+    // This runs from a read path (editor load), so it must not be able to leave the repo dirty:
+    // the commit helper commits everything staged (no pathspec), and a leftover modified/staged
+    // chapter.json would be swept into the next unrelated commit or break a later pull. Check the
+    // commit preconditions before touching the file, and roll back if the commit still fails.
+    crate::installation_access::ensure_repo_allows_writes(app, repo_path)?;
+
+    let original_text = fs::read_to_string(chapter_json_path)
+        .map_err(|error| format!("Could not read chapter.json: {error}"))?;
+    // Edit as a Value so unknown chapter.json keys round-trip untouched.
+    let mut value: serde_json::Value = serde_json::from_str(&original_text)
+        .map_err(|error| format!("Could not parse chapter.json: {error}"))?;
     let object = value
         .as_object_mut()
         .ok_or_else(|| "chapter.json is not a JSON object".to_string())?;
@@ -73,13 +82,20 @@ fn persist_chapter_source_word_count(
     write_json_pretty(chapter_json_path, &value)?;
 
     let relative_chapter_json = repo_relative_path(repo_path, chapter_json_path)?;
-    git_output(repo_path, &["add", &relative_chapter_json])?;
-    crate::git_commit::git_commit_as_signed_in_user(
-        app,
-        repo_path,
-        "Update cached source word count",
-        &[&relative_chapter_json],
-    )?;
+    let commit_result = git_output(repo_path, &["add", &relative_chapter_json]).and_then(|_| {
+        crate::git_commit::git_commit_as_signed_in_user(
+            app,
+            repo_path,
+            "Update cached source word count",
+            &[&relative_chapter_json],
+        )
+        .map(|_| ())
+    });
+    if let Err(error) = commit_result {
+        let _ = fs::write(chapter_json_path, &original_text);
+        let _ = git_output(repo_path, &["reset", "-q", "--", &relative_chapter_json]);
+        return Err(error);
+    }
     Ok(())
 }
 
