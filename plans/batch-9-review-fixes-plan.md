@@ -1,5 +1,8 @@
 # Batch 9 Review Fixes — AI Integration
 
+**Status: COMPLETE** — all five fixes implemented and verified (m2 partial on
+Claude by design, documented in the review); PR #115.
+
 Resolves the five findings from `reviews/2026-06-10-batch-9-review.md` (S1, S2, M1,
 m1, m2). Branch: `fix/batch-9-review-findings`, stacked on `fix/batch-8-review-findings`
 (PR #114) because the review docs build on that branch's strategy-table state. One

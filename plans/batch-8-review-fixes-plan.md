@@ -1,5 +1,7 @@
 # Batch 8 Review Fixes — Team Metadata
 
+**Status: COMPLETE** — all five fixes implemented and verified; PR #114.
+
 Resolves the five findings from `reviews/2026-06-10-batch-8-review.md` (S1, M1, M2, m1, m2).
 Branch: `fix/batch-8-review-findings`. One focused commit per finding.
 
