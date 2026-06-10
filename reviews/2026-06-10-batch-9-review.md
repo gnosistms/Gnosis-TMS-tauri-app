@@ -2,7 +2,8 @@
 <!-- vt.idd:local-review:batch-9 -->
 
 **Date**: 2026-06-10
-**Status**: Complete. Findings reported; fixes not yet applied.
+**Status**: Complete. All five findings resolved on `fix/batch-9-review-findings`
+(m2 partially — Claude deferred; see Resolution status).
 **Scope**: prompt building, structured-output contracts, provider HTTP clients, and AI
 settings/secret-distribution storage. Special focus per strategy: secret leakage in
 error paths.
@@ -230,11 +231,11 @@ malformed-error handling exist.
 
 | Finding | Status | Notes |
 |---|---|---|
-| S1 | Open | Gemini key → `x-goog-api-key` header; optionally scrub pattern + fixed-string body-read errors |
-| S2 | Open | Strip content from the reported message for `AI_ASSISTANT_MALFORMED_RESPONSE_JSON:` rejections |
-| M1 | Open | Raise Claude `max_tokens`; surface `stop_reason: max_tokens` as an explicit error |
-| m1 | Open | Longer per-request timeout for `run_prompt` |
-| m2 | Open | Native structured-output enforcement on Gemini/DeepSeek/Claude |
+| S1 | Resolved | Gemini authenticates via `x-goog-api-key`; `AIza...` scrub pattern added to `telemetry-scrub.js` as defense in depth. |
+| S2 | Resolved | `runtime.js` reports the stable constant for `AI_ASSISTANT_MALFORMED_RESPONSE_JSON:` rejections; the content payload still reaches the editor for local display. Deeper Ok-channel contract change deferred. |
+| M1 | Resolved | Claude `max_tokens` raised to 8,192 (probe stays 1); `stop_reason: max_tokens` now returns an explicit output-limit error. Tests added. |
+| m1 | Resolved | 300s per-request timeout on all four `run_prompt` paths; listings/probes keep the 45s client default. |
+| m2 | Resolved (partial) | Gemini `responseMimeType: application/json` + DeepSeek `response_format: json_object` for the named JSON formats, with request-shape tests. Claude deliberately stays prompt-contract-only — native enforcement needs tool-use/prefill (larger change); truncation-induced malformed JSON is now an explicit error via M1. |
 
 ---
 
