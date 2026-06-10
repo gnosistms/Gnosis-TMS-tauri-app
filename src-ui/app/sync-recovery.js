@@ -66,14 +66,18 @@ export async function handleSyncFailure(
     return false;
   }
 
+  // The automatic session refresh already ran and was rejected (connectivity-failed
+  // refreshes never classify as auth_invalid), so the cached credentials are dead:
+  // take the user to the sign-in screen rather than leaving them on a silently
+  // degraded page.
   state.auth = {
     ...state.auth,
     status: "expired",
-    message:
-      "GitHub could not refresh this session. You are still signed in locally; online sync will retry automatically.",
+    message: "Your GitHub session expired. Please sign in with GitHub again.",
+    session: null,
+    pendingAutoOpenSingleTeam: false,
   };
-  if (render) {
-    showNoticeBadge(state.auth.message, render);
-  }
+  state.screen = "start";
+  render?.();
   return true;
 }
