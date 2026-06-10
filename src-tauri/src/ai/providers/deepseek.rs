@@ -1,9 +1,10 @@
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use crate::ai::{
     providers::shared_http_client,
-    types::{AiPromptRequest, AiPromptResponse, AiProviderModel},
+    types::{AiPromptOutputFormat, AiPromptRequest, AiPromptResponse, AiProviderModel},
 };
 
 const DEEPSEEK_MODELS_API_URL: &str = "https://api.deepseek.com/models";
@@ -28,6 +29,18 @@ struct DeepSeekChatCompletionsRequest<'a> {
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_format: Option<serde_json::Value>,
+}
+
+/// DeepSeek's native JSON mode guarantees parseable output for the structured
+/// formats. It requires the prompt to mention JSON, which every structured prompt
+/// does ("Return only valid JSON").
+fn response_format_for(output_format: &AiPromptOutputFormat) -> Option<serde_json::Value> {
+    match output_format {
+        AiPromptOutputFormat::Text => None,
+        _ => Some(json!({ "type": "json_object" })),
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -150,6 +163,7 @@ pub(crate) fn run_prompt(
             }],
             stream: false,
             max_tokens: None,
+            response_format: response_format_for(&request.output_format),
         })
         .send()
         .map_err(normalize_transport_error)?;
@@ -208,6 +222,7 @@ pub(crate) fn probe_model(model_id: &str, api_key: &str) -> Result<(), String> {
             }],
             stream: false,
             max_tokens: Some(1),
+            response_format: None,
         })
         .send()
         .map_err(normalize_transport_error)?;
@@ -265,4 +280,26 @@ fn extract_probe_error_message(status: StatusCode, body: &str, provider_name: &s
     extract_api_error_message(body).unwrap_or_else(|| {
         format!("{provider_name} returned {status} while testing the selected model.")
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::response_format_for;
+    use crate::ai::types::AiPromptOutputFormat;
+
+    #[test]
+    fn structured_formats_request_native_json_mode() {
+        assert_eq!(response_format_for(&AiPromptOutputFormat::Text), None);
+        for output_format in [
+            AiPromptOutputFormat::AssistantTurnJson,
+            AiPromptOutputFormat::TranslationSectionsJson,
+            AiPromptOutputFormat::ReviewJson,
+            AiPromptOutputFormat::GlossaryAlignmentJson,
+        ] {
+            assert_eq!(
+                response_format_for(&output_format),
+                Some(serde_json::json!({ "type": "json_object" })),
+            );
+        }
+    }
 }

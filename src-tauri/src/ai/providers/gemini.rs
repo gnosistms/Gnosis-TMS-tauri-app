@@ -36,6 +36,22 @@ struct GeminiModelEntry {
 #[derive(Debug, Serialize)]
 struct GeminiGenerateContentRequest<'a> {
     contents: Vec<GeminiContent<'a>>,
+    #[serde(rename = "generationConfig", skip_serializing_if = "Option::is_none")]
+    generation_config: Option<GeminiGenerationConfig>,
+}
+
+/// Gemini's JSON mode guarantees parseable output for the structured formats instead
+/// of relying on the prompt contract alone.
+#[derive(Debug, Serialize)]
+struct GeminiGenerationConfig {
+    #[serde(rename = "responseMimeType")]
+    response_mime_type: &'static str,
+}
+
+fn generation_config_for_json_output(json_output: bool) -> Option<GeminiGenerationConfig> {
+    json_output.then_some(GeminiGenerationConfig {
+        response_mime_type: "application/json",
+    })
 }
 
 #[derive(Debug, Serialize)]
@@ -204,12 +220,17 @@ pub(crate) fn run_prompt(
 
     let client = shared_http_client()
         .map_err(|error| format!("Could not start the Gemini request: {error}"))?;
+    let json_output = !matches!(
+        request.output_format,
+        crate::ai::types::AiPromptOutputFormat::Text
+    );
     let (status, body) = send_generate_content_request(
         client,
         normalized_key,
         model_id,
         &request.prompt,
         Some(super::AI_PROMPT_TIMEOUT),
+        json_output,
     )
     .map_err(|error| format!("Could not complete the Gemini request: {error}"))?;
 
@@ -256,6 +277,7 @@ pub(crate) fn probe_model(model_id: &str, api_key: &str) -> Result<(), String> {
         normalized_model_id,
         "Reply with OK.",
         None,
+        false,
     )
     .map_err(|error| format!("Could not complete the Gemini model test request: {error}"))?;
 
@@ -272,6 +294,7 @@ fn send_generate_content_request(
     model_id: &str,
     text: &str,
     request_timeout: Option<Duration>,
+    json_output: bool,
 ) -> Result<(StatusCode, String), String> {
     let mut attempt = 0;
 
@@ -286,6 +309,7 @@ fn send_generate_content_request(
                 contents: vec![GeminiContent {
                     parts: vec![GeminiPart { text }],
                 }],
+                generation_config: generation_config_for_json_output(json_output),
             });
         if let Some(request_timeout) = request_timeout {
             request_builder = request_builder.timeout(request_timeout);
@@ -491,6 +515,37 @@ fn extract_api_error_message(body: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn generate_content_request_sets_json_mime_only_for_json_output() {
+        use super::{
+            generation_config_for_json_output, GeminiContent, GeminiGenerateContentRequest,
+            GeminiPart,
+        };
+
+        let json_request = GeminiGenerateContentRequest {
+            contents: vec![GeminiContent {
+                parts: vec![GeminiPart { text: "hello" }],
+            }],
+            generation_config: generation_config_for_json_output(true),
+        };
+        let payload = serde_json::to_value(&json_request).unwrap();
+        assert_eq!(
+            payload
+                .pointer("/generationConfig/responseMimeType")
+                .and_then(serde_json::Value::as_str),
+            Some("application/json")
+        );
+
+        let text_request = GeminiGenerateContentRequest {
+            contents: vec![GeminiContent {
+                parts: vec![GeminiPart { text: "hello" }],
+            }],
+            generation_config: generation_config_for_json_output(false),
+        };
+        let payload = serde_json::to_value(&text_request).unwrap();
+        assert!(payload.get("generationConfig").is_none());
+    }
+
     use std::time::Duration;
 
     use super::{
