@@ -558,6 +558,12 @@ export async function confirmTeamMemberRemoval(render) {
           clearMembersStatus(render);
           await completePageSync(render);
           showMembersNotice(render, "Member removed.");
+          // The broker caches access verdicts (up to 30 minutes for reads), so revocation
+          // is not instant — tell the owner rather than let them assume it is.
+          state.memberRemovalAccessNotice = {
+            isOpen: true,
+            username,
+          };
         } finally {
           render();
           resolve();

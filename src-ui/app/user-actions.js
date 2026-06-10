@@ -1,6 +1,6 @@
 import { actionSuffix, runWithImmediateLoading } from "./action-helpers.js";
 import { openTeamLeave } from "./team-flow/actions.js";
-import { state } from "./state.js";
+import { resetMemberRemovalAccessNotice, state } from "./state.js";
 import {
   acknowledgeInviteUserSuccess,
   cancelInviteUser,
@@ -46,6 +46,12 @@ export function createUserActions(render) {
 
     if (action === "cancel-team-member-removal") {
       cancelTeamMemberRemoval(render);
+      return true;
+    }
+
+    if (action === "dismiss-member-removal-access-notice") {
+      resetMemberRemovalAccessNotice();
+      render();
       return true;
     }
 

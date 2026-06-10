@@ -32,6 +32,7 @@ import { renderInviteUserModal } from "./invite-user-modal.js";
 import { renderTeamMemberOwnerDemotionModal } from "./team-member-owner-demotion-modal.js";
 import { renderTeamMemberOwnerModal } from "./team-member-owner-modal.js";
 import { renderTeamMemberRemoveModal } from "./team-member-remove-modal.js";
+import { renderMemberRemovalAccessNoticeModal } from "./member-removal-access-notice-modal.js";
 import { renderTeamLeaveModal } from "./teams/leave-modal.js";
 
 function renderMemberRoleSelect(user, options = {}) {
@@ -193,6 +194,6 @@ export function renderUsersScreen(state) {
       offlineMode: state.offline?.isEnabled === true,
       offlineReconnectState: state.offline?.reconnecting === true,
       body,
-    }) + renderInviteUserModal(state) + renderTeamLeaveModal(state) + renderTeamMemberRemoveModal(state) + renderTeamMemberOwnerModal(state) + renderTeamMemberOwnerDemotionModal(state)
+    }) + renderInviteUserModal(state) + renderTeamLeaveModal(state) + renderTeamMemberRemoveModal(state) + renderMemberRemovalAccessNoticeModal(state) + renderTeamMemberOwnerModal(state) + renderTeamMemberOwnerDemotionModal(state)
   );
 }
