@@ -29,6 +29,7 @@ globalThis.window.__TAURI__.core = {
 };
 
 const { resetSessionState, state } = await import("./state.js");
+const { queryClient } = await import("./query-client.js");
 const {
   applyProjectSnapshotToState,
 } = await import("./project-top-level-state.js");
@@ -197,6 +198,17 @@ function installProjectDiscoveryInvokeMock({
     if (command === "list_gnosis_projects_for_installation") {
       return remoteProjectsPromise;
     }
+    if (command === "list_gnosis_resources_for_installation") {
+      // The combined listing carries the same projects payload (and failure) the
+      // legacy per-type commands did.
+      const projects = await remoteProjectsPromise;
+      return {
+        projects: Array.isArray(projects) ? projects : [],
+        glossaries: [],
+        qaLists: [],
+        digest: "",
+      };
+    }
     if (command === "sync_local_team_metadata_repo" || command === "ensure_local_team_metadata_repo") {
       return null;
     }
@@ -227,6 +239,7 @@ function installProjectDiscoveryInvokeMock({
 test.afterEach(() => {
   invokeHandler = async () => null;
   resetSessionState();
+  queryClient.clear();
 });
 
 test("local project file listing uses a bounded repo-write wait", async () => {

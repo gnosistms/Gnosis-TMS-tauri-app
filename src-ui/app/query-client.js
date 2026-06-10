@@ -55,6 +55,11 @@ export const memberKeys = {
   byTeam: (teamId) => ["members", teamId ?? null],
 };
 
+export const installationResourceKeys = {
+  all: ["installationResources"],
+  byInstallation: (installationId) => ["installationResources", installationId ?? null],
+};
+
 export const teamKeys = {
   all: ["teams"],
   currentUser: (login) => ["teams", login ?? null],

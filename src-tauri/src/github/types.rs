@@ -85,6 +85,18 @@ pub(crate) struct GithubQaListRepo {
     pub(crate) default_branch_head_oid: Option<String>,
 }
 
+// Combined listing of every gnosis resource type in the installation, fetched from the
+// broker's /gnosis-resources endpoint in one round trip. Equal digests across fetches
+// mean the resource world is unchanged.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GithubInstallationResources {
+    pub(crate) projects: Vec<GithubProjectRepo>,
+    pub(crate) glossaries: Vec<GithubGlossaryRepo>,
+    pub(crate) qa_lists: Vec<GithubQaListRepo>,
+    pub(crate) digest: String,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GithubProjectMetadataRecord {

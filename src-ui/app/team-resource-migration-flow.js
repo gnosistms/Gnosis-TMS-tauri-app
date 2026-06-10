@@ -28,6 +28,7 @@ import {
   saveTeamScopedCacheMap,
   teamCacheKey,
 } from "./team-cache.js";
+import { invalidateInstallationResourcesForTeam } from "./installation-resources-query.js";
 
 export const TEAM_REPO_LAYOUT_MIGRATION_TARGET_VERSION = "0.8.10";
 
@@ -434,7 +435,8 @@ async function runTeamResourceMigrationSyncInternal(render, team, options = {}) 
       await migratePendingProjects(render, team, currentResources, currentPending, token);
 
       // Migrations may have renamed repos, so the rescan needs a fresh listing — drop any
-      // caller-provided one.
+      // caller-provided one and invalidate the shared installation listing cache.
+      await invalidateInstallationResourcesForTeam(team);
       currentResources = await collectTeamMigrationResources(team, {
         ...options,
         remoteProjects: undefined,

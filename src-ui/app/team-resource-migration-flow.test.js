@@ -3,6 +3,25 @@ import assert from "node:assert/strict";
 
 let invokeHandler = async () => null;
 
+async function dispatchMockInvoke(command, payload) {
+  if (command === "list_gnosis_resources_for_installation") {
+    // The migration flow only reads glossaries and QA lists from the combined listing
+    // (projects come from options.remoteProjects or its own legacy call), so the
+    // fan-out skips the projects handler.
+    const legacyList = async (legacyCommand) => {
+      const result = await invokeHandler(legacyCommand, payload);
+      return Array.isArray(result) ? result : [];
+    };
+    return {
+      projects: [],
+      glossaries: await legacyList("list_gnosis_glossaries_for_installation"),
+      qaLists: await legacyList("list_gnosis_qa_lists_for_installation"),
+      digest: "",
+    };
+  }
+  return invokeHandler(command, payload);
+}
+
 globalThis.document = globalThis.document ?? {
   querySelector: () => null,
   querySelectorAll: () => [],
@@ -10,7 +29,7 @@ globalThis.document = globalThis.document ?? {
 globalThis.window = globalThis.window ?? {};
 globalThis.window.__TAURI__ = {
   core: {
-    invoke: (command, payload) => invokeHandler(command, payload),
+    invoke: (command, payload) => dispatchMockInvoke(command, payload),
   },
 };
 globalThis.window.requestAnimationFrame = (callback) => {
@@ -19,9 +38,14 @@ globalThis.window.requestAnimationFrame = (callback) => {
 };
 
 const { resetSessionState, state } = await import("./state.js");
+const { queryClient } = await import("./query-client.js");
 const {
   runTeamResourceMigrationSync,
 } = await import("./team-resource-migration-flow.js");
+
+test.afterEach(() => {
+  queryClient.clear();
+});
 
 function setupTeamMigrationTest() {
   resetSessionState();

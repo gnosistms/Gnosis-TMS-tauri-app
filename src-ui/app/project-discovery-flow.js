@@ -1,5 +1,5 @@
 import { invoke, waitForNextPaint } from "./runtime.js";
-import { requireBrokerSession } from "./auth-flow.js";
+import { listRemoteProjectsForInstallation } from "./installation-resources-query.js";
 import {
   loadStoredChapterPendingMutations,
 } from "./project-cache.js";
@@ -894,10 +894,7 @@ export async function loadProjectSnapshotForTeam(render, teamId = state.selected
 
   try {
     const [projectsResult, metadataResult, repairResult, glossaryDiscoveryResult] = await Promise.allSettled([
-      invoke("list_gnosis_projects_for_installation", {
-        installationId: selectedTeam.installationId,
-        sessionToken: requireBrokerSession(),
-      }),
+      listRemoteProjectsForInstallation(selectedTeam.installationId),
       listProjectMetadataRecords(selectedTeam),
       inspectAndMigrateLocalRepoBindings(selectedTeam),
       glossaryLoadPromise,

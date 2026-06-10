@@ -1,6 +1,6 @@
 use crate::broker::{
-    broker_client, broker_delete_no_content_with_session, broker_patch_no_content_with_session,
-    broker_post_json_with_session,
+    broker_client, broker_delete_no_content_with_session, broker_get_json_with_session,
+    broker_patch_no_content_with_session, broker_post_json_with_session,
 };
 use tauri::AppHandle;
 
@@ -9,7 +9,8 @@ use super::{
     types::{
         CreateGithubGlossaryRepoInput, CreateGithubProjectRepoInput, CreateGithubQaListRepoInput,
         DeleteGithubGlossaryRepoInput, DeleteGithubProjectRepoInput, DeleteGithubQaListRepoInput,
-        GithubGlossaryRepo, GithubProjectRepo, GithubQaListRepo, RenameGithubProjectRepoInput,
+        GithubGlossaryRepo, GithubInstallationResources, GithubProjectRepo, GithubQaListRepo,
+        RenameGithubProjectRepoInput,
     },
 };
 
@@ -96,6 +97,61 @@ pub(crate) async fn list_gnosis_qa_lists_for_installation(
     })
     .await
     .map_err(|error| format!("Could not run the QA list listing task: {error}"))?
+}
+
+fn tolerant_resource_list_field<T: serde::de::DeserializeOwned>(
+    app: &AppHandle,
+    value: &serde_json::Value,
+    field: &str,
+    item_kind: &'static str,
+) -> Result<Vec<T>, String> {
+    // A missing list field is a malformed response, not an empty list — treating it as
+    // empty would look like every resource of that type was deleted.
+    let list_value = value.get(field).cloned().ok_or_else(|| {
+        format!("GitHub App broker returned a malformed resource listing (missing {field}).")
+    })?;
+    let (items, skipped_count) = super::deserialize_tolerant_broker_list(list_value, item_kind)?;
+    if skipped_count > 0 {
+        super::report_backend_nonfatal_error(
+            app,
+            "list_gnosis_resources_for_installation.deserialize",
+            "broker_list_item_deserialize_failed",
+        );
+    }
+    Ok(items)
+}
+
+#[tauri::command]
+pub(crate) async fn list_gnosis_resources_for_installation(
+    app: AppHandle,
+    installation_id: i64,
+    session_token: String,
+) -> Result<GithubInstallationResources, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let client = broker_client()?;
+        let value: serde_json::Value = broker_get_json_with_session(
+            &client,
+            &format!("/api/github-app/installations/{installation_id}/gnosis-resources"),
+            &session_token,
+        )?;
+        let projects = tolerant_resource_list_field(&app, &value, "projects", "project repo")?;
+        let glossaries =
+            tolerant_resource_list_field(&app, &value, "glossaries", "glossary repo")?;
+        let qa_lists = tolerant_resource_list_field(&app, &value, "qaLists", "QA list repo")?;
+        let digest = value
+            .get("digest")
+            .and_then(|entry| entry.as_str())
+            .unwrap_or("")
+            .to_string();
+        Ok(GithubInstallationResources {
+            projects,
+            glossaries,
+            qa_lists,
+            digest,
+        })
+    })
+    .await
+    .map_err(|error| format!("Could not run the resource listing task: {error}"))?
 }
 
 // Resource-management authorization is enforced by the command layer that owns the

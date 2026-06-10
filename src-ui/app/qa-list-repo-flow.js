@@ -9,6 +9,7 @@ import {
   upsertQaListMetadataRecord,
 } from "./team-metadata-flow.js";
 import { createRepoResourceRepoFlow } from "./repo-resource/repo-flow.js";
+import { listRemoteQaListsForInstallation } from "./installation-resources-query.js";
 
 function ensureInvoke() {
   if (!invoke) {
@@ -116,8 +117,8 @@ const qaListRepoFlow = createRepoResourceRepoFlow({
   listLocalMetadataRecords: listLocalQaListMetadataRecords,
   upsertMetadataRecord: upsertQaListMetadataRecord,
   ensureRuntime: ensureInvoke,
+  listRemoteRepos: (team) => listRemoteQaListsForInstallation(team.installationId),
   commands: {
-    listRemote: "list_gnosis_qa_lists_for_installation",
     sync: "sync_gtms_qa_list_repos",
     listLocal: "list_local_gtms_qa_lists",
     createRemote: "create_gnosis_qa_list_repo",
