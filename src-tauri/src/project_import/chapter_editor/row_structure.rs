@@ -43,26 +43,35 @@ pub(crate) fn insert_gtms_editor_row_sync(
     let row_id = uuid::Uuid::now_v7().to_string();
     let row_file = create_inserted_row_file(&row_id, &order_key, &chapter_file, &languages);
     let row_json_path = chapter_path.join("rows").join(format!("{row_id}.json"));
-    write_json_pretty(&row_json_path, &row_file)?;
-
     let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
+    let row_file_json = serde_json::to_string_pretty(&row_file).map_err(|error| {
+        format!(
+            "Could not serialize row file '{}': {error}",
+            row_json_path.display()
+        )
+    })?;
+
     let commit_message = if insert_before {
         format!("Insert row {} before {}", row_id, input.row_id)
     } else {
         format!("Insert row {} after {}", row_id, input.row_id)
     };
-    git_output(&repo_path, &["add", &relative_row_json])?;
-    git_commit_as_signed_in_user_with_metadata(
+    write_row_files_and_commit(
         app,
         &repo_path,
         &commit_message,
-        &[&relative_row_json],
         CommitMetadata {
             operation: Some("insert"),
             migration: None,
             status_note: None,
             ai_model: None,
         },
+        &[PreparedRowFileWrite {
+            path: row_json_path,
+            relative_path: relative_row_json,
+            original_text: None,
+            updated_text: format!("{row_file_json}\n"),
+        }],
     )?;
 
     let inserted_row_file: StoredRowFile = serde_json::from_value(row_file)
@@ -97,9 +106,8 @@ pub(crate) fn update_gtms_editor_row_lifecycle_sync(
     let chapter_file: StoredChapterFile =
         read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
     let languages = sanitize_chapter_languages(&chapter_file.languages);
-    let row_json_path = chapter_path
-        .join("rows")
-        .join(format!("{}.json", input.row_id));
+    let row_json_path = validated_row_json_path(&chapter_path, &input.row_id)?;
+    let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
     let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
         format!(
             "Could not read row file '{}': {error}",
@@ -165,20 +173,15 @@ pub(crate) fn update_gtms_editor_row_lifecycle_sync(
         )
     })?;
     let updated_row_text = format!("{updated_row_json}\n");
-    write_text_file(&row_json_path, &updated_row_text)?;
-
-    let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
     let commit_message = if next_state == "deleted" {
         format!("Delete row {}", input.row_id)
     } else {
         format!("Restore row {}", input.row_id)
     };
-    git_output(&repo_path, &["add", &relative_row_json])?;
-    git_commit_as_signed_in_user_with_metadata(
+    write_row_files_and_commit(
         app,
         &repo_path,
         &commit_message,
-        &[&relative_row_json],
         CommitMetadata {
             operation: Some(if next_state == "deleted" {
                 "delete"
@@ -189,6 +192,12 @@ pub(crate) fn update_gtms_editor_row_lifecycle_sync(
             status_note: None,
             ai_model: None,
         },
+        &[PreparedRowFileWrite {
+            path: row_json_path,
+            relative_path: relative_row_json,
+            original_text: Some(original_row_text),
+            updated_text: updated_row_text,
+        }],
     )?;
 
     Ok(UpdateEditorRowLifecycleResponse {
@@ -216,9 +225,8 @@ pub(crate) fn permanently_delete_gtms_editor_row_sync(
     let chapter_file: StoredChapterFile =
         read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
     let languages = sanitize_chapter_languages(&chapter_file.languages);
-    let row_json_path = chapter_path
-        .join("rows")
-        .join(format!("{}.json", input.row_id));
+    let row_json_path = validated_row_json_path(&chapter_path, &input.row_id)?;
+    let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
     let row_file: StoredRowFile = read_json_file(&row_json_path, "row file")?;
     if row_file.lifecycle.state != "deleted" {
         return Err("Only soft-deleted rows can be permanently deleted.".to_string());
@@ -232,40 +240,57 @@ pub(crate) fn permanently_delete_gtms_editor_row_sync(
         &languages,
     );
     let uploaded_image_paths = row_uploaded_image_relative_paths(&row_file);
-    fs::remove_file(&row_json_path).map_err(|error| {
-        format!(
-            "Could not remove the deleted row from disk at '{}': {error}",
-            row_json_path.display()
-        )
-    })?;
-    for relative_path in &uploaded_image_paths {
-        remove_repo_file_from_disk(&repo_path, relative_path)?;
+    // Fail the expected commit-gate failures (write access, signed-out session) before
+    // any file is removed, so they cannot strand a dirty working tree.
+    crate::git_commit::ensure_local_commit_preconditions(app, &repo_path)?;
+
+    let mut commit_paths = vec![relative_row_json.clone()];
+    commit_paths.extend(uploaded_image_paths.iter().cloned());
+    let delete_and_commit = || -> Result<(), String> {
+        fs::remove_file(&row_json_path).map_err(|error| {
+            format!(
+                "Could not remove the deleted row from disk at '{}': {error}",
+                row_json_path.display()
+            )
+        })?;
+        for relative_path in &uploaded_image_paths {
+            remove_repo_file_from_disk(&repo_path, relative_path)?;
+            git_output(
+                &repo_path,
+                &["rm", "--cached", "--ignore-unmatch", relative_path],
+            )?;
+        }
+
         git_output(
             &repo_path,
-            &["rm", "--cached", "--ignore-unmatch", relative_path],
+            &["rm", "--cached", "--ignore-unmatch", &relative_row_json],
         )?;
+        let commit_path_refs: Vec<&str> = commit_paths.iter().map(String::as_str).collect();
+        git_commit_as_signed_in_user_with_metadata(
+            app,
+            &repo_path,
+            &format!("Delete row {} permanently", input.row_id),
+            &commit_path_refs,
+            CommitMetadata {
+                operation: Some("permanent-delete"),
+                migration: None,
+                status_note: None,
+                ai_model: None,
+            },
+        )?;
+        Ok(())
+    };
+    if let Err(error) = delete_and_commit() {
+        // Row files and uploaded images are always committed, so HEAD still has the
+        // content: unstage the deletions and restore the working tree from the index.
+        let mut reset_args = vec!["reset", "-q", "--"];
+        reset_args.extend(commit_paths.iter().map(String::as_str));
+        let _ = git_output(&repo_path, &reset_args);
+        let mut checkout_args = vec!["checkout", "-q", "--"];
+        checkout_args.extend(commit_paths.iter().map(String::as_str));
+        let _ = git_output(&repo_path, &checkout_args);
+        return Err(error);
     }
-
-    let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
-    git_output(
-        &repo_path,
-        &["rm", "--cached", "--ignore-unmatch", &relative_row_json],
-    )?;
-    let mut commit_paths = vec![relative_row_json.clone()];
-    commit_paths.extend(uploaded_image_paths);
-    let commit_path_refs: Vec<&str> = commit_paths.iter().map(String::as_str).collect();
-    git_commit_as_signed_in_user_with_metadata(
-        app,
-        &repo_path,
-        &format!("Delete row {} permanently", input.row_id),
-        &commit_path_refs,
-        CommitMetadata {
-            operation: Some("permanent-delete"),
-            migration: None,
-            status_note: None,
-            ai_model: None,
-        },
-    )?;
 
     Ok(UpdateEditorRowLifecycleResponse {
         row_id: input.row_id,

@@ -6,6 +6,102 @@ pub(super) fn current_repo_head_sha(repo_path: &Path) -> Option<String> {
     git_output(repo_path, &["rev-parse", "--verify", "HEAD"]).ok()
 }
 
+/// Row ids come straight from IPC input and end up in `Path::join`, `fs::write`, and
+/// `fs::remove_file`. `Path::strip_prefix` is lexical, so a `..` component would survive
+/// the repo-relative check downstream — reject anything outside a plain single-component
+/// file name here. Mirrors `validated_resource_id` in `team_metadata_local/repo.rs`.
+pub(super) fn validated_row_json_path(
+    chapter_path: &Path,
+    row_id: &str,
+) -> Result<PathBuf, String> {
+    let normalized = row_id.trim();
+    if normalized.is_empty()
+        || normalized == "."
+        || normalized == ".."
+        || !normalized
+            .chars()
+            .all(|value| value.is_ascii_alphanumeric() || matches!(value, '.' | '_' | '-'))
+    {
+        return Err(format!("'{normalized}' is not a valid row id."));
+    }
+    Ok(chapter_path.join("rows").join(format!("{normalized}.json")))
+}
+
+pub(super) struct PreparedRowFileWrite {
+    pub(super) path: PathBuf,
+    pub(super) relative_path: String,
+    /// `None` when the file is being created (rollback removes it instead of restoring).
+    pub(super) original_text: Option<String>,
+    pub(super) updated_text: String,
+}
+
+/// Write the prepared files and commit them as the signed-in user without ever being
+/// able to leave the working tree dirty: the commit preconditions (write access,
+/// signed-in session) are checked before the first write, and any later failure rolls
+/// the written files back and unstages them before the error is returned. Returns the
+/// commit helper's stdout (empty when there was nothing to commit).
+pub(super) fn write_row_files_and_commit(
+    app: &AppHandle,
+    repo_path: &Path,
+    commit_message: &str,
+    metadata: CommitMetadata<'_>,
+    writes: &[PreparedRowFileWrite],
+) -> Result<String, String> {
+    crate::git_commit::ensure_local_commit_preconditions(app, repo_path)?;
+
+    let mut written_count = 0usize;
+    let mut failure = None;
+    for write in writes {
+        if let Err(error) = write_text_file(&write.path, &write.updated_text) {
+            failure = Some(error);
+            break;
+        }
+        written_count += 1;
+    }
+
+    let mut commit_output = String::new();
+    if failure.is_none() {
+        let relative_paths = writes
+            .iter()
+            .map(|write| write.relative_path.as_str())
+            .collect::<Vec<_>>();
+        let mut add_args = vec!["add"];
+        add_args.extend(relative_paths.iter().copied());
+        let result = git_output(repo_path, &add_args).and_then(|_| {
+            git_commit_as_signed_in_user_with_metadata(
+                app,
+                repo_path,
+                commit_message,
+                &relative_paths,
+                metadata,
+            )
+        });
+        match result {
+            Ok(output) => commit_output = output,
+            Err(error) => failure = Some(error),
+        }
+    }
+
+    if let Some(error) = failure {
+        for write in writes.iter().take(written_count) {
+            match &write.original_text {
+                Some(text) => {
+                    let _ = fs::write(&write.path, text);
+                }
+                None => {
+                    let _ = fs::remove_file(&write.path);
+                }
+            }
+        }
+        let mut reset_args = vec!["reset", "-q", "--"];
+        reset_args.extend(writes.iter().map(|write| write.relative_path.as_str()));
+        let _ = git_output(repo_path, &reset_args);
+        return Err(error);
+    }
+
+    Ok(commit_output)
+}
+
 pub(super) fn load_editor_rows(rows_path: &Path) -> Result<Vec<StoredRowFile>, String> {
     if !rows_path.exists() {
         return Ok(Vec::new());
@@ -101,20 +197,11 @@ fn persist_chapter_source_word_counts_batch(
     commit_message: &str,
 ) -> Result<(), String> {
     // This runs from read paths (editor load, projects-page listing), so it must not be able
-    // to leave the repo dirty: the commit helper commits everything staged (no pathspec), and
-    // a leftover modified/staged chapter.json would be swept into the next unrelated commit
-    // or break a later pull. Check the commit preconditions before touching any file, prepare
-    // every update before writing the first one, and roll back everything if a later step fails.
-    crate::installation_access::ensure_repo_allows_writes(app, repo_path)?;
-
-    struct PreparedUpdate {
-        chapter_json_path: PathBuf,
-        original_text: String,
-        updated_value: serde_json::Value,
-        relative_path: String,
-    }
-
-    let mut updates = Vec::with_capacity(entries.len());
+    // to leave the repo dirty: a failed commit would strand modified/staged chapter.json files
+    // that break a later pull. write_row_files_and_commit checks the commit preconditions
+    // before touching any file and rolls everything back if a later step fails; prepare every
+    // update before writing the first one.
+    let mut writes = Vec::with_capacity(entries.len());
     for (chapter_json_path, source_word_count) in entries {
         let original_text = fs::read_to_string(chapter_json_path)
             .map_err(|error| format!("Could not read chapter.json: {error}"))?;
@@ -128,44 +215,32 @@ fn persist_chapter_source_word_counts_batch(
             "source_word_count".to_string(),
             serde_json::json!(source_word_count),
         );
-        updates.push(PreparedUpdate {
-            chapter_json_path: chapter_json_path.clone(),
-            original_text,
-            updated_value: value,
+        let updated_json = serde_json::to_string_pretty(&value).map_err(|error| {
+            format!(
+                "Could not serialize '{}': {error}",
+                chapter_json_path.display()
+            )
+        })?;
+        writes.push(PreparedRowFileWrite {
+            path: chapter_json_path.clone(),
             relative_path: repo_relative_path(repo_path, chapter_json_path)?,
+            original_text: Some(original_text),
+            updated_text: format!("{updated_json}\n"),
         });
     }
 
-    let mut written_count = 0usize;
-    let mut write_and_commit = || -> Result<(), String> {
-        for update in &updates {
-            write_json_pretty(&update.chapter_json_path, &update.updated_value)?;
-            written_count += 1;
-        }
-        let relative_paths = updates
-            .iter()
-            .map(|update| update.relative_path.as_str())
-            .collect::<Vec<_>>();
-        let mut add_args = vec!["add"];
-        add_args.extend(relative_paths.iter().copied());
-        git_output(repo_path, &add_args)?;
-        crate::git_commit::git_commit_as_signed_in_user(
-            app,
-            repo_path,
-            commit_message,
-            &relative_paths,
-        )?;
-        Ok(())
-    };
-    if let Err(error) = write_and_commit() {
-        for update in updates.iter().take(written_count) {
-            let _ = fs::write(&update.chapter_json_path, &update.original_text);
-        }
-        let mut reset_args = vec!["reset", "-q", "--"];
-        reset_args.extend(updates.iter().map(|update| update.relative_path.as_str()));
-        let _ = git_output(repo_path, &reset_args);
-        return Err(error);
-    }
+    write_row_files_and_commit(
+        app,
+        repo_path,
+        commit_message,
+        CommitMetadata {
+            operation: None,
+            migration: None,
+            status_note: None,
+            ai_model: None,
+        },
+        &writes,
+    )?;
     Ok(())
 }
 
@@ -762,4 +837,43 @@ fn count_words(value: &str) -> usize {
         .split_whitespace()
         .filter(|segment| !segment.is_empty())
         .count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validated_row_json_path_accepts_plain_ids_and_trims() {
+        let chapter = Path::new("/repos/project/chapters/chapter-1");
+        let path = validated_row_json_path(chapter, " 0196a7e2-aa11-7def-8000-1234abcd5678 ")
+            .expect("plain id should resolve");
+        assert_eq!(
+            path,
+            chapter
+                .join("rows")
+                .join("0196a7e2-aa11-7def-8000-1234abcd5678.json")
+        );
+        assert!(validated_row_json_path(chapter, "Row_1.v2").is_ok());
+    }
+
+    #[test]
+    fn validated_row_json_path_rejects_traversal_and_empty_ids() {
+        let chapter = Path::new("/repos/project/chapters/chapter-1");
+        for invalid in [
+            "",
+            "   ",
+            ".",
+            "..",
+            "../../chapter.json",
+            "../../../../../etc/target",
+            "nested/row",
+            "nested\\row",
+        ] {
+            assert!(
+                validated_row_json_path(chapter, invalid).is_err(),
+                "'{invalid}' should be rejected"
+            );
+        }
+    }
 }

@@ -215,30 +215,48 @@ modes on Gemini/DeepSeek — Claude enforcement deferred, documented in review).
 ---
 
 ## Batch 10 — Chapter Editor (the deep end)
-*~8,450 lines · 3 sessions*
+*~13,000 lines · 4 sessions*
 
-### 10a: Editor Core (~3,680 lines)
-
-```
-project_import/chapter_editor/mod.rs         (1,639)
-project_import/chapter_editor/shared.rs        (597)
-project_import/chapter_editor/row_fields.rs    (966)
-project_import/chapter_editor/row_structure.rs (475)
-```
-
-### 10b: Git Conflict Resolution + History (~2,720 lines)
+### 10a: Editor Core (~4,140 lines) — REVIEW COMPLETE
 
 ```
-project_import/chapter_editor/git_conflicts.rs (1,460)
+project_import/chapter_editor/mod.rs         (1,669)
+project_import/chapter_editor/shared.rs        (765)
+project_import/chapter_editor/row_fields.rs  (1,230)
+project_import/chapter_editor/row_structure.rs (474)
+```
+
+**Review file**: `reviews/2026-06-10-batch-10a-review.md`
+**Findings**: 0 Critical, 1 Security, 1 Major, 2 Minor
+**Resolution**: S1, M1, m1 resolved 2026-06-10 on `fix/batch-10a-review-findings`
+(validated row-id paths, commit-gate preflight + rollback via
+`write_row_files_and_commit`, word-count helper refactor). m2 (per-save O(chapter)
+cost) deferred — needs a frontend-contract design decision.
+
+### 10b: Git Conflict Resolution + History (~2,950 lines)
+
+```
+project_import/chapter_editor/git_conflicts.rs (1,686)
 project_import/chapter_editor/history.rs       (1,262)
 ```
 
-### 10c: Aligned Translation + Export (~3,970 lines)
+### 10c: Aligned Translation + Export (~4,260 lines)
 
 ```
-project_import/chapter_editor/aligned_translation.rs (2,602)
-project_import/chapter_editor/chapter_export.rs      (1,369)
+project_import/chapter_editor/aligned_translation.rs (2,886)
+project_import/chapter_editor/chapter_export.rs      (1,370)
 ```
+
+### 10d: Chapter Selection + Images (~1,660 lines)
+
+```
+project_import/chapter_editor/chapter_selection.rs   (536)
+project_import/chapter_editor/images.rs            (1,121)
+```
+
+These two files were missing from the original strategy (added 2026-06-10 during
+the 10a session). `images.rs` handles base64 upload, filenames, and on-disk file
+removal — review it with 10a finding S1 (unvalidated ids in paths) in hand.
 
 `aligned_translation.rs` (lexicographic key generation, merge logic) and
 `git_conflicts.rs` (semantic conflict detection) are the most algorithmically
@@ -367,10 +385,10 @@ The fix is the same transform applied to Batch 2 M2 (`invite_user_to_organizatio
 | 7 | Content Storage | 4,470 | 2 | ✅ `2026-06-03-batch-7-review.md` — 0C/0S/0M/1m, resolved in PR #25 |
 | 8 | Team Metadata | 2,475 | 1 | ✅ `2026-06-10-batch-8-review.md` — 0C/1S/2M/2m, all resolved on `fix/batch-8-review-findings` |
 | 9 | AI Integration | 5,040 | 2 | ✅ `2026-06-10-batch-9-review.md` — 0C/2S/1M/2m, all resolved on `fix/batch-9-review-findings` |
-| 10 | Chapter Editor | 8,450 | 3 | — |
+| 10 | Chapter Editor | 13,000 | 4 | 🔶 10a done — `2026-06-10-batch-10a-review.md`, 0C/1S/1M/2m, S1/M1/m1 resolved, m2 deferred; 10b/10c/10d pending |
 | 11 | Import Pipeline | 6,325 | 3 | — |
 | 12 | Search + Updater | 2,680 | 1 | — |
-| **Total** | | **~45,700** | **18** | |
+| **Total** | | **~50,300** | **19** | |
 
 ## Naming Convention
 
