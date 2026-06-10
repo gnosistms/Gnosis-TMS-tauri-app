@@ -5,15 +5,15 @@ use serde_json::{Number, Value};
 use tauri::AppHandle;
 
 use crate::broker_auth_storage::load_broker_auth_session_internal;
-use crate::git_commit::{
-    git_commit_as_signed_in_user_with_metadata, GitCommitMetadata as CommitMetadata,
-};
+use crate::git_commit::GitCommitMetadata as CommitMetadata;
 use crate::project_repo_paths::resolve_project_git_repo_path;
 
-use super::chapter_editor::validated_row_json_path;
+use super::chapter_editor::{
+    validated_row_json_path, write_row_files_and_commit, PreparedRowFileWrite,
+};
 use super::project_git::{
     ensure_repo_exists, ensure_valid_git_repo, find_chapter_path_by_id, git_output, read_json_file,
-    repo_relative_path, write_text_file,
+    repo_relative_path,
 };
 
 fn current_repo_head_sha(repo_path: &std::path::Path) -> Option<String> {
@@ -184,21 +184,22 @@ pub(super) fn save_gtms_editor_row_comment_sync(
             row_json_path.display()
         )
     })?;
-    write_text_file(&row_json_path, &format!("{updated_row_json}\n"))?;
-
-    let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
-    git_output(&repo_path, &["add", &relative_row_json])?;
-    git_commit_as_signed_in_user_with_metadata(
+    write_row_files_and_commit(
         app,
         &repo_path,
         &format!("Add comment to row {}", input.row_id),
-        &[&relative_row_json],
         CommitMetadata {
             operation: Some("editor-comment"),
             migration: None,
             status_note: None,
             ai_model: None,
         },
+        &[PreparedRowFileWrite {
+            relative_path: repo_relative_path(&repo_path, &row_json_path)?,
+            original_text: Some(original_row_text),
+            updated_text: format!("{updated_row_json}\n"),
+            path: row_json_path,
+        }],
     )?;
 
     Ok(SaveEditorRowCommentResponse {
@@ -256,21 +257,22 @@ pub(super) fn delete_gtms_editor_row_comment_sync(
             row_json_path.display()
         )
     })?;
-    write_text_file(&row_json_path, &format!("{updated_row_json}\n"))?;
-
-    let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
-    git_output(&repo_path, &["add", &relative_row_json])?;
-    git_commit_as_signed_in_user_with_metadata(
+    write_row_files_and_commit(
         app,
         &repo_path,
         &format!("Delete comment from row {}", input.row_id),
-        &[&relative_row_json],
         CommitMetadata {
             operation: Some("editor-comment"),
             migration: None,
             status_note: None,
             ai_model: None,
         },
+        &[PreparedRowFileWrite {
+            relative_path: repo_relative_path(&repo_path, &row_json_path)?,
+            original_text: Some(original_row_text),
+            updated_text: format!("{updated_row_json}\n"),
+            path: row_json_path,
+        }],
     )?;
 
     Ok(DeleteEditorRowCommentResponse {
