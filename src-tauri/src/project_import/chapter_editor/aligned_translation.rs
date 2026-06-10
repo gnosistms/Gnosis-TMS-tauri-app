@@ -2608,7 +2608,25 @@ fn emit_progress(app: &AppHandle, event: &AlignmentProgressEvent) {
     let _ = app.emit(EVENT_NAME, event);
 }
 
+/// Job ids come from IPC input on apply and are joined into a cache path. They are
+/// `hash_json` SHA-256 hex in normal use; validate as a plain single-component token so a
+/// crafted `..`/separator id can never escape the alignment-jobs directory.
+fn validated_alignment_job_id(job_id: &str) -> Result<&str, String> {
+    let normalized = job_id.trim();
+    if normalized.is_empty()
+        || normalized == "."
+        || normalized == ".."
+        || !normalized
+            .chars()
+            .all(|value| value.is_ascii_alphanumeric() || matches!(value, '_' | '-'))
+    {
+        return Err("The alignment job id is not valid.".to_string());
+    }
+    Ok(normalized)
+}
+
 fn job_path(app: &AppHandle, installation_id: i64, job_id: &str) -> Result<PathBuf, String> {
+    let job_id = validated_alignment_job_id(job_id)?;
     let root = installation_data_dir(app, installation_id)?.join("alignment-jobs");
     fs::create_dir_all(&root)
         .map_err(|error| format!("Could not create alignment cache folder: {error}"))?;
@@ -2762,6 +2780,24 @@ mod tests {
         assert_eq!(units[0].text, "one");
         assert_eq!(units[0].original_line_number, 1);
         assert_eq!(units[1].original_line_number, 3);
+    }
+
+    #[test]
+    fn validated_alignment_job_id_accepts_hex_and_rejects_traversal() {
+        assert!(validated_alignment_job_id(
+            "a3f1c8e29b7d4f6018245e9bc0a7d3f1a3f1c8e29b7d4f6018245e9bc0a7d3f1"
+        )
+        .is_ok());
+        assert_eq!(
+            validated_alignment_job_id(" job-1_2 ").as_deref(),
+            Ok("job-1_2")
+        );
+        for invalid in ["", "   ", ".", "..", "../escape", "a/b", "a\\b", "job.json"] {
+            assert!(
+                validated_alignment_job_id(invalid).is_err(),
+                "'{invalid}' should be rejected"
+            );
+        }
     }
 
     #[test]
