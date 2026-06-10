@@ -10,6 +10,11 @@ use crate::ai::types::{AiPromptRequest, AiPromptResponse, AiProviderId, AiProvid
 
 static SHARED_HTTP_CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
 
+/// Per-request override for prompt runs. The shared client's 45s default fits model
+/// listings and probes, but long generations on reasoning-heavy models routinely need
+/// more; without streaming the whole response must finish inside this window.
+pub(crate) const AI_PROMPT_TIMEOUT: Duration = Duration::from_secs(300);
+
 pub(crate) fn shared_http_client() -> Result<&'static reqwest::blocking::Client, String> {
     if let Some(client) = SHARED_HTTP_CLIENT.get() {
         return Ok(client);

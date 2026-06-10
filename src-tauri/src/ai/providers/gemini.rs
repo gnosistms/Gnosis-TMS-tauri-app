@@ -36,6 +36,22 @@ struct GeminiModelEntry {
 #[derive(Debug, Serialize)]
 struct GeminiGenerateContentRequest<'a> {
     contents: Vec<GeminiContent<'a>>,
+    #[serde(rename = "generationConfig", skip_serializing_if = "Option::is_none")]
+    generation_config: Option<GeminiGenerationConfig>,
+}
+
+/// Gemini's JSON mode guarantees parseable output for the structured formats instead
+/// of relying on the prompt contract alone.
+#[derive(Debug, Serialize)]
+struct GeminiGenerationConfig {
+    #[serde(rename = "responseMimeType")]
+    response_mime_type: &'static str,
+}
+
+fn generation_config_for_json_output(json_output: bool) -> Option<GeminiGenerationConfig> {
+    json_output.then_some(GeminiGenerationConfig {
+        response_mime_type: "application/json",
+    })
 }
 
 #[derive(Debug, Serialize)]
@@ -111,9 +127,12 @@ pub(crate) fn list_models(api_key: &str) -> Result<Vec<AiProviderModel>, String>
     let mut next_page_token = String::new();
 
     loop {
+        // The key travels in a header, never the URL: reqwest error displays include
+        // the full request URL, so a query-string key would leak into error messages.
         let mut request = client
             .get(GEMINI_MODELS_API_URL)
-            .query(&[("key", normalized_key), ("pageSize", "1000")]);
+            .header("x-goog-api-key", normalized_key)
+            .query(&[("pageSize", "1000")]);
         if !next_page_token.is_empty() {
             request = request.query(&[("pageToken", next_page_token.as_str())]);
         }
@@ -201,9 +220,19 @@ pub(crate) fn run_prompt(
 
     let client = shared_http_client()
         .map_err(|error| format!("Could not start the Gemini request: {error}"))?;
-    let (status, body) =
-        send_generate_content_request(client, normalized_key, model_id, &request.prompt)
-            .map_err(|error| format!("Could not complete the Gemini request: {error}"))?;
+    let json_output = !matches!(
+        request.output_format,
+        crate::ai::types::AiPromptOutputFormat::Text
+    );
+    let (status, body) = send_generate_content_request(
+        client,
+        normalized_key,
+        model_id,
+        &request.prompt,
+        Some(super::AI_PROMPT_TIMEOUT),
+        json_output,
+    )
+    .map_err(|error| format!("Could not complete the Gemini request: {error}"))?;
 
     if !status.is_success() {
         return Err(normalize_http_error(status, &body));
@@ -247,6 +276,8 @@ pub(crate) fn probe_model(model_id: &str, api_key: &str) -> Result<(), String> {
         normalized_key,
         normalized_model_id,
         "Reply with OK.",
+        None,
+        false,
     )
     .map_err(|error| format!("Could not complete the Gemini model test request: {error}"))?;
 
@@ -262,23 +293,28 @@ fn send_generate_content_request(
     api_key: &str,
     model_id: &str,
     text: &str,
+    request_timeout: Option<Duration>,
+    json_output: bool,
 ) -> Result<(StatusCode, String), String> {
     let mut attempt = 0;
 
     loop {
-        let response = client
+        let mut request_builder = client
             .post(format!(
                 "https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent"
             ))
-            .query(&[("key", api_key)])
+            .header("x-goog-api-key", api_key)
             .header("Content-Type", "application/json")
             .json(&GeminiGenerateContentRequest {
                 contents: vec![GeminiContent {
                     parts: vec![GeminiPart { text }],
                 }],
-            })
-            .send()
-            .map_err(normalize_transport_error)?;
+                generation_config: generation_config_for_json_output(json_output),
+            });
+        if let Some(request_timeout) = request_timeout {
+            request_builder = request_builder.timeout(request_timeout);
+        }
+        let response = request_builder.send().map_err(normalize_transport_error)?;
         let status = response.status();
         let body = response
             .text()
@@ -479,6 +515,37 @@ fn extract_api_error_message(body: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn generate_content_request_sets_json_mime_only_for_json_output() {
+        use super::{
+            generation_config_for_json_output, GeminiContent, GeminiGenerateContentRequest,
+            GeminiPart,
+        };
+
+        let json_request = GeminiGenerateContentRequest {
+            contents: vec![GeminiContent {
+                parts: vec![GeminiPart { text: "hello" }],
+            }],
+            generation_config: generation_config_for_json_output(true),
+        };
+        let payload = serde_json::to_value(&json_request).unwrap();
+        assert_eq!(
+            payload
+                .pointer("/generationConfig/responseMimeType")
+                .and_then(serde_json::Value::as_str),
+            Some("application/json")
+        );
+
+        let text_request = GeminiGenerateContentRequest {
+            contents: vec![GeminiContent {
+                parts: vec![GeminiPart { text: "hello" }],
+            }],
+            generation_config: generation_config_for_json_output(false),
+        };
+        let payload = serde_json::to_value(&text_request).unwrap();
+        assert!(payload.get("generationConfig").is_none());
+    }
+
     use std::time::Duration;
 
     use super::{

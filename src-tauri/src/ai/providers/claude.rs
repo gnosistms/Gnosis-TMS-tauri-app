@@ -9,6 +9,10 @@ use crate::ai::{
 const CLAUDE_API_VERSION: &str = "2023-06-01";
 const CLAUDE_MODELS_API_URL: &str = "https://api.anthropic.com/v1/models";
 const CLAUDE_MESSAGES_API_URL: &str = "https://api.anthropic.com/v1/messages";
+// The Messages API requires max_tokens. Keep it generous: long translations (CJK and
+// diacritic-heavy targets especially) overflowed the previous 1,024 cap and were
+// silently truncated.
+const CLAUDE_MAX_OUTPUT_TOKENS: u32 = 8192;
 
 #[derive(Debug, Deserialize)]
 struct ClaudeModelsResponse {
@@ -41,6 +45,8 @@ struct ClaudeMessage<'a> {
 struct ClaudeMessagesResponse {
     #[serde(default)]
     content: Vec<ClaudeContentBlock>,
+    #[serde(default)]
+    stop_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -140,12 +146,13 @@ pub(crate) fn run_prompt(
 
     let response = client
         .post(CLAUDE_MESSAGES_API_URL)
+        .timeout(super::AI_PROMPT_TIMEOUT)
         .header("x-api-key", normalized_key)
         .header("anthropic-version", CLAUDE_API_VERSION)
         .header("content-type", "application/json")
         .json(&ClaudeMessagesRequest {
             model: model_id,
-            max_tokens: 1024,
+            max_tokens: CLAUDE_MAX_OUTPUT_TOKENS,
             messages: vec![ClaudeMessage {
                 role: "user",
                 content: &request.prompt,
@@ -163,8 +170,27 @@ pub(crate) fn run_prompt(
         return Err(normalize_http_error(status, &body));
     }
 
-    let payload: ClaudeMessagesResponse = serde_json::from_str(&body)
+    let text = normalize_messages_response(&body)?;
+
+    Ok(AiPromptResponse {
+        text,
+        provider_response_id: None,
+    })
+}
+
+fn normalize_messages_response(body: &str) -> Result<String, String> {
+    let payload: ClaudeMessagesResponse = serde_json::from_str(body)
         .map_err(|_| "Claude returned a malformed response.".to_string())?;
+    // A max_tokens stop means the text is incomplete — returning it as success would
+    // silently hand the user a truncated translation (or unparsable JSON).
+    if payload.stop_reason.as_deref() == Some("max_tokens") {
+        return Err(
+            "Claude stopped before finishing because the response hit the output limit. \
+             Try a shorter text."
+                .to_string(),
+        );
+    }
+
     let text = payload
         .content
         .into_iter()
@@ -176,10 +202,7 @@ pub(crate) fn run_prompt(
         return Err("Claude returned an empty response.".to_string());
     }
 
-    Ok(AiPromptResponse {
-        text,
-        provider_response_id: None,
-    })
+    Ok(text)
 }
 
 pub(crate) fn probe_model(model_id: &str, api_key: &str) -> Result<(), String> {
@@ -265,4 +288,45 @@ fn extract_probe_error_message(status: StatusCode, body: &str, provider_name: &s
     extract_api_error_message(body).unwrap_or_else(|| {
         format!("{provider_name} returned {status} while testing the selected model.")
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_messages_response;
+
+    #[test]
+    fn messages_response_concatenates_text_blocks() {
+        let body = r#"{
+            "content": [
+                { "type": "text", "text": "Xin " },
+                { "type": "text", "text": "chào." }
+            ],
+            "stop_reason": "end_turn"
+        }"#;
+
+        assert_eq!(normalize_messages_response(body).unwrap(), "Xin chào.");
+    }
+
+    #[test]
+    fn messages_response_rejects_max_tokens_truncation() {
+        let body = r#"{
+            "content": [
+                { "type": "text", "text": "Half a translation that was cut" }
+            ],
+            "stop_reason": "max_tokens"
+        }"#;
+
+        let error = normalize_messages_response(body).unwrap_err();
+
+        assert!(error.contains("output limit"), "got: {error}");
+    }
+
+    #[test]
+    fn messages_response_rejects_empty_output() {
+        let body = r#"{ "content": [], "stop_reason": "end_turn" }"#;
+
+        let error = normalize_messages_response(body).unwrap_err();
+
+        assert_eq!(error, "Claude returned an empty response.");
+    }
 }

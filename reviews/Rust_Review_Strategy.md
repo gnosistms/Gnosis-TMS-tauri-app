@@ -180,8 +180,8 @@ divergence rebase recovery, atomic record writes, domain-agnostic push gate).
 
 ---
 
-## Batch 9 — AI Integration
-*~5,040 lines · 2 sessions*
+## Batch 9 — AI Integration REVIEW COMPLETE
+*~5,040 lines · 2 sessions (reviewed in one pass)*
 
 ### 9a: AI Core (~3,280 lines)
 
@@ -204,6 +204,13 @@ team_ai.rs                       (667)
 Prompt handling, structured output schemas, and streaming responses. Check for
 secret leakage in error paths. `team_ai.rs` owns AI settings storage (reviewed
 alongside providers for context).
+
+**Review file**: `reviews/2026-06-10-batch-9-review.md`
+**Findings**: 0 Critical, 2 Security, 1 Major, 2 Minor
+**Resolution**: All resolved 2026-06-10 on `fix/batch-9-review-findings` (Gemini key
+moved to header + scrub pattern; content-free malformed-response telemetry; Claude
+output cap raised with explicit truncation error; 300s prompt timeout; native JSON
+modes on Gemini/DeepSeek — Claude enforcement deferred, documented in review).
 
 ---
 
@@ -359,7 +366,7 @@ The fix is the same transform applied to Batch 2 M2 (`invite_user_to_organizatio
 | 6 | Glossary & QA Sync | 1,985 | 1 | ✅ `2026-06-03-batch-6-review.md` — 0C/0S/1M/0m, resolved in PR #23 |
 | 7 | Content Storage | 4,470 | 2 | ✅ `2026-06-03-batch-7-review.md` — 0C/0S/0M/1m, resolved in PR #25 |
 | 8 | Team Metadata | 2,475 | 1 | ✅ `2026-06-10-batch-8-review.md` — 0C/1S/2M/2m, all resolved on `fix/batch-8-review-findings` |
-| 9 | AI Integration | 5,040 | 2 | — |
+| 9 | AI Integration | 5,040 | 2 | ✅ `2026-06-10-batch-9-review.md` — 0C/2S/1M/2m, all resolved on `fix/batch-9-review-findings` |
 | 10 | Chapter Editor | 8,450 | 3 | — |
 | 11 | Import Pipeline | 6,325 | 3 | — |
 | 12 | Search + Updater | 2,680 | 1 | — |

@@ -104,11 +104,20 @@ export const invoke = rawInvoke
     }
   : null;
 
+// Malformed AI assistant responses reject with a JSON payload that embeds the raw
+// model output and prompt so the editor can show them locally. That payload is
+// document content and must never reach telemetry (telemetry-plan hard constraint).
+const AI_ASSISTANT_MALFORMED_RESPONSE_ERROR_PREFIX = "AI_ASSISTANT_MALFORMED_RESPONSE_JSON:";
+
 function maybeReportCommandFailure(command, error) {
   // Skip the expected "session expired" path — it is routine, not a defect, and noisy.
   // Reporting is fire-and-forget and a no-op until the consent gate opens.
-  const message = String(error?.message ?? error ?? "").trim().toLowerCase();
-  if (message.startsWith("auth_required:")) {
+  const rawMessage = String(error?.message ?? error ?? "").trim();
+  if (rawMessage.toLowerCase().startsWith("auth_required:")) {
+    return;
+  }
+  if (rawMessage.startsWith(AI_ASSISTANT_MALFORMED_RESPONSE_ERROR_PREFIX)) {
+    reportCommandFailure(command, "The AI assistant returned a malformed response.");
     return;
   }
   reportCommandFailure(command, error);

@@ -31,6 +31,14 @@ test("scrubString redacts secret-looking tokens", () => {
   assert.match(scrubString("key sk-ant-abc123ABC456def789ghi failed"), /<redacted>/);
   assert.match(scrubString("OpenAI sk-abcdefghijklmnop1234 rejected"), /<redacted>/);
   assert.match(scrubString("Authorization: Bearer abcdef.ghijkl.mnopqr"), /<redacted>/);
+  assert.match(
+    scrubString("url (https://generativelanguage.googleapis.com/?key=AIzaSyA1234567890abcdefghijklmnopqrstu)"),
+    /<redacted>/,
+  );
+  assert.doesNotMatch(
+    scrubString("key=AIzaSyA1234567890abcdefghijklmnopqrstu"),
+    /AIzaSyA/,
+  );
   assert.doesNotMatch(scrubString("ghp_ABCDEF0123456789ABCDEF"), /ghp_ABCDEF/);
 });
 
