@@ -273,12 +273,12 @@ the 10a session). `images.rs` handles base64 upload, filenames, and on-disk file
 removal — review it with 10a finding S1 (unvalidated ids in paths) in hand.
 
 **Review file**: `reviews/2026-06-10-batch-10d-review.md`
-**Findings**: 0 Critical, 1 Security, 1 Major, 1 Minor — open, not yet resolved.
-S1 (images.rs builds row paths from an unvalidated `row_id` — third and final
-occurrence of the 10a/10b pattern) and M1 (three single-file chapter.json settings
-commits write-then-commit with no rollback; `update_gtms_chapter_languages_sync` in
-the same file shows the correct pattern). `images.rs`'s snapshot/rollback machinery
-is the reference implementation the rest of Batch 10 was brought up to.
+**Findings**: 0 Critical, 1 Security, 1 Major, 1 Minor
+**Resolution**: All resolved 2026-06-10 on `fix/batch-10d-review-findings`
+(image row-id validation, chapter.json settings rollback via
+`write_row_files_and_commit`, SVG dropped from accepted uploads). `images.rs`'s
+snapshot/rollback machinery is the reference implementation the rest of Batch 10
+was brought up to.
 
 `aligned_translation.rs` (lexicographic key generation, merge logic) and
 `git_conflicts.rs` (semantic conflict detection) are the most algorithmically
@@ -407,7 +407,7 @@ The fix is the same transform applied to Batch 2 M2 (`invite_user_to_organizatio
 | 7 | Content Storage | 4,470 | 2 | ✅ `2026-06-03-batch-7-review.md` — 0C/0S/0M/1m, resolved in PR #25 |
 | 8 | Team Metadata | 2,475 | 1 | ✅ `2026-06-10-batch-8-review.md` — 0C/1S/2M/2m, all resolved on `fix/batch-8-review-findings` |
 | 9 | AI Integration | 5,040 | 2 | ✅ `2026-06-10-batch-9-review.md` — 0C/2S/1M/2m, all resolved on `fix/batch-9-review-findings` |
-| 10 | Chapter Editor | 13,000 | 4 | ✅ 10a/10b/10c resolved; 10d done — `2026-06-10-batch-10d-review.md`, 0C/1S/1M/1m open |
+| 10 | Chapter Editor | 13,000 | 4 | ✅ all 4 sessions reviewed and resolved (10a/10b/10c/10d); + export SSRF rebinding follow-up (#121) |
 | 11 | Import Pipeline | 6,325 | 3 | — |
 | 12 | Search + Updater | 2,680 | 1 | — |
 | **Total** | | **~50,300** | **19** | |

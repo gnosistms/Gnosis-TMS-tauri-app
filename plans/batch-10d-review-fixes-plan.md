@@ -1,5 +1,9 @@
 # Batch 10d Review Fixes — Chapter Selection + Images
 
+**Status: complete (2026-06-10).** S1, M1, m1 landed on
+`fix/batch-10d-review-findings`. m1 was resolved by dropping SVG from accepted uploads
+(conservative choice over shipping a sanitizer).
+
 Resolves the findings from `reviews/2026-06-10-batch-10d-review.md` (S1, M1, m1).
 Branch: `fix/batch-10d-review-findings`. One focused commit per finding.
 

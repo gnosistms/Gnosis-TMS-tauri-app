@@ -2,7 +2,7 @@
 <!-- vt.idd:local-review:batch-10d -->
 
 **Date**: 2026-06-10
-**Status**: Review complete. Findings not yet resolved.
+**Status**: Complete. All three findings resolved on `fix/batch-10d-review-findings`.
 **Scope**: chapter-level settings mutations — language selection, language-set edits,
 glossary links, workflow status (`chapter_selection.rs`) — and editor row image
 save/upload/remove with the shared repo-file snapshot/rollback machinery
@@ -179,9 +179,9 @@ assumption next to the SVG acceptance.
 
 | Finding | Status | Notes |
 |---|---|---|
-| S1 | Open | |
-| M1 | Open | |
-| m1 | Open | |
+| S1 | Resolved | All three image commands route row paths through `validated_row_json_path`. |
+| M1 | Resolved | The three single-file chapter.json settings commits flow through a shared `commit_chapter_json_update` over `write_row_files_and_commit` (gates preflighted, rollback on failure); `update_gtms_chapter_languages_sync` already had its own clean-tree + hard-reset rollback. |
+| m1 | Resolved | SVG removed from the upload allowlist and magic-byte detection (conservative choice over a sanitizer); dead XML root sniffer + `quick_xml` import removed; tests assert SVG rejection. Export keeps an `svg` mime entry for any legacy stored file (img-only context). |
 
 ---
 
