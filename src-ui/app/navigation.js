@@ -283,7 +283,6 @@ export async function handleNavigation(navTarget, render) {
     if (navTarget === "projects" && state.selectedTeamId) {
       void waitForNextPaint().then(async () => {
         try {
-          await refreshVisibleTeamAccess(render);
           await loadTeamProjects(render, state.selectedTeamId);
         } finally {
           setResourcePageRefreshing(state.projectsPage, false);
@@ -306,7 +305,6 @@ export async function handleNavigation(navTarget, render) {
     }
     if (navTarget === "glossaries" && state.selectedTeamId) {
       void waitForNextPaint().then(async () => {
-        await refreshVisibleTeamAccess(render);
         return loadTeamGlossaries(render, state.selectedTeamId, {
           preserveVisibleData: preserveVisibleGlossaries,
         });
@@ -323,7 +321,6 @@ export async function handleNavigation(navTarget, render) {
     }
     if (navTarget === "qa" && state.selectedTeamId) {
       void waitForNextPaint().then(async () => {
-        await refreshVisibleTeamAccess(render);
         return loadTeamQaLists(render, state.selectedTeamId);
       });
     }
@@ -376,7 +373,6 @@ export async function refreshCurrentScreen(render) {
 
   if (screen === "projects") {
     try {
-      await refreshVisibleTeamAccess(render);
       await invalidateInstallationResourcesForTeam(selectedNavigationTeam());
       await invalidateTeamMetadataSyncForTeam(selectedNavigationTeam());
       await loadTeamProjects(render, state.selectedTeamId);
@@ -391,7 +387,6 @@ export async function refreshCurrentScreen(render) {
 
   if (screen === "glossaries") {
     try {
-      await refreshVisibleTeamAccess(render);
       await invalidateInstallationResourcesForTeam(selectedNavigationTeam());
       await invalidateTeamMetadataSyncForTeam(selectedNavigationTeam());
       await loadTeamGlossaries(render, state.selectedTeamId, { preserveVisibleData: true });
@@ -416,7 +411,6 @@ export async function refreshCurrentScreen(render) {
 
   if (screen === "qa") {
     try {
-      await refreshVisibleTeamAccess(render);
       await invalidateInstallationResourcesForTeam(selectedNavigationTeam());
       await invalidateTeamMetadataSyncForTeam(selectedNavigationTeam());
       await loadTeamQaLists(render, state.selectedTeamId);

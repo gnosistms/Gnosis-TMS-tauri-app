@@ -48,7 +48,8 @@ export function createNavigationActions(render) {
       render();
       void (async () => {
         try {
-          await refreshSelectedTeamAccess(render);
+          // Capabilities arrive with the combined resource listing during the load —
+          // no blocking access check on entry.
           await loadTeamProjects(render, state.selectedTeamId);
         } finally {
           clearScopedSyncBadge("projects", render);
@@ -77,7 +78,6 @@ export function createNavigationActions(render) {
       primeGlossariesLoadingState(state.selectedTeamId);
       render();
       void (async () => {
-        await refreshSelectedTeamAccess(render);
         await loadTeamGlossaries(render, state.selectedTeamId);
       })();
       return true;
@@ -90,7 +90,6 @@ export function createNavigationActions(render) {
       primeQaListsLoadingState(state.selectedTeamId);
       render();
       void (async () => {
-        await refreshSelectedTeamAccess(render);
         await loadTeamQaLists(render, state.selectedTeamId);
       })();
       return true;
@@ -140,7 +139,6 @@ export function createNavigationActions(render) {
       });
       render();
       void (async () => {
-        await refreshSelectedTeamAccess(render);
         await loadTeamGlossaries(render, state.selectedTeamId, {
           preserveVisibleData: state.glossaries.length > 0,
         });
@@ -155,7 +153,6 @@ export function createNavigationActions(render) {
       });
       render();
       void (async () => {
-        await refreshSelectedTeamAccess(render);
         await loadTeamQaLists(render, state.selectedTeamId);
       })();
       return true;
