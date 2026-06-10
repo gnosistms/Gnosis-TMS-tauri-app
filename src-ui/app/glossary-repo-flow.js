@@ -9,6 +9,7 @@ import {
   upsertGlossaryMetadataRecord,
 } from "./team-metadata-flow.js";
 import { createRepoResourceRepoFlow } from "./repo-resource/repo-flow.js";
+import { listRemoteGlossariesForInstallation } from "./installation-resources-query.js";
 
 function glossaryLanguageFields(value) {
   return {
@@ -136,8 +137,8 @@ const glossaryRepoFlow = createRepoResourceRepoFlow({
     String(message ?? "").startsWith("Glossary metadata could not be loaded")
       ? String(message ?? "")
       : `Glossary metadata could not be loaded from the local team-metadata repo. ${message}`,
+  listRemoteRepos: (team) => listRemoteGlossariesForInstallation(team.installationId),
   commands: {
-    listRemote: "list_gnosis_glossaries_for_installation",
     sync: "sync_gtms_glossary_repos",
     listLocal: "list_local_gtms_glossaries",
     createRemote: "create_gnosis_glossary_repo",

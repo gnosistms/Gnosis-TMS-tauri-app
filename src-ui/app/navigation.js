@@ -68,6 +68,11 @@ import {
 } from "./status-feedback.js";
 import { refreshCurrentUserTeamAccess } from "./team-query.js";
 import { setResourcePageRefreshing } from "./resource-page-controller.js";
+import { invalidateInstallationResourcesForTeam } from "./installation-resources-query.js";
+
+function selectedNavigationTeam() {
+  return state.teams.find((team) => team?.id === state.selectedTeamId) ?? null;
+}
 
 async function refreshVisibleTeamAccess(render) {
   if (!state.selectedTeamId || state.screen === "teams") {
@@ -371,6 +376,7 @@ export async function refreshCurrentScreen(render) {
   if (screen === "projects") {
     try {
       await refreshVisibleTeamAccess(render);
+      await invalidateInstallationResourcesForTeam(selectedNavigationTeam());
       await loadTeamProjects(render, state.selectedTeamId);
       setResourcePageRefreshing(state.projectsPage, false);
       clearScopedSyncBadge("projects", render);
@@ -384,6 +390,7 @@ export async function refreshCurrentScreen(render) {
   if (screen === "glossaries") {
     try {
       await refreshVisibleTeamAccess(render);
+      await invalidateInstallationResourcesForTeam(selectedNavigationTeam());
       await loadTeamGlossaries(render, state.selectedTeamId, { preserveVisibleData: true });
     } catch (error) {
       failRefreshButtonFeedback(screen, render);
@@ -407,6 +414,7 @@ export async function refreshCurrentScreen(render) {
   if (screen === "qa") {
     try {
       await refreshVisibleTeamAccess(render);
+      await invalidateInstallationResourcesForTeam(selectedNavigationTeam());
       await loadTeamQaLists(render, state.selectedTeamId);
       clearScopedSyncBadge("qa", render);
       render();

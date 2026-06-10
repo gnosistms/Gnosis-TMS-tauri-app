@@ -403,6 +403,7 @@ export function createRepoResourceRepoFlow(descriptor) {
     resourceHasRequiredMetadata,
     listMetadataRecords,
     listLocalMetadataRecords,
+    listRemoteRepos,
     upsertMetadataRecord,
     ensureRuntime = null,
     afterSyncSnapshots = null,
@@ -767,10 +768,7 @@ export function createRepoResourceRepoFlow(descriptor) {
     runEnsureRuntime();
     let repos;
     try {
-      repos = await invoke(commands.listRemote, {
-        installationId: team.installationId,
-        sessionToken: requireBrokerSession(),
-      });
+      repos = await listRemoteRepos(team);
     } catch (error) {
       throw normalizeBrokerError(error, messages.unknownBrokerError);
     }

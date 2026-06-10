@@ -10,12 +10,31 @@ globalThis.document = {
   },
 };
 
+async function dispatchMockInvoke(command, payload) {
+  if (command === "list_gnosis_resources_for_installation") {
+    // The combined listing fans out to the per-type handlers so tests keep mocking the
+    // legacy commands. A thrown listing error fails the whole combined call, matching
+    // the real endpoint; unknown commands resolve to empty lists.
+    const legacyList = async (legacyCommand) => {
+      const result = await invokeHandler(legacyCommand, payload);
+      return Array.isArray(result) ? result : [];
+    };
+    return {
+      projects: await legacyList("list_gnosis_projects_for_installation"),
+      glossaries: await legacyList("list_gnosis_glossaries_for_installation"),
+      qaLists: await legacyList("list_gnosis_qa_lists_for_installation"),
+      digest: "",
+    };
+  }
+  return invokeHandler(command, payload);
+}
+
 globalThis.window = {
   __TAURI__: {
     core: {
       invoke: (command, payload) => {
         invokeCalls.push({ command, payload });
-        return invokeHandler(command, payload);
+        return dispatchMockInvoke(command, payload);
       },
     },
   },
