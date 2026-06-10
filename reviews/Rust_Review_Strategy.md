@@ -158,7 +158,7 @@ a format parsing surface worth scrutiny for malformed input handling.
 
 ---
 
-## Batch 8 — Team Metadata
+## Batch 8 — Team Metadata REVIEW COMPLETE
 *~2,475 lines · 1 session*
 
 ```
@@ -171,6 +171,11 @@ team_metadata_local/repo.rs      (217)
 
 The metadata-first mutation lifecycle lives here. `repair.rs` (820 lines) is the
 most complex — it handles recovery from partial failures and tombstone resolution.
+
+**Review file**: `reviews/2026-06-10-batch-8-review.md`
+**Findings**: 0 Critical, 1 Security, 2 Major, 2 Minor — all open (path-traversal
+guard on `resource_id`, corrupt-record listing tolerance, metadata-repo divergence
+recovery, atomic record writes, push gate asymmetry).
 
 ---
 
@@ -352,7 +357,7 @@ The fix is the same transform applied to Batch 2 M2 (`invite_user_to_organizatio
 | 5 | Project Sync + Migrations | 3,510 | 1 | ✅ `2026-06-03-batch-5-review.md` — 0C/0S/2M/0m, all resolved via PR #22 |
 | 6 | Glossary & QA Sync | 1,985 | 1 | ✅ `2026-06-03-batch-6-review.md` — 0C/0S/1M/0m, resolved in PR #23 |
 | 7 | Content Storage | 4,470 | 2 | ✅ `2026-06-03-batch-7-review.md` — 0C/0S/0M/1m, resolved in PR #25 |
-| 8 | Team Metadata | 2,475 | 1 | — |
+| 8 | Team Metadata | 2,475 | 1 | ✅ `2026-06-10-batch-8-review.md` — 0C/1S/2M/2m, findings open |
 | 9 | AI Integration | 5,040 | 2 | — |
 | 10 | Chapter Editor | 8,450 | 3 | — |
 | 11 | Import Pipeline | 6,325 | 3 | — |

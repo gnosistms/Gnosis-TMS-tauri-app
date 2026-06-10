@@ -105,8 +105,33 @@ pub(super) fn resource_directory_path(repo_path: &Path, kind: &str) -> PathBuf {
     }
 }
 
-pub(super) fn resource_record_path(repo_path: &Path, kind: &str, resource_id: &str) -> PathBuf {
-    resource_directory_path(repo_path, kind).join(format!("{resource_id}.json"))
+/// Resource ids come straight from IPC input and end up in `Path::join`, `fs::write`,
+/// and `fs::remove_file`. `Path::strip_prefix` is lexical, so a `..` component would
+/// survive the repo-relative check downstream — reject anything outside a plain
+/// single-component file name here.
+fn validated_resource_id(resource_id: &str) -> Result<String, String> {
+    let normalized = resource_id.trim();
+    if normalized.is_empty()
+        || normalized == "."
+        || normalized == ".."
+        || !normalized
+            .chars()
+            .all(|value| value.is_ascii_alphanumeric() || matches!(value, '.' | '_' | '-'))
+    {
+        return Err(format!(
+            "'{normalized}' is not a valid team-metadata resource id."
+        ));
+    }
+    Ok(normalized.to_string())
+}
+
+pub(super) fn resource_record_path(
+    repo_path: &Path,
+    kind: &str,
+    resource_id: &str,
+) -> Result<PathBuf, String> {
+    let resource_id = validated_resource_id(resource_id)?;
+    Ok(resource_directory_path(repo_path, kind).join(format!("{resource_id}.json")))
 }
 
 pub(super) fn build_local_team_metadata_repo_info(
@@ -223,4 +248,43 @@ pub(super) fn push_local_metadata_repo(
         repo_path: repo_path.display().to_string(),
         current_head_oid: read_current_head_oid(repo_path),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resource_record_path_accepts_plain_ids_and_trims() {
+        let repo = Path::new("/repos/team-metadata");
+        let path = resource_record_path(repo, "project", " 0196a7e2-aa11-7def-8000-1234abcd5678 ")
+            .expect("plain id should resolve");
+        assert_eq!(
+            path,
+            repo.join("resources")
+                .join("projects")
+                .join("0196a7e2-aa11-7def-8000-1234abcd5678.json")
+        );
+        assert!(resource_record_path(repo, "glossary", "Glossary_1.v2").is_ok());
+    }
+
+    #[test]
+    fn resource_record_path_rejects_traversal_and_empty_ids() {
+        let repo = Path::new("/repos/team-metadata");
+        for invalid in [
+            "",
+            "   ",
+            ".",
+            "..",
+            "../../manifest",
+            "../../../../etc/target",
+            "nested/record",
+            "nested\\record",
+        ] {
+            assert!(
+                resource_record_path(repo, "project", invalid).is_err(),
+                "id '{invalid}' should be rejected"
+            );
+        }
+    }
 }

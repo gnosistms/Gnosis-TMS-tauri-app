@@ -458,7 +458,7 @@ pub(crate) async fn upsert_local_gnosis_project_metadata_record(
             &input.org_login,
             &session_token,
         )?;
-        let record_path = resource_record_path(&repo_path, "project", &input.project_id);
+        let record_path = resource_record_path(&repo_path, "project", &input.project_id)?;
         let current = read_json_object(&record_path)?;
         let actor_login = actor_login(&app)?;
         let record_value = build_project_record_value(current, &input, actor_login.as_deref())?;
@@ -489,7 +489,7 @@ pub(crate) async fn delete_local_gnosis_project_metadata_record(
             &input.org_login,
             &session_token,
         )?;
-        let record_path = resource_record_path(&repo_path, "project", &input.project_id);
+        let record_path = resource_record_path(&repo_path, "project", &input.project_id)?;
         delete_local_record(
             &app,
             &repo_path,
@@ -516,7 +516,7 @@ pub(crate) async fn upsert_local_gnosis_glossary_metadata_record(
             &input.org_login,
             &session_token,
         )?;
-        let record_path = resource_record_path(&repo_path, "glossary", &input.glossary_id);
+        let record_path = resource_record_path(&repo_path, "glossary", &input.glossary_id)?;
         let current = read_json_object(&record_path)?;
         let actor_login = actor_login(&app)?;
         let record_value = build_glossary_record_value(current, &input, actor_login.as_deref())?;
@@ -547,7 +547,7 @@ pub(crate) async fn delete_local_gnosis_glossary_metadata_record(
             &input.org_login,
             &session_token,
         )?;
-        let record_path = resource_record_path(&repo_path, "glossary", &input.glossary_id);
+        let record_path = resource_record_path(&repo_path, "glossary", &input.glossary_id)?;
         delete_local_record(
             &app,
             &repo_path,
@@ -574,7 +574,7 @@ pub(crate) async fn upsert_local_gnosis_qa_list_metadata_record(
             &input.org_login,
             &session_token,
         )?;
-        let record_path = resource_record_path(&repo_path, "qaList", &input.qa_list_id);
+        let record_path = resource_record_path(&repo_path, "qaList", &input.qa_list_id)?;
         let current = read_json_object(&record_path)?;
         let actor_login = actor_login(&app)?;
         let record_value = build_qa_list_record_value(current, &input, actor_login.as_deref())?;
@@ -605,7 +605,7 @@ pub(crate) async fn delete_local_gnosis_qa_list_metadata_record(
             &input.org_login,
             &session_token,
         )?;
-        let record_path = resource_record_path(&repo_path, "qaList", &input.qa_list_id);
+        let record_path = resource_record_path(&repo_path, "qaList", &input.qa_list_id)?;
         delete_local_record(
             &app,
             &repo_path,

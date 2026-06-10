@@ -51,7 +51,7 @@ pub(super) fn local_record_has_tombstone(
         return Err("Could not determine which team-metadata record to inspect.".to_string());
     }
 
-    let record_path = resource_record_path(repo_path, kind, normalized_resource_id);
+    let record_path = resource_record_path(repo_path, kind, normalized_resource_id)?;
     if !record_path.exists() {
         return Ok(false);
     }
