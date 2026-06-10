@@ -399,3 +399,98 @@ test("team resource migration reuses a caller-provided remote project listing", 
     "project-live",
   ]);
 });
+
+const { setActiveStorageLogin } = await import("./team-storage.js");
+
+test("team resource migration skips rescans after a clean verdict", async () => {
+  setupTeamMigrationTest();
+  state.teams[0].installationId = 71;
+  setActiveStorageLogin("verdict-tester");
+
+  const commands = [];
+  invokeHandler = async (command) => {
+    commands.push(command);
+    if (isLocalMetadataListCommand(command)) {
+      return [];
+    }
+    if (
+      command === "list_gnosis_projects_for_installation"
+      || command === "list_gnosis_glossaries_for_installation"
+      || command === "list_gnosis_qa_lists_for_installation"
+    ) {
+      return [];
+    }
+    if (command === "list_pending_team_repo_layout_migrations") {
+      return { targetVersion: "0.8.10", migrations: [] };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  try {
+    const firstRun = await runTeamResourceMigrationSync(() => {}, state.teams[0]);
+    assert.equal(firstRun, false);
+    assert.ok(commands.includes("list_pending_team_repo_layout_migrations"));
+
+    commands.length = 0;
+    const secondRun = await runTeamResourceMigrationSync(() => {}, state.teams[0]);
+    assert.equal(secondRun, false);
+    assert.deepEqual(commands, []);
+  } finally {
+    setActiveStorageLogin(null);
+  }
+});
+
+test("team resource migration keeps rescanning until a scan comes back clean", async () => {
+  setupTeamMigrationTest();
+  state.teams[0].installationId = 72;
+  setActiveStorageLogin("verdict-tester");
+
+  let pendingScanCount = 0;
+  invokeHandler = async (command) => {
+    if (isLocalMetadataListCommand(command)) {
+      return [];
+    }
+    if (
+      command === "list_gnosis_projects_for_installation"
+      || command === "list_gnosis_qa_lists_for_installation"
+    ) {
+      return [];
+    }
+    if (command === "list_gnosis_glossaries_for_installation") {
+      return [{
+        glossaryId: "glossary-1",
+        name: "glossary-repo",
+        fullName: "team/glossary-repo",
+        defaultBranchName: "main",
+      }];
+    }
+    if (command === "list_pending_team_repo_layout_migrations") {
+      pendingScanCount += 1;
+      return {
+        targetVersion: "0.8.10",
+        migrations: [{
+          resourceType: "glossary",
+          resourceId: "glossary-1",
+          repoName: "glossary-repo",
+          title: "Shared Glossary",
+        }],
+      };
+    }
+    if (command === "sync_gtms_glossary_repos") {
+      throw new Error("sync failed");
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  try {
+    await assert.rejects(() => runTeamResourceMigrationSync(() => {}, state.teams[0]));
+    const scansAfterFailure = pendingScanCount;
+    assert.ok(scansAfterFailure >= 1);
+
+    // The failed run must not have stored a clean verdict: the next run scans again.
+    await assert.rejects(() => runTeamResourceMigrationSync(() => {}, state.teams[0]));
+    assert.ok(pendingScanCount > scansAfterFailure);
+  } finally {
+    setActiveStorageLogin(null);
+  }
+});
