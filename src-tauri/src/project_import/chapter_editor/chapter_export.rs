@@ -2,7 +2,7 @@ use super::*;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use reqwest::blocking::Client as BlockingClient;
 use std::io::{Cursor, Read, Write};
-use std::net::{IpAddr, ToSocketAddrs};
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::time::Duration;
 use zip::{write::SimpleFileOptions, ZipWriter};
 
@@ -879,14 +879,16 @@ fn download_docx_image(url: &str) -> Option<DocxImage> {
     // export must not let one of them point this fetch at the exporting machine's own
     // network. Reject non-public hosts, refuse redirects (a public URL could otherwise 302
     // into a private range), and cap the body size.
-    if !is_public_export_image_url(url) {
-        return None;
-    }
-    let client = BlockingClient::builder()
+    let request = validated_export_image_request(url)?;
+    let mut builder = BlockingClient::builder()
         .timeout(Duration::from_secs(8))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .ok()?;
+        .redirect(reqwest::redirect::Policy::none());
+    if let Some((host, addresses)) = request.pinned_addresses.as_ref() {
+        // Pin the host to the exact addresses we validated so reqwest's own DNS lookup at
+        // connect time cannot rebind the name to a private address (TOCTOU).
+        builder = builder.resolve_to_addrs(host, addresses);
+    }
+    let client = builder.build().ok()?;
     let response = client.get(url).send().ok()?;
     if !response.status().is_success() {
         return None;
@@ -906,38 +908,54 @@ fn download_docx_image(url: &str) -> Option<DocxImage> {
     })
 }
 
-fn is_public_export_image_url(url: &str) -> bool {
-    let Ok(parsed) = url::Url::parse(url) else {
-        return false;
-    };
+struct ValidatedExportImageRequest {
+    // `Some((host, addrs))` for a domain host whose DNS result was validated and must be
+    // pinned at connect time; `None` for a literal-IP host (no DNS, nothing to pin).
+    pinned_addresses: Option<(String, Vec<SocketAddr>)>,
+}
+
+/// Validate that an export image URL targets a public host. For domain hosts the DNS
+/// result is resolved once, every address is checked, and the addresses are returned so
+/// the caller can pin them — closing the rebinding window between this check and the
+/// fetch. Returns `None` if the URL is unsupported or resolves to any non-public address.
+fn validated_export_image_request(url: &str) -> Option<ValidatedExportImageRequest> {
+    let parsed = url::Url::parse(url).ok()?;
     if !matches!(parsed.scheme(), "http" | "https") {
-        return false;
+        return None;
     }
     let port = parsed.port_or_known_default().unwrap_or(0);
-    match parsed.host() {
-        // Literal IP hosts are classified directly (no DNS).
-        Some(url::Host::Ipv4(addr)) => is_public_ip(IpAddr::V4(addr)),
-        Some(url::Host::Ipv6(addr)) => is_public_ip(IpAddr::V6(addr)),
+    match parsed.host()? {
+        // Literal IP hosts are classified directly (no DNS, nothing to pin).
+        url::Host::Ipv4(addr) => {
+            is_public_ip(IpAddr::V4(addr)).then_some(ValidatedExportImageRequest {
+                pinned_addresses: None,
+            })
+        }
+        url::Host::Ipv6(addr) => {
+            is_public_ip(IpAddr::V6(addr)).then_some(ValidatedExportImageRequest {
+                pinned_addresses: None,
+            })
+        }
         // Resolve the domain and reject if any address it maps to is non-public, so a
         // hostname that points at a private/loopback/link-local/ULA address is refused.
-        Some(url::Host::Domain(host)) => {
+        url::Host::Domain(host) => {
             if host.eq_ignore_ascii_case("localhost") {
-                return false;
+                return None;
             }
-            let Ok(addresses) = (host, port).to_socket_addrs() else {
-                return false;
-            };
-            let mut resolved_any = false;
-            for address in addresses {
-                resolved_any = true;
-                if !is_public_ip(address.ip()) {
-                    return false;
-                }
+            let addresses = (host, port).to_socket_addrs().ok()?.collect::<Vec<_>>();
+            if addresses.is_empty() || addresses.iter().any(|address| !is_public_ip(address.ip())) {
+                return None;
             }
-            resolved_any
+            Some(ValidatedExportImageRequest {
+                pinned_addresses: Some((host.to_string(), addresses)),
+            })
         }
-        None => false,
     }
+}
+
+#[cfg(test)]
+fn is_public_export_image_url(url: &str) -> bool {
+    validated_export_image_request(url).is_some()
 }
 
 fn is_public_ip(ip: IpAddr) -> bool {
@@ -1176,6 +1194,16 @@ mod tests {
         assert!(is_public_export_image_url(
             "https://[2001:4860:4860::8888]/image.png"
         ));
+    }
+
+    #[test]
+    fn export_image_literal_ip_request_is_not_pinned() {
+        // A literal public IP needs no DNS, so there is nothing to pin.
+        let request = validated_export_image_request("http://8.8.8.8/image.png")
+            .expect("public literal ip should validate");
+        assert!(request.pinned_addresses.is_none());
+        // A literal private IP is rejected outright.
+        assert!(validated_export_image_request("http://10.0.0.5/image.png").is_none());
     }
 
     #[test]
