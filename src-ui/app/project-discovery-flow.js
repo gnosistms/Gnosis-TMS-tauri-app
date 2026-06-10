@@ -911,6 +911,21 @@ export async function loadProjectSnapshotForTeam(render, teamId = state.selected
     ) {
       return currentLoadResult;
     }
+    // Local-first tolerance deliberately lets the refresh continue when a broker call
+    // fails (flaky network, broker hiccup) — but a dead session is categorically
+    // different: per policy it must take the user to the sign-in screen, never degrade
+    // silently. Escalate before tolerating.
+    for (const settled of [projectsResult, metadataResult, repairResult, glossaryDiscoveryResult]) {
+      if (settled.status !== "rejected") {
+        continue;
+      }
+      const classification = classifySyncError(settled.reason);
+      if (classification.type === "auth_invalid") {
+        await handleSyncFailure(classification, { render });
+        failProjectLoadPageSync({ options, progressSnapshot: currentLoadResult });
+        return currentLoadResult;
+      }
+    }
     let remoteProjects = projectsResult.status === "fulfilled"
       ? (Array.isArray(projectsResult.value) ? projectsResult.value : [])
       : [];

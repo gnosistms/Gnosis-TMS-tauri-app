@@ -477,3 +477,22 @@ test("glossary successful load applies and persists the refreshed query snapshot
   assert.equal(state.glossaryDiscovery.status, "ready");
   assert.equal(state.glossariesPage.isRefreshing, false);
 });
+
+test("an expired session during the remote listing routes to the sign-in screen", async () => {
+  setupGlossaryLoadState();
+  invokeHandler = async (command) => {
+    if (command === "list_gnosis_glossaries_for_installation") {
+      throw new Error("AUTH_REQUIRED:Your GitHub session expired. Please log in with GitHub again to continue.");
+    }
+    if (command === "inspect_and_migrate_local_repo_bindings") {
+      return { issues: [], autoRepairedCount: 0 };
+    }
+    return null;
+  };
+
+  await loadTeamGlossaries(() => {}, "team-1");
+
+  assert.equal(state.screen, "start");
+  assert.equal(state.auth.status, "expired");
+  assert.equal(state.auth.session, null);
+});
