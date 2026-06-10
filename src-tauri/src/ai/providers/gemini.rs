@@ -111,9 +111,12 @@ pub(crate) fn list_models(api_key: &str) -> Result<Vec<AiProviderModel>, String>
     let mut next_page_token = String::new();
 
     loop {
+        // The key travels in a header, never the URL: reqwest error displays include
+        // the full request URL, so a query-string key would leak into error messages.
         let mut request = client
             .get(GEMINI_MODELS_API_URL)
-            .query(&[("key", normalized_key), ("pageSize", "1000")]);
+            .header("x-goog-api-key", normalized_key)
+            .query(&[("pageSize", "1000")]);
         if !next_page_token.is_empty() {
             request = request.query(&[("pageToken", next_page_token.as_str())]);
         }
@@ -270,7 +273,7 @@ fn send_generate_content_request(
             .post(format!(
                 "https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent"
             ))
-            .query(&[("key", api_key)])
+            .header("x-goog-api-key", api_key)
             .header("Content-Type", "application/json")
             .json(&GeminiGenerateContentRequest {
                 contents: vec![GeminiContent {

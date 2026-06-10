@@ -36,6 +36,7 @@ const SECRET_VALUE_PATTERNS = [
   /\bgh[pousr]_[A-Za-z0-9]{16,}\b/g, // GitHub tokens
   /\bsk-ant-[A-Za-z0-9_-]{16,}\b/g, // Anthropic keys
   /\bsk-[A-Za-z0-9_-]{16,}\b/g, // OpenAI-style keys
+  /\bAIza[A-Za-z0-9_-]{30,}\b/g, // Google API keys (Gemini)
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, // JWTs
   /\b[Bb]earer\s+[A-Za-z0-9._-]{12,}/g, // Bearer tokens
 ];
