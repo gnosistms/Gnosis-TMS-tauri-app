@@ -1010,6 +1010,10 @@ test("owner removal requires username confirmation before invoking Tauri", async
     ],
   );
   assert.equal(state.users.some((user) => user.username === "alice"), false);
+  // Removal succeeded: the owner is told that read access takes a while to fully revoke
+  // (the broker caches access verdicts).
+  assert.equal(state.memberRemovalAccessNotice.isOpen, true);
+  assert.equal(state.memberRemovalAccessNotice.username, "alice");
 });
 
 test("failed member removal rolls back and reopens the confirmation modal", async () => {
