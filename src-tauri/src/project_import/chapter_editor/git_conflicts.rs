@@ -707,6 +707,13 @@ fn resolve_three_way_row_conflict(
     );
     set_row_lifecycle_state(&mut remote_value, &lifecycle_state)?;
     set_row_lifecycle_state(&mut local_value, &lifecycle_state)?;
+    let merged_comments = merge_editor_comment_slices(
+        base_stage.as_ref().map(|stage| &stage.value),
+        &local_stage.value,
+        &remote_stage.value,
+    );
+    set_row_editor_comments(&mut remote_value, &merged_comments)?;
+    set_row_editor_comments(&mut local_value, &merged_comments)?;
     apply_plain_text_updates(&mut remote_value, &remote_plain_text)?;
     apply_plain_text_updates(&mut local_value, &local_plain_text)?;
     apply_footnote_updates(&mut remote_value, &remote_footnotes)?;
@@ -736,6 +743,110 @@ fn resolve_three_way_row_conflict(
         },
         imported_conflict,
     })
+}
+
+struct MergedEditorComments {
+    comments: Vec<Value>,
+    revision: u64,
+}
+
+fn row_editor_comment_values(row_value: &Value) -> Vec<Value> {
+    row_value
+        .get("editor_comments")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn row_editor_comments_revision(row_value: &Value) -> u64 {
+    row_value
+        .get("editor_comments_revision")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+}
+
+fn editor_comment_id(comment: &Value) -> Option<&str> {
+    comment
+        .get("comment_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn editor_comment_ids(comments: &[Value]) -> BTreeSet<String> {
+    comments
+        .iter()
+        .filter_map(editor_comment_id)
+        .map(str::to_string)
+        .collect()
+}
+
+/// Merge the per-row editor comment lists: keep remote's comments in remote order
+/// (dropping ones the local side deleted relative to base; an edited comment takes the
+/// remote version, consistent with the scalar rule), then append local-only additions.
+/// The result is symmetric, so either client resolving the same divergence lands on the
+/// same list. The revision takes the larger counter and bumps once when both sides
+/// changed comments, so a client that already cached its own pre-merge revision still
+/// sees a newer value and refreshes.
+fn merge_editor_comment_slices(
+    base_value: Option<&Value>,
+    local_value: &Value,
+    remote_value: &Value,
+) -> MergedEditorComments {
+    let base_comments = base_value
+        .map(row_editor_comment_values)
+        .unwrap_or_default();
+    let local_comments = row_editor_comment_values(local_value);
+    let remote_comments = row_editor_comment_values(remote_value);
+    let base_ids = editor_comment_ids(&base_comments);
+    let local_ids = editor_comment_ids(&local_comments);
+    let remote_ids = editor_comment_ids(&remote_comments);
+
+    let mut merged = Vec::new();
+    for comment in &remote_comments {
+        if let Some(comment_id) = editor_comment_id(comment) {
+            if base_ids.contains(comment_id) && !local_ids.contains(comment_id) {
+                continue;
+            }
+        }
+        merged.push(comment.clone());
+    }
+    for comment in &local_comments {
+        let Some(comment_id) = editor_comment_id(comment) else {
+            continue;
+        };
+        if !base_ids.contains(comment_id) && !remote_ids.contains(comment_id) {
+            merged.push(comment.clone());
+        }
+    }
+
+    let local_revision = row_editor_comments_revision(local_value);
+    let remote_revision = row_editor_comments_revision(remote_value);
+    let local_changed = local_comments != base_comments;
+    let remote_changed = remote_comments != base_comments;
+    let revision = local_revision.max(remote_revision)
+        + u64::from(local_changed && remote_changed && local_comments != remote_comments);
+
+    MergedEditorComments {
+        comments: merged,
+        revision,
+    }
+}
+
+fn set_row_editor_comments(
+    row_value: &mut Value,
+    merged: &MergedEditorComments,
+) -> Result<(), String> {
+    let row_object = row_object_mut(row_value)?;
+    row_object.insert(
+        "editor_comments".to_string(),
+        Value::Array(merged.comments.clone()),
+    );
+    row_object.insert(
+        "editor_comments_revision".to_string(),
+        json!(merged.revision),
+    );
+    Ok(())
 }
 
 fn merge_string_slice(base: &str, local: &str, remote: &str) -> (String, String, bool) {
@@ -1008,6 +1119,11 @@ fn strip_supported_row_merge_keys(value: &mut Value) -> Result<(), String> {
     let Some(row_object) = value.as_object_mut() else {
         return Ok(());
     };
+
+    // Editor comments merge semantically (union of additions, deletions honored), so a
+    // local-only comment must not be treated as an unsupported change that blocks the merge.
+    row_object.remove("editor_comments");
+    row_object.remove("editor_comments_revision");
 
     if let Some(structure_object) = row_object
         .get_mut("structure")
@@ -1460,6 +1576,114 @@ mod tests {
             ResolvedEditorConflictAction::Delete => panic!("row should not delete"),
         }
         assert!(plan.imported_conflict.is_none());
+    }
+
+    fn comment(comment_id: &str, body: &str) -> Value {
+        json!({
+          "comment_id": comment_id,
+          "author_login": "octocat",
+          "author_name": "The Octocat",
+          "body": body,
+          "created_at": "2026-06-10T09:00:00Z"
+        })
+    }
+
+    fn row_json_with_comments(plain_text: &str, revision: u64, comments: &[Value]) -> String {
+        json!({
+          "row_id": "row-1",
+          "structure": { "order_key": "001" },
+          "status": { "review_state": "unreviewed" },
+          "origin": { "source_row_number": 1 },
+          "editor_comments_revision": revision,
+          "editor_comments": comments,
+          "fields": {
+            "en": { "plain_text": plain_text, "editor_flags": { "reviewed": false, "please_check": false } }
+          }
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn row_conflicts_merge_local_comment_with_remote_text_edit() {
+        // Regression for the previous behavior: a local-only comment on a row the remote
+        // also edited tripped "unsupported local-only changes" and aborted the resolution.
+        let plan = resolve_row_git_conflict_from_stage_texts(
+            "chapters/ch-1/rows/row-1.json",
+            Some(&row_json_with_comments("hello", 0, &[])),
+            Some(&row_json_with_comments("remote edit", 0, &[])),
+            Some(&row_json_with_comments(
+                "hello",
+                1,
+                &[comment("c-1", "Check this")],
+            )),
+        )
+        .expect("comment + text divergence should resolve");
+
+        assert!(plan.imported_conflict.is_none());
+        match plan.action {
+            ResolvedEditorConflictAction::Write { text } => {
+                let merged: Value = serde_json::from_str(&text).expect("merged row should parse");
+                assert_eq!(merged["fields"]["en"]["plain_text"], json!("remote edit"));
+                assert_eq!(merged["editor_comments"][0]["comment_id"], json!("c-1"));
+                assert_eq!(merged["editor_comments_revision"], json!(1));
+            }
+            ResolvedEditorConflictAction::Delete => panic!("row should not delete"),
+        }
+    }
+
+    #[test]
+    fn row_conflicts_honor_local_comment_deletion() {
+        let base_comments = [comment("c-1", "Old note")];
+        let plan = resolve_row_git_conflict_from_stage_texts(
+            "chapters/ch-1/rows/row-1.json",
+            Some(&row_json_with_comments("hello", 1, &base_comments)),
+            Some(&row_json_with_comments("remote edit", 1, &base_comments)),
+            Some(&row_json_with_comments("hello", 2, &[])),
+        )
+        .expect("comment deletion should resolve");
+
+        match plan.action {
+            ResolvedEditorConflictAction::Write { text } => {
+                let merged: Value = serde_json::from_str(&text).expect("merged row should parse");
+                assert_eq!(merged["editor_comments"], json!([]));
+                assert_eq!(merged["editor_comments_revision"], json!(2));
+            }
+            ResolvedEditorConflictAction::Delete => panic!("row should not delete"),
+        }
+    }
+
+    #[test]
+    fn row_conflicts_union_concurrent_comment_additions_and_bump_revision() {
+        let plan = resolve_row_git_conflict_from_stage_texts(
+            "chapters/ch-1/rows/row-1.json",
+            Some(&row_json_with_comments("hello", 3, &[])),
+            Some(&row_json_with_comments(
+                "hello",
+                4,
+                &[comment("c-remote", "From remote")],
+            )),
+            Some(&row_json_with_comments(
+                "hello",
+                4,
+                &[comment("c-local", "From local")],
+            )),
+        )
+        .expect("concurrent comment additions should resolve");
+
+        match plan.action {
+            ResolvedEditorConflictAction::Write { text } => {
+                let merged: Value = serde_json::from_str(&text).expect("merged row should parse");
+                let ids = merged["editor_comments"]
+                    .as_array()
+                    .expect("comments should be an array")
+                    .iter()
+                    .map(|entry| entry["comment_id"].as_str().unwrap_or_default().to_string())
+                    .collect::<Vec<_>>();
+                assert_eq!(ids, vec!["c-remote".to_string(), "c-local".to_string()]);
+                assert_eq!(merged["editor_comments_revision"], json!(5));
+            }
+            ResolvedEditorConflictAction::Delete => panic!("row should not delete"),
+        }
     }
 
     #[test]
