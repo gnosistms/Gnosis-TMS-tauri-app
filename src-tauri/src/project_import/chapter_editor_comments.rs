@@ -10,6 +10,7 @@ use crate::git_commit::{
 };
 use crate::project_repo_paths::resolve_project_git_repo_path;
 
+use super::chapter_editor::validated_row_json_path;
 use super::project_git::{
     ensure_repo_exists, ensure_valid_git_repo, find_chapter_path_by_id, git_output, read_json_file,
     repo_relative_path, write_text_file,
@@ -287,7 +288,7 @@ fn resolve_row_json_path(
     row_id: &str,
 ) -> Result<std::path::PathBuf, String> {
     let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), chapter_id)?;
-    Ok(chapter_path.join("rows").join(format!("{row_id}.json")))
+    validated_row_json_path(&chapter_path, row_id)
 }
 
 fn build_load_editor_row_comments_response(

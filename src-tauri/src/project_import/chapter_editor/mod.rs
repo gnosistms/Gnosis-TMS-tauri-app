@@ -104,6 +104,10 @@ use self::shared::{
     normalize_editor_text_style_value, refresh_cached_chapter_source_word_count,
     row_fields_object_mut, row_footnote_map, row_image_caption_map, row_object_mut,
     row_plain_text_map, row_text_style, sanitize_chapter_languages, set_editor_field_flags,
+};
+// Re-exported for the sibling `chapter_editor_comments` module, whose row mutations must
+// share the same row-id validation and write+commit rollback discipline.
+pub(super) use self::shared::{
     validated_row_json_path, write_row_files_and_commit, PreparedRowFileWrite,
 };
 

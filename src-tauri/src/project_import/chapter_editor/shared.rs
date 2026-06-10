@@ -10,7 +10,7 @@ pub(super) fn current_repo_head_sha(repo_path: &Path) -> Option<String> {
 /// `fs::remove_file`. `Path::strip_prefix` is lexical, so a `..` component would survive
 /// the repo-relative check downstream — reject anything outside a plain single-component
 /// file name here. Mirrors `validated_resource_id` in `team_metadata_local/repo.rs`.
-pub(super) fn validated_row_json_path(
+pub(in crate::project_import) fn validated_row_json_path(
     chapter_path: &Path,
     row_id: &str,
 ) -> Result<PathBuf, String> {
@@ -27,12 +27,12 @@ pub(super) fn validated_row_json_path(
     Ok(chapter_path.join("rows").join(format!("{normalized}.json")))
 }
 
-pub(super) struct PreparedRowFileWrite {
-    pub(super) path: PathBuf,
-    pub(super) relative_path: String,
+pub(in crate::project_import) struct PreparedRowFileWrite {
+    pub(in crate::project_import) path: PathBuf,
+    pub(in crate::project_import) relative_path: String,
     /// `None` when the file is being created (rollback removes it instead of restoring).
-    pub(super) original_text: Option<String>,
-    pub(super) updated_text: String,
+    pub(in crate::project_import) original_text: Option<String>,
+    pub(in crate::project_import) updated_text: String,
 }
 
 /// Write the prepared files and commit them as the signed-in user without ever being
@@ -40,7 +40,7 @@ pub(super) struct PreparedRowFileWrite {
 /// signed-in session) are checked before the first write, and any later failure rolls
 /// the written files back and unstages them before the error is returned. Returns the
 /// commit helper's stdout (empty when there was nothing to commit).
-pub(super) fn write_row_files_and_commit(
+pub(in crate::project_import) fn write_row_files_and_commit(
     app: &AppHandle,
     repo_path: &Path,
     commit_message: &str,
