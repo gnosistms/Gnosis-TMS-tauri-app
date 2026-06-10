@@ -339,7 +339,7 @@ pub(crate) fn reverse_gtms_editor_batch_replace_commit_sync(
 
     let mut updated_rows = Vec::new();
     let mut skipped_row_ids = Vec::new();
-    let mut relative_paths_to_add = Vec::new();
+    let mut prepared_writes = Vec::new();
 
     for relative_row_path in relative_row_paths {
         let row_id = row_id_from_relative_row_path(&relative_row_path).ok_or_else(|| {
@@ -382,8 +382,12 @@ pub(crate) fn reverse_gtms_editor_batch_replace_commit_sync(
                     row_id
                 )
             })?;
-        write_text_file(&row_json_path, &normalized_restored_row_text)?;
-        relative_paths_to_add.push(relative_row_path);
+        prepared_writes.push(PreparedRowFileWrite {
+            path: row_json_path,
+            relative_path: relative_row_path,
+            original_text: Some(current_row_text),
+            updated_text: normalized_restored_row_text,
+        });
         updated_rows.push(UpdateEditorRowFieldsBatchRowInput {
             row_id,
             fields: row_plain_text_fields(&restored_row_file),
@@ -403,17 +407,7 @@ pub(crate) fn reverse_gtms_editor_batch_replace_commit_sync(
         });
     }
 
-    let rows = load_editor_rows(&chapter_path.join("rows"))?;
-    let word_counts = build_word_counts_from_stored_rows(&rows, &languages);
-
-    let mut add_args = vec!["add"];
-    for path in &relative_paths_to_add {
-        add_args.push(path.as_str());
-    }
-    git_output(&repo_path, &add_args)?;
-
-    let commit_paths: Vec<&str> = relative_paths_to_add.iter().map(String::as_str).collect();
-    let commit_output = git_commit_as_signed_in_user_with_metadata(
+    let commit_output = write_row_files_and_commit(
         app,
         &repo_path,
         &format!(
@@ -425,14 +419,16 @@ pub(crate) fn reverse_gtms_editor_batch_replace_commit_sync(
                 "rows"
             }
         ),
-        &commit_paths,
         CommitMetadata {
             operation: Some("editor-replace"),
             migration: None,
             status_note: None,
             ai_model: None,
         },
+        &prepared_writes,
     )?;
+    let rows = load_editor_rows(&chapter_path.join("rows"))?;
+    let word_counts = build_word_counts_from_stored_rows(&rows, &languages);
     let commit_sha = if commit_output.is_empty() {
         None
     } else {
