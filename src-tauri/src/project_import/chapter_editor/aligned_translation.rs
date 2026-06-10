@@ -30,6 +30,9 @@ const APPLY_DEBUG_LOG_DIR: &str = "logs";
 const APPLY_DEBUG_LOG_FILE: &str = "aligned-translation-apply.log";
 const APPLY_DEBUG_LOG_MAX_BYTES: u64 = 1_000_000;
 const APPLY_PROGRESS_TOTAL: usize = 6;
+// Cached alignment jobs hold the pasted translation and source text, so reclaim abandoned
+// previews after a week and delete a job as soon as it has been applied.
+const ALIGNMENT_JOB_TTL_SECS: u64 = 7 * 24 * 60 * 60;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -297,6 +300,7 @@ pub(crate) fn preflight_aligned_translation_to_gtms_chapter_sync(
     if input.model_id.trim().is_empty() {
         return Err("Select an OpenAI model before adding translation.".to_string());
     }
+    prune_stale_alignment_jobs(app, input.installation_id);
 
     let context = load_alignment_context(
         app,
@@ -579,6 +583,8 @@ pub(crate) fn apply_aligned_translation_to_gtms_chapter_sync(
         ),
     }
     let result = result?;
+    // The alignment is now committed, so drop its cached source/target text.
+    remove_alignment_job_file(&job_path);
     emit_progress(
         app,
         &progress_event(
@@ -2627,6 +2633,45 @@ fn job_path(app: &AppHandle, installation_id: i64, job_id: &str) -> Result<PathB
     fs::create_dir_all(&root)
         .map_err(|error| format!("Could not create alignment cache folder: {error}"))?;
     Ok(root.join(format!("{job_id}.json")))
+}
+
+/// Best-effort removal of a consumed/abandoned alignment job so its cached source and
+/// pasted-translation text does not linger on disk.
+fn remove_alignment_job_file(path: &Path) {
+    if let Err(error) = fs::remove_file(path) {
+        if path.exists() && cfg!(debug_assertions) {
+            eprintln!("[gtms alignment-jobs] could not remove job file: {error}");
+        }
+    }
+}
+
+/// Best-effort sweep of alignment jobs older than the TTL. Runs at preflight so abandoned
+/// previews (created but never applied) are reclaimed without a dedicated background task.
+fn prune_stale_alignment_jobs(app: &AppHandle, installation_id: i64) {
+    let Ok(data_dir) = installation_data_dir(app, installation_id) else {
+        return;
+    };
+    let root = data_dir.join("alignment-jobs");
+    let Ok(entries) = fs::read_dir(&root) else {
+        return;
+    };
+    let now = SystemTime::now();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        let aged_out = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|modified| now.duration_since(modified).ok())
+            .map(|age| age.as_secs() > ALIGNMENT_JOB_TTL_SECS)
+            .unwrap_or(false);
+        if aged_out {
+            let _ = fs::remove_file(&path);
+        }
+    }
 }
 
 fn load_cached_job(path: &Path, signature: &Value) -> Result<Option<AlignmentJob>, String> {
