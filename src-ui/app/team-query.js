@@ -26,6 +26,10 @@ import {
 } from "./local-hard-delete-store.js";
 import { isSoftDeletedResource } from "./resource-write-policy.js";
 
+// How recently the teams listing must have been fetched from the broker for
+// refreshCurrentUserTeamAccess to reuse it instead of refetching.
+const TEAM_ACCESS_REFRESH_STALE_MS = 30_000;
+
 let activeTeamsQuerySubscription = null;
 
 export function resetTeamsQueryObserver() {
@@ -129,7 +133,10 @@ export function seedTeamsQueryFromCache({
     discovery: { status: "ready", error: "" },
     authLogin,
   });
-  queryClient.setQueryData(teamKeys.currentUser(authLogin), snapshot);
+  // updatedAt: 0 marks disk-seeded data as already stale, so freshness-based reuse
+  // (refreshCurrentUserTeamAccess's staleTime) never mistakes a stale cache for a
+  // recent broker fetch.
+  queryClient.setQueryData(teamKeys.currentUser(authLogin), snapshot, { updatedAt: 0 });
   applyTeamsQuerySnapshotToState(snapshot, { authLogin, isFetching: true });
   render?.();
   return snapshot;
@@ -250,7 +257,15 @@ export async function refreshCurrentUserTeamAccess(options = {}) {
   }
 
   try {
-    const snapshot = await queryClient.fetchQuery(createTeamsQueryOptions({ authLogin }));
+    // A teams listing fetched from the broker moments ago is fresh enough for access
+    // gating on page entry. Without the staleTime, opening a team re-paid the full
+    // broker listing (~5s) before the projects load could even start. Disk-seeded
+    // snapshots are marked stale (updatedAt: 0 in seedTeamsQueryFromCache), so a
+    // cache-only seed still triggers a real refetch here.
+    const snapshot = await queryClient.fetchQuery({
+      ...createTeamsQueryOptions({ authLogin }),
+      staleTime: TEAM_ACCESS_REFRESH_STALE_MS,
+    });
     const applied = applyTeamsQuerySnapshotToState(snapshot, { authLogin, isFetching: false });
     if (applied) {
       options.render?.();
