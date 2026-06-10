@@ -197,20 +197,11 @@ fn persist_chapter_source_word_counts_batch(
     commit_message: &str,
 ) -> Result<(), String> {
     // This runs from read paths (editor load, projects-page listing), so it must not be able
-    // to leave the repo dirty: the commit helper commits everything staged (no pathspec), and
-    // a leftover modified/staged chapter.json would be swept into the next unrelated commit
-    // or break a later pull. Check the commit preconditions before touching any file, prepare
-    // every update before writing the first one, and roll back everything if a later step fails.
-    crate::installation_access::ensure_repo_allows_writes(app, repo_path)?;
-
-    struct PreparedUpdate {
-        chapter_json_path: PathBuf,
-        original_text: String,
-        updated_value: serde_json::Value,
-        relative_path: String,
-    }
-
-    let mut updates = Vec::with_capacity(entries.len());
+    // to leave the repo dirty: a failed commit would strand modified/staged chapter.json files
+    // that break a later pull. write_row_files_and_commit checks the commit preconditions
+    // before touching any file and rolls everything back if a later step fails; prepare every
+    // update before writing the first one.
+    let mut writes = Vec::with_capacity(entries.len());
     for (chapter_json_path, source_word_count) in entries {
         let original_text = fs::read_to_string(chapter_json_path)
             .map_err(|error| format!("Could not read chapter.json: {error}"))?;
@@ -224,44 +215,32 @@ fn persist_chapter_source_word_counts_batch(
             "source_word_count".to_string(),
             serde_json::json!(source_word_count),
         );
-        updates.push(PreparedUpdate {
-            chapter_json_path: chapter_json_path.clone(),
-            original_text,
-            updated_value: value,
+        let updated_json = serde_json::to_string_pretty(&value).map_err(|error| {
+            format!(
+                "Could not serialize '{}': {error}",
+                chapter_json_path.display()
+            )
+        })?;
+        writes.push(PreparedRowFileWrite {
+            path: chapter_json_path.clone(),
             relative_path: repo_relative_path(repo_path, chapter_json_path)?,
+            original_text: Some(original_text),
+            updated_text: format!("{updated_json}\n"),
         });
     }
 
-    let mut written_count = 0usize;
-    let mut write_and_commit = || -> Result<(), String> {
-        for update in &updates {
-            write_json_pretty(&update.chapter_json_path, &update.updated_value)?;
-            written_count += 1;
-        }
-        let relative_paths = updates
-            .iter()
-            .map(|update| update.relative_path.as_str())
-            .collect::<Vec<_>>();
-        let mut add_args = vec!["add"];
-        add_args.extend(relative_paths.iter().copied());
-        git_output(repo_path, &add_args)?;
-        crate::git_commit::git_commit_as_signed_in_user(
-            app,
-            repo_path,
-            commit_message,
-            &relative_paths,
-        )?;
-        Ok(())
-    };
-    if let Err(error) = write_and_commit() {
-        for update in updates.iter().take(written_count) {
-            let _ = fs::write(&update.chapter_json_path, &update.original_text);
-        }
-        let mut reset_args = vec!["reset", "-q", "--"];
-        reset_args.extend(updates.iter().map(|update| update.relative_path.as_str()));
-        let _ = git_output(repo_path, &reset_args);
-        return Err(error);
-    }
+    write_row_files_and_commit(
+        app,
+        repo_path,
+        commit_message,
+        CommitMetadata {
+            operation: None,
+            migration: None,
+            status_note: None,
+            ai_model: None,
+        },
+        &writes,
+    )?;
     Ok(())
 }
 
