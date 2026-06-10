@@ -20,7 +20,8 @@ use crate::{
     },
     installation_access::{
         ensure_installation_allows_glossary_management,
-        ensure_installation_allows_project_management, ensure_installation_allows_qa_list_management,
+        ensure_installation_allows_project_management,
+        ensure_installation_allows_qa_list_management,
     },
     local_repo_sync_state::{
         read_local_repo_sync_state, upsert_local_repo_sync_state, LocalRepoSyncState,
@@ -160,7 +161,8 @@ pub(crate) async fn list_local_gnosis_project_metadata_records(
             list_local_metadata_records::<GithubProjectMetadataRecord>(&repo_path, "project")?;
         // One folder scan for the whole record set — per-record rescans spawned a git
         // subprocess per (record × folder) pair and dominated the projects refresh.
-        let repo_folders = scan_local_project_repo_folders(&app, installation_id).unwrap_or_default();
+        let repo_folders =
+            scan_local_project_repo_folders(&app, installation_id).unwrap_or_default();
         for record in &mut records {
             record.chapter_count = find_project_repo_in_scan(&repo_folders, record)
                 .ok()
@@ -271,8 +273,8 @@ pub(crate) async fn inspect_and_migrate_local_repo_bindings(
             issues: project_scan
                 .issues
                 .into_iter()
-                .chain(glossary_scan.issues.into_iter())
-                .chain(qa_list_scan.issues.into_iter())
+                .chain(glossary_scan.issues)
+                .chain(qa_list_scan.issues)
                 .collect(),
             auto_repaired_count: project_scan.auto_repaired_count
                 + glossary_scan.auto_repaired_count

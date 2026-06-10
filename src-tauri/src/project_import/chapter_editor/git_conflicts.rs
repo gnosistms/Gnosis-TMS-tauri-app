@@ -981,7 +981,7 @@ fn local_row_change_is_unsupported(
     local_value: &Value,
     remote_value: &Value,
 ) -> Result<bool, String> {
-    let mut base_stripped = base_value.cloned().unwrap_or_else(|| Value::Null);
+    let mut base_stripped = base_value.cloned().unwrap_or(Value::Null);
     let mut local_stripped = local_value.clone();
     let mut remote_stripped = remote_value.clone();
     strip_supported_row_merge_keys(&mut base_stripped)?;
@@ -995,7 +995,7 @@ fn local_chapter_metadata_change_is_unsupported(
     local_value: &Value,
     remote_value: &Value,
 ) -> Result<bool, String> {
-    let mut base_stripped = base_value.cloned().unwrap_or_else(|| Value::Null);
+    let mut base_stripped = base_value.cloned().unwrap_or(Value::Null);
     let mut local_stripped = local_value.clone();
     let mut remote_stripped = remote_value.clone();
     strip_supported_chapter_merge_keys(&mut base_stripped)?;
@@ -1140,7 +1140,7 @@ fn merge_optional_glossary_setting(
         chapter_value,
         path,
         next_value
-            .map(|value| serde_json::to_value(value))
+            .map(serde_json::to_value)
             .transpose()
             .map_err(|error| {
                 format!("Could not serialize the chapter glossary setting: {error}")
@@ -1539,7 +1539,10 @@ mod tests {
         .expect("workflow_status conflict should resolve");
         let merged_value: Value =
             serde_json::from_str(&merged).expect("merged chapter should parse");
-        assert_eq!(merged_value["settings"]["workflow_status"], json!("publish"));
+        assert_eq!(
+            merged_value["settings"]["workflow_status"],
+            json!("publish")
+        );
     }
 
     #[test]
@@ -1581,7 +1584,10 @@ mod tests {
         .expect("workflow_status conflict should resolve");
         let merged_value: Value =
             serde_json::from_str(&merged).expect("merged chapter should parse");
-        assert_eq!(merged_value["settings"]["workflow_status"], json!("publish"));
+        assert_eq!(
+            merged_value["settings"]["workflow_status"],
+            json!("publish")
+        );
     }
 
     #[test]
@@ -1623,7 +1629,10 @@ mod tests {
         .expect("workflow_status conflict should resolve");
         let merged_value: Value =
             serde_json::from_str(&merged).expect("merged chapter should parse");
-        assert_eq!(merged_value["settings"]["workflow_status"], json!("publish"));
+        assert_eq!(
+            merged_value["settings"]["workflow_status"],
+            json!("publish")
+        );
     }
 
     #[test]

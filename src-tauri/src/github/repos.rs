@@ -135,8 +135,7 @@ pub(crate) async fn list_gnosis_resources_for_installation(
             &session_token,
         )?;
         let projects = tolerant_resource_list_field(&app, &value, "projects", "project repo")?;
-        let glossaries =
-            tolerant_resource_list_field(&app, &value, "glossaries", "glossary repo")?;
+        let glossaries = tolerant_resource_list_field(&app, &value, "glossaries", "glossary repo")?;
         let qa_lists = tolerant_resource_list_field(&app, &value, "qaLists", "QA list repo")?;
         let digest = value
             .get("digest")

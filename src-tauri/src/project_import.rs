@@ -249,8 +249,8 @@ pub(crate) async fn purge_local_gtms_project_repo(
     input: PurgeLocalProjectRepoInput,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || purge_local_gtms_project_repo_sync(&app, input))
-    .await
-    .map_err(|error| format!("The local project repo removal worker failed: {error}"))?
+        .await
+        .map_err(|error| format!("The local project repo removal worker failed: {error}"))?
 }
 
 #[tauri::command]

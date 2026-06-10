@@ -169,6 +169,10 @@ fn persist_chapter_source_word_counts_batch(
     Ok(())
 }
 
+/// TEMP alias for the bulk-backfill side channel — removed together with the backfill
+/// (see plans/bulk-backfill-source-word-count-plan.md).
+type ChapterSummariesWithBackfill = (Vec<ProjectChapterSummary>, Vec<(PathBuf, usize)>);
+
 /// Returns the chapter summaries plus, TEMPORARILY (see
 /// plans/bulk-backfill-source-word-count-plan.md; remove around 2026-06-23), the
 /// `(chapter.json path, source count)` pairs for chapters that had no cached
@@ -176,7 +180,7 @@ fn persist_chapter_source_word_counts_batch(
 /// per chapter instead of on every refresh.
 pub(super) fn load_project_chapter_summaries(
     repo_path: &Path,
-) -> Result<(Vec<ProjectChapterSummary>, Vec<(PathBuf, usize)>), String> {
+) -> Result<ChapterSummariesWithBackfill, String> {
     let mut source_word_count_backfill = Vec::new();
     let chapters_root = repo_path.join("chapters");
     if !chapters_root.exists() {

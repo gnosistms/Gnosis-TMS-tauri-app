@@ -585,13 +585,13 @@ fn detected_uploaded_image_extension(bytes: &[u8]) -> Option<&'static str> {
     if bytes.starts_with(&[0x00, 0x00, 0x01, 0x00]) {
         return Some("ico");
     }
-    if bytes.len() >= 12 && &bytes[4..8] == b"ftyp" {
-        if bytes
+    if bytes.len() >= 12
+        && &bytes[4..8] == b"ftyp"
+        && bytes
             .windows(4)
             .any(|window| window == b"avif" || window == b"avis")
-        {
-            return Some("avif");
-        }
+    {
+        return Some("avif");
     }
     if svg_document_root_is_svg(bytes) {
         return Some("svg");

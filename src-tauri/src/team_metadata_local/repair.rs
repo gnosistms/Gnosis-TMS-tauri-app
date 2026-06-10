@@ -704,11 +704,7 @@ fn match_scanned_repo_for_record(
                 .sync_state_current_repo_name
                 .as_deref()
                 .map(str::trim)
-                .is_some_and(|repo_name| {
-                    candidate_repo_names
-                        .iter()
-                        .any(|candidate| *candidate == repo_name)
-                })
+                .is_some_and(|repo_name| candidate_repo_names.contains(&repo_name))
             || candidate_repo_names
                 .iter()
                 .any(|candidate| *candidate == folder.folder_name)
@@ -863,9 +859,13 @@ mod tests {
         let mut by_id = scanned("/repos/folder-1", "folder-1");
         by_id.sync_state_resource_id = Some("project-1".to_string());
         let by_name = scanned("/repos/project-a", "project-a");
-        let error =
-            match_scanned_repo_for_record(&[by_id, by_name], "project", "project-1", &["project-a"])
-                .expect_err("ambiguous match should error");
+        let error = match_scanned_repo_for_record(
+            &[by_id, by_name],
+            "project",
+            "project-1",
+            &["project-a"],
+        )
+        .expect_err("ambiguous match should error");
         assert!(error.contains("More than one local project repo"));
     }
 }

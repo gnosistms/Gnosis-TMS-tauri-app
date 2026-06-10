@@ -70,6 +70,7 @@ fn deserialize_tolerant_broker_list<T: DeserializeOwned>(
     Ok((items, skipped_count))
 }
 
+#[allow(clippy::items_after_test_module)]
 #[cfg(test)]
 mod tests {
     use super::{deserialize_tolerant_broker_list, encode_broker_path_segment};
@@ -132,8 +133,7 @@ pub(crate) use repos::{
     create_gnosis_glossary_repo, create_gnosis_project_repo, create_gnosis_qa_list_repo,
     ensure_gnosis_repo_properties_schema, list_gnosis_glossaries_for_installation,
     list_gnosis_projects_for_installation, list_gnosis_qa_lists_for_installation,
-    list_gnosis_resources_for_installation,
-    mark_gnosis_project_repo_deleted, rename_gnosis_project_repo, restore_gnosis_project_repo,
-    rollback_created_gnosis_glossary_repo, rollback_created_gnosis_project_repo,
-    rollback_created_gnosis_qa_list_repo,
+    list_gnosis_resources_for_installation, mark_gnosis_project_repo_deleted,
+    rename_gnosis_project_repo, restore_gnosis_project_repo, rollback_created_gnosis_glossary_repo,
+    rollback_created_gnosis_project_repo, rollback_created_gnosis_qa_list_repo,
 };

@@ -312,7 +312,10 @@ mod tests {
     fn effective_header_width_drops_only_wholly_empty_trailing_columns() {
         // Trailing column with a blank header AND no data (calamine used-range padding) is dropped.
         assert_eq!(
-            effective_header_width(&headers(&["es", "en", "ja", ""]), &[true, true, true, false]),
+            effective_header_width(
+                &headers(&["es", "en", "ja", ""]),
+                &[true, true, true, false]
+            ),
             3,
         );
         // Several trailing wholly-empty columns are all dropped.

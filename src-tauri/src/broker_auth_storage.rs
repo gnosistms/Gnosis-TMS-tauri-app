@@ -1,4 +1,7 @@
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use tauri::{AppHandle, Manager};
 
@@ -20,16 +23,15 @@ fn auth_session_path(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 /// Atomically write `contents` to `path` via a sibling `.tmp` file.
-fn atomic_write(path: &PathBuf, contents: &str) -> Result<(), String> {
+fn atomic_write(path: &Path, contents: &str) -> Result<(), String> {
     let tmp_path = path.with_extension("json.tmp");
-    fs::write(&tmp_path, contents)
-        .map_err(|e| format!("Could not write broker session: {e}"))?;
+    fs::write(&tmp_path, contents).map_err(|e| format!("Could not write broker session: {e}"))?;
     crate::util::atomic_replace(&tmp_path, path)
         .map_err(|e| format!("Could not save broker session: {e}"))?;
     Ok(())
 }
 
-fn write_session_json(session_path: &PathBuf, session: &BrokerSession) -> Result<(), String> {
+fn write_session_json(session_path: &Path, session: &BrokerSession) -> Result<(), String> {
     let contents = serde_json::to_string(session)
         .map_err(|e| format!("Could not encode the broker session: {e}"))?;
     atomic_write(session_path, &contents)

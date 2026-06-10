@@ -728,7 +728,7 @@ pub(super) fn build_editor_field_history_entries(
 
     for (index, (commit, historical_field_version)) in commits
         .into_iter()
-        .zip(historical_field_versions.into_iter())
+        .zip(historical_field_versions)
         .enumerate()
     {
         let Some(field_version) = historical_field_version else {

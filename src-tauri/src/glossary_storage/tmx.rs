@@ -88,10 +88,8 @@ pub(super) fn parse_tmx_glossary(
         {
             Event::Eof => break,
             Event::Start(event) => match event.name().as_ref() {
-                b"header" | b"headers" => {
-                    if source_language_code.is_none() {
-                        source_language_code = read_tmx_language_attr(&reader, &event, b"srclang")?;
-                    }
+                b"header" | b"headers" if source_language_code.is_none() => {
+                    source_language_code = read_tmx_language_attr(&reader, &event, b"srclang")?;
                 }
                 b"tu" => {
                     current_unit = Some(WorkingTmxUnit {
@@ -128,10 +126,8 @@ pub(super) fn parse_tmx_glossary(
                 _ => {}
             },
             Event::Empty(event) => match event.name().as_ref() {
-                b"header" | b"headers" => {
-                    if source_language_code.is_none() {
-                        source_language_code = read_tmx_language_attr(&reader, &event, b"srclang")?;
-                    }
+                b"header" | b"headers" if source_language_code.is_none() => {
+                    source_language_code = read_tmx_language_attr(&reader, &event, b"srclang")?;
                 }
                 b"note" => {}
                 _ => {}

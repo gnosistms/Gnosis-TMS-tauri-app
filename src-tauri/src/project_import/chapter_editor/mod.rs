@@ -98,15 +98,13 @@ pub(crate) use self::row_structure::{
 };
 use self::shared::{
     apply_word_count_delta, backfill_chapter_source_word_counts,
-    build_word_counts_from_stored_rows,
-    clear_editor_html_preview_cache, current_repo_head_sha, editor_row_from_stored_row_file,
-    editor_row_from_stored_row_file_with_update, ensure_editor_field_object_defaults,
-    load_editor_rows, load_project_chapter_summaries, load_word_counts,
-    refresh_cached_chapter_source_word_count,
-    normalize_editor_footnote_value, normalize_editor_image_caption_value,
-    normalize_editor_text_style_value, row_fields_object_mut, row_footnote_map,
-    row_image_caption_map, row_object_mut, row_plain_text_map, row_text_style,
-    sanitize_chapter_languages, set_editor_field_flags,
+    build_word_counts_from_stored_rows, clear_editor_html_preview_cache, current_repo_head_sha,
+    editor_row_from_stored_row_file, editor_row_from_stored_row_file_with_update,
+    ensure_editor_field_object_defaults, load_editor_rows, load_project_chapter_summaries,
+    load_word_counts, normalize_editor_footnote_value, normalize_editor_image_caption_value,
+    normalize_editor_text_style_value, refresh_cached_chapter_source_word_count,
+    row_fields_object_mut, row_footnote_map, row_image_caption_map, row_object_mut,
+    row_plain_text_map, row_text_style, sanitize_chapter_languages, set_editor_field_flags,
 };
 
 const ORDER_KEY_SPACING: u128 = 1u128 << 104;

@@ -24,22 +24,12 @@ use super::{
 };
 use crate::storage_paths::installation_data_dir;
 
+#[derive(Default)]
 pub(super) struct ProjectSearchIndexRefreshStats {
     pub(super) repo_count: usize,
     pub(super) updated_repo_count: usize,
     pub(super) full_reindex_count: usize,
     pub(super) dirty_chapter_count: usize,
-}
-
-impl Default for ProjectSearchIndexRefreshStats {
-    fn default() -> Self {
-        Self {
-            repo_count: 0,
-            updated_repo_count: 0,
-            full_reindex_count: 0,
-            dirty_chapter_count: 0,
-        }
-    }
 }
 
 struct SearchDocumentInserter<'conn> {

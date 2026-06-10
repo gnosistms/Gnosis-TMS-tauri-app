@@ -196,11 +196,7 @@ fn fallback_article(html: &str) -> Result<HtmlArticle, String> {
             .select(&link_selector)
             .map(|link| element_text(link, false).chars().count())
             .sum::<usize>();
-        let link_density_percent = if text_len == 0 {
-            100
-        } else {
-            (link_text_len * 100) / text_len
-        };
+        let link_density_percent = (link_text_len * 100).checked_div(text_len).unwrap_or(100);
         if text_len < MIN_FALLBACK_TEXT_CHARS
             || paragraph_count < MIN_FALLBACK_PARAGRAPH_BLOCKS
             || link_density_percent > 35
@@ -893,9 +889,7 @@ fn element_explicit_center_alignment(element: ElementRef<'_>) -> Option<bool> {
     if let Some(style_alignment) = style_text_align_value(element.attr("style").unwrap_or("")) {
         return Some(alignment_value_is_center(&style_alignment));
     }
-    element
-        .attr("align")
-        .map(|value| alignment_value_is_center(value))
+    element.attr("align").map(alignment_value_is_center)
 }
 
 fn style_text_align_value(style: &str) -> Option<String> {
