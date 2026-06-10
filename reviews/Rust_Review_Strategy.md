@@ -233,12 +233,19 @@ project_import/chapter_editor/row_structure.rs (474)
 `write_row_files_and_commit`, word-count helper refactor). m2 (per-save O(chapter)
 cost) deferred — needs a frontend-contract design decision.
 
-### 10b: Git Conflict Resolution + History (~2,950 lines)
+### 10b: Git Conflict Resolution + History (~2,950 lines) — REVIEW COMPLETE
 
 ```
 project_import/chapter_editor/git_conflicts.rs (1,686)
 project_import/chapter_editor/history.rs       (1,262)
 ```
+
+**Review file**: `reviews/2026-06-10-batch-10b-review.md`
+**Findings**: 0 Critical, 1 Security, 1 Major, 2 Minor — open, not yet resolved.
+S1 (history.rs builds row paths from an unvalidated `row_id` — the 10a S1 fix didn't
+reach this file) and M1 (batch-replace undo strands written rows on commit failure;
+the sibling `restore_*` shows the correct rollback pattern). The semantic merge
+itself is solid and well tested.
 
 ### 10c: Aligned Translation + Export (~4,260 lines)
 
@@ -385,7 +392,7 @@ The fix is the same transform applied to Batch 2 M2 (`invite_user_to_organizatio
 | 7 | Content Storage | 4,470 | 2 | ✅ `2026-06-03-batch-7-review.md` — 0C/0S/0M/1m, resolved in PR #25 |
 | 8 | Team Metadata | 2,475 | 1 | ✅ `2026-06-10-batch-8-review.md` — 0C/1S/2M/2m, all resolved on `fix/batch-8-review-findings` |
 | 9 | AI Integration | 5,040 | 2 | ✅ `2026-06-10-batch-9-review.md` — 0C/2S/1M/2m, all resolved on `fix/batch-9-review-findings` |
-| 10 | Chapter Editor | 13,000 | 4 | 🔶 10a done — `2026-06-10-batch-10a-review.md`, 0C/1S/1M/2m, S1/M1/m1 resolved, m2 deferred; 10b/10c/10d pending |
+| 10 | Chapter Editor | 13,000 | 4 | 🔶 10a done (S1/M1/m1 resolved, m2 deferred); 10b done — `2026-06-10-batch-10b-review.md`, 0C/1S/1M/2m open; 10c/10d pending |
 | 11 | Import Pipeline | 6,325 | 3 | — |
 | 12 | Search + Updater | 2,680 | 1 | — |
 | **Total** | | **~50,300** | **19** | |
