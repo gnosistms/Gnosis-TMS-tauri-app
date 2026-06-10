@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::AppHandle;
 
-use crate::git_commit::git_commit_as_signed_in_user;
+use crate::git_commit::{ensure_local_commit_preconditions, git_commit_as_signed_in_user};
 use crate::project_repo_paths::resolve_project_git_repo_path;
 
 use super::chapter_editor::commit_chapter_json_update;
@@ -75,6 +75,27 @@ fn chapter_lifecycle_state(chapter_value: &Value) -> &str {
         .unwrap_or("active")
 }
 
+/// Unstage chapter removals and restore the folders from HEAD after a failed
+/// permanent-delete sequence, so a failed commit (or a mid-sequence error) cannot
+/// strand staged deletions and missing folders that would break the next pull.
+fn rollback_staged_chapter_removals(
+    repo_path: &Path,
+    relative_paths: &[&str],
+    failure: String,
+) -> String {
+    let mut reset_args = vec!["reset", "-q", "--"];
+    reset_args.extend_from_slice(relative_paths);
+    let reset_result = git_output(repo_path, &reset_args);
+    let mut checkout_args = vec!["checkout", "-q", "--"];
+    checkout_args.extend_from_slice(relative_paths);
+    let checkout_result = git_output(repo_path, &checkout_args);
+    if reset_result.is_ok() && checkout_result.is_ok() {
+        format!("{failure} The local file removal was rolled back.")
+    } else {
+        format!("{failure} Rolling back the local file removal also failed.")
+    }
+}
+
 fn clear_deleted_chapters_in_repo(repo_path: &Path) -> Result<ClearDeletedChaptersChanges, String> {
     let chapters_root = repo_path.join("chapters");
     if !chapters_root.exists() {
@@ -134,16 +155,29 @@ fn clear_deleted_chapters_in_repo(repo_path: &Path) -> Result<ClearDeletedChapte
     deleted_chapters.sort_by(|left, right| left.0.cmp(&right.0));
 
     let mut chapter_ids = Vec::new();
-    let mut relative_paths = Vec::new();
+    let mut relative_paths: Vec<String> = Vec::new();
     for (relative_path, chapter_id, path) in deleted_chapters {
-        git_output(repo_path, &["rm", "-r", &relative_path])?;
-        if path.exists() {
-            fs::remove_dir_all(&path).map_err(|error| {
-                format!(
-                    "Could not remove the deleted file from disk at '{}': {error}",
-                    path.display()
-                )
-            })?;
+        let removal = git_output(repo_path, &["rm", "-r", &relative_path]).and_then(|_| {
+            if path.exists() {
+                fs::remove_dir_all(&path).map_err(|error| {
+                    format!(
+                        "Could not remove the deleted file from disk at '{}': {error}",
+                        path.display()
+                    )
+                })
+            } else {
+                Ok(())
+            }
+        });
+        if let Err(error) = removal {
+            // Roll back the chapters already removed (and the partial current one) so a
+            // mid-sequence failure cannot leave a partially cleared, uncommitted tree.
+            relative_paths.push(relative_path);
+            let staged = relative_paths
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>();
+            return Err(rollback_staged_chapter_removals(repo_path, &staged, error));
         }
         chapter_ids.push(chapter_id);
         relative_paths.push(relative_path);
@@ -311,22 +345,39 @@ pub(super) fn permanently_delete_gtms_chapter_sync(
         return Err("Only soft-deleted files can be permanently deleted.".to_string());
     }
 
+    // The removal below deletes the folder from disk before any commit gate runs, so an
+    // *expected* gate failure (degraded write access, signed-out session) must be caught
+    // before the first destructive step.
+    ensure_local_commit_preconditions(app, &repo_path)?;
+
     let relative_chapter_path = repo_relative_path(&repo_path, &chapter_path)?;
     git_output(&repo_path, &["rm", "-r", &relative_chapter_path])?;
-    if chapter_path.exists() {
+    let removal_result = if chapter_path.exists() {
         fs::remove_dir_all(&chapter_path).map_err(|error| {
             format!(
                 "Could not remove the deleted file from disk at '{}': {error}",
                 chapter_path.display()
             )
-        })?;
+        })
+    } else {
+        Ok(())
+    };
+    let commit_result = removal_result.and_then(|_| {
+        git_commit_as_signed_in_user(
+            app,
+            &repo_path,
+            "Delete file permanently",
+            &[&relative_chapter_path],
+        )
+        .map(|_| ())
+    });
+    if let Err(error) = commit_result {
+        return Err(rollback_staged_chapter_removals(
+            &repo_path,
+            &[&relative_chapter_path],
+            error,
+        ));
     }
-    git_commit_as_signed_in_user(
-        app,
-        &repo_path,
-        "Delete file permanently",
-        &[&relative_chapter_path],
-    )?;
 
     Ok(UpdateChapterLifecycleResponse {
         chapter_id: input.chapter_id,
@@ -347,6 +398,10 @@ pub(super) fn clear_deleted_gtms_chapters_sync(
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
+    // Clearing removes folders from disk before any commit gate runs, so an *expected*
+    // gate failure must be caught before the first destructive step.
+    ensure_local_commit_preconditions(app, &repo_path)?;
+
     let changes = clear_deleted_chapters_in_repo(&repo_path)?;
     if !changes.relative_paths.is_empty() {
         let relative_paths = changes
@@ -354,7 +409,15 @@ pub(super) fn clear_deleted_gtms_chapters_sync(
             .iter()
             .map(String::as_str)
             .collect::<Vec<_>>();
-        git_commit_as_signed_in_user(app, &repo_path, "Clear deleted files", &relative_paths)?;
+        if let Err(error) =
+            git_commit_as_signed_in_user(app, &repo_path, "Clear deleted files", &relative_paths)
+        {
+            return Err(rollback_staged_chapter_removals(
+                &repo_path,
+                &relative_paths,
+                error,
+            ));
+        }
     }
 
     Ok(ClearDeletedChaptersResponse {
@@ -438,6 +501,35 @@ mod tests {
 
         git_output(&repo_path, &["commit", "-m", "Clear deleted files"])?;
         assert_eq!(commit_count(&repo_path)?, initial_commit_count + 1);
+        let _ = fs::remove_dir_all(&repo_path);
+        Ok(())
+    }
+
+    #[test]
+    fn rollback_staged_chapter_removals_restores_removed_chapters() -> Result<(), String> {
+        let repo_path = create_test_repo()?;
+        write_chapter(&repo_path, "deleted-one", "deleted-one", "deleted")?;
+        write_chapter(&repo_path, "deleted-two", "deleted-two", "deleted")?;
+        commit_all(&repo_path, "Initial project")?;
+
+        // Stage the removals and delete the folders from disk, as a failed
+        // permanent-delete sequence would have before its commit failed.
+        git_output(&repo_path, &["rm", "-r", "chapters/deleted-one"])?;
+        git_output(&repo_path, &["rm", "-r", "chapters/deleted-two"])?;
+
+        let message = rollback_staged_chapter_removals(
+            &repo_path,
+            &["chapters/deleted-one", "chapters/deleted-two"],
+            "The commit failed.".to_string(),
+        );
+
+        assert_eq!(
+            message,
+            "The commit failed. The local file removal was rolled back."
+        );
+        assert!(repo_path.join("chapters/deleted-one/chapter.json").exists());
+        assert!(repo_path.join("chapters/deleted-two/chapter.json").exists());
+        assert_eq!(git_output(&repo_path, &["status", "--porcelain"])?, "");
         let _ = fs::remove_dir_all(&repo_path);
         Ok(())
     }
