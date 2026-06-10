@@ -8,7 +8,6 @@ use std::{
 };
 
 use base64::Engine as _;
-use quick_xml::{events::Event as XmlEvent, Reader as XmlReader};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};

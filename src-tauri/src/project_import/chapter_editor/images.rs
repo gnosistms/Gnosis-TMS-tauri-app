@@ -19,9 +19,7 @@ pub(crate) fn save_gtms_editor_language_image_url_sync(
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
     let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
-    let row_json_path = chapter_path
-        .join("rows")
-        .join(format!("{}.json", input.row_id));
+    let row_json_path = validated_row_json_path(&chapter_path, &input.row_id)?;
     if !row_json_path.exists() {
         return Ok(SaveEditorLanguageImageResponse {
             row_id: input.row_id,
@@ -181,9 +179,7 @@ pub(crate) fn upload_gtms_editor_language_image_sync(
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
     let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
-    let row_json_path = chapter_path
-        .join("rows")
-        .join(format!("{}.json", input.row_id));
+    let row_json_path = validated_row_json_path(&chapter_path, &input.row_id)?;
     if !row_json_path.exists() {
         return Ok(SaveEditorLanguageImageResponse {
             row_id: input.row_id,
@@ -347,9 +343,7 @@ pub(crate) fn remove_gtms_editor_language_image_sync(
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
     let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
-    let row_json_path = chapter_path
-        .join("rows")
-        .join(format!("{}.json", input.row_id));
+    let row_json_path = validated_row_json_path(&chapter_path, &input.row_id)?;
     if !row_json_path.exists() {
         return Ok(SaveEditorLanguageImageResponse {
             row_id: input.row_id,
@@ -530,7 +524,6 @@ fn normalize_uploaded_image_extension(extension: &str) -> Option<&'static str> {
         "jpg" | "jpeg" => Some("jpg"),
         "png" | "apng" => Some("png"),
         "gif" => Some("gif"),
-        "svg" => Some("svg"),
         "webp" => Some("webp"),
         "avif" => Some("avif"),
         "bmp" => Some("bmp"),
@@ -539,33 +532,9 @@ fn normalize_uploaded_image_extension(extension: &str) -> Option<&'static str> {
     }
 }
 
-fn svg_document_root_is_svg(bytes: &[u8]) -> bool {
-    let mut reader = XmlReader::from_reader(bytes);
-    reader.trim_text(true);
-    let mut buffer = Vec::new();
-
-    loop {
-        match reader.read_event_into(&mut buffer) {
-            Ok(XmlEvent::Start(event)) | Ok(XmlEvent::Empty(event)) => {
-                return event.name().as_ref() == b"svg";
-            }
-            Ok(XmlEvent::Decl(_))
-            | Ok(XmlEvent::DocType(_))
-            | Ok(XmlEvent::Comment(_))
-            | Ok(XmlEvent::PI(_))
-            | Ok(XmlEvent::Text(_))
-            | Ok(XmlEvent::CData(_)) => {
-                buffer.clear();
-                continue;
-            }
-            Ok(XmlEvent::Eof) | Err(_) => return false,
-            _ => {
-                buffer.clear();
-            }
-        }
-    }
-}
-
+// SVG is intentionally not an accepted upload format: an SVG can carry <script>, on*
+// handlers, or <foreignObject> HTML, and we do not sanitize uploads, so accepting one
+// would let it travel to every teammate via git as latent stored XSS. Raster formats only.
 fn detected_uploaded_image_extension(bytes: &[u8]) -> Option<&'static str> {
     if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
         return Some("jpg");
@@ -593,10 +562,6 @@ fn detected_uploaded_image_extension(bytes: &[u8]) -> Option<&'static str> {
     {
         return Some("avif");
     }
-    if svg_document_root_is_svg(bytes) {
-        return Some("svg");
-    }
-
     None
 }
 
@@ -1083,6 +1048,19 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn uploaded_image_validation_rejects_svg() {
+        let svg = br#"<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>"#;
+        assert_eq!(detected_uploaded_image_extension(svg), None);
+        assert!(validated_uploaded_image_extension("drawing.svg", svg).is_err());
+    }
+
+    #[test]
+    fn uploaded_image_validation_accepts_png_magic_bytes() {
+        let png = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0];
+        assert_eq!(detected_uploaded_image_extension(&png), Some("png"));
     }
 
     #[test]
