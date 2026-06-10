@@ -49,10 +49,13 @@ use self::mutations::{
 };
 use self::records::{list_local_metadata_records, local_record_has_tombstone, read_json_object};
 use self::repair::{
-    find_glossary_repo_for_record, find_project_repo_for_record, find_qa_list_repo_for_record,
+    find_glossary_repo_for_record, find_glossary_repo_in_scan, find_project_repo_for_record,
+    find_project_repo_in_scan, find_qa_list_repo_for_record, find_qa_list_repo_in_scan,
     inspect_glossary_repo_repairs, inspect_project_repo_repairs, inspect_qa_list_repo_repairs,
     local_glossary_term_count, local_project_chapter_count, local_qa_list_term_count,
     maybe_repair_sync_state, normalized_optional_text, repo_folder_name,
+    scan_local_glossary_repo_folders, scan_local_project_repo_folders,
+    scan_local_qa_list_repo_folders,
 };
 use self::repo::{
     build_local_team_metadata_repo_info, current_origin_remote_url, ensure_local_repo_exists,
@@ -155,8 +158,11 @@ pub(crate) async fn list_local_gnosis_project_metadata_records(
         let repo_path = require_local_metadata_repo(&app, installation_id)?;
         let mut records =
             list_local_metadata_records::<GithubProjectMetadataRecord>(&repo_path, "project")?;
+        // One folder scan for the whole record set — per-record rescans spawned a git
+        // subprocess per (record × folder) pair and dominated the projects refresh.
+        let repo_folders = scan_local_project_repo_folders(&app, installation_id).unwrap_or_default();
         for record in &mut records {
-            record.chapter_count = find_project_repo_for_record(&app, installation_id, record)
+            record.chapter_count = find_project_repo_in_scan(&repo_folders, record)
                 .ok()
                 .flatten()
                 .and_then(|repo_path| local_project_chapter_count(&repo_path).ok())
@@ -177,8 +183,10 @@ pub(crate) async fn list_local_gnosis_glossary_metadata_records(
         let repo_path = require_local_metadata_repo(&app, installation_id)?;
         let mut records =
             list_local_metadata_records::<GithubGlossaryMetadataRecord>(&repo_path, "glossary")?;
+        let repo_folders =
+            scan_local_glossary_repo_folders(&app, installation_id).unwrap_or_default();
         for record in &mut records {
-            record.term_count = find_glossary_repo_for_record(&app, installation_id, record)
+            record.term_count = find_glossary_repo_in_scan(&repo_folders, record)
                 .ok()
                 .flatten()
                 .and_then(|repo_path| local_glossary_term_count(&repo_path).ok())
@@ -199,8 +207,10 @@ pub(crate) async fn list_local_gnosis_qa_list_metadata_records(
         let repo_path = require_local_metadata_repo(&app, installation_id)?;
         let mut records =
             list_local_metadata_records::<GithubQaListMetadataRecord>(&repo_path, "qaList")?;
+        let repo_folders =
+            scan_local_qa_list_repo_folders(&app, installation_id).unwrap_or_default();
         for record in &mut records {
-            record.term_count = find_qa_list_repo_for_record(&app, installation_id, record)
+            record.term_count = find_qa_list_repo_in_scan(&repo_folders, record)
                 .ok()
                 .flatten()
                 .and_then(|repo_path| local_qa_list_term_count(&repo_path).ok())

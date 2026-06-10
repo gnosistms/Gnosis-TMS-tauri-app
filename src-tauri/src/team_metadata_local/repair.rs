@@ -632,42 +632,77 @@ pub(super) fn inspect_qa_list_repo_repairs(
     })
 }
 
-pub(super) fn find_project_repo_for_record(
-    app: &AppHandle,
-    installation_id: i64,
-    record: &GithubProjectMetadataRecord,
-) -> Result<Option<PathBuf>, String> {
-    let repo_root = local_project_repo_root(app, installation_id)?;
-    let candidate_repo_names = std::iter::once(record.repo_name.as_str())
-        .chain(record.previous_repo_names.iter().map(String::as_str))
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .collect::<Vec<_>>();
-    let mut matches = Vec::new();
+/// One pre-read snapshot of a local repo folder, so record matching does not have to
+/// re-scan the folder tree (and re-spawn `git rev-parse` per folder) once per metadata
+/// record — the listing commands match a whole record set against one scan.
+pub(super) struct ScannedRepoFolder {
+    path: PathBuf,
+    folder_name: String,
+    sync_state_resource_id: Option<String>,
+    sync_state_current_repo_name: Option<String>,
+    embedded_resource_id: Option<String>,
+}
 
-    for entry in fs::read_dir(&repo_root).map_err(|error| {
+fn no_embedded_resource_id(_repo_path: &Path) -> Option<String> {
+    None
+}
+
+fn scan_repo_folders(
+    repo_root: &Path,
+    kind_label: &str,
+    read_embedded_id: fn(&Path) -> Option<String>,
+) -> Result<Vec<ScannedRepoFolder>, String> {
+    let mut folders = Vec::new();
+    for entry in fs::read_dir(repo_root).map_err(|error| {
         format!(
-            "Could not read the local project repo folder '{}': {error}",
+            "Could not read the local {kind_label} repo folder '{}': {error}",
             repo_root.display()
         )
     })? {
-        let entry =
-            entry.map_err(|error| format!("Could not read a local project repo entry: {error}"))?;
+        let entry = entry
+            .map_err(|error| format!("Could not read a local {kind_label} repo entry: {error}"))?;
         let repo_path = entry.path();
         if !is_git_repo(&repo_path) {
             continue;
         }
 
         let sync_state = read_local_repo_sync_state(&repo_path).ok().flatten();
-        let folder_name = repo_folder_name(&repo_path).unwrap_or_default();
-        let matches_record = sync_state
-            .as_ref()
-            .and_then(|state| state.resource_id.as_deref())
-            .map(str::trim)
-            == Some(record.id.trim())
-            || sync_state
+        folders.push(ScannedRepoFolder {
+            folder_name: repo_folder_name(&repo_path).unwrap_or_default(),
+            sync_state_resource_id: sync_state
                 .as_ref()
-                .and_then(|state| state.current_repo_name.as_deref())
+                .and_then(|state| state.resource_id.clone()),
+            sync_state_current_repo_name: sync_state
+                .as_ref()
+                .and_then(|state| state.current_repo_name.clone()),
+            embedded_resource_id: read_embedded_id(&repo_path),
+            path: repo_path,
+        });
+    }
+    Ok(folders)
+}
+
+fn candidate_repo_names<'a>(repo_name: &'a str, previous_repo_names: &'a [String]) -> Vec<&'a str> {
+    std::iter::once(repo_name)
+        .chain(previous_repo_names.iter().map(String::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .collect()
+}
+
+fn match_scanned_repo_for_record(
+    folders: &[ScannedRepoFolder],
+    kind_label: &str,
+    record_id: &str,
+    candidate_repo_names: &[&str],
+) -> Result<Option<PathBuf>, String> {
+    let trimmed_record_id = record_id.trim();
+    let mut matches = folders.iter().filter(|folder| {
+        folder.sync_state_resource_id.as_deref().map(str::trim) == Some(trimmed_record_id)
+            || folder.embedded_resource_id.as_deref().map(str::trim) == Some(trimmed_record_id)
+            || folder
+                .sync_state_current_repo_name
+                .as_deref()
                 .map(str::trim)
                 .is_some_and(|repo_name| {
                     candidate_repo_names
@@ -676,21 +711,70 @@ pub(super) fn find_project_repo_for_record(
                 })
             || candidate_repo_names
                 .iter()
-                .any(|candidate| *candidate == folder_name);
-
-        if matches_record {
-            matches.push(repo_path);
-        }
-    }
-
-    if matches.len() > 1 {
+                .any(|candidate| *candidate == folder.folder_name)
+    });
+    let first = matches.next();
+    if matches.next().is_some() {
         return Err(format!(
-            "More than one local project repo matches metadata record '{}'.",
-            record.id
+            "More than one local {kind_label} repo matches metadata record '{record_id}'."
         ));
     }
+    Ok(first.map(|folder| folder.path.clone()))
+}
 
-    Ok(matches.into_iter().next())
+pub(super) fn scan_local_project_repo_folders(
+    app: &AppHandle,
+    installation_id: i64,
+) -> Result<Vec<ScannedRepoFolder>, String> {
+    scan_repo_folders(
+        &local_project_repo_root(app, installation_id)?,
+        "project",
+        no_embedded_resource_id,
+    )
+}
+
+pub(super) fn find_project_repo_in_scan(
+    folders: &[ScannedRepoFolder],
+    record: &GithubProjectMetadataRecord,
+) -> Result<Option<PathBuf>, String> {
+    match_scanned_repo_for_record(
+        folders,
+        "project",
+        &record.id,
+        &candidate_repo_names(&record.repo_name, &record.previous_repo_names),
+    )
+}
+
+pub(super) fn find_project_repo_for_record(
+    app: &AppHandle,
+    installation_id: i64,
+    record: &GithubProjectMetadataRecord,
+) -> Result<Option<PathBuf>, String> {
+    let folders = scan_local_project_repo_folders(app, installation_id)?;
+    find_project_repo_in_scan(&folders, record)
+}
+
+pub(super) fn scan_local_glossary_repo_folders(
+    app: &AppHandle,
+    installation_id: i64,
+) -> Result<Vec<ScannedRepoFolder>, String> {
+    scan_repo_folders(
+        &local_glossary_repo_root(app, installation_id)?,
+        "glossary",
+        read_glossary_id_from_repo,
+    )
+}
+
+pub(super) fn find_glossary_repo_in_scan(
+    folders: &[ScannedRepoFolder],
+    record: &GithubGlossaryMetadataRecord,
+) -> Result<Option<PathBuf>, String> {
+    match_scanned_repo_for_record(
+        folders,
+        "glossary",
+        &record.id,
+        &candidate_repo_names(&record.repo_name, &record.previous_repo_names),
+    )
 }
 
 pub(super) fn find_glossary_repo_for_record(
@@ -698,62 +782,31 @@ pub(super) fn find_glossary_repo_for_record(
     installation_id: i64,
     record: &GithubGlossaryMetadataRecord,
 ) -> Result<Option<PathBuf>, String> {
-    let repo_root = local_glossary_repo_root(app, installation_id)?;
-    let candidate_repo_names = std::iter::once(record.repo_name.as_str())
-        .chain(record.previous_repo_names.iter().map(String::as_str))
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .collect::<Vec<_>>();
-    let mut matches = Vec::new();
+    let folders = scan_local_glossary_repo_folders(app, installation_id)?;
+    find_glossary_repo_in_scan(&folders, record)
+}
 
-    for entry in fs::read_dir(&repo_root).map_err(|error| {
-        format!(
-            "Could not read the local glossary repo folder '{}': {error}",
-            repo_root.display()
-        )
-    })? {
-        let entry = entry
-            .map_err(|error| format!("Could not read a local glossary repo entry: {error}"))?;
-        let repo_path = entry.path();
-        if !is_git_repo(&repo_path) {
-            continue;
-        }
+pub(super) fn scan_local_qa_list_repo_folders(
+    app: &AppHandle,
+    installation_id: i64,
+) -> Result<Vec<ScannedRepoFolder>, String> {
+    scan_repo_folders(
+        &local_qa_list_repo_root(app, installation_id)?,
+        "QA list",
+        read_qa_list_id_from_repo,
+    )
+}
 
-        let sync_state = read_local_repo_sync_state(&repo_path).ok().flatten();
-        let folder_name = repo_folder_name(&repo_path).unwrap_or_default();
-        let embedded_glossary_id = read_glossary_id_from_repo(&repo_path);
-        let matches_record = sync_state
-            .as_ref()
-            .and_then(|state| state.resource_id.as_deref())
-            .map(str::trim)
-            == Some(record.id.trim())
-            || embedded_glossary_id.as_deref().map(str::trim) == Some(record.id.trim())
-            || sync_state
-                .as_ref()
-                .and_then(|state| state.current_repo_name.as_deref())
-                .map(str::trim)
-                .is_some_and(|repo_name| {
-                    candidate_repo_names
-                        .iter()
-                        .any(|candidate| *candidate == repo_name)
-                })
-            || candidate_repo_names
-                .iter()
-                .any(|candidate| *candidate == folder_name);
-
-        if matches_record {
-            matches.push(repo_path);
-        }
-    }
-
-    if matches.len() > 1 {
-        return Err(format!(
-            "More than one local glossary repo matches metadata record '{}'.",
-            record.id
-        ));
-    }
-
-    Ok(matches.into_iter().next())
+pub(super) fn find_qa_list_repo_in_scan(
+    folders: &[ScannedRepoFolder],
+    record: &GithubQaListMetadataRecord,
+) -> Result<Option<PathBuf>, String> {
+    match_scanned_repo_for_record(
+        folders,
+        "QA list",
+        &record.id,
+        &candidate_repo_names(&record.repo_name, &record.previous_repo_names),
+    )
 }
 
 pub(super) fn find_qa_list_repo_for_record(
@@ -761,60 +814,58 @@ pub(super) fn find_qa_list_repo_for_record(
     installation_id: i64,
     record: &GithubQaListMetadataRecord,
 ) -> Result<Option<PathBuf>, String> {
-    let repo_root = local_qa_list_repo_root(app, installation_id)?;
-    let candidate_repo_names = std::iter::once(record.repo_name.as_str())
-        .chain(record.previous_repo_names.iter().map(String::as_str))
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .collect::<Vec<_>>();
-    let mut matches = Vec::new();
+    let folders = scan_local_qa_list_repo_folders(app, installation_id)?;
+    find_qa_list_repo_in_scan(&folders, record)
+}
 
-    for entry in fs::read_dir(&repo_root).map_err(|error| {
-        format!(
-            "Could not read the local QA list repo folder '{}': {error}",
-            repo_root.display()
-        )
-    })? {
-        let entry =
-            entry.map_err(|error| format!("Could not read a local QA list repo entry: {error}"))?;
-        let repo_path = entry.path();
-        if !is_git_repo(&repo_path) {
-            continue;
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-        let sync_state = read_local_repo_sync_state(&repo_path).ok().flatten();
-        let folder_name = repo_folder_name(&repo_path).unwrap_or_default();
-        let embedded_qa_list_id = read_qa_list_id_from_repo(&repo_path);
-        let matches_record = sync_state
-            .as_ref()
-            .and_then(|state| state.resource_id.as_deref())
-            .map(str::trim)
-            == Some(record.id.trim())
-            || embedded_qa_list_id.as_deref().map(str::trim) == Some(record.id.trim())
-            || sync_state
-                .as_ref()
-                .and_then(|state| state.current_repo_name.as_deref())
-                .map(str::trim)
-                .is_some_and(|repo_name| {
-                    candidate_repo_names
-                        .iter()
-                        .any(|candidate| *candidate == repo_name)
-                })
-            || candidate_repo_names
-                .iter()
-                .any(|candidate| *candidate == folder_name);
-
-        if matches_record {
-            matches.push(repo_path);
+    fn scanned(path: &str, folder_name: &str) -> ScannedRepoFolder {
+        ScannedRepoFolder {
+            path: PathBuf::from(path),
+            folder_name: folder_name.to_string(),
+            sync_state_resource_id: None,
+            sync_state_current_repo_name: None,
+            embedded_resource_id: None,
         }
     }
 
-    if matches.len() > 1 {
-        return Err(format!(
-            "More than one local QA list repo matches metadata record '{}'.",
-            record.id
-        ));
+    #[test]
+    fn matches_by_sync_state_resource_id() {
+        let mut folder = scanned("/repos/renamed-folder", "renamed-folder");
+        folder.sync_state_resource_id = Some(" project-1 ".to_string());
+        let found =
+            match_scanned_repo_for_record(&[folder], "project", "project-1", &["other-name"])
+                .expect("match should resolve");
+        assert_eq!(found, Some(PathBuf::from("/repos/renamed-folder")));
     }
 
-    Ok(matches.into_iter().next())
+    #[test]
+    fn matches_by_candidate_folder_name() {
+        let folders = [scanned("/repos/project-a", "project-a")];
+        let found = match_scanned_repo_for_record(&folders, "project", "project-1", &["project-a"])
+            .expect("match should resolve");
+        assert_eq!(found, Some(PathBuf::from("/repos/project-a")));
+    }
+
+    #[test]
+    fn no_match_returns_none() {
+        let folders = [scanned("/repos/project-a", "project-a")];
+        let found = match_scanned_repo_for_record(&folders, "project", "project-1", &["project-b"])
+            .expect("match should resolve");
+        assert_eq!(found, None);
+    }
+
+    #[test]
+    fn multiple_matches_error() {
+        let mut by_id = scanned("/repos/folder-1", "folder-1");
+        by_id.sync_state_resource_id = Some("project-1".to_string());
+        let by_name = scanned("/repos/project-a", "project-a");
+        let error =
+            match_scanned_repo_for_record(&[by_id, by_name], "project", "project-1", &["project-a"])
+                .expect_err("ambiguous match should error");
+        assert!(error.contains("More than one local project repo"));
+    }
 }
