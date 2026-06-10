@@ -146,6 +146,7 @@ pub(crate) fn run_prompt(
 
     let response = client
         .post(CLAUDE_MESSAGES_API_URL)
+        .timeout(super::AI_PROMPT_TIMEOUT)
         .header("x-api-key", normalized_key)
         .header("anthropic-version", CLAUDE_API_VERSION)
         .header("content-type", "application/json")

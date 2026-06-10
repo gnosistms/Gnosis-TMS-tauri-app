@@ -363,6 +363,7 @@ pub(crate) fn run_prompt(
 
     let response = client
         .post(OPENAI_RESPONSES_API_URL)
+        .timeout(super::AI_PROMPT_TIMEOUT)
         .header("Authorization", format!("Bearer {normalized_key}"))
         .header("Content-Type", "application/json")
         .header("User-Agent", "gnosis-tms")

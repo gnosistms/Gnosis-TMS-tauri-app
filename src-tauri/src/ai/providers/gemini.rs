@@ -204,9 +204,14 @@ pub(crate) fn run_prompt(
 
     let client = shared_http_client()
         .map_err(|error| format!("Could not start the Gemini request: {error}"))?;
-    let (status, body) =
-        send_generate_content_request(client, normalized_key, model_id, &request.prompt)
-            .map_err(|error| format!("Could not complete the Gemini request: {error}"))?;
+    let (status, body) = send_generate_content_request(
+        client,
+        normalized_key,
+        model_id,
+        &request.prompt,
+        Some(super::AI_PROMPT_TIMEOUT),
+    )
+    .map_err(|error| format!("Could not complete the Gemini request: {error}"))?;
 
     if !status.is_success() {
         return Err(normalize_http_error(status, &body));
@@ -250,6 +255,7 @@ pub(crate) fn probe_model(model_id: &str, api_key: &str) -> Result<(), String> {
         normalized_key,
         normalized_model_id,
         "Reply with OK.",
+        None,
     )
     .map_err(|error| format!("Could not complete the Gemini model test request: {error}"))?;
 
@@ -265,11 +271,12 @@ fn send_generate_content_request(
     api_key: &str,
     model_id: &str,
     text: &str,
+    request_timeout: Option<Duration>,
 ) -> Result<(StatusCode, String), String> {
     let mut attempt = 0;
 
     loop {
-        let response = client
+        let mut request_builder = client
             .post(format!(
                 "https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent"
             ))
@@ -279,9 +286,11 @@ fn send_generate_content_request(
                 contents: vec![GeminiContent {
                     parts: vec![GeminiPart { text }],
                 }],
-            })
-            .send()
-            .map_err(normalize_transport_error)?;
+            });
+        if let Some(request_timeout) = request_timeout {
+            request_builder = request_builder.timeout(request_timeout);
+        }
+        let response = request_builder.send().map_err(normalize_transport_error)?;
         let status = response.status();
         let body = response
             .text()

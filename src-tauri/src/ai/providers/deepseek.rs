@@ -139,6 +139,7 @@ pub(crate) fn run_prompt(
 
     let response = client
         .post(DEEPSEEK_CHAT_COMPLETIONS_API_URL)
+        .timeout(super::AI_PROMPT_TIMEOUT)
         .header("Authorization", format!("Bearer {normalized_key}"))
         .header("Content-Type", "application/json")
         .json(&DeepSeekChatCompletionsRequest {
