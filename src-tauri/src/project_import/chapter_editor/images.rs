@@ -19,9 +19,7 @@ pub(crate) fn save_gtms_editor_language_image_url_sync(
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
     let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
-    let row_json_path = chapter_path
-        .join("rows")
-        .join(format!("{}.json", input.row_id));
+    let row_json_path = validated_row_json_path(&chapter_path, &input.row_id)?;
     if !row_json_path.exists() {
         return Ok(SaveEditorLanguageImageResponse {
             row_id: input.row_id,
@@ -181,9 +179,7 @@ pub(crate) fn upload_gtms_editor_language_image_sync(
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
     let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
-    let row_json_path = chapter_path
-        .join("rows")
-        .join(format!("{}.json", input.row_id));
+    let row_json_path = validated_row_json_path(&chapter_path, &input.row_id)?;
     if !row_json_path.exists() {
         return Ok(SaveEditorLanguageImageResponse {
             row_id: input.row_id,
@@ -347,9 +343,7 @@ pub(crate) fn remove_gtms_editor_language_image_sync(
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
     let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
-    let row_json_path = chapter_path
-        .join("rows")
-        .join(format!("{}.json", input.row_id));
+    let row_json_path = validated_row_json_path(&chapter_path, &input.row_id)?;
     if !row_json_path.exists() {
         return Ok(SaveEditorLanguageImageResponse {
             row_id: input.row_id,
