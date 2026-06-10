@@ -1013,29 +1013,18 @@ export async function loadProjectSnapshotForTeam(render, teamId = state.selected
       chapters: Array.isArray(project.chapters) ? project.chapters : [],
       remoteState: project.remoteState ?? "linked",
     }));
-    const preSyncListings = await loadLocalProjectFileListings(
-      selectedTeam,
-      mappedProjects.filter((project) =>
-        project?.lifecycleState !== "deleted"
-        && project?.recordState !== "tombstone"
-      ),
+    // list_local_gtms_project_files returns one entry per requested project (a missing repo
+    // still yields an entry with no chapters), so the pre-sync listing this check used to make
+    // only ever signalled whether any eligible project was requested at all. Use the target
+    // presence directly; refreshProjectFilesFromDisk below does the real post-sync listing.
+    const hasPreSyncListingTargets = mappedProjects.some((project) =>
+      project?.lifecycleState !== "deleted"
+      && project?.recordState !== "tombstone"
     );
-    if (
-      await abortProjectDiscoveryIfStale(
-        render,
-        selectedTeam.id,
-        requestId,
-        syncVersionAtStart,
-        true,
-        options,
-      )
-    ) {
-      return currentLoadResult;
-    }
     const installationRecoveryDetected =
       metadataLoaded
       && recoverableMetadataCount > 0
-      && preSyncListings.length === 0;
+      && !hasPreSyncListingTargets;
     const recoveryMessage =
       installationRecoveryDetected && options.suppressRecoveryWarning !== true
         ? "Local installation data was missing. Rebuilding project repos from GitHub."
@@ -1091,7 +1080,12 @@ export async function loadProjectSnapshotForTeam(render, teamId = state.selected
     ) {
       return currentLoadResult;
     }
-    await runTeamResourceMigrationSync(render, selectedTeam, { projects: mappedProjects });
+    await runTeamResourceMigrationSync(render, selectedTeam, {
+      projects: mappedProjects,
+      // Reuse the installation listing fetched above so the migration scan does not repeat
+      // the slow broker call on every refresh.
+      remoteProjects: remoteLoaded ? remoteProjects : undefined,
+    });
     if (
       await abortProjectDiscoveryIfStale(
         render,

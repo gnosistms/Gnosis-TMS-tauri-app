@@ -207,7 +207,11 @@ async function listRemoteProjectsForTeam(team) {
 }
 
 async function collectTeamMigrationResources(team, options = {}) {
-  const remoteProjects = await listRemoteProjectsForTeam(team);
+  // The projects refresh passes its just-fetched installation listing so the steady-state
+  // migration scan (no pending migrations) does not repeat the slow broker call.
+  const remoteProjects = Array.isArray(options.remoteProjects)
+    ? options.remoteProjects
+    : await listRemoteProjectsForTeam(team);
   const remoteGlossaries = await listRemoteGlossaryReposForTeam(team);
   const remoteQaLists = teamSupportsQaListRepos(team)
     ? await listRemoteQaListReposForTeam(team)
@@ -390,7 +394,12 @@ async function runTeamResourceMigrationSyncInternal(render, team, options = {}) 
       await migratePendingQaLists(render, team, currentResources, currentPending, token);
       await migratePendingProjects(render, team, currentResources, currentPending, token);
 
-      currentResources = await collectTeamMigrationResources(team, options);
+      // Migrations may have renamed repos, so the rescan needs a fresh listing — drop any
+      // caller-provided one.
+      currentResources = await collectTeamMigrationResources(team, {
+        ...options,
+        remoteProjects: undefined,
+      });
       currentPendingScan = await listPendingTeamMigrations(team, currentResources);
     }
 

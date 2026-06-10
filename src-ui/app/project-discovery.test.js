@@ -636,7 +636,8 @@ test("project loading clears stale missing-local-repo repair after repo sync clo
       defaultBranchHeadOid: "remote-head",
     }]),
     localProjectFilesResults: [
-      [],
+      // Initial local scan (before repo sync clones the repo) finds nothing; the post-sync
+      // refresh sees the cloned chapters.
       [],
       [{
         projectId: "project-1",
