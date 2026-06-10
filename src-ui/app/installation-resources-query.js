@@ -1,4 +1,5 @@
 import { requireBrokerSession } from "./auth-flow.js";
+import { applyTeamAccessFromListing } from "./team-query.js";
 import { installationResourceKeys, queryClient } from "./query-client.js";
 import { invoke } from "./runtime.js";
 
@@ -10,8 +11,8 @@ import { invoke } from "./runtime.js";
 // refreshes always hit the broker.
 const INSTALLATION_RESOURCES_STALE_MS = 30_000;
 
-function fetchInstallationResources(installationId) {
-  return queryClient.fetchQuery({
+async function fetchInstallationResources(installationId) {
+  const resources = await queryClient.fetchQuery({
     queryKey: installationResourceKeys.byInstallation(installationId),
     queryFn: () =>
       invoke("list_gnosis_resources_for_installation", {
@@ -20,6 +21,11 @@ function fetchInstallationResources(installationId) {
       }),
     staleTime: INSTALLATION_RESOURCES_STALE_MS,
   });
+  // The listing carries the caller's access verdict (absent on older brokers) —
+  // capabilities update with the data, replacing the blocking access check that used
+  // to gate team entry.
+  applyTeamAccessFromListing(installationId, resources?.access);
+  return resources;
 }
 
 export async function listRemoteProjectsForInstallation(installationId) {

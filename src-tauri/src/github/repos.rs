@@ -143,11 +143,16 @@ pub(crate) async fn list_gnosis_resources_for_installation(
             .and_then(|entry| entry.as_str())
             .unwrap_or("")
             .to_string();
+        let access = value
+            .get("access")
+            .filter(|entry| entry.is_object())
+            .cloned();
         Ok(GithubInstallationResources {
             projects,
             glossaries,
             qa_lists,
             digest,
+            access,
         })
     })
     .await

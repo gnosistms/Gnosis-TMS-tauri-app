@@ -1,5 +1,6 @@
 import { requireBrokerSession } from "./auth-flow.js";
 import {
+  upsertStoredTeamRecords,
   loadStoredTeamPendingMutations,
   replaceStoredTeamRecords,
   saveStoredTeamRecords,
@@ -277,6 +278,40 @@ export async function refreshCurrentUserTeamAccess(options = {}) {
     }
     return false;
   }
+}
+
+// The combined resource listing carries the caller's access verdict (the broker
+// computes it to authorize the request). Applying it here keeps capabilities exactly
+// as fresh as the data on screen without a separate blocking installations call on
+// team entry. Lives in the query layer, which owns team snapshot application.
+export function applyTeamAccessFromListing(installationId, access) {
+  if (!access || typeof access !== "object" || !Number.isFinite(installationId)) {
+    return false;
+  }
+  const authLogin = currentAuthLogin();
+  const team = state.teams.find((item) => item?.installationId === installationId);
+  if (!team || !authLogin) {
+    return false;
+  }
+  const reconciled = reconcileStoredTeam(team, access);
+  if (!reconciled) {
+    return false;
+  }
+  upsertStoredTeamRecords([reconciled]);
+  const queryKey = teamKeys.currentUser(authLogin);
+  const queryData = queryClient.getQueryData(queryKey);
+  if (queryData) {
+    const patched = patchTeamQueryData(queryData, team.id, reconciled);
+    if (patched !== queryData) {
+      // updatedAt: 0 — patching one team's capabilities must not make the whole teams
+      // listing count as freshly fetched.
+      queryClient.setQueryData(queryKey, patched, { updatedAt: 0 });
+    }
+  }
+  state.teams = state.teams.map((item) =>
+    item?.id === team.id ? { ...item, ...reconciled } : item
+  );
+  return true;
 }
 
 export function patchTeamQueryData(queryData, teamId, patch) {

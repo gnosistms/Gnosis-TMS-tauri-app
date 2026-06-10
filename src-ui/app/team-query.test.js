@@ -68,6 +68,7 @@ const {
   createTeamsQueryOptions,
   createTeamsQuerySnapshot,
   refreshCurrentUserTeamAccess,
+  applyTeamAccessFromListing,
   resetTeamsQueryObserver,
   seedTeamsQueryFromCache,
 } = await import("./team-query.js");
@@ -289,4 +290,49 @@ test("refreshCurrentUserTeamAccess reuses a freshly fetched teams listing", asyn
   // the "updates stale selected team permissions" test above.)
   await refreshCurrentUserTeamAccess({ render: () => {} });
   assert.equal(invokeLog.length, 1);
+});
+
+test("applyTeamAccessFromListing patches capabilities from the combined listing", () => {
+  installFixture();
+  saveStoredTeamRecords([
+    team({
+      membershipRole: "translator",
+      canDelete: false,
+      canManageMembers: false,
+      canManageProjects: false,
+    }),
+  ]);
+  seedTeamsQueryFromCache({ authLogin: "owner" });
+  assert.equal(state.teams[0].canManageProjects, false);
+
+  const applied = applyTeamAccessFromListing(42, {
+    installationId: 42,
+    accountLogin: "team-one",
+    accountName: "Team One Remote",
+    accountType: "Organization",
+    description: null,
+    membershipState: "active",
+    membershipRole: "owner",
+    canDelete: true,
+    canManageMembers: true,
+    canManageProjects: true,
+    canLeave: true,
+  });
+
+  assert.equal(applied, true);
+  assert.equal(state.teams[0].membershipRole, "owner");
+  assert.equal(state.teams[0].canManageProjects, true);
+  assert.equal(state.teams[0].canDelete, true);
+  // No broker call was involved — capabilities came from the listing payload.
+  assert.equal(invokeLog.length, 0);
+});
+
+test("applyTeamAccessFromListing ignores unknown installations and empty payloads", () => {
+  installFixture();
+  saveStoredTeamRecords([team({})]);
+  seedTeamsQueryFromCache({ authLogin: "owner" });
+
+  assert.equal(applyTeamAccessFromListing(999, { installationId: 999 }), false);
+  assert.equal(applyTeamAccessFromListing(42, null), false);
+  assert.equal(applyTeamAccessFromListing(42, undefined), false);
 });

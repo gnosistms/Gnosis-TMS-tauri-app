@@ -95,6 +95,10 @@ pub(crate) struct GithubInstallationResources {
     pub(crate) glossaries: Vec<GithubGlossaryRepo>,
     pub(crate) qa_lists: Vec<GithubQaListRepo>,
     pub(crate) digest: String,
+    // The caller's access verdict, passed through untyped for the JS layer (same shape
+    // as the installations listing's per-team entries). None on older brokers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) access: Option<serde_json::Value>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
