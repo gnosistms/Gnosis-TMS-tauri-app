@@ -120,6 +120,7 @@ const {
   resetSessionState,
   state,
 } = await import("./state.js");
+const { queryClient } = await import("./query-client.js");
 const {
   startEditorBackgroundSyncSession,
   stopEditorBackgroundSyncSession,
@@ -274,6 +275,7 @@ function installEditorFixture() {
 }
 
 test.afterEach(async () => {
+  queryClient.clear();
   invokeHandler = async () => null;
   invokeLog.length = 0;
   localStorageState.clear();
