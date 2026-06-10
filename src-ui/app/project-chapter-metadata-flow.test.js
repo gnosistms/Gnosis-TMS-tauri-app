@@ -23,6 +23,7 @@ globalThis.window = {
 };
 
 const { state, resetSessionState } = await import("./state.js");
+const { queryClient } = await import("./query-client.js");
 const {
   chapterGlossaryIntentKey,
   chapterWorkflowStatusIntentKey,
@@ -53,6 +54,7 @@ function seedProjectState(chapterOverrides = {}) {
   resetSessionState();
   resetProjectWriteCoordinator();
   resetRepoWriteQueue();
+  queryClient.clear();
   invokeLog.length = 0;
   state.selectedTeamId = "team-1";
   state.teams = [{
@@ -85,6 +87,7 @@ test.afterEach(() => {
   resetProjectWriteCoordinator();
   resetRepoWriteQueue();
   resetSessionState();
+  queryClient.clear();
   invokeHandler = async () => null;
   invokeLog.length = 0;
 });
@@ -105,7 +108,10 @@ test("failed chapter workflow status writes roll back the visible status", async
   assert.equal(state.projects[0].chapters[0].workflowStatus, "queued");
   assert.equal(state.projects[0].chapters[0].pendingWorkflowStatusMutation, false);
   assert.equal(state.projects[0].chapters[0].workflowStatusMutationError, "status write failed");
-  assert.equal(invokeLog[0]?.command, "update_gtms_chapter_workflow_status");
+  assert.ok(
+    invokeLog.some((entry) => entry.command === "update_gtms_chapter_workflow_status"),
+    "the workflow status write should have been invoked",
+  );
 });
 
 test("failed chapter glossary metadata writes roll back the visible glossary", async () => {
@@ -130,5 +136,8 @@ test("failed chapter glossary metadata writes roll back the visible glossary", a
   });
   assert.equal(state.projects[0].chapters[0].pendingGlossaryMutation, false);
   assert.equal(state.projects[0].chapters[0].glossaryMutationError, "glossary write failed");
-  assert.equal(invokeLog[0]?.command, "update_gtms_chapter_glossary_links");
+  assert.ok(
+    invokeLog.some((entry) => entry.command === "update_gtms_chapter_glossary_links"),
+    "the glossary link write should have been invoked",
+  );
 });

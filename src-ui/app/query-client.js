@@ -60,6 +60,11 @@ export const installationResourceKeys = {
   byInstallation: (installationId) => ["installationResources", installationId ?? null],
 };
 
+export const teamMetadataSyncKeys = {
+  all: ["teamMetadataSync"],
+  byInstallation: (installationId) => ["teamMetadataSync", installationId ?? null],
+};
+
 export const teamKeys = {
   all: ["teams"],
   currentUser: (login) => ["teams", login ?? null],

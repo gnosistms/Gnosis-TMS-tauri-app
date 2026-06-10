@@ -1,5 +1,6 @@
 import { requireBrokerSession } from "./auth-flow.js";
 import { invoke } from "./runtime.js";
+import { queryClient, teamMetadataSyncKeys } from "./query-client.js";
 
 const METADATA_WRITE_RETRY_DELAYS_MS = [180, 420];
 const teamMetadataWriteQueues = new Map();
@@ -282,6 +283,32 @@ async function syncLocalTeamMetadataRepo(team) {
   });
 }
 
+// The projects and glossary discovery flows each list metadata during one refresh, and
+// each listing used to fire its own ~5s network git pull of the same team-metadata repo.
+// Read paths share one pull: concurrent callers join the in-flight request, and a pull
+// from the last 30 seconds is fresh enough (listings read local records, which already
+// include the user's own writes; the pull only fetches teammates' changes). Manual
+// refresh invalidates first. Mutations keep their own fresh pull (push-conflict safety).
+const TEAM_METADATA_SYNC_STALE_MS = 30_000;
+
+function syncTeamMetadataRepoShared(team) {
+  return queryClient.fetchQuery({
+    queryKey: teamMetadataSyncKeys.byInstallation(team.installationId),
+    queryFn: () => syncLocalTeamMetadataRepo(team),
+    staleTime: TEAM_METADATA_SYNC_STALE_MS,
+  });
+}
+
+export async function invalidateTeamMetadataSyncForTeam(team) {
+  if (!Number.isFinite(team?.installationId)) {
+    return;
+  }
+  await queryClient.invalidateQueries({
+    queryKey: teamMetadataSyncKeys.byInstallation(team.installationId),
+    refetchType: "none",
+  });
+}
+
 async function pushLocalTeamMetadataRepo(team) {
   return invoke("push_local_team_metadata_repo", {
     installationId: team.installationId,
@@ -511,11 +538,7 @@ export async function lookupLocalMetadataTombstone(team, kind, resourceId) {
 }
 
 export async function listProjectMetadataRecords(team) {
-  const syncPromise = invoke("sync_local_team_metadata_repo", {
-    installationId: team.installationId,
-    orgLogin: team.githubOrg,
-    sessionToken: requireBrokerSession(),
-  });
+  const syncPromise = syncTeamMetadataRepoShared(team);
 
   try {
     const records = await invoke("list_local_gnosis_project_metadata_records", {
@@ -570,11 +593,7 @@ export async function listLocalQaListMetadataRecords(team) {
 }
 
 export async function listGlossaryMetadataRecords(team) {
-  const syncPromise = invoke("sync_local_team_metadata_repo", {
-    installationId: team.installationId,
-    orgLogin: team.githubOrg,
-    sessionToken: requireBrokerSession(),
-  });
+  const syncPromise = syncTeamMetadataRepoShared(team);
 
   try {
     const records = await invoke("list_local_gnosis_glossary_metadata_records", {
@@ -602,11 +621,7 @@ export async function listGlossaryMetadataRecords(team) {
 }
 
 export async function listQaListMetadataRecords(team) {
-  const syncPromise = invoke("sync_local_team_metadata_repo", {
-    installationId: team.installationId,
-    orgLogin: team.githubOrg,
-    sessionToken: requireBrokerSession(),
-  });
+  const syncPromise = syncTeamMetadataRepoShared(team);
 
   try {
     const records = await invoke("list_local_gnosis_qa_list_metadata_records", {
@@ -634,7 +649,7 @@ export async function listQaListMetadataRecords(team) {
 }
 
 export async function refreshGlossaryMetadataRecords(team) {
-  await syncLocalTeamMetadataRepo(team);
+  await syncTeamMetadataRepoShared(team);
   const records = await invoke("list_local_gnosis_glossary_metadata_records", {
     installationId: team.installationId,
   });
@@ -644,7 +659,7 @@ export async function refreshGlossaryMetadataRecords(team) {
 }
 
 export async function refreshQaListMetadataRecords(team) {
-  await syncLocalTeamMetadataRepo(team);
+  await syncTeamMetadataRepoShared(team);
   const records = await invoke("list_local_gnosis_qa_list_metadata_records", {
     installationId: team.installationId,
   });

@@ -132,6 +132,7 @@ const {
   resetSessionState,
   state,
 } = await import("./state.js");
+const { queryClient } = await import("./query-client.js");
 const { normalizeEditorRows, applyEditorUiState } = await import("./editor-state-flow.js");
 const {
   applyEditorAiReview,
@@ -314,6 +315,7 @@ function installSelectedTeam(options = {}) {
 }
 
 test.afterEach(() => {
+  queryClient.clear();
   invokeHandler = async () => null;
   invokeLog.length = 0;
   localStorageState.clear();
