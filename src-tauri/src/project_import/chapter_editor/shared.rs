@@ -66,10 +66,21 @@ pub(super) fn load_project_chapter_summaries(
 
         let chapter_file: StoredChapterFile = read_json_file(&chapter_json_path, "chapter.json")?;
         let languages = sanitize_chapter_languages(&chapter_file.languages);
-        let rows = load_editor_rows(&path.join("rows"))?;
-        let word_counts = build_word_counts_from_stored_rows(&rows, &languages);
         let selected_source_language_code =
             preferred_source_language_code(&chapter_file, &languages);
+        // Use the cached source-language word count when present so the projects-page file list does
+        // not have to read every row of every chapter. Legacy chapters (no cached value) fall back to
+        // computing from rows; the editor-load path then backfills and persists the cache.
+        let word_counts = match chapter_file.source_word_count {
+            Some(count) => match selected_source_language_code.as_deref() {
+                Some(code) => BTreeMap::from([(code.to_string(), count)]),
+                None => BTreeMap::new(),
+            },
+            None => {
+                let rows = load_editor_rows(&path.join("rows"))?;
+                build_word_counts_from_stored_rows(&rows, &languages)
+            }
+        };
         let selected_target_language_code = preferred_target_language_code(
             &chapter_file,
             &languages,

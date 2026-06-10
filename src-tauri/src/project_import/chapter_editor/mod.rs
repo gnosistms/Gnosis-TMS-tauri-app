@@ -770,6 +770,11 @@ struct StoredChapterFile {
     languages: Vec<ChapterLanguage>,
     #[serde(default)]
     settings: Option<StoredChapterSettings>,
+    // Cached source-language word count for the projects-page file list, so it does not have to
+    // read every row of every chapter on each refresh. None on legacy chapters (computed lazily and
+    // persisted). Derived data: the chapter-merge resolver ignores it (see git_conflicts.rs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_word_count: Option<usize>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
