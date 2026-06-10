@@ -1,0 +1,72 @@
+#!/bin/sh
+# Gnosis TMS — Pre-commit Hook (Tier 1: Fast, <5s)
+#
+# Runs cheap, file-level checks. Compilation-dependent checks
+# (clippy) run in pre-push.
+
+set -e
+
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+STAGED_FILES=$(git diff --cached --name-only)
+
+if [ -z "$STAGED_FILES" ]; then
+  echo "No staged files — skipping checks."
+  exit 0
+fi
+
+# ── Rust: fmt --check (triggered by staged .rs / Cargo files) ────────────
+#
+# Trigger is staged Rust files, but the check runs on the whole workspace
+# (cargo fmt has no per-file mode). rustfmt is a formatter check, not a
+# compiler pass — runs in <1s.
+
+STAGED_RUST=$(echo "$STAGED_FILES" | grep -E '\.(rs)$|^src-tauri/Cargo\.toml$' || true)
+if [ -n "$STAGED_RUST" ]; then
+  echo "Running cargo fmt --check..."
+  npm run format:rust:check
+  echo "Rust format check passed."
+fi
+
+# ── ESLint (staged JS files only) ────────────────────────────────────
+
+STAGED_JS=$(echo "$STAGED_FILES" | grep -E 'src-ui/.+\.js$' | grep -v 'src-ui/lib/vendor/' || true)
+if [ -n "$STAGED_JS" ]; then
+  echo "Running ESLint on staged JS files..."
+  echo "$STAGED_JS" | tr '\n' '\0' | xargs -0 npx eslint --
+  echo "ESLint passed."
+fi
+
+# ── ShellCheck (staged shell files) ──────────────────────────────────
+
+STAGED_SHELL=$(echo "$STAGED_FILES" | grep -E '\.sh$|^\.husky/' || true)
+if [ -n "$STAGED_SHELL" ]; then
+  if command -v shellcheck >/dev/null 2>&1; then
+    echo "Running ShellCheck..."
+    echo "$STAGED_SHELL" | tr '\n' '\0' | xargs -0 shellcheck --
+    echo "ShellCheck passed."
+  else
+    echo "shellcheck not installed — shell static analysis skipped."
+    echo "  Install: https://www.shellcheck.net"
+  fi
+fi
+
+# ── Secret scanning (staged files only) ──────────────────────────────
+#
+# Scans only what is actually being committed. gitleaks v8.19+ uses
+# `git --staged`; the old `detect --staged` flag is rejected by current
+# versions and blocks all commits as false positives.
+
+if command -v gitleaks >/dev/null 2>&1; then
+  echo "Scanning staged changes for secrets..."
+  if ! gitleaks git --staged --no-banner; then
+    echo "Secret scan failed. Remove secrets before committing."
+    exit 1
+  fi
+  echo "Secret scan passed."
+else
+  echo "gitleaks not installed — secret scanning deferred to pre-push."
+  echo "  Install: https://github.com/gitleaks/gitleaks"
+fi
+
+echo "Pre-commit checks passed."

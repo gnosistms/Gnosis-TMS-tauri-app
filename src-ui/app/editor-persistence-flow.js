@@ -869,7 +869,7 @@ export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, ope
   }
 
   const normalizedTextStyle = normalizeEditorRowTextStyle(nextTextStyle);
-  let row = await ensureEditorRowReadyForWrite(render, rowId);
+  const row = await ensureEditorRowReadyForWrite(render, rowId);
   if (!row) {
     return;
   }

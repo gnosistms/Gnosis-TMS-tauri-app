@@ -478,7 +478,7 @@ fn build_app_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result
                 &check_for_updates_item,
             ],
         )?;
-        return Menu::with_items(app, &[&file_menu, &edit_menu, &window_menu, &help_menu]);
+        Menu::with_items(app, &[&file_menu, &edit_menu, &window_menu, &help_menu])
     }
 }
 
@@ -685,9 +685,9 @@ pub fn run() {
             leave_organization_for_installation
         ])
         .setup(|app| {
-            let menu = build_app_menu(&app.handle())?;
+            let menu = build_app_menu(app.handle())?;
             let _ = app.set_menu(menu)?;
-            initialize_git_runtime(&app.handle());
+            initialize_git_runtime(app.handle());
 
             #[cfg(target_os = "macos")]
             for label in ["main"] {

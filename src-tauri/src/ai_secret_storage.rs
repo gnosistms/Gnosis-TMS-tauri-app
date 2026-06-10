@@ -165,7 +165,9 @@ fn load_or_create_client(stronghold: &Stronghold) -> Result<Client, String> {
         // Any other failure means the snapshot opened but this client's state could not
         // be restored. Surface it instead of silently creating an empty store, which
         // would make previously saved secrets look like they had vanished.
-        Err(error) => Err(format!("Could not open the encrypted AI key store: {error}")),
+        Err(error) => Err(format!(
+            "Could not open the encrypted AI key store: {error}"
+        )),
     }
 }
 

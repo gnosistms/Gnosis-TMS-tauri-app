@@ -202,7 +202,7 @@ pub(crate) fn run_prompt(
     let client = shared_http_client()
         .map_err(|error| format!("Could not start the Gemini request: {error}"))?;
     let (status, body) =
-        send_generate_content_request(&client, normalized_key, model_id, &request.prompt)
+        send_generate_content_request(client, normalized_key, model_id, &request.prompt)
             .map_err(|error| format!("Could not complete the Gemini request: {error}"))?;
 
     if !status.is_success() {
@@ -243,7 +243,7 @@ pub(crate) fn probe_model(model_id: &str, api_key: &str) -> Result<(), String> {
     let client = shared_http_client()
         .map_err(|error| format!("Could not start the Gemini model test request: {error}"))?;
     let (status, body) = send_generate_content_request(
-        &client,
+        client,
         normalized_key,
         normalized_model_id,
         "Reply with OK.",

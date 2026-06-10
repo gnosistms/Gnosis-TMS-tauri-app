@@ -12,13 +12,26 @@
     "icons:sync": "bash src-tauri/icons/sync-all-icons.sh",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "prepare": "husky",
+    "lint:rust:strict": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
+    "format:rust:check": "cargo fmt --manifest-path src-tauri/Cargo.toml --all --check",
+    "lint:js": "eslint \"src-ui/app/**/*.js\" \"src-ui/screens/**/*.js\"",
+    "lint:js:fix": "eslint \"src-ui/app/**/*.js\" \"src-ui/screens/**/*.js\" --fix",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.59.1",
     "@tauri-apps/cli": "^2.5.0",
+    "eslint": "^10.4.1",
+    "globals": "^17.6.0",
+    "husky": "^9.1.7",
     "knip": "^5.88.1",
     "vite": "^5.4.19"
+  },
+  "engines": {
+    "node": "^20.19.0 || ^22.13.0 || >=24"
   },
   "dependencies": {
     "@sentry/browser": "^10.56.0",

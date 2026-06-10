@@ -427,6 +427,7 @@ pub(crate) fn discard_old_layout_repos(
     })
 }
 
+#[allow(clippy::type_complexity)]
 fn term_changes_between_commits(
     repo_path: &Path,
     terms_relative_path: &str,

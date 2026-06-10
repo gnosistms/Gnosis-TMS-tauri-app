@@ -124,6 +124,7 @@ pub(crate) async fn search_github_users_for_installation(
     .map_err(|error| format!("Could not run the GitHub user search task: {error}"))?
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub(crate) async fn invite_user_to_organization_for_installation(
     app: AppHandle,

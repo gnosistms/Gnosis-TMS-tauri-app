@@ -20,7 +20,8 @@ use crate::{
     },
     installation_access::{
         ensure_installation_allows_glossary_management,
-        ensure_installation_allows_project_management, ensure_installation_allows_qa_list_management,
+        ensure_installation_allows_project_management,
+        ensure_installation_allows_qa_list_management,
     },
     local_repo_sync_state::{
         read_local_repo_sync_state, upsert_local_repo_sync_state, LocalRepoSyncState,
@@ -271,8 +272,8 @@ pub(crate) async fn inspect_and_migrate_local_repo_bindings(
             issues: project_scan
                 .issues
                 .into_iter()
-                .chain(glossary_scan.issues.into_iter())
-                .chain(qa_list_scan.issues.into_iter())
+                .chain(glossary_scan.issues)
+                .chain(qa_list_scan.issues)
                 .collect(),
             auto_repaired_count: project_scan.auto_repaired_count
                 + glossary_scan.auto_repaired_count
