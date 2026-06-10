@@ -80,15 +80,12 @@ pub(crate) fn update_gtms_chapter_language_selection_sync(
             Value::String(target_language_code.clone()),
         );
         settings_object.remove("default_preview_language");
-        write_json_pretty(&chapter_json_path, &chapter_value)?;
-
-        let relative_chapter_json = repo_relative_path(&repo_path, &chapter_json_path)?;
-        git_output(&repo_path, &["add", &relative_chapter_json])?;
-        git_commit_as_signed_in_user(
+        commit_chapter_json_update(
             app,
             &repo_path,
+            &chapter_json_path,
+            &chapter_value,
             &format!("Update language selection for {}", chapter_title),
-            &[&relative_chapter_json],
         )?;
     }
 
@@ -327,6 +324,41 @@ pub(crate) fn update_gtms_chapter_languages_sync(
     })
 }
 
+/// Write and commit a single chapter.json settings change through the shared row-commit
+/// helper so a failed commit gate (expired session, lost write access) cannot strand a
+/// dirty, staged chapter.json that would break the next pull.
+fn commit_chapter_json_update(
+    app: &AppHandle,
+    repo_path: &Path,
+    chapter_json_path: &Path,
+    chapter_value: &Value,
+    commit_message: &str,
+) -> Result<(), String> {
+    let updated_text = format!(
+        "{}\n",
+        serde_json::to_string_pretty(chapter_value)
+            .map_err(|error| format!("Could not serialize chapter.json: {error}"))?
+    );
+    write_row_files_and_commit(
+        app,
+        repo_path,
+        commit_message,
+        CommitMetadata {
+            operation: None,
+            migration: None,
+            status_note: None,
+            ai_model: None,
+        },
+        &[PreparedRowFileWrite {
+            relative_path: repo_relative_path(repo_path, chapter_json_path)?,
+            original_text: fs::read_to_string(chapter_json_path).ok(),
+            path: chapter_json_path.to_path_buf(),
+            updated_text,
+        }],
+    )?;
+    Ok(())
+}
+
 fn rollback_failed_chapter_language_update(
     repo_path: &std::path::Path,
     previous_head_sha: &str,
@@ -385,15 +417,12 @@ pub(crate) fn update_gtms_chapter_glossary_links_sync(
         linked_glossaries_object.insert("glossary".to_string(), glossary_value);
         linked_glossaries_object.remove("glossary_1");
         linked_glossaries_object.remove("glossary_2");
-        write_json_pretty(&chapter_json_path, &chapter_value)?;
-
-        let relative_chapter_json = repo_relative_path(&repo_path, &chapter_json_path)?;
-        git_output(&repo_path, &["add", &relative_chapter_json])?;
-        git_commit_as_signed_in_user(
+        commit_chapter_json_update(
             app,
             &repo_path,
+            &chapter_json_path,
+            &chapter_value,
             &format!("Update glossary links for {}", chapter_title),
-            &[&relative_chapter_json],
         )?;
     }
 
@@ -441,15 +470,12 @@ pub(crate) fn update_gtms_chapter_workflow_status_sync(
     let status_changed = settings_object.get("workflow_status") != Some(&next_value);
     if status_changed {
         settings_object.insert("workflow_status".to_string(), next_value);
-        write_json_pretty(&chapter_json_path, &chapter_value)?;
-
-        let relative_chapter_json = repo_relative_path(&repo_path, &chapter_json_path)?;
-        git_output(&repo_path, &["add", &relative_chapter_json])?;
-        git_commit_as_signed_in_user(
+        commit_chapter_json_update(
             app,
             &repo_path,
+            &chapter_json_path,
+            &chapter_value,
             &format!("Update chapter status for {}", chapter_title),
-            &[&relative_chapter_json],
         )?;
     }
 
