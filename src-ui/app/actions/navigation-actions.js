@@ -1,5 +1,9 @@
 import { state } from "../state.js";
 import {
+  clearScopedSyncBadge,
+  showScopedSyncBadge,
+} from "../status-feedback.js";
+import {
   loadTeamGlossaries,
   openGlossaryEditor,
   primeGlossariesLoadingState,
@@ -37,10 +41,18 @@ export function createNavigationActions(render) {
       state.selectedTeamId = openTeamId;
       state.screen = "projects";
       primeProjectsLoadingState(openTeamId);
+      // Show the refresh badge before the access check, not after — the access refresh
+      // can take seconds when the teams listing is not fresh, and this path previously
+      // sat badge-less the whole time.
+      showScopedSyncBadge("projects", "Refreshing project list...", null);
       render();
       void (async () => {
-        await refreshSelectedTeamAccess(render);
-        await loadTeamProjects(render, state.selectedTeamId);
+        try {
+          await refreshSelectedTeamAccess(render);
+          await loadTeamProjects(render, state.selectedTeamId);
+        } finally {
+          clearScopedSyncBadge("projects", render);
+        }
       })();
       return true;
     }

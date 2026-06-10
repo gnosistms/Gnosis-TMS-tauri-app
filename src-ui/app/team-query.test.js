@@ -274,3 +274,19 @@ test("refreshCurrentUserTeamAccess updates stale selected team permissions", asy
   assert.equal(renderCount, 1);
   assert.equal(invokeLog.length, 1);
 });
+
+test("refreshCurrentUserTeamAccess reuses a freshly fetched teams listing", async () => {
+  installFixture();
+  invokeHandler = async () => [installation()];
+
+  const applied = await refreshCurrentUserTeamAccess({ render: () => {} });
+  assert.equal(applied, true);
+  assert.equal(invokeLog.length, 1);
+
+  // Within the staleness window the broker listing is reused — opening a team right
+  // after the teams screen fetched it must not re-pay the listing call before the
+  // projects load can start. (A cache-only seed stays stale and still refetches; see
+  // the "updates stale selected team permissions" test above.)
+  await refreshCurrentUserTeamAccess({ render: () => {} });
+  assert.equal(invokeLog.length, 1);
+});
