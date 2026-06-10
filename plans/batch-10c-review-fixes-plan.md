@@ -1,5 +1,8 @@
 # Batch 10c Review Fixes — Aligned Translation + Export
 
+**Status: complete (2026-06-10).** S1, S2, M1, m1 landed on
+`fix/batch-10c-review-findings`; m2 deferred as documented below.
+
 Resolves the findings from `reviews/2026-06-10-batch-10c-review.md` (S1, S2, M1, m1;
 m2 deferred). Branch: `fix/batch-10c-review-findings`. One focused commit per finding.
 

@@ -255,11 +255,11 @@ project_import/chapter_editor/chapter_export.rs      (1,370)
 ```
 
 **Review file**: `reviews/2026-06-10-batch-10c-review.md`
-**Findings**: 0 Critical, 2 Security, 1 Major, 2 Minor — open, not yet resolved.
-S1 (DOCX export SSRF — fetches arbitrary image URLs from row content with no
-redirect/size cap), S2 (`job_id` from IPC joined into a cache path unvalidated),
-M1 (apply writes rows + chapter.json then commits with no rollback — same pattern
-as 10a/10b). The alignment pipeline and DOCX writer themselves reviewed solid.
+**Findings**: 0 Critical, 2 Security, 1 Major, 2 Minor
+**Resolution**: S1, S2, M1, m1 resolved 2026-06-10 on `fix/batch-10c-review-findings`
+(DOCX export SSRF guard + redirect/size caps, job-id path validation, apply rollback
+via `write_row_files_and_commit`, alignment-job cache pruning). m2 (per-run API
+budget/concurrency) deferred — needs a UI-facing contract.
 
 ### 10d: Chapter Selection + Images (~1,660 lines)
 
@@ -399,7 +399,7 @@ The fix is the same transform applied to Batch 2 M2 (`invite_user_to_organizatio
 | 7 | Content Storage | 4,470 | 2 | ✅ `2026-06-03-batch-7-review.md` — 0C/0S/0M/1m, resolved in PR #25 |
 | 8 | Team Metadata | 2,475 | 1 | ✅ `2026-06-10-batch-8-review.md` — 0C/1S/2M/2m, all resolved on `fix/batch-8-review-findings` |
 | 9 | AI Integration | 5,040 | 2 | ✅ `2026-06-10-batch-9-review.md` — 0C/2S/1M/2m, all resolved on `fix/batch-9-review-findings` |
-| 10 | Chapter Editor | 13,000 | 4 | 🔶 10a done (resolved); 10b done (resolved); 10c done — `2026-06-10-batch-10c-review.md`, 0C/2S/1M/2m open; 10d pending |
+| 10 | Chapter Editor | 13,000 | 4 | 🔶 10a done (resolved); 10b done (resolved); 10c done (0C/2S/1M/2m, S1/S2/M1/m1 resolved, m2 deferred); 10d pending |
 | 11 | Import Pipeline | 6,325 | 3 | — |
 | 12 | Search + Updater | 2,680 | 1 | — |
 | **Total** | | **~50,300** | **19** | |

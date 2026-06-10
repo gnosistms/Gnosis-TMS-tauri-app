@@ -2,7 +2,8 @@
 <!-- vt.idd:local-review:batch-10c -->
 
 **Date**: 2026-06-10
-**Status**: Review complete. Findings not yet resolved.
+**Status**: Complete. S1, S2, M1, m1 resolved on `fix/batch-10c-review-findings`;
+m2 deferred (see Resolution status).
 **Scope**: the "Add translation" AI alignment pipeline — preflight/section/mismatch/
 row-alignment/split passes, job caching, and the chapter→rows apply (`aligned_translation.rs`)
 — and chapter export to HTML/TXT/DOCX including image embedding and the bundled
@@ -222,11 +223,11 @@ observation.) Not a correctness bug.
 
 | Finding | Status | Notes |
 |---|---|---|
-| S1 | Open | |
-| S2 | Open | |
-| M1 | Open | |
-| m1 | Open | |
-| m2 | Open | |
+| S1 | Resolved | `download_docx_image` rejects non-public hosts (`is_public_export_image_url`, per-address loopback/private/link-local/ULA/CGNAT classification), disables redirects, and caps the body at 25 MB. Host/IP-classifier tests added. |
+| S2 | Resolved | `job_path` routes `job_id` through `validated_alignment_job_id` (single-component allowlist); test added. |
+| M1 | Resolved | `apply_job_to_chapter` prepares each changed file (chapter.json + rows, with current on-disk text as rollback original) and flows through `write_row_files_and_commit` — gates preflighted, full rollback on failure. |
+| m1 | Resolved | A consumed job is deleted on apply; preflight sweeps jobs older than 7 days. |
+| m2 | Deferred | Per-run API-call/spend budget + bounded concurrency need a UI-facing contract (budget surfacing, cancellation). Tracked alongside the Batch 9 fan-out observation; revisit if long-chapter alignment cost/latency surfaces. |
 
 ---
 
