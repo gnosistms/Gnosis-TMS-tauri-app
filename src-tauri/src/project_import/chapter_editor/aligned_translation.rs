@@ -118,7 +118,7 @@ pub(crate) struct AlignedTranslationApplyResponse {
     skipped_non_empty_row_count: usize,
     inserted_row_count: usize,
     target_language_code: String,
-    source_word_counts: BTreeMap<String, usize>,
+    word_counts: BTreeMap<String, usize>,
     commit_sha: Option<String>,
     chapter_base_commit_sha: Option<String>,
 }
@@ -1816,7 +1816,7 @@ fn apply_job_to_chapter(
     emit_apply_progress(app, &job.job_id, 6, "Refreshing chapter data");
     log_alignment_apply_checkpoint(app, &job.job_id, "apply-job:rows-reload-start", "");
     let refreshed_rows = load_editor_rows(&context.chapter_path.join("rows"))?;
-    let source_word_counts = build_source_word_counts_from_stored_rows(&refreshed_rows, &languages);
+    let word_counts = build_word_counts_from_stored_rows(&refreshed_rows, &languages);
     log_alignment_apply_checkpoint(
         app,
         &job.job_id,
@@ -1849,7 +1849,7 @@ fn apply_job_to_chapter(
         skipped_non_empty_row_count: skipped_non_empty,
         inserted_row_count: inserted_rows.len(),
         target_language_code: job.target_language_code.clone(),
-        source_word_counts,
+        word_counts,
         commit_sha,
         chapter_base_commit_sha: current_repo_head_sha(&context.repo_path),
     })

@@ -97,10 +97,10 @@ pub(crate) use self::row_structure::{
     update_gtms_editor_row_lifecycle_sync,
 };
 use self::shared::{
-    apply_source_word_count_delta, build_source_word_counts_from_stored_rows,
+    apply_word_count_delta, build_word_counts_from_stored_rows,
     clear_editor_html_preview_cache, current_repo_head_sha, editor_row_from_stored_row_file,
     editor_row_from_stored_row_file_with_update, ensure_editor_field_object_defaults,
-    load_editor_rows, load_project_chapter_summaries, load_source_word_counts,
+    load_editor_rows, load_project_chapter_summaries, load_word_counts,
     normalize_editor_footnote_value, normalize_editor_image_caption_value,
     normalize_editor_text_style_value, row_fields_object_mut, row_footnote_map,
     row_image_caption_map, row_object_mut, row_plain_text_map, row_text_style,
@@ -432,7 +432,7 @@ pub(crate) struct UpdateEditorRowLifecycleInput {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UpdateEditorRowFieldsBatchResponse {
     row_ids: Vec<String>,
-    source_word_counts: BTreeMap<String, usize>,
+    word_counts: BTreeMap<String, usize>,
     commit_sha: Option<String>,
     chapter_base_commit_sha: Option<String>,
 }
@@ -493,7 +493,7 @@ pub(crate) struct ClearEditorReviewedMarkersResponse {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct InsertEditorRowResponse {
     row: EditorRow,
-    source_word_counts: BTreeMap<String, usize>,
+    word_counts: BTreeMap<String, usize>,
     chapter_base_commit_sha: Option<String>,
 }
 
@@ -502,7 +502,7 @@ pub(crate) struct InsertEditorRowResponse {
 pub(crate) struct UpdateEditorRowLifecycleResponse {
     row_id: String,
     lifecycle_state: String,
-    source_word_counts: BTreeMap<String, usize>,
+    word_counts: BTreeMap<String, usize>,
     chapter_base_commit_sha: Option<String>,
 }
 
@@ -589,7 +589,7 @@ pub(crate) struct RestoreEditorFieldHistoryResponse {
     text_style: String,
     reviewed: bool,
     please_check: bool,
-    source_word_counts: BTreeMap<String, usize>,
+    word_counts: BTreeMap<String, usize>,
     chapter_base_commit_sha: Option<String>,
 }
 
@@ -617,7 +617,7 @@ pub(crate) struct ReverseEditorBatchReplaceCommitInput {
 pub(crate) struct ReverseEditorBatchReplaceCommitResponse {
     updated_rows: Vec<UpdateEditorRowFieldsBatchRowInput>,
     skipped_row_ids: Vec<String>,
-    source_word_counts: BTreeMap<String, usize>,
+    word_counts: BTreeMap<String, usize>,
     commit_sha: Option<String>,
     chapter_base_commit_sha: Option<String>,
 }
@@ -628,7 +628,7 @@ pub(crate) struct LoadChapterEditorResponse {
     chapter_id: String,
     file_title: String,
     languages: Vec<ChapterLanguage>,
-    source_word_counts: BTreeMap<String, usize>,
+    word_counts: BTreeMap<String, usize>,
     selected_source_language_code: Option<String>,
     selected_target_language_code: Option<String>,
     chapter_base_commit_sha: Option<String>,
@@ -708,7 +708,7 @@ pub(super) struct ProjectChapterSummary {
     name: String,
     status: String,
     languages: Vec<ChapterLanguage>,
-    source_word_counts: BTreeMap<String, usize>,
+    word_counts: BTreeMap<String, usize>,
     selected_source_language_code: Option<String>,
     selected_target_language_code: Option<String>,
     workflow_status: String,
@@ -738,7 +738,7 @@ pub(crate) struct SaveEditorRowWithConcurrencyResponse {
     row_id: String,
     status: String,
     row: Option<EditorRow>,
-    source_word_counts: BTreeMap<String, usize>,
+    word_counts: BTreeMap<String, usize>,
     base_fields: BTreeMap<String, String>,
     base_footnotes: BTreeMap<String, String>,
     base_image_captions: BTreeMap<String, String>,
@@ -934,7 +934,7 @@ pub(super) fn load_gtms_chapter_editor_data_sync(
         read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
     let rows = load_editor_rows(&chapter_path.join("rows"))?;
     let languages = sanitize_chapter_languages(&chapter_file.languages);
-    let source_word_counts = build_source_word_counts_from_stored_rows(&rows, &languages);
+    let word_counts = build_word_counts_from_stored_rows(&rows, &languages);
     let row_update_paths_by_id = rows
         .iter()
         .map(|row| {
@@ -960,7 +960,7 @@ pub(super) fn load_gtms_chapter_editor_data_sync(
         chapter_id: chapter_file.chapter_id,
         file_title: chapter_file.title,
         languages,
-        source_word_counts,
+        word_counts,
         selected_source_language_code,
         selected_target_language_code,
         chapter_base_commit_sha: git_output(&repo_path, &["rev-parse", "--verify", "HEAD"]).ok(),

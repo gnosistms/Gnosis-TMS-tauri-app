@@ -318,8 +318,8 @@ export function buildImportedFileEntry(result) {
     ?? result.languages?.find((language) => language.code !== selectedSourceLanguageCode)?.code
     ?? null;
   const sourceWordCount =
-    selectedSourceLanguageCode && result.sourceWordCounts
-      ? Number(result.sourceWordCounts[selectedSourceLanguageCode] ?? 0)
+    selectedSourceLanguageCode && result.wordCounts
+      ? Number(result.wordCounts[selectedSourceLanguageCode] ?? 0)
       : 0;
 
   return {
@@ -327,9 +327,9 @@ export function buildImportedFileEntry(result) {
     name: result.fileTitle,
     status: "active",
     languages: Array.isArray(result.languages) ? result.languages : [],
-    sourceWordCounts:
-      result.sourceWordCounts && typeof result.sourceWordCounts === "object"
-        ? result.sourceWordCounts
+    wordCounts:
+      result.wordCounts && typeof result.wordCounts === "object"
+        ? result.wordCounts
         : {},
     selectedSourceLanguageCode,
     selectedTargetLanguageCode,

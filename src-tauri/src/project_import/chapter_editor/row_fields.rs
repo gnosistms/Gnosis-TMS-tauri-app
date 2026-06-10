@@ -232,7 +232,7 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
         .join(format!("{}.json", input.row_id));
     let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
     let languages = sanitize_chapter_languages(&chapter_file.languages);
-    let source_word_counts = load_source_word_counts(&chapter_path.join("rows"), &languages)?;
+    let word_counts = load_word_counts(&chapter_path.join("rows"), &languages)?;
     if !row_json_path.exists() {
         if cfg!(debug_assertions) {
             eprintln!(
@@ -244,7 +244,7 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
             row_id: input.row_id,
             status: "deleted".to_string(),
             row: None,
-            source_word_counts,
+            word_counts,
             base_fields: input.base_fields,
             base_footnotes: input.base_footnotes,
             base_image_captions: input.base_image_captions,
@@ -278,7 +278,7 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
                 &chapter_path,
                 original_row_file,
             )?),
-            source_word_counts,
+            word_counts,
             base_fields: input.base_fields,
             base_footnotes: input.base_footnotes,
             base_image_captions: input.base_image_captions,
@@ -338,7 +338,7 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
                 &chapter_path,
                 original_row_file,
             )?),
-            source_word_counts,
+            word_counts,
             base_fields: input.base_fields,
             base_footnotes: input.base_footnotes,
             base_image_captions: input.base_image_captions,
@@ -370,7 +370,7 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
         )
     })?;
     let updated_row_text = format!("{updated_row_json}\n");
-    let mut next_source_word_counts = source_word_counts.clone();
+    let mut next_word_counts = word_counts.clone();
     let mut next_row = original_row_file.clone();
     if updated_row_text != original_row_text {
         if cfg!(debug_assertions) {
@@ -387,8 +387,8 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
                     row_json_path.display()
                 )
             })?;
-        next_source_word_counts = apply_source_word_count_delta(
-            &source_word_counts,
+        next_word_counts = apply_word_count_delta(
+            &word_counts,
             &original_row_file,
             &updated_row_file,
             &languages,
@@ -447,7 +447,7 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
             &chapter_path,
             next_row,
         )?),
-        source_word_counts: next_source_word_counts,
+        word_counts: next_word_counts,
         base_fields: input.base_fields,
         base_footnotes: input.base_footnotes,
         base_image_captions: input.base_image_captions,
@@ -568,7 +568,7 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
     let chapter_file: StoredChapterFile =
         read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
     let languages = sanitize_chapter_languages(&chapter_file.languages);
-    let mut source_word_counts = load_source_word_counts(&chapter_path.join("rows"), &languages)?;
+    let mut word_counts = load_word_counts(&chapter_path.join("rows"), &languages)?;
     let mut rows_by_id = BTreeMap::new();
     for row in input.rows {
         let row_id = row.row_id.trim().to_string();
@@ -636,8 +636,8 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
                     row_json_path.display()
                 )
             })?;
-        source_word_counts = apply_source_word_count_delta(
-            &source_word_counts,
+        word_counts = apply_word_count_delta(
+            &word_counts,
             &original_row_file,
             &updated_row_file,
             &languages,
@@ -685,7 +685,7 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
 
         return Ok(UpdateEditorRowFieldsBatchResponse {
             row_ids: changed_row_ids,
-            source_word_counts,
+            word_counts,
             commit_sha,
             chapter_base_commit_sha: current_repo_head_sha(&repo_path),
         });
@@ -693,7 +693,7 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
 
     Ok(UpdateEditorRowFieldsBatchResponse {
         row_ids: changed_row_ids,
-        source_word_counts,
+        word_counts,
         commit_sha: None,
         chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })

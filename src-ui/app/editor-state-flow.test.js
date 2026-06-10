@@ -266,7 +266,7 @@ test("markEditorRowsPersisted updates persisted fields and clears reconciled dir
     state.editorChapter = {
       ...createEditorChapterState(),
       chapterId: "chapter-1",
-      sourceWordCounts: {},
+      wordCounts: {},
       dirtyRowIds: new Set(["row-1"]),
       rows: normalizeEditorRows([{
         rowId: "row-1",
@@ -285,7 +285,7 @@ test("markEditorRowsPersisted updates persisted fields and clears reconciled dir
     assert.equal(state.editorChapter.rows[0].fields.en, "new");
     assert.equal(state.editorChapter.rows[0].persistedFields.en, "new");
     assert.equal(state.editorChapter.rows[0].saveStatus, "idle");
-    assert.deepEqual(state.editorChapter.sourceWordCounts, { en: 7 });
+    assert.deepEqual(state.editorChapter.wordCounts, { en: 7 });
     assert.deepEqual([...state.editorChapter.dirtyRowIds], []);
   } finally {
     restoreSharedState(snapshot);

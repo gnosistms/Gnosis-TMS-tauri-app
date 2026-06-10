@@ -327,10 +327,10 @@ export async function saveEditorConflictResolution(render, operations = {}) {
       : null;
   state.editorChapter = {
     ...state.editorChapter,
-    sourceWordCounts:
-      payload?.sourceWordCounts && typeof payload.sourceWordCounts === "object"
-        ? payload.sourceWordCounts
-        : state.editorChapter.sourceWordCounts,
+    wordCounts:
+      payload?.wordCounts && typeof payload.wordCounts === "object"
+        ? payload.wordCounts
+        : state.editorChapter.wordCounts,
     chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
   };
   if (typeof operations.applyEditorSelectionsToProjectState === "function") {

@@ -74,7 +74,7 @@ pub(crate) fn insert_gtms_editor_row_sync(
             &chapter_path,
             inserted_row_file,
         )?,
-        source_word_counts: build_source_word_counts_from_stored_rows(&rows, &languages),
+        word_counts: build_word_counts_from_stored_rows(&rows, &languages),
         chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
 }
@@ -137,7 +137,7 @@ pub(crate) fn update_gtms_editor_row_lifecycle_sync(
         return Ok(UpdateEditorRowLifecycleResponse {
             row_id: input.row_id,
             lifecycle_state: next_state.to_string(),
-            source_word_counts: load_source_word_counts(&chapter_path.join("rows"), &languages)?,
+            word_counts: load_word_counts(&chapter_path.join("rows"), &languages)?,
             chapter_base_commit_sha: git_output(&repo_path, &["rev-parse", "--verify", "HEAD"])
                 .ok(),
         });
@@ -151,10 +151,10 @@ pub(crate) fn update_gtms_editor_row_lifecycle_sync(
                 row_json_path.display()
             )
         })?;
-    let existing_source_word_counts =
-        load_source_word_counts(&chapter_path.join("rows"), &languages)?;
-    let source_word_counts = apply_source_word_count_delta(
-        &existing_source_word_counts,
+    let existing_word_counts =
+        load_word_counts(&chapter_path.join("rows"), &languages)?;
+    let word_counts = apply_word_count_delta(
+        &existing_word_counts,
         &original_row_file,
         &updated_row_file,
         &languages,
@@ -195,7 +195,7 @@ pub(crate) fn update_gtms_editor_row_lifecycle_sync(
     Ok(UpdateEditorRowLifecycleResponse {
         row_id: input.row_id,
         lifecycle_state: next_state.to_string(),
-        source_word_counts,
+        word_counts,
         chapter_base_commit_sha: git_output(&repo_path, &["rev-parse", "--verify", "HEAD"]).ok(),
     })
 }
@@ -225,10 +225,10 @@ pub(crate) fn permanently_delete_gtms_editor_row_sync(
         return Err("Only soft-deleted rows can be permanently deleted.".to_string());
     }
 
-    let existing_source_word_counts =
-        load_source_word_counts(&chapter_path.join("rows"), &languages)?;
-    let source_word_counts = apply_source_word_count_delta(
-        &existing_source_word_counts,
+    let existing_word_counts =
+        load_word_counts(&chapter_path.join("rows"), &languages)?;
+    let word_counts = apply_word_count_delta(
+        &existing_word_counts,
         &row_file,
         &empty_deleted_row_stub(&row_file),
         &languages,
@@ -272,7 +272,7 @@ pub(crate) fn permanently_delete_gtms_editor_row_sync(
     Ok(UpdateEditorRowLifecycleResponse {
         row_id: input.row_id,
         lifecycle_state: "deleted".to_string(),
-        source_word_counts,
+        word_counts,
         chapter_base_commit_sha: git_output(&repo_path, &["rev-parse", "--verify", "HEAD"]).ok(),
     })
 }

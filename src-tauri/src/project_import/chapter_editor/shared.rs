@@ -67,7 +67,7 @@ pub(super) fn load_project_chapter_summaries(
         let chapter_file: StoredChapterFile = read_json_file(&chapter_json_path, "chapter.json")?;
         let languages = sanitize_chapter_languages(&chapter_file.languages);
         let rows = load_editor_rows(&path.join("rows"))?;
-        let source_word_counts = build_source_word_counts_from_stored_rows(&rows, &languages);
+        let word_counts = build_word_counts_from_stored_rows(&rows, &languages);
         let selected_source_language_code =
             preferred_source_language_code(&chapter_file, &languages);
         let selected_target_language_code = preferred_target_language_code(
@@ -94,7 +94,7 @@ pub(super) fn load_project_chapter_summaries(
                 "active".to_string()
             },
             languages,
-            source_word_counts,
+            word_counts,
             selected_source_language_code,
             selected_target_language_code,
             workflow_status,
@@ -520,7 +520,7 @@ fn normalize_header(value: &str) -> String {
         .join(" ")
 }
 
-pub(super) fn build_source_word_counts_from_stored_rows(
+pub(super) fn build_word_counts_from_stored_rows(
     rows: &[StoredRowFile],
     languages: &[ChapterLanguage],
 ) -> BTreeMap<String, usize> {
@@ -546,15 +546,15 @@ pub(super) fn build_source_word_counts_from_stored_rows(
     counts
 }
 
-pub(super) fn load_source_word_counts(
+pub(super) fn load_word_counts(
     rows_path: &Path,
     languages: &[ChapterLanguage],
 ) -> Result<BTreeMap<String, usize>, String> {
     let rows = load_editor_rows(rows_path)?;
-    Ok(build_source_word_counts_from_stored_rows(&rows, languages))
+    Ok(build_word_counts_from_stored_rows(&rows, languages))
 }
 
-pub(super) fn apply_source_word_count_delta(
+pub(super) fn apply_word_count_delta(
     existing_counts: &BTreeMap<String, usize>,
     original_row: &StoredRowFile,
     updated_row: &StoredRowFile,

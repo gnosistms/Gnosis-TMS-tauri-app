@@ -1559,15 +1559,15 @@ export async function confirmEditorClearTranslations(render, operations = {}) {
   if (rows.length === 0) {
     const payload = {
       rowIds: [],
-      sourceWordCounts: state.editorChapter?.sourceWordCounts ?? {},
+      wordCounts: state.editorChapter?.wordCounts ?? {},
       chapterBaseCommitSha: state.editorChapter?.chapterBaseCommitSha ?? null,
     };
     state.editorChapter = {
       ...state.editorChapter,
-      sourceWordCounts:
-        payload?.sourceWordCounts && typeof payload.sourceWordCounts === "object"
-          ? payload.sourceWordCounts
-          : state.editorChapter.sourceWordCounts,
+      wordCounts:
+        payload?.wordCounts && typeof payload.wordCounts === "object"
+          ? payload.wordCounts
+          : state.editorChapter.wordCounts,
       chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
       clearTranslationsModal: createEditorClearTranslationsModalState(),
     };
@@ -1638,10 +1638,10 @@ export async function confirmEditorClearTranslations(render, operations = {}) {
           value.selectedLanguageCodes,
           changedRowIds,
         ),
-        sourceWordCounts:
-          payload?.sourceWordCounts && typeof payload.sourceWordCounts === "object"
-            ? payload.sourceWordCounts
-            : state.editorChapter.sourceWordCounts,
+        wordCounts:
+          payload?.wordCounts && typeof payload.wordCounts === "object"
+            ? payload.wordCounts
+            : state.editorChapter.wordCounts,
         chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
         clearTranslationsModal: createEditorClearTranslationsModalState(),
       };
@@ -1932,10 +1932,10 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
         );
         state.editorChapter = {
           ...state.editorChapter,
-          sourceWordCounts:
-            payload?.sourceWordCounts && typeof payload.sourceWordCounts === "object"
-              ? payload.sourceWordCounts
-              : state.editorChapter.sourceWordCounts,
+          wordCounts:
+            payload?.wordCounts && typeof payload.wordCounts === "object"
+              ? payload.wordCounts
+              : state.editorChapter.wordCounts,
           chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
         };
         reconcileDirtyTrackedEditorRows([value.rowId]);
@@ -2008,10 +2008,10 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
 
     state.editorChapter = {
       ...state.editorChapter,
-      sourceWordCounts:
-        payload?.sourceWordCounts && typeof payload.sourceWordCounts === "object"
-          ? payload.sourceWordCounts
-          : state.editorChapter.sourceWordCounts,
+      wordCounts:
+        payload?.wordCounts && typeof payload.wordCounts === "object"
+          ? payload.wordCounts
+          : state.editorChapter.wordCounts,
       chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
     };
     reconcileDirtyTrackedEditorRows([value.rowId]);

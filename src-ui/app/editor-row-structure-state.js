@@ -17,10 +17,10 @@ import {
   createEditorRowPermanentDeletionModalState,
 } from "./state.js";
 
-function resolveSourceWordCounts(chapterState, sourceWordCounts) {
-  return sourceWordCounts && typeof sourceWordCounts === "object"
-    ? sourceWordCounts
-    : chapterState.sourceWordCounts;
+function resolveSourceWordCounts(chapterState, wordCounts) {
+  return wordCounts && typeof wordCounts === "object"
+    ? wordCounts
+    : chapterState.wordCounts;
 }
 
 function cloneExpandedDeletedRowGroupIds(expandedDeletedRowGroupIds) {
@@ -261,7 +261,7 @@ export function applyInsertedEditorRowState(
   nextRow,
   anchorRowId,
   insertBefore = true,
-  sourceWordCounts = null,
+  wordCounts = null,
 ) {
   if (!chapterState?.chapterId || !nextRow?.rowId) {
     return chapterState;
@@ -270,7 +270,7 @@ export function applyInsertedEditorRowState(
   return {
     ...chapterState,
     rows: insertEditorRow(chapterState.rows, nextRow, anchorRowId, insertBefore),
-    sourceWordCounts: resolveSourceWordCounts(chapterState, sourceWordCounts),
+    wordCounts: resolveSourceWordCounts(chapterState, wordCounts),
     insertRowModal: createEditorInsertRowModalState(),
     activeRowId: nextRow.rowId ?? chapterState.activeRowId,
     activeLanguageCode:
@@ -285,7 +285,7 @@ export function applySoftDeletedEditorRowState(
   chapterState,
   rowId,
   lifecycleState = "deleted",
-  sourceWordCounts = null,
+  wordCounts = null,
   triggerAnchorSnapshot = null,
 ) {
   if (!chapterState?.chapterId || !rowId) {
@@ -328,7 +328,7 @@ export function applySoftDeletedEditorRowState(
       ...withClearedActiveFieldForRow(chapterState, rowId),
       rows,
       expandedDeletedRowGroupIds,
-      sourceWordCounts: resolveSourceWordCounts(chapterState, sourceWordCounts),
+      wordCounts: resolveSourceWordCounts(chapterState, wordCounts),
     },
     anchorSnapshot,
   };
@@ -338,7 +338,7 @@ export function applyRestoredEditorRowState(
   chapterState,
   rowId,
   lifecycleState = "active",
-  sourceWordCounts = null,
+  wordCounts = null,
   triggerAnchorSnapshot = null,
 ) {
   if (!chapterState?.chapterId || !rowId) {
@@ -363,7 +363,7 @@ export function applyRestoredEditorRowState(
       ...chapterState,
       rows,
       expandedDeletedRowGroupIds,
-      sourceWordCounts: resolveSourceWordCounts(chapterState, sourceWordCounts),
+      wordCounts: resolveSourceWordCounts(chapterState, wordCounts),
     },
     anchorSnapshot: buildVisibleAnchorSnapshot(
       rows,
@@ -377,7 +377,7 @@ export function applyRestoredEditorRowState(
 export function applyPermanentlyDeletedEditorRowState(
   chapterState,
   rowId,
-  sourceWordCounts = null,
+  wordCounts = null,
   triggerAnchorSnapshot = null,
 ) {
   if (!chapterState?.chapterId || !rowId) {
@@ -405,7 +405,7 @@ export function applyPermanentlyDeletedEditorRowState(
       rows,
       dirtyRowIds: compactDirtyRowIds(rows, chapterState.dirtyRowIds),
       expandedDeletedRowGroupIds,
-      sourceWordCounts: resolveSourceWordCounts(chapterState, sourceWordCounts),
+      wordCounts: resolveSourceWordCounts(chapterState, wordCounts),
       rowPermanentDeletionModal: createEditorRowPermanentDeletionModalState(),
     },
     anchorSnapshot: buildVisibleAnchorSnapshot(

@@ -517,8 +517,8 @@ export function resolveChapterSourceWordCount(chapter) {
 
   const sourceCode = chapter.selectedSourceLanguageCode;
   const counts =
-    chapter.sourceWordCounts && typeof chapter.sourceWordCounts === "object"
-      ? chapter.sourceWordCounts
+    chapter.wordCounts && typeof chapter.wordCounts === "object"
+      ? chapter.wordCounts
       : {};
   const value = sourceCode ? counts[sourceCode] : null;
   return Number.isFinite(value) ? value : 0;
@@ -577,7 +577,7 @@ export function applyEditorSelectionsToProjectState(chapterState = state.editorC
   applyChapterMetadataToState(chapterState.chapterId, {
     name: chapterState.fileTitle,
     languages: chapterState.languages,
-    sourceWordCounts: chapterState.sourceWordCounts,
+    wordCounts: chapterState.wordCounts,
     selectedSourceLanguageCode: chapterState.selectedSourceLanguageCode,
     selectedTargetLanguageCode: chapterState.selectedTargetLanguageCode,
   });
@@ -664,7 +664,7 @@ export function removeEditorChapterRow(rowId) {
   };
 }
 
-export function markEditorRowsPersisted(rowUpdates, sourceWordCounts = null, chapterBaseCommitSha = null) {
+export function markEditorRowsPersisted(rowUpdates, wordCounts = null, chapterBaseCommitSha = null) {
   const updatesByRowId = new Map(
     (Array.isArray(rowUpdates) ? rowUpdates : []).map((row) => [
       row.rowId,
@@ -716,10 +716,10 @@ export function markEditorRowsPersisted(rowUpdates, sourceWordCounts = null, cha
         saveError: "",
       };
     }),
-    sourceWordCounts:
-      sourceWordCounts && typeof sourceWordCounts === "object"
-        ? sourceWordCounts
-        : state.editorChapter.sourceWordCounts,
+    wordCounts:
+      wordCounts && typeof wordCounts === "object"
+        ? wordCounts
+        : state.editorChapter.wordCounts,
   };
   reconcileDirtyTrackedEditorRows([...updatesByRowId.keys()]);
   applyEditorSelectionsToProjectState(state.editorChapter);

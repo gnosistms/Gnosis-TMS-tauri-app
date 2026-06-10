@@ -27,7 +27,7 @@ use txt::decode_text_file;
 use txt::parse_txt_file;
 use uuid::Uuid;
 #[cfg(test)]
-use write_gtms::{build_chapter_file, build_row_file, build_source_word_counts_from_import};
+use write_gtms::{build_chapter_file, build_row_file, build_word_counts_from_import};
 use write_gtms::{
     commit_written_imports, import_parsed_workbook_to_gtms_sync, prepare_project_import_repo,
     write_parsed_workbook_chapter, ProjectImportRepoContext, WrittenImport,
@@ -121,7 +121,7 @@ pub(crate) struct ImportXlsxResponse {
     worksheet_name: String,
     unit_count: usize,
     languages: Vec<ChapterLanguage>,
-    source_word_counts: BTreeMap<String, usize>,
+    word_counts: BTreeMap<String, usize>,
     selected_source_language_code: Option<String>,
     selected_target_language_code: Option<String>,
     language_codes: Vec<String>,
@@ -1176,7 +1176,7 @@ mod tests {
         let chapter = build_chapter_file(&parsed, &chapter_id, "chapter", None);
         let row = build_row_file(&parsed, &parsed.rows[0], 0, parsed.rows.len(), "row-1")
             .expect("row should build");
-        let counts = build_source_word_counts_from_import(&parsed);
+        let counts = build_word_counts_from_import(&parsed);
 
         assert_eq!(chapter.source_files[0].format, "txt");
         assert_eq!(chapter.languages.len(), 1);

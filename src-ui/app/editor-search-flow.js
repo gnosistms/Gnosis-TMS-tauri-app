@@ -595,13 +595,13 @@ export async function replaceSelectedEditorRows(render, operations = {}) {
       if (value.resetRows.length > 0) {
         operations.markEditorRowsPersisted(
           value.resetRows,
-          resetPayload?.sourceWordCounts,
+          resetPayload?.wordCounts,
           nextChapterBaseCommitSha(resetPayload, state.editorChapter),
         );
       }
       operations.markEditorRowsPersisted(
         value.replaceRows,
-        replacePayload?.sourceWordCounts,
+        replacePayload?.wordCounts,
         nextChapterBaseCommitSha(replacePayload, state.editorChapter),
       );
       updateEditorReplaceState(state, (currentState) => ({

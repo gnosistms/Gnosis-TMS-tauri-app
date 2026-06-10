@@ -141,9 +141,9 @@ function applyEditorPayloadToState(
     chapterBaseCommitSha: payload.chapterBaseCommitSha ?? null,
     fileTitle: payload.fileTitle,
     languages: Array.isArray(payload.languages) ? payload.languages : [],
-    sourceWordCounts:
-      payload.sourceWordCounts && typeof payload.sourceWordCounts === "object"
-        ? payload.sourceWordCounts
+    wordCounts:
+      payload.wordCounts && typeof payload.wordCounts === "object"
+        ? payload.wordCounts
         : {},
     selectedSourceLanguageCode,
     selectedTargetLanguageCode,
@@ -166,7 +166,7 @@ function applyEditorPayloadToState(
   operations.applyChapterMetadataToState(payload.chapterId, {
     name: payload.fileTitle,
     languages: state.editorChapter.languages,
-    sourceWordCounts: state.editorChapter.sourceWordCounts,
+    wordCounts: state.editorChapter.wordCounts,
     selectedSourceLanguageCode,
     selectedTargetLanguageCode,
     hasImportedEditorConflicts,
@@ -329,11 +329,11 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
     languages: preserveVisibleRows
       ? state.editorChapter.languages
       : Array.isArray(context.chapter.languages) ? context.chapter.languages : [],
-    sourceWordCounts:
+    wordCounts:
       preserveVisibleRows
-        ? state.editorChapter.sourceWordCounts
-        : context.chapter.sourceWordCounts && typeof context.chapter.sourceWordCounts === "object"
-          ? context.chapter.sourceWordCounts
+        ? state.editorChapter.wordCounts
+        : context.chapter.wordCounts && typeof context.chapter.wordCounts === "object"
+          ? context.chapter.wordCounts
           : {},
     selectedSourceLanguageCode: nextSelectedSourceLanguageCode,
     selectedTargetLanguageCode: nextSelectedTargetLanguageCode,
