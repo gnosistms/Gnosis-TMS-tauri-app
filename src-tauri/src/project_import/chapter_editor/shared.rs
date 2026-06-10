@@ -27,6 +27,81 @@ pub(super) fn validated_row_json_path(
     Ok(chapter_path.join("rows").join(format!("{normalized}.json")))
 }
 
+pub(super) struct PreparedRowFileWrite {
+    pub(super) path: PathBuf,
+    pub(super) relative_path: String,
+    /// `None` when the file is being created (rollback removes it instead of restoring).
+    pub(super) original_text: Option<String>,
+    pub(super) updated_text: String,
+}
+
+/// Write the prepared files and commit them as the signed-in user without ever being
+/// able to leave the working tree dirty: the commit preconditions (write access,
+/// signed-in session) are checked before the first write, and any later failure rolls
+/// the written files back and unstages them before the error is returned. Returns the
+/// commit helper's stdout (empty when there was nothing to commit).
+pub(super) fn write_row_files_and_commit(
+    app: &AppHandle,
+    repo_path: &Path,
+    commit_message: &str,
+    metadata: CommitMetadata<'_>,
+    writes: &[PreparedRowFileWrite],
+) -> Result<String, String> {
+    crate::git_commit::ensure_local_commit_preconditions(app, repo_path)?;
+
+    let mut written_count = 0usize;
+    let mut failure = None;
+    for write in writes {
+        if let Err(error) = write_text_file(&write.path, &write.updated_text) {
+            failure = Some(error);
+            break;
+        }
+        written_count += 1;
+    }
+
+    let mut commit_output = String::new();
+    if failure.is_none() {
+        let relative_paths = writes
+            .iter()
+            .map(|write| write.relative_path.as_str())
+            .collect::<Vec<_>>();
+        let mut add_args = vec!["add"];
+        add_args.extend(relative_paths.iter().copied());
+        let result = git_output(repo_path, &add_args).and_then(|_| {
+            git_commit_as_signed_in_user_with_metadata(
+                app,
+                repo_path,
+                commit_message,
+                &relative_paths,
+                metadata,
+            )
+        });
+        match result {
+            Ok(output) => commit_output = output,
+            Err(error) => failure = Some(error),
+        }
+    }
+
+    if let Some(error) = failure {
+        for write in writes.iter().take(written_count) {
+            match &write.original_text {
+                Some(text) => {
+                    let _ = fs::write(&write.path, text);
+                }
+                None => {
+                    let _ = fs::remove_file(&write.path);
+                }
+            }
+        }
+        let mut reset_args = vec!["reset", "-q", "--"];
+        reset_args.extend(writes.iter().map(|write| write.relative_path.as_str()));
+        let _ = git_output(repo_path, &reset_args);
+        return Err(error);
+    }
+
+    Ok(commit_output)
+}
+
 pub(super) fn load_editor_rows(rows_path: &Path) -> Result<Vec<StoredRowFile>, String> {
     if !rows_path.exists() {
         return Ok(Vec::new());

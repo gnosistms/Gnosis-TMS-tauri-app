@@ -52,6 +52,20 @@ fn signed_in_git_author(app: &AppHandle) -> Result<SignedInGitAuthor, String> {
     })
 }
 
+/// The write-access snapshot and signed-in-session checks normally run inside the
+/// commit helper — after the caller has already written and staged files. Mutation
+/// commands call this before their first file write so an *expected* gate failure
+/// (degraded installation permissions, signed-out session) cannot strand a dirty
+/// working tree that breaks later pulls. Both checks are local file reads.
+pub(crate) fn ensure_local_commit_preconditions(
+    app: &AppHandle,
+    repo_path: &Path,
+) -> Result<(), String> {
+    ensure_repo_allows_writes(app, repo_path)?;
+    signed_in_git_author(app)?;
+    Ok(())
+}
+
 pub(crate) fn git_commit_as_signed_in_user(
     app: &AppHandle,
     repo_path: &Path,

@@ -391,22 +391,10 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
             &updated_row_file,
             &languages,
         );
-        write_text_file(&row_json_path, &updated_row_text)?;
-        if cfg!(debug_assertions) {
-            eprintln!(
-                "[gtms row-save] git-add:start row='{}' path='{}'",
-                input.row_id, relative_row_json
-            );
-        }
-        git_output(&repo_path, &["add", &relative_row_json])?;
-        if cfg!(debug_assertions) {
-            eprintln!("[gtms row-save] git-commit:start row='{}'", input.row_id);
-        }
-        git_commit_as_signed_in_user_with_metadata(
+        write_row_files_and_commit(
             app,
             &repo_path,
             &format!("Update row {}", input.row_id),
-            &[&relative_row_json],
             CommitMetadata {
                 operation: Some(if input.operation.trim().is_empty() {
                     "editor-update"
@@ -417,6 +405,12 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
                 status_note: None,
                 ai_model: Some(input.ai_model.trim()).filter(|value| !value.is_empty()),
             },
+            &[PreparedRowFileWrite {
+                path: row_json_path.clone(),
+                relative_path: relative_row_json.clone(),
+                original_text: Some(original_row_text.clone()),
+                updated_text: updated_row_text,
+            }],
         )?;
         if cfg!(debug_assertions) {
             eprintln!("[gtms row-save] git-commit:done row='{}'", input.row_id);
@@ -587,7 +581,7 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
     }
 
     let mut changed_row_ids = Vec::new();
-    let mut relative_row_paths = Vec::new();
+    let mut prepared_writes = Vec::new();
 
     for (row_id, batch_row) in rows_by_id {
         let fields = batch_row.fields;
@@ -641,22 +635,19 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
             &updated_row_file,
             &languages,
         );
-        write_text_file(&row_json_path, &updated_row_text)?;
-        relative_row_paths.push(repo_relative_path(&repo_path, &row_json_path)?);
+        prepared_writes.push(PreparedRowFileWrite {
+            relative_path: repo_relative_path(&repo_path, &row_json_path)?,
+            path: row_json_path,
+            original_text: Some(original_row_text),
+            updated_text: updated_row_text,
+        });
         changed_row_ids.push(row_id);
     }
 
     if !changed_row_ids.is_empty() {
-        let mut add_args = vec!["add"];
-        for path in &relative_row_paths {
-            add_args.push(path.as_str());
-        }
-        git_output(&repo_path, &add_args)?;
-
-        let commit_paths: Vec<&str> = relative_row_paths.iter().map(String::as_str).collect();
         let commit_message = input.commit_message.trim();
         let operation = input.operation.trim();
-        let commit_output = git_commit_as_signed_in_user_with_metadata(
+        let commit_output = write_row_files_and_commit(
             app,
             &repo_path,
             if commit_message.is_empty() {
@@ -664,7 +655,6 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
             } else {
                 commit_message
             },
-            &commit_paths,
             CommitMetadata {
                 operation: if operation.is_empty() {
                     None
@@ -675,6 +665,7 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
                 status_note: None,
                 ai_model: None,
             },
+            &prepared_writes,
         )?;
         let commit_sha = if commit_output.is_empty() {
             None
@@ -741,27 +732,29 @@ pub(crate) fn update_gtms_editor_row_field_flag_sync(
             )
         })?;
         let updated_row_text = format!("{updated_row_json}\n");
-        write_text_file(&row_json_path, &updated_row_text)?;
-
         let status_note = status_note_for_field_flag(
             normalize_editor_field_flag_key(&input.flag)?,
             input.enabled,
         );
-        git_output(&repo_path, &["add", &relative_row_json])?;
-        git_commit_as_signed_in_user_with_metadata(
+        write_row_files_and_commit(
             app,
             &repo_path,
             &format!(
                 "Update row {} {} markers",
                 input.row_id, input.language_code
             ),
-            &[&relative_row_json],
             CommitMetadata {
                 operation: Some("field-status"),
                 migration: None,
                 status_note: Some(status_note),
                 ai_model: None,
             },
+            &[PreparedRowFileWrite {
+                path: row_json_path.clone(),
+                relative_path: relative_row_json.clone(),
+                original_text: Some(original_row_text),
+                updated_text: updated_row_text,
+            }],
         )?;
     }
 
@@ -855,14 +848,11 @@ pub(crate) fn apply_gtms_editor_ai_review_result_sync(
     let changed = updated_row_text != original_row_text || reviewed_changed || please_check_changed;
 
     if changed {
-        write_text_file(&row_json_path, &updated_row_text)?;
-        git_output(&repo_path, &["add", &relative_row_json])?;
         let ai_model = input.ai_model.trim();
-        git_commit_as_signed_in_user_with_metadata(
+        write_row_files_and_commit(
             app,
             &repo_path,
             &format!("AI review row {} {}", input.row_id, input.language_code),
-            &[&relative_row_json],
             CommitMetadata {
                 operation: Some("ai-review"),
                 migration: None,
@@ -873,6 +863,12 @@ pub(crate) fn apply_gtms_editor_ai_review_result_sync(
                     Some(ai_model)
                 },
             },
+            &[PreparedRowFileWrite {
+                path: row_json_path.clone(),
+                relative_path: relative_row_json.clone(),
+                original_text: Some(original_row_text.clone()),
+                updated_text: updated_row_text.clone(),
+            }],
         )?;
     }
 
@@ -950,20 +946,22 @@ pub(crate) fn update_gtms_editor_row_text_style_sync(
             )
         })?;
         let updated_row_text = format!("{updated_row_json}\n");
-        write_text_file(&row_json_path, &updated_row_text)?;
-
-        git_output(&repo_path, &["add", &relative_row_json])?;
-        git_commit_as_signed_in_user_with_metadata(
+        write_row_files_and_commit(
             app,
             &repo_path,
             &format!("Update row {} text style", input.row_id),
-            &[&relative_row_json],
             CommitMetadata {
                 operation: Some("text-style"),
                 migration: None,
                 status_note: None,
                 ai_model: None,
             },
+            &[PreparedRowFileWrite {
+                path: row_json_path.clone(),
+                relative_path: relative_row_json.clone(),
+                original_text: Some(original_row_text),
+                updated_text: updated_row_text,
+            }],
         )?;
     }
 
@@ -991,7 +989,7 @@ pub(crate) fn clear_gtms_editor_reviewed_markers_sync(
     let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
     let rows_path = chapter_path.join("rows");
     let mut changed_row_ids = Vec::new();
-    let mut relative_row_paths = Vec::new();
+    let mut prepared_writes = Vec::new();
 
     for stored_row in load_editor_rows(&rows_path)? {
         let row_id = stored_row.row_id.trim().to_string();
@@ -1029,30 +1027,27 @@ pub(crate) fn clear_gtms_editor_reviewed_markers_sync(
             )
         })?;
         let updated_row_text = format!("{updated_row_json}\n");
-        write_text_file(&row_json_path, &updated_row_text)?;
-        relative_row_paths.push(repo_relative_path(&repo_path, &row_json_path)?);
+        prepared_writes.push(PreparedRowFileWrite {
+            relative_path: repo_relative_path(&repo_path, &row_json_path)?,
+            path: row_json_path,
+            original_text: Some(original_row_text),
+            updated_text: updated_row_text,
+        });
         changed_row_ids.push(row_id);
     }
 
     if !changed_row_ids.is_empty() {
-        let mut add_args = vec!["add"];
-        for path in &relative_row_paths {
-            add_args.push(path.as_str());
-        }
-        git_output(&repo_path, &add_args)?;
-
-        let commit_paths: Vec<&str> = relative_row_paths.iter().map(String::as_str).collect();
-        git_commit_as_signed_in_user_with_metadata(
+        write_row_files_and_commit(
             app,
             &repo_path,
             &format!("Mark all {} translations unreviewed", input.language_code),
-            &commit_paths,
             CommitMetadata {
                 operation: Some("field-status"),
                 migration: None,
                 status_note: Some("Marked all unreviewed"),
                 ai_model: None,
             },
+            &prepared_writes,
         )?;
     }
 
