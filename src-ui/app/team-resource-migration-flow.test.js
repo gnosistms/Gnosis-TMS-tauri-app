@@ -356,3 +356,46 @@ test("team resource migration reports incomplete repeated pending work", async (
   );
   assert.equal(state.teamResourceMigrationModal.isOpen, false);
 });
+
+test("team resource migration reuses a caller-provided remote project listing", async () => {
+  setupTeamMigrationTest();
+
+  let pendingScanPayload = null;
+  invokeHandler = async (command, payload = {}) => {
+    if (isLocalMetadataListCommand(command)) {
+      return [];
+    }
+    if (command === "list_gnosis_projects_for_installation") {
+      throw new Error("Should reuse the caller-provided listing instead of refetching");
+    }
+    if (command === "list_gnosis_glossaries_for_installation") {
+      return [];
+    }
+    if (command === "list_gnosis_qa_lists_for_installation") {
+      return [];
+    }
+    if (command === "list_pending_team_repo_layout_migrations") {
+      pendingScanPayload = payload.input;
+      return {
+        targetVersion: "0.8.10",
+        migrations: [],
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const migrated = await runTeamResourceMigrationSync(() => {}, state.teams[0], {
+    remoteProjects: [{
+      projectId: "project-live",
+      name: "project-live",
+      fullName: "team/project-live",
+      lifecycleState: "active",
+      recordState: "live",
+    }],
+  });
+
+  assert.equal(migrated, false);
+  assert.deepEqual(pendingScanPayload.projects.map((project) => project.repoName), [
+    "project-live",
+  ]);
+});
