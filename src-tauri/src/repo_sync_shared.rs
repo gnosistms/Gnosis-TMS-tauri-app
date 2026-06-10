@@ -9,7 +9,7 @@ use std::{
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 #[cfg(any(windows, target_os = "macos"))]
 use std::env;
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 use std::os::unix::fs::PermissionsExt;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;

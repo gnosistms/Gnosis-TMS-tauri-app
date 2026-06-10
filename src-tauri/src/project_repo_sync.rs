@@ -2113,7 +2113,14 @@ mod tests {
         let local_path = parent.join("local");
         fs::create_dir_all(&parent).expect("create temp parent");
 
-        run_git(&parent, &["init", "--bare", "remote.git"]);
+        // --initial-branch matters on the bare remote: the local repo below is created
+        // by cloning it, and a clone of a main-only remote whose HEAD points at the
+        // host git's default branch (master on stock git, main on Apple Git) checks
+        // out nothing.
+        run_git(
+            &parent,
+            &["init", "--bare", "--initial-branch", "main", "remote.git"],
+        );
         fs::create_dir_all(&seed_path).expect("create seed repo");
         run_git(&seed_path, &["init", "--initial-branch", "main"]);
         run_git(&seed_path, &["config", "user.email", "test@example.com"]);
@@ -2171,7 +2178,10 @@ mod tests {
         let local_path = parent.join("local");
         fs::create_dir_all(&parent).expect("create temp parent");
 
-        run_git(&parent, &["init", "--bare", "remote.git"]);
+        run_git(
+            &parent,
+            &["init", "--bare", "--initial-branch", "main", "remote.git"],
+        );
         fs::create_dir_all(&seed_path).expect("create seed repo");
         run_git(&seed_path, &["init", "--initial-branch", "main"]);
         run_git(&seed_path, &["config", "user.email", "test@example.com"]);

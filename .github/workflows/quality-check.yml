@@ -1,18 +1,11 @@
 # Gnosis TMS — Quality Check
 #
-# DISABLED: This workflow lives in workflows-disabled/ and will not fire.
-# To enable: move this file to .github/workflows/ and open a PR for review.
-#
 # Fires on:
 #   - Push to main
 #   - Pull requests marked Ready for Review (drafts are skipped)
 #
 # Mirrors scripts/local-ci.sh. All check steps invoke the npm scripts in
 # package.json so the commands stay in sync with what runs locally.
-#
-# Pre-existing known failure (skipped in both local-ci.sh and here):
-#   project_repo_sync::tests::recover_project_rebase_without_unmerged_files_...
-#   Root cause: test helper calls `git commit -am` on an untracked file.
 
 name: Quality Check
 
@@ -91,10 +84,7 @@ jobs:
         run: npm run lint:rust:strict
 
       - name: Run tests
-        # One pre-existing failure is skipped; see workflow header comment.
-        run: |
-          npm run test:rust -- -- \
-            --skip recover_project_rebase_without_unmerged_files_resets_visible_branch_and_keeps_backup
+        run: npm run test:rust
 
   # ── JavaScript: lint + test ──────────────────────────────────────────
 
