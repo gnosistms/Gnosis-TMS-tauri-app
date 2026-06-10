@@ -217,9 +217,49 @@ pub(super) fn pull_local_metadata_repo(
         &["pull", "--ff-only", "origin", &branch_name],
         Some(&git_transport_auth),
     );
-    pull_result
-        .map(|_| ())
-        .map_err(|error| abort_rebase_after_failed_pull(repo_path, error))
+    match pull_result {
+        Ok(_) => Ok(()),
+        Err(error) if git_error_indicates_diverged(&error) => {
+            rebase_diverged_metadata_repo(repo_path, &branch_name, error)
+        }
+        Err(error) => Err(abort_rebase_after_failed_pull(repo_path, error)),
+    }
+}
+
+/// The metadata repo is multi-writer (every manager on the team), so a teammate pushing
+/// in the window between our pull and push leaves this clone diverged — and a
+/// `--ff-only` pull can never recover from that on its own. Records live one file per
+/// resource, so concurrent edits to *different* resources rebase cleanly; only
+/// same-record edits conflict, and then we abort and surface a distinct error.
+fn rebase_diverged_metadata_repo(
+    repo_path: &Path,
+    branch_name: &str,
+    pull_error: String,
+) -> Result<(), String> {
+    // The failed `pull --ff-only` already fetched, so origin/<branch> is current and
+    // the rebase needs no network access.
+    match git_output(
+        repo_path,
+        &["rebase", &format!("origin/{branch_name}")],
+        None,
+    ) {
+        Ok(_) => Ok(()),
+        Err(rebase_error) => Err(abort_rebase_after_failed_pull(
+            repo_path,
+            format!(
+                "The local team-metadata repo has diverged from GitHub and could not be \
+                 rebased automatically: {rebase_error} (fast-forward pull failed first: \
+                 {pull_error})"
+            ),
+        )),
+    }
+}
+
+fn git_error_indicates_diverged(error: &str) -> bool {
+    let normalized = error.trim().to_ascii_lowercase();
+    normalized.contains("not possible to fast-forward")
+        || normalized.contains("diverging branches")
+        || normalized.contains("have diverged")
 }
 
 fn current_branch_name(repo_path: &Path) -> String {
@@ -266,6 +306,22 @@ mod tests {
                 .join("0196a7e2-aa11-7def-8000-1234abcd5678.json")
         );
         assert!(resource_record_path(repo, "glossary", "Glossary_1.v2").is_ok());
+    }
+
+    #[test]
+    fn diverged_pull_errors_are_classified() {
+        assert!(git_error_indicates_diverged(
+            "fatal: Not possible to fast-forward, aborting."
+        ));
+        assert!(git_error_indicates_diverged(
+            "hint: Diverging branches can't be fast-forwarded, you need to either:"
+        ));
+        assert!(!git_error_indicates_diverged(
+            "fatal: unable to access 'https://github.com/org/team-metadata.git/': Could not resolve host"
+        ));
+        assert!(!git_error_indicates_diverged(
+            "fatal: couldn't find remote ref main"
+        ));
     }
 
     #[test]
