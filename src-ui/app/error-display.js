@@ -1,7 +1,12 @@
 export function formatErrorForDisplay(value) {
-  const message = String(value ?? "").trim();
+  let message = String(value ?? "").trim();
   if (!message) {
     return "";
+  }
+
+  // Internal routing prefix — the text after it is the user-facing part.
+  if (message.startsWith("AUTH_REQUIRED:")) {
+    message = message.slice("AUTH_REQUIRED:".length).trim();
   }
 
   const githubMatch = message.match(/^GitHub API\s+(\d+):\s*([\s\S]+)$/);

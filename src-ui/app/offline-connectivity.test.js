@@ -204,7 +204,11 @@ test("restoreStoredBrokerSession keeps the saved login when session inspection e
   assert.equal(loadedTeams, true);
 });
 
-test("handleSyncFailure preserves the local session on auth failures", async () => {
+test("handleSyncFailure routes rejected sessions to the sign-in screen", async () => {
+  // Policy (Hans, 2026-06-10): auth_invalid means the automatic refresh already ran
+  // and was REJECTED (connectivity-failed refreshes rethrow as connection errors and
+  // never reach this classification), so the cached credentials are dead — go to the
+  // sign-in screen instead of staying on a silently degraded page.
   state.screen = "projects";
   state.auth = {
     status: "success",
@@ -229,11 +233,8 @@ test("handleSyncFailure preserves the local session on auth failures", async () 
   );
 
   assert.equal(handled, true);
-  assert.equal(state.screen, "projects");
-  assert.deepEqual(state.auth.session, {
-    sessionToken: "session-1",
-    login: "hans",
-  });
+  assert.equal(state.screen, "start");
+  assert.equal(state.auth.session, null);
   assert.equal(state.auth.status, "expired");
   assert.equal(renderCount, 1);
 });

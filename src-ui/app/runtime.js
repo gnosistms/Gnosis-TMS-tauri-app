@@ -1,4 +1,5 @@
 import { state } from "./state.js";
+import { classifySyncError } from "./sync-error.js";
 import { readDevRuntimeFlags } from "./dev-runtime-flags.js";
 import { reportCommandFailure } from "./telemetry.js";
 
@@ -78,8 +79,23 @@ export const invoke = rawInvoke
         }
 
         const currentSessionToken = extractBrokerSessionToken(payload);
-        const refreshedSession = await refreshBrokerSession(currentSessionToken).catch(() => null);
+        let refreshedSession = null;
+        let refreshFailure = null;
+        try {
+          refreshedSession = await refreshBrokerSession(currentSessionToken);
+        } catch (error) {
+          refreshFailure = error;
+        }
         if (!refreshedSession?.sessionToken) {
+          // A refresh that failed because the broker was unreachable is a connectivity
+          // problem, not an auth rejection — rethrow the original error so it is
+          // handled as such instead of bouncing the user to the login page.
+          if (
+            refreshFailure
+            && classifySyncError(refreshFailure).type === "connection_unavailable"
+          ) {
+            throw error;
+          }
           throw new Error("AUTH_REQUIRED:Your GitHub session expired. Please log in with GitHub again to continue.");
         }
 
