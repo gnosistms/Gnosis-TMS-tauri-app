@@ -53,12 +53,7 @@ run "cargo fmt --check"   npm run format:rust:check
 run "cargo clippy"        npm run lint:rust:strict
 
 if [ "$FAST" = false ]; then
-  # One pre-existing test failure is skipped (not caused by this branch):
-  #   project_repo_sync::tests::recover_project_rebase_without_unmerged_files_resets_visible_branch_and_keeps_backup
-  # Root cause: test helper calls `git commit -am` on an untracked file;
-  # -a only auto-stages tracked modifications, not new files.
-  run "cargo test" npm run test:rust -- -- \
-    --skip recover_project_rebase_without_unmerged_files_resets_visible_branch_and_keeps_backup
+  run "cargo test" npm run test:rust
 fi
 
 printf "\n"; bold "[JavaScript]"
