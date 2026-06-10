@@ -61,50 +61,126 @@ fn persist_chapter_source_word_count(
     chapter_json_path: &Path,
     source_word_count: usize,
 ) -> Result<(), String> {
-    // This runs from a read path (editor load), so it must not be able to leave the repo dirty:
-    // the commit helper commits everything staged (no pathspec), and a leftover modified/staged
-    // chapter.json would be swept into the next unrelated commit or break a later pull. Check the
-    // commit preconditions before touching the file, and roll back if the commit still fails.
+    persist_chapter_source_word_counts_batch(
+        app,
+        repo_path,
+        &[(chapter_json_path.to_path_buf(), source_word_count)],
+        "Update cached source word count",
+    )
+}
+
+/// TEMPORARY bulk backfill (see plans/bulk-backfill-source-word-count-plan.md; remove
+/// around 2026-06-23): persist the source word counts the projects-page fallback already
+/// computed from rows, so teams with many files do not have to open every chapter in the
+/// editor to warm the cache. One commit per project. Best-effort like the editor-load
+/// refresh: a viewer without write access is a clean no-op.
+pub(super) fn backfill_chapter_source_word_counts(
+    app: &AppHandle,
+    repo_path: &Path,
+    entries: &[(PathBuf, usize)],
+) {
+    if entries.is_empty() {
+        return;
+    }
+    if let Err(error) = persist_chapter_source_word_counts_batch(
+        app,
+        repo_path,
+        entries,
+        "Backfill cached source word counts",
+    ) {
+        if cfg!(debug_assertions) {
+            eprintln!("[gtms word-count cache] skipped bulk backfill: {error}");
+        }
+    }
+}
+
+fn persist_chapter_source_word_counts_batch(
+    app: &AppHandle,
+    repo_path: &Path,
+    entries: &[(PathBuf, usize)],
+    commit_message: &str,
+) -> Result<(), String> {
+    // This runs from read paths (editor load, projects-page listing), so it must not be able
+    // to leave the repo dirty: the commit helper commits everything staged (no pathspec), and
+    // a leftover modified/staged chapter.json would be swept into the next unrelated commit
+    // or break a later pull. Check the commit preconditions before touching any file, prepare
+    // every update before writing the first one, and roll back everything if a later step fails.
     crate::installation_access::ensure_repo_allows_writes(app, repo_path)?;
 
-    let original_text = fs::read_to_string(chapter_json_path)
-        .map_err(|error| format!("Could not read chapter.json: {error}"))?;
-    // Edit as a Value so unknown chapter.json keys round-trip untouched.
-    let mut value: serde_json::Value = serde_json::from_str(&original_text)
-        .map_err(|error| format!("Could not parse chapter.json: {error}"))?;
-    let object = value
-        .as_object_mut()
-        .ok_or_else(|| "chapter.json is not a JSON object".to_string())?;
-    object.insert(
-        "source_word_count".to_string(),
-        serde_json::json!(source_word_count),
-    );
-    write_json_pretty(chapter_json_path, &value)?;
+    struct PreparedUpdate {
+        chapter_json_path: PathBuf,
+        original_text: String,
+        updated_value: serde_json::Value,
+        relative_path: String,
+    }
 
-    let relative_chapter_json = repo_relative_path(repo_path, chapter_json_path)?;
-    let commit_result = git_output(repo_path, &["add", &relative_chapter_json]).and_then(|_| {
+    let mut updates = Vec::with_capacity(entries.len());
+    for (chapter_json_path, source_word_count) in entries {
+        let original_text = fs::read_to_string(chapter_json_path)
+            .map_err(|error| format!("Could not read chapter.json: {error}"))?;
+        // Edit as a Value so unknown chapter.json keys round-trip untouched.
+        let mut value: serde_json::Value = serde_json::from_str(&original_text)
+            .map_err(|error| format!("Could not parse chapter.json: {error}"))?;
+        let object = value
+            .as_object_mut()
+            .ok_or_else(|| "chapter.json is not a JSON object".to_string())?;
+        object.insert(
+            "source_word_count".to_string(),
+            serde_json::json!(source_word_count),
+        );
+        updates.push(PreparedUpdate {
+            chapter_json_path: chapter_json_path.clone(),
+            original_text,
+            updated_value: value,
+            relative_path: repo_relative_path(repo_path, chapter_json_path)?,
+        });
+    }
+
+    let mut written_count = 0usize;
+    let mut write_and_commit = || -> Result<(), String> {
+        for update in &updates {
+            write_json_pretty(&update.chapter_json_path, &update.updated_value)?;
+            written_count += 1;
+        }
+        let relative_paths = updates
+            .iter()
+            .map(|update| update.relative_path.as_str())
+            .collect::<Vec<_>>();
+        let mut add_args = vec!["add"];
+        add_args.extend(relative_paths.iter().copied());
+        git_output(repo_path, &add_args)?;
         crate::git_commit::git_commit_as_signed_in_user(
             app,
             repo_path,
-            "Update cached source word count",
-            &[&relative_chapter_json],
-        )
-        .map(|_| ())
-    });
-    if let Err(error) = commit_result {
-        let _ = fs::write(chapter_json_path, &original_text);
-        let _ = git_output(repo_path, &["reset", "-q", "--", &relative_chapter_json]);
+            commit_message,
+            &relative_paths,
+        )?;
+        Ok(())
+    };
+    if let Err(error) = write_and_commit() {
+        for update in updates.iter().take(written_count) {
+            let _ = fs::write(&update.chapter_json_path, &update.original_text);
+        }
+        let mut reset_args = vec!["reset", "-q", "--"];
+        reset_args.extend(updates.iter().map(|update| update.relative_path.as_str()));
+        let _ = git_output(repo_path, &reset_args);
         return Err(error);
     }
     Ok(())
 }
 
+/// Returns the chapter summaries plus, TEMPORARILY (see
+/// plans/bulk-backfill-source-word-count-plan.md; remove around 2026-06-23), the
+/// `(chapter.json path, source count)` pairs for chapters that had no cached
+/// `source_word_count` — the caller persists them so the row-read fallback runs once
+/// per chapter instead of on every refresh.
 pub(super) fn load_project_chapter_summaries(
     repo_path: &Path,
-) -> Result<Vec<ProjectChapterSummary>, String> {
+) -> Result<(Vec<ProjectChapterSummary>, Vec<(PathBuf, usize)>), String> {
+    let mut source_word_count_backfill = Vec::new();
     let chapters_root = repo_path.join("chapters");
     if !chapters_root.exists() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), source_word_count_backfill));
     }
 
     let entries = fs::read_dir(&chapters_root).map_err(|error| {
@@ -146,7 +222,16 @@ pub(super) fn load_project_chapter_summaries(
             },
             None => {
                 let rows = load_editor_rows(&path.join("rows"))?;
-                build_word_counts_from_stored_rows(&rows, &languages)
+                let computed = build_word_counts_from_stored_rows(&rows, &languages);
+                source_word_count_backfill.push((
+                    chapter_json_path.clone(),
+                    selected_source_language_code
+                        .as_deref()
+                        .and_then(|code| computed.get(code))
+                        .copied()
+                        .unwrap_or(0),
+                ));
+                computed
             }
         };
         let selected_target_language_code = preferred_target_language_code(
@@ -182,7 +267,7 @@ pub(super) fn load_project_chapter_summaries(
         });
     }
 
-    Ok(chapters)
+    Ok((chapters, source_word_count_backfill))
 }
 
 pub(super) fn ensure_editor_field_object_defaults(

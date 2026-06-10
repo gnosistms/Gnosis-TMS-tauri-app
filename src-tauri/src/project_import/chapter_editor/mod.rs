@@ -97,7 +97,8 @@ pub(crate) use self::row_structure::{
     update_gtms_editor_row_lifecycle_sync,
 };
 use self::shared::{
-    apply_word_count_delta, build_word_counts_from_stored_rows,
+    apply_word_count_delta, backfill_chapter_source_word_counts,
+    build_word_counts_from_stored_rows,
     clear_editor_html_preview_cache, current_repo_head_sha, editor_row_from_stored_row_file,
     editor_row_from_stored_row_file_with_update, ensure_editor_field_object_defaults,
     load_editor_rows, load_project_chapter_summaries, load_word_counts,
@@ -1090,7 +1091,13 @@ pub(super) fn list_local_gtms_project_files_sync(
         .unwrap_or_else(|| repo_root.join(&project.repo_name));
         let chapters =
             if repo_path.exists() && git_output(&repo_path, &["rev-parse", "--git-dir"]).is_ok() {
-                load_project_chapter_summaries(&repo_path)?
+                let (chapters, source_word_count_backfill) =
+                    load_project_chapter_summaries(&repo_path)?;
+                // TEMP bulk backfill (see plans/bulk-backfill-source-word-count-plan.md;
+                // remove around 2026-06-23): persist the counts the fallback just computed
+                // so chapters never opened in the editor still warm the cache.
+                backfill_chapter_source_word_counts(app, &repo_path, &source_word_count_backfill);
+                chapters
             } else {
                 Vec::new()
             };
