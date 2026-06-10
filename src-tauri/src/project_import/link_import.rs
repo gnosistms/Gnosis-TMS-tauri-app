@@ -1,3 +1,4 @@
+use std::io::Read as _;
 use std::time::Duration;
 
 use base64::{engine::general_purpose, Engine as _};
@@ -9,7 +10,7 @@ use reqwest::{
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::constants::ensure_within_import_size_limit;
+use crate::constants::{ensure_within_import_size_limit, MAX_IMPORT_FILE_BYTES};
 
 const ACCESS_DENIED_PREFIX: &str = "PROJECT_IMPORT_LINK_ACCESS_DENIED:";
 const INVALID_LINK_PREFIX: &str = "PROJECT_IMPORT_LINK_INVALID:";
@@ -94,10 +95,13 @@ fn resolve_google_export(
         .and_then(content_disposition_file_name)
         .map(|value| ensure_extension(&value, file_type))
         .unwrap_or_else(|| fallback_file_name.to_string());
-    let bytes = response
-        .bytes()
+    // Read at most one byte past the import limit so a huge (or endless) response is
+    // rejected without buffering it all into memory; the size check below still fires.
+    let mut data = Vec::new();
+    response
+        .take(MAX_IMPORT_FILE_BYTES + 1)
+        .read_to_end(&mut data)
         .map_err(|error| invalid_link(&format!("Could not read the Google file: {error}")))?;
-    let data = bytes.to_vec();
 
     if google_response_is_access_denied(status, &final_url, &content_type, &data) {
         return Err(access_denied());
@@ -141,10 +145,13 @@ fn resolve_html_link(url: &Url) -> Result<ResolveProjectImportLinkResponse, Stri
         .and_then(|value| value.to_str().ok())
         .unwrap_or("")
         .to_string();
-    let bytes = response
-        .bytes()
+    // Read at most one byte past the import limit so a huge (or endless) response is
+    // rejected without buffering it all into memory; the size check below still fires.
+    let mut data = Vec::new();
+    response
+        .take(MAX_IMPORT_FILE_BYTES + 1)
+        .read_to_end(&mut data)
         .map_err(|error| invalid_link(&format!("Could not read the website: {error}")))?;
-    let data = bytes.to_vec();
 
     if !status.is_success() {
         return Err(invalid_link(&format!(
