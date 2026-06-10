@@ -2,7 +2,7 @@
 <!-- vt.idd:local-review:batch-10b -->
 
 **Date**: 2026-06-10
-**Status**: Review complete. Findings not yet resolved.
+**Status**: Complete. All four findings resolved on `fix/batch-10b-review-findings`.
 **Scope**: semantic conflict resolution for editor rows and chapter metadata
 (`git_conflicts.rs`), and the editor's git-history surface — field history, history
 restore, batch-replace undo, and row version metadata (`history.rs`).
@@ -219,10 +219,10 @@ and a plausible coincidence during active review.
 
 | Finding | Status | Notes |
 |---|---|---|
-| S1 | Open | |
-| M1 | Open | |
-| m1 | Open | |
-| m2 | Open | |
+| S1 | Resolved | Both history sites route through `validated_row_json_path` (fix A). |
+| M1 | Resolved | Batch-replace undo prepares all restored rows, then flows through `write_row_files_and_commit` — gates preflighted, full rollback on failure (fix A). |
+| m1 | Resolved | `validated_commit_sha` (7–64 hex chars) runs at the top of `restore_*` and `reverse_*` before any git call; unit tests pin accepted/rejected forms (fix A). |
+| m2 | Resolved | Implemented fix A (proper merge) rather than the interim B: comments merge as a slice — remote order kept, local deletions honored, local-only additions appended, remote wins on edits, revision = max + bump when both sides changed. Three regression tests added. |
 
 ---
 

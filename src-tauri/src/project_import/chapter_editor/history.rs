@@ -5,6 +5,20 @@ use super::images::{
 };
 use super::*;
 
+/// Commit shas come straight from IPC input and are spliced into git revision
+/// arguments (`show`, `rev-parse`, `log <sha>..HEAD`). Require a plain hex object id
+/// so a `-`-leading or otherwise crafted value can never be parsed as a git option.
+fn validated_commit_sha(commit_sha: &str) -> Result<String, String> {
+    let normalized = commit_sha.trim();
+    if normalized.len() < 7
+        || normalized.len() > 64
+        || !normalized.chars().all(|value| value.is_ascii_hexdigit())
+    {
+        return Err("The selected history commit id is not valid.".to_string());
+    }
+    Ok(normalized.to_string())
+}
+
 pub(crate) fn load_gtms_editor_field_history_sync(
     app: &AppHandle,
     input: LoadEditorFieldHistoryInput,
@@ -19,9 +33,7 @@ pub(crate) fn load_gtms_editor_field_history_sync(
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
     let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
-    let row_json_path = chapter_path
-        .join("rows")
-        .join(format!("{}.json", input.row_id));
+    let row_json_path = validated_row_json_path(&chapter_path, &input.row_id)?;
     if !row_json_path.exists() {
         return Err(format!(
             "Could not find row '{}' in the local project repo.",
@@ -59,12 +71,11 @@ pub(crate) fn restore_gtms_editor_field_from_history_sync(
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
+    let commit_sha = validated_commit_sha(&input.commit_sha)?;
     let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
     let chapter_file: StoredChapterFile =
         read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
-    let row_json_path = chapter_path
-        .join("rows")
-        .join(format!("{}.json", input.row_id));
+    let row_json_path = validated_row_json_path(&chapter_path, &input.row_id)?;
     if !row_json_path.exists() {
         return Err(format!(
             "Could not find row '{}' in the local project repo.",
@@ -76,7 +87,7 @@ pub(crate) fn restore_gtms_editor_field_from_history_sync(
     let historical_field_value = load_historical_row_field_value(
         &repo_path,
         &relative_row_json,
-        &input.commit_sha,
+        &commit_sha,
         &input.language_code,
     )?
     .ok_or_else(|| {
@@ -194,8 +205,7 @@ pub(crate) fn restore_gtms_editor_field_from_history_sync(
     push_repo_file_snapshot(&mut rollback_snapshots, &repo_path, &relative_row_json)?;
 
     if let Some(relative_path) = historical_uploaded_path.as_deref() {
-        let historical_bytes =
-            load_historical_blob_bytes(&repo_path, &input.commit_sha, relative_path)?;
+        let historical_bytes = load_historical_blob_bytes(&repo_path, &commit_sha, relative_path)?;
         let absolute_path = repo_path.join(relative_path);
         if !file_bytes_equal(&absolute_path, &historical_bytes) {
             push_repo_file_snapshot(&mut rollback_snapshots, &repo_path, relative_path)?;
@@ -230,7 +240,7 @@ pub(crate) fn restore_gtms_editor_field_from_history_sync(
             &updated_row_file,
             &languages,
         );
-        let short_commit = short_commit_sha(&input.commit_sha);
+        let short_commit = short_commit_sha(&commit_sha);
         with_repo_file_rollback(&repo_path, &rollback_snapshots, || {
             if let Some((relative_path, historical_bytes)) = historical_asset_update.as_ref() {
                 let absolute_path = repo_path.join(relative_path);
@@ -316,25 +326,24 @@ pub(crate) fn reverse_gtms_editor_batch_replace_commit_sync(
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
+    let commit_sha = validated_commit_sha(&input.commit_sha)?;
     let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
     let chapter_file: StoredChapterFile =
         read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
     let languages = sanitize_chapter_languages(&chapter_file.languages);
-    let selected_operation = load_git_commit_operation_type(&repo_path, &input.commit_sha)?;
+    let selected_operation = load_git_commit_operation_type(&repo_path, &commit_sha)?;
     if selected_operation.as_deref() != Some("editor-replace") {
         return Err("Only batch replace commits can be undone from history.".to_string());
     }
 
-    let parent_commit_sha = git_output(
-        &repo_path,
-        &["rev-parse", &format!("{}^", input.commit_sha)],
-    )
-    .map_err(|_| {
-        "The selected batch replace commit does not have a previous version to restore.".to_string()
-    })?;
+    let parent_commit_sha = git_output(&repo_path, &["rev-parse", &format!("{commit_sha}^")])
+        .map_err(|_| {
+            "The selected batch replace commit does not have a previous version to restore."
+                .to_string()
+        })?;
     let relative_chapter_path = repo_relative_path(&repo_path, &chapter_path)?;
     let relative_row_paths =
-        load_commit_row_paths_for_chapter(&repo_path, &input.commit_sha, &relative_chapter_path)?;
+        load_commit_row_paths_for_chapter(&repo_path, &commit_sha, &relative_chapter_path)?;
     if relative_row_paths.is_empty() {
         return Err(
             "The selected batch replace commit does not contain any rows in this file.".to_string(),
@@ -343,7 +352,7 @@ pub(crate) fn reverse_gtms_editor_batch_replace_commit_sync(
 
     let mut updated_rows = Vec::new();
     let mut skipped_row_ids = Vec::new();
-    let mut relative_paths_to_add = Vec::new();
+    let mut prepared_writes = Vec::new();
 
     for relative_row_path in relative_row_paths {
         let row_id = row_id_from_relative_row_path(&relative_row_path).ok_or_else(|| {
@@ -352,7 +361,7 @@ pub(crate) fn reverse_gtms_editor_batch_replace_commit_sync(
                 relative_row_path
             )
         })?;
-        if commit_has_later_changes_for_path(&repo_path, &input.commit_sha, &relative_row_path)? {
+        if commit_has_later_changes_for_path(&repo_path, &commit_sha, &relative_row_path)? {
             skipped_row_ids.push(row_id);
             continue;
         }
@@ -386,8 +395,12 @@ pub(crate) fn reverse_gtms_editor_batch_replace_commit_sync(
                     row_id
                 )
             })?;
-        write_text_file(&row_json_path, &normalized_restored_row_text)?;
-        relative_paths_to_add.push(relative_row_path);
+        prepared_writes.push(PreparedRowFileWrite {
+            path: row_json_path,
+            relative_path: relative_row_path,
+            original_text: Some(current_row_text),
+            updated_text: normalized_restored_row_text,
+        });
         updated_rows.push(UpdateEditorRowFieldsBatchRowInput {
             row_id,
             fields: row_plain_text_fields(&restored_row_file),
@@ -407,17 +420,7 @@ pub(crate) fn reverse_gtms_editor_batch_replace_commit_sync(
         });
     }
 
-    let rows = load_editor_rows(&chapter_path.join("rows"))?;
-    let word_counts = build_word_counts_from_stored_rows(&rows, &languages);
-
-    let mut add_args = vec!["add"];
-    for path in &relative_paths_to_add {
-        add_args.push(path.as_str());
-    }
-    git_output(&repo_path, &add_args)?;
-
-    let commit_paths: Vec<&str> = relative_paths_to_add.iter().map(String::as_str).collect();
-    let commit_output = git_commit_as_signed_in_user_with_metadata(
+    let commit_output = write_row_files_and_commit(
         app,
         &repo_path,
         &format!(
@@ -429,14 +432,16 @@ pub(crate) fn reverse_gtms_editor_batch_replace_commit_sync(
                 "rows"
             }
         ),
-        &commit_paths,
         CommitMetadata {
             operation: Some("editor-replace"),
             migration: None,
             status_note: None,
             ai_model: None,
         },
+        &prepared_writes,
     )?;
+    let rows = load_editor_rows(&chapter_path.join("rows"))?;
+    let word_counts = build_word_counts_from_stored_rows(&rows, &languages);
     let commit_sha = if commit_output.is_empty() {
         None
     } else {
@@ -1046,6 +1051,38 @@ mod tests {
         HistoricalFieldVersion {
             field_value: history_field(plain_text, reviewed, please_check),
             text_style: text_style.to_string(),
+        }
+    }
+
+    #[test]
+    fn validated_commit_sha_accepts_short_and_full_hex_ids_and_trims() {
+        assert_eq!(
+            validated_commit_sha(" 8aadf21d ").as_deref(),
+            Ok("8aadf21d")
+        );
+        assert!(validated_commit_sha("8aadf21").is_ok());
+        assert!(validated_commit_sha(
+            "8aadf21d8aadf21d8aadf21d8aadf21d8aadf21d8aadf21d8aadf21d8aadf21d"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn validated_commit_sha_rejects_option_looking_and_non_hex_values() {
+        for invalid in [
+            "",
+            "8aadf2",
+            "--output=/tmp/x",
+            "-S8aadf21d",
+            "HEAD",
+            "main..HEAD",
+            "8aadf21z",
+            "8aadf21d8aadf21d8aadf21d8aadf21d8aadf21d8aadf21d8aadf21d8aadf21d0",
+        ] {
+            assert!(
+                validated_commit_sha(invalid).is_err(),
+                "'{invalid}' should be rejected"
+            );
         }
     }
 
