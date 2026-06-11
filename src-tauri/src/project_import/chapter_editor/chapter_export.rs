@@ -1027,6 +1027,17 @@ fn read_local_docx_image(path: &Path) -> Option<DocxImage> {
 }
 
 fn download_docx_image(url: &str) -> Option<DocxImage> {
+    let data = download_public_image_bytes(url)?;
+    let (extension, width_px, height_px) = docx_image_info(&data)?;
+    Some(DocxImage {
+        data,
+        extension,
+        width_px,
+        height_px,
+    })
+}
+
+fn download_public_image_bytes(url: &str) -> Option<Vec<u8>> {
     // Image URLs are row content that can arrive over git from other team members, so an
     // export must not let one of them point this fetch at the exporting machine's own
     // network. Reject non-public hosts, refuse redirects (a public URL could otherwise 302
@@ -1051,21 +1062,60 @@ fn download_docx_image(url: &str) -> Option<DocxImage> {
     if data.len() as u64 > MAX_EXPORT_IMAGE_BYTES {
         return None;
     }
-    let (extension, width_px, height_px) = docx_image_info(&data)?;
-    Some(DocxImage {
-        data,
-        extension,
-        width_px,
-        height_px,
-    })
+    Some(data)
 }
 
 /// Fetches a remote image (with the same public-host validation, redirect
 /// refusal, and size cap as the DOCX export) and returns its natural pixel
-/// dimensions. `None` for unreachable, non-public, oversized, or unsupported
-/// images.
+/// dimensions. Unlike the DOCX embed path this also understands WebP, which
+/// only needs measuring, never embedding. `None` for unreachable, non-public,
+/// oversized, or unsupported images.
 pub(crate) fn fetch_public_image_dimensions(url: &str) -> Option<(u32, u32)> {
-    download_docx_image(url).map(|image| (image.width_px, image.height_px))
+    let data = download_public_image_bytes(url)?;
+    if let Some((_, width_px, height_px)) = docx_image_info(&data) {
+        return Some((width_px, height_px));
+    }
+    webp_dimensions(&data)
+}
+
+/// WebP canvas dimensions for the three container layouts: lossy (VP8),
+/// lossless (VP8L), and extended (VP8X).
+fn webp_dimensions(data: &[u8]) -> Option<(u32, u32)> {
+    if data.len() < 30 || &data[0..4] != b"RIFF" || &data[8..12] != b"WEBP" {
+        return None;
+    }
+
+    match &data[12..16] {
+        b"VP8 " => {
+            // Lossy frame header: 3-byte frame tag, then the 9d 01 2a start
+            // code, then 14-bit little-endian width and height.
+            if data.get(23..26)? != [0x9d, 0x01, 0x2a] {
+                return None;
+            }
+            let width = u16::from_le_bytes(data.get(26..28)?.try_into().ok()?) as u32 & 0x3fff;
+            let height = u16::from_le_bytes(data.get(28..30)?.try_into().ok()?) as u32 & 0x3fff;
+            nonzero_dimensions(width, height)
+        }
+        b"VP8L" => {
+            // Lossless: signature byte 0x2f, then width-1 and height-1 as
+            // consecutive 14-bit little-endian fields.
+            if *data.get(20)? != 0x2f {
+                return None;
+            }
+            let bits = u32::from_le_bytes(data.get(21..25)?.try_into().ok()?);
+            let width = (bits & 0x3fff) + 1;
+            let height = ((bits >> 14) & 0x3fff) + 1;
+            nonzero_dimensions(width, height)
+        }
+        b"VP8X" => {
+            // Extended: 4 bytes of flags/reserved, then canvas width-1 and
+            // height-1 as 24-bit little-endian values.
+            let width = u32::from_le_bytes([data[24], data[25], data[26], 0]) + 1;
+            let height = u32::from_le_bytes([data[27], data[28], data[29], 0]) + 1;
+            nonzero_dimensions(width, height)
+        }
+        _ => None,
+    }
 }
 
 struct ValidatedExportImageRequest {
@@ -1509,6 +1559,38 @@ mod tests {
     use super::*;
     use std::io::Read;
     use zip::ZipArchive;
+
+    #[test]
+    fn webp_dimensions_reads_all_three_container_layouts() {
+        // Lossy VP8: frame tag, 9d 01 2a start code, 14-bit LE width/height.
+        let mut lossy = Vec::new();
+        lossy.extend_from_slice(b"RIFF\x00\x00\x00\x00WEBPVP8 \x00\x00\x00\x00");
+        lossy.extend_from_slice(&[0, 0, 0]); // frame tag
+        lossy.extend_from_slice(&[0x9d, 0x01, 0x2a]);
+        lossy.extend_from_slice(&800u16.to_le_bytes());
+        lossy.extend_from_slice(&1200u16.to_le_bytes());
+        assert_eq!(webp_dimensions(&lossy), Some((800, 1200)));
+
+        // Lossless VP8L: 0x2f signature, then width-1 / height-1 in 14-bit fields.
+        let mut lossless = Vec::new();
+        lossless.extend_from_slice(b"RIFF\x00\x00\x00\x00WEBPVP8L\x00\x00\x00\x00");
+        lossless.push(0x2f);
+        let bits: u32 = (799) | ((1199) << 14);
+        lossless.extend_from_slice(&bits.to_le_bytes());
+        lossless.extend_from_slice(&[0; 8]);
+        assert_eq!(webp_dimensions(&lossless), Some((800, 1200)));
+
+        // Extended VP8X: 4 bytes flags/reserved, then 24-bit LE canvas-1 values.
+        let mut extended = Vec::new();
+        extended.extend_from_slice(b"RIFF\x00\x00\x00\x00WEBPVP8X\x00\x00\x00\x00");
+        extended.extend_from_slice(&[0, 0, 0, 0]);
+        extended.extend_from_slice(&[0x1f, 0x03, 0x00]); // 799 -> 800
+        extended.extend_from_slice(&[0xaf, 0x04, 0x00]); // 1199 -> 1200
+        assert_eq!(webp_dimensions(&extended), Some((800, 1200)));
+
+        assert_eq!(webp_dimensions(b"RIFF....WAVEfmt "), None);
+        assert_eq!(webp_dimensions(b"not even riff data here ......"), None);
+    }
 
     fn language() -> String {
         "en".to_string()

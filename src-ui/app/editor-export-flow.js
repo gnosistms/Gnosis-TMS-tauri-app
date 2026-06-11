@@ -15,8 +15,13 @@ import {
 } from "./repo-write-queue.js";
 import {
   ensureWordPressPaneReady,
+  seedWordPressOverwriteDefault,
   submitWordPressExport,
 } from "./editor-export-wordpress-flow.js";
+import {
+  loadStoredEditorExportDefault,
+  saveStoredEditorExportDefault,
+} from "./editor-export-defaults.js";
 
 export const EDITOR_EXPORT_CATEGORIES = [
   {
@@ -44,7 +49,7 @@ export const EDITOR_EXPORT_CATEGORIES = [
     id: "link",
     label: "Link and transfer",
     options: [
-      { id: "link:wordpress", label: "WordPress", kind: "link", format: "wordpress", available: true },
+      { id: "link:wordpress", label: "WordPress.com", kind: "link", format: "wordpress", available: true },
       { id: "link:team", label: "Other Gnosis TMS team", kind: "link", format: "team", available: false },
     ],
   },
@@ -80,13 +85,28 @@ export function openEditorExportOptions(render) {
   }
 
   const previous = currentExportModal() ?? createEditorExportModalState();
+  // The last successful export for this chapter wins over the in-session
+  // selection; both fall back to the catalog default.
+  const stored = loadStoredEditorExportDefault(state.editorChapter.chapterId);
+  const storedOption = stored ? findEditorExportOption(stored.optionId) : null;
+  const selectedOptionId = storedOption?.available
+    ? storedOption.id
+    : previous.selectedOptionId;
+  const expandedCategoryIds = Array.from(new Set([
+    ...(Array.isArray(previous.expandedCategoryIds) ? previous.expandedCategoryIds : []),
+    String(selectedOptionId ?? "").split(":")[0],
+  ])).filter(Boolean);
+
   updateEditorExportModal({
     ...createEditorExportModalState(),
-    expandedCategoryIds: previous.expandedCategoryIds,
-    selectedOptionId: previous.selectedOptionId,
+    expandedCategoryIds,
+    selectedOptionId,
     isOpen: true,
   });
-  if (previous.selectedOptionId === "link:wordpress") {
+  if (selectedOptionId === "link:wordpress") {
+    if (storedOption?.available && stored?.wordpress) {
+      seedWordPressOverwriteDefault(stored.wordpress);
+    }
     ensureWordPressPaneReady(render);
   }
   render();
@@ -253,6 +273,7 @@ async function submitEditorFileExport(render, option, operations) {
       },
     });
     updateEditorExportModal({ isOpen: false, status: "idle", error: "" });
+    saveStoredEditorExportDefault(context.chapter.id, { optionId: option.id });
     // Full render to remove the modal; showNoticeBadge only repaints the
     // badge surface.
     render();
@@ -282,6 +303,7 @@ async function submitEditorCopyExport(render, option, operations) {
   try {
     await writeClipboard(formats);
     updateEditorExportModal({ isOpen: false, status: "idle", error: "" });
+    saveStoredEditorExportDefault(state.editorChapter?.chapterId, { optionId: option.id });
     render();
     showNoticeBadge(option.format === "html" ? "Copied HTML." : "Copied plain text.", render, 1400);
   } catch (error) {

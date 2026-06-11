@@ -565,14 +565,14 @@ function serializePreviewImageHtml(block) {
 
   const caption = String(block.caption ?? "").trim();
   const figureHtml = [
-    '<figure class="wp-block-image">',
+    '<figure class="wp-block-image aligncenter">',
     `<img src="${escapeHtml(exportSrc)}" alt="" />`,
     caption
-      ? `<figcaption>${serializePreviewText(block.caption)}</figcaption>`
+      ? `<figcaption class="wp-element-caption"><em>${serializePreviewText(block.caption)}</em></figcaption>`
       : "",
     "</figure>",
   ].join("");
-  return wrapSerializedWordPressBlock("image", figureHtml);
+  return wrapSerializedWordPressBlock("image", figureHtml, { align: "center" });
 }
 
 function serializePreviewTextBlockHtml(block, footnoteState) {

@@ -36,6 +36,8 @@ const {
   resetSessionState,
   state,
 } = await import("./state.js");
+const { clearActiveStorageLogin, setActiveStorageLogin } = await import("./team-storage.js");
+const { loadStoredEditorExportDefault } = await import("./editor-export-defaults.js");
 const { EDITOR_MODE_PREVIEW } = await import("./editor-preview.js");
 const { openEditorExportOptions } = await import("./editor-export-flow.js");
 const {
@@ -125,6 +127,40 @@ function setWordPress(patch) {
 
 test.afterEach(() => {
   resetSessionState();
+  clearActiveStorageLogin();
+});
+
+test("a successful export remembers the post and reopening defaults to overwriting it", async () => {
+  installWordPressFixture();
+  setActiveStorageLogin("tester");
+  setWordPress({ jobId: "job-1" });
+  state.editorChapter = {
+    ...state.editorChapter,
+    exportModal: { ...state.editorChapter.exportModal, status: "exporting" },
+  };
+
+  handleWordPressExportProgressEvent({
+    jobId: "job-1",
+    status: "success",
+    message: "Created a new WordPress draft.",
+    postLink: "https://example.wordpress.com/?p=24994",
+    postId: 24994,
+    postTitle: "Chương 3",
+  }, () => {});
+
+  assert.deepEqual(loadStoredEditorExportDefault("chapter-1"), {
+    optionId: "link:wordpress",
+    wordpress: { postId: 24994, postTitle: "Chương 3" },
+  });
+
+  // Reopen: the modal defaults to WordPress overwrite of the remembered post.
+  openEditorExportOptions(() => {});
+  assert.equal(state.editorChapter.exportModal.selectedOptionId, "link:wordpress");
+  assert.ok(state.editorChapter.exportModal.expandedCategoryIds.includes("link"));
+  const wordpress = currentWordPressExportState();
+  assert.equal(wordpress.mode, "overwrite");
+  assert.equal(wordpress.selectedPostId, 24994);
+  assert.equal(wordpress.searchResults[0].title, "Chương 3");
 });
 
 test("ensureWordPressPaneReady seeds the title and loads the connection once", async () => {

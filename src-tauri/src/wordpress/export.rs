@@ -56,6 +56,8 @@ pub(crate) struct WordPressExportProgressPayload {
     current: Option<usize>,
     total: Option<usize>,
     post_link: Option<String>,
+    post_id: Option<u64>,
+    post_title: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -160,17 +162,22 @@ pub(crate) async fn export_chapter_to_wordpress(
         });
 
         match outcome {
-            Ok((message, post_link)) => {
-                wordpress_debug_log(&format!("export succeeded: link={post_link}"));
+            Ok(outcome) => {
+                wordpress_debug_log(&format!(
+                    "export succeeded: link={} id={:?}",
+                    outcome.post_link, outcome.post_id
+                ));
                 emit_export_progress(
                     &app,
                     WordPressExportProgressPayload {
                         job_id,
                         status: "success",
-                        message,
+                        message: outcome.message,
                         current: None,
                         total: None,
-                        post_link: Some(post_link),
+                        post_link: Some(outcome.post_link),
+                        post_id: outcome.post_id,
+                        post_title: outcome.post_title,
                     },
                 )
             }
@@ -185,6 +192,8 @@ pub(crate) async fn export_chapter_to_wordpress(
                         current: None,
                         total: None,
                         post_link: None,
+                        post_id: None,
+                        post_title: None,
                     },
                 )
             }
@@ -194,10 +203,17 @@ pub(crate) async fn export_chapter_to_wordpress(
     Ok(())
 }
 
+struct WordPressExportOutcome {
+    message: String,
+    post_link: String,
+    post_id: Option<u64>,
+    post_title: Option<String>,
+}
+
 fn run_wordpress_export(
     app: &AppHandle,
     input: WordPressExportInput,
-) -> Result<(String, String), String> {
+) -> Result<WordPressExportOutcome, String> {
     let connection = require_wordpress_connection(app)?;
     let site = WordPressSite::wordpress_com(&connection)?;
     let client = wordpress_http_client()?;
@@ -239,6 +255,8 @@ fn run_wordpress_export(
                     current: Some(index + 1),
                     total: Some(total),
                     post_link: None,
+                    post_id: None,
+                    post_title: None,
                 },
             );
 
@@ -283,6 +301,8 @@ fn run_wordpress_export(
             current: None,
             total: None,
             post_link: None,
+            post_id: None,
+            post_title: None,
         },
     );
 
@@ -322,12 +342,27 @@ fn run_wordpress_export(
         .and_then(|value| value.as_str())
         .unwrap_or_default()
         .to_string();
+    let post_title = response
+        .pointer("/title/raw")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+        .or_else(|| {
+            response
+                .pointer("/title/rendered")
+                .and_then(|value| value.as_str())
+                .map(decode_html_entities)
+        });
     let message = if input.mode == "create" {
         "Created a new WordPress draft.".to_string()
     } else {
         "Overwrote the WordPress post.".to_string()
     };
-    Ok((message, post_link))
+    Ok(WordPressExportOutcome {
+        message,
+        post_link,
+        post_id: response.get("id").and_then(|value| value.as_u64()),
+        post_title,
+    })
 }
 
 fn require_wordpress_connection(app: &AppHandle) -> Result<WordPressConnection, String> {
@@ -461,26 +496,42 @@ fn wordpress_display_size(natural_width: u64, natural_height: u64) -> Option<(u6
 /// its src attribute to the same markup the block editor's resize handle
 /// produces: display width/height in the block attrs and inline style. The
 /// img src is rewritten to `new_src_attr` (both values in HTML-attribute
-/// escaped form). Content is returned unchanged if the block markup is not
-/// the expected shape.
+/// escaped form). Handles the current centered serializer markup and the
+/// pre-centering legacy shape; content is returned unchanged for anything
+/// else.
 fn resize_image_block(
     content: &str,
     source_attr: &str,
     new_src_attr: &str,
     (display_width, display_height): (u64, u64),
 ) -> String {
-    let plain_block = format!(
-        "<!-- wp:image -->\n<figure class=\"wp-block-image\"><img src=\"{source_attr}\" alt=\"\" />"
-    );
-    if !content.contains(&plain_block) {
-        return content.to_string();
+    // (plain block attrs, resized leading attrs, plain figure class, resized figure class)
+    const BLOCK_VARIANTS: [(&str, &str, &str, &str); 2] = [
+        (
+            " {\"align\":\"center\"}",
+            "\"align\":\"center\",",
+            "wp-block-image aligncenter",
+            "wp-block-image aligncenter is-resized",
+        ),
+        ("", "", "wp-block-image", "wp-block-image is-resized"),
+    ];
+
+    for (plain_attrs, resized_leading_attrs, plain_class, resized_class) in BLOCK_VARIANTS {
+        let plain_block = format!(
+            "<!-- wp:image{plain_attrs} -->\n<figure class=\"{plain_class}\"><img src=\"{source_attr}\" alt=\"\" />"
+        );
+        if !content.contains(&plain_block) {
+            continue;
+        }
+
+        let resized_block = format!(
+            "<!-- wp:image {{{resized_leading_attrs}\"width\":\"{display_width}px\",\"height\":\"{display_height}px\"}} -->\n\
+             <figure class=\"{resized_class}\"><img src=\"{new_src_attr}\" alt=\"\" style=\"width:{display_width}px;height:{display_height}px\" />"
+        );
+        return content.replace(&plain_block, &resized_block);
     }
 
-    let resized_block = format!(
-        "<!-- wp:image {{\"width\":\"{display_width}px\",\"height\":\"{display_height}px\"}} -->\n\
-         <figure class=\"wp-block-image is-resized\"><img src=\"{new_src_attr}\" alt=\"\" style=\"width:{display_width}px;height:{display_height}px\" />"
-    );
-    content.replace(&plain_block, &resized_block)
+    content.to_string()
 }
 
 /// Rewrites the serialized image block for `source` to the uploaded URL. When
@@ -754,9 +805,36 @@ mod tests {
     #[test]
     fn apply_uploaded_image_resizes_tall_images_with_block_editor_markup() {
         let content = concat!(
+            "<!-- wp:image {\"align\":\"center\"} -->\n",
+            "<figure class=\"wp-block-image aligncenter\"><img src=\"images/tall.png\" alt=\"\" />",
+            "<figcaption class=\"wp-element-caption\"><em>Caption</em></figcaption></figure>\n",
+            "<!-- /wp:image -->",
+        );
+        let uploaded = UploadedWordPressImage {
+            source_url: "https://files.example/tall.png".to_string(),
+            natural_width: Some(1500),
+            natural_height: Some(3000),
+        };
+
+        let rewritten = apply_uploaded_image_to_content(content, "images/tall.png", &uploaded);
+
+        assert_eq!(
+            rewritten,
+            concat!(
+                "<!-- wp:image {\"align\":\"center\",\"width\":\"300px\",\"height\":\"600px\"} -->\n",
+                "<figure class=\"wp-block-image aligncenter is-resized\">",
+                "<img src=\"https://files.example/tall.png\" alt=\"\" style=\"width:300px;height:600px\" />",
+                "<figcaption class=\"wp-element-caption\"><em>Caption</em></figcaption></figure>\n",
+                "<!-- /wp:image -->",
+            ),
+        );
+    }
+
+    #[test]
+    fn apply_uploaded_image_still_resizes_legacy_uncentered_blocks() {
+        let content = concat!(
             "<!-- wp:image -->\n",
-            "<figure class=\"wp-block-image\"><img src=\"images/tall.png\" alt=\"\" />",
-            "<figcaption>Caption</figcaption></figure>\n",
+            "<figure class=\"wp-block-image\"><img src=\"images/tall.png\" alt=\"\" /></figure>\n",
             "<!-- /wp:image -->",
         );
         let uploaded = UploadedWordPressImage {
@@ -772,8 +850,7 @@ mod tests {
             concat!(
                 "<!-- wp:image {\"width\":\"300px\",\"height\":\"600px\"} -->\n",
                 "<figure class=\"wp-block-image is-resized\">",
-                "<img src=\"https://files.example/tall.png\" alt=\"\" style=\"width:300px;height:600px\" />",
-                "<figcaption>Caption</figcaption></figure>\n",
+                "<img src=\"https://files.example/tall.png\" alt=\"\" style=\"width:300px;height:600px\" /></figure>\n",
                 "<!-- /wp:image -->",
             ),
         );

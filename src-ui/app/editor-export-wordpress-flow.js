@@ -13,6 +13,7 @@ import {
   state,
 } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
+import { saveStoredEditorExportDefault } from "./editor-export-defaults.js";
 
 function currentExportModal() {
   return state.editorChapter?.exportModal ?? null;
@@ -52,6 +53,29 @@ function createWordPressJobId() {
     return crypto.randomUUID();
   }
   return `wp-job-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+}
+
+// Defaults the pane to overwriting the remembered post from the chapter's
+// last successful WordPress export.
+export function seedWordPressOverwriteDefault(storedWordPress) {
+  const postId = Number.parseInt(String(storedWordPress?.postId ?? ""), 10);
+  if (!Number.isFinite(postId) || postId <= 0) {
+    return;
+  }
+
+  const postTitle = String(storedWordPress?.postTitle ?? "").trim();
+  updateWordPressState({
+    mode: "overwrite",
+    selectedPostId: postId,
+    searchResults: [{
+      id: postId,
+      title: postTitle || `Post ${postId}`,
+      status: "",
+      link: "",
+      modified: "",
+    }],
+    searchStatus: "done",
+  });
 }
 
 // Prepares the pane when the WordPress option is shown: loads the stored
@@ -310,6 +334,16 @@ export function handleWordPressExportProgressEvent(payload, render) {
   if (payload.status === "success") {
     updateWordPressState({ exportStage: "", jobId: "" });
     updateExportModal({ isOpen: false, status: "idle", error: "" });
+    const postId = Number.parseInt(String(payload.postId ?? ""), 10);
+    if (Number.isFinite(postId) && postId > 0) {
+      saveStoredEditorExportDefault(state.editorChapter?.chapterId, {
+        optionId: "link:wordpress",
+        wordpress: {
+          postId,
+          postTitle: String(payload.postTitle ?? "").trim(),
+        },
+      });
+    }
     // Full render to remove the modal; showNoticeBadge only repaints the
     // badge surface.
     render();
