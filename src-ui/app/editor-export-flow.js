@@ -18,6 +18,7 @@ import {
   seedWordPressOverwriteDefault,
   submitWordPressExport,
 } from "./editor-export-wordpress-flow.js";
+import { submitTeamChapterCopy } from "./editor-export-team-copy-flow.js";
 import {
   loadStoredEditorExportDefault,
   saveStoredEditorExportDefault,
@@ -50,7 +51,7 @@ export const EDITOR_EXPORT_CATEGORIES = [
     label: "Link and transfer",
     options: [
       { id: "link:wordpress", label: "WordPress.com", kind: "link", format: "wordpress", available: true },
-      { id: "link:team", label: "Other Gnosis TMS team", kind: "link", format: "team", available: false },
+      { id: "link:team", label: "Other Gnosis TMS team", kind: "link", format: "team", available: true },
     ],
   },
 ];
@@ -334,5 +335,10 @@ export async function submitEditorExport(render, operations = {}) {
 
   if (option.kind === "link" && option.format === "wordpress") {
     await submitWordPressExport(render, operations);
+    return;
+  }
+
+  if (option.kind === "link" && option.format === "team") {
+    await submitTeamChapterCopy(render, operations);
   }
 }

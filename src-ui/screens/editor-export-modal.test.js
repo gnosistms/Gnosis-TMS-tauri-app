@@ -69,13 +69,95 @@ test("editor export modal shows the save pane for the Phase 2 file formats", () 
 });
 
 test("editor export modal hides the submit button for unavailable options", () => {
-  for (const selectedOptionId of ["copy:docx", "link:team"]) {
+  for (const selectedOptionId of ["copy:docx"]) {
     const html = renderEditorExportModal(exportState({ selectedOptionId }));
 
     assert.match(html, /This export option is not available yet\./);
     assert.doesNotMatch(html, /data-action="submit-editor-export"/);
     assert.match(html, /data-action="close-editor-export-options"/);
   }
+});
+
+function teamCopyState(teamCopyOverrides = {}, modalOverrides = {}, stateOverrides = {}) {
+  const base = exportState({
+    expandedCategoryIds: ["link"],
+    selectedOptionId: "link:team",
+    teamCopy: {
+      targetTeamId: "",
+      projectsStatus: "idle",
+      projects: [],
+      targetProjectId: "",
+      copyStage: "",
+      jobId: "",
+      ...teamCopyOverrides,
+    },
+    ...modalOverrides,
+  });
+  return {
+    ...base,
+    selectedTeamId: "team-1",
+    teams: [
+      { id: "team-1", installationId: 42, name: "Home Team", membershipRole: "owner" },
+      { id: "team-2", installationId: 77, name: "Other Team", membershipRole: "translator" },
+      { id: "team-3", installationId: 88, name: "Read Only", membershipRole: "viewer" },
+    ],
+    ...stateOverrides,
+  };
+}
+
+test("team copy pane explains when no other writable team exists", () => {
+  const html = renderEditorExportModal(teamCopyState({}, {}, {
+    teams: [{ id: "team-1", installationId: 42, name: "Home Team", membershipRole: "owner" }],
+  }));
+
+  assert.match(html, /not a member of another team/);
+  assert.doesNotMatch(html, /data-action="submit-editor-export"/);
+});
+
+test("team copy pane lists only other writable teams in the team select", () => {
+  const html = renderEditorExportModal(teamCopyState());
+
+  assert.match(html, /data-team-copy-team-select/);
+  assert.match(html, /<option value="team-2" >Other Team<\/option>/);
+  assert.doesNotMatch(html, /Home Team/);
+  assert.doesNotMatch(html, /Read Only/);
+  assert.match(html, /Choose the team to copy this chapter to\./);
+  assert.match(html, /data-action="submit-editor-export"/);
+});
+
+test("team copy pane shows the project select once projects load", () => {
+  const loading = renderEditorExportModal(teamCopyState({
+    targetTeamId: "team-2",
+    projectsStatus: "loading",
+  }));
+  assert.match(loading, /Loading that team&#39;s projects\.\.\./);
+
+  const empty = renderEditorExportModal(teamCopyState({
+    targetTeamId: "team-2",
+    projectsStatus: "done",
+    projects: [],
+  }));
+  assert.match(empty, /That team has no projects yet\./);
+
+  const loaded = renderEditorExportModal(teamCopyState({
+    targetTeamId: "team-2",
+    projectsStatus: "done",
+    projects: [{ id: "project-9", name: "other-repo", title: "Other Project" }],
+    targetProjectId: "project-9",
+  }));
+  assert.match(loaded, /data-team-copy-project-select/);
+  assert.match(loaded, /<option value="project-9" selected>Other Project<\/option>/);
+  assert.match(loaded, /The copy will appear as a new file in Other Project \(Other Team\)\./);
+});
+
+test("team copy pane shows the copy stage while exporting", () => {
+  const html = renderEditorExportModal(teamCopyState(
+    { targetTeamId: "team-2", copyStage: "Copying the chapter..." },
+    { status: "exporting" },
+  ));
+
+  assert.match(html, /Copying the chapter\.\.\./);
+  assert.match(html, /Copying\.\.\./);
 });
 
 function wordpressState(wordpressOverrides = {}, modalOverrides = {}) {

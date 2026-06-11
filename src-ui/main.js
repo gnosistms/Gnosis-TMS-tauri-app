@@ -6,6 +6,7 @@ import {
 } from "./app/auth-flow.js";
 import { registerAppEvents } from "./app/events.js";
 import { registerWordPressExportListeners } from "./app/editor-export-wordpress-flow.js";
+import { registerTeamChapterCopyListeners } from "./app/editor-export-team-copy-flow.js";
 import {
   initializeEditorVirtualization,
 } from "./app/editor-virtualization.js";
@@ -963,6 +964,7 @@ async function bootstrap() {
   void registerBrokerAuthListener(render, loadUserTeams);
   void registerGithubAppInstallListener(render, setGithubAppInstallation);
   void registerWordPressExportListeners(render);
+  void registerTeamChapterCopyListeners(render);
   void checkForAppUpdate(render, { silent: true });
   render();
   void initializeConnectivity(render, () => restoreStoredBrokerSession(render, loadUserTeams, storedBrokerSession));

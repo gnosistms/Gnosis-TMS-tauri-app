@@ -10,6 +10,10 @@ import {
   findEditorExportOption,
 } from "../app/editor-export-flow.js";
 import { selectedWordPressPost } from "../app/editor-export-wordpress-flow.js";
+import {
+  eligibleTeamCopyTargets,
+  selectedTeamCopyProject,
+} from "../app/editor-export-team-copy-flow.js";
 
 function renderExportOption(option, selectedOptionId) {
   const classes = [
@@ -183,7 +187,101 @@ function wordpressDetail(wordpress, isExporting) {
   };
 }
 
-function exportDetail(option, isExporting, modal) {
+function renderTeamCopySelect({ label, selectAttribute, placeholder, options, value }) {
+  return `
+    <label class="field editor-export-modal__team-copy-field">
+      <span class="field__label">${escapeHtml(label)}</span>
+      <select class="field__input" ${selectAttribute}>
+        <option value="" ${value ? "" : "selected"}>${escapeHtml(placeholder)}</option>
+        ${options
+          .map((option) => `
+            <option value="${escapeHtml(option.value)}" ${option.value === value ? "selected" : ""}>${escapeHtml(option.label)}</option>
+          `)
+          .join("")}
+      </select>
+    </label>
+  `;
+}
+
+function teamCopyProjectSection(teamCopy) {
+  if (!teamCopy.targetTeamId) {
+    return supportingText("Choose the team to copy this chapter to.");
+  }
+  if (teamCopy.projectsStatus === "loading") {
+    return supportingText("Loading that team's projects...");
+  }
+  if (teamCopy.projectsStatus !== "done") {
+    return "";
+  }
+  if (teamCopy.projects.length === 0) {
+    return supportingText("That team has no projects yet. Create one there first.");
+  }
+  return renderTeamCopySelect({
+    label: "Project",
+    selectAttribute: "data-team-copy-project-select",
+    placeholder: "Select",
+    options: teamCopy.projects.map((project) => ({
+      value: project.id,
+      label: project.title || project.name,
+    })),
+    value: teamCopy.targetProjectId,
+  });
+}
+
+function teamCopyDetail(teamCopy, isExporting, appState) {
+  const targets = eligibleTeamCopyTargets(appState);
+  if (targets.length === 0) {
+    return {
+      bodyMarkup: supportingText(
+        "You are not a member of another team where you can add files.",
+      ),
+      submitButton: "",
+    };
+  }
+
+  const resolvedTeamCopy = teamCopy ?? {
+    targetTeamId: "",
+    projectsStatus: "idle",
+    projects: [],
+    targetProjectId: "",
+    copyStage: "",
+  };
+  const selectedProject = selectedTeamCopyProject(resolvedTeamCopy);
+  const selectedTeam = targets.find((team) => team.id === resolvedTeamCopy.targetTeamId) ?? null;
+
+  return {
+    bodyMarkup: `
+      ${supportingText("Copy this chapter, including every language and its images, into a project on another team.")}
+      ${renderTeamCopySelect({
+        label: "Team",
+        selectAttribute: "data-team-copy-team-select",
+        placeholder: "Select",
+        options: targets.map((team) => ({
+          value: team.id,
+          label: team.name || team.githubOrg || team.id,
+        })),
+        value: resolvedTeamCopy.targetTeamId,
+      })}
+      ${teamCopyProjectSection(resolvedTeamCopy)}
+      ${selectedProject && selectedTeam
+        ? supportingText(
+          `The copy will appear as a new file in ${selectedProject.title || selectedProject.name} (${selectedTeam.name || selectedTeam.githubOrg || selectedTeam.id}).`,
+        )
+        : ""}
+      ${isExporting && resolvedTeamCopy.copyStage
+        ? `<p class="modal__supporting editor-export-modal__team-copy-stage">${escapeHtml(resolvedTeamCopy.copyStage)}</p>`
+        : ""}
+    `,
+    submitButton: loadingPrimaryButton({
+      label: "Copy chapter",
+      loadingLabel: "Copying...",
+      action: "submit-editor-export",
+      isLoading: isExporting,
+    }),
+  };
+}
+
+function exportDetail(option, isExporting, modal, appState) {
   if (!option || option.available !== true) {
     return {
       bodyMarkup: supportingText("This export option is not available yet."),
@@ -193,6 +291,10 @@ function exportDetail(option, isExporting, modal) {
 
   if (option.kind === "link" && option.format === "wordpress") {
     return wordpressDetail(modal.wordpress, isExporting);
+  }
+
+  if (option.kind === "link" && option.format === "team") {
+    return teamCopyDetail(modal.teamCopy, isExporting, appState);
   }
 
   if (option.kind === "file") {
@@ -226,7 +328,7 @@ export function renderEditorExportModal(state) {
 
   const isExporting = modal.status === "exporting";
   const option = findEditorExportOption(modal.selectedOptionId);
-  const detail = exportDetail(option, isExporting, modal);
+  const detail = exportDetail(option, isExporting, modal, state);
   const errorMarkup = modal.error
     ? `<p class="modal__error" role="alert">${escapeHtml(formatErrorForDisplay(modal.error))}</p>`
     : "";

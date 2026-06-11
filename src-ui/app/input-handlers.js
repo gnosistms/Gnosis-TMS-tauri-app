@@ -99,6 +99,10 @@ import {
   updateWordPressSearchQuery,
   updateWordPressTitle,
 } from "./editor-export-wordpress-flow.js";
+import {
+  selectTeamCopyTargetProject,
+  selectTeamCopyTargetTeam,
+} from "./editor-export-team-copy-flow.js";
 import { normalizedConfirmationValue } from "./resource-entity-modal.js";
 
 let liveReviewSidebarRenderPending = false;
@@ -1021,6 +1025,34 @@ function handleWordPressModeInput(event, render) {
   return true;
 }
 
+function handleTeamCopyTeamInput(event, render) {
+  if (event.type !== "change") {
+    return false;
+  }
+
+  const input = event.target.closest("[data-team-copy-team-select]");
+  if (!(input instanceof HTMLSelectElement)) {
+    return false;
+  }
+
+  selectTeamCopyTargetTeam(render, input.value);
+  return true;
+}
+
+function handleTeamCopyProjectInput(event, render) {
+  if (event.type !== "change") {
+    return false;
+  }
+
+  const input = event.target.closest("[data-team-copy-project-select]");
+  if (!(input instanceof HTMLSelectElement)) {
+    return false;
+  }
+
+  selectTeamCopyTargetProject(render, input.value);
+  return true;
+}
+
 const inputHandlers = [
   handleProjectCreationInput,
   handleProjectPermanentDeleteInput,
@@ -1085,6 +1117,8 @@ const inputHandlers = [
   handleWordPressTitleInput,
   handleWordPressSearchInput,
   handleWordPressModeInput,
+  handleTeamCopyTeamInput,
+  handleTeamCopyProjectInput,
 ];
 
 export function handleInputEvent(event, render) {

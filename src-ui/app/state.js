@@ -786,7 +786,19 @@ export function createEditorExportModalState() {
     expandedCategoryIds: ["file"],
     selectedOptionId: "file:html",
     wordpress: createEditorExportWordPressState(),
+    teamCopy: createEditorExportTeamCopyState(),
   });
+}
+
+export function createEditorExportTeamCopyState() {
+  return {
+    targetTeamId: "",
+    projectsStatus: "idle",
+    projects: [],
+    targetProjectId: "",
+    copyStage: "",
+    jobId: "",
+  };
 }
 
 export function createEditorExportWordPressState() {
