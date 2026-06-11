@@ -10,7 +10,10 @@ use tauri::AppHandle;
 use uuid::Uuid;
 
 use crate::constants::ensure_within_import_size_limit;
-use crate::git_commit::{git_commit_as_signed_in_user_with_metadata, GitCommitMetadata};
+use crate::git_commit::{
+    ensure_local_commit_preconditions, git_commit_as_signed_in_user_with_metadata,
+    GitCommitMetadata,
+};
 use crate::project_repo_paths::resolve_project_git_repo_path;
 use crate::short_path_names::{allocate_short_folder_name, allocate_short_image_filename};
 
@@ -52,14 +55,84 @@ pub(super) fn import_parsed_workbook_to_gtms_sync(
         &parsed.repo_name,
     )?;
     let written = write_parsed_workbook_chapter(&context, parsed, None)?;
-    commit_written_imports(
+    if let Err(error) = commit_written_imports(
         app,
         &context,
         std::slice::from_ref(&written.relative_chapter_path),
         &format!("Import {}", written.response.source_file_name),
-    )?;
+    ) {
+        // Unstage and remove the written chapter so a failed commit cannot strand a
+        // dirty tree — prepare_project_import_repo's clean-tree precondition would
+        // otherwise reject every future import.
+        let cleanup = cleanup_written_imports(&context, std::slice::from_ref(&written), true);
+        return Err(with_cleanup_failure(error, cleanup));
+    }
 
     Ok(written.response)
+}
+
+/// Combine an import failure with the result of cleaning up after it, so a cleanup
+/// error can never shadow the root-cause import error.
+pub(super) fn with_cleanup_failure(
+    import_error: String,
+    cleanup_result: Result<(), String>,
+) -> String {
+    match cleanup_result {
+        Ok(()) => import_error,
+        Err(cleanup_error) => {
+            format!("{import_error} Cleaning up the partial import also failed: {cleanup_error}")
+        }
+    }
+}
+
+/// Best-effort removal of written-but-uncommitted import chapters: unstage them, remove
+/// the folders, and drop a `.gitattributes` this import created. Collected errors are
+/// returned for the caller to append to the root-cause failure (see
+/// `with_cleanup_failure`).
+pub(super) fn cleanup_written_imports(
+    context: &ProjectImportRepoContext,
+    written: &[WrittenImport],
+    unstage: bool,
+) -> Result<(), String> {
+    let mut cleanup_errors = Vec::new();
+    if unstage {
+        let mut paths = vec![".gitattributes".to_string()];
+        paths.extend(
+            written
+                .iter()
+                .map(|entry| entry.relative_chapter_path.clone()),
+        );
+        for path in &paths {
+            let _ = git_output(&context.repo_path, &["reset", "--", path]);
+        }
+    }
+
+    for entry in written.iter().rev() {
+        if let Err(error) = fs::remove_dir_all(&entry.absolute_chapter_path) {
+            if entry.absolute_chapter_path.exists() {
+                cleanup_errors.push(format!(
+                    "Could not remove '{}': {error}",
+                    entry.absolute_chapter_path.display()
+                ));
+            }
+        }
+    }
+
+    let gitattributes_path = context.repo_path.join(".gitattributes");
+    if !context.gitattributes_existed && gitattributes_path.exists() {
+        if let Err(error) = fs::remove_file(&gitattributes_path) {
+            cleanup_errors.push(format!(
+                "Could not remove '{}': {error}",
+                gitattributes_path.display()
+            ));
+        }
+    }
+
+    if cleanup_errors.is_empty() {
+        Ok(())
+    } else {
+        Err(cleanup_errors.join(" "))
+    }
 }
 
 pub(super) fn prepare_project_import_repo(
@@ -79,6 +152,10 @@ pub(super) fn prepare_project_import_repo(
         &repo_path,
         "The local project repo has uncommitted changes. Sync it before adding files.",
     )?;
+    // The commit gates (write access, signed-in session) normally run only inside the
+    // commit helper, after the chapter is already written and staged. Check them here
+    // so an *expected* gate failure rejects before anything is parsed or written.
+    ensure_local_commit_preconditions(app, &repo_path)?;
 
     let project_title = read_project_title(&repo_path.join("project.json"))?;
     let gitattributes_existed = repo_path.join(".gitattributes").exists();
@@ -732,6 +809,96 @@ mod tests {
             fields,
             format_metadata: BTreeMap::new(),
         }
+    }
+
+    fn create_test_repo() -> Result<PathBuf, String> {
+        let repo_path =
+            std::env::temp_dir().join(format!("gnosis-import-cleanup-test-{}", Uuid::now_v7()));
+        fs::create_dir_all(&repo_path)
+            .map_err(|error| format!("Could not create test repo: {error}"))?;
+        git_output(&repo_path, &["init"])?;
+        git_output(&repo_path, &["config", "user.email", "test@example.com"])?;
+        git_output(&repo_path, &["config", "user.name", "Test User"])?;
+        fs::write(repo_path.join("project.json"), "{\"title\":\"Project\"}\n")
+            .map_err(|error| format!("Could not write project.json: {error}"))?;
+        git_output(&repo_path, &["add", "."])?;
+        git_output(&repo_path, &["commit", "-m", "Initial project"])?;
+        Ok(repo_path)
+    }
+
+    fn test_written_import(
+        relative_chapter_path: &str,
+        absolute_chapter_path: PathBuf,
+    ) -> WrittenImport {
+        WrittenImport {
+            response: ImportXlsxResponse {
+                chapter_id: "chapter-1".to_string(),
+                repo_path: String::new(),
+                chapter_path: String::new(),
+                project_title: "Project".to_string(),
+                file_title: "Article".to_string(),
+                worksheet_name: "HTML".to_string(),
+                unit_count: 0,
+                languages: Vec::new(),
+                word_counts: BTreeMap::new(),
+                selected_source_language_code: None,
+                selected_target_language_code: None,
+                language_codes: Vec::new(),
+                source_file_name: "article.html".to_string(),
+                import_summary: None,
+            },
+            relative_chapter_path: relative_chapter_path.to_string(),
+            absolute_chapter_path,
+        }
+    }
+
+    #[test]
+    fn cleanup_written_imports_unstages_and_removes_written_chapters() -> Result<(), String> {
+        let repo_path = create_test_repo()?;
+
+        // Simulate the state a failed commit leaves behind: a written chapter and a
+        // .gitattributes created by this import, both staged.
+        let chapter_path = repo_path.join("chapters").join("article");
+        fs::create_dir_all(chapter_path.join("rows"))
+            .map_err(|error| format!("Could not create test chapter: {error}"))?;
+        fs::write(chapter_path.join("chapter.json"), "{}\n")
+            .map_err(|error| format!("Could not write chapter.json: {error}"))?;
+        fs::write(repo_path.join(".gitattributes"), "*.json text eol=lf\n")
+            .map_err(|error| format!("Could not write .gitattributes: {error}"))?;
+        git_output(&repo_path, &["add", ".gitattributes", "chapters/article"])?;
+
+        let context = ProjectImportRepoContext {
+            repo_path: repo_path.clone(),
+            project_title: "Project".to_string(),
+            gitattributes_existed: false,
+        };
+        let written = vec![test_written_import(
+            "chapters/article",
+            chapter_path.clone(),
+        )];
+
+        cleanup_written_imports(&context, &written, true)?;
+
+        assert!(!chapter_path.exists());
+        assert!(!repo_path.join(".gitattributes").exists());
+        assert_eq!(git_output(&repo_path, &["status", "--porcelain"])?, "");
+        let _ = fs::remove_dir_all(&repo_path);
+        Ok(())
+    }
+
+    #[test]
+    fn with_cleanup_failure_preserves_the_root_cause_error() {
+        assert_eq!(
+            with_cleanup_failure("The commit failed.".to_string(), Ok(())),
+            "The commit failed."
+        );
+        assert_eq!(
+            with_cleanup_failure(
+                "The commit failed.".to_string(),
+                Err("Could not remove folder.".to_string())
+            ),
+            "The commit failed. Cleaning up the partial import also failed: Could not remove folder."
+        );
     }
 
     #[test]

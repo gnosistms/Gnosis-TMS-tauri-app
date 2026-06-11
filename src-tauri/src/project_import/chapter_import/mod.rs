@@ -29,8 +29,9 @@ use uuid::Uuid;
 #[cfg(test)]
 use write_gtms::{build_chapter_file, build_row_file, build_word_counts_from_import};
 use write_gtms::{
-    commit_written_imports, import_parsed_workbook_to_gtms_sync, prepare_project_import_repo,
-    write_parsed_workbook_chapter, ProjectImportRepoContext, WrittenImport,
+    cleanup_written_imports, commit_written_imports, import_parsed_workbook_to_gtms_sync,
+    prepare_project_import_repo, with_cleanup_failure, write_parsed_workbook_chapter,
+    ProjectImportRepoContext, WrittenImport,
 };
 use xlsx::parse_xlsx_workbook;
 #[cfg(test)]
@@ -478,8 +479,12 @@ pub(super) fn import_project_files_to_gtms_sync(
         match write_parsed_workbook_chapter(&context, parsed, default_glossary.as_ref()) {
             Ok(entry) => written.push(entry),
             Err(error) => {
-                cleanup_written_imports(&context, &written, true)?;
-                clear_batch_cancellation(&canceled_batch_ids, &batch_id)?;
+                // Best-effort: the root-cause write error must surface even when the
+                // cleanup or the cancel-set clear fails (a stale unique batch id in the
+                // cancel set is harmless).
+                let error =
+                    with_cleanup_failure(error, cleanup_written_imports(&context, &written, true));
+                let _ = clear_batch_cancellation(&canceled_batch_ids, &batch_id);
                 return Err(error);
             }
         }
@@ -496,8 +501,9 @@ pub(super) fn import_project_files_to_gtms_sync(
             &relative_paths,
             &batch_import_commit_message(written.len()),
         ) {
-            cleanup_written_imports(&context, &written, true)?;
-            clear_batch_cancellation(&canceled_batch_ids, &batch_id)?;
+            let error =
+                with_cleanup_failure(error, cleanup_written_imports(&context, &written, true));
+            let _ = clear_batch_cancellation(&canceled_batch_ids, &batch_id);
             return Err(error);
         }
     }
@@ -669,52 +675,6 @@ fn error_file_name(error: &str) -> String {
         .filter(|file_name| !file_name.is_empty())
         .unwrap_or("file")
         .to_string()
-}
-
-fn cleanup_written_imports(
-    context: &ProjectImportRepoContext,
-    written: &[WrittenImport],
-    unstage: bool,
-) -> Result<(), String> {
-    let mut cleanup_errors = Vec::new();
-    if unstage {
-        let mut paths = vec![".gitattributes".to_string()];
-        paths.extend(
-            written
-                .iter()
-                .map(|entry| entry.relative_chapter_path.clone()),
-        );
-        for path in &paths {
-            let _ = super::project_git::git_output(&context.repo_path, &["reset", "--", path]);
-        }
-    }
-
-    for entry in written.iter().rev() {
-        if let Err(error) = fs::remove_dir_all(&entry.absolute_chapter_path) {
-            if entry.absolute_chapter_path.exists() {
-                cleanup_errors.push(format!(
-                    "Could not remove '{}': {error}",
-                    entry.absolute_chapter_path.display()
-                ));
-            }
-        }
-    }
-
-    let gitattributes_path = context.repo_path.join(".gitattributes");
-    if !context.gitattributes_existed && gitattributes_path.exists() {
-        if let Err(error) = fs::remove_file(&gitattributes_path) {
-            cleanup_errors.push(format!(
-                "Could not remove '{}': {error}",
-                gitattributes_path.display()
-            ));
-        }
-    }
-
-    if cleanup_errors.is_empty() {
-        Ok(())
-    } else {
-        Err(cleanup_errors.join(" "))
-    }
 }
 
 fn humanize_file_stem(file_name: &str) -> String {
