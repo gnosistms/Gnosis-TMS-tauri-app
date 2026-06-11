@@ -41,6 +41,7 @@ const { loadStoredEditorExportDefault } = await import("./editor-export-defaults
 const { EDITOR_MODE_PREVIEW } = await import("./editor-preview.js");
 const { openEditorExportOptions } = await import("./editor-export-flow.js");
 const {
+  closeWordPressExportSuccessModal,
   connectWordPress,
   currentWordPressExportState,
   disconnectWordPress,
@@ -161,6 +162,71 @@ test("a successful export remembers the post and reopening defaults to overwriti
   assert.equal(wordpress.mode, "overwrite");
   assert.equal(wordpress.selectedPostId, 24994);
   assert.equal(wordpress.searchResults[0].title, "Chương 3");
+});
+
+test("a draft export opens the success modal linking to the WordPress editor", () => {
+  installWordPressFixture();
+  setActiveStorageLogin("tester");
+  setWordPress({ jobId: "job-1" });
+
+  handleWordPressExportProgressEvent({
+    jobId: "job-1",
+    status: "success",
+    message: "Created a new WordPress draft.",
+    postLink: "https://example.wordpress.com/?p=24994",
+    postEditLink: "https://wordpress.com/post/12345/24994",
+    postId: 24994,
+    postStatus: "draft",
+    postTitle: "Chương 3",
+  }, () => {});
+
+  assert.deepEqual(state.editorChapter.wordpressExportSuccessModal, {
+    isOpen: true,
+    isDraft: true,
+    url: "https://wordpress.com/post/12345/24994",
+  });
+
+  closeWordPressExportSuccessModal(() => {});
+  assert.equal(state.editorChapter.wordpressExportSuccessModal.isOpen, false);
+});
+
+test("a published export opens the success modal linking to the live post", () => {
+  installWordPressFixture();
+  setActiveStorageLogin("tester");
+  setWordPress({ jobId: "job-1" });
+
+  handleWordPressExportProgressEvent({
+    jobId: "job-1",
+    status: "success",
+    message: "Overwrote the WordPress post.",
+    postLink: "https://example.wordpress.com/2026/06/11/chapter-3/",
+    postEditLink: "https://wordpress.com/post/12345/24994",
+    postId: 24994,
+    postStatus: "publish",
+    postTitle: "Chương 3",
+  }, () => {});
+
+  assert.deepEqual(state.editorChapter.wordpressExportSuccessModal, {
+    isOpen: true,
+    isDraft: false,
+    url: "https://example.wordpress.com/2026/06/11/chapter-3/",
+  });
+});
+
+test("a success payload without links falls back to the notice badge", () => {
+  installWordPressFixture();
+  setActiveStorageLogin("tester");
+  setWordPress({ jobId: "job-1" });
+
+  handleWordPressExportProgressEvent({
+    jobId: "job-1",
+    status: "success",
+    message: "Created a new WordPress draft.",
+    postId: 24994,
+    postTitle: "Chương 3",
+  }, () => {});
+
+  assert.equal(state.editorChapter.wordpressExportSuccessModal.isOpen, false);
 });
 
 test("ensureWordPressPaneReady seeds the title and loads the connection once", async () => {

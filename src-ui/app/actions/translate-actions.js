@@ -44,6 +44,9 @@ import {
   copyEditorConflictResolutionVersion,
   deleteActiveEditorRowComment,
   moveEditorPreviewSearch,
+  closeEditorInsertLinkModal,
+  openEditorInsertLink,
+  submitEditorInsertLink,
   openEditorImagePreview,
   openEditorImageUpload,
   openEditorImageUploadPicker,
@@ -62,6 +65,7 @@ import {
   selectEditorExportOption,
   submitEditorExport,
   toggleEditorExportCategory,
+  closeWordPressExportSuccessModal,
   connectWordPress,
   disconnectWordPress,
   searchWordPressPosts,
@@ -128,6 +132,8 @@ const SESSION_WRITE_ACTIONS = new Set([
   "open-editor-derive-glossaries",
   "set-editor-row-text-style",
   "toggle-editor-inline-style",
+  "open-editor-insert-link",
+  "submit-editor-insert-link",
   "open-editor-footnote",
   "open-editor-image-caption",
   "open-editor-image-url",
@@ -513,6 +519,29 @@ export function createTranslateActions(render) {
         ? event.target.closest("[data-editor-inline-style-button]")
         : null;
       toggleEditorInlineStyle(render, button);
+      return true;
+    }
+
+    if (action === "open-editor-insert-link") {
+      const button = event?.target instanceof Element
+        ? event.target.closest("[data-editor-link-button]")
+        : null;
+      openEditorInsertLink(render, button);
+      return true;
+    }
+
+    if (action === "submit-editor-insert-link") {
+      submitEditorInsertLink(render);
+      return true;
+    }
+
+    if (action === "close-editor-insert-link-modal") {
+      closeEditorInsertLinkModal(render);
+      return true;
+    }
+
+    if (action === "close-wordpress-export-success-modal") {
+      closeWordPressExportSuccessModal(render);
       return true;
     }
 

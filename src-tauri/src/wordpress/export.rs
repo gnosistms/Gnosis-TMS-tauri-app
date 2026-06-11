@@ -58,6 +58,8 @@ pub(crate) struct WordPressExportProgressPayload {
     post_link: Option<String>,
     post_id: Option<u64>,
     post_title: Option<String>,
+    post_status: Option<String>,
+    post_edit_link: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -178,6 +180,8 @@ pub(crate) async fn export_chapter_to_wordpress(
                         post_link: Some(outcome.post_link),
                         post_id: outcome.post_id,
                         post_title: outcome.post_title,
+                        post_status: outcome.post_status,
+                        post_edit_link: outcome.post_edit_link,
                     },
                 )
             }
@@ -194,6 +198,8 @@ pub(crate) async fn export_chapter_to_wordpress(
                         post_link: None,
                         post_id: None,
                         post_title: None,
+                        post_status: None,
+                        post_edit_link: None,
                     },
                 )
             }
@@ -208,6 +214,8 @@ struct WordPressExportOutcome {
     post_link: String,
     post_id: Option<u64>,
     post_title: Option<String>,
+    post_status: Option<String>,
+    post_edit_link: Option<String>,
 }
 
 fn run_wordpress_export(
@@ -257,6 +265,8 @@ fn run_wordpress_export(
                     post_link: None,
                     post_id: None,
                     post_title: None,
+                    post_status: None,
+                    post_edit_link: None,
                 },
             );
 
@@ -302,6 +312,8 @@ fn run_wordpress_export(
             post_link: None,
             post_id: None,
             post_title: None,
+            post_status: None,
+            post_edit_link: None,
         },
     );
 
@@ -356,12 +368,25 @@ fn run_wordpress_export(
     } else {
         "Overwrote the WordPress post.".to_string()
     };
+    let post_id = response.get("id").and_then(|value| value.as_u64());
+    let post_status = response
+        .get("status")
+        .and_then(|value| value.as_str())
+        .map(str::to_string);
     Ok(WordPressExportOutcome {
         message,
         post_link,
-        post_id: response.get("id").and_then(|value| value.as_u64()),
+        post_id,
         post_title,
+        post_status,
+        post_edit_link: post_id.map(|id| wordpress_editor_link(&connection.blog_id, id)),
     })
+}
+
+/// The WordPress.com editor URL for a post; works for both Simple and
+/// Jetpack-connected sites reachable through the WordPress.com API.
+fn wordpress_editor_link(blog_id: &str, post_id: u64) -> String {
+    format!("https://wordpress.com/post/{}/{post_id}", blog_id.trim())
 }
 
 fn require_wordpress_connection(app: &AppHandle) -> Result<WordPressConnection, String> {
@@ -518,19 +543,25 @@ fn resize_image_block(
         ("", "", "wp-block-image", "wp-block-image is-resized"),
     ];
 
-    for (plain_attrs, resized_leading_attrs, plain_class, resized_class) in BLOCK_VARIANTS {
-        let plain_block = format!(
-            "<!-- wp:image{plain_attrs} -->\n<figure class=\"{plain_class}\"><img src=\"{source_attr}\" alt=\"\" />"
-        );
-        if !content.contains(&plain_block) {
-            continue;
-        }
+    // The serializer emits the canonical Gutenberg `alt=""/>` form; the
+    // spaced `alt="" />` variant covers content from older app versions.
+    const IMG_TAIL_VARIANTS: [&str; 2] = ["alt=\"\"/>", "alt=\"\" />"];
 
-        let resized_block = format!(
-            "<!-- wp:image {{{resized_leading_attrs}\"width\":\"{display_width}px\",\"aspectRatio\":\"{natural_width}/{natural_height}\"}} -->\n\
-             <figure class=\"{resized_class}\"><img src=\"{new_src_attr}\" alt=\"\" style=\"aspect-ratio:{natural_width}/{natural_height};width:{display_width}px\" />"
-        );
-        return content.replace(&plain_block, &resized_block);
+    for (plain_attrs, resized_leading_attrs, plain_class, resized_class) in BLOCK_VARIANTS {
+        for img_tail in IMG_TAIL_VARIANTS {
+            let plain_block = format!(
+                "<!-- wp:image{plain_attrs} -->\n<figure class=\"{plain_class}\"><img src=\"{source_attr}\" {img_tail}"
+            );
+            if !content.contains(&plain_block) {
+                continue;
+            }
+
+            let resized_block = format!(
+                "<!-- wp:image {{{resized_leading_attrs}\"width\":\"{display_width}px\",\"aspectRatio\":\"{natural_width}/{natural_height}\"}} -->\n\
+                 <figure class=\"{resized_class}\"><img src=\"{new_src_attr}\" alt=\"\" style=\"aspect-ratio:{natural_width}/{natural_height};width:{display_width}px\"/>"
+            );
+            return content.replace(&plain_block, &resized_block);
+        }
     }
 
     content.to_string()
@@ -703,6 +734,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn wordpress_editor_link_targets_the_wordpress_com_editor() {
+        assert_eq!(
+            wordpress_editor_link("12345", 678),
+            "https://wordpress.com/post/12345/678"
+        );
+        assert_eq!(
+            wordpress_editor_link(" 12345 ", 678),
+            "https://wordpress.com/post/12345/678"
+        );
+    }
+
+    #[test]
     fn collect_image_sources_includes_remote_urls_and_skips_data_uris() {
         let content = concat!(
             "<!-- wp:image -->\n",
@@ -745,7 +788,7 @@ mod tests {
             concat!(
                 "<!-- wp:image {\"width\":\"300px\",\"aspectRatio\":\"1500/3000\"} -->\n",
                 "<figure class=\"wp-block-image is-resized\">",
-                "<img src=\"https://example.com/tall.png?a=1&amp;b=2\" alt=\"\" style=\"aspect-ratio:1500/3000;width:300px\" /></figure>\n",
+                "<img src=\"https://example.com/tall.png?a=1&amp;b=2\" alt=\"\" style=\"aspect-ratio:1500/3000;width:300px\"/></figure>\n",
                 "<!-- /wp:image -->",
             ),
         );
@@ -809,9 +852,10 @@ mod tests {
 
     #[test]
     fn apply_uploaded_image_resizes_tall_images_with_block_editor_markup() {
+        // Canonical serializer markup: no space before the img tag's `/>`.
         let content = concat!(
             "<!-- wp:image {\"align\":\"center\"} -->\n",
-            "<figure class=\"wp-block-image aligncenter\"><img src=\"images/tall.png\" alt=\"\" />",
+            "<figure class=\"wp-block-image aligncenter\"><img src=\"images/tall.png\" alt=\"\"/>",
             "<figcaption class=\"wp-element-caption\"><em>Caption</em></figcaption></figure>\n",
             "<!-- /wp:image -->",
         );
@@ -828,7 +872,7 @@ mod tests {
             concat!(
                 "<!-- wp:image {\"align\":\"center\",\"width\":\"375px\",\"aspectRatio\":\"1500/3000\"} -->\n",
                 "<figure class=\"wp-block-image aligncenter is-resized\">",
-                "<img src=\"https://files.example/tall.png\" alt=\"\" style=\"aspect-ratio:1500/3000;width:375px\" />",
+                "<img src=\"https://files.example/tall.png\" alt=\"\" style=\"aspect-ratio:1500/3000;width:375px\"/>",
                 "<figcaption class=\"wp-element-caption\"><em>Caption</em></figcaption></figure>\n",
                 "<!-- /wp:image -->",
             ),
@@ -855,7 +899,7 @@ mod tests {
             concat!(
                 "<!-- wp:image {\"width\":\"375px\",\"aspectRatio\":\"1500/3000\"} -->\n",
                 "<figure class=\"wp-block-image is-resized\">",
-                "<img src=\"https://files.example/tall.png\" alt=\"\" style=\"aspect-ratio:1500/3000;width:375px\" /></figure>\n",
+                "<img src=\"https://files.example/tall.png\" alt=\"\" style=\"aspect-ratio:1500/3000;width:375px\"/></figure>\n",
                 "<!-- /wp:image -->",
             ),
         );

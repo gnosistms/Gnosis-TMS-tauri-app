@@ -97,6 +97,7 @@ import { renderConnectionFailureModal } from "./screens/connection-failure-modal
 import { renderEditorAiTranslateAllModal } from "./screens/editor-ai-translate-all-modal.js";
 import { renderEditorDeriveGlossariesModal } from "./screens/editor-derive-glossaries-modal.js";
 import { renderEditorImagePreviewOverlay } from "./screens/editor-image-preview-overlay.js";
+import { renderEditorInsertLinkModal } from "./screens/editor-insert-link-modal.js";
 import { renderGlossariesScreen } from "./screens/glossaries.js";
 import { renderGlossaryEditorScreen } from "./screens/glossary-editor.js";
 import { renderNavigationLoadingModal } from "./screens/navigation-loading-modal.js";
@@ -547,6 +548,24 @@ function renderTranslateDeriveGlossariesModalOnly() {
   }
 }
 
+function renderTranslateInsertLinkModalOnly() {
+  const html = renderEditorInsertLinkModal(state);
+  const modalCard = app.querySelector(".modal-card--insert-link");
+  const backdrop = modalCard?.closest?.(".modal-backdrop");
+  if (backdrop instanceof HTMLElement) {
+    if (html) {
+      backdrop.outerHTML = html;
+    } else {
+      backdrop.remove();
+    }
+    return;
+  }
+
+  if (html) {
+    app.insertAdjacentHTML("beforeend", html);
+  }
+}
+
 function renderTranslateImagePreviewOverlayOnly() {
   const html = renderEditorImagePreviewOverlay(state);
   const overlay = app.querySelector(".editor-image-preview-overlay");
@@ -604,6 +623,11 @@ function renderWithOptions(options = {}) {
 
   if (options?.scope === "translate-image-preview-overlay" && state.screen === "translate") {
     renderTranslateImagePreviewOverlayOnly();
+    return;
+  }
+
+  if (options?.scope === "translate-insert-link-modal" && state.screen === "translate") {
+    renderTranslateInsertLinkModalOnly();
     return;
   }
 

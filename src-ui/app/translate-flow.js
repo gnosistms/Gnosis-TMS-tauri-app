@@ -68,6 +68,15 @@ import {
 } from "./editor-derive-glossaries-flow.js";
 import { toggleEditorInlineStyle as toggleEditorInlineStyleFlow } from "./editor-inline-markup-flow.js";
 import {
+  closeEditorInsertLinkModal as closeEditorInsertLinkModalFlow,
+  openEditorInsertLink as openEditorInsertLinkFlow,
+  submitEditorInsertLink as submitEditorInsertLinkFlow,
+} from "./editor-link-flow.js";
+export {
+  updateEditorInsertLinkUrlDraft,
+  validateEditorLinkUrl,
+} from "./editor-link-flow.js";
+import {
   applyEditorAssistantDraft as applyEditorAssistantDraftFlow,
   runEditorAiAssistant as runEditorAiAssistantFlow,
   scheduleAssistantTranscriptScrollToBottom,
@@ -162,6 +171,7 @@ import {
   toggleEditorExportCategory as toggleEditorExportCategoryFlow,
 } from "./editor-export-flow.js";
 import {
+  closeWordPressExportSuccessModal as closeWordPressExportSuccessModalFlow,
   connectWordPress as connectWordPressFlow,
   disconnectWordPress as disconnectWordPressFlow,
   searchWordPressPosts as searchWordPressPostsFlow,
@@ -733,6 +743,10 @@ export async function submitEditorExport(render) {
   await submitEditorExportFlow(render);
 }
 
+export function closeWordPressExportSuccessModal(render) {
+  closeWordPressExportSuccessModalFlow(render);
+}
+
 export async function connectWordPress(render) {
   await connectWordPressFlow(render);
 }
@@ -871,6 +885,23 @@ export function updateEditorRowFieldValue(rowId, languageCode, nextValue, conten
 
 export function toggleEditorInlineStyle(render, button) {
   toggleEditorInlineStyleFlow(render, button, {
+    updateEditorRowFieldValueForContentKind: updateEditorRowFieldValue,
+    syncEditorRowTextareaHeight,
+    syncEditorVirtualizationRowLayout,
+    syncEditorGlossaryHighlightRowDom,
+  });
+}
+
+export function openEditorInsertLink(render, button) {
+  openEditorInsertLinkFlow(render, button);
+}
+
+export function closeEditorInsertLinkModal(render) {
+  closeEditorInsertLinkModalFlow(render);
+}
+
+export function submitEditorInsertLink(render) {
+  submitEditorInsertLinkFlow(render, {
     updateEditorRowFieldValueForContentKind: updateEditorRowFieldValue,
     syncEditorRowTextareaHeight,
     syncEditorVirtualizationRowLayout,

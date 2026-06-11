@@ -1453,6 +1453,29 @@
   padding-inline: 12px;
 }
 
+.wordpress-export-success-modal__link {
+  margin: 0;
+  word-break: break-all;
+  line-height: 1.45;
+}
+
+.wordpress-export-success-modal__link a {
+  color: var(--link);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.wordpress-export-success-modal__link a:hover {
+  color: var(--link-hover);
+}
+
+.editor-insert-link-modal__error {
+  margin: 4px 0 0;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  color: var(--message-error-text);
+}
+
 .project-import-modal__error-badge {
   justify-self: start;
   max-width: 100%;

@@ -10,6 +10,7 @@ import {
 import {
   createEditorExportModalState,
   createEditorExportWordPressState,
+  createWordPressExportSuccessModalState,
   state,
 } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
@@ -344,6 +345,26 @@ export function handleWordPressExportProgressEvent(payload, render) {
         },
       });
     }
+
+    // A published post links to the live page; anything else (draft, pending,
+    // private, future) links to the WordPress editor for preview + publish.
+    const isPublished = String(payload.postStatus ?? "").trim().toLowerCase() === "publish";
+    const postLink = String(payload.postLink ?? "").trim();
+    const editLink = String(payload.postEditLink ?? "").trim();
+    const successUrl = isPublished ? (postLink || editLink) : (editLink || postLink);
+    if (successUrl && state.editorChapter?.chapterId) {
+      state.editorChapter = {
+        ...state.editorChapter,
+        wordpressExportSuccessModal: {
+          isOpen: true,
+          isDraft: !isPublished,
+          url: successUrl,
+        },
+      };
+      render();
+      return;
+    }
+
     // Full render to remove the modal; showNoticeBadge only repaints the
     // badge surface.
     render();
@@ -353,6 +374,18 @@ export function handleWordPressExportProgressEvent(payload, render) {
 
   updateWordPressState({ exportStage: "", jobId: "" });
   updateExportModal({ status: "idle", error: formatErrorForDisplay(payload.message ?? "WordPress export failed.") });
+  render();
+}
+
+export function closeWordPressExportSuccessModal(render) {
+  if (!state.editorChapter?.wordpressExportSuccessModal?.isOpen) {
+    return;
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    wordpressExportSuccessModal: createWordPressExportSuccessModalState(),
+  };
   render();
 }
 
