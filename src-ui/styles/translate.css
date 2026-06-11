@@ -1050,6 +1050,12 @@
   text-decoration-thickness: 1.4px;
 }
 
+.translation-row-text-style-button--link .translation-row-text-style-button__label svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+
 .translation-row-text-style-button--footnote .translation-row-text-style-button__label {
   font-size: 14px;
 }
