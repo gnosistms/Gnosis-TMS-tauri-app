@@ -646,3 +646,74 @@ export function serializeEditorPreviewHtml(blocks) {
 
   return ["<meta charset='utf-8'>", bodyHtml, footnotesHtml].filter(Boolean).join("\n\n");
 }
+
+function plainTextWithFootnoteRefs(block, footnoteItems) {
+  const text = previewTextValue(block?.text);
+  const footnotes = normalizeEditorFootnotes(block?.footnotes);
+  const parsed = parseInlineMarkup(text);
+  const visibleText = parseInlineMarkup(unescapeLiteralFootnoteMarkers(text)).visibleText;
+  if (footnotes.length === 0) {
+    return visibleText;
+  }
+
+  const escapedLiteralMarkerRanges = collectEscapedLiteralFootnoteMarkerRanges(parsed.visibleText);
+  const footnoteByMarker = new Map(footnotes.map((entry) => [entry.marker, entry]));
+  const usedMarkers = new Set();
+  const markers = parseUnescapedFootnoteMarkers(visibleText)
+    .filter((marker) => !isInsideAnyRange(
+      { start: marker.index, end: marker.endIndex },
+      escapedLiteralMarkerRanges,
+    ));
+  const appendedRefs = [];
+
+  const appendReference = (entry) => {
+    usedMarkers.add(entry.marker);
+    const number = footnoteItems.length + 1;
+    footnoteItems.push({
+      number,
+      text: extractInlineMarkupVisibleText(previewTextValue(entry.text)).trim(),
+    });
+    return `[${number}]`;
+  };
+
+  let result = "";
+  let cursor = 0;
+  for (const marker of markers) {
+    const entry = footnoteByMarker.get(marker.marker);
+    if (entry && !usedMarkers.has(marker.marker)) {
+      result += visibleText.slice(cursor, marker.index) + appendReference(entry);
+      cursor = marker.endIndex;
+    }
+  }
+  result += visibleText.slice(cursor);
+
+  for (const entry of [...footnotes].sort((left, right) => left.marker - right.marker)) {
+    if (!usedMarkers.has(entry.marker)) {
+      appendedRefs.push(appendReference(entry));
+    }
+  }
+
+  const separator = result && appendedRefs.length > 0 && !/\s$/.test(result) ? " " : "";
+  return `${result}${separator}${appendedRefs.join(" ")}`;
+}
+
+export function serializeEditorPreviewPlainText(blocks) {
+  const footnoteItems = [];
+  const sections = (Array.isArray(blocks) ? blocks : [])
+    .map((block) => {
+      if (block?.kind === "image") {
+        return extractInlineMarkupVisibleText(previewTextValue(block.caption)).trim();
+      }
+      if (block?.kind !== "text") {
+        return "";
+      }
+      return plainTextWithFootnoteRefs(block, footnoteItems).trim();
+    })
+    .filter(Boolean);
+
+  if (footnoteItems.length > 0) {
+    sections.push(footnoteItems.map((entry) => `[${entry.number}] ${entry.text}`).join("\n"));
+  }
+
+  return sections.join("\n\n");
+}

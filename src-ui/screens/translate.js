@@ -20,6 +20,7 @@ import { MANAGE_CHAPTER_LANGUAGES_OPTION_VALUE } from "../app/translate-flow.js"
 import { renderEditorRowInsertModal } from "./editor-row-insert-modal.js";
 import { renderEditorRowPermanentDeletionModal } from "./editor-row-permanent-deletion-modal.js";
 import { renderEditorUnreviewAllModal } from "./editor-unreview-all-modal.js";
+import { renderEditorExportModal } from "./editor-export-modal.js";
 import { renderEditorAiReviewAllModal } from "./editor-ai-review-all-modal.js";
 import { renderEditorAiTranslateAllModal } from "./editor-ai-translate-all-modal.js";
 import { renderEditorClearTranslationsModal } from "./editor-clear-translations-modal.js";
@@ -338,6 +339,7 @@ export function renderTranslateScreen(state) {
     + renderEditorRowInsertModal(state)
     + renderEditorRowPermanentDeletionModal(state)
     + renderEditorUnreviewAllModal(state)
+    + renderEditorExportModal(state)
     + renderEditorAiReviewAllModal(state)
     + renderEditorClearTranslationsModal(state)
     + renderEditorDeriveGlossariesModal(state)

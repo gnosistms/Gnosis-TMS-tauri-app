@@ -471,6 +471,7 @@ export function createEditorChapterState() {
     replaceUndoModal: createEditorReplaceUndoModalState(),
     conflictResolutionModal: createEditorConflictResolutionModalState(),
     unreviewAllModal: createEditorUnreviewAllModalState(),
+    exportModal: createEditorExportModalState(),
     expandedDeletedRowGroupIds: new Set(),
     insertRowModal: createEditorInsertRowModalState(),
     rowPermanentDeletionModal: createEditorRowPermanentDeletionModalState(),
@@ -754,6 +755,13 @@ export function createEditorReplaceUndoModalState() {
 export function createEditorUnreviewAllModalState() {
   return createEntityModalState({
     languageCode: null,
+  });
+}
+
+export function createEditorExportModalState() {
+  return createEntityModalState({
+    expandedCategoryIds: ["file"],
+    selectedOptionId: "file:html",
   });
 }
 

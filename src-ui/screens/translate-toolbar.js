@@ -478,10 +478,10 @@ export function renderPreviewToolbar({
           <button
             type="button"
             class="select-pill select-pill--toolbar select-pill--preview-action"
-            data-action="copy-editor-preview-html"
-            ${tooltipAttributes("Copy the entire document shown below for pasting into other apps.", { align: "end", side: "bottom" })}
+            data-action="open-editor-export-options"
+            ${tooltipAttributes("Export the document shown below to a file, the clipboard, or another destination.", { align: "end", side: "bottom" })}
           >
-            <span class="select-pill__value">Copy HTML</span>
+            <span class="select-pill__value">Export options</span>
           </button>
         </div>
       </div>
