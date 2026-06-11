@@ -1,5 +1,14 @@
 # Editor Export Menu Plan
 
+## Status (2026-06-10)
+
+- **Phase 1 is implemented** on `feature/editor-export-menu` (commit `1c71db62
+  Replace preview Copy HTML with an Export options modal`). Unit tests pass.
+- The branch was rebased onto local `main` to pick up `9cfcf56c` (window
+  `allow-destroy` capability fix) — unrelated to export work.
+- **Next: Phase 2** (xlsx/rtf/md builders in `chapter_export.rs`); the
+  DOCX-to-clipboard research item is still open.
+
 ## Goal
 
 Replace the "Copy HTML" button on the editor preview toolbar with an "Export
