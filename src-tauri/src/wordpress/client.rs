@@ -2,6 +2,7 @@ use reqwest::blocking::{Client, RequestBuilder, Response};
 use reqwest::StatusCode;
 use url::Url;
 
+use crate::wordpress::debug::wordpress_debug_log;
 use crate::wordpress::storage::WordPressConnection;
 
 pub(crate) const WORDPRESS_RECONNECT_MESSAGE: &str =
@@ -51,11 +52,16 @@ impl WordPressSite {
         client: &Client,
         path_and_query: &str,
     ) -> Result<serde_json::Value, String> {
+        let endpoint = self.endpoint(path_and_query)?;
+        wordpress_debug_log(&format!("GET {endpoint}"));
         let response = self
-            .authorize(client.get(self.endpoint(path_and_query)?))
+            .authorize(client.get(endpoint))
             .header("Accept", "application/json")
             .send()
-            .map_err(|error| format!("Could not reach WordPress: {error}"))?;
+            .map_err(|error| {
+                wordpress_debug_log(&format!("GET send failed: {error}"));
+                format!("Could not reach WordPress: {error}")
+            })?;
         parse_wordpress_json_response(response)
     }
 
@@ -65,11 +71,16 @@ impl WordPressSite {
         path: &str,
         body: &serde_json::Value,
     ) -> Result<serde_json::Value, String> {
+        let endpoint = self.endpoint(path)?;
+        wordpress_debug_log(&format!("POST {endpoint}"));
         let response = self
-            .authorize(client.post(self.endpoint(path)?).json(body))
+            .authorize(client.post(endpoint).json(body))
             .header("Accept", "application/json")
             .send()
-            .map_err(|error| format!("Could not reach WordPress: {error}"))?;
+            .map_err(|error| {
+                wordpress_debug_log(&format!("POST send failed: {error}"));
+                format!("Could not reach WordPress: {error}")
+            })?;
         parse_wordpress_json_response(response)
     }
 
@@ -93,8 +104,13 @@ impl WordPressSite {
                 }
             })
             .collect();
+        let endpoint = self.endpoint("media")?;
+        wordpress_debug_log(&format!(
+            "POST {endpoint} (media upload, {} bytes, {mime_type})",
+            bytes.len()
+        ));
         let response = self
-            .authorize(client.post(self.endpoint("media")?).body(bytes))
+            .authorize(client.post(endpoint).body(bytes))
             .header("Accept", "application/json")
             .header("Content-Type", mime_type)
             .header(
@@ -102,7 +118,10 @@ impl WordPressSite {
                 format!("attachment; filename=\"{sanitized_name}\""),
             )
             .send()
-            .map_err(|error| format!("Could not reach WordPress: {error}"))?;
+            .map_err(|error| {
+                wordpress_debug_log(&format!("media upload send failed: {error}"));
+                format!("Could not reach WordPress: {error}")
+            })?;
         parse_wordpress_json_response(response)
     }
 }
@@ -112,6 +131,10 @@ fn parse_wordpress_json_response(response: Response) -> Result<serde_json::Value
     let body = response
         .text()
         .map_err(|error| format!("Could not read the WordPress response: {error}"))?;
+    wordpress_debug_log(&format!(
+        "response status={status} body[..300]={}",
+        body.chars().take(300).collect::<String>()
+    ));
 
     if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
         return Err(WORDPRESS_RECONNECT_MESSAGE.to_string());

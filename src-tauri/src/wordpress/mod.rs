@@ -1,5 +1,6 @@
 pub(crate) mod auth;
 mod client;
+mod debug;
 pub(crate) mod export;
 mod storage;
 

@@ -8,6 +8,7 @@ use crate::{
     constants::WORDPRESS_EXPORT_PROGRESS_EVENT,
     project_repo_paths::resolve_project_git_repo_path,
     wordpress::client::{WordPressSite, WORDPRESS_RECONNECT_MESSAGE},
+    wordpress::debug::wordpress_debug_log,
     wordpress::storage::{
         clear_wordpress_connection, load_wordpress_connection, WordPressConnection,
         WordPressConnectionInfo,
@@ -137,29 +138,50 @@ pub(crate) async fn export_chapter_to_wordpress(
 
     tauri::async_runtime::spawn_blocking(move || {
         let job_id = input.job_id.clone();
-        match run_wordpress_export(&app, input) {
-            Ok((message, post_link)) => emit_export_progress(
-                &app,
-                WordPressExportProgressPayload {
-                    job_id,
-                    status: "success",
-                    message,
-                    current: None,
-                    total: None,
-                    post_link: Some(post_link),
-                },
-            ),
-            Err(error) => emit_export_progress(
-                &app,
-                WordPressExportProgressPayload {
-                    job_id,
-                    status: "error",
-                    message: error,
-                    current: None,
-                    total: None,
-                    post_link: None,
-                },
-            ),
+        // catch_unwind so a panic in the export still produces a terminal
+        // event — otherwise the UI would wait on "exporting" forever.
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_wordpress_export(&app, input)
+        }))
+        .unwrap_or_else(|panic| {
+            let detail = panic
+                .downcast_ref::<&str>()
+                .map(|message| (*message).to_string())
+                .or_else(|| panic.downcast_ref::<String>().cloned())
+                .unwrap_or_default();
+            wordpress_debug_log(&format!("export task panicked: {detail}"));
+            Err("The WordPress export failed unexpectedly. Please try again.".to_string())
+        });
+
+        match outcome {
+            Ok((message, post_link)) => {
+                wordpress_debug_log(&format!("export succeeded: link={post_link}"));
+                emit_export_progress(
+                    &app,
+                    WordPressExportProgressPayload {
+                        job_id,
+                        status: "success",
+                        message,
+                        current: None,
+                        total: None,
+                        post_link: Some(post_link),
+                    },
+                )
+            }
+            Err(error) => {
+                wordpress_debug_log(&format!("export failed: {error}"));
+                emit_export_progress(
+                    &app,
+                    WordPressExportProgressPayload {
+                        job_id,
+                        status: "error",
+                        message: error,
+                        current: None,
+                        total: None,
+                        post_link: None,
+                    },
+                )
+            }
         }
     });
 
@@ -175,6 +197,14 @@ fn run_wordpress_export(
     let client = wordpress_http_client()?;
 
     let local_sources = collect_local_image_sources(&input.content);
+    wordpress_debug_log(&format!(
+        "export start: mode={} post_id={:?} content_bytes={} footnotes={} local_images={}",
+        input.mode,
+        input.post_id,
+        input.content.len(),
+        input.footnotes.len(),
+        local_sources.len(),
+    ));
     let mut content = input.content.clone();
 
     if !local_sources.is_empty() {
@@ -198,7 +228,12 @@ fn run_wordpress_export(
                     post_link: None,
                 },
             );
+            wordpress_debug_log(&format!(
+                "uploading image {} of {total}: {source}",
+                index + 1
+            ));
             let uploaded_url = upload_repo_image(&site, &client, &repo_path, source)?;
+            wordpress_debug_log(&format!("image uploaded: {source} -> {uploaded_url}"));
             content = replace_image_source(&content, source, &uploaded_url);
         }
     }
@@ -241,7 +276,9 @@ fn run_wordpress_export(
         )
     };
 
+    wordpress_debug_log(&format!("posting to {path}"));
     let response = site.post_json(&client, &path, &body)?;
+    wordpress_debug_log("post request returned");
     let post_link = response
         .get("link")
         .and_then(|value| value.as_str())
