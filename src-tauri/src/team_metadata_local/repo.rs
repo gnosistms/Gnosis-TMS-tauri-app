@@ -85,11 +85,21 @@ fn clone_team_metadata_repo(
     let repo_url = expected_remote_url(org_login)?;
     let git_transport_auth = GitTransportAuth::from_token(git_transport_token)?;
     let repo_path_string = repo_path.display().to_string();
-    git_output(
+    let clone_result = git_output(
         repo_parent,
         &["clone", repo_url.as_str(), repo_path_string.as_str()],
         Some(&git_transport_auth),
-    )?;
+    );
+    if let Err(error) = clone_result {
+        // git removes its own target on most failures, but an interrupted
+        // transfer/checkout can leave a partial clone behind. If it stays, every
+        // retry sees a git dir without manifest.json and cascades "missing
+        // manifest.json" / "not available yet" errors instead of re-cloning.
+        if repo_path.exists() {
+            let _ = fs::remove_dir_all(repo_path);
+        }
+        return Err(error);
+    }
     Ok(())
 }
 
@@ -146,6 +156,17 @@ pub(super) fn build_local_team_metadata_repo_info(
     })
 }
 
+/// When a clone is interrupted during checkout, the object data is intact but the
+/// working tree (including manifest.json) is incomplete. Restore tracked files from
+/// HEAD. Returns true when the manifest is available afterwards.
+fn restore_partial_metadata_checkout(repo_path: &Path) -> bool {
+    if git_output(repo_path, &["cat-file", "-e", "HEAD:manifest.json"], None).is_err() {
+        return false;
+    }
+    git_output(repo_path, &["checkout", "HEAD", "--", "."], None).is_ok()
+        && manifest_path(repo_path).exists()
+}
+
 pub(super) fn ensure_local_repo_exists(
     app: &AppHandle,
     installation_id: i64,
@@ -156,11 +177,26 @@ pub(super) fn ensure_local_repo_exists(
 
     if repo_path.exists() {
         if repo_has_git_dir(&repo_path) {
-            ensure_origin_remote(&repo_path, org_login)?;
-            return Ok(repo_path);
-        }
-
-        if repo_dir_is_empty(&repo_path)? {
+            // The manifest only ever comes from the remote, so a git dir without
+            // manifest.json is partial-clone damage. Repair it here instead of
+            // letting every later read fail "missing manifest.json".
+            let manifest_available =
+                manifest_path(&repo_path).exists() || restore_partial_metadata_checkout(&repo_path);
+            if manifest_available || read_current_head_oid(&repo_path).is_some() {
+                // Keep repos that have commits even without a manifest, so the
+                // downstream "missing manifest.json" handling can report them.
+                ensure_origin_remote(&repo_path, org_login)?;
+                return Ok(repo_path);
+            }
+            // No manifest and no commits at all — partial clone residue with
+            // nothing local to preserve. Remove it and re-clone below.
+            fs::remove_dir_all(&repo_path).map_err(|error| {
+                format!(
+                    "Could not reset the partially cloned team-metadata repo '{}': {error}",
+                    repo_path.display()
+                )
+            })?;
+        } else if repo_dir_is_empty(&repo_path)? {
             fs::remove_dir_all(&repo_path).map_err(|error| {
                 format!(
                     "Could not reset the empty local team-metadata folder '{}': {error}",
@@ -207,23 +243,109 @@ pub(super) fn pull_local_metadata_repo(
 ) -> Result<(), String> {
     let git_transport_token = load_git_transport_token(installation_id, session_token)?;
     let git_transport_auth = GitTransportAuth::from_token(&git_transport_token)?;
+    let branch_name = current_branch_name(repo_path);
+    let Err(first_error) = attempt_metadata_pull(repo_path, &branch_name, &git_transport_auth)
+    else {
+        return Ok(());
+    };
+    // Untracked record files are residue of an interrupted mutation (written, but the
+    // commit never landed, so the command failed and the write was never acknowledged
+    // as durable). The remote copy is authoritative for them — clear the specific
+    // files git refused to overwrite and retry once.
+    if remove_untracked_files_blocking_pull(repo_path, &first_error) {
+        return attempt_metadata_pull(repo_path, &branch_name, &git_transport_auth);
+    }
+    Err(first_error)
+}
+
+fn attempt_metadata_pull(
+    repo_path: &Path,
+    branch_name: &str,
+    git_transport_auth: &GitTransportAuth,
+) -> Result<(), String> {
     // Pull the current branch explicitly. A bare `git pull --ff-only` relies on local
     // upstream tracking; when that is missing or ambiguous, git tries to merge every
     // fetched head and fails with "Cannot fast-forward to multiple branches." Naming the
     // branch resolves to a single merge target.
-    let branch_name = current_branch_name(repo_path);
     let pull_result = git_output(
         repo_path,
-        &["pull", "--ff-only", "origin", &branch_name],
-        Some(&git_transport_auth),
+        &["pull", "--ff-only", "origin", branch_name],
+        Some(git_transport_auth),
     );
     match pull_result {
         Ok(_) => Ok(()),
         Err(error) if git_error_indicates_diverged(&error) => {
-            rebase_diverged_metadata_repo(repo_path, &branch_name, error)
+            rebase_diverged_metadata_repo(repo_path, branch_name, error)
         }
         Err(error) => Err(abort_rebase_after_failed_pull(repo_path, error)),
     }
+}
+
+const UNTRACKED_OVERWRITE_MARKER: &str = "untracked working tree files would be overwritten by";
+
+/// Parse the repo-relative paths git lists under an untracked-overwrite error header
+/// (one per indented line, ending at the first non-indented line).
+fn untracked_paths_blocking_pull(error: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    let mut in_file_list = false;
+    for line in error.lines() {
+        if line
+            .to_ascii_lowercase()
+            .contains(UNTRACKED_OVERWRITE_MARKER)
+        {
+            in_file_list = true;
+            continue;
+        }
+        if !in_file_list {
+            continue;
+        }
+        if line.starts_with('\t') || line.starts_with("    ") {
+            let path = line.trim();
+            if !path.is_empty() {
+                paths.push(path.to_string());
+            }
+        } else {
+            in_file_list = false;
+        }
+    }
+    paths
+}
+
+/// Remove the untracked files git refused to overwrite during a pull. Returns true
+/// only when every listed file was verified untracked (`??` in porcelain status) and
+/// removed — any anomaly leaves the working tree alone so the original error surfaces.
+fn remove_untracked_files_blocking_pull(repo_path: &Path, error: &str) -> bool {
+    let relative_paths = untracked_paths_blocking_pull(error);
+    if relative_paths.is_empty() {
+        return false;
+    }
+
+    for relative_path in &relative_paths {
+        let path = Path::new(relative_path);
+        let is_plain_relative = !path.is_absolute()
+            && path
+                .components()
+                .all(|component| matches!(component, std::path::Component::Normal(_)));
+        if !is_plain_relative {
+            return false;
+        }
+        let is_untracked = git_output(
+            repo_path,
+            &["status", "--porcelain", "--", relative_path],
+            None,
+        )
+        .is_ok_and(|status| status.starts_with("??"));
+        if !is_untracked {
+            return false;
+        }
+    }
+
+    for relative_path in &relative_paths {
+        if fs::remove_file(repo_path.join(relative_path)).is_err() {
+            return false;
+        }
+    }
+    true
 }
 
 /// The metadata repo is multi-writer (every manager on the team), so a teammate pushing
@@ -322,6 +444,30 @@ mod tests {
         assert!(!git_error_indicates_diverged(
             "fatal: couldn't find remote ref main"
         ));
+    }
+
+    #[test]
+    fn untracked_overwrite_paths_are_parsed_from_pull_errors() {
+        let error = "git pull --ff-only origin main failed: error: The following untracked working tree files would be overwritten by merge:\n\tresources/projects/0196a7e2.json\n\tresources/glossaries/team-glossary.json\nPlease move or remove them before you merge.\nAborting";
+        assert_eq!(
+            untracked_paths_blocking_pull(error),
+            vec![
+                "resources/projects/0196a7e2.json".to_string(),
+                "resources/glossaries/team-glossary.json".to_string(),
+            ],
+        );
+    }
+
+    #[test]
+    fn unrelated_pull_errors_yield_no_untracked_paths() {
+        assert!(untracked_paths_blocking_pull(
+            "git pull --ff-only origin main failed: fatal: Not possible to fast-forward, aborting."
+        )
+        .is_empty());
+        assert!(untracked_paths_blocking_pull(
+            "error: Your local changes to the following files would be overwritten by merge:\n\tmanifest.json"
+        )
+        .is_empty());
     }
 
     #[test]
