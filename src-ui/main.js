@@ -122,7 +122,12 @@ import {
   getNoticeBadgeText,
   getScopedSyncBadgeText,
   getStatusSurfaceItems,
+  showNoticeBadge,
 } from "./app/status-feedback.js";
+import {
+  createEditorCloseGuard,
+  EDITOR_CLOSE_GUARD_NOTICE_DURATION_MS,
+} from "./app/editor-close-guard.js";
 
 // Install crash handlers as early as possible so first-run crashes are captured (and
 // buffered until the consent gate opens). See plans/telemetry-plan.md.
@@ -698,9 +703,18 @@ function editorHasPendingDurableWrites() {
   );
 }
 
+// Set when the user force-closes past pending writes so beforeunload does not
+// re-block a close the user already approved.
+let editorCloseForceApproved = false;
+
+const editorCloseGuard = createEditorCloseGuard({
+  hasPendingDurableWrites: editorHasPendingDurableWrites,
+  showBlockedNotice: (message) => showNoticeBadge(message, render, EDITOR_CLOSE_GUARD_NOTICE_DURATION_MS),
+});
+
 window.addEventListener("beforeunload", (event) => {
   persistCurrentEditorLocation(state);
-  if (!editorHasPendingDurableWrites()) {
+  if (editorCloseForceApproved || !editorHasPendingDurableWrites()) {
     return;
   }
 
@@ -722,12 +736,15 @@ function registerTauriEditorCloseGuard() {
 
     void currentWindow.onCloseRequested((event) => {
       persistCurrentEditorLocation(state);
-      if (!editorHasPendingDurableWrites()) {
+      const { allowClose, forced } = editorCloseGuard.handleCloseRequest();
+      if (allowClose) {
+        if (forced) {
+          editorCloseForceApproved = true;
+        }
         return;
       }
 
       event?.preventDefault?.();
-      render();
     });
   } catch {}
 }
