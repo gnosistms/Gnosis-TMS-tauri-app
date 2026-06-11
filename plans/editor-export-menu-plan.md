@@ -4,10 +4,24 @@
 
 - **Phase 1 is implemented** on `feature/editor-export-menu` (commit `1c71db62
   Replace preview Copy HTML with an Export options modal`). Unit tests pass.
+- **Phase 2 is implemented** on the same branch: `chapter_export.rs` gained
+  xlsx/rtf/md builders behind `export_gtms_chapter_file`, the editor export
+  catalog marks `file:xlsx` / `file:rtf` / `file:md` available, and the
+  project-export modal (same Rust command) now offers XLSX/RTF/MD too — only
+  SRT remains unsupported there. Notes:
+  - XLSX mirrors the import column layout and exports **all** chapter
+    languages (header row = language codes, footnotes after `***`), so the
+    project-export modal intentionally hides the language select for it.
+  - RTF embeds png/jpeg via `\pict` with the DOCX max-page scaling; gif and
+    unfetchable URLs fall back to a HYPERLINK field.
+  - MD appends `[^n]` refs to the row's paragraph and collects definitions at
+    the document end.
 - The branch was rebased onto local `main` to pick up `9cfcf56c` (window
   `allow-destroy` capability fix) — unrelated to export work.
-- **Next: Phase 2** (xlsx/rtf/md builders in `chapter_export.rs`); the
-  DOCX-to-clipboard research item is still open.
+- **Next: Phase 3** (WordPress export). Still open from Phase 2: the
+  DOCX-to-clipboard research item (`copy:docx` stays unavailable).
+- Manual verification still pending: macOS + Windows file dialogs, opening the
+  exported xlsx in Excel/Google Sheets, rtf in Word, md rendering on GitHub.
 
 ## Goal
 
