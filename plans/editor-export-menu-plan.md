@@ -24,6 +24,13 @@
   Broker OAuth routes shipped on broker `main` (`c9ea0f8`). `link:wordpress`
   is `available: true`. Still open from Phase 2: the DOCX-to-clipboard
   research item (`copy:docx` stays unavailable).
+- **Phase 4 is implemented** on `feature/team-chapter-copy` — see
+  `plans/team-chapter-copy-plan.md`. `copy_gtms_chapter_to_team` copies the
+  chapter directory into another team's project with fresh chapter/row ids
+  (glossary links stripped, image assets copied), syncing the target repo
+  before and after, with progress via `team-chapter-copy-progress` events.
+  `link:team` is `available: true`. Manual pass pending: a real cross-team
+  copy on a clean machine (target repo not yet cloned) and on Windows.
 - Manual verification still pending: macOS + Windows file dialogs, opening the
   exported xlsx in Excel/Google Sheets, rtf in Word, md rendering on GitHub.
 
