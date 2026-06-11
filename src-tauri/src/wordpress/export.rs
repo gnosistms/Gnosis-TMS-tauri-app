@@ -19,6 +19,11 @@ use crate::{
 // unbounded body into memory during export (matches the chapter export cap).
 const MAX_WORDPRESS_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
 
+// Display-only cap so a full post image fits a typical screen without
+// scrolling. Only the block's display size is set — the uploaded media file
+// keeps its full resolution.
+const MAX_WORDPRESS_IMAGE_DISPLAY_HEIGHT_PX: u64 = 600;
+
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct WordPressFootnoteInput {
@@ -232,9 +237,12 @@ fn run_wordpress_export(
                 "uploading image {} of {total}: {source}",
                 index + 1
             ));
-            let uploaded_url = upload_repo_image(&site, &client, &repo_path, source)?;
-            wordpress_debug_log(&format!("image uploaded: {source} -> {uploaded_url}"));
-            content = replace_image_source(&content, source, &uploaded_url);
+            let uploaded = upload_repo_image(&site, &client, &repo_path, source)?;
+            wordpress_debug_log(&format!(
+                "image uploaded: {source} -> {} natural={:?}x{:?}",
+                uploaded.source_url, uploaded.natural_width, uploaded.natural_height,
+            ));
+            content = apply_uploaded_image_to_content(&content, source, &uploaded);
         }
     }
 
@@ -394,12 +402,70 @@ fn replace_image_source(content: &str, source: &str, uploaded_url: &str) -> Stri
     )
 }
 
+struct UploadedWordPressImage {
+    source_url: String,
+    natural_width: Option<u64>,
+    natural_height: Option<u64>,
+}
+
+/// Display size for an uploaded image: capped to
+/// `MAX_WORDPRESS_IMAGE_DISPLAY_HEIGHT_PX` with the width derived from the
+/// natural aspect ratio. `None` means the image already fits and the block
+/// stays unsized.
+fn wordpress_display_size(natural_width: u64, natural_height: u64) -> Option<(u64, u64)> {
+    if natural_width == 0 || natural_height == 0 {
+        return None;
+    }
+    if natural_height <= MAX_WORDPRESS_IMAGE_DISPLAY_HEIGHT_PX {
+        return None;
+    }
+    let display_height = MAX_WORDPRESS_IMAGE_DISPLAY_HEIGHT_PX;
+    let display_width = ((natural_width as f64) * (display_height as f64) / (natural_height as f64))
+        .round()
+        .max(1.0) as u64;
+    Some((display_width, display_height))
+}
+
+/// Rewrites the serialized image block for `source` to the uploaded URL. When
+/// the image is taller than the display cap, the plain block is upgraded to
+/// the same markup the block editor's resize handle produces (display
+/// width/height in the block attrs and inline style); the media file itself
+/// is untouched. Falls back to a plain src swap if the block markup is not
+/// the expected shape.
+fn apply_uploaded_image_to_content(
+    content: &str,
+    source: &str,
+    uploaded: &UploadedWordPressImage,
+) -> String {
+    if let (Some(natural_width), Some(natural_height)) =
+        (uploaded.natural_width, uploaded.natural_height)
+    {
+        if let Some((display_width, display_height)) =
+            wordpress_display_size(natural_width, natural_height)
+        {
+            let plain_block = format!(
+                "<!-- wp:image -->\n<figure class=\"wp-block-image\"><img src=\"{source}\" alt=\"\" />"
+            );
+            if content.contains(&plain_block) {
+                let escaped_url = escape_html_attribute(&uploaded.source_url);
+                let resized_block = format!(
+                    "<!-- wp:image {{\"width\":\"{display_width}px\",\"height\":\"{display_height}px\"}} -->\n\
+                     <figure class=\"wp-block-image is-resized\"><img src=\"{escaped_url}\" alt=\"\" style=\"width:{display_width}px;height:{display_height}px\" />"
+                );
+                return content.replace(&plain_block, &resized_block);
+            }
+        }
+    }
+
+    replace_image_source(content, source, &uploaded.source_url)
+}
+
 fn upload_repo_image(
     site: &WordPressSite,
     client: &Client,
     repo_path: &Path,
     source: &str,
-) -> Result<String, String> {
+) -> Result<UploadedWordPressImage, String> {
     let absolute_path = resolve_repo_image_path(repo_path, source)?;
     let metadata = std::fs::metadata(&absolute_path)
         .map_err(|_| format!("Could not find the uploaded image '{source}' in the project."))?;
@@ -418,12 +484,22 @@ fn upload_repo_image(
         .ok_or_else(|| format!("Could not determine the image type for '{source}'."))?;
 
     let response = site.upload_media(client, &file_name, mime_type, bytes)?;
-    response
+    let source_url = response
         .get("source_url")
         .and_then(|value| value.as_str())
         .filter(|value| !value.trim().is_empty())
         .map(str::to_string)
-        .ok_or_else(|| "WordPress did not return a URL for the uploaded image.".to_string())
+        .ok_or_else(|| "WordPress did not return a URL for the uploaded image.".to_string())?;
+
+    Ok(UploadedWordPressImage {
+        source_url,
+        natural_width: response
+            .pointer("/media_details/width")
+            .and_then(|value| value.as_u64()),
+        natural_height: response
+            .pointer("/media_details/height")
+            .and_then(|value| value.as_u64()),
+    })
 }
 
 /// Resolves a serializer-emitted repo-relative image path, rejecting anything
@@ -570,6 +646,98 @@ mod tests {
         assert!(resolve_repo_image_path(&temp_dir, "/etc/passwd").is_err());
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn wordpress_display_size_caps_height_and_keeps_the_aspect_ratio() {
+        // Taller than the cap: scaled down to 600px high.
+        assert_eq!(wordpress_display_size(2000, 3000), Some((400, 600)));
+        assert_eq!(wordpress_display_size(1200, 2400), Some((300, 600)));
+        // Already fits: no display size, the block stays unsized.
+        assert_eq!(wordpress_display_size(800, 600), None);
+        assert_eq!(wordpress_display_size(4000, 599), None);
+        // Degenerate dimensions are left alone.
+        assert_eq!(wordpress_display_size(0, 9000), None);
+    }
+
+    #[test]
+    fn apply_uploaded_image_resizes_tall_images_with_block_editor_markup() {
+        let content = concat!(
+            "<!-- wp:image -->\n",
+            "<figure class=\"wp-block-image\"><img src=\"images/tall.png\" alt=\"\" />",
+            "<figcaption>Caption</figcaption></figure>\n",
+            "<!-- /wp:image -->",
+        );
+        let uploaded = UploadedWordPressImage {
+            source_url: "https://files.example/tall.png".to_string(),
+            natural_width: Some(1500),
+            natural_height: Some(3000),
+        };
+
+        let rewritten = apply_uploaded_image_to_content(content, "images/tall.png", &uploaded);
+
+        assert_eq!(
+            rewritten,
+            concat!(
+                "<!-- wp:image {\"width\":\"300px\",\"height\":\"600px\"} -->\n",
+                "<figure class=\"wp-block-image is-resized\">",
+                "<img src=\"https://files.example/tall.png\" alt=\"\" style=\"width:300px;height:600px\" />",
+                "<figcaption>Caption</figcaption></figure>\n",
+                "<!-- /wp:image -->",
+            ),
+        );
+    }
+
+    #[test]
+    fn apply_uploaded_image_leaves_fitting_images_unsized() {
+        let content = concat!(
+            "<!-- wp:image -->\n",
+            "<figure class=\"wp-block-image\"><img src=\"images/wide.png\" alt=\"\" /></figure>\n",
+            "<!-- /wp:image -->",
+        );
+        let uploaded = UploadedWordPressImage {
+            source_url: "https://files.example/wide.png".to_string(),
+            natural_width: Some(2000),
+            natural_height: Some(500),
+        };
+
+        let rewritten = apply_uploaded_image_to_content(content, "images/wide.png", &uploaded);
+
+        assert_eq!(
+            rewritten,
+            concat!(
+                "<!-- wp:image -->\n",
+                "<figure class=\"wp-block-image\"><img src=\"https://files.example/wide.png\" alt=\"\" /></figure>\n",
+                "<!-- /wp:image -->",
+            ),
+        );
+    }
+
+    #[test]
+    fn apply_uploaded_image_falls_back_to_src_swap_without_dimensions_or_pattern() {
+        let uploaded_without_dimensions = UploadedWordPressImage {
+            source_url: "https://files.example/a.png".to_string(),
+            natural_width: None,
+            natural_height: None,
+        };
+        let content = "<!-- wp:image -->\n<figure class=\"wp-block-image\"><img src=\"images/a.png\" alt=\"\" /></figure>\n<!-- /wp:image -->";
+        let rewritten =
+            apply_uploaded_image_to_content(content, "images/a.png", &uploaded_without_dimensions);
+        assert!(rewritten.contains("src=\"https://files.example/a.png\""));
+        assert!(!rewritten.contains("is-resized"));
+
+        // Tall image but unexpected surrounding markup: src still swapped.
+        let unexpected_markup = "<figure><img src=\"images/a.png\" alt=\"\" /></figure>";
+        let tall = UploadedWordPressImage {
+            source_url: "https://files.example/a.png".to_string(),
+            natural_width: Some(1000),
+            natural_height: Some(4000),
+        };
+        let rewritten = apply_uploaded_image_to_content(unexpected_markup, "images/a.png", &tall);
+        assert_eq!(
+            rewritten,
+            "<figure><img src=\"https://files.example/a.png\" alt=\"\" /></figure>",
+        );
     }
 
     #[test]
