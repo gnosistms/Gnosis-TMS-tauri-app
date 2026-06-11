@@ -81,12 +81,16 @@ function setupGlossaryLoadState() {
       name: "Team 1",
       githubOrg: "team-1",
       installationId: 1,
+      // Metadata maintenance writes (backfill/repair/finalize) are gated on
+      // resource management, so the fixture account must be a manager.
+      membershipRole: "admin",
     },
     {
       id: "team-2",
       name: "Team 2",
       githubOrg: "team-2",
       installationId: 2,
+      membershipRole: "admin",
     },
   ];
 }
@@ -294,6 +298,89 @@ test("repo-backed glossary load backfills missing metadata records for local rep
   assert.equal(metadataRecords[0].githubNodeId, remoteRepo.nodeId);
   assert.deepEqual(metadataRecords[0].sourceLanguage, localGlossary.sourceLanguage);
   assert.deepEqual(metadataRecords[0].targetLanguage, localGlossary.targetLanguage);
+  assert.equal(result.glossaries.length, 1);
+  assert.equal(result.glossaries[0].id, localGlossary.id);
+});
+
+test("repo-backed glossary load never writes metadata records for non-manager accounts", async () => {
+  setupGlossaryLoadState();
+  const team = { ...state.teams[0], membershipRole: "translator" };
+  state.teams = [team, state.teams[1]];
+  const remoteRepo = {
+    name: "glossary-spanish-vietnamese",
+    fullName: "team-1/glossary-spanish-vietnamese",
+    repoId: 22,
+    nodeId: "repo-node-22",
+    defaultBranchName: "main",
+    defaultBranchHeadOid: "head-remote",
+  };
+  const localGlossary = {
+    glossaryId: "glossary-spanish-vietnamese-id",
+    id: "glossary-spanish-vietnamese-id",
+    title: "Spanish Vietnamese Glossary",
+    repoName: "glossary-old-name",
+    fullName: "team-1/glossary-old-name",
+    sourceLanguage: { code: "es", name: "Spanish" },
+    targetLanguage: { code: "vi", name: "Vietnamese" },
+    lifecycleState: "active",
+    termCount: 3,
+  };
+  // The remote repo was renamed: a manager's load would repair the metadata
+  // record (an upsert), which this account type is not allowed to perform.
+  const metadataRecord = {
+    id: localGlossary.id,
+    kind: "glossary",
+    title: localGlossary.title,
+    repoName: "glossary-old-name",
+    previousRepoNames: [],
+    githubRepoId: remoteRepo.repoId,
+    githubNodeId: remoteRepo.nodeId,
+    fullName: "team-1/glossary-old-name",
+    defaultBranch: "main",
+    lifecycleState: "active",
+    remoteState: "linked",
+    recordState: "live",
+    deletedAt: null,
+    sourceLanguage: localGlossary.sourceLanguage,
+    targetLanguage: localGlossary.targetLanguage,
+    termCount: localGlossary.termCount,
+  };
+  const metadataWrites = [];
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "list_local_gtms_glossaries") {
+      return [localGlossary];
+    }
+    if (command === "list_gnosis_glossaries_for_installation") {
+      return [remoteRepo];
+    }
+    if (command === "list_local_gnosis_glossary_metadata_records") {
+      return [metadataRecord];
+    }
+    if (command === "inspect_and_migrate_local_repo_bindings") {
+      return { issues: [], autoRepairedCount: 0 };
+    }
+    if (
+      command === "upsert_local_gnosis_glossary_metadata_record"
+      || command === "delete_local_gnosis_glossary_metadata_record"
+    ) {
+      // The backend rejects management writes for this account type; the flow
+      // must not even attempt them during a routine load (JAVASCRIPT-M).
+      metadataWrites.push({ command, payload });
+      throw new Error("Your account type cannot manage shared resources.");
+    }
+    if (command === "sync_gtms_glossary_repos") {
+      return (payload.input.glossaries ?? []).map((glossary) => ({
+        repoName: glossary.repoName,
+        status: "upToDate",
+      }));
+    }
+    return { commitCreated: false };
+  };
+
+  const result = await loadRepoBackedGlossariesForTeam(team);
+
+  assert.deepEqual(metadataWrites, []);
   assert.equal(result.glossaries.length, 1);
   assert.equal(result.glossaries[0].id, localGlossary.id);
 });
