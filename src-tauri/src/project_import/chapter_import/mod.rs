@@ -31,7 +31,6 @@ use write_gtms::{build_chapter_file, build_row_file, build_word_counts_from_impo
 use write_gtms::{
     cleanup_written_imports, commit_written_imports, import_parsed_workbook_to_gtms_sync,
     prepare_project_import_repo, with_cleanup_failure, write_parsed_workbook_chapter,
-    ProjectImportRepoContext, WrittenImport,
 };
 use xlsx::parse_xlsx_workbook;
 #[cfg(test)]
