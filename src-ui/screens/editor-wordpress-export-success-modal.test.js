@@ -15,7 +15,7 @@ test("draft success modal links to the WordPress editor with publish guidance", 
   }));
 
   assert.match(html, /WORDPRESS EXPORT/);
-  assert.match(html, /Content successfully exported to Wordpress/);
+  assert.match(html, /Content successfully exported to WordPress/);
   assert.match(html, /still an unpublished draft\. To preview and publish, click the link below/);
   assert.match(html, /<a href="https:\/\/wordpress\.com\/post\/12345\/24994">/);
   assert.match(html, /data-action="close-wordpress-export-success-modal"/);
@@ -28,7 +28,7 @@ test("published success modal links to the live post", () => {
     url: "https://example.com/2026/06/11/chapter-3/",
   }));
 
-  assert.match(html, /Your content was exported to Wordpress\. To see it, click the link below\./);
+  assert.match(html, /Your content was exported to WordPress\. To see it, click the link below\./);
   assert.doesNotMatch(html, /unpublished draft/);
   assert.match(html, /<a href="https:\/\/example\.com\/2026\/06\/11\/chapter-3\/">/);
 });
