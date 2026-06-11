@@ -895,7 +895,7 @@ struct StoredRowOrigin {
     source_row_number: usize,
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Default, Deserialize, Serialize)]
 struct StoredFieldValue {
     #[serde(default)]
     plain_text: String,
