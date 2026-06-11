@@ -23,7 +23,7 @@ const MAX_WORDPRESS_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
 // Display-only cap so a full post image fits a typical screen without
 // scrolling. Only the block's display size is set — the uploaded media file
 // keeps its full resolution.
-const MAX_WORDPRESS_IMAGE_DISPLAY_HEIGHT_PX: u64 = 800;
+const MAX_WORDPRESS_IMAGE_DISPLAY_HEIGHT_PX: u64 = 750;
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -797,12 +797,12 @@ mod tests {
 
     #[test]
     fn wordpress_display_size_caps_height_and_keeps_the_aspect_ratio() {
-        // Taller than the cap: scaled down to 800px high.
-        assert_eq!(wordpress_display_size(2000, 3000), Some((533, 800)));
-        assert_eq!(wordpress_display_size(1200, 2400), Some((400, 800)));
+        // Taller than the cap: scaled down to 750px high.
+        assert_eq!(wordpress_display_size(2000, 3000), Some((500, 750)));
+        assert_eq!(wordpress_display_size(1200, 2400), Some((375, 750)));
         // Already fits: no display size, the block stays unsized.
-        assert_eq!(wordpress_display_size(1000, 800), None);
-        assert_eq!(wordpress_display_size(4000, 799), None);
+        assert_eq!(wordpress_display_size(1000, 750), None);
+        assert_eq!(wordpress_display_size(4000, 749), None);
         // Degenerate dimensions are left alone.
         assert_eq!(wordpress_display_size(0, 9000), None);
     }
@@ -826,9 +826,9 @@ mod tests {
         assert_eq!(
             rewritten,
             concat!(
-                "<!-- wp:image {\"align\":\"center\",\"width\":\"400px\",\"aspectRatio\":\"1500/3000\"} -->\n",
+                "<!-- wp:image {\"align\":\"center\",\"width\":\"375px\",\"aspectRatio\":\"1500/3000\"} -->\n",
                 "<figure class=\"wp-block-image aligncenter is-resized\">",
-                "<img src=\"https://files.example/tall.png\" alt=\"\" style=\"aspect-ratio:1500/3000;width:400px\" />",
+                "<img src=\"https://files.example/tall.png\" alt=\"\" style=\"aspect-ratio:1500/3000;width:375px\" />",
                 "<figcaption class=\"wp-element-caption\"><em>Caption</em></figcaption></figure>\n",
                 "<!-- /wp:image -->",
             ),
@@ -853,9 +853,9 @@ mod tests {
         assert_eq!(
             rewritten,
             concat!(
-                "<!-- wp:image {\"width\":\"400px\",\"aspectRatio\":\"1500/3000\"} -->\n",
+                "<!-- wp:image {\"width\":\"375px\",\"aspectRatio\":\"1500/3000\"} -->\n",
                 "<figure class=\"wp-block-image is-resized\">",
-                "<img src=\"https://files.example/tall.png\" alt=\"\" style=\"aspect-ratio:1500/3000;width:400px\" /></figure>\n",
+                "<img src=\"https://files.example/tall.png\" alt=\"\" style=\"aspect-ratio:1500/3000;width:375px\" /></figure>\n",
                 "<!-- /wp:image -->",
             ),
         );
