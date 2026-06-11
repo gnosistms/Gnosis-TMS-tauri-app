@@ -24,6 +24,7 @@ const SUPPORTED_FOCUSED_INPUT_SELECTORS = [
   "[data-editor-search-input]",
   "[data-preview-search-input]",
   "[data-editor-replace-input]",
+  "[data-editor-insert-link-url-input]",
   "[data-editor-comment-draft]",
   "[data-editor-assistant-draft]",
   "[data-ai-key-input]",

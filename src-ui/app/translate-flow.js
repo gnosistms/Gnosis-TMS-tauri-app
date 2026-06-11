@@ -68,6 +68,15 @@ import {
 } from "./editor-derive-glossaries-flow.js";
 import { toggleEditorInlineStyle as toggleEditorInlineStyleFlow } from "./editor-inline-markup-flow.js";
 import {
+  closeEditorInsertLinkModal as closeEditorInsertLinkModalFlow,
+  openEditorInsertLink as openEditorInsertLinkFlow,
+  submitEditorInsertLink as submitEditorInsertLinkFlow,
+} from "./editor-link-flow.js";
+export {
+  updateEditorInsertLinkUrlDraft,
+  validateEditorLinkUrl,
+} from "./editor-link-flow.js";
+import {
   applyEditorAssistantDraft as applyEditorAssistantDraftFlow,
   runEditorAiAssistant as runEditorAiAssistantFlow,
   scheduleAssistantTranscriptScrollToBottom,
@@ -844,6 +853,23 @@ export function updateEditorRowFieldValue(rowId, languageCode, nextValue, conten
 
 export function toggleEditorInlineStyle(render, button) {
   toggleEditorInlineStyleFlow(render, button, {
+    updateEditorRowFieldValueForContentKind: updateEditorRowFieldValue,
+    syncEditorRowTextareaHeight,
+    syncEditorVirtualizationRowLayout,
+    syncEditorGlossaryHighlightRowDom,
+  });
+}
+
+export function openEditorInsertLink(render, button) {
+  openEditorInsertLinkFlow(render, button);
+}
+
+export function closeEditorInsertLinkModal(render) {
+  closeEditorInsertLinkModalFlow(render);
+}
+
+export function submitEditorInsertLink(render) {
+  submitEditorInsertLinkFlow(render, {
     updateEditorRowFieldValueForContentKind: updateEditorRowFieldValue,
     syncEditorRowTextareaHeight,
     syncEditorVirtualizationRowLayout,

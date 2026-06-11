@@ -239,6 +239,20 @@ function renderRowTextStyleButtons(row, language) {
     `);
   }
 
+  secondaryButtons.push(`
+    <button
+      class="translation-row-text-style-button translation-row-text-style-button--link"
+      type="button"
+      data-action="open-editor-insert-link"
+      data-editor-link-button
+      data-row-id="${escapeHtml(row.id)}"
+      data-language-code="${escapeHtml(language.code)}"
+      ${tooltipAttributes("Insert HTML link", { side: "top" })}
+    >
+      <span class="translation-row-text-style-button__label" aria-hidden="true">&#128279;&#xFE0E;</span>
+    </button>
+  `);
+
   if (language.showAddImageButtons === true) {
     secondaryButtons.push(`
       <button

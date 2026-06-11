@@ -452,6 +452,7 @@ export function createEditorChapterState() {
     imageEditor: createEditorImageEditorState(),
     imageInvalidFileModal: createEditorImageInvalidFileModalState(),
     imagePreviewOverlay: createEditorImagePreviewOverlayState(),
+    insertLinkModal: createEditorInsertLinkModalState(),
     sidebarTab: "review",
     reviewExpandedSectionKeys: new Set(["last-update", "ai-review"]),
     aiReview: createEditorAiReviewState(),
@@ -539,6 +540,19 @@ export function createEditorImagePreviewOverlayState() {
     rowId: null,
     languageCode: null,
     src: "",
+  };
+}
+
+export function createEditorInsertLinkModalState() {
+  return {
+    isOpen: false,
+    mode: null,
+    rowId: null,
+    languageCode: null,
+    selectionStart: 0,
+    selectionEnd: 0,
+    selectedText: "",
+    urlDraft: "",
   };
 }
 

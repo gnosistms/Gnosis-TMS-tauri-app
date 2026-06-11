@@ -1356,6 +1356,13 @@
   padding-inline: 12px;
 }
 
+.editor-insert-link-modal__error {
+  margin: 4px 0 0;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  color: var(--message-error-text);
+}
+
 .project-import-modal__error-badge {
   justify-self: start;
   max-width: 100%;

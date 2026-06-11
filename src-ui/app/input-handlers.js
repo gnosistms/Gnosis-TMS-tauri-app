@@ -74,6 +74,8 @@ import {
   updateEditorConflictResolutionFinalImageCaption,
   updateEditorImageUrlDraft,
   updateEditorPreviewSearchQuery,
+  updateEditorInsertLinkUrlDraft,
+  validateEditorLinkUrl,
   toggleEditorReplaceEnabled,
   toggleEditorReplaceRowSelected,
   scheduleEditorAssistantTranscriptScrollToBottom,
@@ -725,6 +727,31 @@ function handleEditorImageUrlInput(event) {
   return true;
 }
 
+function handleEditorInsertLinkUrlInput(event) {
+  const input = event.target.closest("[data-editor-insert-link-url-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateEditorInsertLinkUrlDraft(input.value);
+  const isValid = Boolean(validateEditorLinkUrl(input.value));
+  const submitButton = document.querySelector('[data-action="submit-editor-insert-link"]');
+  if (submitButton instanceof HTMLButtonElement) {
+    submitButton.disabled = !isValid;
+    submitButton.classList.toggle("is-disabled", !isValid);
+    if (isValid) {
+      submitButton.removeAttribute("aria-disabled");
+    } else {
+      submitButton.setAttribute("aria-disabled", "true");
+    }
+  }
+  const errorText = document.querySelector("[data-editor-insert-link-url-error]");
+  if (errorText instanceof HTMLElement) {
+    errorText.hidden = !(input.value.trim().length > 0 && !isValid);
+  }
+  return true;
+}
+
 function handleEditorConflictResolutionInput(event) {
   const imageCaptionInput = event.target.closest("[data-editor-conflict-final-image-caption-input]");
   if (imageCaptionInput) {
@@ -1001,6 +1028,7 @@ const inputHandlers = [
   handleEditorAiReviewAllModeInput,
   handleEditorClearTranslationsLanguageInput,
   handleEditorImageUrlInput,
+  handleEditorInsertLinkUrlInput,
   handleEditorConflictResolutionInput,
   handleChapterStatusSelectInput,
   handleChapterGlossarySelectInput,

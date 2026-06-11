@@ -33,8 +33,17 @@ annotations (phonetic readings above CJK base text). This module owns:
 ## Supported Markup
 
 The supported inline tag set is fixed: `strong` (bold), `em` (italic), `u` (underline),
-`ruby` / `rt` (phonetic annotation). Tag aliases `b` → `strong`, `i` → `em` are
-normalized on parse.
+`ruby` / `rt` (phonetic annotation), and `a` (hyperlink). Tag aliases `b` → `strong`,
+`i` → `em` are normalized on parse.
+
+`a` is the only tag that takes an attribute: a single quoted `href` whose value must
+be an http(s) URL. An `<a>` tag with a missing, malformed, or non-http(s) href (e.g.
+`javascript:`) is treated as plain text, so it is HTML-escaped on render. Entities in
+a stored href are decoded on parse and re-encoded on serialize, so hand-typed
+unescaped hrefs canonicalize on the first round-trip (same contract as tag aliases).
+The href is part of the tag token, not visible/base text — glossary matching, word
+counts, and search never see it. Links are not a toggleable style: `a` has no entry
+in `STYLE_TO_TAG` / `TAG_TO_STYLE`; insertion is owned by `editor-link-flow.js`.
 
 No other tags are permitted. The **parser** treats unsupported tag syntax as plain
 text — tag delimiters become text nodes, not markup nodes. The **serializer** then

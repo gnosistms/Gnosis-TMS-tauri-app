@@ -2,7 +2,7 @@ import { syncEditorRowTextareaHeight } from "./autosize.js";
 import { syncEditorImagePreviewFrameWithResult } from "./editor-image-preview-size.js";
 import { syncEditorVirtualizationRowLayout } from "./editor-virtualization.js";
 import { closestEventTarget } from "./event-target.js";
-import { onCurrentWebviewDragDrop } from "./runtime.js";
+import { onCurrentWebviewDragDrop, openExternalUrl } from "./runtime.js";
 import {
   captureTranslateAnchorForRow,
   primeTranslateInteractionAnchor,
@@ -202,7 +202,7 @@ export function registerTranslateEditorDomEvents(app, render) {
   app.addEventListener("mousedown", (event) => {
     const button = closestEventTarget(
       event.target,
-      "[data-editor-row-text-style-button], [data-editor-inline-style-button], [data-editor-footnote-button], [data-editor-image-button], [data-editor-image-caption-button], [data-editor-image-upload-dropzone], [data-editor-image-upload-close-button], [data-editor-image-url-close-button], [data-editor-image-url-status-button], [data-editor-language-image-remove-button], [data-action^=\"switch-editor-sidebar-tab:\"], [data-action^=\"run-editor-ai-translate:\"], [data-action^=\"apply-editor-assistant-draft:\"], [data-action^=\"review-editor-text-now:\"], [data-action=\"review-editor-text-now\"], [data-action=\"apply-editor-ai-review\"], [data-preview-search-nav-button]",
+      "[data-editor-row-text-style-button], [data-editor-inline-style-button], [data-editor-link-button], [data-editor-footnote-button], [data-editor-image-button], [data-editor-image-caption-button], [data-editor-image-upload-dropzone], [data-editor-image-upload-close-button], [data-editor-image-url-close-button], [data-editor-image-url-status-button], [data-editor-language-image-remove-button], [data-action^=\"switch-editor-sidebar-tab:\"], [data-action^=\"run-editor-ai-translate:\"], [data-action^=\"apply-editor-assistant-draft:\"], [data-action^=\"review-editor-text-now:\"], [data-action=\"review-editor-text-now\"], [data-action=\"apply-editor-ai-review\"], [data-preview-search-nav-button]",
     );
     if (!button) {
       return;
@@ -213,6 +213,15 @@ export function registerTranslateEditorDomEvents(app, render) {
 
   app.addEventListener("pointerdown", (event) => {
     if (!(event instanceof PointerEvent) || event.button !== 0) {
+      return;
+    }
+
+    const externalLink = closestEventTarget(event.target, "a[href]");
+    if (
+      externalLink instanceof HTMLAnchorElement
+      && /^https?:\/\//i.test(externalLink.getAttribute("href") ?? "")
+    ) {
+      event.preventDefault();
       return;
     }
 
@@ -253,7 +262,7 @@ export function registerTranslateEditorDomEvents(app, render) {
 
     const editorControlButton = closestEventTarget(
       event.target,
-      "[data-editor-row-text-style-button], [data-editor-inline-style-button], [data-editor-footnote-button], [data-editor-image-button], [data-editor-image-caption-button], [data-editor-image-upload-close-button], [data-editor-image-url-close-button], [data-editor-image-url-status-button], [data-editor-language-image-remove-button], [data-action^=\"switch-editor-sidebar-tab:\"]",
+      "[data-editor-row-text-style-button], [data-editor-inline-style-button], [data-editor-link-button], [data-editor-footnote-button], [data-editor-image-button], [data-editor-image-caption-button], [data-editor-image-upload-close-button], [data-editor-image-url-close-button], [data-editor-image-url-status-button], [data-editor-language-image-remove-button], [data-action^=\"switch-editor-sidebar-tab:\"]",
     );
     const imageOpenButton = closestEventTarget(
       event.target,
@@ -338,6 +347,17 @@ export function registerTranslateEditorDomEvents(app, render) {
   });
 
   app.addEventListener("click", (event) => {
+    const externalLink = closestEventTarget(event.target, "a[href]");
+    if (
+      externalLink instanceof HTMLAnchorElement
+      && /^https?:\/\//i.test(externalLink.getAttribute("href") ?? "")
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      openExternalUrl(externalLink.getAttribute("href") ?? "");
+      return;
+    }
+
     const displayField = closestEventTarget(event.target, "[data-editor-display-field]");
     if (displayField instanceof HTMLButtonElement) {
       const rowId = displayField.dataset.rowId ?? "";
