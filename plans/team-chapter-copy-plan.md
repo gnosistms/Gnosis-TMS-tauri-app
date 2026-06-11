@@ -12,6 +12,24 @@ can write to.
   cross-team copy where the target repo has never been cloned locally, a
   copy with uploaded images, and a Windows pass.
 
+## Round 2 (2026-06-11 feedback)
+
+- The team select offers **every** team with write permission, **including
+  the current team** (copying within the same team duplicates the chapter).
+  When exactly one team is eligible it is preselected and its projects load
+  immediately.
+- The pane gains a **file name** field (defaulting to the source chapter
+  title) that becomes the copied chapter's title and slug in the target.
+- The **export button on chapter rows in the projects page opens this same
+  Export options modal** instead of the old format/language modal. The modal
+  carries an explicit chapter context (`exportModal.chapterId` +
+  `exportModal.languageCode`); file panes show a language select when the
+  chapter is not open in the editor (XLSX excepted — it exports all
+  languages). Copy-and-paste and WordPress options need the editor's
+  in-memory rows, so outside the editor they show "Open the file in the
+  editor to use this export option." The old `project-export-flow.js` /
+  `project-export-modal.js` are removed.
+
 ## Design decisions
 
 - **Faithful copy with fresh IDs.** The copy preserves everything stored in
