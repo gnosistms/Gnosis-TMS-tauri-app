@@ -4,7 +4,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use quick_xml::{events::Event as XmlEvent, Reader as XmlReader};
 use serde_json::{json, Value};
 use tauri::AppHandle;
 use uuid::Uuid;
@@ -617,38 +616,10 @@ fn detected_imported_image_extension(bytes: &[u8]) -> Option<&'static str> {
     {
         return Some("avif");
     }
-    if svg_document_root_is_svg(bytes) {
-        return Some("svg");
-    }
-
+    // SVG is deliberately absent: imported images become stored uploads that travel
+    // via git, and unsanitized SVG is latent stored XSS. Mirrors the editor upload
+    // path (10d m1) — see detected_uploaded_image_extension in chapter_editor/images.rs.
     None
-}
-
-fn svg_document_root_is_svg(bytes: &[u8]) -> bool {
-    let mut reader = XmlReader::from_reader(bytes);
-    reader.trim_text(true);
-    let mut buffer = Vec::new();
-
-    loop {
-        match reader.read_event_into(&mut buffer) {
-            Ok(XmlEvent::Start(event)) | Ok(XmlEvent::Empty(event)) => {
-                return event.name().as_ref() == b"svg";
-            }
-            Ok(XmlEvent::Decl(_))
-            | Ok(XmlEvent::DocType(_))
-            | Ok(XmlEvent::Comment(_))
-            | Ok(XmlEvent::PI(_))
-            | Ok(XmlEvent::Text(_))
-            | Ok(XmlEvent::CData(_)) => {
-                buffer.clear();
-                continue;
-            }
-            Ok(XmlEvent::Eof) | Err(_) => return false,
-            _ => {
-                buffer.clear();
-            }
-        }
-    }
 }
 
 fn relative_imported_image_path(
@@ -937,6 +908,28 @@ mod tests {
 
         finalize_pending_uploaded_images(&mut row, &repo_path, "article", "row-1")
             .expect("invalid upload should be omitted without failing import");
+
+        assert!(row
+            .fields
+            .get("en")
+            .and_then(|field| field.image.as_ref())
+            .is_none());
+
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn imported_image_detection_rejects_svg() {
+        let svg = br#"<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>"#;
+        assert_eq!(detected_imported_image_extension(svg), None);
+
+        let repo_path =
+            std::env::temp_dir().join(format!("gnosis-import-svg-image-test-{}", Uuid::now_v7()));
+        fs::create_dir_all(&repo_path).expect("repo temp path should be created");
+        let mut row = row_with_pending_upload(svg.to_vec());
+
+        finalize_pending_uploaded_images(&mut row, &repo_path, "article", "row-1")
+            .expect("svg upload should be omitted without failing import");
 
         assert!(row
             .fields

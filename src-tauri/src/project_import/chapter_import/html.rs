@@ -801,7 +801,6 @@ fn image_extension_from_mime_type(value: &str) -> Option<&'static str> {
         "image/jpeg" | "image/jpg" => Some("jpg"),
         "image/png" | "image/apng" => Some("png"),
         "image/gif" => Some("gif"),
-        "image/svg+xml" => Some("svg"),
         "image/webp" => Some("webp"),
         "image/avif" => Some("avif"),
         "image/bmp" => Some("bmp"),
