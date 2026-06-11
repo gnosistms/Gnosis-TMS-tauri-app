@@ -83,10 +83,13 @@ pub(crate) fn export_gtms_chapter_file_sync(
     input: ExportChapterFileInput,
 ) -> Result<(), String> {
     let format = input.format.trim().to_lowercase();
-    if matches!(format.as_str(), "xlsx" | "srt") {
+    if format == "srt" {
         return Err(UNSUPPORTED_FUNCTION_MESSAGE.to_string());
     }
-    if !matches!(format.as_str(), "docx" | "txt" | "html") {
+    if !matches!(
+        format.as_str(),
+        "docx" | "txt" | "html" | "xlsx" | "rtf" | "md"
+    ) {
         return Err("Unsupported export format.".to_string());
     }
     if input.output_path.trim().is_empty() {
@@ -138,6 +141,15 @@ pub(crate) fn export_gtms_chapter_file_sync(
         "txt" => fs::write(&output_path, render_txt_document(&document))
             .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
         "docx" => fs::write(&output_path, render_docx_document(&document)?)
+            .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
+        "xlsx" => fs::write(
+            &output_path,
+            render_xlsx_workbook(&chapter_file.title, &languages, &rows)?,
+        )
+        .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
+        "rtf" => fs::write(&output_path, render_rtf_document(&document))
+            .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
+        "md" => fs::write(&output_path, render_md_document(&document))
             .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
         _ => Err("Unsupported export format.".to_string()),
     }
@@ -537,6 +549,145 @@ fn render_txt_document(document: &ExportDocument) -> String {
     }
 }
 
+/// The non-embedding link form of an export image: the original URL for url images,
+/// the pinned raw.githubusercontent.com URL (or the repo-relative path when no remote
+/// is known) for uploads.
+fn export_image_link(image: &ExportImage) -> String {
+    match image {
+        ExportImage::Url(url) => url.clone(),
+        ExportImage::Upload {
+            raw_url,
+            repo_relative_path,
+            ..
+        } => raw_url
+            .clone()
+            .unwrap_or_else(|| repo_relative_path.clone()),
+    }
+}
+
+fn render_md_document(document: &ExportDocument) -> String {
+    let mut fragments: Vec<String> = Vec::new();
+    let mut footnote_definitions: Vec<String> = Vec::new();
+    let mut last_text_fragment: Option<usize> = None;
+
+    for block in &document.blocks {
+        match block {
+            ExportBlock::Text { text_style, text } => {
+                let inline = md_inline_text(text);
+                if inline.trim().is_empty() {
+                    continue;
+                }
+                let rendered = match normalize_editor_text_style_value(Some(text_style)).as_str() {
+                    "heading1" => format!("# {}", md_single_line(&inline)),
+                    "heading2" => format!("## {}", md_single_line(&inline)),
+                    "quote" => inline
+                        .lines()
+                        .map(|line| format!("> {line}"))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    // A lone newline is a soft break in Markdown; keep visual line
+                    // breaks with a backslash hard break.
+                    _ => inline.replace('\n', "\\\n"),
+                };
+                fragments.push(rendered);
+                last_text_fragment = Some(fragments.len() - 1);
+            }
+            ExportBlock::Image { image, caption } => {
+                fragments.push(format!(
+                    "![](<{}>)",
+                    md_link_destination(&export_image_link(image))
+                ));
+                let caption = md_single_line(&md_inline_text(caption));
+                if !caption.trim().is_empty() {
+                    fragments.push(format!("*{}*", caption.trim()));
+                }
+            }
+            ExportBlock::Footnote { number, text } => {
+                let inline = md_single_line(&md_inline_text(text));
+                if inline.trim().is_empty() {
+                    continue;
+                }
+                // The stored footnote is attached to a row, not to an inline position,
+                // so the reference goes at the end of that row's text paragraph.
+                if let Some(index) = last_text_fragment {
+                    let _ = write!(fragments[index], "[^{number}]");
+                }
+                footnote_definitions.push(format!("[^{number}]: {}", inline.trim()));
+            }
+        }
+    }
+
+    fragments.extend(footnote_definitions);
+    if fragments.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", fragments.join("\n\n"))
+    }
+}
+
+fn md_single_line(value: &str) -> String {
+    value.replace('\n', " ")
+}
+
+/// Angle-bracket link destinations tolerate spaces but not unescaped angle brackets
+/// or newlines.
+fn md_link_destination(value: &str) -> String {
+    value
+        .replace('<', "%3C")
+        .replace('>', "%3E")
+        .replace('\n', "")
+}
+
+fn md_inline_text(value: &str) -> String {
+    inline_segments(value)
+        .into_iter()
+        .map(|segment| md_segment(&segment))
+        .collect()
+}
+
+fn md_segment(segment: &InlineSegment) -> String {
+    let escaped = escape_md_text(&segment.text);
+    if !segment.style.bold && !segment.style.italic && !segment.style.underline {
+        return escaped;
+    }
+
+    // Emphasis markers do not bind across whitespace, so wrap only the trimmed core
+    // and keep the surrounding whitespace outside the markers.
+    let leading_len = escaped.len() - escaped.trim_start().len();
+    let trimmed_len = escaped.trim_end().len();
+    if leading_len >= trimmed_len {
+        return escaped;
+    }
+    let (leading, rest) = escaped.split_at(leading_len);
+    let (core, trailing) = rest.split_at(trimmed_len - leading_len);
+
+    let mut wrapped = core.to_string();
+    if segment.style.bold {
+        wrapped = format!("**{wrapped}**");
+    }
+    if segment.style.italic {
+        wrapped = format!("*{wrapped}*");
+    }
+    if segment.style.underline {
+        wrapped = format!("<u>{wrapped}</u>");
+    }
+    format!("{leading}{wrapped}{trailing}")
+}
+
+fn escape_md_text(value: &str) -> String {
+    let mut output = String::new();
+    for ch in value.chars() {
+        if matches!(
+            ch,
+            '\\' | '`' | '*' | '_' | '[' | ']' | '<' | '>' | '#' | '|' | '~'
+        ) {
+            output.push('\\');
+        }
+        output.push(ch);
+    }
+    output
+}
+
 fn inline_segments(value: &str) -> Vec<InlineSegment> {
     let mut output = Vec::new();
     let mut style = InlineStyleState::default();
@@ -688,10 +839,10 @@ fn write_zip_file(
 ) -> Result<(), String> {
     writer
         .start_file(path, SimpleFileOptions::default())
-        .map_err(|error| format!("Could not add '{path}' to DOCX: {error}"))?;
+        .map_err(|error| format!("Could not add '{path}' to the export file: {error}"))?;
     writer
         .write_all(contents.as_bytes())
-        .map_err(|error| format!("Could not write '{path}' to DOCX: {error}"))
+        .map_err(|error| format!("Could not write '{path}' to the export file: {error}"))
 }
 
 fn docx_text_paragraph_xml(text_style: Option<&str>, text: &str, forced_italic: bool) -> String {
@@ -1063,6 +1214,274 @@ fn nonzero_dimensions(width: u32, height: u32) -> Option<(u32, u32)> {
     } else {
         Some((width, height))
     }
+}
+
+fn render_rtf_document(document: &ExportDocument) -> String {
+    let mut body = String::new();
+    for block in &document.blocks {
+        match block {
+            ExportBlock::Text { text_style, text } => {
+                body.push_str(&rtf_text_paragraph(Some(text_style), text, false));
+            }
+            ExportBlock::Footnote { number, text } => {
+                body.push_str(&rtf_text_paragraph(
+                    None,
+                    &format!("[{number}] {text}"),
+                    true,
+                ));
+            }
+            ExportBlock::Image { image, caption } => {
+                body.push_str(&rtf_image_paragraph(image));
+                if !caption.trim().is_empty() {
+                    body.push_str(&rtf_text_paragraph(Some("centered"), caption, true));
+                }
+            }
+        }
+    }
+    format!("{{\\rtf1\\ansi\\deff0\\uc1{{\\fonttbl{{\\f0\\froman Times New Roman;}}}}\n{body}}}\n")
+}
+
+fn rtf_text_paragraph(text_style: Option<&str>, text: &str, forced_italic: bool) -> String {
+    let properties = match normalize_editor_text_style_value(text_style).as_str() {
+        "heading1" => "\\sb240\\b\\fs32",
+        "heading2" => "\\sb240\\b\\fs26",
+        "quote" => "\\li720\\ri720\\i",
+        "indented" => "\\li720",
+        "centered" => "\\qc",
+        _ => "",
+    };
+    let runs = inline_segments(text)
+        .into_iter()
+        .map(|mut segment| {
+            if forced_italic {
+                segment.style.italic = true;
+            }
+            rtf_run(&segment)
+        })
+        .collect::<String>();
+    format!("\\pard\\plain\\f0\\fs24\\sa200{properties} {runs}\\par\n")
+}
+
+fn rtf_run(segment: &InlineSegment) -> String {
+    let mut controls = String::new();
+    if segment.style.bold {
+        controls.push_str("\\b");
+    }
+    if segment.style.italic {
+        controls.push_str("\\i");
+    }
+    if segment.style.underline {
+        controls.push_str("\\ul");
+    }
+    let text = rtf_escape(&segment.text);
+    if controls.is_empty() {
+        text
+    } else {
+        format!("{{{controls} {text}}}")
+    }
+}
+
+fn rtf_escape(value: &str) -> String {
+    let mut output = String::new();
+    for ch in value.chars() {
+        match ch {
+            '\\' => output.push_str("\\\\"),
+            '{' => output.push_str("\\{"),
+            '}' => output.push_str("\\}"),
+            '\n' => output.push_str("\\line "),
+            '\r' => {}
+            ch if (ch as u32) < 0x80 => output.push(ch),
+            ch => {
+                // Non-ASCII goes out as \uN? escapes: N is the signed 16-bit UTF-16
+                // code unit (two escapes for a surrogate pair), '?' the ANSI fallback.
+                let mut buffer = [0u16; 2];
+                for unit in ch.encode_utf16(&mut buffer) {
+                    let _ = write!(output, "\\u{}?", *unit as i16);
+                }
+            }
+        }
+    }
+    output
+}
+
+fn rtf_image_paragraph(image: &ExportImage) -> String {
+    match resolve_docx_image_render(image) {
+        DocxImageRender::Embedded(data) if matches!(data.extension.as_str(), "png" | "jpg") => {
+            let blip = if data.extension == "png" {
+                "pngblip"
+            } else {
+                "jpegblip"
+            };
+            let (width_emu, height_emu) = docx_image_extent(&data);
+            // Display size in twips: 914,400 EMU and 1,440 twips per inch, so 635 EMU
+            // per twip. Reuses the DOCX max-page scaling.
+            let width_twips = (width_emu / 635).max(1);
+            let height_twips = (height_emu / 635).max(1);
+            let hex = data
+                .data
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            format!(
+                "\\pard\\qc\\sa200 {{\\pict\\{blip}\\picw{}\\pich{}\\picwgoal{width_twips}\\pichgoal{height_twips} {hex}}}\\par\n",
+                data.width_px, data.height_px
+            )
+        }
+        // RTF \pict has no GIF blip type; fall back to the image link.
+        DocxImageRender::Embedded(_) => rtf_link_paragraph(&export_image_link(image)),
+        DocxImageRender::Link(url) => rtf_link_paragraph(&url),
+    }
+}
+
+fn rtf_link_paragraph(url: &str) -> String {
+    let escaped = rtf_escape(url);
+    format!(
+        "\\pard\\plain\\f0\\fs24\\sa200\\qc {{\\field{{\\*\\fldinst HYPERLINK \"{escaped}\"}}{{\\fldrslt {{\\ul {escaped}}}}}}}\\par\n"
+    )
+}
+
+// The XLSX export mirrors the import column layout (`chapter_import/xlsx.rs`): row 1
+// holds language-code headers, every chapter row is one sheet row, and a footnote is
+// appended to its cell after the `***` separator — so an exported workbook re-imports
+// cleanly. Images have no XLSX representation and are skipped, like the TXT export.
+fn render_xlsx_workbook(
+    title: &str,
+    languages: &[ChapterLanguage],
+    rows: &[StoredRowFile],
+) -> Result<Vec<u8>, String> {
+    if languages.is_empty() {
+        return Err("The file does not have any languages to export.".to_string());
+    }
+
+    let header = languages
+        .iter()
+        .map(|language| xlsx_export_header_code(language).to_string())
+        .collect::<Vec<_>>();
+    let mut sheet_rows = xlsx_row_xml(1, &header);
+    for (index, cells) in xlsx_export_rows(languages, rows).iter().enumerate() {
+        sheet_rows.push_str(&xlsx_row_xml(index + 2, cells));
+    }
+
+    let sheet_xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>{sheet_rows}</sheetData></worksheet>"#
+    );
+    let workbook_xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="{}" sheetId="1" r:id="rId1"/></sheets></workbook>"#,
+        escape_xml(&xlsx_sheet_name(title))
+    );
+
+    let cursor = Cursor::new(Vec::new());
+    let mut writer = ZipWriter::new(cursor);
+    write_zip_file(&mut writer, "[Content_Types].xml", xlsx_content_types_xml())?;
+    write_zip_file(&mut writer, "_rels/.rels", xlsx_package_rels_xml())?;
+    write_zip_file(&mut writer, "xl/workbook.xml", &workbook_xml)?;
+    write_zip_file(
+        &mut writer,
+        "xl/_rels/workbook.xml.rels",
+        xlsx_workbook_rels_xml(),
+    )?;
+    write_zip_file(&mut writer, "xl/worksheets/sheet1.xml", &sheet_xml)?;
+    writer
+        .finish()
+        .map(|cursor| cursor.into_inner())
+        .map_err(|error| format!("Could not finish XLSX export: {error}"))
+}
+
+/// Header cell for a language column. Duplicate-language columns store a unique code
+/// (`zh-Hans-x-2`) with the original in `base_code`; exporting the base code is what
+/// lets the import's duplicate-column allocation round-trip the workbook.
+fn xlsx_export_header_code(language: &ChapterLanguage) -> &str {
+    language
+        .base_code
+        .as_deref()
+        .map(str::trim)
+        .filter(|code| !code.is_empty())
+        .unwrap_or(language.code.as_str())
+}
+
+fn xlsx_export_rows(languages: &[ChapterLanguage], rows: &[StoredRowFile]) -> Vec<Vec<String>> {
+    rows.iter()
+        .filter(|row| row.lifecycle.state != "deleted")
+        .map(|row| {
+            languages
+                .iter()
+                .map(|language| xlsx_cell_value(row.fields.get(&language.code)))
+                .collect::<Vec<_>>()
+        })
+        .filter(|cells| cells.iter().any(|cell| !cell.is_empty()))
+        .collect()
+}
+
+fn xlsx_cell_value(field: Option<&StoredFieldValue>) -> String {
+    let Some(field) = field else {
+        return String::new();
+    };
+    let text = field.plain_text.trim();
+    let footnote = normalize_editor_footnote_value(&field.footnote);
+    let footnote = footnote.trim();
+    if footnote.is_empty() {
+        text.to_string()
+    } else {
+        format!("{text} *** {footnote}")
+    }
+}
+
+fn xlsx_row_xml(row_number: usize, cells: &[String]) -> String {
+    let mut xml = format!("<row r=\"{row_number}\">");
+    for (column_index, cell) in cells.iter().enumerate() {
+        if cell.is_empty() {
+            continue;
+        }
+        let _ = write!(
+            xml,
+            "<c r=\"{}{row_number}\" t=\"inlineStr\"><is><t xml:space=\"preserve\">{}</t></is></c>",
+            xlsx_column_name(column_index),
+            escape_xml(cell)
+        );
+    }
+    xml.push_str("</row>");
+    xml
+}
+
+fn xlsx_column_name(index: usize) -> String {
+    let mut name = String::new();
+    let mut value = index;
+    loop {
+        name.insert(0, (b'A' + (value % 26) as u8) as char);
+        if value < 26 {
+            break;
+        }
+        value = value / 26 - 1;
+    }
+    name
+}
+
+/// Worksheet names cap at 31 characters and reject `[ ] : * ? / \`.
+fn xlsx_sheet_name(title: &str) -> String {
+    let cleaned = title
+        .chars()
+        .filter(|ch| !matches!(ch, '[' | ']' | ':' | '*' | '?' | '/' | '\\'))
+        .take(31)
+        .collect::<String>()
+        .trim()
+        .to_string();
+    if cleaned.is_empty() {
+        "Sheet1".to_string()
+    } else {
+        cleaned
+    }
+}
+
+fn xlsx_content_types_xml() -> &'static str {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>"#
+}
+
+fn xlsx_package_rels_xml() -> &'static str {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#
+}
+
+fn xlsx_workbook_rels_xml() -> &'static str {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>"#
 }
 
 fn content_types_xml() -> &'static str {
@@ -1513,5 +1932,229 @@ mod tests {
         assert!(!docx_text.contains("Deleted"));
         assert!(!docx_text.contains("Deleted note"));
         assert!(!docx_text.contains("Deleted caption"));
+    }
+
+    fn export_language(code: &str, role: &str, base_code: Option<&str>) -> ChapterLanguage {
+        ChapterLanguage {
+            code: code.to_string(),
+            name: code.to_string(),
+            role: role.to_string(),
+            base_code: base_code.map(|value| value.to_string()),
+        }
+    }
+
+    fn field_value(text: &str, footnote: &str) -> StoredFieldValue {
+        StoredFieldValue {
+            plain_text: text.to_string(),
+            footnote: footnote.to_string(),
+            image_caption: String::new(),
+            image: None,
+            editor_flags: StoredFieldEditorFlags::default(),
+        }
+    }
+
+    #[test]
+    fn xlsx_export_mirrors_import_layout_and_round_trips() {
+        use calamine::{open_workbook_auto_from_rs, Reader};
+
+        let languages = vec![
+            export_language("es", "source", None),
+            export_language("en", "target", None),
+            export_language("en-x-2", "target", Some("en")),
+        ];
+
+        let mut first = row("row-1", "a", "", "paragraph");
+        first.fields.clear();
+        first
+            .fields
+            .insert("es".to_string(), field_value("Hola", ""));
+        first
+            .fields
+            .insert("en".to_string(), field_value("Hello", "First note"));
+        first
+            .fields
+            .insert("en-x-2".to_string(), field_value("Hullo", ""));
+
+        let mut deleted = row("row-2", "b", "Gone", "paragraph");
+        deleted.lifecycle.state = "deleted".to_string();
+
+        let mut blank = row("row-3", "c", "", "paragraph");
+        blank.fields.clear();
+
+        let bytes = render_xlsx_workbook("Chapter: One?", &languages, &[first, deleted, blank])
+            .expect("xlsx should render");
+        let mut workbook =
+            open_workbook_auto_from_rs(Cursor::new(bytes)).expect("workbook should open");
+        assert_eq!(workbook.sheet_names(), vec!["Chapter One".to_string()]);
+        let range = workbook
+            .worksheet_range_at(0)
+            .expect("worksheet exists")
+            .expect("worksheet reads");
+        let rows = range
+            .rows()
+            .map(|cells| {
+                cells
+                    .iter()
+                    .map(|cell| cell.to_string())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        // Duplicate-language columns export their base code so the import's
+        // duplicate-column allocation reproduces the same chapter languages.
+        assert_eq!(rows[0], vec!["es", "en", "en"]);
+        assert_eq!(rows[1], vec!["Hola", "Hello *** First note", "Hullo"]);
+        // The deleted row and the wholly empty row are not exported.
+        assert_eq!(rows.len(), 2);
+    }
+
+    #[test]
+    fn xlsx_column_names_extend_past_single_letters() {
+        assert_eq!(xlsx_column_name(0), "A");
+        assert_eq!(xlsx_column_name(25), "Z");
+        assert_eq!(xlsx_column_name(26), "AA");
+        assert_eq!(xlsx_column_name(51), "AZ");
+        assert_eq!(xlsx_column_name(52), "BA");
+        assert_eq!(xlsx_column_name(701), "ZZ");
+        assert_eq!(xlsx_column_name(702), "AAA");
+    }
+
+    #[test]
+    fn md_export_maps_styles_images_and_footnotes() {
+        let output = render_md_document(&document(vec![
+            ExportBlock::Text {
+                text_style: "heading1".to_string(),
+                text: "Title".to_string(),
+            },
+            ExportBlock::Text {
+                text_style: "paragraph".to_string(),
+                text: "<b>Bold</b> and <i>italic</i> and <u>under</u>".to_string(),
+            },
+            ExportBlock::Image {
+                image: ExportImage::Url("https://example.com/image.png".to_string()),
+                caption: "Caption".to_string(),
+            },
+            ExportBlock::Footnote {
+                number: 1,
+                text: "Note".to_string(),
+            },
+            ExportBlock::Text {
+                text_style: "quote".to_string(),
+                text: "Line one\nLine two".to_string(),
+            },
+            ExportBlock::Text {
+                text_style: "heading2".to_string(),
+                text: "Sub".to_string(),
+            },
+            ExportBlock::Text {
+                text_style: "paragraph".to_string(),
+                text: "Stars * and [brackets]".to_string(),
+            },
+        ]));
+
+        assert!(output.contains("# Title"));
+        // The footnote reference lands at the end of its row's paragraph.
+        assert!(output.contains("**Bold** and *italic* and <u>under</u>[^1]"));
+        assert!(output.contains("![](<https://example.com/image.png>)"));
+        assert!(output.contains("*Caption*"));
+        assert!(output.contains("> Line one\n> Line two"));
+        assert!(output.contains("## Sub"));
+        assert!(output.contains("Stars \\* and \\[brackets\\]"));
+        // Footnote definitions collect at the end of the document.
+        assert!(output.trim_end().ends_with("[^1]: Note"));
+    }
+
+    #[test]
+    fn md_export_links_uploaded_images_at_their_raw_url() {
+        let output = render_md_document(&document(vec![ExportBlock::Image {
+            image: ExportImage::Upload {
+                repo_relative_path: "chapters/ch-1/images/row/image.png".to_string(),
+                raw_url: Some(
+                    "https://raw.githubusercontent.com/org/repo/abc123/chapters/ch-1/images/row/image.png"
+                        .to_string(),
+                ),
+                absolute_path: PathBuf::from("/repo/chapters/ch-1/images/row/image.png"),
+            },
+            caption: String::new(),
+        }]));
+
+        assert!(output.contains(
+            "![](<https://raw.githubusercontent.com/org/repo/abc123/chapters/ch-1/images/row/image.png>)"
+        ));
+    }
+
+    #[test]
+    fn rtf_export_renders_styles_inline_marks_and_unicode() {
+        let output = render_rtf_document(&document(vec![
+            ExportBlock::Text {
+                text_style: "heading2".to_string(),
+                text: "<b>Bold</b> <u>Under</u>".to_string(),
+            },
+            ExportBlock::Text {
+                text_style: "quote".to_string(),
+                text: "Quote".to_string(),
+            },
+            ExportBlock::Text {
+                text_style: "paragraph".to_string(),
+                text: "字 {braces} \\slash".to_string(),
+            },
+            ExportBlock::Footnote {
+                number: 1,
+                text: "Note".to_string(),
+            },
+        ]));
+
+        assert!(output.starts_with("{\\rtf1\\ansi"));
+        assert!(output.contains("\\sb240\\b\\fs26"));
+        assert!(output.contains("{\\b Bold}"));
+        assert!(output.contains("{\\ul Under}"));
+        assert!(output.contains("\\li720\\ri720\\i Quote"));
+        assert!(output.contains("\\u23383?"));
+        assert!(output.contains("\\{braces\\}"));
+        assert!(output.contains("\\\\slash"));
+        assert!(output.contains("{\\i [1] Note}"));
+        assert!(output.ends_with("}\n"));
+    }
+
+    #[test]
+    fn rtf_export_embeds_local_png_images_with_scaled_goals() {
+        let image_bytes = png_header(12, 8);
+        let image_path = std::env::temp_dir().join(format!(
+            "gnosis-tms-rtf-export-image-{}.png",
+            std::process::id()
+        ));
+        fs::write(&image_path, &image_bytes).expect("image should be written");
+
+        let output = render_rtf_document(&document(vec![ExportBlock::Image {
+            image: ExportImage::Upload {
+                repo_relative_path: "chapters/ch-1/images/row/image.png".to_string(),
+                raw_url: None,
+                absolute_path: image_path.clone(),
+            },
+            caption: "Caption".to_string(),
+        }]));
+        let _ = fs::remove_file(&image_path);
+
+        assert!(output.contains("\\pict\\pngblip\\picw12\\pich8\\picwgoal180\\pichgoal120"));
+        assert!(output.contains(
+            &image_bytes
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        ));
+        assert!(output.contains("{\\i Caption}"));
+    }
+
+    #[test]
+    fn rtf_export_falls_back_to_a_link_for_unfetchable_image_urls() {
+        // A non-public host fails URL validation before any network request, which
+        // exercises the link fallback without fetching anything in tests.
+        let output = render_rtf_document(&document(vec![ExportBlock::Image {
+            image: ExportImage::Url("http://127.0.0.1/image.png".to_string()),
+            caption: String::new(),
+        }]));
+
+        assert!(output.contains("HYPERLINK \"http://127.0.0.1/image.png\""));
+        assert!(!output.contains("\\pict"));
     }
 }
