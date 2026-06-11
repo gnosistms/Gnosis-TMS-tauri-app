@@ -5,8 +5,9 @@ import {
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
 
-const SUPPORTED_FORMATS = ["xlsx", "docx", "txt", "html", "srt"];
-const LANGUAGE_FORMATS = new Set(["docx", "txt", "html"]);
+const SUPPORTED_FORMATS = ["xlsx", "docx", "txt", "html", "rtf", "md", "srt"];
+// XLSX is absent on purpose: it exports every language column at once.
+const LANGUAGE_FORMATS = new Set(["docx", "txt", "html", "rtf", "md"]);
 
 function formatLabel(format) {
   return String(format ?? "").trim().toUpperCase();

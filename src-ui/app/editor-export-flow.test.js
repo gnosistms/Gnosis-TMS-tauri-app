@@ -396,10 +396,44 @@ test("submitEditorExport does nothing when the file dialog is cancelled", async 
   assert.equal(state.editorChapter.exportModal.error, "");
 });
 
+test("submitEditorExport exports the Phase 2 file formats with matching filters", async () => {
+  installEditorExportFixture();
+  const expected = [
+    { optionId: "file:xlsx", format: "xlsx", filter: { name: "XLSX workbook", extensions: ["xlsx"] } },
+    { optionId: "file:rtf", format: "rtf", filter: { name: "RTF document", extensions: ["rtf"] } },
+    { optionId: "file:md", format: "md", filter: { name: "Markdown document", extensions: ["md"] } },
+  ];
+
+  for (const { optionId, format, filter } of expected) {
+    openExportModal(optionId);
+    const saveDialogCalls = [];
+    const invokeCalls = [];
+
+    await submitEditorExport(() => {}, {
+      saveDialog: async (options) => {
+        saveDialogCalls.push(options);
+        return `/tmp/chapter-one.${format}`;
+      },
+      invoke: async (command, payload) => {
+        invokeCalls.push({ command, payload });
+        return null;
+      },
+      waitForRepoQueue: async () => {},
+    });
+
+    assert.equal(saveDialogCalls.length, 1);
+    assert.equal(saveDialogCalls[0].defaultPath, `Chapter One-vi.${format}`);
+    assert.deepEqual(saveDialogCalls[0].filters, [filter]);
+    assert.equal(invokeCalls.length, 1);
+    assert.equal(invokeCalls[0].payload.input.format, format);
+    assert.equal(state.editorChapter.exportModal.isOpen, false);
+  }
+});
+
 test("submitEditorExport ignores options that are not available yet", async () => {
   installEditorExportFixture();
   const invokeCalls = [];
-  for (const optionId of ["file:xlsx", "file:rtf", "file:md", "copy:docx", "link:wordpress", "link:team"]) {
+  for (const optionId of ["copy:docx", "link:wordpress", "link:team"]) {
     openExportModal(optionId);
 
     await submitEditorExport(() => {}, {

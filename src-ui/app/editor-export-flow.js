@@ -20,11 +20,11 @@ export const EDITOR_EXPORT_CATEGORIES = [
     label: "Save to file",
     options: [
       { id: "file:html", label: "HTML", kind: "file", format: "html", available: true },
-      { id: "file:xlsx", label: "XLSX", kind: "file", format: "xlsx", available: false },
+      { id: "file:xlsx", label: "XLSX", kind: "file", format: "xlsx", available: true },
       { id: "file:docx", label: "DOCX", kind: "file", format: "docx", available: true },
       { id: "file:txt", label: "TXT", kind: "file", format: "txt", available: true },
-      { id: "file:rtf", label: "RTF", kind: "file", format: "rtf", available: false },
-      { id: "file:md", label: "Markdown", kind: "file", format: "md", available: false },
+      { id: "file:rtf", label: "RTF", kind: "file", format: "rtf", available: true },
+      { id: "file:md", label: "Markdown", kind: "file", format: "md", available: true },
     ],
   },
   {
@@ -136,6 +136,15 @@ function exportFileFilter(format) {
   }
   if (format === "html") {
     return { name: "HTML document", extensions: ["html"] };
+  }
+  if (format === "xlsx") {
+    return { name: "XLSX workbook", extensions: ["xlsx"] };
+  }
+  if (format === "rtf") {
+    return { name: "RTF document", extensions: ["rtf"] };
+  }
+  if (format === "md") {
+    return { name: "Markdown document", extensions: ["md"] };
   }
   return { name: "Plain text", extensions: ["txt"] };
 }

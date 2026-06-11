@@ -55,8 +55,21 @@ test("editor export modal shows the copy pane for clipboard options", () => {
   assert.match(html, /data-action="submit-editor-export"/);
 });
 
+test("editor export modal shows the save pane for the Phase 2 file formats", () => {
+  for (const { selectedOptionId, label } of [
+    { selectedOptionId: "file:xlsx", label: "XLSX" },
+    { selectedOptionId: "file:rtf", label: "RTF" },
+    { selectedOptionId: "file:md", label: "Markdown" },
+  ]) {
+    const html = renderEditorExportModal(exportState({ selectedOptionId }));
+
+    assert.match(html, new RegExp(`Click Save to export a ${label} file\\.`));
+    assert.match(html, /data-action="submit-editor-export"/);
+  }
+});
+
 test("editor export modal hides the submit button for unavailable options", () => {
-  for (const selectedOptionId of ["file:xlsx", "copy:docx", "link:wordpress", "link:team"]) {
+  for (const selectedOptionId of ["copy:docx", "link:wordpress", "link:team"]) {
     const html = renderEditorExportModal(exportState({ selectedOptionId }));
 
     assert.match(html, /This export option is not available yet\./);

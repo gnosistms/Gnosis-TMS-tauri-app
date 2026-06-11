@@ -94,15 +94,27 @@ test("selectProjectExportFormat routes unsupported formats through unsupported m
   installProjectExportFixture();
   openProjectExport(() => {}, "chapter-1");
 
-  selectProjectExportFormat(() => {}, "xlsx");
+  selectProjectExportFormat(() => {}, "srt");
 
   assert.equal(state.projectExport.format, "");
-  assert.equal(state.projectExport.unsupportedFormat, "xlsx");
+  assert.equal(state.projectExport.unsupportedFormat, "srt");
 
   closeProjectExportUnsupported(() => {});
 
   assert.equal(state.projectExport.unsupportedFormat, "");
   assert.equal(state.projectExport.isOpen, true);
+});
+
+test("selectProjectExportFormat accepts the Phase 2 formats", () => {
+  installProjectExportFixture();
+  openProjectExport(() => {}, "chapter-1");
+
+  for (const format of ["xlsx", "rtf", "md"]) {
+    selectProjectExportFormat(() => {}, format);
+
+    assert.equal(state.projectExport.format, format);
+    assert.equal(state.projectExport.unsupportedFormat, "");
+  }
 });
 
 test("selectProjectExportLanguage only accepts chapter languages", () => {
