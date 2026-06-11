@@ -159,6 +159,100 @@ test("ensureWordPressPaneReady seeds the title and loads the connection once", a
   assert.deepEqual(invokeCalls, ["get_wordpress_connection"]);
 });
 
+test("ensureWordPressPaneReady seeds the title from a leading H1 row", async () => {
+  installWordPressFixture({
+    rows: [
+      {
+        rowId: "row-1",
+        lifecycleState: "active",
+        textStyle: "heading1",
+        fields: { vi: "Chương 3 – Trận chiến" },
+        footnotes: {},
+      },
+      {
+        rowId: "row-2",
+        lifecycleState: "active",
+        textStyle: "paragraph",
+        fields: { vi: "Body" },
+        footnotes: {},
+      },
+    ],
+  });
+
+  ensureWordPressPaneReady(() => {}, { invoke: async () => null });
+  await Promise.resolve();
+
+  assert.equal(currentWordPressExportState().title, "Chương 3 – Trận chiến");
+});
+
+test("submitWordPressExport strips the leading H1 and sends it as the overwrite title", async () => {
+  installWordPressFixture({
+    rows: [
+      {
+        rowId: "row-1",
+        lifecycleState: "active",
+        textStyle: "heading1",
+        fields: { vi: "Chương 3" },
+        footnotes: {},
+      },
+      {
+        rowId: "row-2",
+        lifecycleState: "active",
+        textStyle: "paragraph",
+        fields: { vi: "Body" },
+        footnotes: {},
+      },
+    ],
+  });
+  setWordPress({
+    connectionStatus: "connected",
+    connection: { blogId: "12345", blogUrl: "https://example.wordpress.com" },
+    mode: "overwrite",
+    searchResults: [{ id: 7, title: "Old title", status: "draft", link: "", modified: "" }],
+    selectedPostId: 7,
+    searchStatus: "done",
+  });
+
+  const invokeCalls = [];
+  await submitWordPressExport(() => {}, {
+    invoke: async (command, payload) => {
+      invokeCalls.push({ command, payload });
+    },
+  });
+
+  assert.equal(invokeCalls.length, 1);
+  const input = invokeCalls[0].payload.input;
+  assert.equal(input.mode, "overwrite");
+  assert.equal(input.postId, 7);
+  assert.equal(input.title, "Chương 3");
+  assert.doesNotMatch(input.content, /wp:heading/);
+  assert.match(input.content, /Body/);
+  assert.match(input.content, /\[no_toc\]/);
+});
+
+test("submitWordPressExport sends no overwrite title without a leading H1", async () => {
+  installWordPressFixture();
+  setWordPress({
+    connectionStatus: "connected",
+    connection: { blogId: "12345", blogUrl: "https://example.wordpress.com" },
+    mode: "overwrite",
+    searchResults: [{ id: 7, title: "Old title", status: "draft", link: "", modified: "" }],
+    selectedPostId: 7,
+    searchStatus: "done",
+    title: "typed but ignored for overwrite",
+  });
+
+  const invokeCalls = [];
+  await submitWordPressExport(() => {}, {
+    invoke: async (command, payload) => {
+      invokeCalls.push({ command, payload });
+    },
+  });
+
+  assert.equal(invokeCalls.length, 1);
+  assert.equal(invokeCalls[0].payload.input.title, "");
+});
+
 test("loadWordPressConnection marks the pane disconnected without a stored connection", async () => {
   installWordPressFixture();
 

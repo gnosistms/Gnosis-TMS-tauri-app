@@ -5,6 +5,7 @@ import {
   buildEditorPreviewDocument,
   countEditorPreviewSearchMatches,
   EDITOR_MODE_PREVIEW,
+  extractWordPressLeadingHeadingTitle,
   normalizeEditorPreviewSearchForDocument,
   renderEditorPreviewDocumentHtml,
   selectedEditorPreviewLanguageCode,
@@ -442,11 +443,12 @@ test("serializeEditorPreviewWordPress returns content plus matching footnote met
     },
   }], "vi");
 
-  const { content, footnotes } = serializeEditorPreviewWordPress(blocks);
+  const { content, footnotes, title } = serializeEditorPreviewWordPress(blocks);
 
+  assert.equal(title, null);
   assert.doesNotMatch(content, /<meta charset/);
   assert.match(content, /^<!-- wp:paragraph -->/);
-  assert.match(content, /<!-- wp:footnotes \/-->$/);
+  assert.match(content, /<!-- wp:footnotes \/-->/);
   assert.match(content, /src="chapters\/ch-1\/images\/row-1\/image\.png"/);
 
   assert.equal(footnotes.length, 1);
@@ -459,8 +461,8 @@ test("serializeEditorPreviewWordPress omits footnote markup without footnotes", 
   const blocks = buildEditorPreviewDocument([{
     rowId: "row-1",
     lifecycleState: "active",
-    textStyle: "heading1",
-    fields: { vi: "Title" },
+    textStyle: "paragraph",
+    fields: { vi: "Plain paragraph" },
     footnotes: {},
     imageCaptions: {},
     images: {},
@@ -470,5 +472,104 @@ test("serializeEditorPreviewWordPress omits footnote markup without footnotes", 
 
   assert.deepEqual(footnotes, []);
   assert.doesNotMatch(content, /wp:footnotes/);
+  assert.match(content, /<!-- wp:paragraph -->/);
+});
+
+function wordPressTitleFixtureRows() {
+  return [
+    {
+      rowId: "row-1",
+      lifecycleState: "active",
+      textStyle: "heading1",
+      fields: { vi: "<strong>Chương 3</strong> – Trận chiến" },
+      footnotes: {},
+      imageCaptions: {},
+      images: {},
+    },
+    {
+      rowId: "row-2",
+      lifecycleState: "active",
+      textStyle: "paragraph",
+      fields: { vi: "Body text" },
+      footnotes: {},
+      imageCaptions: {},
+      images: {},
+    },
+  ];
+}
+
+test("serializeEditorPreviewWordPress promotes a leading H1 to the post title", () => {
+  const blocks = buildEditorPreviewDocument(wordPressTitleFixtureRows(), "vi");
+
+  const { content, title } = serializeEditorPreviewWordPress(blocks);
+
+  assert.equal(title, "Chương 3 – Trận chiến");
+  assert.equal(extractWordPressLeadingHeadingTitle(blocks), "Chương 3 – Trận chiến");
+  assert.doesNotMatch(content, /wp:heading/);
+  assert.doesNotMatch(content, /Chương 3/);
+  assert.match(content, /Body text/);
+  // No H1 headings remain inside the article: the auto TOC is suppressed.
+  assert.match(content, /<!-- wp:shortcode -->\n\[no_toc\]\n<!-- \/wp:shortcode -->$/);
+});
+
+test("serializeEditorPreviewWordPress keeps the TOC when internal H1 headings remain", () => {
+  const rows = [
+    ...wordPressTitleFixtureRows(),
+    {
+      rowId: "row-3",
+      lifecycleState: "active",
+      textStyle: "heading1",
+      fields: { vi: "Second chapter heading" },
+      footnotes: {},
+      imageCaptions: {},
+      images: {},
+    },
+  ];
+  const blocks = buildEditorPreviewDocument(rows, "vi");
+
+  const { content, title } = serializeEditorPreviewWordPress(blocks);
+
+  assert.equal(title, "Chương 3 – Trận chiến");
   assert.match(content, /<!-- wp:heading \{"level":1\} -->/);
+  assert.doesNotMatch(content, /no_toc/);
+});
+
+test("serializeEditorPreviewWordPress does not promote H1s that are not first or carry footnotes", () => {
+  const h1WithFootnote = buildEditorPreviewDocument([{
+    rowId: "row-1",
+    lifecycleState: "active",
+    textStyle: "heading1",
+    fields: { vi: "Heading [1]" },
+    footnotes: { vi: "A note" },
+    imageCaptions: {},
+    images: {},
+  }], "vi");
+  const withFootnoteResult = serializeEditorPreviewWordPress(h1WithFootnote);
+  assert.equal(withFootnoteResult.title, null);
+  assert.match(withFootnoteResult.content, /<!-- wp:heading \{"level":1\} -->/);
+  assert.doesNotMatch(withFootnoteResult.content, /no_toc/);
+
+  const imageFirst = buildEditorPreviewDocument([
+    {
+      rowId: "row-1",
+      lifecycleState: "active",
+      textStyle: "paragraph",
+      fields: { vi: "" },
+      footnotes: {},
+      imageCaptions: { vi: "Cover" },
+      images: { vi: { kind: "url", url: "https://example.com/cover.png" } },
+    },
+    {
+      rowId: "row-2",
+      lifecycleState: "active",
+      textStyle: "heading1",
+      fields: { vi: "Not a title" },
+      footnotes: {},
+      imageCaptions: {},
+      images: {},
+    },
+  ], "vi");
+  const imageFirstResult = serializeEditorPreviewWordPress(imageFirst);
+  assert.equal(imageFirstResult.title, null);
+  assert.match(imageFirstResult.content, /Not a title/);
 });

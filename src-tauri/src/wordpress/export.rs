@@ -6,6 +6,7 @@ use tauri::{AppHandle, Emitter};
 
 use crate::{
     constants::WORDPRESS_EXPORT_PROGRESS_EVENT,
+    project_import::fetch_public_image_dimensions,
     project_repo_paths::resolve_project_git_repo_path,
     wordpress::client::{WordPressSite, WORDPRESS_RECONNECT_MESSAGE},
     wordpress::debug::wordpress_debug_log,
@@ -201,48 +202,71 @@ fn run_wordpress_export(
     let site = WordPressSite::wordpress_com(&connection)?;
     let client = wordpress_http_client()?;
 
-    let local_sources = collect_local_image_sources(&input.content);
+    let image_sources = collect_image_sources(&input.content);
     wordpress_debug_log(&format!(
-        "export start: mode={} post_id={:?} content_bytes={} footnotes={} local_images={}",
+        "export start: mode={} post_id={:?} content_bytes={} footnotes={} images={}",
         input.mode,
         input.post_id,
         input.content.len(),
         input.footnotes.len(),
-        local_sources.len(),
+        image_sources.len(),
     ));
     let mut content = input.content.clone();
 
-    if !local_sources.is_empty() {
-        let repo_path = resolve_project_git_repo_path(
-            app,
-            input.installation_id,
-            input.project_id.as_deref(),
-            Some(&input.repo_name),
-        )?;
-        let total = local_sources.len();
+    if !image_sources.is_empty() {
+        let has_local_sources = image_sources
+            .iter()
+            .any(|source| is_local_image_source(source));
+        let repo_path = if has_local_sources {
+            Some(resolve_project_git_repo_path(
+                app,
+                input.installation_id,
+                input.project_id.as_deref(),
+                Some(&input.repo_name),
+            )?)
+        } else {
+            None
+        };
+        let total = image_sources.len();
 
-        for (index, source) in local_sources.iter().enumerate() {
+        for (index, source) in image_sources.iter().enumerate() {
             emit_export_progress(
                 app,
                 WordPressExportProgressPayload {
                     job_id: input.job_id.clone(),
                     status: "progress",
-                    message: format!("Uploading image {} of {total}...", index + 1),
+                    message: format!("Processing image {} of {total}...", index + 1),
                     current: Some(index + 1),
                     total: Some(total),
                     post_link: None,
                 },
             );
-            wordpress_debug_log(&format!(
-                "uploading image {} of {total}: {source}",
-                index + 1
-            ));
-            let uploaded = upload_repo_image(&site, &client, &repo_path, source)?;
-            wordpress_debug_log(&format!(
-                "image uploaded: {source} -> {} natural={:?}x{:?}",
-                uploaded.source_url, uploaded.natural_width, uploaded.natural_height,
-            ));
-            content = apply_uploaded_image_to_content(&content, source, &uploaded);
+
+            if let Some(repo_path) = repo_path.as_ref().filter(|_| is_local_image_source(source)) {
+                wordpress_debug_log(&format!(
+                    "uploading image {} of {total}: {source}",
+                    index + 1
+                ));
+                let uploaded = upload_repo_image(&site, &client, repo_path, source)?;
+                wordpress_debug_log(&format!(
+                    "image uploaded: {source} -> {} natural={:?}x{:?}",
+                    uploaded.source_url, uploaded.natural_width, uploaded.natural_height,
+                ));
+                content = apply_uploaded_image_to_content(&content, source, &uploaded);
+                continue;
+            }
+
+            // Remote URL image: nothing to upload, but tall images still get a
+            // display size. A failed fetch only skips the sizing.
+            let dimensions = fetch_public_image_dimensions(&decode_html_entities(source));
+            wordpress_debug_log(&format!("remote image {source} natural={dimensions:?}"));
+            if let Some((natural_width, natural_height)) = dimensions {
+                if let Some(display) =
+                    wordpress_display_size(natural_width as u64, natural_height as u64)
+                {
+                    content = resize_image_block(&content, source, source, display);
+                }
+            }
         }
     }
 
@@ -274,13 +298,19 @@ fn run_wordpress_export(
             }),
         )
     } else {
+        let mut body = serde_json::json!({
+            "content": content,
+            "meta": { "footnotes": footnotes_meta },
+        });
+        // Overwrite only touches the title when the chapter's leading H1
+        // supplies one (the frontend sends it empty otherwise).
+        if !input.title.trim().is_empty() {
+            body["title"] = serde_json::Value::String(input.title.trim().to_string());
+        }
         (
             // post_id is checked in the command before the job is spawned.
             format!("posts/{}", input.post_id.unwrap_or_default()),
-            serde_json::json!({
-                "content": content,
-                "meta": { "footnotes": footnotes_meta },
-            }),
+            body,
         )
     };
 
@@ -356,10 +386,10 @@ fn post_summary_from_json(value: &serde_json::Value) -> WordPressPostSummary {
     }
 }
 
-/// Collects unique `<img src>` values that are repo-relative upload paths (the
-/// serializer emits the stored repo path for uploaded images, while pasted
-/// images keep their absolute http(s) URL).
-fn collect_local_image_sources(content: &str) -> Vec<String> {
+/// Collects unique `<img src>` values from the serialized content. Local
+/// (repo-relative) sources are uploaded; remote http(s) sources are only
+/// measured for display sizing. `data:` URIs are left alone entirely.
+fn collect_image_sources(content: &str) -> Vec<String> {
     let mut sources = Vec::new();
     let mut cursor = 0;
     while let Some(offset) = content[cursor..].find("<img ") {
@@ -377,7 +407,8 @@ fn collect_local_image_sources(content: &str) -> Vec<String> {
         else {
             continue;
         };
-        if source.is_empty() || !is_local_image_source(source) {
+        let lowered = source.trim().to_ascii_lowercase();
+        if source.is_empty() || lowered.starts_with("data:") || lowered.starts_with("//") {
             continue;
         }
         if !sources.iter().any(|existing| existing == source) {
@@ -426,12 +457,36 @@ fn wordpress_display_size(natural_width: u64, natural_height: u64) -> Option<(u6
     Some((display_width, display_height))
 }
 
-/// Rewrites the serialized image block for `source` to the uploaded URL. When
-/// the image is taller than the display cap, the plain block is upgraded to
-/// the same markup the block editor's resize handle produces (display
-/// width/height in the block attrs and inline style); the media file itself
-/// is untouched. Falls back to a plain src swap if the block markup is not
+/// Upgrades the plain serialized image block whose img has `source_attr` as
+/// its src attribute to the same markup the block editor's resize handle
+/// produces: display width/height in the block attrs and inline style. The
+/// img src is rewritten to `new_src_attr` (both values in HTML-attribute
+/// escaped form). Content is returned unchanged if the block markup is not
 /// the expected shape.
+fn resize_image_block(
+    content: &str,
+    source_attr: &str,
+    new_src_attr: &str,
+    (display_width, display_height): (u64, u64),
+) -> String {
+    let plain_block = format!(
+        "<!-- wp:image -->\n<figure class=\"wp-block-image\"><img src=\"{source_attr}\" alt=\"\" />"
+    );
+    if !content.contains(&plain_block) {
+        return content.to_string();
+    }
+
+    let resized_block = format!(
+        "<!-- wp:image {{\"width\":\"{display_width}px\",\"height\":\"{display_height}px\"}} -->\n\
+         <figure class=\"wp-block-image is-resized\"><img src=\"{new_src_attr}\" alt=\"\" style=\"width:{display_width}px;height:{display_height}px\" />"
+    );
+    content.replace(&plain_block, &resized_block)
+}
+
+/// Rewrites the serialized image block for `source` to the uploaded URL. When
+/// the image is taller than the display cap, the block also gets the resized
+/// display size; the media file itself is untouched. Falls back to a plain
+/// src swap if the block markup is not the expected shape.
 fn apply_uploaded_image_to_content(
     content: &str,
     source: &str,
@@ -440,19 +495,15 @@ fn apply_uploaded_image_to_content(
     if let (Some(natural_width), Some(natural_height)) =
         (uploaded.natural_width, uploaded.natural_height)
     {
-        if let Some((display_width, display_height)) =
-            wordpress_display_size(natural_width, natural_height)
-        {
-            let plain_block = format!(
-                "<!-- wp:image -->\n<figure class=\"wp-block-image\"><img src=\"{source}\" alt=\"\" />"
+        if let Some(display) = wordpress_display_size(natural_width, natural_height) {
+            let resized = resize_image_block(
+                content,
+                source,
+                &escape_html_attribute(&uploaded.source_url),
+                display,
             );
-            if content.contains(&plain_block) {
-                let escaped_url = escape_html_attribute(&uploaded.source_url);
-                let resized_block = format!(
-                    "<!-- wp:image {{\"width\":\"{display_width}px\",\"height\":\"{display_height}px\"}} -->\n\
-                     <figure class=\"wp-block-image is-resized\"><img src=\"{escaped_url}\" alt=\"\" style=\"width:{display_width}px;height:{display_height}px\" />"
-                );
-                return content.replace(&plain_block, &resized_block);
+            if resized != content {
+                return resized;
             }
         }
     }
@@ -598,7 +649,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn collect_local_image_sources_skips_remote_and_duplicate_sources() {
+    fn collect_image_sources_includes_remote_urls_and_skips_data_uris() {
         let content = concat!(
             "<!-- wp:image -->\n",
             "<figure class=\"wp-block-image\"><img src=\"images/a b.png\" alt=\"\" /></figure>\n",
@@ -609,11 +660,51 @@ mod tests {
             "<figure><img src=\"images/second.jpg\" alt=\"\" /></figure>",
         );
         assert_eq!(
-            collect_local_image_sources(content),
+            collect_image_sources(content),
             vec![
                 "images/a b.png".to_string(),
-                "images/second.jpg".to_string()
+                "https://example.com/x.png".to_string(),
+                "images/second.jpg".to_string(),
             ],
+        );
+        assert!(is_local_image_source("images/a b.png"));
+        assert!(!is_local_image_source("https://example.com/x.png"));
+    }
+
+    #[test]
+    fn resize_image_block_sizes_remote_images_in_place() {
+        let content = concat!(
+            "<!-- wp:image -->\n",
+            "<figure class=\"wp-block-image\"><img src=\"https://example.com/tall.png?a=1&amp;b=2\" alt=\"\" /></figure>\n",
+            "<!-- /wp:image -->",
+        );
+
+        let resized = resize_image_block(
+            content,
+            "https://example.com/tall.png?a=1&amp;b=2",
+            "https://example.com/tall.png?a=1&amp;b=2",
+            (300, 600),
+        );
+        assert_eq!(
+            resized,
+            concat!(
+                "<!-- wp:image {\"width\":\"300px\",\"height\":\"600px\"} -->\n",
+                "<figure class=\"wp-block-image is-resized\">",
+                "<img src=\"https://example.com/tall.png?a=1&amp;b=2\" alt=\"\" style=\"width:300px;height:600px\" /></figure>\n",
+                "<!-- /wp:image -->",
+            ),
+        );
+
+        // Unexpected markup: returned unchanged.
+        let unexpected = "<figure><img src=\"https://example.com/tall.png\" alt=\"\" /></figure>";
+        assert_eq!(
+            resize_image_block(
+                unexpected,
+                "https://example.com/tall.png",
+                "https://example.com/tall.png",
+                (300, 600),
+            ),
+            unexpected,
         );
     }
 

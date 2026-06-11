@@ -651,18 +651,56 @@ export function serializeEditorPreviewHtml(blocks) {
   return ["<meta charset='utf-8'>", bodyHtml, footnotesHtml].filter(Boolean).join("\n\n");
 }
 
+function isHeading1Block(block) {
+  return block?.kind === "text"
+    && normalizeEditorRowTextStyle(block.textStyle) === EDITOR_ROW_TEXT_STYLE_HEADING1;
+}
+
+// A leading H1 becomes the WordPress post title instead of an in-article
+// heading. Blocks with footnotes are not eligible — stripping them would
+// orphan the footnote content.
+function wordPressLeadingTitleBlock(blocks) {
+  const first = (Array.isArray(blocks) ? blocks : [])[0];
+  if (!isHeading1Block(first) || normalizeEditorFootnotes(first.footnotes).length > 0) {
+    return null;
+  }
+
+  const title = extractInlineMarkupVisibleText(
+    unescapeLiteralFootnoteMarkers(previewTextValue(first.text)),
+  ).trim();
+  return title ? { block: first, title } : null;
+}
+
+export function extractWordPressLeadingHeadingTitle(blocks) {
+  return wordPressLeadingTitleBlock(blocks)?.title ?? null;
+}
+
+// Easy Table of Contents' documented per-post off switch; its disable
+// checkbox writes protected post meta the wp/v2 API cannot set.
+const WORDPRESS_NO_TOC_BLOCK = "<!-- wp:shortcode -->\n[no_toc]\n<!-- /wp:shortcode -->";
+
 // WordPress post payload: the same block markup as the clipboard HTML export,
 // minus the clipboard charset prefix, plus the footnote bodies that the core
 // footnotes block stores in the `footnotes` post meta (ids match the
-// `data-fn` refs already present in the markup).
+// `data-fn` refs already present in the markup). A leading H1 is promoted to
+// `title` and removed from the content; when no H1 headings remain inside the
+// article, a [no_toc] shortcode block suppresses the auto table of contents.
 export function serializeEditorPreviewWordPress(blocks) {
-  const { bodyHtml, footnotesHtml, footnoteState } = serializeEditorPreviewBlocks(blocks);
+  const allBlocks = Array.isArray(blocks) ? blocks : [];
+  const titleEntry = wordPressLeadingTitleBlock(allBlocks);
+  const bodyBlocks = titleEntry ? allBlocks.slice(1) : allBlocks;
+  const { bodyHtml, footnotesHtml, footnoteState } = serializeEditorPreviewBlocks(bodyBlocks);
+  const hasInternalHeading1 = bodyBlocks.some(isHeading1Block);
+
   return {
-    content: [bodyHtml, footnotesHtml].filter(Boolean).join("\n\n"),
+    content: [bodyHtml, footnotesHtml, hasInternalHeading1 ? "" : WORDPRESS_NO_TOC_BLOCK]
+      .filter(Boolean)
+      .join("\n\n"),
     footnotes: footnoteState.items.map((item) => ({
       id: item.id,
       content: serializePreviewText(item.text),
     })),
+    title: titleEntry?.title ?? null,
   };
 }
 

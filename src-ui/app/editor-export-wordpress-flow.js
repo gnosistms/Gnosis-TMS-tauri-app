@@ -3,6 +3,7 @@ import { invoke, listen, openExternalUrl } from "./runtime.js";
 import { findChapterContext, selectedProjectsTeam } from "./project-context.js";
 import {
   buildEditorPreviewDocument,
+  extractWordPressLeadingHeadingTitle,
   selectedEditorPreviewLanguageCode,
   serializeEditorPreviewWordPress,
 } from "./editor-preview.js";
@@ -61,8 +62,16 @@ export function ensureWordPressPaneReady(render, operations = {}) {
     return;
   }
 
-  if (!wordpress.title && state.editorChapter?.fileTitle) {
-    updateWordPressState({ title: String(state.editorChapter.fileTitle) });
+  if (!wordpress.title) {
+    // Prefer the chapter's leading H1 (it becomes the post title and is
+    // stripped from the exported content); fall back to the file title.
+    const languageCode = selectedEditorPreviewLanguageCode(state.editorChapter);
+    const blocks = buildEditorPreviewDocument(state.editorChapter?.rows, languageCode);
+    const headingTitle = extractWordPressLeadingHeadingTitle(blocks);
+    const title = headingTitle || String(state.editorChapter?.fileTitle ?? "");
+    if (title) {
+      updateWordPressState({ title });
+    }
   }
 
   if (wordpress.connectionStatus === "unknown") {
@@ -232,7 +241,7 @@ export async function submitWordPressExport(render, operations = {}) {
   }
 
   const blocks = buildEditorPreviewDocument(state.editorChapter?.rows, languageCode);
-  const { content, footnotes } = serializeEditorPreviewWordPress(blocks);
+  const { content, footnotes, title: headingTitle } = serializeEditorPreviewWordPress(blocks);
   if (!content.trim()) {
     failWordPressAction(render, "There is nothing to export.");
     return;
@@ -252,7 +261,11 @@ export async function submitWordPressExport(render, operations = {}) {
         jobId,
         mode: wordpress.mode,
         postId: wordpress.mode === "overwrite" ? overwritePost.id : null,
-        title: String(wordpress.title ?? "").trim(),
+        // Create uses the (editable) title field; overwrite only updates the
+        // post title when the chapter's leading H1 supplies one.
+        title: wordpress.mode === "create"
+          ? String(wordpress.title ?? "").trim()
+          : headingTitle ?? "",
         content,
         footnotes,
       },

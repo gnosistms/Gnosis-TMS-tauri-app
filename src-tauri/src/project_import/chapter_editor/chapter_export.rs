@@ -1060,6 +1060,14 @@ fn download_docx_image(url: &str) -> Option<DocxImage> {
     })
 }
 
+/// Fetches a remote image (with the same public-host validation, redirect
+/// refusal, and size cap as the DOCX export) and returns its natural pixel
+/// dimensions. `None` for unreachable, non-public, oversized, or unsupported
+/// images.
+pub(crate) fn fetch_public_image_dimensions(url: &str) -> Option<(u32, u32)> {
+    download_docx_image(url).map(|image| (image.width_px, image.height_px))
+}
+
 struct ValidatedExportImageRequest {
     // `Some((host, addrs))` for a domain host whose DNS result was validated and must be
     // pinned at connect time; `None` for a literal-IP host (no DNS, nothing to pin).

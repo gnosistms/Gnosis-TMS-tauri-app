@@ -50,7 +50,9 @@ pub(crate) use self::aligned_translation::{
     AlignedTranslationApplyResponse, AlignedTranslationPreflightInput,
     AlignedTranslationPreflightResponse,
 };
-pub(crate) use self::chapter_export::{export_gtms_chapter_file_sync, ExportChapterFileInput};
+pub(crate) use self::chapter_export::{
+    export_gtms_chapter_file_sync, fetch_public_image_dimensions, ExportChapterFileInput,
+};
 use self::chapter_selection::{
     linked_chapter_glossary, preferred_source_language_code, preferred_target_language_code,
 };
