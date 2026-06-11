@@ -248,8 +248,15 @@ pub(crate) fn resolve_chapter_json_git_conflict_from_stage_texts(
         &local_value,
         &remote_value,
     )? {
+        // Name the offending top-level fields (names only, never values) so a report
+        // of this error is diagnosable without the conflicted repo in hand.
+        let unsupported_fields = unsupported_chapter_merge_field_names(
+            base_value.as_ref(),
+            &local_value,
+            &remote_value,
+        )?;
         return Err(format!(
-            "Could not resolve conflicted chapter metadata '{path}': unsupported local-only changes remain after applying the supported chapter merge rules."
+            "Could not resolve conflicted chapter metadata '{path}': unsupported local-only changes remain after applying the supported chapter merge rules (fields: {unsupported_fields})."
         ));
     }
 
@@ -1115,6 +1122,46 @@ fn local_chapter_metadata_change_is_unsupported(
     Ok(local_stripped != base_stripped && local_stripped != remote_stripped)
 }
 
+/// The sorted top-level field names (never values) that block the supported chapter
+/// merge: keys outside the supported merge set where the local stage differs from
+/// both the base and the rebased remote stage.
+fn unsupported_chapter_merge_field_names(
+    base_value: Option<&Value>,
+    local_value: &Value,
+    remote_value: &Value,
+) -> Result<String, String> {
+    let mut base_stripped = base_value.cloned().unwrap_or(Value::Null);
+    let mut local_stripped = local_value.clone();
+    let mut remote_stripped = remote_value.clone();
+    strip_supported_chapter_merge_keys(&mut base_stripped)?;
+    strip_supported_chapter_merge_keys(&mut local_stripped)?;
+    strip_supported_chapter_merge_keys(&mut remote_stripped)?;
+
+    let Some(local_object) = local_stripped.as_object() else {
+        return Ok("<non-object chapter metadata>".to_string());
+    };
+    let empty = serde_json::Map::new();
+    let base_object = base_stripped.as_object().unwrap_or(&empty);
+    let remote_object = remote_stripped.as_object().unwrap_or(&empty);
+
+    let field_names: Vec<&str> = local_object
+        .keys()
+        .chain(base_object.keys())
+        .chain(remote_object.keys())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .filter(|key| {
+            let local_field = local_object.get(*key);
+            local_field != base_object.get(*key) && local_field != remote_object.get(*key)
+        })
+        .map(String::as_str)
+        .collect();
+    if field_names.is_empty() {
+        return Ok("<mixed local and remote divergence>".to_string());
+    }
+    Ok(field_names.join(", "))
+}
+
 fn strip_supported_row_merge_keys(value: &mut Value) -> Result<(), String> {
     let Some(row_object) = value.as_object_mut() else {
         return Ok(());
@@ -1905,6 +1952,33 @@ mod tests {
         assert!(
             merged_value.get("source_word_count").is_none(),
             "merged chapter should drop the cached source_word_count so it is recomputed"
+        );
+    }
+
+    #[test]
+    fn unsupported_chapter_conflicts_name_the_offending_fields() {
+        // The refusal must say WHICH fields blocked the merge (names only, no values),
+        // so a telemetry report of this error is diagnosable without the repo.
+        let error = resolve_chapter_json_git_conflict_from_stage_texts(
+            "chapters/ch-1/chapter.json",
+            Some(r#"{ "chapter_id": "chapter-1", "title": "Chapter", "languages": [] }"#),
+            Some(r#"{ "chapter_id": "chapter-1", "title": "Chapter", "languages": [] }"#),
+            Some(
+                r#"{ "chapter_id": "chapter-1", "title": "Chapter", "languages": ["vi"], "custom_field": 1 }"#,
+            ),
+        )
+        .expect_err("local-only changes outside the supported merge set should refuse");
+        assert!(
+            error.contains("unsupported local-only changes"),
+            "unexpected error: {error}"
+        );
+        assert!(
+            error.contains("custom_field") && error.contains("languages"),
+            "error should name the offending fields: {error}"
+        );
+        assert!(
+            !error.contains("\"vi\""),
+            "error must not leak field values: {error}"
         );
     }
 }

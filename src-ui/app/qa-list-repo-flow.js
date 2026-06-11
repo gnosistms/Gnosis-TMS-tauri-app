@@ -1,4 +1,5 @@
 import { invoke } from "./runtime.js";
+import { canManageQaListResources } from "./permissions.js";
 import { normalizeQaList, sortQaLists } from "./qa-list-shared.js";
 import { state } from "./state.js";
 import { loadStoredQaListsForTeam, saveStoredQaListsForTeam } from "./qa-list-cache.js";
@@ -116,6 +117,7 @@ const qaListRepoFlow = createRepoResourceRepoFlow({
   listMetadataRecords: listQaListMetadataRecords,
   listLocalMetadataRecords: listLocalQaListMetadataRecords,
   upsertMetadataRecord: upsertQaListMetadataRecord,
+  canManageResources: canManageQaListResources,
   ensureRuntime: ensureInvoke,
   listRemoteRepos: (team) => listRemoteQaListsForInstallation(team.installationId),
   commands: {

@@ -405,6 +405,7 @@ export function createRepoResourceRepoFlow(descriptor) {
     listLocalMetadataRecords,
     listRemoteRepos,
     upsertMetadataRecord,
+    canManageResources = () => true,
     ensureRuntime = null,
     afterSyncSnapshots = null,
     formatMetadataWarning = null,
@@ -483,6 +484,12 @@ export function createRepoResourceRepoFlow(descriptor) {
   }
 
   async function repairMetadataFromRemoteRename(team, metadataRecords, remoteRepos) {
+    // Maintenance writes go through the management-gated metadata commands. Viewers
+    // and translators sync too, and must not attempt them — the backend rejects each
+    // write with "cannot manage shared resources"; a manager's sync will repair.
+    if (!canManageResources(team)) {
+      return false;
+    }
     const remoteByRepoId = new Map(
       (Array.isArray(remoteRepos) ? remoteRepos : [])
         .filter((repo) => Number.isFinite(repo?.repoId))
@@ -548,6 +555,9 @@ export function createRepoResourceRepoFlow(descriptor) {
   }
 
   async function finalizeMissingForTeam(team, metadataRecords, remoteRepos) {
+    if (!canManageResources(team)) {
+      return metadataRecords;
+    }
     const missingRecords = primitives.findConfirmedMissingRecords(metadataRecords, remoteRepos);
     if (!Number.isFinite(team?.installationId) || missingRecords.length === 0) {
       return metadataRecords;
@@ -591,7 +601,11 @@ export function createRepoResourceRepoFlow(descriptor) {
   }
 
   async function backfillMetadataRecords(team, localSummaries, remoteRepos, metadataRecords) {
-    if (!Number.isFinite(team?.installationId) || state.offline?.isEnabled === true) {
+    if (
+      !canManageResources(team)
+      || !Number.isFinite(team?.installationId)
+      || state.offline?.isEnabled === true
+    ) {
       return metadataRecords;
     }
     const existingIds = new Set((Array.isArray(metadataRecords) ? metadataRecords : []).map((record) => record.id));

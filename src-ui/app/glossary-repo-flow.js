@@ -1,4 +1,5 @@
 import { invoke } from "./runtime.js";
+import { canManageGlossaryResources } from "./permissions.js";
 import { normalizeGlossarySummary, sortGlossaries } from "./glossary-shared.js";
 import { loadStoredGlossariesForTeam, saveStoredGlossariesForTeam } from "./glossary-cache.js";
 import { removeGlossaryFromState } from "./glossary-top-level-state.js";
@@ -132,6 +133,7 @@ const glossaryRepoFlow = createRepoResourceRepoFlow({
   listMetadataRecords: listGlossaryMetadataRecords,
   listLocalMetadataRecords: listLocalGlossaryMetadataRecords,
   upsertMetadataRecord: upsertGlossaryMetadataRecord,
+  canManageResources: canManageGlossaryResources,
   afterSyncSnapshots: openRequiredAppUpdatePromptFromGlossarySnapshots,
   formatMetadataWarning: (message) =>
     String(message ?? "").startsWith("Glossary metadata could not be loaded")
