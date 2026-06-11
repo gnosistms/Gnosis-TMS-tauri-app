@@ -566,7 +566,7 @@ function serializePreviewImageHtml(block) {
   const caption = String(block.caption ?? "").trim();
   const figureHtml = [
     '<figure class="wp-block-image aligncenter">',
-    `<img src="${escapeHtml(exportSrc)}" alt="" />`,
+    `<img src="${escapeHtml(exportSrc)}" alt=""/>`,
     caption
       ? `<figcaption class="wp-element-caption"><em>${serializePreviewText(block.caption)}</em></figcaption>`
       : "",
@@ -581,36 +581,41 @@ function serializePreviewTextBlockHtml(block, footnoteState) {
     footnoteState,
     { serialize: true },
   );
+  // Each branch mirrors the exact markup the matching core block's `save`
+  // generates (verified by editor-preview-wordpress-validation.test.js), so
+  // the Gutenberg editor accepts the post without rewriting or recovery.
   const normalizedStyle = normalizeEditorRowTextStyle(block?.textStyle);
   if (normalizedStyle === EDITOR_ROW_TEXT_STYLE_HEADING1) {
     return {
       blockName: "heading",
       attributes: { level: 1 },
-      html: `<h1>${textHtml}</h1>`,
+      html: `<h1 class="wp-block-heading">${textHtml}</h1>`,
     };
   }
   if (normalizedStyle === EDITOR_ROW_TEXT_STYLE_HEADING2) {
     return {
       blockName: "heading",
-      html: `<h2>${textHtml}</h2>`,
+      html: `<h2 class="wp-block-heading">${textHtml}</h2>`,
     };
   }
   if (normalizedStyle === EDITOR_ROW_TEXT_STYLE_QUOTE) {
+    const innerParagraph = wrapSerializedWordPressBlock("paragraph", `<p>${textHtml}</p>`);
     return {
       blockName: "quote",
-      html: `<blockquote class="wp-block-quote"><p>${textHtml}</p></blockquote>`,
+      html: `<blockquote class="wp-block-quote">${innerParagraph}</blockquote>`,
     };
   }
   if (normalizedStyle === EDITOR_ROW_TEXT_STYLE_INDENTED) {
     return {
       blockName: "paragraph",
-      html: `<p style="padding-left: 2em;">${textHtml}</p>`,
+      attributes: { style: { spacing: { padding: { left: "2em" } } } },
+      html: `<p style="padding-left:2em">${textHtml}</p>`,
     };
   }
   if (normalizedStyle === EDITOR_ROW_TEXT_STYLE_CENTERED) {
     return {
       blockName: "paragraph",
-      attributes: { align: "center" },
+      attributes: { style: { typography: { textAlign: "center" } } },
       html: `<p class="has-text-align-center">${textHtml}</p>`,
     };
   }
@@ -641,7 +646,7 @@ function serializeEditorPreviewBlocks(blocks) {
       return serializePreviewTextBlock(block, footnoteState);
     })
     .filter(Boolean)
-    .join("\n");
+    .join("\n\n");
   const footnotesHtml = footnoteState.items.length > 0 ? "<!-- wp:footnotes /-->" : "";
   return { bodyHtml, footnotesHtml, footnoteState };
 }

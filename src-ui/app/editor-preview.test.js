@@ -314,9 +314,12 @@ test("serializeEditorPreviewHtml uses semantic tags and repo-relative uploaded i
 
   assert.match(html, /^<meta charset='utf-8'>/);
   assert.match(html, /<!-- wp:heading \{"level":1\} -->/);
-  assert.match(html, /<h1>Chapter Title<\/h1>/);
+  assert.match(html, /<h1 class="wp-block-heading">Chapter Title<\/h1>/);
   assert.match(html, /<!-- wp:quote -->/);
-  assert.match(html, /<blockquote class="wp-block-quote"><p>Quoted line <sup data-fn="[0-9a-f-]{36}" class="fn">/);
+  assert.match(
+    html,
+    /<blockquote class="wp-block-quote"><!-- wp:paragraph -->\n<p>Quoted line <sup data-fn="[0-9a-f-]{36}" class="fn">/,
+  );
   assert.match(html, /<!-- wp:footnotes \/-->/);
   assert.doesNotMatch(html, /<ol class="wp-block-footnotes">/);
   assert.match(html, /<figure/);
@@ -337,7 +340,7 @@ test("serializeEditorPreviewHtml uses centered HTML for centered plain text", ()
 
   const html = serializeEditorPreviewHtml(blocks);
 
-  assert.match(html, /<!-- wp:paragraph \{"align":"center"\} -->/);
+  assert.match(html, /<!-- wp:paragraph \{"style":\{"typography":\{"textAlign":"center"\}\}\} -->/);
   assert.match(html, /<p class="has-text-align-center">Centered line<\/p>/);
 });
 
@@ -479,6 +482,64 @@ test("serializeEditorPreviewWordPress omits footnote markup without footnotes", 
   assert.doesNotMatch(content, /wp:footnotes/);
   assert.doesNotMatch(content, /wp:separator/);
   assert.match(content, /<!-- wp:paragraph -->/);
+});
+
+test("serializeEditorPreviewWordPress maps every text style to its block markup", () => {
+  const styleRow = (rowId, textStyle, text) => ({
+    rowId,
+    lifecycleState: "active",
+    textStyle,
+    fields: { vi: text },
+    footnotes: {},
+    imageCaptions: {},
+    images: {},
+  });
+  // The paragraph row leads so the H1 stays an in-body heading instead of
+  // being promoted to the post title.
+  const blocks = buildEditorPreviewDocument([
+    styleRow("row-p", "paragraph", "Plain paragraph"),
+    styleRow("row-h1", "heading1", "Large heading"),
+    styleRow("row-h2", "heading2", "Subheading"),
+    styleRow("row-q", "quote", "Quoted passage"),
+    styleRow("row-i", "indented", "Indented passage"),
+    styleRow("row-c", "centered", "Centered passage"),
+  ], "vi");
+
+  const { content, title } = serializeEditorPreviewWordPress(blocks);
+
+  assert.equal(title, null);
+  assert.ok(content.includes("<!-- wp:paragraph -->\n<p>Plain paragraph</p>\n<!-- /wp:paragraph -->"));
+  assert.ok(content.includes('<!-- wp:heading {"level":1} -->\n<h1 class="wp-block-heading">Large heading</h1>\n<!-- /wp:heading -->'));
+  assert.ok(content.includes('<!-- wp:heading -->\n<h2 class="wp-block-heading">Subheading</h2>\n<!-- /wp:heading -->'));
+  assert.ok(content.includes(
+    '<!-- wp:quote -->\n<blockquote class="wp-block-quote"><!-- wp:paragraph -->\n<p>Quoted passage</p>\n<!-- /wp:paragraph --></blockquote>\n<!-- /wp:quote -->',
+  ));
+  assert.ok(content.includes(
+    '<!-- wp:paragraph {"style":{"spacing":{"padding":{"left":"2em"}}}} -->\n<p style="padding-left:2em">Indented passage</p>\n<!-- /wp:paragraph -->',
+  ));
+  assert.ok(content.includes(
+    '<!-- wp:paragraph {"style":{"typography":{"textAlign":"center"}}} -->\n<p class="has-text-align-center">Centered passage</p>\n<!-- /wp:paragraph -->',
+  ));
+  // An in-body H1 means the table-of-contents suppression shortcode is omitted.
+  assert.doesNotMatch(content, /no_toc/);
+});
+
+test("serializeEditorPreviewWordPress keeps inline links in body and footnotes", () => {
+  const blocks = buildEditorPreviewDocument([{
+    rowId: "row-1",
+    lifecycleState: "active",
+    textStyle: "paragraph",
+    fields: { vi: 'Read <a href="https://example.com/page?a=1&amp;b=2">the page</a> [1]' },
+    footnotes: { vi: 'See <a href="https://example.com/note">the note</a>' },
+    imageCaptions: {},
+    images: {},
+  }], "vi");
+
+  const { content, footnotes } = serializeEditorPreviewWordPress(blocks);
+
+  assert.ok(content.includes('Read <a href="https://example.com/page?a=1&amp;b=2">the page</a>'));
+  assert.equal(footnotes.length, 1);
+  assert.equal(footnotes[0].content, 'See <a href="https://example.com/note">the note</a>');
 });
 
 function wordPressTitleFixtureRows() {
