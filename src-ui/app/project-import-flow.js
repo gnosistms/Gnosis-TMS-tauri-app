@@ -108,6 +108,54 @@ function droppedPathImportFileLike(value) {
   return value && typeof value === "object" && typeof value.droppedPath === "string";
 }
 
+/**
+ * Recognizes paste-link input that is a local file rather than a web URL and
+ * returns the filesystem path, or "" when the input is not path-shaped.
+ * Accepts file:// URLs (including the common `file://Users/...` typo where the
+ * first path segment lands in the URL host), POSIX absolute paths, `~/` paths,
+ * Windows drive paths, and UNC paths.
+ */
+export function localFilePathFromImportLinkInput(value) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  if (/^file:\/\//i.test(trimmed)) {
+    let parsedUrl = null;
+    try {
+      parsedUrl = new URL(trimmed);
+    } catch {
+      return "";
+    }
+    let path = "";
+    try {
+      path = decodeURIComponent(parsedUrl.pathname);
+    } catch {
+      path = parsedUrl.pathname;
+    }
+    const host = parsedUrl.hostname;
+    if (host && host.toLowerCase() !== "localhost") {
+      path = `/${host}${path}`;
+    }
+    if (/^\/[A-Za-z]:[\\/]/.test(path)) {
+      path = path.slice(1);
+    }
+    return path;
+  }
+
+  if (
+    trimmed.startsWith("/")
+    || /^~[\\/]/.test(trimmed)
+    || /^[A-Za-z]:[\\/]/.test(trimmed)
+    || trimmed.startsWith("\\\\")
+  ) {
+    return trimmed;
+  }
+
+  return "";
+}
+
 function normalizeImportFileList(files) {
   if (!Array.isArray(files)) {
     return files ? [files] : [];
@@ -649,6 +697,14 @@ export async function submitProjectImportLink(render) {
 
   const url = String(state.projectImport.linkUrl ?? "").trim();
   if (!url) {
+    return;
+  }
+
+  // A pasted local path skips link resolution and flows through the same
+  // pipeline as a file dropped or picked on the Upload tab.
+  const localPath = localFilePathFromImportLinkInput(url);
+  if (localPath) {
+    await importProjectFiles(render, normalizeImportFileList([droppedPathImportFile(localPath)]));
     return;
   }
 

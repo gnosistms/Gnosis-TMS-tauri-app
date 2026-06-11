@@ -20,6 +20,23 @@ pub(crate) struct LocalDroppedFilePayload {
     data_base64: String,
 }
 
+/// Expands a leading `~/` to the user's home directory. Real drag-and-drop
+/// paths are always absolute; this only matters for hand-typed paths (the
+/// Add files paste-link tab accepts them).
+fn expand_user_home(path: &str) -> String {
+    let Some(rest) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) else {
+        return path.to_string();
+    };
+
+    let home_var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    match std::env::var(home_var) {
+        Ok(home) if !home.trim().is_empty() => {
+            Path::new(&home).join(rest).to_string_lossy().into_owned()
+        }
+        _ => path.to_string(),
+    }
+}
+
 #[tauri::command]
 pub(crate) fn read_local_dropped_file(path: String) -> Result<LocalDroppedFilePayload, String> {
     let trimmed_path = path.trim();
@@ -27,7 +44,8 @@ pub(crate) fn read_local_dropped_file(path: String) -> Result<LocalDroppedFilePa
         return Err("The dropped file path is missing.".to_string());
     }
 
-    let file_path = Path::new(trimmed_path);
+    let expanded_path = expand_user_home(trimmed_path);
+    let file_path = Path::new(&expanded_path);
     let metadata = fs::metadata(file_path).map_err(|error| {
         format!(
             "Could not read the dropped file '{}': {error}",
@@ -87,5 +105,32 @@ fn mime_type_for_path(path: &Path) -> &'static str {
         Some("txt") => "text/plain",
         Some("docx") => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         _ => "application/octet-stream",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::expand_user_home;
+
+    #[test]
+    fn expand_user_home_resolves_home_relative_paths() {
+        let home_var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+        let home = std::env::var(home_var).expect("test environment should have a home dir");
+
+        let expanded = expand_user_home("~/Desktop/file.html");
+        assert!(expanded.starts_with(&home));
+        assert!(
+            expanded.ends_with("Desktop/file.html") || expanded.ends_with("Desktop\\file.html")
+        );
+    }
+
+    #[test]
+    fn expand_user_home_leaves_other_paths_alone() {
+        assert_eq!(expand_user_home("/tmp/file.html"), "/tmp/file.html");
+        assert_eq!(
+            expand_user_home("C:\\Docs\\file.html"),
+            "C:\\Docs\\file.html"
+        );
+        assert_eq!(expand_user_home("~file"), "~file");
     }
 }

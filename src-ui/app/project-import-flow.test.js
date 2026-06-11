@@ -46,6 +46,7 @@ const {
   retryProjectImportLink,
   selectProjectImportInputMode,
   selectProjectImportSourceLanguage,
+  localFilePathFromImportLinkInput,
   submitProjectImportLink,
   submitProjectImportPastedText,
   updateProjectImportLinkUrl,
@@ -765,6 +766,82 @@ test("project import HTML link opens source language selection with HTML file", 
   assert.equal(state.projectImport.status, "selectingSourceLanguage");
   assert.equal(state.projectImport.pendingFileName, "article.html");
   assert.equal(state.projectImport.pendingFile.sourceUrl, "https://example.com/article");
+});
+
+test("project import paste-link accepts a local file path without link resolution", async () => {
+  resetProjectImportTestState();
+  state.projectImport = {
+    ...state.projectImport,
+    isOpen: true,
+    inputMode: "pasteLink",
+    projectId: "project-1",
+    projectTitle: "Project",
+    linkUrl: "/tmp/sample.html",
+  };
+  const commands = [];
+  invokeHandler = async (command, payload = {}) => {
+    commands.push(command);
+    if (command === "read_local_dropped_file") {
+      assert.equal(payload.path, "/tmp/sample.html");
+      return {
+        name: "sample.html",
+        mimeType: "text/html",
+        dataBase64: "PGh0bWw+PC9odG1sPg==",
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await submitProjectImportLink(() => {});
+
+  assert.ok(!commands.includes("resolve_project_import_link"));
+  assert.equal(state.projectImport.status, "selectingSourceLanguage");
+  assert.equal(state.projectImport.pendingFileName, "sample.html");
+  assert.equal(state.projectImport.pendingFile.sourcePath, "/tmp/sample.html");
+  assert.equal(state.projectImport.pendingFile.sourceUrl, "file:///tmp/sample.html");
+});
+
+test("project import paste-link accepts a file:// link with the host-folding typo", async () => {
+  resetProjectImportTestState();
+  state.projectImport = {
+    ...state.projectImport,
+    isOpen: true,
+    inputMode: "pasteLink",
+    projectId: "project-1",
+    projectTitle: "Project",
+    linkUrl: "file://Users/hans/Desktop/sample%20file.html",
+  };
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "read_local_dropped_file") {
+      assert.equal(payload.path, "/Users/hans/Desktop/sample file.html");
+      return {
+        name: "sample file.html",
+        mimeType: "text/html",
+        dataBase64: "PGh0bWw+PC9odG1sPg==",
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await submitProjectImportLink(() => {});
+
+  assert.equal(state.projectImport.status, "selectingSourceLanguage");
+  assert.equal(state.projectImport.pendingFileName, "sample file.html");
+});
+
+test("localFilePathFromImportLinkInput recognizes path shapes and rejects web URLs", () => {
+  assert.equal(localFilePathFromImportLinkInput("/Users/hans/file.html"), "/Users/hans/file.html");
+  assert.equal(localFilePathFromImportLinkInput("~/Desktop/file.html"), "~/Desktop/file.html");
+  assert.equal(localFilePathFromImportLinkInput("C:\\Docs\\file.html"), "C:\\Docs\\file.html");
+  assert.equal(localFilePathFromImportLinkInput("C:/Docs/file.html"), "C:/Docs/file.html");
+  assert.equal(localFilePathFromImportLinkInput("\\\\server\\share\\file.html"), "\\\\server\\share\\file.html");
+  assert.equal(localFilePathFromImportLinkInput("file:///tmp/a%20b.html"), "/tmp/a b.html");
+  assert.equal(localFilePathFromImportLinkInput("file://localhost/tmp/a.html"), "/tmp/a.html");
+  assert.equal(localFilePathFromImportLinkInput("file:///C:/Docs/file.html"), "C:/Docs/file.html");
+  assert.equal(localFilePathFromImportLinkInput("https://example.com/page"), "");
+  assert.equal(localFilePathFromImportLinkInput("example.com/page"), "");
+  assert.equal(localFilePathFromImportLinkInput("not a url"), "");
+  assert.equal(localFilePathFromImportLinkInput(""), "");
 });
 
 test("project import link errors open the matching modal state and retry reuses the link", async () => {

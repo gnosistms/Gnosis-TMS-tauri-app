@@ -101,7 +101,7 @@ function renderProjectImportLinkErrorModal(modal) {
           <div class="card__body modal-card__body">
             <p class="card__eyebrow">INVALID LINK</p>
             <h2 class="modal__title">This link can not be opened</h2>
-            <p class="modal__supporting">This link is not readable. The exact reason is unknown. Note that only Google Docs, Google Sheets, and HTML website links are supported.</p>
+            <p class="modal__supporting">This link is not readable. The exact reason is unknown. Note that only Google Docs, Google Sheets, HTML website links, and local file paths are supported.</p>
             <div class="modal__actions">
               ${primaryButton("Cancel", "close-project-import-link-error")}
             </div>
@@ -219,7 +219,7 @@ function renderProjectImportLinkPanel(modal, disabled) {
         placeholder="https://docs.google.com/..."
         ${disabled ? 'disabled aria-disabled="true"' : ""}
       />
-      <span class="project-import-modal__hint">Paste link here. Supports Google Docs, Google Sheets, and HTML web pages.</span>
+      <span class="project-import-modal__hint">Paste link here. Supports Google Docs, Google Sheets, HTML web pages, and local file paths.</span>
     </label>
   `;
 }
