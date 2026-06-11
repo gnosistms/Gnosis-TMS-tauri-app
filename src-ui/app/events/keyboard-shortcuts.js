@@ -114,6 +114,23 @@ export function registerKeyboardShortcutEvents(dispatchAction) {
       }
     }
 
+    const insertLinkUrlInput = event.target instanceof Element
+      ? event.target.closest("[data-editor-insert-link-url-input]")
+      : null;
+    if (insertLinkUrlInput instanceof HTMLInputElement) {
+      const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
+      if (key === "enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        event.preventDefault();
+        void dispatchAction("submit-editor-insert-link", event);
+        return;
+      }
+      if (key === "escape") {
+        event.preventDefault();
+        void dispatchAction("close-editor-insert-link-modal", event);
+        return;
+      }
+    }
+
     if (shouldBlurActiveEditorField(event)) {
       const viewportSnapshot = captureTranslateViewport(event.target);
       const contentKind = event.target.dataset.contentKind ?? "";

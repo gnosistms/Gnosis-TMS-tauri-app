@@ -297,3 +297,89 @@ test("bold treats ruby as an atomic inline unit", () => {
 
   assert.equal(result.value, "<strong><ruby>漢字<rt>よみ</rt></ruby></strong>です");
 });
+
+test("link markup renders a sanitized anchor with its href", () => {
+  assert.equal(
+    renderSanitizedInlineMarkupHtml('Read <a href="https://example.com/page">the page</a> now'),
+    'Read <a href="https://example.com/page">the page</a> now',
+  );
+});
+
+test("link markup escapes unsafe or malformed hrefs as plain text", () => {
+  assert.equal(
+    renderSanitizedInlineMarkupHtml('<a href="javascript:alert(1)">x</a>'),
+    "&lt;a href=&quot;javascript:alert(1)&quot;&gt;x&lt;/a&gt;",
+  );
+  assert.equal(
+    renderSanitizedInlineMarkupHtml("<a>x</a>"),
+    "&lt;a&gt;x&lt;/a&gt;",
+  );
+  assert.equal(
+    renderSanitizedInlineMarkupHtml('<a href="https://example.com" target="_blank">x</a>'),
+    "&lt;a href=&quot;https://example.com&quot; target=&quot;_blank&quot;&gt;x&lt;/a&gt;",
+  );
+});
+
+test("link href entities round-trip canonically", () => {
+  const stored = '<a href="https://example.com/?a=1&amp;b=2">x</a>';
+  const once = renderSanitizedInlineMarkupHtml(stored);
+  assert.equal(once, stored);
+  assert.equal(renderSanitizedInlineMarkupHtml(once), stored);
+});
+
+test("link href is excluded from visible and history text", () => {
+  assert.equal(
+    extractInlineMarkupVisibleText('See <a href="https://example.com/winter-king">the king</a>'),
+    "See the king",
+  );
+  assert.equal(
+    extractInlineMarkupHistoryText('See <a href="https://example.com/winter-king">the king</a>'),
+    "See the king",
+  );
+});
+
+test("glossary highlight marks render inside link text", () => {
+  const html = renderSanitizedInlineMarkupWithEditorHighlightState(
+    '<a href="https://example.com">winter king</a>',
+    {
+      glossaryHighlightHtml:
+        '<mark class="glossary-match translation-language-panel__glossary-mark" data-text-start="0" data-text-end="6">winter</mark>',
+    },
+  );
+
+  assert.match(
+    html,
+    /<a href="https:\/\/example\.com"><mark [^>]*>winter<\/mark> king<\/a>/,
+  );
+});
+
+test("style toggles preserve link hrefs", () => {
+  const value = 'before <a href="https://example.com">linked text</a> after';
+  const result = toggleInlineMarkupSelection({
+    value,
+    selectionStart: 0,
+    selectionEnd: value.length,
+    style: "bold",
+  });
+
+  assert.equal(
+    result.value,
+    '<strong>before <a href="https://example.com">linked text</a> after</strong>',
+  );
+});
+
+test("style toggle splitting a link keeps the href on both halves", () => {
+  const value = '<a href="https://example.com">linked text</a>';
+  const start = value.indexOf("linked");
+  const result = toggleInlineMarkupSelection({
+    value,
+    selectionStart: start,
+    selectionEnd: start + "linked".length,
+    style: "bold",
+  });
+
+  assert.equal(
+    result.value,
+    '<strong><a href="https://example.com">linked</a></strong><a href="https://example.com"> text</a>',
+  );
+});
