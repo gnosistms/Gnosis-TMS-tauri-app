@@ -155,7 +155,13 @@ import {
   EDITOR_MODE_TRANSLATE,
 } from "./editor-preview.js";
 import {
-  copyEditorPreviewHtml as copyEditorPreviewHtmlFlow,
+  closeEditorExportOptions as closeEditorExportOptionsFlow,
+  openEditorExportOptions as openEditorExportOptionsFlow,
+  selectEditorExportOption as selectEditorExportOptionFlow,
+  submitEditorExport as submitEditorExportFlow,
+  toggleEditorExportCategory as toggleEditorExportCategoryFlow,
+} from "./editor-export-flow.js";
+import {
   moveEditorPreviewSearch as moveEditorPreviewSearchFlow,
   refreshEditorPreviewAfterTargetLanguageChange,
   resetEditorPreviewModeScrollSnapshot,
@@ -700,8 +706,24 @@ export function moveEditorPreviewSearch(render, direction = "next") {
   moveEditorPreviewSearchFlow(render, direction);
 }
 
-export async function copyEditorPreviewHtml(render) {
-  await copyEditorPreviewHtmlFlow(render);
+export function openEditorExportOptions(render) {
+  openEditorExportOptionsFlow(render);
+}
+
+export function closeEditorExportOptions(render) {
+  closeEditorExportOptionsFlow(render);
+}
+
+export function toggleEditorExportCategory(render, categoryId) {
+  toggleEditorExportCategoryFlow(render, categoryId);
+}
+
+export function selectEditorExportOption(render, optionId) {
+  selectEditorExportOptionFlow(render, optionId);
+}
+
+export async function submitEditorExport(render) {
+  await submitEditorExportFlow(render);
 }
 
 export async function restoreEditorFieldHistory(render, commitSha) {

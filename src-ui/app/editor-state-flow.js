@@ -57,6 +57,7 @@ import {
   createEditorHistoryState,
   createEditorInsertRowModalState,
   createEditorUnreviewAllModalState,
+  createEditorExportModalState,
   createEditorRowPermanentDeletionModalState,
   state,
 } from "./state.js";
@@ -327,6 +328,13 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
           ...previousEditorChapter.unreviewAllModal,
         }
         : createEditorUnreviewAllModalState(),
+    exportModal:
+      isSameChapter && previousEditorChapter?.exportModal?.isOpen === true
+        ? {
+          ...createEditorExportModalState(),
+          ...previousEditorChapter.exportModal,
+        }
+        : createEditorExportModalState(),
     clearTranslationsModal:
       isSameChapter
         && previousEditorChapter?.clearTranslationsModal?.isOpen === true

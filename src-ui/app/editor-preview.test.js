@@ -9,6 +9,7 @@ import {
   renderEditorPreviewDocumentHtml,
   selectedEditorPreviewLanguageCode,
   serializeEditorPreviewHtml,
+  serializeEditorPreviewPlainText,
   stepEditorPreviewSearchState,
 } from "./editor-preview.js";
 
@@ -336,6 +337,87 @@ test("serializeEditorPreviewHtml uses centered HTML for centered plain text", ()
 
   assert.match(html, /<!-- wp:paragraph \{"align":"center"\} -->/);
   assert.match(html, /<p class="has-text-align-center">Centered line<\/p>/);
+});
+
+test("serializeEditorPreviewPlainText strips markup and numbers footnotes across blocks", () => {
+  const blocks = buildEditorPreviewDocument([
+    {
+      rowId: "row-1",
+      lifecycleState: "active",
+      textStyle: "heading1",
+      fields: { vi: "<strong>Title</strong>" },
+      imageCaptions: {},
+      images: {},
+    },
+    {
+      rowId: "row-2",
+      lifecycleState: "active",
+      textStyle: "paragraph",
+      fields: { vi: "Alpha [1] body" },
+      footnotes: { vi: [{ marker: 1, text: "First note" }] },
+      imageCaptions: {},
+      images: {},
+    },
+    {
+      rowId: "row-3",
+      lifecycleState: "active",
+      textStyle: "paragraph",
+      fields: { vi: "Beta end" },
+      footnotes: { vi: [{ marker: 1, text: "Second note" }] },
+      imageCaptions: {},
+      images: {},
+    },
+  ], "vi");
+
+  const text = serializeEditorPreviewPlainText(blocks);
+
+  assert.equal(text, [
+    "Title",
+    "Alpha [1] body",
+    "Beta end [2]",
+    "[1] First note\n[2] Second note",
+  ].join("\n\n"));
+});
+
+test("serializeEditorPreviewPlainText keeps escaped literal markers as text", () => {
+  const blocks = buildEditorPreviewDocument([{
+    rowId: "row-1",
+    lifecycleState: "active",
+    textStyle: "paragraph",
+    fields: { vi: "Literal \\[100\\] then note [1] end" },
+    footnotes: { vi: [{ marker: 1, text: "One" }] },
+    imageCaptions: {},
+    images: {},
+  }], "vi");
+
+  const text = serializeEditorPreviewPlainText(blocks);
+
+  assert.equal(text, "Literal [100] then note [1] end\n\n[1] One");
+});
+
+test("serializeEditorPreviewPlainText includes image captions and skips captionless images", () => {
+  const blocks = buildEditorPreviewDocument([
+    {
+      rowId: "row-1",
+      lifecycleState: "active",
+      textStyle: "paragraph",
+      fields: { vi: "Before image" },
+      imageCaptions: { vi: "A <em>nice</em> caption" },
+      images: { vi: { kind: "url", url: "https://example.com/image.png" } },
+    },
+    {
+      rowId: "row-2",
+      lifecycleState: "active",
+      textStyle: "paragraph",
+      fields: {},
+      imageCaptions: {},
+      images: { vi: { kind: "url", url: "https://example.com/plain.png" } },
+    },
+  ], "vi");
+
+  const text = serializeEditorPreviewPlainText(blocks);
+
+  assert.equal(text, "Before image\n\nA nice caption");
 });
 
 test("preview mode constant remains stable", () => {

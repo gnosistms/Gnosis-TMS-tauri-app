@@ -8,8 +8,8 @@ import {
   waitForRepoWriteQueueIdle,
 } from "./repo-write-queue.js";
 
-const SUPPORTED_EXPORT_FORMATS = new Set(["docx", "txt", "html"]);
-const UNSUPPORTED_EXPORT_FORMATS = new Set(["xlsx", "srt"]);
+const SUPPORTED_EXPORT_FORMATS = new Set(["docx", "txt", "html", "xlsx", "rtf", "md"]);
+const UNSUPPORTED_EXPORT_FORMATS = new Set(["srt"]);
 
 function normalizeFormat(value) {
   return String(value ?? "").trim().toLowerCase();
@@ -54,6 +54,15 @@ function exportFilter(format) {
   }
   if (format === "html") {
     return { name: "HTML document", extensions: ["html"] };
+  }
+  if (format === "xlsx") {
+    return { name: "XLSX workbook", extensions: ["xlsx"] };
+  }
+  if (format === "rtf") {
+    return { name: "RTF document", extensions: ["rtf"] };
+  }
+  if (format === "md") {
+    return { name: "Markdown document", extensions: ["md"] };
   }
   return { name: "Plain text", extensions: ["txt"] };
 }

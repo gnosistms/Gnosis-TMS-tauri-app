@@ -7,7 +7,6 @@ import {
   normalizeEditorMode,
   normalizeEditorPreviewSearchState,
   selectedEditorPreviewLanguageCode,
-  serializeEditorPreviewHtml,
   stepEditorPreviewSearchState,
 } from "./editor-preview.js";
 import {
@@ -16,7 +15,6 @@ import {
   unlockScreenScrollSnapshot,
 } from "./scroll-state.js";
 import { state } from "./state.js";
-import { showNoticeBadge } from "./status-feedback.js";
 
 let previewModeTranslateScrollSnapshot = null;
 
@@ -95,32 +93,6 @@ function focusPreviewSearchInput(selection = null, value = null) {
       );
     }
   });
-}
-
-export async function writeHtmlToClipboard(html) {
-  if (typeof navigator === "undefined" || !navigator.clipboard) {
-    throw new Error("Clipboard access is not available.");
-  }
-
-  if (
-    typeof navigator.clipboard.write === "function"
-    && typeof ClipboardItem !== "undefined"
-    && typeof Blob !== "undefined"
-  ) {
-    await navigator.clipboard.write([
-      new ClipboardItem({
-        "text/html": new Blob([html], { type: "text/html" }),
-      }),
-    ]);
-    return;
-  }
-
-  if (typeof navigator.clipboard.writeText === "function") {
-    await navigator.clipboard.writeText(html);
-    return;
-  }
-
-  throw new Error("Clipboard access is not available.");
 }
 
 export function resetEditorPreviewModeScrollSnapshot() {
@@ -250,24 +222,4 @@ export function moveEditorPreviewSearch(render, direction = "next") {
   };
   renderPreviewMode(render);
   focusPreviewSearchInput(selection, nextPreviewSearch.query);
-}
-
-export async function copyEditorPreviewHtml(render) {
-  if (currentEditorMode() !== EDITOR_MODE_PREVIEW) {
-    return;
-  }
-
-  const html = serializeEditorPreviewHtml(currentPreviewBlocks());
-  if (!html) {
-    showNoticeBadge("Nothing to copy.", render);
-    return;
-  }
-
-  try {
-    await writeHtmlToClipboard(html);
-    showNoticeBadge("Copied HTML.", render, 1400);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    showNoticeBadge(message || "The HTML could not be copied.", render, 2200);
-  }
 }

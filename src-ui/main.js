@@ -671,6 +671,7 @@ function renderWithOptions(options = {}) {
   syncLanguagePickerAlphabetIndexes(app);
   restoreTargetLanguageManagerPickerScrollTop(targetLanguageManagerPickerScrollTop);
   document.title = titles[state.screen] ?? "Gnosis TMS";
+  syncTauriEditorCloseGuardRegistration();
 }
 
 app.addEventListener("scroll", (event) => {
@@ -722,7 +723,26 @@ window.addEventListener("beforeunload", (event) => {
   event.returnValue = "Editor changes are still saving. Leave after saving finishes.";
 });
 
-function registerTauriEditorCloseGuard() {
+// The guard only has work on the translate screen (editorHasPendingDurableWrites
+// is false everywhere else), but a registered onCloseRequested listener forces every
+// close through a Rust → JS → Rust round trip before the window can die. Registration
+// therefore follows the screen: attached on translate, detached elsewhere so other
+// screens keep the native instant close.
+let editorCloseGuardUnlistenPromise = null;
+
+function syncTauriEditorCloseGuardRegistration() {
+  const wantGuard = state.screen === "translate";
+  if (wantGuard === Boolean(editorCloseGuardUnlistenPromise)) {
+    return;
+  }
+
+  if (!wantGuard) {
+    const unlistenPromise = editorCloseGuardUnlistenPromise;
+    editorCloseGuardUnlistenPromise = null;
+    void unlistenPromise.then((unlisten) => unlisten?.()).catch(() => {});
+    return;
+  }
+
   const getCurrentWindow = window.__TAURI__?.window?.getCurrentWindow;
   if (typeof getCurrentWindow !== "function") {
     return;
@@ -734,7 +754,7 @@ function registerTauriEditorCloseGuard() {
       return;
     }
 
-    void currentWindow.onCloseRequested((event) => {
+    editorCloseGuardUnlistenPromise = currentWindow.onCloseRequested((event) => {
       persistCurrentEditorLocation(state);
       const { allowClose, forced } = editorCloseGuard.handleCloseRequest();
       if (allowClose) {
@@ -749,7 +769,7 @@ function registerTauriEditorCloseGuard() {
   } catch {}
 }
 
-registerTauriEditorCloseGuard();
+syncTauriEditorCloseGuardRegistration();
 
 window.__gnosisDebug = {
   waitForBootstrap() {

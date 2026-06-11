@@ -40,7 +40,7 @@ import {
   closeEditorImageUrl,
   closeEditorImageInvalidFileModal,
   closeEditorImagePreview,
-  copyEditorPreviewHtml,
+  closeEditorExportOptions,
   copyEditorConflictResolutionVersion,
   deleteActiveEditorRowComment,
   moveEditorPreviewSearch,
@@ -58,6 +58,10 @@ import {
   openEditorRowComments,
   openEditorRowPermanentDeletionModal,
   openInsertEditorRowModal,
+  openEditorExportOptions,
+  selectEditorExportOption,
+  submitEditorExport,
+  toggleEditorExportCategory,
   applyEditorAiReview,
   continueEditorAiReviewAllPreflight,
   dismissEditorAiReviewAllFilterModal,
@@ -593,8 +597,18 @@ export function createTranslateActions(render) {
       return true;
     }
 
-    if (action === "copy-editor-preview-html") {
-      await copyEditorPreviewHtml(render);
+    if (action === "open-editor-export-options") {
+      openEditorExportOptions(render);
+      return true;
+    }
+
+    if (action === "close-editor-export-options") {
+      closeEditorExportOptions(render);
+      return true;
+    }
+
+    if (action === "submit-editor-export") {
+      await submitEditorExport(render);
       return true;
     }
 
@@ -605,6 +619,18 @@ export function createTranslateActions(render) {
 
     if (action === "step-editor-preview-search:next") {
       moveEditorPreviewSearch(render, "next");
+      return true;
+    }
+
+    const exportCategoryId = actionSuffix(action, "toggle-editor-export-category:");
+    if (exportCategoryId !== null) {
+      toggleEditorExportCategory(render, exportCategoryId);
+      return true;
+    }
+
+    const exportOptionId = actionSuffix(action, "select-editor-export-option:");
+    if (exportOptionId !== null) {
+      selectEditorExportOption(render, exportOptionId);
       return true;
     }
 
