@@ -43,6 +43,7 @@ mod images;
 mod row_fields;
 mod row_structure;
 mod shared;
+mod team_copy;
 
 pub(crate) use self::aligned_translation::{
     apply_aligned_translation_to_gtms_chapter_sync,
@@ -107,6 +108,7 @@ use self::shared::{
     row_fields_object_mut, row_footnote_map, row_image_caption_map, row_object_mut,
     row_plain_text_map, row_text_style, sanitize_chapter_languages, set_editor_field_flags,
 };
+pub(crate) use self::team_copy::{start_team_chapter_copy, TeamChapterCopyInput};
 // Re-exported for the sibling `chapter_editor_comments` and `chapter_lifecycle` modules,
 // whose mutations must share the same row-id validation and write+commit rollback
 // discipline.

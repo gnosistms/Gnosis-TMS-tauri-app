@@ -9,6 +9,7 @@ pub(crate) const BROKER_AUTH_CALLBACK_PATH: &str = "/broker/auth/callback";
 pub(crate) const WORDPRESS_AUTH_CALLBACK_EVENT: &str = "wordpress-auth-callback";
 pub(crate) const WORDPRESS_AUTH_CALLBACK_PATH: &str = "/wordpress/auth/callback";
 pub(crate) const WORDPRESS_EXPORT_PROGRESS_EVENT: &str = "wordpress-export-progress";
+pub(crate) const TEAM_CHAPTER_COPY_PROGRESS_EVENT: &str = "team-chapter-copy-progress";
 // Keep this value and label in sync with src-ui/app/import-file-limit.js.
 // Rust is authoritative; JS mirrors this only to reject oversized picker files before reading them.
 pub(crate) const MAX_IMPORT_FILE_BYTES: u64 = 25 * 1024 * 1024;

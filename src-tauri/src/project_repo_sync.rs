@@ -136,7 +136,7 @@ pub(crate) struct DiscardOldLayoutProjectReposResponse {
     pub(crate) skipped_project_ids: Vec<String>,
 }
 
-struct ProjectRepoSyncOutcome {
+pub(crate) struct ProjectRepoSyncOutcome {
     current_head_oid: Option<String>,
     repo_sync_status: String,
     message: Option<String>,
@@ -993,7 +993,7 @@ fn inspect_project_repo_state(
     }
 }
 
-fn sync_project_repo(
+pub(crate) fn sync_project_repo(
     app: &AppHandle,
     project: &ProjectRepoSyncDescriptor,
     repo_path: &Path,
