@@ -88,21 +88,27 @@ pub(super) fn git_output_with_stdin(
         .spawn()
         .map_err(|error| format_git_spawn_error(args, &error))?;
 
-    {
-        let stdin = child
-            .stdin
-            .as_mut()
-            .ok_or_else(|| format!("Could not open stdin for git {}.", args.join(" ")))?;
-        stdin
-            .write_all(stdin_contents.as_bytes())
-            .map_err(|error| {
-                format!("Could not write stdin for git {}: {error}", args.join(" "))
-            })?;
-    }
+    // Write stdin from a separate thread while wait_with_output drains stdout. Writing
+    // it all up front deadlocks once both pipe buffers fill: git blocks writing stdout,
+    // stops reading stdin, and the request write blocks forever — reachable with
+    // `cat-file --batch` over a large row set.
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| format!("Could not open stdin for git {}.", args.join(" ")))?;
+    let payload = stdin_contents.as_bytes().to_vec();
+    let stdin_writer = std::thread::spawn(move || {
+        let result = stdin.write_all(&payload);
+        drop(stdin);
+        result
+    });
 
     let output = child
         .wait_with_output()
         .map_err(|error| format!("Could not wait for git {}: {error}", args.join(" ")))?;
+    let stdin_result = stdin_writer
+        .join()
+        .map_err(|_| format!("The stdin writer for git {} panicked.", args.join(" ")))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -116,6 +122,11 @@ pub(super) fn git_output_with_stdin(
         };
         return Err(format!("git {} failed: {detail}", args.join(" ")));
     }
+
+    // Surface a stdin write failure only when git itself did not already fail — git
+    // exiting early (its error above) is the more actionable message.
+    stdin_result
+        .map_err(|error| format!("Could not write stdin for git {}: {error}", args.join(" ")))?;
 
     Ok(output.stdout)
 }
