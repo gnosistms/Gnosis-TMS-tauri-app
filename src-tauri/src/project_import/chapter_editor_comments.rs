@@ -5,14 +5,15 @@ use serde_json::{Number, Value};
 use tauri::AppHandle;
 
 use crate::broker_auth_storage::load_broker_auth_session_internal;
-use crate::git_commit::{
-    git_commit_as_signed_in_user_with_metadata, GitCommitMetadata as CommitMetadata,
-};
+use crate::git_commit::GitCommitMetadata as CommitMetadata;
 use crate::project_repo_paths::resolve_project_git_repo_path;
 
+use super::chapter_editor::{
+    validated_row_json_path, write_row_files_and_commit, PreparedRowFileWrite,
+};
 use super::project_git::{
     ensure_repo_exists, ensure_valid_git_repo, find_chapter_path_by_id, git_output, read_json_file,
-    repo_relative_path, write_text_file,
+    repo_relative_path,
 };
 
 fn current_repo_head_sha(repo_path: &std::path::Path) -> Option<String> {
@@ -120,7 +121,7 @@ pub(super) fn load_gtms_editor_row_comments_sync(
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
-    let row_json_path = resolve_row_json_path(&repo_path, &input.chapter_id, &input.row_id)?;
+    let row_json_path = resolve_row_json_path(app, &repo_path, &input.chapter_id, &input.row_id)?;
     let row_file: StoredEditorCommentsRowFile = read_json_file(&row_json_path, "row file")?;
 
     Ok(build_load_editor_row_comments_response(
@@ -148,7 +149,7 @@ pub(super) fn save_gtms_editor_row_comment_sync(
         return Err("Enter a comment before saving.".to_string());
     }
 
-    let row_json_path = resolve_row_json_path(&repo_path, &input.chapter_id, &input.row_id)?;
+    let row_json_path = resolve_row_json_path(app, &repo_path, &input.chapter_id, &input.row_id)?;
     let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
         format!(
             "Could not read row file '{}': {error}",
@@ -183,21 +184,22 @@ pub(super) fn save_gtms_editor_row_comment_sync(
             row_json_path.display()
         )
     })?;
-    write_text_file(&row_json_path, &format!("{updated_row_json}\n"))?;
-
-    let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
-    git_output(&repo_path, &["add", &relative_row_json])?;
-    git_commit_as_signed_in_user_with_metadata(
+    write_row_files_and_commit(
         app,
         &repo_path,
         &format!("Add comment to row {}", input.row_id),
-        &[&relative_row_json],
         CommitMetadata {
             operation: Some("editor-comment"),
             migration: None,
             status_note: None,
             ai_model: None,
         },
+        &[PreparedRowFileWrite {
+            relative_path: repo_relative_path(&repo_path, &row_json_path)?,
+            original_text: Some(original_row_text),
+            updated_text: format!("{updated_row_json}\n"),
+            path: row_json_path,
+        }],
     )?;
 
     Ok(SaveEditorRowCommentResponse {
@@ -227,7 +229,7 @@ pub(super) fn delete_gtms_editor_row_comment_sync(
         return Err("Could not determine which comment to delete.".to_string());
     }
 
-    let row_json_path = resolve_row_json_path(&repo_path, &input.chapter_id, &input.row_id)?;
+    let row_json_path = resolve_row_json_path(app, &repo_path, &input.chapter_id, &input.row_id)?;
     let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
         format!(
             "Could not read row file '{}': {error}",
@@ -255,21 +257,22 @@ pub(super) fn delete_gtms_editor_row_comment_sync(
             row_json_path.display()
         )
     })?;
-    write_text_file(&row_json_path, &format!("{updated_row_json}\n"))?;
-
-    let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
-    git_output(&repo_path, &["add", &relative_row_json])?;
-    git_commit_as_signed_in_user_with_metadata(
+    write_row_files_and_commit(
         app,
         &repo_path,
         &format!("Delete comment from row {}", input.row_id),
-        &[&relative_row_json],
         CommitMetadata {
             operation: Some("editor-comment"),
             migration: None,
             status_note: None,
             ai_model: None,
         },
+        &[PreparedRowFileWrite {
+            relative_path: repo_relative_path(&repo_path, &row_json_path)?,
+            original_text: Some(original_row_text),
+            updated_text: format!("{updated_row_json}\n"),
+            path: row_json_path,
+        }],
     )?;
 
     Ok(DeleteEditorRowCommentResponse {
@@ -282,12 +285,13 @@ pub(super) fn delete_gtms_editor_row_comment_sync(
 }
 
 fn resolve_row_json_path(
+    app: &AppHandle,
     repo_path: &std::path::Path,
     chapter_id: &str,
     row_id: &str,
 ) -> Result<std::path::PathBuf, String> {
-    let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), chapter_id)?;
-    Ok(chapter_path.join("rows").join(format!("{row_id}.json")))
+    let chapter_path = find_chapter_path_by_id(app, &repo_path.join("chapters"), chapter_id)?;
+    validated_row_json_path(&chapter_path, row_id)
 }
 
 fn build_load_editor_row_comments_response(

@@ -10,7 +10,7 @@ pub(super) fn current_repo_head_sha(repo_path: &Path) -> Option<String> {
 /// `fs::remove_file`. `Path::strip_prefix` is lexical, so a `..` component would survive
 /// the repo-relative check downstream — reject anything outside a plain single-component
 /// file name here. Mirrors `validated_resource_id` in `team_metadata_local/repo.rs`.
-pub(super) fn validated_row_json_path(
+pub(in crate::project_import) fn validated_row_json_path(
     chapter_path: &Path,
     row_id: &str,
 ) -> Result<PathBuf, String> {
@@ -27,12 +27,12 @@ pub(super) fn validated_row_json_path(
     Ok(chapter_path.join("rows").join(format!("{normalized}.json")))
 }
 
-pub(super) struct PreparedRowFileWrite {
-    pub(super) path: PathBuf,
-    pub(super) relative_path: String,
+pub(in crate::project_import) struct PreparedRowFileWrite {
+    pub(in crate::project_import) path: PathBuf,
+    pub(in crate::project_import) relative_path: String,
     /// `None` when the file is being created (rollback removes it instead of restoring).
-    pub(super) original_text: Option<String>,
-    pub(super) updated_text: String,
+    pub(in crate::project_import) original_text: Option<String>,
+    pub(in crate::project_import) updated_text: String,
 }
 
 /// Write the prepared files and commit them as the signed-in user without ever being
@@ -40,7 +40,7 @@ pub(super) struct PreparedRowFileWrite {
 /// signed-in session) are checked before the first write, and any later failure rolls
 /// the written files back and unstages them before the error is returned. Returns the
 /// commit helper's stdout (empty when there was nothing to commit).
-pub(super) fn write_row_files_and_commit(
+pub(in crate::project_import) fn write_row_files_and_commit(
     app: &AppHandle,
     repo_path: &Path,
     commit_message: &str,
@@ -100,6 +100,41 @@ pub(super) fn write_row_files_and_commit(
     }
 
     Ok(commit_output)
+}
+
+/// Write and commit a single chapter.json change through the shared row-commit
+/// helper so a failed commit gate (expired session, lost write access) cannot strand a
+/// dirty, staged chapter.json that would break the next pull.
+pub(in crate::project_import) fn commit_chapter_json_update(
+    app: &AppHandle,
+    repo_path: &Path,
+    chapter_json_path: &Path,
+    chapter_value: &Value,
+    commit_message: &str,
+) -> Result<(), String> {
+    let updated_text = format!(
+        "{}\n",
+        serde_json::to_string_pretty(chapter_value)
+            .map_err(|error| format!("Could not serialize chapter.json: {error}"))?
+    );
+    write_row_files_and_commit(
+        app,
+        repo_path,
+        commit_message,
+        CommitMetadata {
+            operation: None,
+            migration: None,
+            status_note: None,
+            ai_model: None,
+        },
+        &[PreparedRowFileWrite {
+            relative_path: repo_relative_path(repo_path, chapter_json_path)?,
+            original_text: fs::read_to_string(chapter_json_path).ok(),
+            path: chapter_json_path.to_path_buf(),
+            updated_text,
+        }],
+    )?;
+    Ok(())
 }
 
 pub(super) fn load_editor_rows(rows_path: &Path) -> Result<Vec<StoredRowFile>, String> {

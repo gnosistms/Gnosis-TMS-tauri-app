@@ -88,21 +88,27 @@ pub(super) fn git_output_with_stdin(
         .spawn()
         .map_err(|error| format_git_spawn_error(args, &error))?;
 
-    {
-        let stdin = child
-            .stdin
-            .as_mut()
-            .ok_or_else(|| format!("Could not open stdin for git {}.", args.join(" ")))?;
-        stdin
-            .write_all(stdin_contents.as_bytes())
-            .map_err(|error| {
-                format!("Could not write stdin for git {}: {error}", args.join(" "))
-            })?;
-    }
+    // Write stdin from a separate thread while wait_with_output drains stdout. Writing
+    // it all up front deadlocks once both pipe buffers fill: git blocks writing stdout,
+    // stops reading stdin, and the request write blocks forever — reachable with
+    // `cat-file --batch` over a large row set.
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| format!("Could not open stdin for git {}.", args.join(" ")))?;
+    let payload = stdin_contents.as_bytes().to_vec();
+    let stdin_writer = std::thread::spawn(move || {
+        let result = stdin.write_all(&payload);
+        drop(stdin);
+        result
+    });
 
     let output = child
         .wait_with_output()
         .map_err(|error| format!("Could not wait for git {}: {error}", args.join(" ")))?;
+    let stdin_result = stdin_writer
+        .join()
+        .map_err(|_| format!("The stdin writer for git {} panicked.", args.join(" ")))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -116,6 +122,11 @@ pub(super) fn git_output_with_stdin(
         };
         return Err(format!("git {} failed: {detail}", args.join(" ")));
     }
+
+    // Surface a stdin write failure only when git itself did not already fail — git
+    // exiting early (its error above) is the more actionable message.
+    stdin_result
+        .map_err(|error| format!("Could not write stdin for git {}: {error}", args.join(" ")))?;
 
     Ok(output.stdout)
 }
@@ -161,10 +172,18 @@ pub(super) fn repo_relative_path(repo_path: &Path, path: &Path) -> Result<String
         .map(|relative_path| normalize_git_relative_path(&relative_path.to_string_lossy()))
 }
 
-pub(super) fn find_chapter_path_by_id(
+struct ChapterPathScan {
+    path: Option<PathBuf>,
+    skipped_chapter_files: usize,
+}
+
+/// Scan the chapter folders for the chapter with the given id. A chapter.json that
+/// cannot be read or parsed is skipped (and counted) instead of failing the scan, so one
+/// corrupt chapter cannot wedge every chapter operation in the repo.
+fn scan_chapter_path_by_id(
     chapters_root: &Path,
     chapter_id: &str,
-) -> Result<PathBuf, String> {
+) -> Result<ChapterPathScan, String> {
     let entries = fs::read_dir(chapters_root).map_err(|error| {
         format!(
             "Could not read chapters folder '{}': {error}",
@@ -172,6 +191,7 @@ pub(super) fn find_chapter_path_by_id(
         )
     })?;
 
+    let mut skipped_chapter_files = 0usize;
     for entry in entries {
         let entry =
             entry.map_err(|error| format!("Could not read a chapter folder entry: {error}"))?;
@@ -185,20 +205,61 @@ pub(super) fn find_chapter_path_by_id(
             continue;
         }
 
-        let chapter_value: Value = read_json_file(&chapter_json_path, "chapter.json")?;
+        let Ok(chapter_value) = read_json_file::<Value>(&chapter_json_path, "chapter.json") else {
+            skipped_chapter_files += 1;
+            continue;
+        };
         if chapter_value.get("chapter_id").and_then(Value::as_str) == Some(chapter_id) {
-            return Ok(path);
+            return Ok(ChapterPathScan {
+                path: Some(path),
+                skipped_chapter_files,
+            });
         }
     }
 
-    Err(format!(
-        "Could not find chapter '{chapter_id}' in the local project repo."
-    ))
+    Ok(ChapterPathScan {
+        path: None,
+        skipped_chapter_files,
+    })
+}
+
+/// A skipped chapter file means a corrupt/unreadable chapter.json degraded to one
+/// missing chapter instead of failing the whole scan. Developers still need visibility,
+/// so report it through the consent-gated non-fatal telemetry event.
+fn report_skipped_chapter_files(app: &AppHandle, skipped_chapter_files: usize) {
+    if skipped_chapter_files > 0 {
+        crate::github::report_backend_nonfatal_error(
+            app,
+            "project-import.chapter-scan",
+            "chapter_json_read_failed",
+        );
+    }
+}
+
+pub(super) fn find_chapter_path_by_id(
+    app: &AppHandle,
+    chapters_root: &Path,
+    chapter_id: &str,
+) -> Result<PathBuf, String> {
+    try_find_chapter_path_by_id(app, chapters_root, chapter_id)?
+        .ok_or_else(|| format!("Could not find chapter '{chapter_id}' in the local project repo."))
+}
+
+pub(super) fn try_find_chapter_path_by_id(
+    app: &AppHandle,
+    chapters_root: &Path,
+    chapter_id: &str,
+) -> Result<Option<PathBuf>, String> {
+    let scan = scan_chapter_path_by_id(chapters_root, chapter_id)?;
+    report_skipped_chapter_files(app, scan.skipped_chapter_files);
+    Ok(scan.path)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+    use uuid::Uuid;
 
     #[test]
     fn normalize_git_relative_path_uses_forward_slashes_for_windows_paths() {
@@ -206,5 +267,57 @@ mod tests {
             normalize_git_relative_path(r"chapters\chapter-1\rows\row-1.json"),
             "chapters/chapter-1/rows/row-1.json"
         );
+    }
+
+    fn create_test_chapters_root() -> Result<PathBuf, String> {
+        let chapters_root =
+            std::env::temp_dir().join(format!("gnosis-tms-chapter-scan-{}", Uuid::now_v7()));
+        fs::create_dir_all(&chapters_root)
+            .map_err(|error| format!("Could not create test chapters folder: {error}"))?;
+        Ok(chapters_root)
+    }
+
+    fn write_test_chapter(
+        chapters_root: &Path,
+        folder: &str,
+        chapter_json: &str,
+    ) -> Result<(), String> {
+        let chapter_path = chapters_root.join(folder);
+        fs::create_dir_all(&chapter_path)
+            .map_err(|error| format!("Could not create test chapter: {error}"))?;
+        write_text_file(&chapter_path.join("chapter.json"), chapter_json)
+    }
+
+    #[test]
+    fn chapter_scan_skips_corrupt_chapter_files_and_still_finds_the_target() -> Result<(), String> {
+        let chapters_root = create_test_chapters_root()?;
+        write_test_chapter(&chapters_root, "corrupt", "not json {")?;
+        write_test_chapter(
+            &chapters_root,
+            "target",
+            &json!({ "chapter_id": "chapter-1" }).to_string(),
+        )?;
+
+        // The corrupt chapter must not fail the scan. The skip count is not asserted
+        // here because the scan returns as soon as the target is found and directory
+        // iteration order is unspecified.
+        let scan = scan_chapter_path_by_id(&chapters_root, "chapter-1")?;
+        assert_eq!(scan.path, Some(chapters_root.join("target")));
+
+        let _ = fs::remove_dir_all(&chapters_root);
+        Ok(())
+    }
+
+    #[test]
+    fn chapter_scan_returns_no_path_and_skip_count_when_target_is_missing() -> Result<(), String> {
+        let chapters_root = create_test_chapters_root()?;
+        write_test_chapter(&chapters_root, "corrupt", "not json {")?;
+
+        let scan = scan_chapter_path_by_id(&chapters_root, "chapter-1")?;
+        assert_eq!(scan.path, None);
+        assert_eq!(scan.skipped_chapter_files, 1);
+
+        let _ = fs::remove_dir_all(&chapters_root);
+        Ok(())
     }
 }

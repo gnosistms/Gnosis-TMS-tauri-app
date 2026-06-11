@@ -14,7 +14,8 @@ pub(crate) fn update_gtms_chapter_language_selection_sync(
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
-    let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+    let chapter_path =
+        find_chapter_path_by_id(app, &repo_path.join("chapters"), &input.chapter_id)?;
     let chapter_json_path = chapter_path.join("chapter.json");
     let mut chapter_value: Value = read_json_file(&chapter_json_path, "chapter.json")?;
     let chapter_title = chapter_value
@@ -187,7 +188,8 @@ pub(crate) fn update_gtms_chapter_languages_sync(
         .clone()
         .ok_or_else(|| "Could not determine which project repo to sync.".to_string())?;
 
-    let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+    let chapter_path =
+        find_chapter_path_by_id(app, &repo_path.join("chapters"), &input.chapter_id)?;
     let chapter_json_path = chapter_path.join("chapter.json");
     let mut chapter_value: Value = read_json_file(&chapter_json_path, "chapter.json")?;
     let chapter_file: StoredChapterFile = serde_json::from_value(chapter_value.clone())
@@ -324,41 +326,6 @@ pub(crate) fn update_gtms_chapter_languages_sync(
     })
 }
 
-/// Write and commit a single chapter.json settings change through the shared row-commit
-/// helper so a failed commit gate (expired session, lost write access) cannot strand a
-/// dirty, staged chapter.json that would break the next pull.
-fn commit_chapter_json_update(
-    app: &AppHandle,
-    repo_path: &Path,
-    chapter_json_path: &Path,
-    chapter_value: &Value,
-    commit_message: &str,
-) -> Result<(), String> {
-    let updated_text = format!(
-        "{}\n",
-        serde_json::to_string_pretty(chapter_value)
-            .map_err(|error| format!("Could not serialize chapter.json: {error}"))?
-    );
-    write_row_files_and_commit(
-        app,
-        repo_path,
-        commit_message,
-        CommitMetadata {
-            operation: None,
-            migration: None,
-            status_note: None,
-            ai_model: None,
-        },
-        &[PreparedRowFileWrite {
-            relative_path: repo_relative_path(repo_path, chapter_json_path)?,
-            original_text: fs::read_to_string(chapter_json_path).ok(),
-            path: chapter_json_path.to_path_buf(),
-            updated_text,
-        }],
-    )?;
-    Ok(())
-}
-
 fn rollback_failed_chapter_language_update(
     repo_path: &std::path::Path,
     previous_head_sha: &str,
@@ -385,7 +352,8 @@ pub(crate) fn update_gtms_chapter_glossary_links_sync(
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
-    let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+    let chapter_path =
+        find_chapter_path_by_id(app, &repo_path.join("chapters"), &input.chapter_id)?;
     let chapter_json_path = chapter_path.join("chapter.json");
     let mut chapter_value: Value = read_json_file(&chapter_json_path, "chapter.json")?;
     let chapter_title = chapter_value
@@ -447,7 +415,7 @@ pub(crate) fn update_gtms_chapter_workflow_status_sync(
 
     let workflow_status = normalize_chapter_workflow_status(Some(&input.workflow_status));
     let repo_chapters_path = repo_path.join("chapters");
-    let chapter_path = find_chapter_path_by_id(&repo_chapters_path, &input.chapter_id)?;
+    let chapter_path = find_chapter_path_by_id(app, &repo_chapters_path, &input.chapter_id)?;
     let chapter_json_path = chapter_path.join("chapter.json");
     let mut chapter_value: Value = read_json_file(&chapter_json_path, "chapter.json")?;
     let chapter_title = chapter_value

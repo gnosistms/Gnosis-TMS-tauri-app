@@ -17,7 +17,8 @@ pub(crate) fn insert_gtms_editor_row_sync(
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
-    let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+    let chapter_path =
+        find_chapter_path_by_id(app, &repo_path.join("chapters"), &input.chapter_id)?;
     let chapter_json_path = chapter_path.join("chapter.json");
     let chapter_file: StoredChapterFile = read_json_file(&chapter_json_path, "chapter.json")?;
     let languages = sanitize_chapter_languages(&chapter_file.languages);
@@ -102,7 +103,8 @@ pub(crate) fn update_gtms_editor_row_lifecycle_sync(
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
-    let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+    let chapter_path =
+        find_chapter_path_by_id(app, &repo_path.join("chapters"), &input.chapter_id)?;
     let chapter_file: StoredChapterFile =
         read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
     let languages = sanitize_chapter_languages(&chapter_file.languages);
@@ -221,7 +223,8 @@ pub(crate) fn permanently_delete_gtms_editor_row_sync(
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
-    let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+    let chapter_path =
+        find_chapter_path_by_id(app, &repo_path.join("chapters"), &input.chapter_id)?;
     let chapter_file: StoredChapterFile =
         read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
     let languages = sanitize_chapter_languages(&chapter_file.languages);

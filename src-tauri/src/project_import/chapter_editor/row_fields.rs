@@ -218,7 +218,8 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
-    let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+    let chapter_path =
+        find_chapter_path_by_id(app, &repo_path.join("chapters"), &input.chapter_id)?;
     if cfg!(debug_assertions) {
         eprintln!(
             "[gtms row-save] chapter-resolved path='{}'",
@@ -557,7 +558,8 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
-    let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+    let chapter_path =
+        find_chapter_path_by_id(app, &repo_path.join("chapters"), &input.chapter_id)?;
     let chapter_file: StoredChapterFile =
         read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
     let languages = sanitize_chapter_languages(&chapter_file.languages);
@@ -702,7 +704,8 @@ pub(crate) fn update_gtms_editor_row_field_flag_sync(
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
-    let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+    let chapter_path =
+        find_chapter_path_by_id(app, &repo_path.join("chapters"), &input.chapter_id)?;
     let row_json_path = validated_row_json_path(&chapter_path, &input.row_id)?;
     let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
     let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
@@ -781,7 +784,8 @@ pub(crate) fn apply_gtms_editor_ai_review_result_sync(
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
-    let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+    let chapter_path =
+        find_chapter_path_by_id(app, &repo_path.join("chapters"), &input.chapter_id)?;
     let row_json_path = validated_row_json_path(&chapter_path, &input.row_id)?;
     let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
     let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
@@ -921,7 +925,8 @@ pub(crate) fn update_gtms_editor_row_text_style_sync(
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
-    let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+    let chapter_path =
+        find_chapter_path_by_id(app, &repo_path.join("chapters"), &input.chapter_id)?;
     let row_json_path = validated_row_json_path(&chapter_path, &input.row_id)?;
     let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
     let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
@@ -986,7 +991,8 @@ pub(crate) fn clear_gtms_editor_reviewed_markers_sync(
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
-    let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+    let chapter_path =
+        find_chapter_path_by_id(app, &repo_path.join("chapters"), &input.chapter_id)?;
     let rows_path = chapter_path.join("rows");
     let mut changed_row_ids = Vec::new();
     let mut prepared_writes = Vec::new();
