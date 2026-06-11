@@ -1,7 +1,36 @@
 # Sentry Triage Plan — June 2026 backlog
 
-Status: proposed
+Status: done except release. Code merged (PRs #128/#129, 2026-06-11, which also landed
+`9cfcf56c` on remote main). Sentry statuses applied 2026-06-11: resolved E/1/2;
+resolved-in-next-release C/P/D/F/H/J/G/M/N/K/B/9 (reopen if seen in ≥0.8.33);
+archived-until-escalating 3/4/6/7/8/5; only A left open (dev-only, message truncated
+pre-W6.1 — field names visible on next occurrence). Alert rules (W6.3) declined for
+now. Remaining: cut release 0.8.33 after the close-latency retest.
 Scope: the 22 unresolved issues in `gnosis-tms/javascript` (14-day window, pulled 2026-06-10).
+
+## Implementation status (2026-06-10)
+
+- **W2 + W6.1** — implemented in PR #128 (`fix/sentry-w2-telemetry-noise`): skips
+  APP_UPDATE_REQUIRED + connection_unavailable, downgrades GitHub 5xx and permission
+  denials to warnings, ignores TanStack CancelledError in crash capture, head+tail
+  truncation. All `cancelQueries` call sites were already awaited.
+- **W3** — already fixed on main before this plan ran: `151bcbfa Fix repo maintenance
+  cleanup errors` (2026-06-09, shipped in v0.8.28+) made purge of a missing repo a
+  no-op success for glossary, QA list, and project repos. JAVASCRIPT-1 events are from
+  older installs; resolve it in Sentry once confirmed quiet on ≥0.8.28.
+- **W4.1/W4.2/W4.4 + JAVASCRIPT-A groundwork** — implemented in PR #129
+  (`fix/sentry-w4-team-metadata-sync`): partial-clone cleanup + wedged-install repair,
+  untracked-file pull retry, capability gating of maintenance metadata writes
+  (JAVASCRIPT-M root cause: background repair/backfill/finalize writes ran for viewers
+  and translators), and the chapter-conflict error now names the offending fields.
+- **W4.3** — already fixed by `151bcbfa` (explicit `pull --ff-only origin <branch>`).
+- **W4.5 (JAVASCRIPT-A)** — cannot pin the exact field without the Sentry event payload
+  (needs a session token); the new field-name reporting makes the next occurrence
+  diagnosable. Decide on a manual-resolution fallback after that.
+- **W1** — blocked on Hans: push local `main` (the agent's push was denied by
+  permissions), retest close latency in a release build, cut 0.8.33. Note v0.8.32
+  (tagged 2026-06-10) does NOT contain `9cfcf56c` or the close-guard work.
+- **W5 / W6.2 / W6.3** — Sentry-side; needs a session token.
 
 ## Snapshot
 
