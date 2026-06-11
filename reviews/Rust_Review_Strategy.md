@@ -290,7 +290,7 @@ principles (F-V, F-VII) in hand.
 ## Batch 11 — Import Pipeline
 *~6,325 lines · 3 sessions*
 
-### 11a: Import Core + Chapter Lifecycle (~2,300 lines)
+### 11a: Import Core + Chapter Lifecycle (~2,300 lines) — REVIEW COMPLETE
 
 ```
 project_import.rs                           (649)
@@ -299,6 +299,15 @@ project_import/link_import.rs               (440)
 project_import/chapter_lifecycle.rs         (466)
 project_import/chapter_editor_comments.rs   (532)
 ```
+
+**Review file**: `reviews/2026-06-10-batch-11a-review.md`
+**Findings**: 0 Critical, 1 Security, 2 Major, 3 Minor
+**Resolution**: All resolved 2026-06-10 on `fix/batch-11a-review-findings`
+(comment row-id validation, write+commit rollback for comments and chapter
+lifecycle, destructive-delete preflight + staged-removal rollback, link-import
+streaming size cap, byte-safe percent decoding, tolerant chapter scans with
+telemetry, threaded git stdin writer). S1/M1 were the final occurrences of the
+Batch 10 row-id-traversal and write-then-commit patterns.
 
 ### 11b: HTML Import (~2,430 lines)
 
