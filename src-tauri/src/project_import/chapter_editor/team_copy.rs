@@ -18,6 +18,10 @@ use crate::short_path_names::allocate_short_folder_name;
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TeamChapterCopyInput {
     job_id: String,
+    /// Title (file name) for the copied chapter; falls back to the source
+    /// chapter title when blank.
+    #[serde(default)]
+    title: String,
     source: TeamChapterCopySource,
     target: TeamChapterCopyTarget,
 }
@@ -180,15 +184,14 @@ fn run_team_chapter_copy(
         remote_state: target.remote_state.clone(),
         status: target.status.clone(),
     };
+    // The destination may be any writable project — another team, the same
+    // team, or even the same project (which duplicates the chapter).
     let target_repo_path = resolve_or_desired_project_git_repo_path(
         app,
         target.installation_id,
         Some(&target.project_id),
         &target.repo_name,
     )?;
-    if target_repo_path == source_repo_path {
-        return Err("Choose a project in a different team.".to_string());
-    }
     let transport_token = load_git_transport_token(target.installation_id, session_token)?;
     sync_project_repo(
         app,
@@ -212,6 +215,10 @@ fn run_team_chapter_copy(
     ensure_local_commit_preconditions(app, &target_repo_path)?;
 
     emit_stage(app, &input.job_id, "Copying the chapter...");
+    let requested_title = input.title.trim();
+    if !requested_title.is_empty() {
+        chapter_file.title = requested_title.to_string();
+    }
     let chapter_title = chapter_file.title.clone();
     let written = write_chapter_copy(
         &source_repo_path,
