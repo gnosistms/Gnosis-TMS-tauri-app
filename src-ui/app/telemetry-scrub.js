@@ -75,7 +75,12 @@ export function scrubString(value, maxLength = MAX_STRING_LENGTH) {
   }
 
   if (scrubbed.length > maxLength) {
-    scrubbed = `${scrubbed.slice(0, maxLength)}…`;
+    // Keep head + tail: in long messages (git stderr after an HTML body, wrapped
+    // errors) the actual failure reason often sits at the end, and head-only
+    // truncation used to cut it off before it reached Sentry.
+    const tailLength = Math.floor(maxLength / 4);
+    const headLength = maxLength - tailLength;
+    scrubbed = `${scrubbed.slice(0, headLength)}…${scrubbed.slice(scrubbed.length - tailLength)}`;
   }
   return scrubbed;
 }

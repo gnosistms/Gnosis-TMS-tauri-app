@@ -42,11 +42,14 @@ test("scrubString redacts secret-looking tokens", () => {
   assert.doesNotMatch(scrubString("ghp_ABCDEF0123456789ABCDEF"), /ghp_ABCDEF/);
 });
 
-test("scrubString truncates with the short command-error cap", () => {
-  const long = "x".repeat(500);
+test("scrubString truncates with the short command-error cap, keeping head and tail", () => {
+  const long = `HEAD${"x".repeat(500)}TAIL`;
   const out = scrubString(long, COMMAND_ERROR_MAX_LENGTH);
   assert.equal(out.length, COMMAND_ERROR_MAX_LENGTH + 1); // + ellipsis
-  assert.ok(out.endsWith("…"));
+  assert.ok(out.startsWith("HEAD"));
+  assert.ok(out.includes("…"));
+  // The failure reason at the end of a long message must survive truncation.
+  assert.ok(out.endsWith("TAIL"));
 });
 
 test("scrubData drops sensitive keys and scrubs nested strings", () => {

@@ -59,7 +59,17 @@ function bufferCrash(item) {
   }
 }
 
+export function isRoutineQueryCancellation(item) {
+  // TanStack Query's CancelledError rejects in-flight query promises during
+  // cancelQueries/teardown. Its message is always the literal "CancelledError"
+  // (the class name is unreliable after minification). Routine, not a crash.
+  return String(item?.error?.message ?? item?.message ?? "") === "CancelledError";
+}
+
 function routeCrash(item) {
+  if (isRoutineQueryCancellation(item)) {
+    return;
+  }
   if (!emitCrash(item)) {
     bufferCrash(item);
   }
@@ -193,8 +203,11 @@ export function refreshTelemetryState() {
  * Report a failed Tauri command. Routine telemetry: only sent when the gate is already
  * open. The command name is a tag; the error is scrubbed and length-capped. The payload
  * is never sent.
+ *
+ * `options` lets the caller downgrade expected failures: `level` (default "error"),
+ * `fingerprint` (stable Sentry grouping), and extra `tags` (merged after the defaults).
  */
-export function reportCommandFailure(command, error) {
+export function reportCommandFailure(command, error, options = {}) {
   if (!sentry || !gateOpen()) {
     return;
   }
@@ -203,10 +216,18 @@ export function reportCommandFailure(command, error) {
       `${command}: ${error?.message ?? error ?? "unknown error"}`,
       COMMAND_ERROR_MAX_LENGTH,
     );
-    sentry.captureMessage(message, {
-      level: "error",
-      tags: { source: "command-failure", command: String(command ?? "unknown") },
-    });
+    const captureContext = {
+      level: options.level ?? "error",
+      tags: {
+        source: "command-failure",
+        command: String(command ?? "unknown"),
+        ...(options.tags ?? {}),
+      },
+    };
+    if (Array.isArray(options.fingerprint) && options.fingerprint.length > 0) {
+      captureContext.fingerprint = options.fingerprint;
+    }
+    sentry.captureMessage(message, captureContext);
   });
 }
 
