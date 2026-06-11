@@ -109,18 +109,63 @@ export const invoke = rawInvoke
 // document content and must never reach telemetry (telemetry-plan hard constraint).
 const AI_ASSISTANT_MALFORMED_RESPONSE_ERROR_PREFIX = "AI_ASSISTANT_MALFORMED_RESPONSE_JSON:";
 
-function maybeReportCommandFailure(command, error) {
-  // Skip the expected "session expired" path — it is routine, not a defect, and noisy.
-  // Reporting is fire-and-forget and a no-op until the consent gate opens.
+/**
+ * Decide whether and how a failed command is reported to telemetry. Returns `null`
+ * to skip, or `{ error, options }` to forward to `reportCommandFailure`. Pure, so
+ * the skip/downgrade rules are unit-testable without a Sentry stub.
+ *
+ * Expected control flow and operational failures are skipped or downgraded — they
+ * are routine, not defects, and drown real signal (plans/sentry-triage-plan.md, W2).
+ */
+export function resolveCommandFailureReport(command, error) {
   const rawMessage = String(error?.message ?? error ?? "").trim();
-  if (rawMessage.toLowerCase().startsWith("auth_required:")) {
-    return;
+  const normalizedMessage = rawMessage.toLowerCase();
+  if (normalizedMessage.startsWith("auth_required:")) {
+    return null;
+  }
+  // Forced-update control flow; updater-flow.js owns the user-facing handling.
+  if (rawMessage.startsWith("APP_UPDATE_REQUIRED:")) {
+    return null;
+  }
+  // Offline / broker unreachable / DNS / connection reset.
+  if (classifySyncError(error).type === "connection_unavailable") {
+    return null;
   }
   if (rawMessage.startsWith(AI_ASSISTANT_MALFORMED_RESPONSE_ERROR_PREFIX)) {
-    reportCommandFailure(command, "The AI assistant returned a malformed response.");
-    return;
+    return { error: "The AI assistant returned a malformed response." };
   }
-  reportCommandFailure(command, error);
+  // GitHub 5xx: transient upstream outage. Worth counting, not an app defect —
+  // report as warning under one stable fingerprint per command, and drop the
+  // response body (an HTML error page with no diagnostic value).
+  const githubServerError = rawMessage.match(/^GitHub API (5\d\d):/);
+  if (githubServerError) {
+    return {
+      error: `GitHub API ${githubServerError[1]}`,
+      options: {
+        level: "warning",
+        fingerprint: ["command-failure", String(command ?? "unknown"), "github-5xx"],
+      },
+    };
+  }
+  // Remote permission denials: access rules working as intended for that account.
+  if (
+    normalizedMessage.includes("write access to repository not granted")
+    || normalizedMessage.includes("cannot manage shared resources")
+  ) {
+    return {
+      error,
+      options: { level: "warning", tags: { reason: "permission-denied" } },
+    };
+  }
+  return { error };
+}
+
+function maybeReportCommandFailure(command, error) {
+  // Reporting is fire-and-forget and a no-op until the consent gate opens.
+  const report = resolveCommandFailureReport(command, error);
+  if (report) {
+    reportCommandFailure(command, report.error, report.options);
+  }
 }
 
 export function openExternalUrl(url) {
