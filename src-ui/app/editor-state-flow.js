@@ -50,6 +50,7 @@ import {
   createEditorImageEditorState,
   createEditorImageInvalidFileModalState,
   createEditorInsertLinkModalState,
+  createWordPressExportSuccessModalState,
   createEditorImagePreviewOverlayState,
   createEditorPendingSelectionState,
   createEditorPreviewSearchState,
@@ -391,6 +392,7 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
     imageInvalidFileModal: createEditorImageInvalidFileModalState(),
     imagePreviewOverlay: createEditorImagePreviewOverlayState(),
     insertLinkModal: createEditorInsertLinkModalState(),
+    wordpressExportSuccessModal: createWordPressExportSuccessModalState(),
     sidebarTab: normalizeEditorSidebarTab(sidebarTab),
     reviewExpandedSectionKeys: isSameChapter
       ? cloneExpandedReviewSectionKeys(previousEditorChapter?.reviewExpandedSectionKeys)

@@ -433,7 +433,7 @@ test("submitEditorExport exports the Phase 2 file formats with matching filters"
 test("submitEditorExport ignores options that are not available yet", async () => {
   installEditorExportFixture();
   const invokeCalls = [];
-  for (const optionId of ["copy:docx", "link:wordpress", "link:team"]) {
+  for (const optionId of ["copy:docx", "link:team"]) {
     openExportModal(optionId);
 
     await submitEditorExport(() => {}, {

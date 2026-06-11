@@ -111,7 +111,7 @@ pub(crate) fn clear_team_ai_cached_provider_secret(
     clear_team_ai_cached_provider_secret_at_path(&snapshot_path, installation_id, provider_id)
 }
 
-fn stronghold_snapshot_path(app: &AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn stronghold_snapshot_path(app: &AppHandle) -> Result<PathBuf, String> {
     let local_data_dir = app
         .path()
         .app_local_data_dir()
@@ -171,7 +171,7 @@ fn load_or_create_client(stronghold: &Stronghold) -> Result<Client, String> {
     }
 }
 
-fn load_store_value(
+pub(crate) fn load_store_value(
     snapshot_path: &Path,
     key: &str,
     value_label: &str,
@@ -196,7 +196,7 @@ fn load_store_value(
     Ok(Some(decoded_value))
 }
 
-fn save_store_value(
+pub(crate) fn save_store_value(
     snapshot_path: &Path,
     key: &str,
     value: &str,
@@ -226,7 +226,11 @@ fn save_store_value(
     Ok(())
 }
 
-fn delete_store_value(snapshot_path: &Path, key: &str, value_label: &str) -> Result<(), String> {
+pub(crate) fn delete_store_value(
+    snapshot_path: &Path,
+    key: &str,
+    value_label: &str,
+) -> Result<(), String> {
     let stronghold = open_stronghold(snapshot_path)?;
     let client = load_or_create_client(&stronghold)?;
     client

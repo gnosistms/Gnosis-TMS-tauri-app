@@ -1000,6 +1000,54 @@ mod tests {
     }
 
     #[test]
+    fn wordpress_style_sample_fixture_imports_with_every_mappable_style() {
+        // The fixture translators import to verify the WordPress export; this
+        // guards that the file keeps producing the styles its text promises.
+        let mut input = html_input(include_str!(
+            "../../../../tests/fixtures/wordpress-style-sample.html"
+        ));
+        input.file_name = "wordpress-style-sample.html".to_string();
+
+        let parsed = parse_html_file(input).expect("the style sample should parse");
+        let styles: Vec<Option<&str>> = parsed
+            .rows
+            .iter()
+            .map(|row| row.text_style.as_deref())
+            .collect();
+
+        assert_eq!(
+            styles
+                .iter()
+                .filter(|style| **style == Some("heading1"))
+                .count(),
+            2
+        );
+        assert!(styles.contains(&Some("heading2")));
+        assert!(styles.contains(&Some("quote")));
+        assert!(styles.contains(&Some("centered")));
+        assert_eq!(parsed.rows[0].text_style.as_deref(), Some("heading1"));
+
+        let texts: Vec<&str> = parsed
+            .rows
+            .iter()
+            .map(|row| row.fields["en"].plain_text.as_str())
+            .collect();
+        // Escaped entities in the fixture arrive as literal editor inline markup.
+        assert!(texts
+            .iter()
+            .any(|text| text.contains("<strong>bold text</strong>")));
+        assert!(texts.iter().any(|text| text
+            .contains("<a href=\"https://example.com/style-sample\">this linked text</a>")));
+        assert!(texts
+            .iter()
+            .any(|text| text.contains("<ruby>漢字<rt>かんじ</rt></ruby>")));
+        assert!(parsed
+            .rows
+            .iter()
+            .any(|row| row.fields["en"].image.is_some()));
+    }
+
+    #[test]
     fn html_import_marks_centered_non_heading_text_without_overriding_headings() {
         let long_text =
             "This paragraph contains enough article text for reader extraction. ".repeat(12);

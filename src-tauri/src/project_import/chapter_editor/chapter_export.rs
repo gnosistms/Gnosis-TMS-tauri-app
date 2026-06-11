@@ -56,6 +56,7 @@ struct InlineStyleState {
     bold: bool,
     italic: bool,
     underline: bool,
+    link: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -582,12 +583,48 @@ fn html_image_mime_type(path: &Path, bytes: &[u8]) -> Option<&'static str> {
     }
 }
 
+/// Visible text for the TXT export: like `inline_visible_text`, but a link keeps
+/// its destination as a trailing " (url)" so the URL survives plain text.
+fn txt_inline_text(value: &str) -> String {
+    let mut output = String::new();
+    let mut cursor = 0usize;
+    let mut open_href: Option<String> = None;
+    while cursor < value.len() {
+        let remaining = &value[cursor..];
+        if let Some((source, _)) = allowed_inline_tag(remaining) {
+            cursor += source.len();
+            continue;
+        }
+        match inline_link_tag(remaining) {
+            Some(InlineLinkTag::Open { source_len, href }) => {
+                open_href = Some(href);
+                cursor += source_len;
+                continue;
+            }
+            Some(InlineLinkTag::Close { source_len }) => {
+                if let Some(href) = open_href.take() {
+                    let _ = write!(output, " ({href})");
+                }
+                cursor += source_len;
+                continue;
+            }
+            None => {}
+        }
+        let Some(ch) = remaining.chars().next() else {
+            break;
+        };
+        output.push(ch);
+        cursor += ch.len_utf8();
+    }
+    output
+}
+
 fn render_txt_document(document: &ExportDocument) -> String {
     let mut parts = Vec::new();
     for block in &document.blocks {
         match block {
             ExportBlock::Text { text_style, text } => {
-                let text = inline_visible_text(text).trim().to_string();
+                let text = txt_inline_text(text).trim().to_string();
                 if text.is_empty() {
                     continue;
                 }
@@ -600,7 +637,7 @@ fn render_txt_document(document: &ExportDocument) -> String {
                 parts.push(rendered);
             }
             ExportBlock::Footnote { number, text } => {
-                let text = inline_visible_text(text).trim().to_string();
+                let text = txt_inline_text(text).trim().to_string();
                 if !text.is_empty() {
                     parts.push(format!("[{number}] {text}"));
                 }
@@ -704,10 +741,34 @@ fn md_link_destination(value: &str) -> String {
         .replace('\n', "")
 }
 
+/// Groups consecutive segments that share the same link href, so a link whose
+/// text mixes styles ("the <strong>bold</strong> page") renders as one link.
+fn link_grouped_segments(
+    segments: Vec<InlineSegment>,
+) -> Vec<(Option<String>, Vec<InlineSegment>)> {
+    let mut groups: Vec<(Option<String>, Vec<InlineSegment>)> = Vec::new();
+    for segment in segments {
+        let href = segment.style.link.clone();
+        match groups.last_mut() {
+            Some((current, items)) if *current == href => items.push(segment),
+            _ => groups.push((href, vec![segment])),
+        }
+    }
+    groups
+}
+
 fn md_inline_text(value: &str) -> String {
-    inline_segments(value)
+    link_grouped_segments(inline_segments(value))
         .into_iter()
-        .map(|segment| md_segment(&segment))
+        .map(|(href, segments)| {
+            let inner: String = segments.iter().map(md_segment).collect();
+            match href {
+                Some(url) if !inner.trim().is_empty() => {
+                    format!("[{}](<{}>)", inner, md_link_destination(&url))
+                }
+                _ => inner,
+            }
+        })
         .collect()
 }
 
@@ -787,8 +848,14 @@ fn inline_segments(value: &str) -> Vec<InlineSegment> {
         }
         if let Some(link_tag) = inline_link_tag(remaining) {
             cursor += match link_tag {
-                InlineLinkTag::Open { source_len, .. } => source_len,
-                InlineLinkTag::Close { source_len } => source_len,
+                InlineLinkTag::Open { source_len, href } => {
+                    style.link = Some(href);
+                    source_len
+                }
+                InlineLinkTag::Close { source_len } => {
+                    style.link = None;
+                    source_len
+                }
             };
             continue;
         }
@@ -972,13 +1039,27 @@ fn docx_runs_xml(value: &str, forced_italic: bool) -> String {
 }
 
 fn docx_segment_runs_xml(value: &str, forced_italic: bool) -> String {
-    inline_segments(value)
+    link_grouped_segments(inline_segments(value))
         .into_iter()
-        .map(|mut segment| {
-            if forced_italic {
-                segment.style.italic = true;
+        .map(|(href, segments)| {
+            let runs = segments
+                .into_iter()
+                .map(|mut segment| {
+                    if forced_italic {
+                        segment.style.italic = true;
+                    }
+                    docx_run_xml(&segment)
+                })
+                .collect::<String>();
+            match href {
+                // A field-based hyperlink works without a relationship entry,
+                // so paragraph rendering stays decoupled from the rels file.
+                Some(url) => format!(
+                    r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> HYPERLINK "{}" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>{runs}<w:r><w:fldChar w:fldCharType="end"/></w:r>"#,
+                    escape_xml(&url)
+                ),
+                None => runs,
             }
-            docx_run_xml(&segment)
         })
         .collect::<String>()
 }
@@ -1015,6 +1096,7 @@ fn docx_ruby_from_inner_xml(inner: &str, forced_italic: bool) -> Option<String> 
 }
 
 fn docx_run_xml(segment: &InlineSegment) -> String {
+    let is_link = segment.style.link.is_some();
     let mut rpr = String::new();
     if segment.style.bold {
         rpr.push_str("<w:b/>");
@@ -1022,7 +1104,10 @@ fn docx_run_xml(segment: &InlineSegment) -> String {
     if segment.style.italic {
         rpr.push_str("<w:i/>");
     }
-    if segment.style.underline {
+    if is_link {
+        rpr.push_str(r#"<w:color w:val="0563C1"/>"#);
+    }
+    if segment.style.underline || is_link {
         rpr.push_str(r#"<w:u w:val="single"/>"#);
     }
     let rpr = if rpr.is_empty() {
@@ -1100,6 +1185,17 @@ fn read_local_docx_image(path: &Path) -> Option<DocxImage> {
 }
 
 fn download_docx_image(url: &str) -> Option<DocxImage> {
+    let data = download_public_image_bytes(url)?;
+    let (extension, width_px, height_px) = docx_image_info(&data)?;
+    Some(DocxImage {
+        data,
+        extension,
+        width_px,
+        height_px,
+    })
+}
+
+fn download_public_image_bytes(url: &str) -> Option<Vec<u8>> {
     // Image URLs are row content that can arrive over git from other team members, so an
     // export must not let one of them point this fetch at the exporting machine's own
     // network. Reject non-public hosts, refuse redirects (a public URL could otherwise 302
@@ -1124,13 +1220,60 @@ fn download_docx_image(url: &str) -> Option<DocxImage> {
     if data.len() as u64 > MAX_EXPORT_IMAGE_BYTES {
         return None;
     }
-    let (extension, width_px, height_px) = docx_image_info(&data)?;
-    Some(DocxImage {
-        data,
-        extension,
-        width_px,
-        height_px,
-    })
+    Some(data)
+}
+
+/// Fetches a remote image (with the same public-host validation, redirect
+/// refusal, and size cap as the DOCX export) and returns its natural pixel
+/// dimensions. Unlike the DOCX embed path this also understands WebP, which
+/// only needs measuring, never embedding. `None` for unreachable, non-public,
+/// oversized, or unsupported images.
+pub(crate) fn fetch_public_image_dimensions(url: &str) -> Option<(u32, u32)> {
+    let data = download_public_image_bytes(url)?;
+    if let Some((_, width_px, height_px)) = docx_image_info(&data) {
+        return Some((width_px, height_px));
+    }
+    webp_dimensions(&data)
+}
+
+/// WebP canvas dimensions for the three container layouts: lossy (VP8),
+/// lossless (VP8L), and extended (VP8X).
+fn webp_dimensions(data: &[u8]) -> Option<(u32, u32)> {
+    if data.len() < 30 || &data[0..4] != b"RIFF" || &data[8..12] != b"WEBP" {
+        return None;
+    }
+
+    match &data[12..16] {
+        b"VP8 " => {
+            // Lossy frame header: 3-byte frame tag, then the 9d 01 2a start
+            // code, then 14-bit little-endian width and height.
+            if data.get(23..26)? != [0x9d, 0x01, 0x2a] {
+                return None;
+            }
+            let width = u16::from_le_bytes(data.get(26..28)?.try_into().ok()?) as u32 & 0x3fff;
+            let height = u16::from_le_bytes(data.get(28..30)?.try_into().ok()?) as u32 & 0x3fff;
+            nonzero_dimensions(width, height)
+        }
+        b"VP8L" => {
+            // Lossless: signature byte 0x2f, then width-1 and height-1 as
+            // consecutive 14-bit little-endian fields.
+            if *data.get(20)? != 0x2f {
+                return None;
+            }
+            let bits = u32::from_le_bytes(data.get(21..25)?.try_into().ok()?);
+            let width = (bits & 0x3fff) + 1;
+            let height = ((bits >> 14) & 0x3fff) + 1;
+            nonzero_dimensions(width, height)
+        }
+        b"VP8X" => {
+            // Extended: 4 bytes of flags/reserved, then canvas width-1 and
+            // height-1 as 24-bit little-endian values.
+            let width = u32::from_le_bytes([data[24], data[25], data[26], 0]) + 1;
+            let height = u32::from_le_bytes([data[27], data[28], data[29], 0]) + 1;
+            nonzero_dimensions(width, height)
+        }
+        _ => None,
+    }
 }
 
 struct ValidatedExportImageRequest {
@@ -1323,13 +1466,25 @@ fn rtf_text_paragraph(text_style: Option<&str>, text: &str, forced_italic: bool)
         "centered" => "\\qc",
         _ => "",
     };
-    let runs = inline_segments(text)
+    let runs = link_grouped_segments(inline_segments(text))
         .into_iter()
-        .map(|mut segment| {
-            if forced_italic {
-                segment.style.italic = true;
+        .map(|(href, segments)| {
+            let inner = segments
+                .into_iter()
+                .map(|mut segment| {
+                    if forced_italic {
+                        segment.style.italic = true;
+                    }
+                    rtf_run(&segment)
+                })
+                .collect::<String>();
+            match href {
+                Some(url) => format!(
+                    "{{\\field{{\\*\\fldinst HYPERLINK \"{}\"}}{{\\fldrslt {{\\ul {inner}}}}}}}",
+                    rtf_escape(&url)
+                ),
+                None => inner,
             }
-            rtf_run(&segment)
         })
         .collect::<String>();
     format!("\\pard\\plain\\f0\\fs24\\sa200{properties} {runs}\\par\n")
@@ -1575,6 +1730,38 @@ mod tests {
     use std::io::Read;
     use zip::ZipArchive;
 
+    #[test]
+    fn webp_dimensions_reads_all_three_container_layouts() {
+        // Lossy VP8: frame tag, 9d 01 2a start code, 14-bit LE width/height.
+        let mut lossy = Vec::new();
+        lossy.extend_from_slice(b"RIFF\x00\x00\x00\x00WEBPVP8 \x00\x00\x00\x00");
+        lossy.extend_from_slice(&[0, 0, 0]); // frame tag
+        lossy.extend_from_slice(&[0x9d, 0x01, 0x2a]);
+        lossy.extend_from_slice(&800u16.to_le_bytes());
+        lossy.extend_from_slice(&1200u16.to_le_bytes());
+        assert_eq!(webp_dimensions(&lossy), Some((800, 1200)));
+
+        // Lossless VP8L: 0x2f signature, then width-1 / height-1 in 14-bit fields.
+        let mut lossless = Vec::new();
+        lossless.extend_from_slice(b"RIFF\x00\x00\x00\x00WEBPVP8L\x00\x00\x00\x00");
+        lossless.push(0x2f);
+        let bits: u32 = (799) | ((1199) << 14);
+        lossless.extend_from_slice(&bits.to_le_bytes());
+        lossless.extend_from_slice(&[0; 8]);
+        assert_eq!(webp_dimensions(&lossless), Some((800, 1200)));
+
+        // Extended VP8X: 4 bytes flags/reserved, then 24-bit LE canvas-1 values.
+        let mut extended = Vec::new();
+        extended.extend_from_slice(b"RIFF\x00\x00\x00\x00WEBPVP8X\x00\x00\x00\x00");
+        extended.extend_from_slice(&[0, 0, 0, 0]);
+        extended.extend_from_slice(&[0x1f, 0x03, 0x00]); // 799 -> 800
+        extended.extend_from_slice(&[0xaf, 0x04, 0x00]); // 1199 -> 1200
+        assert_eq!(webp_dimensions(&extended), Some((800, 1200)));
+
+        assert_eq!(webp_dimensions(b"RIFF....WAVEfmt "), None);
+        assert_eq!(webp_dimensions(b"not even riff data here ......"), None);
+    }
+
     fn language() -> String {
         "en".to_string()
     }
@@ -1798,10 +1985,87 @@ mod tests {
     }
 
     #[test]
-    fn inline_segments_flatten_link_tags_to_plain_text() {
-        let segments = inline_segments("see <a href=\"https://example.com\">the <b>bold</b> page</a>");
-        let text: String = segments.iter().map(|segment| segment.text.as_str()).collect();
+    fn inline_segments_carry_link_hrefs_without_leaking_tag_text() {
+        let segments =
+            inline_segments("see <a href=\"https://example.com\">the <b>bold</b> page</a>");
+        let text: String = segments
+            .iter()
+            .map(|segment| segment.text.as_str())
+            .collect();
         assert_eq!(text, "see the bold page");
+        assert_eq!(segments[0].style.link, None);
+        assert!(segments[1..]
+            .iter()
+            .all(|segment| segment.style.link.as_deref() == Some("https://example.com")));
+    }
+
+    #[test]
+    fn txt_export_appends_link_destinations() {
+        let output = render_txt_document(&document(vec![
+            ExportBlock::Text {
+                text_style: "paragraph".to_string(),
+                text: "see <a href=\"https://example.com/page\">the page</a> now".to_string(),
+            },
+            ExportBlock::Footnote {
+                number: 1,
+                text: "<a href=\"https://example.com/note\">note</a>".to_string(),
+            },
+        ]));
+
+        assert!(output.contains("see the page (https://example.com/page) now"));
+        assert!(output.contains("[1] note (https://example.com/note)"));
+    }
+
+    #[test]
+    fn md_export_renders_links_with_grouped_styles() {
+        let output = render_md_document(&document(vec![ExportBlock::Text {
+            text_style: "paragraph".to_string(),
+            text: "see <a href=\"https://example.com/page\">the <b>bold</b> page</a>".to_string(),
+        }]));
+
+        assert!(output.contains("see [the **bold** page](<https://example.com/page>)"));
+    }
+
+    #[test]
+    fn rtf_export_renders_links_as_hyperlink_fields() {
+        let output = render_rtf_document(&document(vec![ExportBlock::Text {
+            text_style: "paragraph".to_string(),
+            text: "see <a href=\"https://example.com/page\">the page</a>".to_string(),
+        }]));
+
+        assert!(output.contains(
+            "{\\field{\\*\\fldinst HYPERLINK \"https://example.com/page\"}{\\fldrslt {\\ul the page}}}"
+        ));
+    }
+
+    #[test]
+    fn docx_paragraphs_render_links_as_hyperlink_fields() {
+        let xml = docx_text_paragraph_xml(
+            Some("paragraph"),
+            "see <a href=\"https://example.com/page?a=1&amp;b=2\">the page</a>",
+            false,
+        );
+
+        assert!(xml.contains(
+            r#"<w:instrText xml:space="preserve"> HYPERLINK "https://example.com/page?a=1&amp;b=2" </w:instrText>"#
+        ));
+        assert!(xml.contains(r#"<w:fldChar w:fldCharType="begin"/>"#));
+        assert!(xml.contains(r#"<w:fldChar w:fldCharType="end"/>"#));
+        assert!(xml.contains(
+            r#"<w:r><w:rPr><w:color w:val="0563C1"/><w:u w:val="single"/></w:rPr><w:t xml:space="preserve">the page</w:t></w:r>"#
+        ));
+    }
+
+    #[test]
+    fn xlsx_cells_keep_raw_link_markup_for_round_trip() {
+        let field = StoredFieldValue {
+            plain_text: "see <a href=\"https://example.com\">the page</a>".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            xlsx_cell_value(Some(&field)),
+            "see <a href=\"https://example.com\">the page</a>"
+        );
     }
 
     #[test]

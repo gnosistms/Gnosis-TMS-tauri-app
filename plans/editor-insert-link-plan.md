@@ -98,13 +98,55 @@ support in the inline markup grammar.
 ### 4. Rust file exports (`chapter_export.rs`)
 
 - Attribute-aware recognition of canonical `<a href="...">` / `</a>` alongside
-  `allowed_inline_tag`:
-  - `sanitize_inline_html` (HTML export): pass through with re-escaped href when
-    http(s), else escape the whole tag as text.
-  - `inline_visible_text` (TXT export): strip link tags, keep link text.
-  - `inline_segments` (DOCX export): strip link tags, keep link text (no DOCX
-    hyperlink relationships in this iteration — flattening documented here).
-- Unit tests in the existing test module.
+  `allowed_inline_tag`. Per-format behavior:
+  - **HTML**: real `<a href>` with re-escaped href; orphan `</a>` and non-http(s)
+    hrefs escape as text (`sanitize_inline_html` tracks open/close balance).
+  - **Markdown**: `[text](<url>)`; consecutive segments sharing an href group into
+    one link so mixed styling stays inside the brackets.
+  - **DOCX**: field-based hyperlink (`fldChar`/`instrText HYPERLINK`) so paragraph
+    rendering stays decoupled from the relationships file; linked runs get the
+    standard blue underline.
+  - **RTF**: `{\field{\*\fldinst HYPERLINK "url"}{\fldrslt {\ul text}}}` (same
+    field form the image-link fallback already used).
+  - **TXT**: link text plus a trailing ` (url)` via `txt_inline_text` (the shared
+    `inline_visible_text` stays URL-free for ruby extraction).
+  - **XLSX**: raw canonical markup in cells, by design — the workbook is the
+    round-trip interchange format and the XLSX import stores cell text verbatim.
+- `InlineStyleState` carries `link: Option<String>`; `link_grouped_segments`
+  groups runs per href for md/rtf/docx.
+- Unit tests per format in the existing test module.
+
+## WordPress export validation (added 2026-06-11)
+
+- A temporary Gutenberg validation test (`editor-preview-wordpress-validation.test.js`)
+  loaded Gutenberg's own `@wordpress/blocks` + `@wordpress/block-library` (CJS
+  builds under a jsdom window) and asserted every exported block parsed valid
+  with zero validation issues AND that `serialize(parse(content))` reproduced
+  the export byte-for-byte — so the WP editor never rewrites or "recovers" a
+  post. **Removed after the manual export was visually verified on
+  gnosisvn.org (2026-06-11)** — it was discovery tooling, and the canonical
+  markup it derived is now pinned as exact strings by the cheap tests in
+  `editor-preview.test.js`. To resurrect it (do this whenever the WordPress
+  serializer markup changes, since WordPress moves its canonical forms over
+  time — e.g. paragraph `align` → `textAlign`): restore the test file from git
+  history and `npm i -D @wordpress/blocks @wordpress/block-library jsdom`, plus
+  a `package.json#knip.ignoreDependencies` entry for the two @wordpress
+  packages.
+- That test forced serializer fixes in `editor-preview.js`: headings gain
+  `class="wp-block-heading"`, quotes wrap an inner `wp:paragraph` block,
+  indented uses `{"style":{"spacing":{"padding":{"left":"2em"}}}}` (the old bare
+  inline style was mangled into nested `<p><p>` by Gutenberg's deprecation
+  migration), centered uses `{"style":{"typography":{"textAlign":"center"}}}`,
+  images use the canonical `alt=""/>` spacing, and blocks join with `\n\n`.
+- The Rust `resize_image_block` exact-match patterns were updated for the
+  canonical img spacing (it still accepts the legacy spaced form).
+- `tests/fixtures/wordpress-style-sample.html` is an importable chapter with
+  every text style, inline markup, a link, ruby, and an image, for manual
+  visual verification of the published post. HTML import cannot mark
+  indentation or footnotes, so the fixture's rows instruct the user to apply
+  the I style and add a footnote by hand after importing.
+  `wordpress_style_sample_fixture_imports_with_every_mappable_style` in
+  `chapter_import/html.rs` guards the fixture.
 
 ## Out of scope / noted
 

@@ -20,6 +20,8 @@ const SUPPORTED_FOCUSED_INPUT_SELECTORS = [
   "[data-glossary-term-search-input]",
   "[data-project-export-format-select]",
   "[data-project-export-language-select]",
+  "[data-project-import-link-input]",
+  "[data-project-import-paste-textarea]",
   "[data-project-search-input]",
   "[data-editor-search-input]",
   "[data-preview-search-input]",
@@ -31,6 +33,8 @@ const SUPPORTED_FOCUSED_INPUT_SELECTORS = [
   "[data-ai-settings-detailed-toggle]",
   "[data-ai-settings-provider-select]",
   "[data-ai-settings-model-select]",
+  "[data-wordpress-title-input]",
+  "[data-wordpress-search-input]",
 ];
 
 function focusSnapshotSelector(activeElement) {

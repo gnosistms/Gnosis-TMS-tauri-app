@@ -18,8 +18,12 @@
     the document end.
 - The branch was rebased onto local `main` to pick up `9cfcf56c` (window
   `allow-destroy` capability fix) — unrelated to export work.
-- **Next: Phase 3** (WordPress export). Still open from Phase 2: the
-  DOCX-to-clipboard research item (`copy:docx` stays unavailable).
+- **Phase 3 is implemented** on `feature/wordpress-export` — see
+  `plans/wordpress-export-plan.md` for the phase plan, including the resolved
+  `meta.footnotes` research item (the WordPress.com wp/v2 proxy accepts it).
+  Broker OAuth routes shipped on broker `main` (`c9ea0f8`). `link:wordpress`
+  is `available: true`. Still open from Phase 2: the DOCX-to-clipboard
+  research item (`copy:docx` stays unavailable).
 - Manual verification still pending: macOS + Windows file dialogs, opening the
   exported xlsx in Excel/Google Sheets, rtf in Word, md rendering on GitHub.
 

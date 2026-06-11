@@ -294,3 +294,36 @@ test("shouldRestoreFocusedInputStateForScope skips editor-row-field focus restor
   );
   assert.equal(shouldRestoreFocusedInputStateForScope(null, "translate-sidebar"), false);
 });
+
+test("project import link input keeps focus and caret across full renders", () => {
+  const input = new FakeHTMLInputElement();
+  input.matches = (selector) => selector === "[data-project-import-link-input]";
+  input.selectionStart = 12;
+  input.selectionEnd = 12;
+  input.selectionDirection = "none";
+  document.activeElement = input;
+
+  const snapshot = captureFocusedInputState();
+  assert.equal(snapshot?.selector, "[data-project-import-link-input]");
+  assert.equal(snapshot?.selectionStart, 12);
+
+  const rerenderedInput = new FakeHTMLInputElement();
+  selectorMap = new Map([["[data-project-import-link-input]", rerenderedInput]]);
+  assert.equal(restoreFocusedInputState(snapshot), true);
+  assert.equal(rerenderedInput.focusCalls.length, 1);
+  assert.deepEqual(rerenderedInput.selectionCalls, [{ start: 12, end: 12, direction: "none" }]);
+});
+
+test("project import paste textarea keeps focus across full renders", () => {
+  const textarea = new FakeHTMLTextAreaElement();
+  textarea.matches = (selector) => selector === "[data-project-import-paste-textarea]";
+  document.activeElement = textarea;
+
+  const snapshot = captureFocusedInputState();
+  assert.equal(snapshot?.selector, "[data-project-import-paste-textarea]");
+
+  const rerenderedTextarea = new FakeHTMLTextAreaElement();
+  selectorMap = new Map([["[data-project-import-paste-textarea]", rerenderedTextarea]]);
+  assert.equal(restoreFocusedInputState(snapshot), true);
+  assert.equal(rerenderedTextarea.focusCalls.length, 1);
+});

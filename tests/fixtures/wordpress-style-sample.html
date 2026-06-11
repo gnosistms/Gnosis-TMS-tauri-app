@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>WordPress Style Sample</title>
+</head>
+<body>
+<article>
+  <h1>WordPress Style Sample</h1>
+  <p>This chapter exists to verify the WordPress export. Every row below uses one of the text styles Gnosis TMS supports, and the row text says which style it is, so you can compare the published post against this list. Because this is the leading H1 row, the heading above this paragraph should become the WordPress post title rather than appearing inside the article.</p>
+  <p>This row is a plain paragraph (P). It should appear in WordPress as ordinary body text with no special styling. It also carries inline formatting samples that should survive the trip: &lt;strong&gt;bold text&lt;/strong&gt;, &lt;em&gt;italic text&lt;/em&gt;, and &lt;u&gt;underlined text&lt;/u&gt; were written as editor markup and should render styled here and in the exported post.</p>
+  <p>This row demonstrates a hyperlink. The phrase &lt;a href="https://example.com/style-sample"&gt;this linked text&lt;/a&gt; should be a clickable link in the static editor view, in the preview, and in the published WordPress post, pointing at example.com.</p>
+  <h1>This row is a second large heading (H1)</h1>
+  <p>The H1 row directly above is not the first row of the chapter, so it should stay inside the article as a real heading when exported, and its presence means the table of contents is not suppressed.</p>
+  <h2>This row is a subheading (H2)</h2>
+  <p>The H2 row directly above should export as a level-two heading in WordPress.</p>
+  <blockquote>This row is a quote (Q). It should arrive in WordPress as a quote block, typically shown with an indent or a border depending on the site theme.</blockquote>
+  <p style="text-align: center">This row is centered (C). It should be horizontally centered in the editor, the preview, and the published post.</p>
+  <p>INDENTED SAMPLE: the HTML import cannot mark indentation, so after importing, click into this row and press the I style button to make it indented. Once exported it should appear inset from the left margin.</p>
+  <p>FOOTNOTE SAMPLE: after importing, click into this row, press the * button, and type a short footnote. The marker should export as a superscript reference with the footnote text collected at the bottom of the WordPress post below a separator line.</p>
+  <p>This row carries a ruby annotation sample: &lt;ruby&gt;漢字&lt;rt&gt;かんじ&lt;/rt&gt;&lt;/ruby&gt; should show the reading above the base characters in the editor and survive the export as ruby markup.</p>
+  <figure>
+    <img src="https://placehold.co/600x400/png" alt="">
+    <figcaption>This row is an image with a caption. The image should appear centered in the published post with this caption underneath it.</figcaption>
+  </figure>
+  <p>This is the final plain paragraph. If everything above looks right in the published post — title taken from the first heading, one in-body H1, one H2, a quote, a centered line, an indented line, a footnote, working inline styles, a clickable link, ruby text, and a captioned image — the export is behaving correctly.</p>
+</article>
+</body>
+</html>

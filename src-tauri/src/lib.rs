@@ -34,6 +34,7 @@ mod team_repo_migrations;
 mod updater;
 mod util;
 mod window;
+mod wordpress;
 
 #[cfg(target_os = "macos")]
 use crate::constants::MAIN_WINDOW_BACKGROUND;
@@ -487,6 +488,7 @@ pub fn run() {
         .manage(AuthState {
             pending_github_app_install: Mutex::new(None),
             pending_broker_auth: Mutex::new(None),
+            pending_wordpress_auth: Mutex::new(None),
         })
         .manage(ProjectRepoSyncStore::default())
         .manage(ProjectImportBatchCancelStore::default())
@@ -521,6 +523,11 @@ pub fn run() {
             check_for_app_update,
             install_app_update,
             begin_broker_auth,
+            wordpress::auth::begin_wordpress_auth,
+            wordpress::export::get_wordpress_connection,
+            wordpress::export::disconnect_wordpress,
+            wordpress::export::search_wordpress_posts,
+            wordpress::export::export_chapter_to_wordpress,
             inspect_broker_auth_session,
             refresh_broker_auth_session,
             load_broker_auth_session,

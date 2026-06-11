@@ -338,6 +338,103 @@
   margin-top: auto;
 }
 
+.editor-export-modal__wordpress-disconnect {
+  border: none;
+  background: none;
+  color: var(--link);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.92em;
+  margin-left: 6px;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.editor-export-modal__wordpress-modes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.editor-export-modal__wordpress-mode {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.editor-export-modal__wordpress-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.editor-export-modal__wordpress-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.editor-export-modal__wordpress-search .field__input {
+  flex: 1;
+}
+
+.editor-export-modal__wordpress-posts {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid rgba(164, 112, 41, 0.18);
+  border-radius: var(--radius-ui);
+}
+
+.editor-export-modal__wordpress-post {
+  display: block;
+  width: 100%;
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 7px 10px;
+  text-align: left;
+}
+
+.editor-export-modal__wordpress-post:hover {
+  background: rgba(166, 107, 41, 0.08);
+}
+
+.editor-export-modal__wordpress-post.is-selected {
+  background: rgba(166, 107, 41, 0.14);
+  color: var(--link);
+  font-weight: 600;
+}
+
+.editor-export-modal__wordpress-post-status {
+  color: var(--muted);
+  font-size: 0.85em;
+  font-weight: 400;
+  margin-left: 6px;
+  text-transform: uppercase;
+}
+
+.editor-export-modal__wordpress-warning {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-ui);
+  background: rgba(204, 92, 41, 0.12);
+  color: #a04417;
+  font-weight: 600;
+}
+
+.editor-export-modal__wordpress-stage {
+  font-style: italic;
+}
+
 .modal__actions {
   display: flex;
   justify-content: flex-end;
@@ -1354,6 +1451,22 @@
 .project-import-modal__mode-control .segmented-control__button {
   min-width: 0;
   padding-inline: 12px;
+}
+
+.wordpress-export-success-modal__link {
+  margin: 0;
+  word-break: break-all;
+  line-height: 1.45;
+}
+
+.wordpress-export-success-modal__link a {
+  color: var(--link);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.wordpress-export-success-modal__link a:hover {
+  color: var(--link-hover);
 }
 
 .editor-insert-link-modal__error {

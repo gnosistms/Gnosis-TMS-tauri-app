@@ -453,6 +453,7 @@ export function createEditorChapterState() {
     imageInvalidFileModal: createEditorImageInvalidFileModalState(),
     imagePreviewOverlay: createEditorImagePreviewOverlayState(),
     insertLinkModal: createEditorInsertLinkModalState(),
+    wordpressExportSuccessModal: createWordPressExportSuccessModalState(),
     sidebarTab: "review",
     reviewExpandedSectionKeys: new Set(["last-update", "ai-review"]),
     aiReview: createEditorAiReviewState(),
@@ -540,6 +541,14 @@ export function createEditorImagePreviewOverlayState() {
     rowId: null,
     languageCode: null,
     src: "",
+  };
+}
+
+export function createWordPressExportSuccessModalState() {
+  return {
+    isOpen: false,
+    isDraft: false,
+    url: "",
   };
 }
 
@@ -776,7 +785,23 @@ export function createEditorExportModalState() {
   return createEntityModalState({
     expandedCategoryIds: ["file"],
     selectedOptionId: "file:html",
+    wordpress: createEditorExportWordPressState(),
   });
+}
+
+export function createEditorExportWordPressState() {
+  return {
+    connectionStatus: "unknown",
+    connection: null,
+    mode: "create",
+    title: "",
+    searchQuery: "",
+    searchStatus: "idle",
+    searchResults: [],
+    selectedPostId: null,
+    exportStage: "",
+    jobId: "",
+  };
 }
 
 export function createEditorConflictResolutionModalState() {

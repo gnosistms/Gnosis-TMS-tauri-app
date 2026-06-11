@@ -5,11 +5,13 @@ import {
   buildEditorPreviewDocument,
   countEditorPreviewSearchMatches,
   EDITOR_MODE_PREVIEW,
+  extractWordPressLeadingHeadingTitle,
   normalizeEditorPreviewSearchForDocument,
   renderEditorPreviewDocumentHtml,
   selectedEditorPreviewLanguageCode,
   serializeEditorPreviewHtml,
   serializeEditorPreviewPlainText,
+  serializeEditorPreviewWordPress,
   stepEditorPreviewSearchState,
 } from "./editor-preview.js";
 
@@ -312,9 +314,12 @@ test("serializeEditorPreviewHtml uses semantic tags and repo-relative uploaded i
 
   assert.match(html, /^<meta charset='utf-8'>/);
   assert.match(html, /<!-- wp:heading \{"level":1\} -->/);
-  assert.match(html, /<h1>Chapter Title<\/h1>/);
+  assert.match(html, /<h1 class="wp-block-heading">Chapter Title<\/h1>/);
   assert.match(html, /<!-- wp:quote -->/);
-  assert.match(html, /<blockquote class="wp-block-quote"><p>Quoted line <sup data-fn="[0-9a-f-]{36}" class="fn">/);
+  assert.match(
+    html,
+    /<blockquote class="wp-block-quote"><!-- wp:paragraph -->\n<p>Quoted line <sup data-fn="[0-9a-f-]{36}" class="fn">/,
+  );
   assert.match(html, /<!-- wp:footnotes \/-->/);
   assert.doesNotMatch(html, /<ol class="wp-block-footnotes">/);
   assert.match(html, /<figure/);
@@ -335,7 +340,7 @@ test("serializeEditorPreviewHtml uses centered HTML for centered plain text", ()
 
   const html = serializeEditorPreviewHtml(blocks);
 
-  assert.match(html, /<!-- wp:paragraph \{"align":"center"\} -->/);
+  assert.match(html, /<!-- wp:paragraph \{"style":\{"typography":\{"textAlign":"center"\}\}\} -->/);
   assert.match(html, /<p class="has-text-align-center">Centered line<\/p>/);
 });
 
@@ -422,4 +427,216 @@ test("serializeEditorPreviewPlainText includes image captions and skips captionl
 
 test("preview mode constant remains stable", () => {
   assert.equal(EDITOR_MODE_PREVIEW, "preview");
+});
+
+test("serializeEditorPreviewWordPress returns content plus matching footnote meta", () => {
+  const blocks = buildEditorPreviewDocument([{
+    rowId: "row-1",
+    lifecycleState: "active",
+    textStyle: "paragraph",
+    fields: { vi: "Alpha body [1]" },
+    footnotes: { vi: "Footnote <strong>bold</strong> text" },
+    imageCaptions: { vi: "Caption" },
+    images: {
+      vi: {
+        kind: "upload",
+        path: "chapters/ch-1/images/row-1/image.png",
+        filePath: "/tmp/image.png",
+      },
+    },
+  }], "vi");
+
+  const { content, footnotes, title } = serializeEditorPreviewWordPress(blocks);
+
+  assert.equal(title, null);
+  assert.doesNotMatch(content, /<meta charset/);
+  assert.match(content, /^<!-- wp:paragraph -->/);
+  assert.match(content, /<!-- wp:footnotes \/-->/);
+  // A separator sits between the article text and the footnotes.
+  assert.match(
+    content,
+    /<!-- wp:separator -->\n<hr class="wp-block-separator has-alpha-channel-opacity"\/>\n<!-- \/wp:separator -->\n\n<!-- wp:footnotes \/-->/,
+  );
+  assert.match(content, /src="chapters\/ch-1\/images\/row-1\/image\.png"/);
+
+  assert.equal(footnotes.length, 1);
+  assert.match(footnotes[0].id, /^[0-9a-f-]{36}$/);
+  assert.equal(footnotes[0].content, "Footnote <strong>bold</strong> text");
+  assert.ok(content.includes(`<sup data-fn="${footnotes[0].id}" class="fn">`));
+});
+
+test("serializeEditorPreviewWordPress omits footnote markup without footnotes", () => {
+  const blocks = buildEditorPreviewDocument([{
+    rowId: "row-1",
+    lifecycleState: "active",
+    textStyle: "paragraph",
+    fields: { vi: "Plain paragraph" },
+    footnotes: {},
+    imageCaptions: {},
+    images: {},
+  }], "vi");
+
+  const { content, footnotes } = serializeEditorPreviewWordPress(blocks);
+
+  assert.deepEqual(footnotes, []);
+  assert.doesNotMatch(content, /wp:footnotes/);
+  assert.doesNotMatch(content, /wp:separator/);
+  assert.match(content, /<!-- wp:paragraph -->/);
+});
+
+test("serializeEditorPreviewWordPress maps every text style to its block markup", () => {
+  const styleRow = (rowId, textStyle, text) => ({
+    rowId,
+    lifecycleState: "active",
+    textStyle,
+    fields: { vi: text },
+    footnotes: {},
+    imageCaptions: {},
+    images: {},
+  });
+  // The paragraph row leads so the H1 stays an in-body heading instead of
+  // being promoted to the post title.
+  const blocks = buildEditorPreviewDocument([
+    styleRow("row-p", "paragraph", "Plain paragraph"),
+    styleRow("row-h1", "heading1", "Large heading"),
+    styleRow("row-h2", "heading2", "Subheading"),
+    styleRow("row-q", "quote", "Quoted passage"),
+    styleRow("row-i", "indented", "Indented passage"),
+    styleRow("row-c", "centered", "Centered passage"),
+  ], "vi");
+
+  const { content, title } = serializeEditorPreviewWordPress(blocks);
+
+  assert.equal(title, null);
+  assert.ok(content.includes("<!-- wp:paragraph -->\n<p>Plain paragraph</p>\n<!-- /wp:paragraph -->"));
+  assert.ok(content.includes('<!-- wp:heading {"level":1} -->\n<h1 class="wp-block-heading">Large heading</h1>\n<!-- /wp:heading -->'));
+  assert.ok(content.includes('<!-- wp:heading -->\n<h2 class="wp-block-heading">Subheading</h2>\n<!-- /wp:heading -->'));
+  assert.ok(content.includes(
+    '<!-- wp:quote -->\n<blockquote class="wp-block-quote"><!-- wp:paragraph -->\n<p>Quoted passage</p>\n<!-- /wp:paragraph --></blockquote>\n<!-- /wp:quote -->',
+  ));
+  assert.ok(content.includes(
+    '<!-- wp:paragraph {"style":{"spacing":{"padding":{"left":"2em"}}}} -->\n<p style="padding-left:2em">Indented passage</p>\n<!-- /wp:paragraph -->',
+  ));
+  assert.ok(content.includes(
+    '<!-- wp:paragraph {"style":{"typography":{"textAlign":"center"}}} -->\n<p class="has-text-align-center">Centered passage</p>\n<!-- /wp:paragraph -->',
+  ));
+  // An in-body H1 means the table-of-contents suppression shortcode is omitted.
+  assert.doesNotMatch(content, /no_toc/);
+});
+
+test("serializeEditorPreviewWordPress keeps inline links in body and footnotes", () => {
+  const blocks = buildEditorPreviewDocument([{
+    rowId: "row-1",
+    lifecycleState: "active",
+    textStyle: "paragraph",
+    fields: { vi: 'Read <a href="https://example.com/page?a=1&amp;b=2">the page</a> [1]' },
+    footnotes: { vi: 'See <a href="https://example.com/note">the note</a>' },
+    imageCaptions: {},
+    images: {},
+  }], "vi");
+
+  const { content, footnotes } = serializeEditorPreviewWordPress(blocks);
+
+  assert.ok(content.includes('Read <a href="https://example.com/page?a=1&amp;b=2">the page</a>'));
+  assert.equal(footnotes.length, 1);
+  assert.equal(footnotes[0].content, 'See <a href="https://example.com/note">the note</a>');
+});
+
+function wordPressTitleFixtureRows() {
+  return [
+    {
+      rowId: "row-1",
+      lifecycleState: "active",
+      textStyle: "heading1",
+      fields: { vi: "<strong>Chương 3</strong> – Trận chiến" },
+      footnotes: {},
+      imageCaptions: {},
+      images: {},
+    },
+    {
+      rowId: "row-2",
+      lifecycleState: "active",
+      textStyle: "paragraph",
+      fields: { vi: "Body text" },
+      footnotes: {},
+      imageCaptions: {},
+      images: {},
+    },
+  ];
+}
+
+test("serializeEditorPreviewWordPress promotes a leading H1 to the post title", () => {
+  const blocks = buildEditorPreviewDocument(wordPressTitleFixtureRows(), "vi");
+
+  const { content, title } = serializeEditorPreviewWordPress(blocks);
+
+  assert.equal(title, "Chương 3 – Trận chiến");
+  assert.equal(extractWordPressLeadingHeadingTitle(blocks), "Chương 3 – Trận chiến");
+  assert.doesNotMatch(content, /wp:heading/);
+  assert.doesNotMatch(content, /Chương 3/);
+  assert.match(content, /Body text/);
+  // No H1 headings remain inside the article: the auto TOC is suppressed.
+  assert.match(content, /<!-- wp:shortcode -->\n\[no_toc\]\n<!-- \/wp:shortcode -->$/);
+});
+
+test("serializeEditorPreviewWordPress keeps the TOC when internal H1 headings remain", () => {
+  const rows = [
+    ...wordPressTitleFixtureRows(),
+    {
+      rowId: "row-3",
+      lifecycleState: "active",
+      textStyle: "heading1",
+      fields: { vi: "Second chapter heading" },
+      footnotes: {},
+      imageCaptions: {},
+      images: {},
+    },
+  ];
+  const blocks = buildEditorPreviewDocument(rows, "vi");
+
+  const { content, title } = serializeEditorPreviewWordPress(blocks);
+
+  assert.equal(title, "Chương 3 – Trận chiến");
+  assert.match(content, /<!-- wp:heading \{"level":1\} -->/);
+  assert.doesNotMatch(content, /no_toc/);
+});
+
+test("serializeEditorPreviewWordPress does not promote H1s that are not first or carry footnotes", () => {
+  const h1WithFootnote = buildEditorPreviewDocument([{
+    rowId: "row-1",
+    lifecycleState: "active",
+    textStyle: "heading1",
+    fields: { vi: "Heading [1]" },
+    footnotes: { vi: "A note" },
+    imageCaptions: {},
+    images: {},
+  }], "vi");
+  const withFootnoteResult = serializeEditorPreviewWordPress(h1WithFootnote);
+  assert.equal(withFootnoteResult.title, null);
+  assert.match(withFootnoteResult.content, /<!-- wp:heading \{"level":1\} -->/);
+  assert.doesNotMatch(withFootnoteResult.content, /no_toc/);
+
+  const imageFirst = buildEditorPreviewDocument([
+    {
+      rowId: "row-1",
+      lifecycleState: "active",
+      textStyle: "paragraph",
+      fields: { vi: "" },
+      footnotes: {},
+      imageCaptions: { vi: "Cover" },
+      images: { vi: { kind: "url", url: "https://example.com/cover.png" } },
+    },
+    {
+      rowId: "row-2",
+      lifecycleState: "active",
+      textStyle: "heading1",
+      fields: { vi: "Not a title" },
+      footnotes: {},
+      imageCaptions: {},
+      images: {},
+    },
+  ], "vi");
+  const imageFirstResult = serializeEditorPreviewWordPress(imageFirst);
+  assert.equal(imageFirstResult.title, null);
+  assert.match(imageFirstResult.content, /Not a title/);
 });

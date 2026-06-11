@@ -39,7 +39,7 @@ test("project import modal renders paste link input state", () => {
 
   assert.match(html, /class="segmented-control__button is-active"[\s\S]*data-action="select-project-import-input-mode:pasteLink"/);
   assert.match(html, /data-project-import-link-input/);
-  assert.match(html, /Paste link here\. Supports Google Docs, Google Sheets, and HTML web pages\./);
+  assert.match(html, /Paste link here\. Supports Google Docs, Google Sheets, HTML web pages, and local file paths\./);
   assert.match(html, /Continue/);
   assert.match(html, /data-action="submit-project-import-link" disabled/);
   assert.doesNotMatch(html, /data-project-import-dropzone/);
@@ -105,7 +105,7 @@ test("project import modal renders invalid link error", () => {
 
   assert.match(html, /INVALID LINK/);
   assert.match(html, /This link can not be opened/);
-  assert.match(html, /only Google Docs, Google Sheets, and HTML website links are supported/);
+  assert.match(html, /only Google Docs, Google Sheets, HTML website links, and local file paths are supported/);
   assert.match(html, /data-action="close-project-import-link-error"[\s\S]*Cancel/);
 });
 

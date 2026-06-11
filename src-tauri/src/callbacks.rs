@@ -11,7 +11,7 @@ use crate::{
     broker_auth::BrokerSession,
     constants::{
         BROKER_AUTH_CALLBACK_EVENT, BROKER_AUTH_CALLBACK_PATH, GITHUB_APP_CALLBACK_EVENT,
-        GITHUB_APP_SETUP_PATH, GITHUB_CALLBACK_ADDRESS,
+        GITHUB_APP_SETUP_PATH, GITHUB_CALLBACK_ADDRESS, WORDPRESS_AUTH_CALLBACK_PATH,
     },
     state::AuthState,
     window::focus_main_window,
@@ -155,7 +155,7 @@ pub(crate) fn emit_broker_auth_event(app: &tauri::AppHandle, payload: BrokerAuth
     let _ = app.emit(BROKER_AUTH_CALLBACK_EVENT, payload);
 }
 
-fn write_html_response(
+pub(crate) fn write_html_response(
     mut stream: TcpStream,
     status_line: &str,
     title: &str,
@@ -248,6 +248,11 @@ fn handle_callback_request(
 
     if url.path() == BROKER_AUTH_CALLBACK_PATH {
         handle_broker_auth_request(app, auth_state, stream, &url);
+        return;
+    }
+
+    if url.path() == WORDPRESS_AUTH_CALLBACK_PATH {
+        crate::wordpress::handle_wordpress_auth_request(app, auth_state, stream, &url);
         return;
     }
 
