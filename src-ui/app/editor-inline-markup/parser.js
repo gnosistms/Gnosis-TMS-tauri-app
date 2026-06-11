@@ -15,18 +15,19 @@ const TAG_TO_STYLE = {
   ruby: "ruby",
 };
 
-const SUPPORTED_TAGS = new Set(["strong", "em", "u", "ruby", "rt"]);
+const SUPPORTED_TAGS = new Set(["strong", "em", "u", "ruby", "rt", "a"]);
 const TAG_ALIASES = {
   b: "strong",
   i: "em",
 };
 
 
-function elementNode(tag, children = []) {
+function elementNode(tag, children = [], attributes = null) {
   return {
     type: "element",
     tag,
     children,
+    attributes,
     openStart: -1,
     openEnd: -1,
     closeStart: -1,
@@ -71,8 +72,40 @@ function cloneNodes(nodes) {
   return (Array.isArray(nodes) ? nodes : []).map((node) => cloneNode(node));
 }
 
+function decodeAttributeEntities(value) {
+  return String(value ?? "")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#39;", "'")
+    .replaceAll("&amp;", "&");
+}
+
+function sanitizeInlineLinkHref(value) {
+  const trimmed = String(value ?? "").trim();
+  if (!/^https?:\/\//i.test(trimmed)) {
+    return "";
+  }
+
+  try {
+    return new URL(trimmed).href ? trimmed : "";
+  } catch {
+    return "";
+  }
+}
+
+function parseLinkAttributes(rawAttributes) {
+  const match = /^\s+href\s*=\s*(?:"([^"]*)"|'([^']*)')\s*$/i.exec(rawAttributes);
+  if (!match) {
+    return null;
+  }
+
+  const href = sanitizeInlineLinkHref(decodeAttributeEntities(match[1] ?? match[2] ?? ""));
+  return href ? { href } : null;
+}
+
 function parseTagToken(rawTag) {
-  const match = /^<\s*(\/?)\s*([A-Za-z][A-Za-z0-9]*)\s*>$/.exec(rawTag);
+  const match = /^<\s*(\/?)\s*([A-Za-z][A-Za-z0-9]*)((?:\s[^>]*)?)>$/.exec(rawTag);
   if (!match) {
     return null;
   }
@@ -84,10 +117,22 @@ function parseTagToken(rawTag) {
     return null;
   }
 
-  return {
-    isClosing,
-    tag: normalizedName,
-  };
+  const rawAttributes = match[3] ?? "";
+  if (isClosing) {
+    return rawAttributes.trim() ? null : { isClosing, tag: normalizedName };
+  }
+
+  if (normalizedName === "a") {
+    const attributes = parseLinkAttributes(rawAttributes);
+    return attributes ? { isClosing, tag: "a", attributes } : null;
+  }
+
+  return rawAttributes.trim()
+    ? null
+    : {
+      isClosing,
+      tag: normalizedName,
+    };
 }
 
 function finalizeElement(node, visibleEnd, rawEnd, closeStart = -1, closeEnd = -1) {
@@ -138,7 +183,7 @@ function parseInlineMarkup(value) {
     }
 
     if (!token.isClosing) {
-      const nextNode = elementNode(token.tag, []);
+      const nextNode = elementNode(token.tag, [], token.attributes ?? null);
       nextNode.openStart = cursor;
       nextNode.openEnd = closingBracketIndex + 1;
       nextNode.rawStart = cursor;
@@ -250,6 +295,7 @@ export {
   STYLE_TO_TAG,
   TAG_TO_STYLE,
   SUPPORTED_TAGS,
+  sanitizeInlineLinkHref,
   elementNode,
   textNode,
   cloneNode,

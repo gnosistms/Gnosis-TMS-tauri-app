@@ -1050,6 +1050,12 @@
   text-decoration-thickness: 1.4px;
 }
 
+.translation-row-text-style-button--link .translation-row-text-style-button__label svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+
 .translation-row-text-style-button--footnote .translation-row-text-style-button__label {
   font-size: 14px;
 }
@@ -1877,6 +1883,29 @@
 .translation-language-panel__glossary-highlight .translation-language-panel__glossary-mark.glossary-match-error {
   color: transparent;
   -webkit-text-fill-color: transparent;
+}
+
+.translation-language-panel__field-static-text a,
+.translation-language-panel__footnote-static a {
+  color: var(--link);
+  text-decoration: underline;
+  text-decoration-thickness: 0.06em;
+  text-underline-offset: 0.16em;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.translation-language-panel__field-static-text a:hover,
+.translation-language-panel__footnote-static a:hover {
+  color: var(--link-hover);
+}
+
+/* Inside a link the link underline wins; the glossary mark keeps its
+   hover tooltip but drops its own underline to avoid a double line. */
+.translation-language-panel__field-static-text a .translation-language-panel__glossary-mark,
+.translation-language-panel__footnote-static a .translation-language-panel__glossary-mark {
+  text-decoration: none;
+  cursor: pointer;
 }
 
 .history-empty {

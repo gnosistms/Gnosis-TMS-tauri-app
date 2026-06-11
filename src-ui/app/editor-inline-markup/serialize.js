@@ -13,6 +13,13 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
+function serializeElementAttributes(node) {
+  const href = node?.tag === "a" && typeof node?.attributes?.href === "string"
+    ? node.attributes.href
+    : "";
+  return href ? ` href="${escapeHtml(href)}"` : "";
+}
+
 function flattenNodesToBaseText(nodes, insideRubyAnnotation = false) {
   return (Array.isArray(nodes) ? nodes : [])
     .map((node) => {
@@ -87,7 +94,7 @@ function renderNodesForHistoryHtml(nodes) {
           : "";
       }
 
-      return `<${node.tag}>${renderNodesForHistoryHtml(node.children)}</${node.tag}>`;
+      return `<${node.tag}${serializeElementAttributes(node)}>${renderNodesForHistoryHtml(node.children)}</${node.tag}>`;
     })
     .join("");
 }
@@ -104,7 +111,7 @@ function serializeNodesWithAllowedTags(source, nodes, allowedTags) {
       }
 
       if (allowedTags.has(node.tag)) {
-        return `<${node.tag}>${serializeNodesWithAllowedTags(source, node.children, allowedTags)}</${node.tag}>`;
+        return `<${node.tag}${serializeElementAttributes(node)}>${serializeNodesWithAllowedTags(source, node.children, allowedTags)}</${node.tag}>`;
       }
 
       const openingTag = node.openStart >= 0 && node.openEnd >= 0
@@ -250,7 +257,7 @@ function serializeNodes(nodes, highlightRanges = [], markRenderer = null) {
         return serializeTextWithHighlights(node.text, node.visibleStart, highlightRanges, markRenderer);
       }
 
-      return `<${node.tag}>${serializeNodes(node.children, highlightRanges, markRenderer)}</${node.tag}>`;
+      return `<${node.tag}${serializeElementAttributes(node)}>${serializeNodes(node.children, highlightRanges, markRenderer)}</${node.tag}>`;
     })
     .join("");
 }

@@ -28,6 +28,7 @@ import { renderEditorDeriveGlossariesModal } from "./editor-derive-glossaries-mo
 import { renderEditorConflictResolutionModal } from "./editor-conflict-resolution-modal.js";
 import { renderEditorImageInvalidFileModal } from "./editor-image-invalid-file-modal.js";
 import { renderEditorImagePreviewOverlay } from "./editor-image-preview-overlay.js";
+import { renderEditorInsertLinkModal } from "./editor-insert-link-modal.js";
 import { renderEditorReplaceUndoModal } from "./editor-replace-undo-modal.js";
 import { renderAiReviewMissingKeyModal } from "./ai-review-missing-key-modal.js";
 import { renderTargetLanguageManagerModal } from "./target-language-manager-modal.js";
@@ -347,6 +348,7 @@ export function renderTranslateScreen(state) {
     + renderEditorConflictResolutionModal(state)
     + renderEditorImageInvalidFileModal(state)
     + renderEditorImagePreviewOverlay(state)
+    + renderEditorInsertLinkModal(state)
     + renderEditorReplaceUndoModal(state)
     + renderAiReviewMissingKeyModal(state);
 }

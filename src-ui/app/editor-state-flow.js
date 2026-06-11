@@ -49,6 +49,7 @@ import {
   createEditorImageCaptionEditorState,
   createEditorImageEditorState,
   createEditorImageInvalidFileModalState,
+  createEditorInsertLinkModalState,
   createEditorImagePreviewOverlayState,
   createEditorPendingSelectionState,
   createEditorPreviewSearchState,
@@ -389,6 +390,7 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
     imageEditor: createEditorImageEditorState(),
     imageInvalidFileModal: createEditorImageInvalidFileModalState(),
     imagePreviewOverlay: createEditorImagePreviewOverlayState(),
+    insertLinkModal: createEditorInsertLinkModalState(),
     sidebarTab: normalizeEditorSidebarTab(sidebarTab),
     reviewExpandedSectionKeys: isSameChapter
       ? cloneExpandedReviewSectionKeys(previousEditorChapter?.reviewExpandedSectionKeys)
