@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     fs,
     path::{Path, PathBuf},
 };
@@ -46,11 +46,11 @@ struct HtmlBlock {
     image_caption: String,
 }
 
-struct HtmlTextAlignmentMarker {
-    text: String,
-    block_kind: String,
-    centered: bool,
-}
+/// Center-alignment flags from the original document, keyed by `(text, block_kind)`
+/// with one entry per occurrence in document order. Keyed lookup keeps the per-block
+/// consume O(1) — a linear scan would be quadratic over the marker list, which a
+/// crafted page full of tiny paragraphs could push into an hours-long import.
+type HtmlTextAlignmentMarkers = HashMap<(String, String), VecDeque<bool>>;
 
 pub(super) fn parse_html_file(input: ImportHtmlInput) -> Result<ParsedWorkbook, String> {
     if input.bytes.is_empty() {
@@ -225,7 +225,7 @@ fn html_blocks_from_fragment(
     content: &str,
     source_url: &str,
     source_path: Option<&str>,
-    original_alignment_markers: &mut VecDeque<HtmlTextAlignmentMarker>,
+    original_alignment_markers: &mut HtmlTextAlignmentMarkers,
 ) -> Result<Vec<HtmlBlock>, String> {
     let fragment = Html::parse_fragment(content);
     let selector = Selector::parse("figure, img, h1, h2, h3, h4, h5, h6, blockquote, p, pre, li")
@@ -285,11 +285,11 @@ fn html_blocks_from_fragment(
     Ok(blocks)
 }
 
-fn html_text_alignment_markers(html: &str) -> Result<VecDeque<HtmlTextAlignmentMarker>, String> {
+fn html_text_alignment_markers(html: &str) -> Result<HtmlTextAlignmentMarkers, String> {
     let document = Html::parse_document(html);
     let selector = Selector::parse("figure, img, h1, h2, h3, h4, h5, h6, blockquote, p, pre, li")
         .map_err(|_| "Could not prepare HTML reader extraction.".to_string())?;
-    let mut markers = VecDeque::new();
+    let mut markers = HtmlTextAlignmentMarkers::new();
 
     for element in document.select(&selector) {
         let tag = element.value().name();
@@ -310,25 +310,23 @@ fn html_text_alignment_markers(html: &str) -> Result<VecDeque<HtmlTextAlignmentM
         }
 
         let (_, block_kind) = html_text_style_for_tag(tag);
-        markers.push_back(HtmlTextAlignmentMarker {
-            text,
-            block_kind: block_kind.to_string(),
-            centered: element_is_center_aligned(element),
-        });
+        markers
+            .entry((text, block_kind.to_string()))
+            .or_default()
+            .push_back(element_is_center_aligned(element));
     }
 
     Ok(markers)
 }
 
 fn consume_original_center_alignment(
-    markers: &mut VecDeque<HtmlTextAlignmentMarker>,
+    markers: &mut HtmlTextAlignmentMarkers,
     text: &str,
     block_kind: &str,
 ) -> Option<bool> {
-    let marker_index = markers
-        .iter()
-        .position(|marker| marker.text == text && marker.block_kind == block_kind)?;
-    markers.remove(marker_index).map(|marker| marker.centered)
+    markers
+        .get_mut(&(text.to_string(), block_kind.to_string()))?
+        .pop_front()
 }
 
 fn image_block_from_figure(
@@ -801,7 +799,6 @@ fn image_extension_from_mime_type(value: &str) -> Option<&'static str> {
         "image/jpeg" | "image/jpg" => Some("jpg"),
         "image/png" | "image/apng" => Some("png"),
         "image/gif" => Some("gif"),
-        "image/svg+xml" => Some("svg"),
         "image/webp" => Some("webp"),
         "image/avif" => Some("avif"),
         "image/bmp" => Some("bmp"),
@@ -1040,6 +1037,32 @@ mod tests {
             Some("centered")
         );
         assert_eq!(style_for_text("Left paragraph."), None);
+    }
+
+    #[test]
+    fn alignment_markers_consume_duplicate_texts_in_document_order() {
+        let mut markers = html_text_alignment_markers(
+            r#"
+            <html><body>
+              <p style="text-align: center">Repeated paragraph.</p>
+              <p>Repeated paragraph.</p>
+            </body></html>
+            "#,
+        )
+        .expect("markers should build");
+
+        assert_eq!(
+            consume_original_center_alignment(&mut markers, "Repeated paragraph.", "paragraph"),
+            Some(true)
+        );
+        assert_eq!(
+            consume_original_center_alignment(&mut markers, "Repeated paragraph.", "paragraph"),
+            Some(false)
+        );
+        assert_eq!(
+            consume_original_center_alignment(&mut markers, "Repeated paragraph.", "paragraph"),
+            None
+        );
     }
 
     #[test]

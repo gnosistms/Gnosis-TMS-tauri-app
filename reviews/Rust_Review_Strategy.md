@@ -309,7 +309,7 @@ streaming size cap, byte-safe percent decoding, tolerant chapter scans with
 telemetry, threaded git stdin writer). S1/M1 were the final occurrences of the
 Batch 10 row-id-traversal and write-then-commit patterns.
 
-### 11b: HTML Import (~2,430 lines)
+### 11b: HTML Import (~2,430 lines) — REVIEW COMPLETE
 
 ```
 project_import/chapter_import/mod.rs        (1,192)
@@ -318,6 +318,15 @@ project_import/chapter_import/html.rs       (1,237)
 
 The HTML parser is a significant attack surface for malformed or adversarial
 input. Review for input validation and sanitization.
+
+**Review file**: `reviews/2026-06-10-batch-11b-review.md`
+**Findings**: 0 Critical, 0 Security, 1 Major, 3 Minor
+**Resolution**: All resolved 2026-06-10 on `fix/batch-11b-review-findings`
+(single-file import commit cleanup + precondition preflight, SVG dropped from the
+import image pipeline, non-shadowing batch cleanup errors, indexed alignment
+markers). The adversarial-input surface itself held up — scheme allowlists,
+canonicalize-contained local images, pre-decode size checks, magic-byte
+validation, sanitized names — with zero Security findings.
 
 ### 11c: Other File Formats (~2,015 lines)
 
