@@ -10,6 +10,7 @@ import {
   selectedEditorPreviewLanguageCode,
   serializeEditorPreviewHtml,
   serializeEditorPreviewPlainText,
+  serializeEditorPreviewWordPress,
   stepEditorPreviewSearchState,
 } from "./editor-preview.js";
 
@@ -422,4 +423,52 @@ test("serializeEditorPreviewPlainText includes image captions and skips captionl
 
 test("preview mode constant remains stable", () => {
   assert.equal(EDITOR_MODE_PREVIEW, "preview");
+});
+
+test("serializeEditorPreviewWordPress returns content plus matching footnote meta", () => {
+  const blocks = buildEditorPreviewDocument([{
+    rowId: "row-1",
+    lifecycleState: "active",
+    textStyle: "paragraph",
+    fields: { vi: "Alpha body [1]" },
+    footnotes: { vi: "Footnote <strong>bold</strong> text" },
+    imageCaptions: { vi: "Caption" },
+    images: {
+      vi: {
+        kind: "upload",
+        path: "chapters/ch-1/images/row-1/image.png",
+        filePath: "/tmp/image.png",
+      },
+    },
+  }], "vi");
+
+  const { content, footnotes } = serializeEditorPreviewWordPress(blocks);
+
+  assert.doesNotMatch(content, /<meta charset/);
+  assert.match(content, /^<!-- wp:paragraph -->/);
+  assert.match(content, /<!-- wp:footnotes \/-->$/);
+  assert.match(content, /src="chapters\/ch-1\/images\/row-1\/image\.png"/);
+
+  assert.equal(footnotes.length, 1);
+  assert.match(footnotes[0].id, /^[0-9a-f-]{36}$/);
+  assert.equal(footnotes[0].content, "Footnote <strong>bold</strong> text");
+  assert.ok(content.includes(`<sup data-fn="${footnotes[0].id}" class="fn">`));
+});
+
+test("serializeEditorPreviewWordPress omits footnote markup without footnotes", () => {
+  const blocks = buildEditorPreviewDocument([{
+    rowId: "row-1",
+    lifecycleState: "active",
+    textStyle: "heading1",
+    fields: { vi: "Title" },
+    footnotes: {},
+    imageCaptions: {},
+    images: {},
+  }], "vi");
+
+  const { content, footnotes } = serializeEditorPreviewWordPress(blocks);
+
+  assert.deepEqual(footnotes, []);
+  assert.doesNotMatch(content, /wp:footnotes/);
+  assert.match(content, /<!-- wp:heading \{"level":1\} -->/);
 });

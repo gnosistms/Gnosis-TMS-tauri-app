@@ -30,6 +30,8 @@ const SUPPORTED_FOCUSED_INPUT_SELECTORS = [
   "[data-ai-settings-detailed-toggle]",
   "[data-ai-settings-provider-select]",
   "[data-ai-settings-model-select]",
+  "[data-wordpress-title-input]",
+  "[data-wordpress-search-input]",
 ];
 
 function focusSnapshotSelector(activeElement) {

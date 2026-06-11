@@ -762,7 +762,23 @@ export function createEditorExportModalState() {
   return createEntityModalState({
     expandedCategoryIds: ["file"],
     selectedOptionId: "file:html",
+    wordpress: createEditorExportWordPressState(),
   });
+}
+
+export function createEditorExportWordPressState() {
+  return {
+    connectionStatus: "unknown",
+    connection: null,
+    mode: "create",
+    title: "",
+    searchQuery: "",
+    searchStatus: "idle",
+    searchResults: [],
+    selectedPostId: null,
+    exportStage: "",
+    jobId: "",
+  };
 }
 
 export function createEditorConflictResolutionModalState() {

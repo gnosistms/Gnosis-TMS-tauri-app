@@ -92,6 +92,11 @@ import {
   updateEditorSourceLanguage,
   updateEditorTargetLanguage,
 } from "./translate-flow.js";
+import {
+  setWordPressExportMode,
+  updateWordPressSearchQuery,
+  updateWordPressTitle,
+} from "./editor-export-wordpress-flow.js";
 import { normalizedConfirmationValue } from "./resource-entity-modal.js";
 
 let liveReviewSidebarRenderPending = false;
@@ -955,6 +960,40 @@ function handleAiActionModelInput(event, render) {
   return true;
 }
 
+function handleWordPressTitleInput(event) {
+  const input = event.target.closest("[data-wordpress-title-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateWordPressTitle(input.value);
+  return true;
+}
+
+function handleWordPressSearchInput(event) {
+  const input = event.target.closest("[data-wordpress-search-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateWordPressSearchQuery(input.value);
+  return true;
+}
+
+function handleWordPressModeInput(event, render) {
+  if (event.type !== "change") {
+    return false;
+  }
+
+  const input = event.target.closest("[data-wordpress-mode-input]");
+  if (!input) {
+    return false;
+  }
+
+  setWordPressExportMode(render, input.value);
+  return true;
+}
+
 const inputHandlers = [
   handleProjectCreationInput,
   handleProjectPermanentDeleteInput,
@@ -1015,6 +1054,9 @@ const inputHandlers = [
   handleTelemetryDisclosureInput,
   handleAiActionProviderInput,
   handleAiActionModelInput,
+  handleWordPressTitleInput,
+  handleWordPressSearchInput,
+  handleWordPressModeInput,
 ];
 
 export function handleInputEvent(event, render) {

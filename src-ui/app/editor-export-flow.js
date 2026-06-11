@@ -13,6 +13,10 @@ import {
   projectRepoScope,
   waitForRepoWriteQueueIdle,
 } from "./repo-write-queue.js";
+import {
+  ensureWordPressPaneReady,
+  submitWordPressExport,
+} from "./editor-export-wordpress-flow.js";
 
 export const EDITOR_EXPORT_CATEGORIES = [
   {
@@ -40,7 +44,7 @@ export const EDITOR_EXPORT_CATEGORIES = [
     id: "link",
     label: "Link and transfer",
     options: [
-      { id: "link:wordpress", label: "WordPress", kind: "link", format: "wordpress", available: false },
+      { id: "link:wordpress", label: "WordPress", kind: "link", format: "wordpress", available: true },
       { id: "link:team", label: "Other Gnosis TMS team", kind: "link", format: "team", available: false },
     ],
   },
@@ -82,6 +86,9 @@ export function openEditorExportOptions(render) {
     selectedOptionId: previous.selectedOptionId,
     isOpen: true,
   });
+  if (previous.selectedOptionId === "link:wordpress") {
+    ensureWordPressPaneReady(render);
+  }
   render();
 }
 
@@ -117,6 +124,9 @@ export function selectEditorExportOption(render, optionId) {
   }
 
   updateEditorExportModal({ selectedOptionId: optionId, error: "" });
+  if (optionId === "link:wordpress") {
+    ensureWordPressPaneReady(render);
+  }
   render();
 }
 
@@ -293,5 +303,10 @@ export async function submitEditorExport(render, operations = {}) {
 
   if (option.kind === "copy") {
     await submitEditorCopyExport(render, option, operations);
+    return;
+  }
+
+  if (option.kind === "link" && option.format === "wordpress") {
+    await submitWordPressExport(render, operations);
   }
 }

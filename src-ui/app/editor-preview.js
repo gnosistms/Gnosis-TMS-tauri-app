@@ -630,7 +630,7 @@ function serializePreviewTextBlock(block, footnoteState) {
   );
 }
 
-export function serializeEditorPreviewHtml(blocks) {
+function serializeEditorPreviewBlocks(blocks) {
   const footnoteState = { items: [] };
   const bodyHtml = (Array.isArray(blocks) ? blocks : [])
     .map((block) => {
@@ -643,8 +643,27 @@ export function serializeEditorPreviewHtml(blocks) {
     .filter(Boolean)
     .join("\n");
   const footnotesHtml = footnoteState.items.length > 0 ? "<!-- wp:footnotes /-->" : "";
+  return { bodyHtml, footnotesHtml, footnoteState };
+}
 
+export function serializeEditorPreviewHtml(blocks) {
+  const { bodyHtml, footnotesHtml } = serializeEditorPreviewBlocks(blocks);
   return ["<meta charset='utf-8'>", bodyHtml, footnotesHtml].filter(Boolean).join("\n\n");
+}
+
+// WordPress post payload: the same block markup as the clipboard HTML export,
+// minus the clipboard charset prefix, plus the footnote bodies that the core
+// footnotes block stores in the `footnotes` post meta (ids match the
+// `data-fn` refs already present in the markup).
+export function serializeEditorPreviewWordPress(blocks) {
+  const { bodyHtml, footnotesHtml, footnoteState } = serializeEditorPreviewBlocks(blocks);
+  return {
+    content: [bodyHtml, footnotesHtml].filter(Boolean).join("\n\n"),
+    footnotes: footnoteState.items.map((item) => ({
+      id: item.id,
+      content: serializePreviewText(item.text),
+    })),
+  };
 }
 
 function plainTextWithFootnoteRefs(block, footnoteItems) {

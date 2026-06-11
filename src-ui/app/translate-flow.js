@@ -162,6 +162,13 @@ import {
   toggleEditorExportCategory as toggleEditorExportCategoryFlow,
 } from "./editor-export-flow.js";
 import {
+  connectWordPress as connectWordPressFlow,
+  disconnectWordPress as disconnectWordPressFlow,
+  searchWordPressPosts as searchWordPressPostsFlow,
+  selectWordPressPost as selectWordPressPostFlow,
+  setWordPressExportMode as setWordPressExportModeFlow,
+} from "./editor-export-wordpress-flow.js";
+import {
   moveEditorPreviewSearch as moveEditorPreviewSearchFlow,
   refreshEditorPreviewAfterTargetLanguageChange,
   resetEditorPreviewModeScrollSnapshot,
@@ -724,6 +731,26 @@ export function selectEditorExportOption(render, optionId) {
 
 export async function submitEditorExport(render) {
   await submitEditorExportFlow(render);
+}
+
+export async function connectWordPress(render) {
+  await connectWordPressFlow(render);
+}
+
+export async function disconnectWordPress(render) {
+  await disconnectWordPressFlow(render);
+}
+
+export async function searchWordPressPosts(render) {
+  await searchWordPressPostsFlow(render);
+}
+
+export function selectWordPressPost(render, postId) {
+  selectWordPressPostFlow(render, postId);
+}
+
+export function setWordPressExportMode(render, mode) {
+  setWordPressExportModeFlow(render, mode);
 }
 
 export async function restoreEditorFieldHistory(render, commitSha) {

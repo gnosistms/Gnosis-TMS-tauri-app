@@ -62,6 +62,10 @@ import {
   selectEditorExportOption,
   submitEditorExport,
   toggleEditorExportCategory,
+  connectWordPress,
+  disconnectWordPress,
+  searchWordPressPosts,
+  selectWordPressPost,
   applyEditorAiReview,
   continueEditorAiReviewAllPreflight,
   dismissEditorAiReviewAllFilterModal,
@@ -612,6 +616,21 @@ export function createTranslateActions(render) {
       return true;
     }
 
+    if (action === "connect-wordpress") {
+      await connectWordPress(render);
+      return true;
+    }
+
+    if (action === "disconnect-wordpress") {
+      await disconnectWordPress(render);
+      return true;
+    }
+
+    if (action === "search-wordpress-posts") {
+      await searchWordPressPosts(render);
+      return true;
+    }
+
     if (action === "step-editor-preview-search:previous") {
       moveEditorPreviewSearch(render, "previous");
       return true;
@@ -631,6 +650,12 @@ export function createTranslateActions(render) {
     const exportOptionId = actionSuffix(action, "select-editor-export-option:");
     if (exportOptionId !== null) {
       selectEditorExportOption(render, exportOptionId);
+      return true;
+    }
+
+    const wordpressPostId = actionSuffix(action, "select-wordpress-post:");
+    if (wordpressPostId !== null) {
+      selectWordPressPost(render, wordpressPostId);
       return true;
     }
 
