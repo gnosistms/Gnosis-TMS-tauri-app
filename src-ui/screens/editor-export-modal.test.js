@@ -6,10 +6,13 @@ import { renderEditorExportModal } from "./editor-export-modal.js";
 function exportState(overrides = {}) {
   return {
     editorChapter: {
+      chapterId: "chapter-1",
       exportModal: {
         isOpen: true,
         expandedCategoryIds: ["file"],
         selectedOptionId: "file:html",
+        chapterId: "chapter-1",
+        languageCode: "",
         status: "idle",
         error: "",
         ...overrides,
@@ -105,21 +108,21 @@ function teamCopyState(teamCopyOverrides = {}, modalOverrides = {}, stateOverrid
   };
 }
 
-test("team copy pane explains when no other writable team exists", () => {
+test("team copy pane explains when no writable team exists", () => {
   const html = renderEditorExportModal(teamCopyState({}, {}, {
-    teams: [{ id: "team-1", installationId: 42, name: "Home Team", membershipRole: "owner" }],
+    teams: [{ id: "team-3", installationId: 88, name: "Read Only", membershipRole: "viewer" }],
   }));
 
-  assert.match(html, /not a member of another team/);
+  assert.match(html, /not a member of a team where you can add files/);
   assert.doesNotMatch(html, /data-action="submit-editor-export"/);
 });
 
-test("team copy pane lists only other writable teams in the team select", () => {
+test("team copy pane lists every writable team including the current one", () => {
   const html = renderEditorExportModal(teamCopyState());
 
   assert.match(html, /data-team-copy-team-select/);
+  assert.match(html, /<option value="team-1" >Home Team<\/option>/);
   assert.match(html, /<option value="team-2" >Other Team<\/option>/);
-  assert.doesNotMatch(html, /Home Team/);
   assert.doesNotMatch(html, /Read Only/);
   assert.match(html, /Choose the team to copy this chapter to\./);
   assert.match(html, /data-action="submit-editor-export"/);
@@ -147,6 +150,7 @@ test("team copy pane shows the project select once projects load", () => {
   }));
   assert.match(loaded, /data-team-copy-project-select/);
   assert.match(loaded, /<option value="project-9" selected>Other Project<\/option>/);
+  assert.match(loaded, /data-team-copy-title-input/);
   assert.match(loaded, /The copy will appear as a new file in Other Project \(Other Team\)\./);
 });
 
@@ -259,4 +263,58 @@ test("editor export modal shows errors and the busy submit state", () => {
   assert.match(html, /export failed/);
   assert.match(html, /Saving\.\.\./);
   assert.match(html, /data-action="close-editor-export-options" disabled/);
+});
+
+function projectsPageExportState(modalOverrides = {}) {
+  const base = exportState({
+    chapterId: "chapter-2",
+    languageCode: "vi",
+    ...modalOverrides,
+  });
+  return {
+    ...base,
+    editorChapter: { ...base.editorChapter, chapterId: "" },
+    projects: [{
+      id: "project-1",
+      chapters: [{
+        id: "chapter-2",
+        name: "Chapter Two",
+        languages: [
+          { code: "es", name: "Spanish", role: "source" },
+          { code: "vi", name: "Vietnamese", role: "target" },
+        ],
+      }],
+    }],
+  };
+}
+
+test("file panes opened from the projects page offer an export language select", () => {
+  const html = renderEditorExportModal(projectsPageExportState());
+
+  assert.match(html, /data-editor-export-language-select/);
+  assert.match(html, /<option value="vi" selected>Vietnamese \(vi\)<\/option>/);
+  assert.match(html, /<option value="es" >Spanish \(es\)<\/option>/);
+  assert.match(html, /data-action="submit-editor-export"/);
+
+  // XLSX exports every language column at once, so no language select.
+  const xlsx = renderEditorExportModal(projectsPageExportState({ selectedOptionId: "file:xlsx" }));
+  assert.doesNotMatch(xlsx, /data-editor-export-language-select/);
+});
+
+test("file panes opened from the editor keep following the preview language", () => {
+  const html = renderEditorExportModal(exportState());
+
+  assert.doesNotMatch(html, /data-editor-export-language-select/);
+});
+
+test("clipboard and WordPress panes require the chapter open in the editor", () => {
+  for (const selectedOptionId of ["copy:text", "copy:html", "link:wordpress"]) {
+    const html = renderEditorExportModal(projectsPageExportState({
+      selectedOptionId,
+      expandedCategoryIds: ["copy", "link"],
+    }));
+
+    assert.match(html, /Open the file in the editor to use this export option\./);
+    assert.doesNotMatch(html, /data-action="submit-editor-export"/);
+  }
 });

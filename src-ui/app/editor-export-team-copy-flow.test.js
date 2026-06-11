@@ -41,6 +41,7 @@ const { openEditorExportOptions } = await import("./editor-export-flow.js");
 const {
   currentTeamCopyState,
   eligibleTeamCopyTargets,
+  ensureTeamCopyPaneReady,
   handleTeamChapterCopyProgressEvent,
   selectTeamCopyTargetProject,
   selectTeamCopyTargetTeam,
@@ -108,13 +109,49 @@ test.afterEach(() => {
   resetSessionState();
 });
 
-test("eligibleTeamCopyTargets keeps writable teams and drops the open chapter's team", () => {
+test("eligibleTeamCopyTargets keeps every writable team including the current one", () => {
   installTeamCopyFixture();
 
   assert.deepEqual(
     eligibleTeamCopyTargets().map((team) => team.id),
-    ["team-2"],
+    ["team-1", "team-2"],
   );
+});
+
+test("ensureTeamCopyPaneReady seeds the copy file name from the chapter", () => {
+  installTeamCopyFixture();
+
+  ensureTeamCopyPaneReady(() => {}, {
+    invoke: async () => [],
+    requireBrokerSession: () => "session-token",
+  });
+
+  assert.equal(currentTeamCopyState().copyTitle, "Chapter One");
+  // Two teams are writable, so none is preselected.
+  assert.equal(currentTeamCopyState().targetTeamId, "");
+});
+
+test("ensureTeamCopyPaneReady preselects the only writable team", async () => {
+  installTeamCopyFixture();
+  state.teams = [
+    { id: "team-1", installationId: 42, name: "Home Team", membershipRole: "owner" },
+    { id: "team-3", installationId: 88, name: "Read Only Team", membershipRole: "viewer" },
+  ];
+  const invokeCalls = [];
+
+  ensureTeamCopyPaneReady(() => {}, {
+    invoke: async (command, payload) => {
+      invokeCalls.push({ command, payload });
+      return [otherTeamProject];
+    },
+    requireBrokerSession: () => "session-token",
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(currentTeamCopyState().targetTeamId, "team-1");
+  assert.equal(invokeCalls.length, 1);
+  assert.equal(invokeCalls[0].payload.installationId, 42);
+  assert.equal(currentTeamCopyState().projectsStatus, "done");
 });
 
 test("selectTeamCopyTargetTeam loads the team's projects and skips deleted records", async () => {
@@ -233,6 +270,7 @@ test("submitTeamChapterCopy invokes the copy command with source and target", as
         projectsStatus: "done",
         projects: [otherTeamProject],
         targetProjectId: "project-9",
+        copyTitle: "Chapter One Copy",
       },
     },
   };
@@ -257,6 +295,7 @@ test("submitTeamChapterCopy invokes the copy command with source and target", as
   const input = invokeCalls[0].payload.input;
   assert.equal(typeof input.jobId, "string");
   assert.notEqual(input.jobId, "");
+  assert.equal(input.title, "Chapter One Copy");
   assert.deepEqual(input.source, {
     installationId: 42,
     projectId: "project-1",
@@ -277,6 +316,36 @@ test("submitTeamChapterCopy invokes the copy command with source and target", as
   });
   assert.equal(state.editorChapter.exportModal.status, "exporting");
   assert.equal(currentTeamCopyState().jobId, input.jobId);
+});
+
+test("submitTeamChapterCopy requires a file name for the copy", async () => {
+  installTeamCopyFixture();
+  state.editorChapter = {
+    ...state.editorChapter,
+    exportModal: {
+      ...state.editorChapter.exportModal,
+      teamCopy: {
+        ...state.editorChapter.exportModal.teamCopy,
+        targetTeamId: "team-2",
+        projectsStatus: "done",
+        projects: [otherTeamProject],
+        targetProjectId: "project-9",
+        copyTitle: "   ",
+      },
+    },
+  };
+  const invokeCalls = [];
+
+  await submitTeamChapterCopy(() => {}, {
+    invoke: async (command) => {
+      invokeCalls.push(command);
+    },
+    requireBrokerSession: () => "session-token",
+    waitForRepoQueue: async () => {},
+  });
+
+  assert.equal(invokeCalls.length, 0);
+  assert.match(state.editorChapter.exportModal.error, /file name/);
 });
 
 test("copy progress events drive stage, success, and error states by job id", () => {

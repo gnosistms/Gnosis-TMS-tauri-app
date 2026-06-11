@@ -54,12 +54,40 @@ function createTeamCopyJobId() {
   return `team-copy-job-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
 }
 
-// Teams the open chapter can be copied to: writable via the derived capability
-// and not the team the chapter already lives in. Accepts an explicit app state
-// so screen renderers can stay pure over their state argument.
+// Teams the chapter can be copied to: every team writable via the derived
+// capability, including the current one (copying within the same team
+// duplicates the chapter). Accepts an explicit app state so screen renderers
+// can stay pure over their state argument.
 export function eligibleTeamCopyTargets(appState = state) {
   const teams = Array.isArray(appState?.teams) ? appState.teams : [];
-  return teams.filter((team) => team?.id !== appState?.selectedTeamId && canWriteChapters(team));
+  return teams.filter((team) => canWriteChapters(team));
+}
+
+// Prepares the pane when the team option is shown: seeds the copy file name
+// from the chapter and, when only one team is writable, selects it so its
+// projects load immediately.
+export function ensureTeamCopyPaneReady(render, operations = {}) {
+  const teamCopy = currentTeamCopyState();
+  if (!teamCopy) {
+    return;
+  }
+
+  if (!teamCopy.copyTitle) {
+    const chapter = findChapterContext(currentExportModal()?.chapterId)?.chapter;
+    const copyTitle = String(chapter?.name ?? "").trim();
+    if (copyTitle) {
+      updateTeamCopyState({ copyTitle });
+    }
+  }
+
+  const targets = eligibleTeamCopyTargets();
+  if (!teamCopy.targetTeamId && targets.length === 1) {
+    selectTeamCopyTargetTeam(render, targets[0].id, operations);
+  }
+}
+
+export function updateTeamCopyTitle(value) {
+  updateTeamCopyState({ copyTitle: String(value ?? "") });
 }
 
 function eligibleTeamCopyTarget(teamId) {
@@ -163,11 +191,16 @@ export async function submitTeamChapterCopy(render, operations = {}) {
     failTeamCopyAction(render, "Choose the destination team and project first.");
     return;
   }
+  const copyTitle = String(teamCopy.copyTitle ?? "").trim();
+  if (!copyTitle) {
+    failTeamCopyAction(render, "Enter a file name for the copy.");
+    return;
+  }
 
   const sourceTeam = selectedProjectsTeam();
-  const context = findChapterContext(state.editorChapter?.chapterId);
+  const context = findChapterContext(modal.chapterId);
   if (!Number.isFinite(sourceTeam?.installationId) || !context?.project || !context?.chapter) {
-    failTeamCopyAction(render, "Could not find the open file.");
+    failTeamCopyAction(render, "Could not find the selected file.");
     return;
   }
 
@@ -191,6 +224,7 @@ export async function submitTeamChapterCopy(render, operations = {}) {
     await invokeCommand("copy_gtms_chapter_to_team", {
       input: {
         jobId,
+        title: copyTitle,
         source: {
           installationId: sourceTeam.installationId,
           projectId: context.project.id ?? null,

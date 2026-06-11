@@ -69,7 +69,6 @@ export const state = {
   glossariesPage: createResourcePageState(),
   qaListsPage: createResourcePageState(),
   projectImport: createProjectImportState(),
-  projectExport: createProjectExportState(),
   projectAddTranslation: createProjectAddTranslationState(),
   glossaryImport: createGlossaryImportState(),
   qaListImport: createQaListImportState(),
@@ -341,23 +340,6 @@ export function createProjectImportState() {
     uploadCancelRequested: false,
     selectedSourceLanguageCode: "",
     sourceLanguageScrollTop: 0,
-  };
-}
-
-export function createProjectExportState() {
-  return {
-    isOpen: false,
-    chapterId: "",
-    projectId: "",
-    repoName: "",
-    projectFullName: "",
-    chapterName: "",
-    languages: [],
-    format: "",
-    languageCode: "",
-    status: "idle",
-    error: "",
-    unsupportedFormat: "",
   };
 }
 
@@ -785,6 +767,12 @@ export function createEditorExportModalState() {
   return createEntityModalState({
     expandedCategoryIds: ["file"],
     selectedOptionId: "file:html",
+    // The chapter this modal exports. Set on open — from the editor or from a
+    // projects-page chapter row. languageCode drives file exports only when
+    // the chapter is not open in the editor (the editor follows the preview
+    // toolbar language).
+    chapterId: "",
+    languageCode: "",
     wordpress: createEditorExportWordPressState(),
     teamCopy: createEditorExportTeamCopyState(),
   });
@@ -796,6 +784,7 @@ export function createEditorExportTeamCopyState() {
     projectsStatus: "idle",
     projects: [],
     targetProjectId: "",
+    copyTitle: "",
     copyStage: "",
     jobId: "",
   };
@@ -1255,7 +1244,6 @@ export function resetSessionState() {
   state.qaListsPage = createResourcePageState();
   state.projectsSearch = createProjectsSearchState();
   state.projectImport = createProjectImportState();
-  state.projectExport = createProjectExportState();
   state.projectAddTranslation = createProjectAddTranslationState();
   state.glossaryImport = createGlossaryImportState();
   state.qaListImport = createQaListImportState();

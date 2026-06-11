@@ -18,7 +18,10 @@ import {
   seedWordPressOverwriteDefault,
   submitWordPressExport,
 } from "./editor-export-wordpress-flow.js";
-import { submitTeamChapterCopy } from "./editor-export-team-copy-flow.js";
+import {
+  ensureTeamCopyPaneReady,
+  submitTeamChapterCopy,
+} from "./editor-export-team-copy-flow.js";
 import {
   loadStoredEditorExportDefault,
   saveStoredEditorExportDefault,
@@ -51,7 +54,7 @@ export const EDITOR_EXPORT_CATEGORIES = [
     label: "Link and transfer",
     options: [
       { id: "link:wordpress", label: "WordPress.com", kind: "link", format: "wordpress", available: true },
-      { id: "link:team", label: "Other Gnosis TMS team", kind: "link", format: "team", available: true },
+      { id: "link:team", label: "Gnosis TMS team", kind: "link", format: "team", available: true },
     ],
   },
 ];
@@ -80,15 +83,42 @@ function updateEditorExportModal(patch) {
   };
 }
 
-export function openEditorExportOptions(render) {
-  if (!state.editorChapter?.chapterId) {
-    return;
-  }
+// True when the modal's chapter is the one open in the editor — copy and
+// WordPress exports serialize from the editor's in-memory rows, so they are
+// only offered then.
+export function exportChapterIsOpenInEditor() {
+  const chapterId = currentExportModal()?.chapterId;
+  return Boolean(chapterId) && state.editorChapter?.chapterId === chapterId;
+}
 
+// Export language outside the editor follows the project-export default:
+// the chapter's remembered target language, else the first target, else the
+// first language.
+function defaultExportLanguageCode(chapter) {
+  const languages = Array.isArray(chapter?.languages) ? chapter.languages : [];
+  const selectedTarget = String(chapter?.selectedTargetLanguageCode ?? "").trim();
+  if (selectedTarget && languages.some((language) => language?.code === selectedTarget)) {
+    return selectedTarget;
+  }
+  return (
+    languages.find((language) => language?.role === "target")?.code
+    ?? languages[0]?.code
+    ?? ""
+  );
+}
+
+function currentExportLanguageCode() {
+  if (exportChapterIsOpenInEditor()) {
+    return String(selectedEditorPreviewLanguageCode(state.editorChapter) ?? "").trim();
+  }
+  return String(currentExportModal()?.languageCode ?? "").trim();
+}
+
+function openExportOptionsForChapter(render, chapterId, languageCode) {
   const previous = currentExportModal() ?? createEditorExportModalState();
   // The last successful export for this chapter wins over the in-session
   // selection; both fall back to the catalog default.
-  const stored = loadStoredEditorExportDefault(state.editorChapter.chapterId);
+  const stored = loadStoredEditorExportDefault(chapterId);
   const storedOption = stored ? findEditorExportOption(stored.optionId) : null;
   const selectedOptionId = storedOption?.available
     ? storedOption.id
@@ -102,14 +132,55 @@ export function openEditorExportOptions(render) {
     ...createEditorExportModalState(),
     expandedCategoryIds,
     selectedOptionId,
+    chapterId,
+    languageCode,
     isOpen: true,
   });
-  if (selectedOptionId === "link:wordpress") {
+  if (selectedOptionId === "link:wordpress" && exportChapterIsOpenInEditor()) {
     if (storedOption?.available && stored?.wordpress) {
       seedWordPressOverwriteDefault(stored.wordpress);
     }
     ensureWordPressPaneReady(render);
   }
+  if (selectedOptionId === "link:team") {
+    ensureTeamCopyPaneReady(render);
+  }
+  render();
+}
+
+export function openEditorExportOptions(render) {
+  if (!state.editorChapter?.chapterId) {
+    return;
+  }
+
+  openExportOptionsForChapter(render, state.editorChapter.chapterId, "");
+}
+
+// Projects-page entry point: same modal, driven by a chapter context instead
+// of the open editor.
+export function openChapterExportOptions(render, chapterId) {
+  const context = findChapterContext(chapterId);
+  if (!context?.project || !context?.chapter) {
+    showNoticeBadge("Could not find the selected file.", render, 2200);
+    return;
+  }
+
+  openExportOptionsForChapter(render, chapterId, defaultExportLanguageCode(context.chapter));
+}
+
+export function selectEditorExportLanguage(render, languageCode) {
+  const modal = currentExportModal();
+  if (!modal?.isOpen || modal.status === "exporting") {
+    return;
+  }
+
+  const normalized = String(languageCode ?? "").trim();
+  const chapter = findChapterContext(modal.chapterId)?.chapter;
+  const languages = Array.isArray(chapter?.languages) ? chapter.languages : [];
+  updateEditorExportModal({
+    languageCode: languages.some((language) => language?.code === normalized) ? normalized : "",
+    error: "",
+  });
   render();
 }
 
@@ -145,8 +216,11 @@ export function selectEditorExportOption(render, optionId) {
   }
 
   updateEditorExportModal({ selectedOptionId: optionId, error: "" });
-  if (optionId === "link:wordpress") {
+  if (optionId === "link:wordpress" && exportChapterIsOpenInEditor()) {
     ensureWordPressPaneReady(render);
+  }
+  if (optionId === "link:team") {
+    ensureTeamCopyPaneReady(render);
   }
   render();
 }
@@ -230,15 +304,21 @@ async function submitEditorFileExport(render, option, operations) {
   const invokeCommand = operations.invoke ?? invoke;
   const waitForRepoQueue = operations.waitForRepoQueue ?? waitForRepoWriteQueueIdle;
   const team = selectedProjectsTeam();
-  const context = findChapterContext(state.editorChapter?.chapterId);
-  const languageCode = String(selectedEditorPreviewLanguageCode(state.editorChapter) ?? "").trim();
+  const context = findChapterContext(currentExportModal()?.chapterId);
+  const languageCode = currentExportLanguageCode();
 
-  if (!Number.isFinite(team?.installationId) || !context?.project || !context?.chapter || !languageCode) {
-    failEditorExport(render, "Could not find the open file.");
+  if (!Number.isFinite(team?.installationId) || !context?.project || !context?.chapter) {
+    failEditorExport(render, "Could not find the selected file.");
+    return;
+  }
+  if (!languageCode) {
+    failEditorExport(render, "Choose the export language first.");
     return;
   }
 
-  const fileBase = sanitizeExportFileName(state.editorChapter?.fileTitle || context.chapter.name);
+  const fileBase = sanitizeExportFileName(
+    (exportChapterIsOpenInEditor() && state.editorChapter?.fileTitle) || context.chapter.name,
+  );
   const defaultFileName = `${fileBase}-${languageCode}.${option.format}`;
   let outputPath = null;
   try {
@@ -320,6 +400,14 @@ export async function submitEditorExport(render, operations = {}) {
 
   const option = findEditorExportOption(modal.selectedOptionId);
   if (!option?.available) {
+    return;
+  }
+
+  // Clipboard and WordPress exports serialize the editor's in-memory rows.
+  const needsOpenEditor = option.kind === "copy"
+    || (option.kind === "link" && option.format === "wordpress");
+  if (needsOpenEditor && !exportChapterIsOpenInEditor()) {
+    failEditorExport(render, "Open the file in the editor to use this export option.");
     return;
   }
 
