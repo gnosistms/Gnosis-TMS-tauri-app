@@ -253,6 +253,9 @@ async function submitEditorFileExport(render, option, operations) {
       },
     });
     updateEditorExportModal({ isOpen: false, status: "idle", error: "" });
+    // Full render to remove the modal; showNoticeBadge only repaints the
+    // badge surface.
+    render();
     showNoticeBadge(`Exported ${defaultFileName}.`, render, 2200);
   } catch (error) {
     failEditorExport(render, error);
@@ -279,6 +282,7 @@ async function submitEditorCopyExport(render, option, operations) {
   try {
     await writeClipboard(formats);
     updateEditorExportModal({ isOpen: false, status: "idle", error: "" });
+    render();
     showNoticeBadge(option.format === "html" ? "Copied HTML." : "Copied plain text.", render, 1400);
   } catch (error) {
     failEditorExport(render, error);

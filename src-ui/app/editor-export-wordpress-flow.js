@@ -297,6 +297,9 @@ export function handleWordPressExportProgressEvent(payload, render) {
   if (payload.status === "success") {
     updateWordPressState({ exportStage: "", jobId: "" });
     updateExportModal({ isOpen: false, status: "idle", error: "" });
+    // Full render to remove the modal; showNoticeBadge only repaints the
+    // badge surface.
+    render();
     showNoticeBadge(payload.message || "Exported to WordPress.", render, 2600);
     return;
   }
