@@ -42,15 +42,15 @@ test("events route native project import drops to the visible project import dro
   assert.match(source, /void handleDroppedGlossaryImportPath\(render, droppedPath\)/);
 });
 
-test("events open project export selects on the first pointer interaction", async () => {
+test("events open export modal selects on the first pointer interaction", async () => {
   const source = await readFile(new URL("./events.js", import.meta.url), "utf8");
 
-  assert.match(source, /PROJECT_EXPORT_SELECT_SELECTOR/);
-  assert.match(source, /function openProjectExportSelectOnFirstPointer\(event\)/);
-  assert.match(source, /event\.target\.closest\(PROJECT_EXPORT_SELECT_SELECTOR\)/);
+  assert.match(source, /EXPORT_MODAL_SELECT_SELECTOR/);
+  assert.match(source, /function openExportModalSelectOnFirstPointer\(event\)/);
+  assert.match(source, /event\.target\.closest\(EXPORT_MODAL_SELECT_SELECTOR\)/);
   assert.match(source, /showPicker\.call\(select\)/);
   assert.match(source, /event\.preventDefault\(\)/);
-  assert.match(source, /if \(openProjectExportSelectOnFirstPointer\(event\)\) \{/);
+  assert.match(source, /if \(openExportModalSelectOnFirstPointer\(event\)\) \{/);
 });
 
 test("events route paste events through the add translation paste fallback", async () => {

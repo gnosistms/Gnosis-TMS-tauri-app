@@ -62,12 +62,7 @@ import {
   selectProjectAddTranslationLanguage,
   submitProjectAddTranslationPaste,
 } from "../project-add-translation-flow.js";
-import {
-  cancelProjectExport,
-  closeProjectExportUnsupported,
-  openProjectExport,
-  submitProjectExport,
-} from "../project-export-flow.js";
+import { openChapterExportOptions } from "../editor-export-flow.js";
 import { actionSuffix, runWithImmediateLoading } from "../action-helpers.js";
 
 const READ_ONLY_PROJECT_WRITE_ACTIONS = new Set([
@@ -242,12 +237,10 @@ export function createProjectActions(render) {
     "cancel-chapter-rename": () => cancelChapterRename(render),
     "clear-project-search": () => clearProjectSearch(render),
     "cancel-project-import": () => cancelProjectImportModal(render),
-    "cancel-project-export": () => cancelProjectExport(render),
     "cancel-project-add-translation": () => cancelProjectAddTranslation(render),
     "close-project-old-layout-discard": () => closeProjectOldLayoutDiscard(render),
     "confirm-project-old-layout-discard": () => confirmProjectOldLayoutDiscard(render),
     "close-project-import-link-error": () => closeProjectImportLinkError(render),
-    "close-project-export-unsupported": () => closeProjectExportUnsupported(render),
     "close-project-import-upload-error": () => closeProjectImportUploadError(render),
     "continue-project-import-text": () => continueProjectImportText(render),
     "retry-project-import-link": () => retryProjectImportLink(render),
@@ -294,7 +287,7 @@ export function createProjectActions(render) {
     },
     {
       prefix: "export-file:",
-      handler: (chapterId) => openProjectExport(render, chapterId),
+      handler: (chapterId) => openChapterExportOptions(render, chapterId),
     },
     {
       prefix: "add-translation-to-file:",
@@ -417,10 +410,6 @@ export function createProjectActions(render) {
     }
     if (action === "submit-project-rename") {
       await runWithImmediateLoading(event, "Saving...", () => submitProjectRename(render));
-      return true;
-    }
-    if (action === "submit-project-export") {
-      await submitProjectExport(render);
       return true;
     }
     if (action === "submit-chapter-rename") {

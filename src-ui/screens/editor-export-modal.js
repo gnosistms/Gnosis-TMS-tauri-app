@@ -10,6 +10,10 @@ import {
   findEditorExportOption,
 } from "../app/editor-export-flow.js";
 import { selectedWordPressPost } from "../app/editor-export-wordpress-flow.js";
+import {
+  eligibleTeamCopyTargets,
+  selectedTeamCopyProject,
+} from "../app/editor-export-team-copy-flow.js";
 
 function renderExportOption(option, selectedOptionId) {
   const classes = [
@@ -183,10 +187,174 @@ function wordpressDetail(wordpress, isExporting) {
   };
 }
 
-function exportDetail(option, isExporting, modal) {
+function renderExportSelect({ label, selectAttribute, placeholder, options, value }) {
+  return `
+    <label class="field editor-export-modal__field">
+      <span class="field__label">${escapeHtml(label)}</span>
+      <select class="field__input" ${selectAttribute}>
+        <option value="" ${value ? "" : "selected"}>${escapeHtml(placeholder)}</option>
+        ${options
+          .map((option) => `
+            <option value="${escapeHtml(option.value)}" ${option.value === value ? "selected" : ""}>${escapeHtml(option.label)}</option>
+          `)
+          .join("")}
+      </select>
+    </label>
+  `;
+}
+
+// Copy-and-paste and WordPress exports serialize the editor's in-memory rows;
+// file and team-copy exports read the repo, so they work from the projects
+// page too.
+function exportChapterOpenInEditor(modal, appState) {
+  return Boolean(modal?.chapterId) && appState?.editorChapter?.chapterId === modal.chapterId;
+}
+
+function exportChapterLanguages(modal, appState) {
+  const projects = [
+    ...(Array.isArray(appState?.projects) ? appState.projects : []),
+    ...(Array.isArray(appState?.deletedProjects) ? appState.deletedProjects : []),
+  ];
+  for (const project of projects) {
+    const chapter = (Array.isArray(project?.chapters) ? project.chapters : [])
+      .find((entry) => entry?.id === modal?.chapterId);
+    if (chapter) {
+      return Array.isArray(chapter.languages) ? chapter.languages : [];
+    }
+  }
+  return [];
+}
+
+function fileExportLanguageSection(option, modal, appState) {
+  // The editor follows the preview toolbar language; XLSX exports every
+  // language column at once.
+  if (exportChapterOpenInEditor(modal, appState) || option.format === "xlsx") {
+    return "";
+  }
+
+  const languages = exportChapterLanguages(modal, appState);
+  if (languages.length === 0) {
+    return "";
+  }
+  return renderExportSelect({
+    label: "Export language",
+    selectAttribute: "data-editor-export-language-select",
+    placeholder: "Select",
+    options: languages.map((language) => ({
+      value: language.code,
+      label: `${language.name || language.code} (${language.code})`,
+    })),
+    value: String(modal.languageCode ?? ""),
+  });
+}
+
+function teamCopyProjectSection(teamCopy) {
+  if (!teamCopy.targetTeamId) {
+    return supportingText("Choose the team to copy this chapter to.");
+  }
+  if (teamCopy.projectsStatus === "loading") {
+    return supportingText("Loading that team's projects...");
+  }
+  if (teamCopy.projectsStatus !== "done") {
+    return "";
+  }
+  if (teamCopy.projects.length === 0) {
+    return supportingText("That team has no projects yet. Create one there first.");
+  }
+  return renderExportSelect({
+    label: "Project",
+    selectAttribute: "data-team-copy-project-select",
+    placeholder: "Select",
+    options: teamCopy.projects.map((project) => ({
+      value: project.id,
+      label: project.title || project.name,
+    })),
+    value: teamCopy.targetProjectId,
+  });
+}
+
+function teamCopyDetail(teamCopy, isExporting, appState) {
+  const targets = eligibleTeamCopyTargets(appState);
+  if (targets.length === 0) {
+    return {
+      bodyMarkup: supportingText(
+        "You are not a member of a team where you can add files.",
+      ),
+      submitButton: "",
+    };
+  }
+
+  const resolvedTeamCopy = teamCopy ?? {
+    targetTeamId: "",
+    projectsStatus: "idle",
+    projects: [],
+    targetProjectId: "",
+    copyTitle: "",
+    copyStage: "",
+  };
+  const selectedProject = selectedTeamCopyProject(resolvedTeamCopy);
+  const selectedTeam = targets.find((team) => team.id === resolvedTeamCopy.targetTeamId) ?? null;
+
+  return {
+    bodyMarkup: `
+      ${supportingText("Copy this chapter, including every language and its images, into a project on any team where you can add files — including this one.")}
+      ${renderExportSelect({
+        label: "Team",
+        selectAttribute: "data-team-copy-team-select",
+        placeholder: "Select",
+        options: targets.map((team) => ({
+          value: team.id,
+          label: team.name || team.githubOrg || team.id,
+        })),
+        value: resolvedTeamCopy.targetTeamId,
+      })}
+      ${teamCopyProjectSection(resolvedTeamCopy)}
+      ${selectedProject
+        ? `
+          <label class="field editor-export-modal__field">
+            <span class="field__label">File name</span>
+            <input
+              class="field__input"
+              type="text"
+              value="${escapeHtml(resolvedTeamCopy.copyTitle ?? "")}"
+              data-team-copy-title-input
+            />
+          </label>
+        `
+        : ""}
+      ${selectedProject && selectedTeam
+        ? supportingText(
+          `The copy will appear as a new file in ${selectedProject.title || selectedProject.name} (${selectedTeam.name || selectedTeam.githubOrg || selectedTeam.id}).`,
+        )
+        : ""}
+      ${isExporting && resolvedTeamCopy.copyStage
+        ? `<p class="modal__supporting editor-export-modal__team-copy-stage">${escapeHtml(resolvedTeamCopy.copyStage)}</p>`
+        : ""}
+    `,
+    submitButton: loadingPrimaryButton({
+      label: "Copy chapter",
+      loadingLabel: "Copying...",
+      action: "submit-editor-export",
+      isLoading: isExporting,
+    }),
+  };
+}
+
+function exportDetail(option, isExporting, modal, appState) {
   if (!option || option.available !== true) {
     return {
       bodyMarkup: supportingText("This export option is not available yet."),
+      submitButton: "",
+    };
+  }
+
+  // Options that serialize the editor's in-memory rows need the chapter open
+  // in the editor; from the projects page they point the user there instead.
+  const editorOnly = option.kind === "copy"
+    || (option.kind === "link" && option.format === "wordpress");
+  if (editorOnly && !exportChapterOpenInEditor(modal, appState)) {
+    return {
+      bodyMarkup: supportingText("Open the file in the editor to use this export option."),
       submitButton: "",
     };
   }
@@ -195,9 +363,16 @@ function exportDetail(option, isExporting, modal) {
     return wordpressDetail(modal.wordpress, isExporting);
   }
 
+  if (option.kind === "link" && option.format === "team") {
+    return teamCopyDetail(modal.teamCopy, isExporting, appState);
+  }
+
   if (option.kind === "file") {
     return {
-      bodyMarkup: supportingText(`Click Save to export a ${option.label} file.`),
+      bodyMarkup: `
+        ${supportingText(`Click Save to export a ${option.label} file.`)}
+        ${fileExportLanguageSection(option, modal, appState)}
+      `,
       submitButton: loadingPrimaryButton({
         label: "Save",
         loadingLabel: "Saving...",
@@ -226,7 +401,7 @@ export function renderEditorExportModal(state) {
 
   const isExporting = modal.status === "exporting";
   const option = findEditorExportOption(modal.selectedOptionId);
-  const detail = exportDetail(option, isExporting, modal);
+  const detail = exportDetail(option, isExporting, modal, state);
   const errorMarkup = modal.error
     ? `<p class="modal__error" role="alert">${escapeHtml(formatErrorForDisplay(modal.error))}</p>`
     : "";

@@ -24,10 +24,7 @@ import {
   updateProjectRenameName,
 } from "./project-flow.js";
 import { updateProjectSearchQuery } from "./project-search-flow.js";
-import {
-  selectProjectExportFormat,
-  selectProjectExportLanguage,
-} from "./project-export-flow.js";
+import { selectEditorExportLanguage } from "./editor-export-flow.js";
 import { updateProjectAddTranslationPaste } from "./project-add-translation-flow.js";
 import {
   updateProjectImportLinkUrl,
@@ -99,6 +96,11 @@ import {
   updateWordPressSearchQuery,
   updateWordPressTitle,
 } from "./editor-export-wordpress-flow.js";
+import {
+  selectTeamCopyTargetProject,
+  selectTeamCopyTargetTeam,
+  updateTeamCopyTitle,
+} from "./editor-export-team-copy-flow.js";
 import { normalizedConfirmationValue } from "./resource-entity-modal.js";
 
 let liveReviewSidebarRenderPending = false;
@@ -818,31 +820,17 @@ function handleChapterStatusSelectInput(event, render) {
   return true;
 }
 
-function handleProjectExportFormatInput(event, render) {
+function handleEditorExportLanguageInput(event, render) {
   if (event.type !== "change") {
     return false;
   }
 
-  const input = event.target.closest("[data-project-export-format-select]");
+  const input = event.target.closest("[data-editor-export-language-select]");
   if (!(input instanceof HTMLSelectElement)) {
     return false;
   }
 
-  selectProjectExportFormat(render, input.value);
-  return true;
-}
-
-function handleProjectExportLanguageInput(event, render) {
-  if (event.type !== "change") {
-    return false;
-  }
-
-  const input = event.target.closest("[data-project-export-language-select]");
-  if (!(input instanceof HTMLSelectElement)) {
-    return false;
-  }
-
-  selectProjectExportLanguage(render, input.value);
+  selectEditorExportLanguage(render, input.value);
   return true;
 }
 
@@ -1021,6 +1009,44 @@ function handleWordPressModeInput(event, render) {
   return true;
 }
 
+function handleTeamCopyTitleInput(event) {
+  const input = event.target.closest("[data-team-copy-title-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateTeamCopyTitle(input.value);
+  return true;
+}
+
+function handleTeamCopyTeamInput(event, render) {
+  if (event.type !== "change") {
+    return false;
+  }
+
+  const input = event.target.closest("[data-team-copy-team-select]");
+  if (!(input instanceof HTMLSelectElement)) {
+    return false;
+  }
+
+  selectTeamCopyTargetTeam(render, input.value);
+  return true;
+}
+
+function handleTeamCopyProjectInput(event, render) {
+  if (event.type !== "change") {
+    return false;
+  }
+
+  const input = event.target.closest("[data-team-copy-project-select]");
+  if (!(input instanceof HTMLSelectElement)) {
+    return false;
+  }
+
+  selectTeamCopyTargetProject(render, input.value);
+  return true;
+}
+
 const inputHandlers = [
   handleProjectCreationInput,
   handleProjectPermanentDeleteInput,
@@ -1071,8 +1097,7 @@ const inputHandlers = [
   handleEditorConflictResolutionInput,
   handleChapterStatusSelectInput,
   handleChapterGlossarySelectInput,
-  handleProjectExportFormatInput,
-  handleProjectExportLanguageInput,
+  handleEditorExportLanguageInput,
   handleProjectImportLinkInput,
   handleProjectImportPastedTextInput,
   handleProjectAddTranslationInput,
@@ -1085,6 +1110,9 @@ const inputHandlers = [
   handleWordPressTitleInput,
   handleWordPressSearchInput,
   handleWordPressModeInput,
+  handleTeamCopyTitleInput,
+  handleTeamCopyTeamInput,
+  handleTeamCopyProjectInput,
 ];
 
 export function handleInputEvent(event, render) {

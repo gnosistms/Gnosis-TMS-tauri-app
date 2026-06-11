@@ -29,24 +29,25 @@ use self::{
         preflight_aligned_translation_to_gtms_chapter_sync, purge_local_gtms_project_repo_sync,
         remove_gtms_editor_language_image_sync, restore_gtms_editor_field_from_history_sync,
         reverse_gtms_editor_batch_replace_commit_sync, save_gtms_editor_language_image_url_sync,
-        update_gtms_chapter_glossary_links_sync, update_gtms_chapter_language_selection_sync,
-        update_gtms_chapter_languages_sync, update_gtms_chapter_workflow_status_sync,
-        update_gtms_editor_row_field_flag_sync, update_gtms_editor_row_fields_batch_sync,
-        update_gtms_editor_row_fields_sync, update_gtms_editor_row_lifecycle_sync,
-        update_gtms_editor_row_text_style_sync, upload_gtms_editor_language_image_sync,
-        AlignedTranslationApplyInput, AlignedTranslationApplyResponse,
-        AlignedTranslationPreflightInput, AlignedTranslationPreflightResponse,
-        ApplyEditorAiReviewResultInput, ApplyEditorAiReviewResultResponse,
-        ClearEditorReviewedMarkersInput, ClearEditorReviewedMarkersResponse,
-        ClearImportedEditorConflictInput, ExportChapterFileInput, InitializeProjectRepoInput,
-        InitializeProjectRepoResponse, InsertEditorRowInput, InsertEditorRowResponse,
-        ListLocalProjectFilesInput, LoadChapterEditorInput, LoadChapterEditorResponse,
-        LoadEditorFieldHistoryInput, LoadEditorFieldHistoryResponse, LoadEditorRowInput,
-        LoadEditorRowResponse, LocalProjectFilesResponse, PurgeLocalProjectRepoInput,
-        RemoveEditorLanguageImageInput, RestoreEditorFieldHistoryInput,
-        RestoreEditorFieldHistoryResponse, ReverseEditorBatchReplaceCommitInput,
-        ReverseEditorBatchReplaceCommitResponse, SaveEditorLanguageImageResponse,
-        SaveEditorLanguageImageUrlInput, SaveEditorRowWithConcurrencyResponse,
+        start_team_chapter_copy, update_gtms_chapter_glossary_links_sync,
+        update_gtms_chapter_language_selection_sync, update_gtms_chapter_languages_sync,
+        update_gtms_chapter_workflow_status_sync, update_gtms_editor_row_field_flag_sync,
+        update_gtms_editor_row_fields_batch_sync, update_gtms_editor_row_fields_sync,
+        update_gtms_editor_row_lifecycle_sync, update_gtms_editor_row_text_style_sync,
+        upload_gtms_editor_language_image_sync, AlignedTranslationApplyInput,
+        AlignedTranslationApplyResponse, AlignedTranslationPreflightInput,
+        AlignedTranslationPreflightResponse, ApplyEditorAiReviewResultInput,
+        ApplyEditorAiReviewResultResponse, ClearEditorReviewedMarkersInput,
+        ClearEditorReviewedMarkersResponse, ClearImportedEditorConflictInput,
+        ExportChapterFileInput, InitializeProjectRepoInput, InitializeProjectRepoResponse,
+        InsertEditorRowInput, InsertEditorRowResponse, ListLocalProjectFilesInput,
+        LoadChapterEditorInput, LoadChapterEditorResponse, LoadEditorFieldHistoryInput,
+        LoadEditorFieldHistoryResponse, LoadEditorRowInput, LoadEditorRowResponse,
+        LocalProjectFilesResponse, PurgeLocalProjectRepoInput, RemoveEditorLanguageImageInput,
+        RestoreEditorFieldHistoryInput, RestoreEditorFieldHistoryResponse,
+        ReverseEditorBatchReplaceCommitInput, ReverseEditorBatchReplaceCommitResponse,
+        SaveEditorLanguageImageResponse, SaveEditorLanguageImageUrlInput,
+        SaveEditorRowWithConcurrencyResponse, TeamChapterCopyInput,
         UpdateChapterGlossaryLinksInput, UpdateChapterGlossaryLinksResponse,
         UpdateChapterLanguageSelectionInput, UpdateChapterLanguageSelectionResponse,
         UpdateChapterLanguagesInput, UpdateChapterLanguagesResponse,
@@ -195,6 +196,17 @@ pub(crate) async fn export_gtms_chapter_file(
     tauri::async_runtime::spawn_blocking(move || export_gtms_chapter_file_sync(&app, input))
         .await
         .map_err(|error| format!("The chapter export worker failed: {error}"))?
+}
+
+/// Returns immediately after validation; the copy runs in a background task
+/// and reports via `team-chapter-copy-progress` events keyed by `jobId`.
+#[tauri::command]
+pub(crate) async fn copy_gtms_chapter_to_team(
+    app: AppHandle,
+    input: TeamChapterCopyInput,
+    session_token: String,
+) -> Result<(), String> {
+    start_team_chapter_copy(app, input, session_token)
 }
 
 #[tauri::command]

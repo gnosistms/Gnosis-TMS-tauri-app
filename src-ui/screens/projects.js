@@ -18,7 +18,7 @@ import { renderChapterRenameModal } from "./chapter-rename-modal.js";
 import { renderProjectClearDeletedFilesModal } from "./project-clear-deleted-files-modal.js";
 import { renderProjectPermanentDeletionModal } from "./project-permanent-deletion-modal.js";
 import { renderProjectImportModal } from "./project-import-modal.js";
-import { renderProjectExportModal } from "./project-export-modal.js";
+import { renderEditorExportModal } from "./editor-export-modal.js";
 import { renderProjectAddTranslationModal } from "./project-add-translation-modal.js";
 import { renderProjectRenameModal } from "./project-rename-modal.js";
 import { renderProjectOldLayoutDiscardModal } from "./project-old-layout-discard-modal.js";
@@ -373,6 +373,6 @@ export function renderProjectsScreen(state) {
     renderProjectClearDeletedFilesModal(state) +
     renderProjectImportModal(state) +
     renderProjectAddTranslationModal(state) +
-    renderProjectExportModal(state)
+    renderEditorExportModal(state)
   );
 }

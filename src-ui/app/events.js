@@ -33,17 +33,17 @@ const SYNC_WITH_SERVER_EVENT = "sync-with-server";
 const ERROR_REPORTING_EVENT = "open-error-reporting";
 const CHECK_FOR_UPDATES_EVENT = "check-for-updates";
 const BACKEND_NONFATAL_TELEMETRY_EVENT = "backend-nonfatal-telemetry";
-const PROJECT_EXPORT_SELECT_SELECTOR =
-  "[data-project-export-format-select], [data-project-export-language-select]";
+const EXPORT_MODAL_SELECT_SELECTOR =
+  "[data-editor-export-language-select], [data-team-copy-team-select], [data-team-copy-project-select]";
 
-function openProjectExportSelectOnFirstPointer(event) {
+function openExportModalSelectOnFirstPointer(event) {
   if (!(event instanceof PointerEvent) || event.button !== 0) {
     return false;
   }
 
   const select =
     event.target instanceof Element
-      ? event.target.closest(PROJECT_EXPORT_SELECT_SELECTOR)
+      ? event.target.closest(EXPORT_MODAL_SELECT_SELECTOR)
       : null;
   if (!(select instanceof HTMLSelectElement) || select.disabled) {
     return false;
@@ -147,7 +147,7 @@ export function registerAppEvents(render) {
       return;
     }
 
-    if (openProjectExportSelectOnFirstPointer(event)) {
+    if (openExportModalSelectOnFirstPointer(event)) {
       return;
     }
 
