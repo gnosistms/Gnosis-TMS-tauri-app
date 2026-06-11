@@ -279,10 +279,9 @@ fn run_wordpress_export(
             let dimensions = fetch_public_image_dimensions(&decode_html_entities(source));
             wordpress_debug_log(&format!("remote image {source} natural={dimensions:?}"));
             if let Some((natural_width, natural_height)) = dimensions {
-                if let Some(display) =
-                    wordpress_display_size(natural_width as u64, natural_height as u64)
-                {
-                    content = resize_image_block(&content, source, source, display);
+                let natural = (natural_width as u64, natural_height as u64);
+                if let Some((display_width, _)) = wordpress_display_size(natural.0, natural.1) {
+                    content = resize_image_block(&content, source, source, display_width, natural);
                 }
             }
         }
@@ -493,17 +492,20 @@ fn wordpress_display_size(natural_width: u64, natural_height: u64) -> Option<(u6
 }
 
 /// Upgrades the plain serialized image block whose img has `source_attr` as
-/// its src attribute to the same markup the block editor's resize handle
-/// produces: display width/height in the block attrs and inline style. The
-/// img src is rewritten to `new_src_attr` (both values in HTML-attribute
-/// escaped form). Handles the current centered serializer markup and the
-/// pre-centering legacy shape; content is returned unchanged for anything
-/// else.
+/// its src attribute to display-sized markup: display width plus the natural
+/// aspect ratio in the block attrs and inline style, with no fixed height.
+/// The browser derives the height from the ratio, so a theme or viewport
+/// that clamps the width (`max-width: 100%`) scales the image down
+/// proportionally instead of distorting it. The img src is rewritten to
+/// `new_src_attr` (both values in HTML-attribute escaped form). Handles the
+/// current centered serializer markup and the pre-centering legacy shape;
+/// content is returned unchanged for anything else.
 fn resize_image_block(
     content: &str,
     source_attr: &str,
     new_src_attr: &str,
-    (display_width, display_height): (u64, u64),
+    display_width: u64,
+    (natural_width, natural_height): (u64, u64),
 ) -> String {
     // (plain block attrs, resized leading attrs, plain figure class, resized figure class)
     const BLOCK_VARIANTS: [(&str, &str, &str, &str); 2] = [
@@ -525,8 +527,8 @@ fn resize_image_block(
         }
 
         let resized_block = format!(
-            "<!-- wp:image {{{resized_leading_attrs}\"width\":\"{display_width}px\",\"height\":\"{display_height}px\"}} -->\n\
-             <figure class=\"{resized_class}\"><img src=\"{new_src_attr}\" alt=\"\" style=\"width:{display_width}px;height:{display_height}px\" />"
+            "<!-- wp:image {{{resized_leading_attrs}\"width\":\"{display_width}px\",\"aspectRatio\":\"{natural_width}/{natural_height}\"}} -->\n\
+             <figure class=\"{resized_class}\"><img src=\"{new_src_attr}\" alt=\"\" style=\"aspect-ratio:{natural_width}/{natural_height};width:{display_width}px\" />"
         );
         return content.replace(&plain_block, &resized_block);
     }
@@ -546,12 +548,13 @@ fn apply_uploaded_image_to_content(
     if let (Some(natural_width), Some(natural_height)) =
         (uploaded.natural_width, uploaded.natural_height)
     {
-        if let Some(display) = wordpress_display_size(natural_width, natural_height) {
+        if let Some((display_width, _)) = wordpress_display_size(natural_width, natural_height) {
             let resized = resize_image_block(
                 content,
                 source,
                 &escape_html_attribute(&uploaded.source_url),
-                display,
+                display_width,
+                (natural_width, natural_height),
             );
             if resized != content {
                 return resized;
@@ -734,14 +737,15 @@ mod tests {
             content,
             "https://example.com/tall.png?a=1&amp;b=2",
             "https://example.com/tall.png?a=1&amp;b=2",
-            (300, 600),
+            300,
+            (1500, 3000),
         );
         assert_eq!(
             resized,
             concat!(
-                "<!-- wp:image {\"width\":\"300px\",\"height\":\"600px\"} -->\n",
+                "<!-- wp:image {\"width\":\"300px\",\"aspectRatio\":\"1500/3000\"} -->\n",
                 "<figure class=\"wp-block-image is-resized\">",
-                "<img src=\"https://example.com/tall.png?a=1&amp;b=2\" alt=\"\" style=\"width:300px;height:600px\" /></figure>\n",
+                "<img src=\"https://example.com/tall.png?a=1&amp;b=2\" alt=\"\" style=\"aspect-ratio:1500/3000;width:300px\" /></figure>\n",
                 "<!-- /wp:image -->",
             ),
         );
@@ -753,7 +757,8 @@ mod tests {
                 unexpected,
                 "https://example.com/tall.png",
                 "https://example.com/tall.png",
-                (300, 600),
+                300,
+                (1500, 3000),
             ),
             unexpected,
         );
@@ -821,9 +826,9 @@ mod tests {
         assert_eq!(
             rewritten,
             concat!(
-                "<!-- wp:image {\"align\":\"center\",\"width\":\"300px\",\"height\":\"600px\"} -->\n",
+                "<!-- wp:image {\"align\":\"center\",\"width\":\"300px\",\"aspectRatio\":\"1500/3000\"} -->\n",
                 "<figure class=\"wp-block-image aligncenter is-resized\">",
-                "<img src=\"https://files.example/tall.png\" alt=\"\" style=\"width:300px;height:600px\" />",
+                "<img src=\"https://files.example/tall.png\" alt=\"\" style=\"aspect-ratio:1500/3000;width:300px\" />",
                 "<figcaption class=\"wp-element-caption\"><em>Caption</em></figcaption></figure>\n",
                 "<!-- /wp:image -->",
             ),
@@ -848,9 +853,9 @@ mod tests {
         assert_eq!(
             rewritten,
             concat!(
-                "<!-- wp:image {\"width\":\"300px\",\"height\":\"600px\"} -->\n",
+                "<!-- wp:image {\"width\":\"300px\",\"aspectRatio\":\"1500/3000\"} -->\n",
                 "<figure class=\"wp-block-image is-resized\">",
-                "<img src=\"https://files.example/tall.png\" alt=\"\" style=\"width:300px;height:600px\" /></figure>\n",
+                "<img src=\"https://files.example/tall.png\" alt=\"\" style=\"aspect-ratio:1500/3000;width:300px\" /></figure>\n",
                 "<!-- /wp:image -->",
             ),
         );

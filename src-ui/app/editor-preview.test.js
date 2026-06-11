@@ -449,6 +449,11 @@ test("serializeEditorPreviewWordPress returns content plus matching footnote met
   assert.doesNotMatch(content, /<meta charset/);
   assert.match(content, /^<!-- wp:paragraph -->/);
   assert.match(content, /<!-- wp:footnotes \/-->/);
+  // A separator sits between the article text and the footnotes.
+  assert.match(
+    content,
+    /<!-- wp:separator -->\n<hr class="wp-block-separator has-alpha-channel-opacity"\/>\n<!-- \/wp:separator -->\n\n<!-- wp:footnotes \/-->/,
+  );
   assert.match(content, /src="chapters\/ch-1\/images\/row-1\/image\.png"/);
 
   assert.equal(footnotes.length, 1);
@@ -472,6 +477,7 @@ test("serializeEditorPreviewWordPress omits footnote markup without footnotes", 
 
   assert.deepEqual(footnotes, []);
   assert.doesNotMatch(content, /wp:footnotes/);
+  assert.doesNotMatch(content, /wp:separator/);
   assert.match(content, /<!-- wp:paragraph -->/);
 });
 

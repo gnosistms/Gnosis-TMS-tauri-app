@@ -679,6 +679,13 @@ export function extractWordPressLeadingHeadingTitle(blocks) {
 // checkbox writes protected post meta the wp/v2 API cannot set.
 const WORDPRESS_NO_TOC_BLOCK = "<!-- wp:shortcode -->\n[no_toc]\n<!-- /wp:shortcode -->";
 
+// Core separator block, placed between the article text and the footnotes.
+const WORDPRESS_SEPARATOR_BLOCK = [
+  "<!-- wp:separator -->",
+  '<hr class="wp-block-separator has-alpha-channel-opacity"/>',
+  "<!-- /wp:separator -->",
+].join("\n");
+
 // WordPress post payload: the same block markup as the clipboard HTML export,
 // minus the clipboard charset prefix, plus the footnote bodies that the core
 // footnotes block stores in the `footnotes` post meta (ids match the
@@ -693,7 +700,12 @@ export function serializeEditorPreviewWordPress(blocks) {
   const hasInternalHeading1 = bodyBlocks.some(isHeading1Block);
 
   return {
-    content: [bodyHtml, footnotesHtml, hasInternalHeading1 ? "" : WORDPRESS_NO_TOC_BLOCK]
+    content: [
+      bodyHtml,
+      footnotesHtml ? WORDPRESS_SEPARATOR_BLOCK : "",
+      footnotesHtml,
+      hasInternalHeading1 ? "" : WORDPRESS_NO_TOC_BLOCK,
+    ]
       .filter(Boolean)
       .join("\n\n"),
     footnotes: footnoteState.items.map((item) => ({
