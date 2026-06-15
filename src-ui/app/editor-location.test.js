@@ -14,6 +14,7 @@ import { setActiveStorageLogin } from "./team-storage.js";
 import {
   prepareEditorLocationBeforeRender,
   queuePendingEditorLocationRestore,
+  replaceCurrentEditorLocation,
   skipNextEditorLocationRestore,
 } from "./editor-location.js";
 
@@ -140,6 +141,47 @@ test("queuePendingEditorLocationRestore ignores preview mode", () => {
   assert.equal(pendingTranslateAnchorRowId(), "");
 
   queueTranslateRowAnchor(null);
+  setActiveStorageLogin(null);
+});
+
+test("replaceCurrentEditorLocation saves a preview-mode anchor without stale scrollTop", () => {
+  const login = "editor-location-replace-preview";
+  const chapterId = "chapter-replace-preview";
+  setActiveStorageLogin(login);
+  queueTranslateRowAnchor(null);
+  saveStoredEditorLocation(chapterId, {
+    type: "row",
+    rowId: "old-row",
+    languageCode: "en",
+    offsetTop: 14,
+    scrollTop: 999,
+  }, login);
+
+  const replaced = replaceCurrentEditorLocation({
+    screen: "translate",
+    editorChapter: {
+      status: "ready",
+      chapterId,
+      mode: "preview",
+      rows: [{ rowId: "row-1" }],
+    },
+  }, {
+    type: "language-panel",
+    rowId: "row-1",
+    languageCode: "vi",
+    offsetTop: 72,
+    scrollTop: 123,
+  });
+
+  assert.equal(replaced, true);
+  assert.deepEqual(loadStoredEditorLocation(chapterId, login), {
+    type: "language-panel",
+    rowId: "row-1",
+    languageCode: "vi",
+    offsetTop: 72,
+  });
+
+  clearStoredEditorLocation(chapterId, login);
   setActiveStorageLogin(null);
 });
 

@@ -12,8 +12,11 @@ import {
 import {
   captureRenderScrollSnapshot,
   lockScreenScrollSnapshot,
+  queueTranslateRowAnchor,
   unlockScreenScrollSnapshot,
 } from "./scroll-state.js";
+import { buildEditorShowRowInContextChapterState } from "./editor-show-context.js";
+import { replaceCurrentEditorLocation } from "./editor-location.js";
 import { state } from "./state.js";
 
 let previewModeTranslateScrollSnapshot = null;
@@ -95,6 +98,57 @@ function focusPreviewSearchInput(selection = null, value = null) {
   });
 }
 
+function isHtmlElement(value) {
+  return typeof HTMLElement === "function" && value instanceof HTMLElement;
+}
+
+function previewBlockOffsetTop(previewBlock) {
+  if (!isHtmlElement(previewBlock)) {
+    return 0;
+  }
+
+  const scrollContainer = previewBlock.closest(".translate-main-scroll");
+  if (!isHtmlElement(scrollContainer)) {
+    return 0;
+  }
+
+  const containerRect = scrollContainer.getBoundingClientRect();
+  const blockRect = previewBlock.getBoundingClientRect();
+  const offsetTop = blockRect.top - containerRect.top;
+  return Number.isFinite(offsetTop) ? offsetTop : 0;
+}
+
+function previewBlockLanguageCode(previewBlock) {
+  if (!isHtmlElement(previewBlock)) {
+    return "";
+  }
+
+  const explicitCode = String(previewBlock.getAttribute("lang") ?? "").trim();
+  return explicitCode || String(selectedEditorPreviewLanguageCode(state.editorChapter) ?? "").trim();
+}
+
+export function buildTranslateAnchorForPreviewBlock(previewBlock, chapterState = state.editorChapter) {
+  if (!isHtmlElement(previewBlock)) {
+    return null;
+  }
+
+  const rowId = String(previewBlock.dataset.rowId ?? "").trim();
+  if (!rowId) {
+    return null;
+  }
+
+  const languageCode = previewBlockLanguageCode(previewBlock);
+  const languages = Array.isArray(chapterState?.languages) ? chapterState.languages : [];
+  const languageCodes = new Set(languages.map((language) => language?.code).filter(Boolean));
+  const canAnchorLanguage = Boolean(languageCode) && (languageCodes.size === 0 || languageCodes.has(languageCode));
+  return {
+    rowId,
+    type: canAnchorLanguage ? "language-panel" : "row",
+    languageCode: canAnchorLanguage ? languageCode : null,
+    offsetTop: previewBlockOffsetTop(previewBlock),
+  };
+}
+
 export function resetEditorPreviewModeScrollSnapshot() {
   previewModeTranslateScrollSnapshot = null;
 }
@@ -133,18 +187,25 @@ export function updateEditorPreviewLanguage(render, nextCode) {
   renderPreviewMode(render);
 }
 
-export function setEditorMode(render, nextMode) {
+export function setEditorMode(render, nextMode, options = {}) {
   const normalizedMode = normalizeEditorMode(nextMode);
   const previousMode = currentEditorMode();
   if (normalizedMode === previousMode) {
     return;
   }
 
+  const translateAnchor =
+    previousMode === EDITOR_MODE_PREVIEW
+    && normalizedMode === EDITOR_MODE_TRANSLATE
+    && options?.translateAnchor?.rowId
+      ? options.translateAnchor
+      : null;
+
   if (previousMode === EDITOR_MODE_TRANSLATE) {
     previewModeTranslateScrollSnapshot = captureRenderScrollSnapshot("translate");
   }
 
-  state.editorChapter = {
+  const nextEditorChapter = {
     ...state.editorChapter,
     mode: normalizedMode,
     previewLanguageCode:
@@ -157,6 +218,18 @@ export function setEditorMode(render, nextMode) {
         : normalizedPreviewSearchState(state.editorChapter.previewSearch),
   };
 
+  state.editorChapter = translateAnchor
+    ? buildEditorShowRowInContextChapterState(nextEditorChapter)
+    : nextEditorChapter;
+
+  if (translateAnchor) {
+    previewModeTranslateScrollSnapshot = null;
+    queueTranslateRowAnchor(translateAnchor);
+    replaceCurrentEditorLocation(state, translateAnchor);
+    render?.();
+    return;
+  }
+
   if (previousMode === EDITOR_MODE_PREVIEW && normalizedMode === EDITOR_MODE_TRANSLATE && previewModeTranslateScrollSnapshot) {
     lockScreenScrollSnapshot("translate", previewModeTranslateScrollSnapshot);
     render?.();
@@ -165,6 +238,20 @@ export function setEditorMode(render, nextMode) {
   }
 
   render?.();
+}
+
+export function jumpFromPreviewBlockToTranslateMode(render, previewBlock) {
+  if (currentEditorMode() !== EDITOR_MODE_PREVIEW) {
+    return false;
+  }
+
+  const translateAnchor = buildTranslateAnchorForPreviewBlock(previewBlock);
+  if (!translateAnchor?.rowId) {
+    return false;
+  }
+
+  setEditorMode(render, EDITOR_MODE_TRANSLATE, { translateAnchor });
+  return true;
 }
 
 export function updateEditorPreviewSearchQuery(render, nextValue) {
