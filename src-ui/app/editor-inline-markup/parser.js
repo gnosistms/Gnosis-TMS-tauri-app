@@ -15,19 +15,20 @@ const TAG_TO_STYLE = {
   ruby: "ruby",
 };
 
-const SUPPORTED_TAGS = new Set(["strong", "em", "u", "ruby", "rt", "a"]);
+const SUPPORTED_TAGS = new Set(["strong", "em", "u", "ruby", "rt", "a", "hr"]);
 const TAG_ALIASES = {
   b: "strong",
   i: "em",
 };
 
 
-function elementNode(tag, children = [], attributes = null) {
+function elementNode(tag, children = [], attributes = null, options = {}) {
   return {
     type: "element",
     tag,
     children,
     attributes,
+    isVoid: options.isVoid === true,
     openStart: -1,
     openEnd: -1,
     closeStart: -1,
@@ -119,7 +120,20 @@ function parseTagToken(rawTag) {
 
   const rawAttributes = match[3] ?? "";
   if (isClosing) {
+    if (normalizedName === "hr") {
+      return null;
+    }
     return rawAttributes.trim() ? null : { isClosing, tag: normalizedName };
+  }
+
+  if (normalizedName === "hr") {
+    return rawAttributes.trim()
+      ? null
+      : {
+        isClosing,
+        isVoid: true,
+        tag: normalizedName,
+      };
   }
 
   if (normalizedName === "a") {
@@ -183,12 +197,19 @@ function parseInlineMarkup(value) {
     }
 
     if (!token.isClosing) {
-      const nextNode = elementNode(token.tag, [], token.attributes ?? null);
+      const nextNode = elementNode(token.tag, [], token.attributes ?? null, {
+        isVoid: token.isVoid === true,
+      });
       nextNode.openStart = cursor;
       nextNode.openEnd = closingBracketIndex + 1;
       nextNode.rawStart = cursor;
       nextNode.visibleStart = visibleCursor;
       stack[stack.length - 1].children.push(nextNode);
+      if (token.isVoid === true) {
+        finalizeElement(nextNode, visibleCursor, closingBracketIndex + 1);
+        cursor = closingBracketIndex + 1;
+        continue;
+      }
       stack.push(nextNode);
       cursor = closingBracketIndex + 1;
       continue;

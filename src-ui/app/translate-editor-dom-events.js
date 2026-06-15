@@ -51,21 +51,37 @@ function previewEditableTextBlockFromTarget(target) {
   return block instanceof HTMLElement ? block : null;
 }
 
-function activeElementIsInEditorLanguageCluster(rowId, languageCode) {
+export function activeElementKeepsEditorControlOpen(
+  rowId,
+  languageCode,
+  doc = document,
+  chapterState = state.editorChapter,
+) {
   if (!rowId || !languageCode) {
     return false;
   }
 
-  const activeElement = document.activeElement;
-  if (!(activeElement instanceof Element)) {
+  const activeElement = doc?.activeElement;
+  if (!activeElement || typeof activeElement.closest !== "function") {
     return false;
   }
 
   const cluster = activeElement.closest("[data-editor-language-cluster]");
-  return (
-    cluster instanceof HTMLElement
-    && cluster.dataset.rowId === rowId
-    && cluster.dataset.languageCode === languageCode
+  if (
+    cluster?.dataset?.rowId === rowId
+    && cluster?.dataset?.languageCode === languageCode
+  ) {
+    return true;
+  }
+
+  const insertLinkInput = activeElement.closest("[data-editor-insert-link-url-input]");
+  const insertLinkModal = chapterState?.insertLinkModal;
+  return Boolean(
+    insertLinkInput
+    && insertLinkModal?.isOpen === true
+    && insertLinkModal.mode === "url"
+    && insertLinkModal.rowId === rowId
+    && insertLinkModal.languageCode === languageCode,
   );
 }
 
@@ -223,7 +239,7 @@ export function registerTranslateEditorDomEvents(app, render) {
   app.addEventListener("mousedown", (event) => {
     const button = closestEventTarget(
       event.target,
-      "[data-editor-row-text-style-button], [data-editor-inline-style-button], [data-editor-link-button], [data-editor-footnote-button], [data-editor-image-button], [data-editor-image-caption-button], [data-editor-image-upload-dropzone], [data-editor-image-upload-close-button], [data-editor-image-url-close-button], [data-editor-image-url-status-button], [data-editor-language-image-remove-button], [data-action^=\"switch-editor-sidebar-tab:\"], [data-action^=\"run-editor-ai-translate:\"], [data-action^=\"apply-editor-assistant-draft:\"], [data-action^=\"review-editor-text-now:\"], [data-action=\"review-editor-text-now\"], [data-action=\"apply-editor-ai-review\"], [data-preview-search-nav-button]",
+      "[data-editor-row-text-style-button], [data-editor-inline-style-button], [data-editor-separator-button], [data-editor-link-button], [data-editor-footnote-button], [data-editor-image-button], [data-editor-image-caption-button], [data-editor-image-upload-dropzone], [data-editor-image-upload-close-button], [data-editor-image-url-close-button], [data-editor-image-url-status-button], [data-editor-language-image-remove-button], [data-action^=\"switch-editor-sidebar-tab:\"], [data-action^=\"run-editor-ai-translate:\"], [data-action^=\"apply-editor-assistant-draft:\"], [data-action^=\"review-editor-text-now:\"], [data-action=\"review-editor-text-now\"], [data-action=\"apply-editor-ai-review\"], [data-preview-search-nav-button]",
     );
     if (!button) {
       return;
@@ -289,7 +305,7 @@ export function registerTranslateEditorDomEvents(app, render) {
 
     const editorControlButton = closestEventTarget(
       event.target,
-      "[data-editor-row-text-style-button], [data-editor-inline-style-button], [data-editor-link-button], [data-editor-footnote-button], [data-editor-image-button], [data-editor-image-caption-button], [data-editor-image-upload-close-button], [data-editor-image-url-close-button], [data-editor-image-url-status-button], [data-editor-language-image-remove-button], [data-action^=\"switch-editor-sidebar-tab:\"]",
+      "[data-editor-row-text-style-button], [data-editor-inline-style-button], [data-editor-separator-button], [data-editor-link-button], [data-editor-footnote-button], [data-editor-image-button], [data-editor-image-caption-button], [data-editor-image-upload-close-button], [data-editor-image-url-close-button], [data-editor-image-url-status-button], [data-editor-language-image-remove-button], [data-action^=\"switch-editor-sidebar-tab:\"]",
     );
     const imageOpenButton = closestEventTarget(
       event.target,
@@ -489,7 +505,7 @@ export function registerTranslateEditorDomEvents(app, render) {
           return;
         }
 
-        if (activeElementIsInEditorLanguageCluster(rowId, languageCode)) {
+        if (activeElementKeepsEditorControlOpen(rowId, languageCode)) {
           return;
         }
 
@@ -504,7 +520,7 @@ export function registerTranslateEditorDomEvents(app, render) {
         return;
       }
 
-      if (activeElementIsInEditorLanguageCluster(rowId, languageCode)) {
+      if (activeElementKeepsEditorControlOpen(rowId, languageCode)) {
         return;
       }
 

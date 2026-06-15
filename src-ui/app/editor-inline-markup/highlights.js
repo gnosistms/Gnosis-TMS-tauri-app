@@ -59,6 +59,7 @@ export function renderSanitizedInlineMarkupWithRanges(value, ranges = [], markRe
     parsed.nodes,
     normalizeVisibleHighlightRanges(ranges, parsed.visibleLength),
     markRenderer,
+    { separatorMode: "display" },
   );
 }
 
@@ -172,6 +173,7 @@ export function renderSanitizedInlineMarkupWithHighlights(value, query, language
       isActive: index === (Number.parseInt(options?.activeMatchIndex ?? "", 10) || 0),
     })),
     options.markRenderer,
+    { separatorMode: "display" },
   );
 
   return {

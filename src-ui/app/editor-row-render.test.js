@@ -134,6 +134,34 @@ test("renderTranslationContentRow keeps text style buttons clickable while style
   assert.doesNotMatch(html, /data-action="set-editor-row-text-style"[\s\S]*?disabled[\s\S]*?>/);
 });
 
+test("renderTranslationContentRow places separator button after image upload when image buttons show", () => {
+  const html = renderTranslationContentRow({
+    ...rowWithSection({
+      canEdit: true,
+      isTextEditorOpen: true,
+      showAddImageButtons: true,
+    }),
+    canEdit: true,
+  });
+
+  assert.match(html, /data-action="open-editor-image-upload"[\s\S]*data-action="insert-editor-separator"/);
+  assert.match(html, /data-editor-separator-button/);
+  assert.match(html, />---<\/span>/);
+});
+
+test("renderTranslationContentRow renders static separator markup as a line span", () => {
+  const html = renderTranslationContentRow({
+    ...rowWithSection({
+      canEdit: true,
+      text: "Alpha<hr>Beta",
+    }),
+    canEdit: true,
+  });
+
+  assert.match(html, /translation-language-panel__inline-separator/);
+  assert.doesNotMatch(html, /<hr>/);
+});
+
 test("renderTranslationContentRow keeps conflict text inside the language field stack", () => {
   const html = renderTranslationContentRow({
     ...rowWithSection({

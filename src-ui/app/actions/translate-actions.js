@@ -65,6 +65,7 @@ import {
   selectEditorExportOption,
   submitEditorExport,
   toggleEditorExportCategory,
+  insertEditorSeparator,
   closeWordPressExportSuccessModal,
   connectWordPress,
   disconnectWordPress,
@@ -132,6 +133,7 @@ const SESSION_WRITE_ACTIONS = new Set([
   "open-editor-derive-glossaries",
   "set-editor-row-text-style",
   "toggle-editor-inline-style",
+  "insert-editor-separator",
   "open-editor-insert-link",
   "submit-editor-insert-link",
   "open-editor-footnote",
@@ -519,6 +521,14 @@ export function createTranslateActions(render) {
         ? event.target.closest("[data-editor-inline-style-button]")
         : null;
       toggleEditorInlineStyle(render, button);
+      return true;
+    }
+
+    if (action === "insert-editor-separator") {
+      const button = event?.target instanceof Element
+        ? event.target.closest("[data-editor-separator-button]")
+        : null;
+      insertEditorSeparator(render, button);
       return true;
     }
 

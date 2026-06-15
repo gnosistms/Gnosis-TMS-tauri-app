@@ -288,6 +288,20 @@ function renderRowTextStyleButtons(row, language) {
     `);
   }
 
+  secondaryButtons.push(`
+    <button
+      class="translation-row-text-style-button translation-row-text-style-button--separator"
+      type="button"
+      data-action="insert-editor-separator"
+      data-editor-separator-button
+      data-row-id="${escapeHtml(row.id)}"
+      data-language-code="${escapeHtml(language.code)}"
+      ${tooltipAttributes("Insert separator", { side: "top" })}
+    >
+      <span class="translation-row-text-style-button__label">---</span>
+    </button>
+  `);
+
   return `
     <div class="translation-row-text-style-actions">
       <div class="translation-row-text-style-actions__group" role="radiogroup" aria-label="Text style">

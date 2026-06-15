@@ -493,6 +493,15 @@
   text-align: center;
 }
 
+.translate-preview__separator {
+  display: block;
+  width: 100%;
+  height: 0;
+  margin: 0.35em 0;
+  border: 0;
+  border-top: 1px solid rgba(164, 112, 41, 0.34);
+}
+
 .translate-preview__image-block {
   display: grid;
   gap: 10px;
@@ -1064,6 +1073,11 @@
   font-size: 11px;
 }
 
+.translation-row-text-style-button--separator .translation-row-text-style-button__label {
+  font-size: 11px;
+  text-transform: lowercase;
+}
+
 .translation-language-panel__field-highlight,
 .translation-language-panel__field,
 .history-item__content {
@@ -1421,6 +1435,15 @@
 .translation-language-panel__field-static-text {
   display: block;
   font-family: inherit;
+}
+
+.translation-language-panel__inline-separator,
+.history-inline-separator {
+  display: block;
+  width: 100%;
+  height: 0;
+  margin: 0.55em 0;
+  border-top: 1px solid rgba(164, 112, 41, 0.36);
 }
 
 .translation-language-panel__field-static--editable {

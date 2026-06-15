@@ -9,6 +9,7 @@ import {
   renderSanitizedInlineMarkupHtml,
   renderSanitizedInlineMarkupWithRanges,
   renderSanitizedInlineMarkupWithHighlights,
+  splitInlineMarkupTextBySeparators,
 } from "./editor-inline-markup.js";
 import { parseInlineMarkup } from "./editor-inline-markup/parser.js";
 import {
@@ -264,6 +265,44 @@ function renderPreviewHighlightedText(text, searchState, matchCounter, languageC
   return result.html;
 }
 
+function previewTextHasVisibleContent(text) {
+  return extractInlineMarkupVisibleText(
+    unescapeLiteralFootnoteMarkers(previewTextValue(text)),
+  ).trim().length > 0;
+}
+
+function previewTextParts(block) {
+  return splitInlineMarkupTextBySeparators(previewTextValue(block?.text))
+    .map((part) => part.kind === "separator"
+      ? { kind: "separator" }
+      : {
+        kind: "text",
+        block: {
+          ...block,
+          text: part.text,
+        },
+      });
+}
+
+function footnoteAppendPartIndex(parts, footnotes) {
+  let lastTextIndex = -1;
+  let lastVisibleTextIndex = -1;
+  parts.forEach((part, index) => {
+    if (part.kind !== "text") {
+      return;
+    }
+    lastTextIndex = index;
+    if (previewTextHasVisibleContent(part.block?.text)) {
+      lastVisibleTextIndex = index;
+    }
+  });
+
+  if (lastVisibleTextIndex >= 0) {
+    return lastVisibleTextIndex;
+  }
+  return normalizeEditorFootnotes(footnotes).length > 0 ? lastTextIndex : -1;
+}
+
 function previewTextTagForStyle(textStyle) {
   switch (normalizeEditorRowTextStyle(textStyle)) {
     case EDITOR_ROW_TEXT_STYLE_HEADING1:
@@ -422,7 +461,7 @@ function renderTextWithWordPressFootnoteRefs(block, footnoteState, options = {})
   }
 
   const footnoteByMarker = new Map(footnotes.map((entry) => [entry.marker, entry]));
-  const usedMarkers = new Set();
+  const usedMarkers = options.usedMarkers instanceof Set ? options.usedMarkers : new Set();
   const markers = parseUnescapedFootnoteMarkers(visibleText)
     .filter((marker) => !isInsideAnyRange(
       { start: marker.index, end: marker.endIndex },
@@ -463,11 +502,13 @@ function renderTextWithWordPressFootnoteRefs(block, footnoteState, options = {})
     }
   }
 
-  for (const entry of [...footnotes].sort((left, right) => left.marker - right.marker)) {
-    if (usedMarkers.has(entry.marker)) {
-      continue;
+  if (options.appendRemaining !== false) {
+    for (const entry of [...footnotes].sort((left, right) => left.marker - right.marker)) {
+      if (usedMarkers.has(entry.marker)) {
+        continue;
+      }
+      appendedRefs.push(appendReference(entry));
     }
-    appendedRefs.push(appendReference(entry));
   }
 
   const html = options.serialize
@@ -475,6 +516,10 @@ function renderTextWithWordPressFootnoteRefs(block, footnoteState, options = {})
     : renderSanitizedInlineMarkupWithRanges(renderText, ranges).replaceAll("\n", "<br>");
   const separator = html && appendedRefs.length > 0 && !/\s$/.test(visibleText) ? " " : "";
   return `${html}${separator}${appendedRefs.join(" ")}`;
+}
+
+function renderPreviewSeparatorBlock(block) {
+  return `<hr class="translate-preview__separator" data-preview-block="separator" data-row-id="${escapeHtml(block?.rowId ?? "")}" aria-hidden="true">`;
 }
 
 function renderWordPressFootnotesList(footnoteState, renderSegment, options = {}) {
@@ -521,12 +566,32 @@ export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
 
       const tagName = previewTextTagForStyle(block.textStyle);
       const variant = previewTextVariantForStyle(block.textStyle);
-      const textHtml = renderTextWithWordPressFootnoteRefs(
-        block,
-        footnoteState,
-        { searchState, matchCounter },
-      );
-      return `<${tagName} class="translate-preview__block translate-preview__block--${variant}" data-preview-block="${escapeHtml(variant)}" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}">${textHtml}</${tagName}>`;
+      const parts = previewTextParts(block);
+      const usedMarkers = new Set();
+      const appendPartIndex = footnoteAppendPartIndex(parts, block.footnotes);
+      return parts
+        .map((part, index) => {
+          if (part.kind === "separator") {
+            return renderPreviewSeparatorBlock(block);
+          }
+
+          const textHtml = renderTextWithWordPressFootnoteRefs(
+            part.block,
+            footnoteState,
+            {
+              searchState,
+              matchCounter,
+              usedMarkers,
+              appendRemaining: index === appendPartIndex,
+            },
+          );
+          if (!textHtml.trim()) {
+            return "";
+          }
+          return `<${tagName} class="translate-preview__block translate-preview__block--${variant}" data-preview-block="${escapeHtml(variant)}" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}">${textHtml}</${tagName}>`;
+        })
+        .filter(Boolean)
+        .join("");
     })
     .filter(Boolean)
     .join("");
@@ -575,12 +640,17 @@ function serializePreviewImageHtml(block) {
   return wrapSerializedWordPressBlock("image", figureHtml, { align: "center" });
 }
 
-function serializePreviewTextBlockHtml(block, footnoteState) {
-  const textHtml = renderTextWithWordPressFootnoteRefs(
-    block,
-    footnoteState,
-    { serialize: true },
-  );
+function serializePreviewTextBlockHtml(block, footnoteState, options = {}) {
+  const textHtml = typeof options.preRenderedTextHtml === "string"
+    ? options.preRenderedTextHtml
+    : renderTextWithWordPressFootnoteRefs(
+      block,
+      footnoteState,
+      {
+        ...options,
+        serialize: true,
+      },
+    );
   // Each branch mirrors the exact markup the matching core block's `save`
   // generates (verified by editor-preview-wordpress-validation.test.js), so
   // the Gutenberg editor accepts the post without rewriting or recovery.
@@ -626,13 +696,41 @@ function serializePreviewTextBlockHtml(block, footnoteState) {
   };
 }
 
-function serializePreviewTextBlock(block, footnoteState) {
-  const serializedBlock = serializePreviewTextBlockHtml(block, footnoteState);
+function serializePreviewTextBlock(block, footnoteState, options = {}) {
+  const serializedBlock = serializePreviewTextBlockHtml(block, footnoteState, options);
   return wrapSerializedWordPressBlock(
     serializedBlock.blockName,
     serializedBlock.html,
     serializedBlock.attributes,
   );
+}
+
+function serializePreviewTextBlockParts(block, footnoteState) {
+  const parts = previewTextParts(block);
+  const usedMarkers = new Set();
+  const appendPartIndex = footnoteAppendPartIndex(parts, block.footnotes);
+  return parts
+    .map((part, index) => {
+      if (part.kind === "separator") {
+        return WORDPRESS_SEPARATOR_BLOCK;
+      }
+      if (!previewTextHasVisibleContent(part.block?.text) && index !== appendPartIndex) {
+        return "";
+      }
+      const textHtml = renderTextWithWordPressFootnoteRefs(part.block, footnoteState, {
+        serialize: true,
+        usedMarkers,
+        appendRemaining: index === appendPartIndex,
+      });
+      if (!textHtml.trim()) {
+        return "";
+      }
+      return serializePreviewTextBlock(part.block, footnoteState, {
+        preRenderedTextHtml: textHtml,
+      });
+    })
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function serializeEditorPreviewBlocks(blocks) {
@@ -643,7 +741,7 @@ function serializeEditorPreviewBlocks(blocks) {
         return serializePreviewImageHtml(block);
       }
 
-      return serializePreviewTextBlock(block, footnoteState);
+      return serializePreviewTextBlockParts(block, footnoteState);
     })
     .filter(Boolean)
     .join("\n\n");
@@ -721,7 +819,7 @@ export function serializeEditorPreviewWordPress(blocks) {
   };
 }
 
-function plainTextWithFootnoteRefs(block, footnoteItems) {
+function plainTextWithFootnoteRefs(block, footnoteItems, options = {}) {
   const text = previewTextValue(block?.text);
   const footnotes = normalizeEditorFootnotes(block?.footnotes);
   const parsed = parseInlineMarkup(text);
@@ -732,7 +830,7 @@ function plainTextWithFootnoteRefs(block, footnoteItems) {
 
   const escapedLiteralMarkerRanges = collectEscapedLiteralFootnoteMarkerRanges(parsed.visibleText);
   const footnoteByMarker = new Map(footnotes.map((entry) => [entry.marker, entry]));
-  const usedMarkers = new Set();
+  const usedMarkers = options.usedMarkers instanceof Set ? options.usedMarkers : new Set();
   const markers = parseUnescapedFootnoteMarkers(visibleText)
     .filter((marker) => !isInsideAnyRange(
       { start: marker.index, end: marker.endIndex },
@@ -761,9 +859,11 @@ function plainTextWithFootnoteRefs(block, footnoteItems) {
   }
   result += visibleText.slice(cursor);
 
-  for (const entry of [...footnotes].sort((left, right) => left.marker - right.marker)) {
-    if (!usedMarkers.has(entry.marker)) {
-      appendedRefs.push(appendReference(entry));
+  if (options.appendRemaining !== false) {
+    for (const entry of [...footnotes].sort((left, right) => left.marker - right.marker)) {
+      if (!usedMarkers.has(entry.marker)) {
+        appendedRefs.push(appendReference(entry));
+      }
     }
   }
 
@@ -774,14 +874,25 @@ function plainTextWithFootnoteRefs(block, footnoteItems) {
 export function serializeEditorPreviewPlainText(blocks) {
   const footnoteItems = [];
   const sections = (Array.isArray(blocks) ? blocks : [])
-    .map((block) => {
+    .flatMap((block) => {
       if (block?.kind === "image") {
         return extractInlineMarkupVisibleText(previewTextValue(block.caption)).trim();
       }
       if (block?.kind !== "text") {
         return "";
       }
-      return plainTextWithFootnoteRefs(block, footnoteItems).trim();
+      const parts = previewTextParts(block);
+      const usedMarkers = new Set();
+      const appendPartIndex = footnoteAppendPartIndex(parts, block.footnotes);
+      return parts.map((part, index) => {
+        if (part.kind === "separator") {
+          return "---";
+        }
+        return plainTextWithFootnoteRefs(part.block, footnoteItems, {
+          usedMarkers,
+          appendRemaining: index === appendPartIndex,
+        }).trim();
+      });
     })
     .filter(Boolean);
 

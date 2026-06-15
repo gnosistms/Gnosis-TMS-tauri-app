@@ -10,6 +10,7 @@ export {
   extractInlineMarkupHistoryText,
   renderSanitizedInlineMarkupHistoryHtml,
   serializeInlineMarkupRubyNotation,
+  splitInlineMarkupTextBySeparators,
 } from "./editor-inline-markup/serialize.js";
 export {
   mapInlineMarkupBaseRangesToVisibleRanges,

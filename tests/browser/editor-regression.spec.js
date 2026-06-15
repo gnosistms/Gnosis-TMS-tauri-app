@@ -4606,6 +4606,36 @@ test.describe("editor regressions", () => {
     expect(displayInnerHtml).not.toContain("&lt;");
   });
 
+  test("separator button inserts hr markup and renders a horizontal line after blur", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 40 }, { mockTauri: true });
+    const telemetrySaveButton = page.getByRole("button", { name: "Save" });
+    if (await telemetrySaveButton.count()) {
+      await telemetrySaveButton.click();
+      await expect(page.locator(".modal-backdrop")).toHaveCount(0);
+    }
+
+    const rowId = "fixture-row-0001";
+    const languageCode = "vi";
+    const targetField = await activateMainEditorField(page, rowId, languageCode);
+    const separatorButton = page.locator(
+      `[data-editor-separator-button][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    );
+
+    await targetField.fill("alpha beta gamma");
+    await setEditorSelectionRange(page, rowId, languageCode, "alpha ".length, "alpha beta".length);
+    await clickLocatorCenter(page, separatorButton);
+    await expect(targetField).toBeVisible();
+    await expect(targetField).toHaveValue("alpha <hr> gamma");
+
+    await page.locator("[data-editor-search-input]").click();
+    const displayField = page.locator(
+      `[data-editor-display-field][data-row-id="${rowId}"][data-language-code="${languageCode}"] [data-editor-display-text]`,
+    );
+    await expect(displayField.locator(".translation-language-panel__inline-separator")).toHaveCount(1);
+    await expect(displayField).toContainText("alpha");
+    await expect(displayField).toContainText("gamma");
+  });
+
   test("inline formatting buttons apply to the active footnote textarea instead of the main field", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 40 }, { mockTauri: true });
 

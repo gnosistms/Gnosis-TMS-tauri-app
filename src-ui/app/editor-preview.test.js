@@ -201,6 +201,30 @@ test("preview rendering and serialization preserve supported inline markup", () 
   assert.match(serialized, /<ruby>漢字<rt>よみ<\/rt><\/ruby>/);
 });
 
+test("preview rendering splits separator markup into a horizontal rule block", () => {
+  const blocks = buildEditorPreviewDocument([{
+    rowId: "row-1",
+    lifecycleState: "active",
+    textStyle: "paragraph",
+    fields: { vi: "Alpha<hr>Beta" },
+    footnotes: {},
+    imageCaptions: {},
+    images: {},
+  }], "vi");
+
+  const rendered = renderEditorPreviewDocumentHtml(blocks);
+  const serialized = serializeEditorPreviewWordPress(blocks);
+  const plainText = serializeEditorPreviewPlainText(blocks);
+
+  assert.match(rendered.html, /<p class="translate-preview__block translate-preview__block--paragraph"[^>]*>Alpha<\/p><hr class="translate-preview__separator"/);
+  assert.match(rendered.html, /<hr class="translate-preview__separator"[\s\S]*<p class="translate-preview__block translate-preview__block--paragraph"[^>]*>Beta<\/p>/);
+  assert.match(
+    serialized.content,
+    /<!-- wp:paragraph -->\n<p>Alpha<\/p>\n<!-- \/wp:paragraph -->\n\n<!-- wp:separator -->\n<hr class="wp-block-separator has-alpha-channel-opacity"\/>\n<!-- \/wp:separator -->\n\n<!-- wp:paragraph -->\n<p>Beta<\/p>/,
+  );
+  assert.equal(plainText, "Alpha\n\n---\n\nBeta");
+});
+
 test("preview footnote refs preserve inline markup when markers are inside tags", () => {
   const blocks = buildEditorPreviewDocument([{
     rowId: "row-1",

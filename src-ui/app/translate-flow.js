@@ -67,6 +67,7 @@ import {
   openEditorDeriveGlossariesModal as openEditorDeriveGlossariesModalFlow,
 } from "./editor-derive-glossaries-flow.js";
 import { toggleEditorInlineStyle as toggleEditorInlineStyleFlow } from "./editor-inline-markup-flow.js";
+import { insertEditorSeparator as insertEditorSeparatorFlow } from "./editor-separator-flow.js";
 import {
   closeEditorInsertLinkModal as closeEditorInsertLinkModalFlow,
   openEditorInsertLink as openEditorInsertLinkFlow,
@@ -890,6 +891,15 @@ export function updateEditorRowFieldValue(rowId, languageCode, nextValue, conten
 
 export function toggleEditorInlineStyle(render, button) {
   toggleEditorInlineStyleFlow(render, button, {
+    updateEditorRowFieldValueForContentKind: updateEditorRowFieldValue,
+    syncEditorRowTextareaHeight,
+    syncEditorVirtualizationRowLayout,
+    syncEditorGlossaryHighlightRowDom,
+  });
+}
+
+export function insertEditorSeparator(render, button) {
+  insertEditorSeparatorFlow(render, button, {
     updateEditorRowFieldValueForContentKind: updateEditorRowFieldValue,
     syncEditorRowTextareaHeight,
     syncEditorVirtualizationRowLayout,

@@ -20,6 +20,16 @@ function serializeElementAttributes(node) {
   return href ? ` href="${escapeHtml(href)}"` : "";
 }
 
+function renderInlineSeparatorHtml(className = "translation-language-panel__inline-separator") {
+  return `<span class="${className}" role="separator" aria-orientation="horizontal"></span>`;
+}
+
+function serializeSeparatorNode(options = {}) {
+  return options.separatorMode === "display"
+    ? renderInlineSeparatorHtml(options.separatorClassName)
+    : "<hr>";
+}
+
 function flattenNodesToBaseText(nodes, insideRubyAnnotation = false) {
   return (Array.isArray(nodes) ? nodes : [])
     .map((node) => {
@@ -50,6 +60,10 @@ function flattenNodesToHistoryText(nodes) {
         return node.text;
       }
 
+      if (node.tag === "hr") {
+        return " --- ";
+      }
+
       if (node.tag === "ruby") {
         const { baseChildren, annotationChildren } = splitRubyNodeChildren(node.children);
         const baseText = flattenNodesToHistoryText(baseChildren);
@@ -76,6 +90,10 @@ function renderNodesForHistoryHtml(nodes) {
 
       if (node.type === "text") {
         return escapeHtml(node.text);
+      }
+
+      if (node.tag === "hr") {
+        return renderInlineSeparatorHtml("history-inline-separator");
       }
 
       if (node.tag === "ruby") {
@@ -110,6 +128,10 @@ function serializeNodesWithAllowedTags(source, nodes, allowedTags) {
         return escapeHtml(node.text);
       }
 
+      if (node.tag === "hr") {
+        return allowedTags.has(node.tag) ? "<hr>" : escapeHtml("<hr>");
+      }
+
       if (allowedTags.has(node.tag)) {
         return `<${node.tag}${serializeElementAttributes(node)}>${serializeNodesWithAllowedTags(source, node.children, allowedTags)}</${node.tag}>`;
       }
@@ -138,6 +160,10 @@ function serializeNodesForRubyNotation(nodes, insideRubyAnnotation = false) {
 
       if (node.type === "text") {
         return node.text;
+      }
+
+      if (node.tag === "hr") {
+        return "";
       }
 
       if (node.tag === "ruby") {
@@ -246,7 +272,78 @@ function serializeTextWithHighlights(text, visibleStart, highlightRanges, markRe
   return html;
 }
 
-function serializeNodes(nodes, highlightRanges = [], markRenderer = null) {
+function splitNodesOnInlineSeparators(nodes) {
+  const parts = [];
+  let currentNodes = [];
+
+  function pushTextPart() {
+    parts.push({
+      kind: "text",
+      nodes: currentNodes,
+    });
+    currentNodes = [];
+  }
+
+  function appendNodes(nextNodes) {
+    for (const node of Array.isArray(nextNodes) ? nextNodes : []) {
+      if (!node) {
+        continue;
+      }
+
+      if (node.type === "element" && node.tag === "hr") {
+        pushTextPart();
+        parts.push({ kind: "separator" });
+        continue;
+      }
+
+      if (node.type !== "element") {
+        currentNodes.push(node);
+        continue;
+      }
+
+      const childParts = splitNodesOnInlineSeparators(node.children);
+      if (childParts.length === 1 && childParts[0]?.kind === "text") {
+        currentNodes.push({
+          ...node,
+          children: childParts[0].nodes,
+        });
+        continue;
+      }
+
+      for (const childPart of childParts) {
+        if (childPart.kind === "separator") {
+          pushTextPart();
+          parts.push({ kind: "separator" });
+          continue;
+        }
+
+        currentNodes.push({
+          ...node,
+          children: childPart.nodes,
+        });
+      }
+    }
+  }
+
+  appendNodes(nodes);
+  pushTextPart();
+
+  const compactParts = [];
+  for (const part of parts) {
+    if (
+      part.kind === "text"
+      && compactParts.length > 0
+      && compactParts[compactParts.length - 1]?.kind === "text"
+    ) {
+      compactParts[compactParts.length - 1].nodes.push(...part.nodes);
+      continue;
+    }
+    compactParts.push(part);
+  }
+  return compactParts;
+}
+
+function serializeNodes(nodes, highlightRanges = [], markRenderer = null, options = {}) {
   return (Array.isArray(nodes) ? nodes : [])
     .map((node) => {
       if (!node) {
@@ -257,9 +354,24 @@ function serializeNodes(nodes, highlightRanges = [], markRenderer = null) {
         return serializeTextWithHighlights(node.text, node.visibleStart, highlightRanges, markRenderer);
       }
 
-      return `<${node.tag}${serializeElementAttributes(node)}>${serializeNodes(node.children, highlightRanges, markRenderer)}</${node.tag}>`;
+      if (node.tag === "hr") {
+        return serializeSeparatorNode(options);
+      }
+
+      return `<${node.tag}${serializeElementAttributes(node)}>${serializeNodes(node.children, highlightRanges, markRenderer, options)}</${node.tag}>`;
     })
     .join("");
+}
+
+export function splitInlineMarkupTextBySeparators(value) {
+  const parsed = parseInlineMarkup(value);
+  return splitNodesOnInlineSeparators(parsed.nodes)
+    .map((part) => part.kind === "separator"
+      ? { kind: "separator" }
+      : {
+        kind: "text",
+        text: serializeNodes(part.nodes),
+      });
 }
 
 export function extractInlineMarkupVisibleText(value) {
@@ -272,7 +384,7 @@ export function extractInlineMarkupBaseText(value) {
 
 export function renderSanitizedInlineMarkupHtml(value) {
   const parsed = parseInlineMarkup(value);
-  return serializeNodes(parsed.nodes);
+  return serializeNodes(parsed.nodes, [], null, { separatorMode: "display" });
 }
 
 export function renderSanitizedInlineMarkupHtmlWithAllowedTags(value, allowedTags = SUPPORTED_TAGS) {
@@ -298,6 +410,7 @@ export function serializeInlineMarkupRubyNotation(value) {
 export {
   escapeHtml,
   flattenNodesToBaseText,
+  renderInlineSeparatorHtml,
   serializeNodesWithAllowedTags,
   serializeNodesForRubyNotation,
   serializeNodes,

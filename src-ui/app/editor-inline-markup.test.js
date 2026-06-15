@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  extractInlineMarkupBaseText,
   buildInlineMarkupSearchHighlightMarkup,
   describeInlineMarkupSelection,
   extractInlineMarkupHistoryText,
@@ -51,6 +52,21 @@ test("sanitized inline markup normalizes aliases and escapes unsupported tags", 
     renderSanitizedInlineMarkupHtml("<script>alert(1)</script>"),
     "&lt;script&gt;alert(1)&lt;/script&gt;",
   );
+});
+
+test("separator markup renders as a horizontal line without visible/base text", () => {
+  assert.equal(
+    renderSanitizedInlineMarkupHtml("Alpha<hr>Beta"),
+    'Alpha<span class="translation-language-panel__inline-separator" role="separator" aria-orientation="horizontal"></span>Beta',
+  );
+  assert.equal(extractInlineMarkupVisibleText("Alpha<hr>Beta"), "AlphaBeta");
+  assert.equal(extractInlineMarkupBaseText("Alpha<hr>Beta"), "AlphaBeta");
+});
+
+test("separator markup rejects unsupported hr variants as escaped text", () => {
+  assert.equal(renderSanitizedInlineMarkupHtml("<hr/>"), "&lt;hr/&gt;");
+  assert.equal(renderSanitizedInlineMarkupHtml("<hr />"), "&lt;hr /&gt;");
+  assert.equal(renderSanitizedInlineMarkupHtml("</hr>"), "&lt;/hr&gt;");
 });
 
 test("extractInlineMarkupVisibleText omits supported tag syntax and keeps ruby text visible", () => {

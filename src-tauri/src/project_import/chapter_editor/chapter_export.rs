@@ -40,6 +40,7 @@ enum ExportImage {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum ExportBlock {
     Text { text_style: String, text: String },
+    Separator,
     Image { image: ExportImage, caption: String },
     Footnote { number: usize, text: String },
 }
@@ -177,10 +178,7 @@ fn build_export_document(
             .map(|value| value.plain_text.trim())
             .filter(|text| !text.is_empty())
         {
-            blocks.push(ExportBlock::Text {
-                text_style: row_text_style(row),
-                text: text.to_string(),
-            });
+            push_text_blocks_with_separators(&mut blocks, row_text_style(row), text);
         }
 
         if let Some(image) = field
@@ -226,6 +224,30 @@ fn build_export_document(
         language_code: export_language_code,
         blocks,
     })
+}
+
+fn push_text_blocks_with_separators(blocks: &mut Vec<ExportBlock>, text_style: String, text: &str) {
+    let mut cursor = 0usize;
+    while let Some(offset) = text[cursor..].find("<hr>") {
+        let start = cursor + offset;
+        let segment = &text[cursor..start];
+        if !segment.trim().is_empty() {
+            blocks.push(ExportBlock::Text {
+                text_style: text_style.clone(),
+                text: segment.trim().to_string(),
+            });
+        }
+        blocks.push(ExportBlock::Separator);
+        cursor = start + "<hr>".len();
+    }
+
+    let tail = &text[cursor..];
+    if !tail.trim().is_empty() {
+        blocks.push(ExportBlock::Text {
+            text_style,
+            text: tail.trim().to_string(),
+        });
+    }
 }
 
 fn export_image(
@@ -356,6 +378,11 @@ fn sanitize_inline_html(value: &str) -> String {
     let mut open_links = 0usize;
     while cursor < value.len() {
         let remaining = &value[cursor..];
+        if remaining.starts_with("<hr>") {
+            output.push_str("<hr>");
+            cursor += "<hr>".len();
+            continue;
+        }
         let tag = allowed_inline_tag(remaining);
         if let Some((source, replacement)) = tag {
             output.push_str(replacement);
@@ -424,6 +451,10 @@ fn inline_visible_text(value: &str) -> String {
     let mut cursor = 0usize;
     while cursor < value.len() {
         let remaining = &value[cursor..];
+        if remaining.starts_with("<hr>") {
+            cursor += "<hr>".len();
+            continue;
+        }
         if let Some((source, _)) = allowed_inline_tag(remaining) {
             cursor += source.len();
             continue;
@@ -470,6 +501,9 @@ fn render_html_document(document: &ExportDocument) -> Result<String, String> {
                         let _ = writeln!(body, "<p>{text}</p>");
                     }
                 }
+            }
+            ExportBlock::Separator => {
+                let _ = writeln!(body, "<hr>");
             }
             ExportBlock::Footnote { number, text } => {
                 let _ = writeln!(
@@ -591,6 +625,11 @@ fn txt_inline_text(value: &str) -> String {
     let mut open_href: Option<String> = None;
     while cursor < value.len() {
         let remaining = &value[cursor..];
+        if remaining.starts_with("<hr>") {
+            output.push_str("\n---\n");
+            cursor += "<hr>".len();
+            continue;
+        }
         if let Some((source, _)) = allowed_inline_tag(remaining) {
             cursor += source.len();
             continue;
@@ -635,6 +674,9 @@ fn render_txt_document(document: &ExportDocument) -> String {
                     _ => text,
                 };
                 parts.push(rendered);
+            }
+            ExportBlock::Separator => {
+                parts.push("---".to_string());
             }
             ExportBlock::Footnote { number, text } => {
                 let text = txt_inline_text(text).trim().to_string();
@@ -694,6 +736,9 @@ fn render_md_document(document: &ExportDocument) -> String {
                 };
                 fragments.push(rendered);
                 last_text_fragment = Some(fragments.len() - 1);
+            }
+            ExportBlock::Separator => {
+                fragments.push("---".to_string());
             }
             ExportBlock::Image { image, caption } => {
                 fragments.push(format!(
@@ -821,6 +866,14 @@ fn inline_segments(value: &str) -> Vec<InlineSegment> {
     let mut cursor = 0usize;
     while cursor < value.len() {
         let remaining = &value[cursor..];
+        if remaining.starts_with("<hr>") {
+            output.push(InlineSegment {
+                text: "\n---\n".to_string(),
+                style: style.clone(),
+            });
+            cursor += "<hr>".len();
+            continue;
+        }
         if let Some((source, replacement)) = allowed_inline_tag(remaining) {
             match replacement {
                 "<strong>" => style.bold = true,
@@ -900,6 +953,9 @@ fn render_docx_document(document: &ExportDocument) -> Result<Vec<u8>, String> {
         match block {
             ExportBlock::Text { text_style, text } => {
                 body.push_str(&docx_text_paragraph_xml(Some(text_style), text, false));
+            }
+            ExportBlock::Separator => {
+                body.push_str(&docx_separator_paragraph_xml());
             }
             ExportBlock::Footnote { number, text } => {
                 body.push_str(&docx_text_paragraph_xml(
@@ -1006,6 +1062,10 @@ fn docx_paragraph_runs_xml(text_style: Option<&str>, runs: &str) -> String {
         format!("<w:pPr>{properties}</w:pPr>")
     };
     format!("<w:p>{ppr}{runs}</w:p>")
+}
+
+fn docx_separator_paragraph_xml() -> String {
+    r#"<w:p><w:pPr><w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="A47029"/></w:pBdr><w:spacing w:before="120" w:after="120"/></w:pPr></w:p>"#.to_string()
 }
 
 fn docx_runs_xml(value: &str, forced_italic: bool) -> String {
@@ -1439,6 +1499,9 @@ fn render_rtf_document(document: &ExportDocument) -> String {
             ExportBlock::Text { text_style, text } => {
                 body.push_str(&rtf_text_paragraph(Some(text_style), text, false));
             }
+            ExportBlock::Separator => {
+                body.push_str(&rtf_separator_paragraph());
+            }
             ExportBlock::Footnote { number, text } => {
                 body.push_str(&rtf_text_paragraph(
                     None,
@@ -1488,6 +1551,10 @@ fn rtf_text_paragraph(text_style: Option<&str>, text: &str, forced_italic: bool)
         })
         .collect::<String>();
     format!("\\pard\\plain\\f0\\fs24\\sa200{properties} {runs}\\par\n")
+}
+
+fn rtf_separator_paragraph() -> String {
+    "\\pard\\plain\\f0\\fs24\\sa200\\brdrb\\brdrs\\brdrw10\\brsp20 \\par\n".to_string()
 }
 
 fn rtf_run(segment: &InlineSegment) -> String {
@@ -1644,14 +1711,18 @@ fn xlsx_cell_value(field: Option<&StoredFieldValue>) -> String {
     let Some(field) = field else {
         return String::new();
     };
-    let text = field.plain_text.trim();
+    let text = xlsx_separator_text_fallback(field.plain_text.trim());
     let footnote = normalize_editor_footnote_value(&field.footnote);
     let footnote = footnote.trim();
     if footnote.is_empty() {
-        text.to_string()
+        text
     } else {
         format!("{text} *** {footnote}")
     }
+}
+
+fn xlsx_separator_text_fallback(value: &str) -> String {
+    value.split("<hr>").collect::<Vec<_>>().join("\n---\n")
 }
 
 fn xlsx_row_xml(row_number: usize, cells: &[String]) -> String {
@@ -1957,6 +2028,44 @@ mod tests {
     }
 
     #[test]
+    fn exports_render_separator_blocks() {
+        let doc = document(vec![
+            ExportBlock::Text {
+                text_style: "paragraph".to_string(),
+                text: "Before".to_string(),
+            },
+            ExportBlock::Separator,
+            ExportBlock::Text {
+                text_style: "paragraph".to_string(),
+                text: "After".to_string(),
+            },
+        ]);
+
+        let html = render_html_document(&doc).expect("html should render");
+        assert!(html.contains("<p>Before</p>\n<hr>\n<p>After</p>"));
+
+        let txt = render_txt_document(&doc);
+        assert!(txt.contains("Before\n\n---\n\nAfter"));
+
+        let md = render_md_document(&doc);
+        assert!(md.contains("Before\n\n---\n\nAfter"));
+
+        let rtf = render_rtf_document(&doc);
+        assert!(rtf.contains("\\brdrb\\brdrs\\brdrw10"));
+
+        let bytes = render_docx_document(&doc).expect("docx should render");
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).expect("docx should be zip");
+        let mut xml = String::new();
+        archive
+            .by_name("word/document.xml")
+            .expect("document exists")
+            .read_to_string(&mut xml)
+            .expect("document xml reads");
+        assert!(xml.contains("<w:pBdr>"));
+        assert!(xml.contains(r#"<w:bottom w:val="single""#));
+    }
+
+    #[test]
     fn sanitize_inline_html_preserves_valid_links_and_escapes_unsafe_ones() {
         assert_eq!(
             sanitize_inline_html("see <a href=\"https://example.com/page\">the page</a>"),
@@ -2066,6 +2175,15 @@ mod tests {
             xlsx_cell_value(Some(&field)),
             "see <a href=\"https://example.com\">the page</a>"
         );
+    }
+
+    #[test]
+    fn xlsx_cells_render_separator_token_as_text_fallback() {
+        let field = StoredFieldValue {
+            plain_text: "Before<hr>After".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(xlsx_cell_value(Some(&field)), "Before\n---\nAfter");
     }
 
     #[test]
@@ -2304,6 +2422,50 @@ mod tests {
         assert!(!docx_text.contains("Deleted"));
         assert!(!docx_text.contains("Deleted note"));
         assert!(!docx_text.contains("Deleted caption"));
+    }
+
+    #[test]
+    fn block_builder_splits_text_rows_on_separator_tokens() {
+        let active = row("row-1", "a", "Before<hr>After", "paragraph");
+        let chapter = StoredChapterFile {
+            chapter_id: "chapter-1".to_string(),
+            title: "Chapter".to_string(),
+            lifecycle: active_lifecycle_state(),
+            source_files: Vec::new(),
+            languages: vec![ChapterLanguage {
+                code: "en".to_string(),
+                name: "English".to_string(),
+                role: "target".to_string(),
+                base_code: None,
+            }],
+            settings: None,
+            source_word_count: None,
+        };
+
+        let document = build_export_document(
+            Path::new("/repo"),
+            &chapter,
+            &[active],
+            "en",
+            Some("org/repo"),
+            "abc123",
+        )
+        .expect("document should build");
+
+        assert_eq!(
+            document.blocks,
+            vec![
+                ExportBlock::Text {
+                    text_style: "paragraph".to_string(),
+                    text: "Before".to_string(),
+                },
+                ExportBlock::Separator,
+                ExportBlock::Text {
+                    text_style: "paragraph".to_string(),
+                    text: "After".to_string(),
+                },
+            ]
+        );
     }
 
     fn export_language(code: &str, role: &str, base_code: Option<&str>) -> ChapterLanguage {
