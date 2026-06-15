@@ -159,6 +159,39 @@ export function skipNextEditorLocationRestore(chapterId = null) {
       : "*";
 }
 
+export function replaceCurrentEditorLocation(appState, snapshot) {
+  const chapterId = loadedEditorChapterId(appState);
+  const rowId = typeof snapshot?.rowId === "string" ? snapshot.rowId.trim() : "";
+  if (!chapterId || !rowId) {
+    return false;
+  }
+
+  const type =
+    snapshot.type === "field"
+    || snapshot.type === "row"
+    || snapshot.type === "deleted-group"
+    || snapshot.type === "language-panel"
+    || snapshot.type === "language-toggle"
+      ? snapshot.type
+      : "row";
+  const languageCode =
+    typeof snapshot.languageCode === "string" && snapshot.languageCode.trim()
+      ? snapshot.languageCode.trim()
+      : null;
+  const offsetTop = Number(snapshot.offsetTop);
+  saveStoredEditorLocation(chapterId, {
+    type,
+    rowId,
+    languageCode,
+    offsetTop: Number.isFinite(offsetTop) ? offsetTop : 0,
+  });
+  restoredChapterId = chapterId;
+  if (pendingRestoreSnapshot?.chapterId === chapterId) {
+    pendingRestoreSnapshot = null;
+  }
+  return true;
+}
+
 export function queuePendingEditorLocationRestore(appState) {
   updatePendingEditorLocationRestore(appState);
 

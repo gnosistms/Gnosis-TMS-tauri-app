@@ -183,6 +183,7 @@ import {
   refreshEditorPreviewAfterTargetLanguageChange,
   resetEditorPreviewModeScrollSnapshot,
   setEditorMode as setEditorModeFlow,
+  jumpFromPreviewBlockToTranslateMode as jumpFromPreviewBlockToTranslateModeFlow,
   updateEditorPreviewLanguage as updateEditorPreviewLanguageFlow,
   updateEditorPreviewSearchQuery as updateEditorPreviewSearchQueryFlow,
 } from "./editor-preview-flow.js";
@@ -713,6 +714,10 @@ export function updateEditorFontSize(nextValue) {
 
 export function setEditorMode(render, nextMode) {
   setEditorModeFlow(render, nextMode);
+}
+
+export function jumpFromPreviewBlockToTranslateMode(render, previewBlock) {
+  return jumpFromPreviewBlockToTranslateModeFlow(render, previewBlock);
 }
 
 export function updateEditorPreviewSearchQuery(render, nextValue) {

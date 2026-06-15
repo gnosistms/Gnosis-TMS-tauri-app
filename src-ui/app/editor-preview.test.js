@@ -155,6 +155,25 @@ test("renderEditorPreviewDocumentHtml highlights visible preview text and tracks
   assert.match(html, /translate-preview__search-match is-active/);
 });
 
+test("renderEditorPreviewDocumentHtml keeps row and language metadata on text blocks", () => {
+  const blocks = buildEditorPreviewDocument([{
+    rowId: "row-1",
+    lifecycleState: "active",
+    textStyle: "paragraph",
+    fields: { vi: "Alpha body" },
+    footnotes: {},
+    imageCaptions: {},
+    images: {},
+  }], "vi");
+
+  const { html } = renderEditorPreviewDocumentHtml(blocks);
+
+  assert.match(
+    html,
+    /<p class="translate-preview__block translate-preview__block--paragraph" data-preview-block="paragraph" data-row-id="row-1" lang="vi">Alpha body<\/p>/,
+  );
+});
+
 test("preview rendering and serialization preserve supported inline markup", () => {
   const blocks = buildEditorPreviewDocument([{
     rowId: "row-1",

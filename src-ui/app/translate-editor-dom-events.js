@@ -26,9 +26,30 @@ import {
   setActiveEditorField,
   submitEditorImageUrl,
   toggleEditorRowFieldMarker,
+  jumpFromPreviewBlockToTranslateMode,
 } from "./translate-flow.js";
 import { syncActiveEditorInlineStyleButtons } from "./editor-inline-markup-flow.js";
+import { showNoticeBadge } from "./status-feedback.js";
 
+const PREVIEW_EDITABLE_TEXT_BLOCK_SELECTOR = [
+  "[data-editor-preview-document] p.translate-preview__block[data-preview-block][data-row-id]",
+  "[data-editor-preview-document] h1.translate-preview__block[data-preview-block][data-row-id]",
+  "[data-editor-preview-document] h2.translate-preview__block[data-preview-block][data-row-id]",
+  "[data-editor-preview-document] blockquote.translate-preview__block[data-preview-block][data-row-id]",
+].join(", ");
+
+function previewEditableTextBlockFromTarget(target) {
+  if (!(target instanceof Element)) {
+    return null;
+  }
+
+  if (target.closest("[data-editor-preview-document] a[href]")) {
+    return null;
+  }
+
+  const block = target.closest(PREVIEW_EDITABLE_TEXT_BLOCK_SELECTOR);
+  return block instanceof HTMLElement ? block : null;
+}
 
 function activeElementIsInEditorLanguageCluster(rowId, languageCode) {
   if (!rowId || !languageCode) {
@@ -225,6 +246,12 @@ export function registerTranslateEditorDomEvents(app, render) {
       return;
     }
 
+    const previewBlock = previewEditableTextBlockFromTarget(event.target);
+    if (previewBlock && event.detail === 1) {
+      showNoticeBadge("Double click to edit this text", render, 2200);
+      return;
+    }
+
     const displayField = closestEventTarget(event.target, "[data-editor-display-field]");
     if (displayField instanceof HTMLButtonElement) {
       const rowId = displayField.dataset.rowId ?? "";
@@ -391,6 +418,17 @@ export function registerTranslateEditorDomEvents(app, render) {
 
     event.preventDefault();
     event.stopPropagation();
+  });
+
+  app.addEventListener("dblclick", (event) => {
+    const previewBlock = previewEditableTextBlockFromTarget(event.target);
+    if (!previewBlock) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    jumpFromPreviewBlockToTranslateMode(render, previewBlock);
   });
 
   app.addEventListener("focusout", (event) => {

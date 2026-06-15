@@ -118,3 +118,12 @@ test("opening an editor text field does not schedule delayed viewport restores",
     /renderTranslateBodyPreservingViewport\(\s*render,\s*resolveEditorMainFieldViewportSnapshot\(rowId, languageCode, options\),\s*\{ extraPaints: 0, skipAnchorRestore: true \},\s*\);/,
   );
 });
+
+test("preview text click hints and double-click jumps are wired through translate DOM events", async () => {
+  const translateEventsSource = await readFile(new URL("./translate-editor-dom-events.js", import.meta.url), "utf8");
+
+  assert.match(translateEventsSource, /PREVIEW_EDITABLE_TEXT_BLOCK_SELECTOR/);
+  assert.match(translateEventsSource, /showNoticeBadge\("Double click to edit this text", render, 2200\)/);
+  assert.match(translateEventsSource, /app\.addEventListener\("dblclick", \(event\) => \{/);
+  assert.match(translateEventsSource, /jumpFromPreviewBlockToTranslateMode\(render, previewBlock\)/);
+});
