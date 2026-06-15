@@ -146,7 +146,7 @@ test("renderTranslationContentRow places separator button after image upload whe
 
   assert.match(html, /data-action="open-editor-image-upload"[\s\S]*data-action="insert-editor-separator"/);
   assert.match(html, /data-editor-separator-button/);
-  assert.match(html, />---<\/span>/);
+  assert.match(html, />--<\/span>/);
 });
 
 test("renderTranslationContentRow renders static separator markup as a line span", () => {

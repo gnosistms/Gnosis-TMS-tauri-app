@@ -298,7 +298,7 @@ function renderRowTextStyleButtons(row, language) {
       data-language-code="${escapeHtml(language.code)}"
       ${tooltipAttributes("Insert separator", { side: "top" })}
     >
-      <span class="translation-row-text-style-button__label">---</span>
+      <span class="translation-row-text-style-button__label">--</span>
     </button>
   `);
 
