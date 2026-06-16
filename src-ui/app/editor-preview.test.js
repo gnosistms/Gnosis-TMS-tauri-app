@@ -245,6 +245,23 @@ test("preview footnote refs preserve inline markup when markers are inside tags"
   assert.doesNotMatch(html, /&lt;\/strong&gt;/);
 });
 
+test("preview footnotes do not render an automatic separator", () => {
+  const blocks = buildEditorPreviewDocument([{
+    rowId: "row-1",
+    lifecycleState: "active",
+    textStyle: "paragraph",
+    fields: { vi: "Alpha body [1]" },
+    footnotes: { vi: "Plain note" },
+    imageCaptions: {},
+    images: {},
+  }], "vi");
+
+  const { html } = renderEditorPreviewDocumentHtml(blocks);
+
+  assert.match(html, /<ol class="wp-block-footnotes">/);
+  assert.doesNotMatch(html, /translate-preview__separator[\s\S]*wp-block-footnotes/);
+});
+
 test("preview appends footnote refs with no matching marker without changing text", () => {
   const blocks = buildEditorPreviewDocument([{
     rowId: "row-1",
@@ -495,10 +512,13 @@ test("serializeEditorPreviewWordPress returns content plus matching footnote met
   assert.doesNotMatch(content, /<meta charset/);
   assert.match(content, /^<!-- wp:paragraph -->/);
   assert.match(content, /<!-- wp:footnotes \/-->/);
-  // A separator sits between the article text and the footnotes.
-  assert.match(
+  assert.doesNotMatch(
     content,
     /<!-- wp:separator -->\n<hr class="wp-block-separator has-alpha-channel-opacity"\/>\n<!-- \/wp:separator -->\n\n<!-- wp:footnotes \/-->/,
+  );
+  assert.match(
+    content,
+    /<\/figure>\n<!-- \/wp:image -->\n\n<!-- wp:footnotes \/-->/,
   );
   assert.match(content, /src="chapters\/ch-1\/images\/row-1\/image\.png"/);
 
