@@ -109,6 +109,7 @@ function verifierOperations(overrides = {}) {
     listRemoteGlossaryReposForTeam: async () => [remoteRepo()],
     refreshGlossaryMetadataRecords: async () => [metadataRecord()],
     inspectAndMigrateLocalRepoBindings: async () => ({ issues: [] }),
+    invalidateInstallationResourcesForTeam: async () => {},
     ...overrides,
   };
 }
@@ -133,6 +134,22 @@ test("verifyImportedGlossaryState rejects a missing remote glossary repo", async
     })),
     /remote glossary repo could not be found/,
   );
+});
+
+test("verifyImportedGlossaryState invalidates remote cache before listing remote repos", async () => {
+  const calls = [];
+
+  await verifyImportedGlossaryState(team, expectedGlossary, verifierOperations({
+    invalidateInstallationResourcesForTeam: async () => {
+      calls.push("invalidate");
+    },
+    listRemoteGlossaryReposForTeam: async () => {
+      calls.push("listRemote");
+      return [remoteRepo()];
+    },
+  }));
+
+  assert.deepEqual(calls, ["invalidate", "listRemote"]);
 });
 
 test("verifyImportedGlossaryState rejects a remote glossary repo with a mismatched GitHub repo id", async () => {

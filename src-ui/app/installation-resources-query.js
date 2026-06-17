@@ -52,3 +52,18 @@ export async function invalidateInstallationResourcesForTeam(team) {
     refetchType: "none",
   });
 }
+
+// Import verification re-lists remote repos immediately after creating one, so it must
+// observe GitHub's newest listing rather than a request that started before the repo
+// existed. Cancel any in-flight listing first so the refetch can't dedupe onto a stale
+// promise, then mark the cache stale. Scoped to the import path on purpose — plain
+// invalidation is enough for navigation and migration callers, which should not cancel
+// a discovery fetch other screens may be awaiting.
+export async function refreshInstallationResourcesForTeam(team) {
+  if (!Number.isFinite(team?.installationId)) {
+    return;
+  }
+  const queryKey = installationResourceKeys.byInstallation(team.installationId);
+  await queryClient.cancelQueries({ queryKey, exact: true });
+  await queryClient.invalidateQueries({ queryKey, exact: true, refetchType: "none" });
+}

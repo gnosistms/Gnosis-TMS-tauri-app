@@ -115,11 +115,20 @@ pub(crate) fn find_repo_path(
     repo_name: Option<&str>,
 ) -> Result<Option<PathBuf>, String> {
     let repo_root = domain.local_repo_root(app, installation_id)?;
+    find_repo_path_in_root(domain, &repo_root, resource_id, repo_name)
+}
+
+fn find_repo_path_in_root(
+    domain: &dyn RepoResourceStorageDomain,
+    repo_root: &Path,
+    resource_id: Option<&str>,
+    repo_name: Option<&str>,
+) -> Result<Option<PathBuf>, String> {
     if !repo_root.exists() {
         return Ok(None);
     }
 
-    for entry in fs::read_dir(&repo_root).map_err(|error| {
+    for entry in fs::read_dir(repo_root).map_err(|error| {
         format!(
             "Could not read the local {} repo folder: {error}",
             domain.display_noun()
@@ -132,7 +141,7 @@ pub(crate) fn find_repo_path(
             )
         })?;
         let repo_path = entry.path();
-        if !repo_path.is_dir() || !repo_path.join(domain.resource_file_name()).exists() {
+        if !repo_path.is_dir() {
             continue;
         }
         if git_output(&repo_path, &["rev-parse", "--git-dir"]).is_err() {
@@ -201,11 +210,9 @@ pub(crate) fn resolve_initialized_repo_path(
     Ok(repo_path)
 }
 
-/// The desired local folder path for a (possibly not-yet-created) resource repo.
-pub(crate) fn desired_git_repo_path(
+fn desired_git_repo_path_in_root(
     domain: &dyn RepoResourceStorageDomain,
-    app: &AppHandle,
-    installation_id: i64,
+    repo_root: &Path,
     repo_name: &str,
 ) -> Result<PathBuf, String> {
     let normalized_repo_name = repo_name.trim();
@@ -216,11 +223,36 @@ pub(crate) fn desired_git_repo_path(
         ));
     }
 
-    let repo_root = domain.local_repo_root(app, installation_id)?;
     Ok(repo_root.join(allocate_short_folder_name(
         normalized_repo_name,
-        local_folder_names(domain, &repo_root)?,
+        local_folder_names(domain, repo_root)?,
     )))
+}
+
+fn existing_or_desired_git_repo_path(
+    domain: &dyn RepoResourceStorageDomain,
+    app: &AppHandle,
+    installation_id: i64,
+    resource_id: Option<&str>,
+    repo_name: &str,
+) -> Result<PathBuf, String> {
+    let repo_root = domain.local_repo_root(app, installation_id)?;
+    existing_or_desired_git_repo_path_in_root(domain, &repo_root, resource_id, repo_name)
+}
+
+fn existing_or_desired_git_repo_path_in_root(
+    domain: &dyn RepoResourceStorageDomain,
+    repo_root: &Path,
+    resource_id: Option<&str>,
+    repo_name: &str,
+) -> Result<PathBuf, String> {
+    if let Some(repo_path) =
+        find_repo_path_in_root(domain, repo_root, resource_id, Some(repo_name))?
+    {
+        return Ok(repo_path);
+    }
+
+    desired_git_repo_path_in_root(domain, repo_root, repo_name)
 }
 
 /// The folder names directly under the resource repo root.
@@ -408,7 +440,8 @@ pub(crate) fn prepare_repo(
     remote_url: Option<&str>,
     default_branch_name: Option<&str>,
 ) -> Result<(), String> {
-    let repo_path = desired_git_repo_path(domain, app, installation_id, repo_name)?;
+    let repo_path =
+        existing_or_desired_git_repo_path(domain, app, installation_id, resource_id, repo_name)?;
     fs::create_dir_all(&repo_path).map_err(|error| {
         format!(
             "Could not create the local {} repo '{}': {error}",
@@ -542,9 +575,42 @@ pub(crate) fn write_text_file(path: &Path, contents: &str) -> Result<(), String>
 
 #[cfg(test)]
 mod tests {
-    use super::write_text_file;
-    use std::fs;
+    use super::{
+        existing_or_desired_git_repo_path_in_root, find_repo_path_in_root, write_text_file,
+        RepoResourceStorageDomain,
+    };
+    use crate::local_repo_sync_state::{upsert_local_repo_sync_state, LocalRepoSyncStateUpdate};
+    use std::{fs, path::Path, path::PathBuf, process::Command};
+    use tauri::AppHandle;
     use uuid::Uuid;
+
+    struct TestStorageDomain;
+
+    impl RepoResourceStorageDomain for TestStorageDomain {
+        fn resource_file_name(&self) -> &'static str {
+            "resource.json"
+        }
+
+        fn state_kind(&self) -> &'static str {
+            "test_resource"
+        }
+
+        fn display_noun(&self) -> &'static str {
+            "test resource"
+        }
+
+        fn local_repo_root(
+            &self,
+            _app: &AppHandle,
+            _installation_id: i64,
+        ) -> Result<PathBuf, String> {
+            unreachable!("find_repo_path_in_root receives the repo root directly")
+        }
+
+        fn read_resource_id(&self, _repo_path: &Path) -> Option<String> {
+            None
+        }
+    }
 
     #[test]
     fn write_text_file_replaces_contents_and_removes_temp_file() {
@@ -559,5 +625,84 @@ mod tests {
         assert!(!dir.join("resource.json.tmp").exists());
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn find_repo_path_finds_prepared_repo_before_resource_file_exists() {
+        let repo_root =
+            std::env::temp_dir().join(format!("gnosis-repo-resource-resolve-{}", Uuid::now_v7()));
+        let repo_path = repo_root.join("brasington-en-vi-17817");
+        fs::create_dir_all(&repo_path).expect("create prepared repo dir");
+        let output = Command::new("git")
+            .args(["init", "--initial-branch", "main"])
+            .current_dir(&repo_path)
+            .output()
+            .expect("run git init");
+        assert!(output.status.success(), "git init failed");
+
+        upsert_local_repo_sync_state(
+            &repo_path,
+            LocalRepoSyncStateUpdate {
+                resource_id: Some("resource-1".to_string()),
+                current_repo_name: Some("brasington-en-vi-1781724330228".to_string()),
+                kind: Some("test_resource".to_string()),
+                ..Default::default()
+            },
+        )
+        .expect("write sync state");
+
+        let domain = TestStorageDomain;
+        let resolved = find_repo_path_in_root(
+            &domain,
+            &repo_root,
+            Some("resource-1"),
+            Some("brasington-en-vi-1781724330228"),
+        )
+        .expect("prepared repo should resolve");
+        let resolved = resolved.expect("prepared repo should match");
+
+        assert_eq!(resolved, repo_path);
+        assert!(!resolved.join("resource.json").exists());
+
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn prepare_path_reuses_existing_shortened_prepared_repo() {
+        let repo_root =
+            std::env::temp_dir().join(format!("gnosis-repo-resource-prepare-{}", Uuid::now_v7()));
+        let repo_path = repo_root.join("brasington-en-vi-17817");
+        fs::create_dir_all(&repo_path).expect("create prepared repo dir");
+        let output = Command::new("git")
+            .args(["init", "--initial-branch", "main"])
+            .current_dir(&repo_path)
+            .output()
+            .expect("run git init");
+        assert!(output.status.success(), "git init failed");
+
+        upsert_local_repo_sync_state(
+            &repo_path,
+            LocalRepoSyncStateUpdate {
+                resource_id: Some("resource-1".to_string()),
+                current_repo_name: Some("brasington-en-vi-1781724330228".to_string()),
+                kind: Some("test_resource".to_string()),
+                ..Default::default()
+            },
+        )
+        .expect("write sync state");
+
+        let domain = TestStorageDomain;
+        let selected_path = existing_or_desired_git_repo_path_in_root(
+            &domain,
+            &repo_root,
+            Some("resource-1"),
+            "brasington-en-vi-1781724330228",
+        )
+        .expect("select prepare path");
+
+        assert_eq!(selected_path, repo_path);
+        assert!(!repo_root.join("brasington-en-vi-17817-2").exists());
+
+        let _ = fs::remove_dir_all(repo_root);
     }
 }
