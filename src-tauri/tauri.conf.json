@@ -43,7 +43,8 @@
     "createUpdaterArtifacts": true,
     "resources": {
       "resources/windows/git/": "git/windows/",
-      "resources/macos/": "git/macos/"
+      "resources/macos/": "git/macos/",
+      "resources/THIRD-PARTY-NOTICES.md": "THIRD-PARTY-NOTICES.md"
     },
     "macOS": {
       "dmg": {

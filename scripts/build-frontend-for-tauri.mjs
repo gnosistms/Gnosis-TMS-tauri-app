@@ -63,6 +63,8 @@ if (uploadRequested && !sentryReady) {
   );
 }
 
+run("node", ["scripts/generate-third-party-notices.mjs"]);
+
 run("npm", ["run", "build"], { env: buildEnv });
 
 if (!sentryReady) {

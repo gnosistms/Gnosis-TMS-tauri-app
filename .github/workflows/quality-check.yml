@@ -113,12 +113,52 @@ jobs:
       - name: Run tests
         run: npm test
 
+  # ── Licenses: dependency compliance (Rust + npm) ─────────────────────
+  #
+  # Fails any PR that introduces a dependency outside the permissive
+  # allowlist (GPL/AGPL/LGPL-only, unknown, or unlicensed). See
+  # src-tauri/deny.toml and the check:licenses:* scripts in package.json.
+  # Metadata-only: no compilation, so no Tauri system deps are needed.
+
+  license-compliance:
+    name: License Compliance
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event.pull_request.draft == false
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check Rust dependency licenses
+        run: npm run check:licenses:rust
+
+      - name: Check npm dependency licenses
+        run: npm run check:licenses:npm
+
   # ── Summary gate (required for branch protection) ────────────────────
 
   quality-summary:
     name: Quality Check Summary
     runs-on: ubuntu-latest
-    needs: [rust-quality, js-quality]
+    needs: [rust-quality, js-quality, license-compliance]
     if: always()
 
     steps:
@@ -126,11 +166,13 @@ jobs:
         env:
           RUST_RESULT: ${{ needs.rust-quality.result }}
           JS_RESULT: ${{ needs.js-quality.result }}
+          LICENSE_RESULT: ${{ needs.license-compliance.result }}
         run: |
           echo "Rust Quality:        $RUST_RESULT"
           echo "JavaScript Quality:  $JS_RESULT"
+          echo "License Compliance:  $LICENSE_RESULT"
           status=0
-          for r in "$RUST_RESULT" "$JS_RESULT"; do
+          for r in "$RUST_RESULT" "$JS_RESULT" "$LICENSE_RESULT"; do
             case "$r" in
               success|skipped) ;;
               *) status=1 ;;
