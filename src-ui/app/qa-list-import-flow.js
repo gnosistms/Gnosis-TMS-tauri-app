@@ -52,6 +52,7 @@ import {
   importFileBytes,
   importFileName,
 } from "./repo-resource/import-flow.js";
+import { refreshInstallationResourcesForTeam } from "./installation-resources-query.js";
 
 export const QA_LIST_IMPORT_ACCEPT = ".tmx,text/xml,application/xml";
 
@@ -162,6 +163,7 @@ export async function verifyImportedQaListState(team, expected, operations = {})
   const listRemote = operations.listRemoteQaListReposForTeam ?? listRemoteQaListReposForTeam;
   const refreshMetadata = operations.refreshQaListMetadataRecords ?? refreshQaListMetadataRecords;
   const inspectRepairs = operations.inspectAndMigrateLocalRepoBindings ?? inspectAndMigrateLocalRepoBindings;
+  const invalidateRemoteCache = operations.invalidateInstallationResourcesForTeam ?? refreshInstallationResourcesForTeam;
   const localQaLists = await listLocal(team);
   const localQaList = (Array.isArray(localQaLists) ? localQaLists : []).find((qaList) =>
     normalizedText(qaList?.qaListId ?? qaList?.id) === qaListId
@@ -187,6 +189,7 @@ export async function verifyImportedQaListState(team, expected, operations = {})
     throw importedQaListSafetyError("The local QA list term count does not match the imported file.");
   }
 
+  await invalidateRemoteCache(team);
   const remoteRepos = await listRemote(team);
   const remoteRepo = findImportedRemoteRepo(remoteRepos, expected.remoteRepo);
   if (!remoteRepo) {
@@ -303,6 +306,7 @@ async function createRemoteQaListRepoForAvailableName(team, baseRepoName) {
 
     try {
       const remoteRepo = await createRemoteQaListRepoWithName(team, candidateRepoName);
+      await refreshInstallationResourcesForTeam(team);
       return {
         remoteRepo,
         repoName: candidateRepoName,

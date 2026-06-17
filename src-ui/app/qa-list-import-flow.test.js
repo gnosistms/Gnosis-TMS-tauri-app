@@ -104,6 +104,7 @@ function verifierOperations(overrides = {}) {
     listRemoteQaListReposForTeam: async () => [remoteRepo()],
     refreshQaListMetadataRecords: async () => [metadataRecord()],
     inspectAndMigrateLocalRepoBindings: async () => ({ issues: [] }),
+    invalidateInstallationResourcesForTeam: async () => {},
     ...overrides,
   };
 }
@@ -148,6 +149,22 @@ test("verifyImportedQaListState rejects a missing remote QA list repo", async ()
     })),
     /remote QA list repo could not be found/,
   );
+});
+
+test("verifyImportedQaListState invalidates remote cache before listing remote repos", async () => {
+  const calls = [];
+
+  await verifyImportedQaListState(team, expectedQaList, verifierOperations({
+    invalidateInstallationResourcesForTeam: async () => {
+      calls.push("invalidate");
+    },
+    listRemoteQaListReposForTeam: async () => {
+      calls.push("listRemote");
+      return [remoteRepo()];
+    },
+  }));
+
+  assert.deepEqual(calls, ["invalidate", "listRemote"]);
 });
 
 test("verifyImportedQaListState rejects a remote QA list repo with a mismatched name", async () => {

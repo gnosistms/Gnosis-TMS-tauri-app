@@ -38,6 +38,7 @@ import { loadTeamGlossaries } from "./glossary-discovery-flow.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
 import { makeGlossaryDefaultIfFirst } from "./glossary-default-flow.js";
+import { refreshInstallationResourcesForTeam } from "./installation-resources-query.js";
 import {
   selectedGlossaryTeamMatches,
   upsertGlossaryForTeam,
@@ -198,6 +199,7 @@ export async function verifyImportedGlossaryState(team, expected, operations = {
   const listRemote = operations.listRemoteGlossaryReposForTeam ?? listRemoteGlossaryReposForTeam;
   const refreshMetadata = operations.refreshGlossaryMetadataRecords ?? refreshGlossaryMetadataRecords;
   const inspectRepairs = operations.inspectAndMigrateLocalRepoBindings ?? inspectAndMigrateLocalRepoBindings;
+  const invalidateRemoteCache = operations.invalidateInstallationResourcesForTeam ?? refreshInstallationResourcesForTeam;
 
   const localGlossaries = await listLocal(team);
   const localGlossary = (Array.isArray(localGlossaries) ? localGlossaries : []).find((glossary) =>
@@ -227,6 +229,7 @@ export async function verifyImportedGlossaryState(team, expected, operations = {
     throw importedGlossarySafetyError("The local glossary term count does not match the imported file.");
   }
 
+  await invalidateRemoteCache(team);
   const remoteRepos = await listRemote(team);
   const remoteRepo = findImportedRemoteRepo(remoteRepos, expected.remoteRepo);
   if (!remoteRepo) {
@@ -346,6 +349,7 @@ async function createRemoteGlossaryRepoForAvailableName(team, baseRepoName) {
 
     try {
       const remoteRepo = await createRemoteGlossaryRepoWithName(team, candidateRepoName);
+      await refreshInstallationResourcesForTeam(team);
       return {
         remoteRepo,
         repoName: candidateRepoName,
