@@ -128,7 +128,7 @@ fn find_repo_path_in_root(
         return Ok(None);
     }
 
-    for entry in fs::read_dir(&repo_root).map_err(|error| {
+    for entry in fs::read_dir(repo_root).map_err(|error| {
         format!(
             "Could not read the local {} repo folder: {error}",
             domain.display_noun()
@@ -225,7 +225,7 @@ fn desired_git_repo_path_in_root(
 
     Ok(repo_root.join(allocate_short_folder_name(
         normalized_repo_name,
-        local_folder_names(domain, &repo_root)?,
+        local_folder_names(domain, repo_root)?,
     )))
 }
 
