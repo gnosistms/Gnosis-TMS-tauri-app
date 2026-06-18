@@ -7,6 +7,13 @@
 #
 # Run via: npm run licenses:notices
 
+# Skip the app's own crate (publish = false). It has no `license` field, so
+# cargo-about would otherwise synthesize one by scanning the crate directory —
+# which on the Windows runner picks up the bundled Git-for-Windows license files
+# (GPL-2.0, curl, …) and fails on the deprecated `GPL-2.0` identifier. The app
+# crate is not third-party, so it must not appear in THIRD-PARTY-NOTICES.md.
+private = { ignore = true }
+
 accepted = [
     "MIT",
     "Apache-2.0",
