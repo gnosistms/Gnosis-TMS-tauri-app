@@ -1,0 +1,18 @@
+## Rust crates
+
+This application bundles the following Rust crates. Licenses are grouped:
+each license text below lists the crates distributed under it.
+
+{{#each licenses}}
+### {{{name}}}
+
+Used by:
+{{#each used_by}}
+- [{{{crate.name}}} {{{crate.version}}}]({{#if crate.repository}}{{{crate.repository}}}{{else}}https://crates.io/crates/{{{crate.name}}}{{/if}})
+{{/each}}
+
+```
+{{{text}}}
+```
+
+{{/each}}

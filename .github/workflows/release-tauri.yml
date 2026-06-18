@@ -111,6 +111,14 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # Required by scripts/generate-third-party-notices.mjs, which runs in
+      # the Tauri beforeBuildCommand to produce the bundled
+      # THIRD-PARTY-NOTICES.md resource.
+      - name: Install cargo-about
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about
+
       - name: Install macOS Rust targets
         if: matrix.platform == 'macos-latest'
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin

@@ -1,0 +1,40 @@
+# cargo-deny configuration — license compliance only.
+#
+# Gnosis TMS ships under PolyForm Noncommercial + commercial licenses, so the
+# dependency tree must stay free of strong copyleft. cargo-deny treats any
+# license not in `allow` as an error, which is what denies GPL/AGPL/LGPL-only
+# and unknown/unlicensed crates.
+#
+# Run locally with: npm run check:licenses:rust
+# Keep the allowlist in sync with `about.toml` and the `check:licenses:npm`
+# script in package.json.
+
+[licenses]
+# The gnosis-tms crate itself is unpublished (publish = false in Cargo.toml)
+# and carries the product's own PolyForm NC + commercial terms, not an SPDX
+# license, so it is excluded from the dependency license check.
+private = { ignore = true }
+allow = [
+    "MIT",
+    "Apache-2.0",
+    # Permissive: the LLVM exception only relaxes Apache-2.0 §4 for binary
+    # redistribution (target-lexicon as of June 2026).
+    "Apache-2.0 WITH LLVM-exception",
+    "ISC",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "Zlib",
+    "Unicode-3.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "BSL-1.0",
+    "Unlicense",
+    "MIT-0",
+    "0BSD",
+    # File-level copyleft, acceptable: applies only to the crate's own files,
+    # which we do not modify (cssparser, cssparser-macros, dtoa-short,
+    # option-ext, selectors as of June 2026).
+    "MPL-2.0",
+]
+# r-efi is `MIT OR Apache-2.0 OR LGPL-2.1-or-later`; the OR expression is
+# satisfied by MIT from the allowlist, so no exception entry is needed.

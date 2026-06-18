@@ -4,6 +4,7 @@ version = "0.8.38"
 description = "Gnosis TMS"
 authors = ["you"]
 edition = "2021"
+publish = false
 
 [lib]
 name = "gnosis_tms_lib"

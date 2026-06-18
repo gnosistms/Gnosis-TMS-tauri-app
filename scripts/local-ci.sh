@@ -60,6 +60,14 @@ printf "\n"; bold "[JavaScript]"
 run "eslint"     npm run lint:js
 run "npm test"   npm test
 
+printf "\n"; bold "[Licenses]"
+if command -v cargo-deny >/dev/null 2>&1; then
+  run "cargo deny (licenses)" npm run check:licenses:rust
+else
+  echo "  - cargo deny (licenses) skipped: install with 'cargo install --locked cargo-deny' to run locally (CI always runs it)"
+fi
+run "npm licenses" npm run check:licenses:npm
+
 # ── Summary ──────────────────────────────────────────────────────────
 
 printf "\n"
