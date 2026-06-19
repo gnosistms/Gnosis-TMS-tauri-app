@@ -254,16 +254,7 @@ fn migrate_project_repo_to_0810(app: &AppHandle, repo_path: &Path) -> Result<(),
     }
 
     let mut chapters = list_project_chapters(&chapters_root)?;
-    let mut allocated = Vec::<String>::new();
-    for chapter in &mut chapters {
-        let title = chapter
-            .title
-            .as_deref()
-            .unwrap_or(chapter.old_folder.as_str());
-        chapter.new_folder =
-            allocate_short_folder_name(title, allocated.iter().map(String::as_str));
-        allocated.push(chapter.new_folder.clone());
-    }
+    allocate_chapter_folder_names(&mut chapters);
 
     for chapter in &chapters {
         if chapter.old_folder == chapter.new_folder {
@@ -302,6 +293,41 @@ struct ProjectChapterMigration {
     title: Option<String>,
 }
 
+/// Allocate a short, unique target folder name for every chapter.
+///
+/// Each new name is deduplicated against both the names already allocated and the
+/// existing folder names of all *other* chapters. Seeding with the sibling folders
+/// is essential: when many titles share a long common prefix, truncation collapses
+/// them to the same base and the disambiguating `-N` suffix can otherwise reproduce
+/// a folder name that still belongs to a different chapter (e.g. `…-part-10` being
+/// renamed to `…-part-2`), which made the in-place migration abort. Excluding only
+/// the chapter's own folder still lets a chapter keep its current name when nothing
+/// else claims it.
+fn allocate_chapter_folder_names(chapters: &mut [ProjectChapterMigration]) {
+    let old_folders: Vec<String> = chapters
+        .iter()
+        .map(|chapter| chapter.old_folder.clone())
+        .collect();
+    let mut allocated = Vec::<String>::new();
+    for (index, chapter) in chapters.iter_mut().enumerate() {
+        let title = chapter
+            .title
+            .clone()
+            .unwrap_or_else(|| chapter.old_folder.clone());
+        let sibling_old_folders = old_folders
+            .iter()
+            .enumerate()
+            .filter(move |(other_index, _)| *other_index != index)
+            .map(|(_, folder)| folder.as_str());
+        let existing = allocated
+            .iter()
+            .map(String::as_str)
+            .chain(sibling_old_folders);
+        chapter.new_folder = allocate_short_folder_name(&title, existing);
+        allocated.push(chapter.new_folder.clone());
+    }
+}
+
 fn allocate_tree_chapter_migrations(
     repo_path: &Path,
     head: &str,
@@ -333,17 +359,10 @@ fn allocate_tree_chapter_migrations(
         });
     }
     chapters.sort_by(|left, right| left.old_folder.cmp(&right.old_folder));
+    allocate_chapter_folder_names(&mut chapters);
 
-    let mut allocated = Vec::<String>::new();
     let mut chapter_map = BTreeMap::new();
-    for mut chapter in chapters {
-        let title = chapter
-            .title
-            .as_deref()
-            .unwrap_or(chapter.old_folder.as_str());
-        chapter.new_folder =
-            allocate_short_folder_name(title, allocated.iter().map(String::as_str));
-        allocated.push(chapter.new_folder.clone());
+    for chapter in chapters {
         chapter_map.insert(chapter.old_folder.clone(), chapter);
     }
 
@@ -916,6 +935,79 @@ mod tests {
                 current_version: "0.8.10".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn chapter_name_allocation_never_collides_with_sibling_folders() {
+        // Reproduces the Tarot & Kabbalah failure: every title shares the same
+        // 22-char prefix, so truncation collapses them to one base and the `-N`
+        // suffix would otherwise reproduce a sibling's existing folder name.
+        let titles = [
+            (
+                "tarot-y-kabbahlah-part",
+                "Tarot y Kabbahlah  Part 1 Chap 6-10",
+            ),
+            (
+                "tarot-y-kabbahlah-part-2",
+                "Tarot y Kabbahlah  Part 1 Chap 11-15",
+            ),
+            (
+                "tarot-y-kabbahlah-part-3",
+                "Tarot y Kabbahlah  Part 1 Chap 16-20",
+            ),
+            (
+                "tarot-y-kabbahlah-part-10",
+                "Tarot y Kabbahlah Part 3 Chap 49-55",
+            ),
+            (
+                "tarot-y-kabbahlah-part-11",
+                "Tarot y Kabbahlah Part 3 Chap 56-60",
+            ),
+            (
+                "tarot-y-kabbahlah-part-14",
+                "Tarot y Kabbahlah Part 4 Chap 71-75",
+            ),
+            ("tarot-y-kabbahlah-prol", "Tarot y Kabbahlah prologue"),
+        ];
+        let mut chapters = titles
+            .iter()
+            .map(|(folder, title)| ProjectChapterMigration {
+                old_folder: (*folder).to_string(),
+                new_folder: String::new(),
+                title: Some((*title).to_string()),
+            })
+            .collect::<Vec<_>>();
+        chapters.sort_by(|left, right| left.old_folder.cmp(&right.old_folder));
+
+        allocate_chapter_folder_names(&mut chapters);
+
+        // No new name may equal any *other* chapter's existing folder — that is the
+        // exact condition the in-place rename guard rejected.
+        for (index, chapter) in chapters.iter().enumerate() {
+            for (other_index, other) in chapters.iter().enumerate() {
+                if index != other_index {
+                    assert_ne!(
+                        chapter.new_folder, other.old_folder,
+                        "new folder '{}' collides with sibling folder '{}'",
+                        chapter.new_folder, other.old_folder
+                    );
+                }
+            }
+        }
+
+        // Every new name must also be unique among the new names.
+        let unique = chapters
+            .iter()
+            .map(|chapter| chapter.new_folder.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(unique.len(), chapters.len());
+
+        // A chapter whose short name does not clash keeps its current folder.
+        let prologue = chapters
+            .iter()
+            .find(|chapter| chapter.old_folder == "tarot-y-kabbahlah-prol")
+            .expect("prologue chapter present");
+        assert_eq!(prologue.new_folder, "tarot-y-kabbahlah-prol");
     }
 
     #[test]
