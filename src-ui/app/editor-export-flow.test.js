@@ -347,6 +347,68 @@ test("submitEditorExport copy Vellum uses the native Vellum writer with fallback
   assert.equal(state.editorChapter.exportModal.isOpen, false);
 });
 
+test("submitEditorExport copy Vellum prepares image resources before building the archive", async () => {
+  installNavigator({ platform: "MacIntel" });
+  installEditorExportFixture({
+    rows: [{
+      rowId: "row-image",
+      lifecycleState: "active",
+      textStyle: "paragraph",
+      fields: { vi: "", es: "" },
+      footnotes: {},
+      imageCaptions: { vi: "Image caption" },
+      images: {
+        vi: {
+          kind: "url",
+          url: "https://example.com/images/Diogenes.webp",
+        },
+      },
+    }],
+  });
+  const prepareCalls = [];
+  const vellumCalls = [];
+  openExportModal("copy:vellum");
+
+  await submitEditorExport(() => {}, {
+    prepareVellumImageResources: async (input) => {
+      prepareCalls.push(input);
+      return [{
+        index: 1,
+        fileName: "Diogenes.webp",
+        imageKey: "diogenes",
+        preservedUrl: "file:///tmp/co.180g.Vellum/preserved-images.abc123/Diogenes.webp",
+        lastAbsolutePath: "/tmp/co.180g.Vellum/vellum-process-attachment.def456/Diogenes.webp",
+        uti: "org.webmproject.webp",
+        tooltip: "Diogenes.webp\n3840 × 2920 px",
+        pixelWidth: 3840,
+        pixelHeight: 2920,
+        colorSpace: "sRGB",
+        colorSpaceModel: "RGB",
+        hasAlpha: false,
+        canUpsize: false,
+      }];
+    },
+    copyVellumTextEditorContent: async (input) => {
+      vellumCalls.push(input);
+    },
+  });
+
+  assert.deepEqual(prepareCalls, [{
+    images: [{
+      index: 1,
+      source: "https://example.com/images/Diogenes.webp",
+      fileName: "Diogenes.webp",
+      uti: "org.webmproject.webp",
+    }],
+  }]);
+  assert.equal(vellumCalls.length, 1);
+  assert.match(vellumCalls[0].decodedPropertyListXml, /file:\/\/\/tmp\/co\.180g\.Vellum\/preserved-images\.abc123\/Diogenes\.webp/);
+  assert.match(vellumCalls[0].decodedPropertyListXml, /\/tmp\/co\.180g\.Vellum\/vellum-process-attachment\.def456\/Diogenes\.webp/);
+  assert.doesNotMatch(vellumCalls[0].decodedPropertyListXml, /https:\/\/example\.com\/images\/Diogenes\.webp/);
+  assert.equal(vellumCalls[0].plainText, "Image caption");
+  assert.equal(state.editorChapter.exportModal.isOpen, false);
+});
+
 test("copy exports follow the preview language without changing editor selections", async () => {
   installEditorExportFixture();
   const writes = [];
