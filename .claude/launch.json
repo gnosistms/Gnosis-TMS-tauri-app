@@ -1,0 +1,36 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "gnosis-tms-frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--", "--port", "4180", "--strictPort"],
+      "port": 4180,
+      "autoPort": false
+    },
+    {
+      "name": "symplr-viewer",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8781",
+        "--directory",
+        "/Users/hans/Desktop/symplr-schedule"
+      ],
+      "port": 8781
+    },
+    {
+      "name": "download-page",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8790",
+        "--directory",
+        "/Users/hans/Desktop/symplr-schedule/docs"
+      ],
+      "port": 8790
+    }
+  ]
+}

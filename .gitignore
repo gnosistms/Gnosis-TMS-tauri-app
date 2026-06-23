@@ -18,8 +18,17 @@ test-results
 Backup Github App Secrets/
 .gnosis-tms/secrets/
 .broker
+.env
+.env.*
+!.env.example
+*.pem
+*.key
 
 # Apple signing artifacts
+*.p8
+*.p12
+*.mobileprovision
+*.provisionprofile
 developerID_application.cer
 CertificateSigningRequest.certSigningRequest
 Certificates.p12
