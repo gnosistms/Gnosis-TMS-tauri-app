@@ -17,6 +17,10 @@ import {
 } from "./scroll-state.js";
 import { buildEditorShowRowInContextChapterState } from "./editor-show-context.js";
 import { replaceCurrentEditorLocation } from "./editor-location.js";
+import {
+  clearStoredEditorPreviewLanguageCode,
+  saveStoredEditorPreviewLanguageCode,
+} from "./editor-preferences.js";
 import { state } from "./state.js";
 
 let previewModeTranslateScrollSnapshot = null;
@@ -174,6 +178,20 @@ export function updateEditorPreviewLanguage(render, nextCode) {
   const languageCode = String(nextCode ?? "").trim();
   if (!languageCode || !languages.some((language) => language?.code === languageCode)) {
     return;
+  }
+
+  const chapterId =
+    typeof state.editorChapter?.chapterId === "string"
+      ? state.editorChapter.chapterId.trim()
+      : "";
+  const defaultLanguageCode = selectedEditorPreviewLanguageCode({
+    ...state.editorChapter,
+    previewLanguageCode: null,
+  });
+  if (languageCode === defaultLanguageCode) {
+    clearStoredEditorPreviewLanguageCode(chapterId);
+  } else {
+    saveStoredEditorPreviewLanguageCode(chapterId, languageCode);
   }
 
   const nextEditorChapter = {

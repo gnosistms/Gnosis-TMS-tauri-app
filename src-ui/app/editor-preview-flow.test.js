@@ -15,7 +15,9 @@ import {
 } from "./scroll-state.js";
 import {
   clearStoredEditorLocation,
+  clearStoredEditorPreviewLanguageCode,
   loadStoredEditorLocation,
+  loadStoredEditorPreviewLanguageCode,
 } from "./editor-preferences.js";
 import { setActiveStorageLogin } from "./team-storage.js";
 import {
@@ -149,6 +151,48 @@ test("preview language selection can show every chapter language without changin
 
   updateEditorPreviewLanguage(() => {}, "not-a-language");
   assert.equal(state.editorChapter.previewLanguageCode, "ja");
+});
+
+test("preview language selection saves a chapter-scoped non-default override", () => {
+  installWindow();
+  const login = "preview-language-flow";
+  const chapterId = "chapter-preview-language";
+  setActiveStorageLogin(login);
+  clearStoredEditorPreviewLanguageCode(chapterId, login);
+  state.editorChapter = {
+    ...createEditorChapterState(),
+    chapterId,
+    mode: EDITOR_MODE_PREVIEW,
+    languages: [
+      { code: "es", name: "Spanish", role: "source" },
+      { code: "vi", name: "Vietnamese", role: "target" },
+    ],
+    selectedSourceLanguageCode: "es",
+    selectedTargetLanguageCode: "vi",
+    rows: [{
+      rowId: "row-1",
+      lifecycleState: "active",
+      textStyle: "paragraph",
+      fields: {
+        es: "Texto fuente",
+        vi: "Translated text",
+      },
+    }],
+  };
+
+  try {
+    updateEditorPreviewLanguage(() => {}, "es");
+
+    assert.equal(state.editorChapter.previewLanguageCode, "es");
+    assert.equal(loadStoredEditorPreviewLanguageCode(chapterId, login), "es");
+
+    updateEditorPreviewLanguage(() => {}, "vi");
+
+    assert.equal(state.editorChapter.previewLanguageCode, "vi");
+    assert.equal(loadStoredEditorPreviewLanguageCode(chapterId, login), null);
+  } finally {
+    clearStoredEditorPreviewLanguageCode(chapterId, login);
+  }
 });
 
 test("buildTranslateAnchorForPreviewBlock maps preview metadata to a translate language-panel anchor", () => {

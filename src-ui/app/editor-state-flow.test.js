@@ -6,7 +6,13 @@ import {
   markEditorRowsPersisted,
   normalizeEditorRows,
 } from "./editor-state-flow.js";
+import { selectedEditorPreviewLanguageCode } from "./editor-preview.js";
+import {
+  clearStoredEditorPreviewLanguageCode,
+  saveStoredEditorPreviewLanguageCode,
+} from "./editor-preferences.js";
 import { createEditorChapterState, createEditorHistoryState, state } from "./state.js";
+import { setActiveStorageLogin } from "./team-storage.js";
 
 function snapshotSharedState() {
   return {
@@ -195,6 +201,64 @@ test("applyEditorUiState resets preview mode for a different chapter", () => {
     activeMatchIndex: 0,
     totalMatchCount: 0,
   });
+});
+
+test("applyEditorUiState defaults new chapters to their target preview language", () => {
+  const previousEditorChapter = {
+    ...createEditorChapterState(),
+    chapterId: "chapter-1",
+    mode: "preview",
+    previewLanguageCode: "es",
+  };
+
+  const result = applyEditorUiState({
+    chapterId: "chapter-2",
+    languages: [
+      { code: "es", name: "Spanish", role: "source" },
+      { code: "vi", name: "Vietnamese", role: "target" },
+    ],
+    selectedSourceLanguageCode: "es",
+    selectedTargetLanguageCode: "vi",
+    rows: [{ rowId: "row-1" }],
+  }, previousEditorChapter);
+
+  assert.equal(result.previewLanguageCode, null);
+  assert.equal(selectedEditorPreviewLanguageCode(result), "vi");
+});
+
+test("applyEditorUiState restores stored preview language for the opened chapter only", () => {
+  const login = "preview-language-state-flow";
+  const chapterId = "chapter-2";
+  setActiveStorageLogin(login);
+  clearStoredEditorPreviewLanguageCode(chapterId, login);
+
+  try {
+    saveStoredEditorPreviewLanguageCode(chapterId, "es", login);
+
+    const previousEditorChapter = {
+      ...createEditorChapterState(),
+      chapterId: "chapter-1",
+      mode: "preview",
+      previewLanguageCode: "ja",
+    };
+
+    const result = applyEditorUiState({
+      chapterId,
+      languages: [
+        { code: "es", name: "Spanish", role: "source" },
+        { code: "vi", name: "Vietnamese", role: "target" },
+      ],
+      selectedSourceLanguageCode: "es",
+      selectedTargetLanguageCode: "vi",
+      rows: [{ rowId: "row-1" }],
+    }, previousEditorChapter);
+
+    assert.equal(result.previewLanguageCode, "es");
+    assert.equal(selectedEditorPreviewLanguageCode(result), "es");
+  } finally {
+    clearStoredEditorPreviewLanguageCode(chapterId, login);
+    setActiveStorageLogin(null);
+  }
 });
 
 test("normalizeEditorRows clones row data and initializes persistence metadata", () => {

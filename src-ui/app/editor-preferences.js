@@ -3,6 +3,7 @@ import { readPersistentValue, removePersistentValue, writePersistentValue } from
 
 const EDITOR_FONT_SIZE_STORAGE_KEY = "gnosis-tms-editor-font-size";
 const EDITOR_LOCATION_STORAGE_KEY = "gnosis-tms-editor-location";
+const EDITOR_PREVIEW_LANGUAGE_STORAGE_KEY = "gnosis-tms-editor-preview-language";
 
 function normalizeStorageLogin(login) {
   return typeof login === "string" && login.trim() ? login.trim().toLowerCase() : null;
@@ -20,6 +21,11 @@ function scopedEditorPreferenceKey(login = getActiveStorageLogin()) {
 function scopedEditorLocationKey(login = getActiveStorageLogin()) {
   const normalizedLogin = resolveStorageLogin(login);
   return normalizedLogin ? `${EDITOR_LOCATION_STORAGE_KEY}:${normalizedLogin}` : null;
+}
+
+function scopedEditorPreviewLanguageKey(login = getActiveStorageLogin()) {
+  const normalizedLogin = resolveStorageLogin(login);
+  return normalizedLogin ? `${EDITOR_PREVIEW_LANGUAGE_STORAGE_KEY}:${normalizedLogin}` : null;
 }
 
 function isPlainObject(value) {
@@ -92,6 +98,55 @@ function loadStoredEditorLocationMap(login = getActiveStorageLogin()) {
     }
 
     normalizedMap[chapterId] = normalizedEntry;
+  }
+
+  if (removedInvalidEntry) {
+    if (Object.keys(normalizedMap).length > 0) {
+      writePersistentValue(key, normalizedMap);
+    } else {
+      removePersistentValue(key);
+    }
+  }
+
+  return normalizedMap;
+}
+
+function normalizeStoredEditorPreviewLanguageCode(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function loadStoredEditorPreviewLanguageMap(login = getActiveStorageLogin()) {
+  const key = scopedEditorPreviewLanguageKey(login);
+  if (!key) {
+    return {};
+  }
+
+  const rawValue = readPersistentValue(key, null);
+  if (rawValue === null || rawValue === undefined) {
+    return {};
+  }
+
+  if (!isPlainObject(rawValue)) {
+    removePersistentValue(key);
+    return {};
+  }
+
+  const normalizedMap = {};
+  let removedInvalidEntry = false;
+
+  for (const [chapterId, value] of Object.entries(rawValue)) {
+    if (typeof chapterId !== "string" || !chapterId.trim()) {
+      removedInvalidEntry = true;
+      continue;
+    }
+
+    const normalizedCode = normalizeStoredEditorPreviewLanguageCode(value);
+    if (!normalizedCode) {
+      removedInvalidEntry = true;
+      continue;
+    }
+
+    normalizedMap[chapterId] = normalizedCode;
   }
 
   if (removedInvalidEntry) {
@@ -211,6 +266,63 @@ export function clearStoredEditorLocation(chapterId, login = getActiveStorageLog
   delete locations[chapterId];
   if (Object.keys(locations).length > 0) {
     writePersistentValue(key, locations);
+  } else {
+    removePersistentValue(key);
+  }
+}
+
+export function loadStoredEditorPreviewLanguageCode(chapterId, login = getActiveStorageLogin()) {
+  if (typeof chapterId !== "string" || !chapterId.trim()) {
+    return null;
+  }
+
+  const languageCodes = loadStoredEditorPreviewLanguageMap(login);
+  return languageCodes[chapterId] ?? null;
+}
+
+export function saveStoredEditorPreviewLanguageCode(
+  chapterId,
+  languageCode,
+  login = getActiveStorageLogin(),
+) {
+  if (typeof chapterId !== "string" || !chapterId.trim()) {
+    return;
+  }
+
+  const normalizedCode = normalizeStoredEditorPreviewLanguageCode(languageCode);
+  if (!normalizedCode) {
+    clearStoredEditorPreviewLanguageCode(chapterId, login);
+    return;
+  }
+
+  const key = scopedEditorPreviewLanguageKey(login);
+  if (!key) {
+    return;
+  }
+
+  const languageCodes = loadStoredEditorPreviewLanguageMap(login);
+  languageCodes[chapterId] = normalizedCode;
+  writePersistentValue(key, languageCodes);
+}
+
+export function clearStoredEditorPreviewLanguageCode(chapterId, login = getActiveStorageLogin()) {
+  if (typeof chapterId !== "string" || !chapterId.trim()) {
+    return;
+  }
+
+  const key = scopedEditorPreviewLanguageKey(login);
+  if (!key) {
+    return;
+  }
+
+  const languageCodes = loadStoredEditorPreviewLanguageMap(login);
+  if (!Object.prototype.hasOwnProperty.call(languageCodes, chapterId)) {
+    return;
+  }
+
+  delete languageCodes[chapterId];
+  if (Object.keys(languageCodes).length > 0) {
+    writePersistentValue(key, languageCodes);
   } else {
     removePersistentValue(key);
   }
