@@ -4,6 +4,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use plist::{Dictionary, Uid, Value};
 use serde::{Deserialize, Serialize};
 
+#[cfg(target_os = "macos")]
 pub(crate) const VELLUM_TEXT_EDITOR_CONTENT_TYPE: &str = "co.180g.Vellum.TextEditorContent";
 
 #[derive(Debug, Deserialize)]
@@ -17,12 +18,14 @@ pub(crate) struct VellumClipboardInput {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) struct VellumImagePreparationInput {
     images: Vec<VellumImageResourceRequest>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) struct VellumImageResourceRequest {
     index: usize,
     source: String,
@@ -202,6 +205,7 @@ fn write_vellum_pasteboard(
     Err("Vellum pasteboard export is only available on macOS.".to_string())
 }
 
+#[cfg(target_os = "macos")]
 fn non_empty_string(value: Option<&str>) -> Option<&str> {
     value.and_then(|text| {
         let trimmed = text.trim();
