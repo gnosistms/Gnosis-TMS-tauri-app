@@ -6,7 +6,7 @@ import {
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
 import {
-  EDITOR_EXPORT_CATEGORIES,
+  editorExportCategories,
   findEditorExportOption,
 } from "../app/editor-export-flow.js";
 import { selectedWordPressPost } from "../app/editor-export-wordpress-flow.js";
@@ -414,7 +414,7 @@ export function renderEditorExportModal(state) {
           <h2 class="modal__title">Export options</h2>
           <div class="editor-export-modal">
             <nav class="editor-export-modal__nav" aria-label="Export options">
-              ${EDITOR_EXPORT_CATEGORIES.map((category) => renderExportCategory(category, modal)).join("")}
+              ${editorExportCategories().map((category) => renderExportCategory(category, modal)).join("")}
             </nav>
             <div class="editor-export-modal__detail">
               <p class="editor-export-modal__detail-heading">${escapeHtml(option?.label ?? "")}</p>

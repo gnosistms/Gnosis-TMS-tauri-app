@@ -46,8 +46,8 @@ const {
 const { EDITOR_MODE_PREVIEW } = await import("./editor-preview.js");
 const { updateEditorPreviewLanguage } = await import("./editor-preview-flow.js");
 const {
-  EDITOR_EXPORT_CATEGORIES,
   closeEditorExportOptions,
+  editorExportCategories,
   findEditorExportOption,
   openEditorExportOptions,
   selectEditorExportOption,
@@ -62,10 +62,15 @@ class TestClipboardItem {
   }
 }
 
-function installNavigator(clipboard) {
+function installNavigator(options = {}) {
+  const hasNavigatorOptions = Object.hasOwn(options, "platform") || Object.hasOwn(options, "clipboard");
+  const clipboard = hasNavigatorOptions ? options.clipboard : options;
   Object.defineProperty(globalThis, "navigator", {
     configurable: true,
-    value: { clipboard },
+    value: {
+      platform: options.platform ?? "MacIntel",
+      clipboard,
+    },
   });
 }
 
@@ -139,14 +144,28 @@ test.afterEach(() => {
 });
 
 test("the export catalog covers the three categories with stable option ids", () => {
-  assert.deepEqual(EDITOR_EXPORT_CATEGORIES.map((category) => category.id), ["file", "copy", "link"]);
-  for (const category of EDITOR_EXPORT_CATEGORIES) {
+  installNavigator({ platform: "MacIntel" });
+  const categories = editorExportCategories();
+  assert.deepEqual(categories.map((category) => category.id), ["file", "copy", "link"]);
+  assert.ok(categories.find((category) => category.id === "copy")?.options.some((option) => option.id === "copy:vellum"));
+  for (const category of categories) {
     for (const option of category.options) {
       assert.equal(option.id, `${category.id}:${option.format}`);
       assert.equal(findEditorExportOption(option.id), option);
     }
   }
   assert.equal(findEditorExportOption("file:unknown"), null);
+});
+
+test("the Vellum export option is hidden outside macOS", () => {
+  installNavigator({ platform: "Win32" });
+
+  assert.equal(findEditorExportOption("copy:vellum"), null);
+  assert.equal(
+    editorExportCategories().find((category) => category.id === "copy")
+      ?.options.some((option) => option.id === "copy:vellum"),
+    false,
+  );
 });
 
 test("openEditorExportOptions opens the modal with the default selection", () => {
@@ -182,9 +201,11 @@ test("toggleEditorExportCategory expands and collapses categories", () => {
 
   toggleEditorExportCategory(() => {}, "copy");
   assert.deepEqual(state.editorChapter.exportModal.expandedCategoryIds, ["file", "copy"]);
+  assert.equal(state.editorChapter.exportModal.selectedOptionId, "copy:text");
 
   toggleEditorExportCategory(() => {}, "file");
   assert.deepEqual(state.editorChapter.exportModal.expandedCategoryIds, ["copy"]);
+  assert.equal(state.editorChapter.exportModal.selectedOptionId, "copy:text");
 
   toggleEditorExportCategory(() => {}, "not-a-category");
   assert.deepEqual(state.editorChapter.exportModal.expandedCategoryIds, ["copy"]);
@@ -295,6 +316,35 @@ test("submitEditorExport copy plain text publishes only the plain flavor", async
   assert.equal(writes.length, 1);
   assert.deepEqual(Object.keys(writes[0][0].items), ["text/plain"]);
   assert.equal(await writes[0][0].items["text/plain"].text(), "Text one[1]\n\n[1] footnote 1");
+});
+
+test("submitEditorExport copy Vellum uses the native Vellum writer with fallbacks", async () => {
+  installNavigator({ platform: "MacIntel" });
+  installEditorExportFixture({
+    rows: [{
+      rowId: "row-1",
+      lifecycleState: "active",
+      textStyle: "heading1",
+      fields: { vi: "Heading <strong>bold</strong>", es: "Titulo" },
+      footnotes: {},
+    }],
+  });
+  const vellumCalls = [];
+  openExportModal("copy:vellum");
+
+  await submitEditorExport(() => {}, {
+    copyVellumTextEditorContent: async (input) => {
+      vellumCalls.push(input);
+    },
+  });
+
+  assert.equal(vellumCalls.length, 1);
+  assert.match(vellumCalls[0].decodedPropertyListXml, /OGImagePreservingArchiver/);
+  assert.match(vellumCalls[0].decodedPropertyListXml, /NSMutableAttributedString/);
+  assert.match(vellumCalls[0].decodedPropertyListXml, /OGBoldText/);
+  assert.equal(vellumCalls[0].plainText, "Heading bold");
+  assert.match(vellumCalls[0].html, /<!-- wp:heading/);
+  assert.equal(state.editorChapter.exportModal.isOpen, false);
 });
 
 test("copy exports follow the preview language without changing editor selections", async () => {

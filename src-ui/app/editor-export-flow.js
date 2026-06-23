@@ -1,5 +1,5 @@
 import { formatErrorForDisplay } from "./error-display.js";
-import { invoke } from "./runtime.js";
+import { invoke, isMacPlatform } from "./runtime.js";
 import { findChapterContext, selectedProjectsTeam } from "./project-context.js";
 import {
   buildEditorPreviewDocument,
@@ -26,8 +26,10 @@ import {
   loadStoredEditorExportDefault,
   saveStoredEditorExportDefault,
 } from "./editor-export-defaults.js";
+import { copyVellumTextEditorContentToClipboard } from "./vellum-clipboard.js";
+import { buildVellumTextEditorContentDecodedXml } from "./vellum-text-editor-content.js";
 
-export const EDITOR_EXPORT_CATEGORIES = [
+const BASE_EDITOR_EXPORT_CATEGORIES = [
   {
     id: "file",
     label: "Save to file",
@@ -46,6 +48,7 @@ export const EDITOR_EXPORT_CATEGORIES = [
     options: [
       { id: "copy:text", label: "Plain text", kind: "copy", format: "text", available: true },
       { id: "copy:html", label: "HTML", kind: "copy", format: "html", available: true },
+      { id: "copy:vellum", label: "Vellum", kind: "copy", format: "vellum", available: true, platform: "mac" },
       { id: "copy:docx", label: "DOCX", kind: "copy", format: "docx", available: false },
     ],
   },
@@ -59,8 +62,17 @@ export const EDITOR_EXPORT_CATEGORIES = [
   },
 ];
 
+export function editorExportCategories() {
+  const mac = isMacPlatform();
+  return BASE_EDITOR_EXPORT_CATEGORIES.map((category) => ({
+    ...category,
+    options: category.options
+      .filter((option) => option.platform !== "mac" || mac),
+  }));
+}
+
 export function findEditorExportOption(optionId) {
-  for (const category of EDITOR_EXPORT_CATEGORIES) {
+  for (const category of editorExportCategories()) {
     const option = category.options.find((entry) => entry.id === optionId);
     if (option) {
       return option;
@@ -120,9 +132,12 @@ function openExportOptionsForChapter(render, chapterId, languageCode) {
   // selection; both fall back to the catalog default.
   const stored = loadStoredEditorExportDefault(chapterId);
   const storedOption = stored ? findEditorExportOption(stored.optionId) : null;
+  const previousOption = findEditorExportOption(previous.selectedOptionId);
   const selectedOptionId = storedOption?.available
     ? storedOption.id
-    : previous.selectedOptionId;
+    : previousOption?.available
+      ? previousOption.id
+      : createEditorExportModalState().selectedOptionId;
   const expandedCategoryIds = Array.from(new Set([
     ...(Array.isArray(previous.expandedCategoryIds) ? previous.expandedCategoryIds : []),
     String(selectedOptionId ?? "").split(":")[0],
@@ -196,16 +211,28 @@ export function closeEditorExportOptions(render) {
 
 export function toggleEditorExportCategory(render, categoryId) {
   const modal = currentExportModal();
-  if (!modal?.isOpen || !EDITOR_EXPORT_CATEGORIES.some((category) => category.id === categoryId)) {
+  const category = editorExportCategories().find((entry) => entry.id === categoryId);
+  if (!modal?.isOpen || !category) {
     return;
   }
 
   const expanded = Array.isArray(modal.expandedCategoryIds) ? modal.expandedCategoryIds : [];
-  updateEditorExportModal({
-    expandedCategoryIds: expanded.includes(categoryId)
+  const wasExpanded = expanded.includes(categoryId);
+  const nextPatch = {
+    expandedCategoryIds: wasExpanded
       ? expanded.filter((id) => id !== categoryId)
       : [...expanded, categoryId],
-  });
+  };
+
+  if (!wasExpanded && categoryId === "copy") {
+    const firstAvailableOption = category.options.find((option) => option.available === true);
+    if (firstAvailableOption) {
+      nextPatch.selectedOptionId = firstAvailableOption.id;
+      nextPatch.error = "";
+    }
+  }
+
+  updateEditorExportModal(nextPatch);
   render();
 }
 
@@ -366,14 +393,16 @@ async function submitEditorFileExport(render, option, operations) {
 
 async function submitEditorCopyExport(render, option, operations) {
   const writeClipboard = operations.writeClipboard ?? writeClipboardFormats;
+  const copyVellum = operations.copyVellumTextEditorContent ?? copyVellumTextEditorContentToClipboard;
   const languageCode = selectedEditorPreviewLanguageCode(state.editorChapter);
   const blocks = buildEditorPreviewDocument(state.editorChapter?.rows, languageCode);
   const plainText = serializeEditorPreviewPlainText(blocks);
+  const html = serializeEditorPreviewHtml(blocks);
   const formats = option.format === "html"
     ? { "text/html": serializeEditorPreviewHtml(blocks), "text/plain": plainText }
     : { "text/plain": plainText };
 
-  if (!plainText && !formats["text/html"]) {
+  if (!plainText && !formats["text/html"] && option.format !== "vellum") {
     failEditorExport(render, "Nothing to copy.");
     return;
   }
@@ -382,11 +411,28 @@ async function submitEditorCopyExport(render, option, operations) {
   render();
 
   try {
-    await writeClipboard(formats);
+    if (option.format === "vellum") {
+      const decodedPropertyListXml = buildVellumTextEditorContentDecodedXml(blocks);
+      if (!decodedPropertyListXml) {
+        throw new Error("Nothing to copy.");
+      }
+      await copyVellum({
+        decodedPropertyListXml,
+        plainText,
+        html,
+      });
+    } else {
+      await writeClipboard(formats);
+    }
     updateEditorExportModal({ isOpen: false, status: "idle", error: "" });
     saveStoredEditorExportDefault(state.editorChapter?.chapterId, { optionId: option.id });
     render();
-    showNoticeBadge(option.format === "html" ? "Copied HTML." : "Copied plain text.", render, 1400);
+    const copiedLabel = option.format === "html"
+      ? "Copied HTML."
+      : option.format === "vellum"
+        ? "Copied Vellum."
+        : "Copied plain text.";
+    showNoticeBadge(copiedLabel, render, 1400);
   } catch (error) {
     failEditorExport(render, error);
   }

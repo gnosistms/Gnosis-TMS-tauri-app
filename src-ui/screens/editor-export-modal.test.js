@@ -3,6 +3,15 @@ import assert from "node:assert/strict";
 
 import { renderEditorExportModal } from "./editor-export-modal.js";
 
+const originalNavigator = globalThis.navigator;
+
+function installNavigatorPlatform(platform) {
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: { platform },
+  });
+}
+
 function exportState(overrides = {}) {
   return {
     editorChapter: {
@@ -21,6 +30,13 @@ function exportState(overrides = {}) {
   };
 }
 
+test.afterEach(() => {
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: originalNavigator,
+  });
+});
+
 test("editor export modal renders nothing while closed", () => {
   assert.equal(renderEditorExportModal(exportState({ isOpen: false })), "");
   assert.equal(renderEditorExportModal({}), "");
@@ -37,6 +53,22 @@ test("editor export modal lists categories and expands only opened ones", () => 
   assert.match(html, /data-action="toggle-editor-export-category:copy"[^>]*aria-expanded="false"/);
   assert.match(html, /data-action="select-editor-export-option:file:html"/);
   assert.doesNotMatch(html, /data-action="select-editor-export-option:copy:text"/);
+});
+
+test("editor export modal lists Vellum only on macOS", () => {
+  installNavigatorPlatform("MacIntel");
+  const macHtml = renderEditorExportModal(exportState({
+    expandedCategoryIds: ["copy"],
+    selectedOptionId: "copy:text",
+  }));
+  assert.match(macHtml, /data-action="select-editor-export-option:copy:vellum"/);
+
+  installNavigatorPlatform("Win32");
+  const windowsHtml = renderEditorExportModal(exportState({
+    expandedCategoryIds: ["copy"],
+    selectedOptionId: "copy:text",
+  }));
+  assert.doesNotMatch(windowsHtml, /data-action="select-editor-export-option:copy:vellum"/);
 });
 
 test("editor export modal shows the save pane for available file formats", () => {

@@ -41,3 +41,8 @@ tar = "0.4"
 zip = { version = "=2.4.2", default-features = false, features = ["deflate-flate2"] }
 readabilityrs = "0.1.3"
 scraper = "0.25"
+plist = "1.8"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSPasteboard"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSArray", "NSData", "NSString"] }
