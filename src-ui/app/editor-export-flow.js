@@ -26,8 +26,15 @@ import {
   loadStoredEditorExportDefault,
   saveStoredEditorExportDefault,
 } from "./editor-export-defaults.js";
-import { copyVellumTextEditorContentToClipboard } from "./vellum-clipboard.js";
-import { buildVellumTextEditorContentDecodedXml } from "./vellum-text-editor-content.js";
+import {
+  copyVellumTextEditorContentToClipboard,
+  prepareVellumImageResources,
+} from "./vellum-clipboard.js";
+import {
+  applyPreparedVellumImageResources,
+  buildVellumImageResourceRequests,
+  buildVellumTextEditorContentDecodedXml,
+} from "./vellum-text-editor-content.js";
 
 const BASE_EDITOR_EXPORT_CATEGORIES = [
   {
@@ -394,6 +401,7 @@ async function submitEditorFileExport(render, option, operations) {
 async function submitEditorCopyExport(render, option, operations) {
   const writeClipboard = operations.writeClipboard ?? writeClipboardFormats;
   const copyVellum = operations.copyVellumTextEditorContent ?? copyVellumTextEditorContentToClipboard;
+  const prepareVellumImages = operations.prepareVellumImageResources ?? prepareVellumImageResources;
   const languageCode = selectedEditorPreviewLanguageCode(state.editorChapter);
   const blocks = buildEditorPreviewDocument(state.editorChapter?.rows, languageCode);
   const plainText = serializeEditorPreviewPlainText(blocks);
@@ -412,7 +420,14 @@ async function submitEditorCopyExport(render, option, operations) {
 
   try {
     if (option.format === "vellum") {
-      const decodedPropertyListXml = buildVellumTextEditorContentDecodedXml(blocks);
+      const imageRequests = buildVellumImageResourceRequests(blocks);
+      const vellumBlocks = imageRequests.length > 0
+        ? applyPreparedVellumImageResources(
+          blocks,
+          await prepareVellumImages({ images: imageRequests }),
+        )
+        : blocks;
+      const decodedPropertyListXml = buildVellumTextEditorContentDecodedXml(vellumBlocks);
       if (!decodedPropertyListXml) {
         throw new Error("Nothing to copy.");
       }

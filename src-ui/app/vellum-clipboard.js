@@ -8,3 +8,10 @@ export async function copyVellumTextEditorContentToClipboard(input, operations =
     input,
   });
 }
+
+export async function prepareVellumImageResources(input, operations = {}) {
+  const invokeCommand = operations.invoke ?? invoke;
+  return invokeCommand("prepare_vellum_image_resources", {
+    input,
+  });
+}

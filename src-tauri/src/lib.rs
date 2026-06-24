@@ -530,6 +530,7 @@ pub fn run() {
             wordpress::export::search_wordpress_posts,
             wordpress::export::export_chapter_to_wordpress,
             vellum_clipboard::copy_vellum_text_editor_content_to_clipboard,
+            vellum_clipboard::prepare_vellum_image_resources,
             inspect_broker_auth_session,
             refresh_broker_auth_session,
             load_broker_auth_session,

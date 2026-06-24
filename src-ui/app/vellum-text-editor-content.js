@@ -122,6 +122,7 @@ function createArchiveBuilder() {
   const classIds = new Map();
   const boolIds = new Map();
   const integerIds = new Map();
+  const realIds = new Map();
 
   function addRaw(xml) {
     objects.push(xml);
@@ -156,6 +157,17 @@ function createArchiveBuilder() {
     }
     const id = addRaw(`<integer>${normalized}</integer>`);
     integerIds.set(key, id);
+    return id;
+  }
+
+  function addReal(value) {
+    const normalized = Number.isFinite(Number(value)) ? Number(value) : 0;
+    const key = String(normalized);
+    if (realIds.has(key)) {
+      return realIds.get(key);
+    }
+    const id = addRaw(`<real>${escapeXml(key)}</real>`);
+    realIds.set(key, id);
     return id;
   }
 
@@ -279,6 +291,7 @@ ${dictXml([
     addOgParagraphFormat,
     addParagraphStyle,
     addRaw,
+    addReal,
     addString,
     addUrl,
     setRoot,
@@ -521,15 +534,11 @@ function addAttributeObjects(builder, attachmentAttributes = {}) {
       return baseAttributes.get("default");
     }
 
-    const metadataEntries = [
-      image.fileName ? ["filename", builder.addString(image.fileName)] : null,
-      image.source ? ["lastAbsolutePath", builder.addString(image.source)] : null,
-      image.uti ? ["uti", builder.addString(image.uti)] : null,
-    ].filter(Boolean);
+    const metadataEntries = imageMetadataEntries(builder, image);
     const metadataClassId = builder.addClass(["NSMutableDictionary", "NSDictionary", "NSObject"]);
     const metadataId = builder.addNsDictionary(metadataEntries, metadataClassId);
     const handleClassId = builder.addClass(["OGImageHandle", "OGImageToken", "NSObject"]);
-    const sourceUrlId = builder.addUrl(image.source);
+    const sourceUrlId = builder.addUrl(image.preservedUrl || image.source);
     const handleId = builder.addKeyedObject(handleClassId, [
       ["imageKey", uidXml(builder.addString(image.imageKey))],
       // Vellum's archived field names are inverted: preservedMetadata is the NSURL,
@@ -597,6 +606,39 @@ function addAttributeObjects(builder, attachmentAttributes = {}) {
       return baseAttributes.get(attributeKey) ?? baseAttributes.get("default");
     },
   };
+}
+
+function imageMetadataEntries(builder, image) {
+  const entries = [];
+  const addStringEntry = (key, value) => {
+    const text = normalizeText(value);
+    if (text) {
+      entries.push([key, builder.addString(text)]);
+    }
+  };
+  const addBooleanEntry = (key, value) => {
+    if (typeof value === "boolean") {
+      entries.push([key, builder.addBoolean(value)]);
+    }
+  };
+  const addNumberEntry = (key, value) => {
+    const number = Number(value);
+    if (Number.isFinite(number) && number > 0) {
+      entries.push([key, builder.addReal(number)]);
+    }
+  };
+
+  addStringEntry("colorSpace", image.colorSpace);
+  addBooleanEntry("hasAlpha", image.hasAlpha);
+  addBooleanEntry("canUpsize", image.canUpsize);
+  addNumberEntry("pixelHeight", image.pixelHeight);
+  addStringEntry("filename", image.fileName);
+  addNumberEntry("pixelWidth", image.pixelWidth);
+  addStringEntry("lastAbsolutePath", image.lastAbsolutePath || image.source);
+  addStringEntry("uti", image.uti);
+  addStringEntry("colorSpaceModel", image.colorSpaceModel);
+
+  return entries;
 }
 
 function blockAttributeKey(block) {
@@ -800,6 +842,19 @@ function filePathToFileUrl(path) {
   return `file://${source.split("/").map((part) => encodeURIComponent(part)).join("/")}`;
 }
 
+function fileUrlToPath(url) {
+  const source = normalizeText(url);
+  if (!source.toLowerCase().startsWith("file://")) {
+    return "";
+  }
+  try {
+    const parsed = new URL(source);
+    return decodeURIComponent(parsed.pathname);
+  } catch {
+    return "";
+  }
+}
+
 function imageSource(image) {
   if (normalizeText(image?.kind) === "url") {
     return normalizeText(image?.url);
@@ -817,6 +872,21 @@ function imageKey(fileName, source, index) {
     || `image_${index}`;
 }
 
+function preparedVellumImage(image) {
+  return image && typeof image.vellumPrepared === "object"
+    ? image.vellumPrepared
+    : null;
+}
+
+function imageTooltip(fileName, prepared) {
+  const width = Number(prepared?.pixelWidth);
+  const height = Number(prepared?.pixelHeight);
+  if (Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0) {
+    return `${fileName}\n${Math.trunc(width)} × ${Math.trunc(height)} px`;
+  }
+  return fileName;
+}
+
 function appendImageRuns(block, target) {
   const image = block?.image;
   if (!image) {
@@ -824,19 +894,87 @@ function appendImageRuns(block, target) {
   }
 
   const index = target.imageAttributes.size + 1;
-  const fileName = imageFileName(image);
-  const source = imageSource(image);
+  const prepared = preparedVellumImage(image);
+  const fallbackFileName = imageFileName(image);
+  const fallbackSource = imageSource(image);
+  const fileName = normalizeText(prepared?.fileName) || fallbackFileName;
+  const preservedUrl = normalizeText(prepared?.preservedUrl);
+  const source = preservedUrl || fallbackSource;
+  const lastAbsolutePath = normalizeText(prepared?.lastAbsolutePath)
+    || fileUrlToPath(source)
+    || source;
   const caption = visibleInlineText(block?.caption ?? "");
   const attributeKey = `image:${index}`;
   target.imageAttributes.set(attributeKey, {
+    canUpsize: typeof prepared?.canUpsize === "boolean" ? prepared.canUpsize : undefined,
     caption,
+    colorSpace: prepared?.colorSpace,
+    colorSpaceModel: prepared?.colorSpaceModel,
     fileName,
-    imageKey: imageKey(fileName, source, index),
+    hasAlpha: typeof prepared?.hasAlpha === "boolean" ? prepared.hasAlpha : undefined,
+    imageKey: normalizeText(prepared?.imageKey) || imageKey(fileName, source, index),
+    lastAbsolutePath,
+    pixelHeight: prepared?.pixelHeight,
+    pixelWidth: prepared?.pixelWidth,
+    preservedUrl,
     source,
-    tooltip: fileName,
-    uti: imageUti(fileName),
+    tooltip: normalizeText(prepared?.tooltip) || imageTooltip(fileName, prepared),
+    uti: normalizeText(prepared?.uti) || imageUti(fileName),
   });
   appendTextRun(target, VELLUM_ATTACHMENT_CHARACTER, attributeKey);
+}
+
+export function buildVellumImageResourceRequests(blocks) {
+  const requests = [];
+  for (const block of Array.isArray(blocks) ? blocks : []) {
+    if (!block || block.kind !== "image" || !block.image) {
+      continue;
+    }
+
+    const index = requests.length + 1;
+    const fileName = imageFileName(block.image);
+    const source = imageSource(block.image);
+    if (!source) {
+      continue;
+    }
+
+    requests.push({
+      index,
+      source,
+      fileName,
+      uti: imageUti(fileName),
+    });
+  }
+  return requests;
+}
+
+export function applyPreparedVellumImageResources(blocks, preparedResources) {
+  const resourcesByIndex = new Map(
+    (Array.isArray(preparedResources) ? preparedResources : [])
+      .map((resource) => [Number(resource?.index), resource])
+      .filter(([index, resource]) => Number.isInteger(index) && index > 0 && resource),
+  );
+  let imageIndex = 0;
+
+  return (Array.isArray(blocks) ? blocks : []).map((block) => {
+    if (!block || block.kind !== "image" || !block.image) {
+      return block;
+    }
+
+    imageIndex += 1;
+    const prepared = resourcesByIndex.get(imageIndex);
+    if (!prepared) {
+      return block;
+    }
+
+    return {
+      ...block,
+      image: {
+        ...block.image,
+        vellumPrepared: prepared,
+      },
+    };
+  });
 }
 
 function appendFootnoteAttachmentRun(target, entry, footnoteContext) {

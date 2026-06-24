@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildVellumTextEditorContentDecodedXml } from "./vellum-text-editor-content.js";
+import {
+  applyPreparedVellumImageResources,
+  buildVellumImageResourceRequests,
+  buildVellumTextEditorContentDecodedXml,
+} from "./vellum-text-editor-content.js";
 
 const VELLUM_ATTACHMENT_CHARACTER = "\uFFFC";
 const VELLUM_PARAGRAPH_SEPARATOR = "\u2029";
@@ -231,4 +235,60 @@ test("buildVellumTextEditorContentDecodedXml writes images as Vellum image attac
   const byteValues = decodedNsByteValues(xml);
   assert.ok(byteValues.some((value) => value.toString("utf8") === `Text test p1\n${VELLUM_ATTACHMENT_CHARACTER}\nText test p2`));
   assert.ok(byteValues.some((value) => value.equals(Buffer.from([13, 0, 1, 1, 13, 0]))));
+});
+
+test("buildVellumTextEditorContentDecodedXml uses prepared local Vellum image resources", () => {
+  const blocks = [
+    {
+      kind: "image",
+      rowId: "row-image",
+      languageCode: "en",
+      image: {
+        kind: "url",
+        url: "https://example.com/images/Diogenes.webp",
+      },
+      caption: "Prepared caption",
+    },
+  ];
+  const requests = buildVellumImageResourceRequests(blocks);
+  assert.deepEqual(requests, [{
+    index: 1,
+    source: "https://example.com/images/Diogenes.webp",
+    fileName: "Diogenes.webp",
+    uti: "org.webmproject.webp",
+  }]);
+
+  const preparedBlocks = applyPreparedVellumImageResources(blocks, [{
+    index: 1,
+    fileName: "Diogenes.webp",
+    imageKey: "diogenes",
+    preservedUrl: "file:///var/folders/test/co.180g.Vellum/preserved-images.abc123/Diogenes.webp",
+    lastAbsolutePath: "/var/folders/test/co.180g.Vellum/vellum-process-attachment.def456/Diogenes.webp",
+    uti: "org.webmproject.webp",
+    tooltip: "Diogenes.webp\n3840 × 2920 px",
+    pixelWidth: 3840,
+    pixelHeight: 2920,
+    colorSpace: "sRGB",
+    colorSpaceModel: "RGB",
+    hasAlpha: false,
+    canUpsize: false,
+  }]);
+  const xml = buildVellumTextEditorContentDecodedXml(preparedBlocks);
+
+  assert.match(xml, /<string>file:\/\/\/var\/folders\/test\/co\.180g\.Vellum\/preserved-images\.abc123\/Diogenes\.webp<\/string>/);
+  assert.doesNotMatch(xml, /https:\/\/example\.com\/images\/Diogenes\.webp/);
+  assert.match(xml, /<string>lastAbsolutePath<\/string>/);
+  assert.match(xml, /<string>\/var\/folders\/test\/co\.180g\.Vellum\/vellum-process-attachment\.def456\/Diogenes\.webp<\/string>/);
+  assert.match(xml, /<string>pixelWidth<\/string>/);
+  assert.match(xml, /<real>3840<\/real>/);
+  assert.match(xml, /<string>pixelHeight<\/string>/);
+  assert.match(xml, /<real>2920<\/real>/);
+  assert.match(xml, /<string>colorSpace<\/string>/);
+  assert.match(xml, /<string>sRGB<\/string>/);
+  assert.match(xml, /<string>colorSpaceModel<\/string>/);
+  assert.match(xml, /<string>RGB<\/string>/);
+  assert.match(xml, /<string>hasAlpha<\/string>/);
+  assert.match(xml, /<false\/>/);
+  assert.match(xml, /<string>canUpsize<\/string>/);
+  assert.match(xml, /<string>Diogenes\.webp\n3840 × 2920 px<\/string>/);
 });
