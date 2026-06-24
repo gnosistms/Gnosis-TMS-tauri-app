@@ -1175,10 +1175,17 @@ fn docx_run_xml(segment: &InlineSegment) -> String {
     } else {
         format!("<w:rPr>{rpr}</w:rPr>")
     };
-    format!(
-        r#"<w:r>{rpr}<w:t xml:space="preserve">{}</w:t></w:r>"#,
-        escape_xml(&segment.text)
-    )
+    format!("<w:r>{rpr}{}</w:r>", docx_run_text_xml(&segment.text))
+}
+
+// A within-row newline is an in-paragraph line break. OOXML does not treat a
+// literal LF inside <w:t> as a break (Word collapses it), so split the run text
+// on newlines and emit <w:br/> between the pieces.
+fn docx_run_text_xml(text: &str) -> String {
+    text.split('\n')
+        .map(|line| format!(r#"<w:t xml:space="preserve">{}</w:t>"#, escape_xml(line)))
+        .collect::<Vec<_>>()
+        .join("<w:br/>")
 }
 
 fn docx_image_paragraph_xml(rel_id: &str, image: &DocxImage) -> String {
@@ -2239,6 +2246,29 @@ mod tests {
         assert!(xml.contains("<w:b/>"));
         assert!(xml.contains("<w:i/>"));
         assert!(xml.contains(r#"<w:u w:val="single"/>"#));
+    }
+
+    #[test]
+    fn docx_export_renders_within_row_newline_as_line_break() {
+        let bytes = render_docx_document(&document(vec![ExportBlock::Text {
+            text_style: "paragraph".to_string(),
+            text: "Line one\nLine two".to_string(),
+        }]))
+        .expect("docx should render");
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).expect("docx should be zip");
+        let mut xml = String::new();
+        archive
+            .by_name("word/document.xml")
+            .expect("document exists")
+            .read_to_string(&mut xml)
+            .expect("document xml reads");
+
+        // The newline becomes an in-paragraph <w:br/>, not a raw LF that Word
+        // would collapse, and both halves stay in the same paragraph.
+        assert!(xml.contains(
+            r#"<w:t xml:space="preserve">Line one</w:t><w:br/><w:t xml:space="preserve">Line two</w:t>"#
+        ));
+        assert!(!xml.contains("Line one\nLine two"));
     }
 
     #[test]

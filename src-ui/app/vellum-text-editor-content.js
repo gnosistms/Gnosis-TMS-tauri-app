@@ -20,6 +20,14 @@ const TEXT_ENCODER = new TextEncoder();
 const FONT_SIZE = 20;
 const VELLUM_ATTACHMENT_CHARACTER = "\uFFFC";
 const VELLUM_PARAGRAPH_SEPARATOR = "\u2029";
+// Within a single row, a user-entered newline is a soft line break, not a new
+// paragraph. Apple's text system treats U+000A/U+2029 as paragraph separators
+// (which carry NSParagraphSpacing) but U+2028 as a line break inside the same
+// paragraph (no paragraph spacing). Mapping body newlines to U+2028 keeps Vellum
+// consistent with the editor, preview, HTML, WordPress, and Markdown, which all
+// render a within-row newline as a tight line break. Row/paragraph boundaries
+// are emitted separately as U+000A and stay paragraph separators.
+const VELLUM_LINE_SEPARATOR = "\u2028";
 
 function escapeXml(value) {
   return String(value ?? "")
@@ -73,6 +81,10 @@ function dictXml(entries) {
 
 function normalizeText(value) {
   return typeof value === "string" ? value.trim() : String(value ?? "").trim();
+}
+
+function softenBodyLineBreaks(value) {
+  return String(value ?? "").replaceAll("\n", VELLUM_LINE_SEPARATOR);
 }
 
 function encodeVarUint(value) {
@@ -1255,6 +1267,10 @@ function appendFootnoteAttachmentRun(target, entry, footnoteContext) {
   appendTextRun(target, VELLUM_ATTACHMENT_CHARACTER, footnoteContext.attributeKeyForEntry(entry));
 }
 
+function bodyTextRun(text) {
+  return softenBodyLineBreaks(unescapeLiteralFootnoteMarkers(text));
+}
+
 function appendTextWithFootnotes(target, text, attributeKey, footnoteContext) {
   const source = String(text ?? "");
   if (!source) {
@@ -1263,13 +1279,13 @@ function appendTextWithFootnotes(target, text, attributeKey, footnoteContext) {
 
   const markers = footnoteContext ? parseUnescapedFootnoteMarkers(source) : [];
   if (markers.length === 0) {
-    appendTextRun(target, unescapeLiteralFootnoteMarkers(source), attributeKey);
+    appendTextRun(target, bodyTextRun(source), attributeKey);
     return;
   }
 
   let cursor = 0;
   for (const marker of markers) {
-    appendTextRun(target, unescapeLiteralFootnoteMarkers(source.slice(cursor, marker.index)), attributeKey);
+    appendTextRun(target, bodyTextRun(source.slice(cursor, marker.index)), attributeKey);
     const entry = footnoteContext.footnoteByMarker.get(marker.marker);
     if (entry && !footnoteContext.usedMarkers.has(entry.marker)) {
       trimTrailingHorizontalSpace(target);
@@ -1279,7 +1295,7 @@ function appendTextWithFootnotes(target, text, attributeKey, footnoteContext) {
     }
     cursor = marker.endIndex;
   }
-  appendTextRun(target, unescapeLiteralFootnoteMarkers(source.slice(cursor)), attributeKey);
+  appendTextRun(target, bodyTextRun(source.slice(cursor)), attributeKey);
 }
 
 function appendRemainingFootnoteRuns(target, footnoteContext) {
