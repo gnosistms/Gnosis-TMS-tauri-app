@@ -56,17 +56,14 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Cache cargo registry
-        uses: actions/cache@v5
+      # Caches compiled dependency artifacts in src-tauri/target/ (plus the cargo
+      # registry), keyed on Cargo.lock + the rustc version, so CI recompiles
+      # dependencies only when they actually change. Our own crate is always
+      # rebuilt and re-linted. PRs restore the cache populated by the base branch.
+      - name: Cache Rust build + registry
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('src-tauri/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-
+          workspaces: "src-tauri"
 
       - name: Setup Node
         uses: actions/setup-node@v6
