@@ -1027,6 +1027,7 @@ pub(crate) fn sync_project_repo(
 
     ensure_project_origin_remote(project, repo_path)?;
     ensure_repo_local_git_identity(app, repo_path)?;
+    restore_checkout_if_working_tree_empty(repo_path)?;
 
     if repo_has_imported_editor_conflicts(repo_path)? {
         let imported_conflicts = list_imported_editor_conflict_refs(repo_path)?;
@@ -1749,6 +1750,47 @@ fn ensure_project_origin_remote(
     Ok(())
 }
 
+/// Recover a project repo that was cloned but never checked out.
+///
+/// `clone_project_repo` clones with `--no-checkout` and only materializes the working
+/// tree after the app-version and layout-migration steps. If one of those steps aborts
+/// — most commonly the app-version gate, when the remote was last saved by a newer
+/// Gnosis TMS — the repo is left with a valid `HEAD` but an empty working tree and no
+/// on-disk `.gtms/repo.json`. On the next sync that reads as an old-format, "dirty"
+/// repo and wedges behind the migration-discard prompt even though there is nothing to
+/// discard.
+///
+/// When the working tree is empty but `HEAD` resolves, restoring the checkout from
+/// `HEAD` is always lossless: an empty working tree cannot hold uncommitted work, and
+/// `reset --hard HEAD` never drops commits. So do it automatically and quietly.
+fn restore_checkout_if_working_tree_empty(repo_path: &Path) -> Result<(), String> {
+    if git_output(repo_path, &["rev-parse", "--verify", "HEAD"], None).is_err() {
+        return Ok(());
+    }
+    if working_tree_has_files(repo_path) {
+        return Ok(());
+    }
+    git_output(repo_path, &["reset", "--hard", "HEAD"], None)?;
+    Ok(())
+}
+
+/// Whether the working tree holds any tracked-or-untracked file other than `.git`.
+///
+/// Conservative on failure: if the directory cannot be read, assume it has files so we
+/// never run a destructive restore against a repo we could not inspect.
+fn working_tree_has_files(repo_path: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(repo_path) else {
+        return true;
+    };
+    for entry in entries.flatten() {
+        if entry.file_name() == ".git" {
+            continue;
+        }
+        return true;
+    }
+    false
+}
+
 fn clone_project_repo(
     app: &AppHandle,
     project: &ProjectRepoSyncDescriptor,
@@ -1761,6 +1803,62 @@ fn clone_project_repo(
         .ok_or_else(|| "Could not resolve the local repo folder.".to_string())?;
     fs::create_dir_all(repo_parent)
         .map_err(|error| format!("Could not create the local repo folder: {error}"))?;
+
+    // Clone into a temporary sibling directory and only move it into place once the
+    // checkout is fully materialized. An aborted clone (e.g. the app-version gate
+    // refusing a repo saved by a newer Gnosis TMS) then leaves no half-cloned,
+    // checkout-less repo behind, which is what otherwise wedged later syncs behind the
+    // migration-discard prompt.
+    let file_name = repo_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("project");
+    let temp_path = repo_parent.join(format!(".{file_name}.gtms-clone-tmp"));
+    let _ = fs::remove_dir_all(&temp_path);
+
+    match populate_cloned_project_repo(
+        app,
+        project,
+        &temp_path,
+        remote_head_oid,
+        git_transport_token,
+    ) {
+        Ok(current_head_oid) => {
+            if repo_path.exists() {
+                fs::remove_dir_all(repo_path).map_err(|error| {
+                    let _ = fs::remove_dir_all(&temp_path);
+                    format!("Could not replace the local repo folder: {error}")
+                })?;
+            }
+            fs::rename(&temp_path, repo_path).map_err(|error| {
+                let _ = fs::remove_dir_all(&temp_path);
+                format!("Could not finalize the local repo folder: {error}")
+            })?;
+            mark_project_repo_synced(project, repo_path)?;
+            Ok(current_head_oid)
+        }
+        Err(error) => {
+            let _ = fs::remove_dir_all(&temp_path);
+            Err(error)
+        }
+    }
+}
+
+/// Clone and fully check out the project repo into `target_path`.
+///
+/// Returns an error (leaving `target_path` in whatever partial state it reached) if any
+/// step fails; the caller is responsible for discarding `target_path` on error so a
+/// partial clone never becomes the live repo.
+fn populate_cloned_project_repo(
+    app: &AppHandle,
+    project: &ProjectRepoSyncDescriptor,
+    target_path: &Path,
+    remote_head_oid: &str,
+    git_transport_token: &str,
+) -> Result<Option<String>, String> {
+    let target_parent = target_path
+        .parent()
+        .ok_or_else(|| "Could not resolve the local repo folder.".to_string())?;
 
     let repo_url = format!("https://github.com/{}.git", project.full_name);
     let git_transport_auth = GitTransportAuth::from_token(git_transport_token)?;
@@ -1775,34 +1873,32 @@ fn clone_project_repo(
         }
     }
     clone_args.push(repo_url.as_str());
-    let repo_path_string = repo_path.display().to_string();
-    clone_args.push(repo_path_string.as_str());
+    let target_path_string = target_path.display().to_string();
+    clone_args.push(target_path_string.as_str());
 
-    git_output(repo_parent, &clone_args, Some(&git_transport_auth))?;
-    ensure_repo_local_git_identity(app, repo_path)?;
+    git_output(target_parent, &clone_args, Some(&git_transport_auth))?;
+    ensure_repo_local_git_identity(app, target_path)?;
     let branch_name = project_branch_name(project);
-    enforce_remote_project_app_version(repo_path, project, &branch_name, &git_transport_auth)?;
+    enforce_remote_project_app_version(target_path, project, &branch_name, &git_transport_auth)?;
 
-    if !remote_head_oid.trim().is_empty() && head_requires_0810_migration(repo_path) {
-        migrate_no_checkout_project_repo_to_0810(app, repo_path)?;
+    if !remote_head_oid.trim().is_empty() && head_requires_0810_migration(target_path) {
+        migrate_no_checkout_project_repo_to_0810(app, target_path)?;
         if !remote_head_oid.trim().is_empty() {
             git_output(
-                repo_path,
+                target_path,
                 &["push", "origin", &branch_name],
                 Some(&git_transport_auth),
             )?;
         }
     } else if !remote_head_oid.trim().is_empty() {
-        git_output(repo_path, &["checkout", "-B", &branch_name], None)?;
+        git_output(target_path, &["checkout", "-B", &branch_name], None)?;
     }
 
     if remote_head_oid.trim().is_empty() {
-        let _ = git_output(repo_path, &["checkout", "-B", &branch_name], None);
+        let _ = git_output(target_path, &["checkout", "-B", &branch_name], None);
     }
 
-    let current_head_oid = git_output(repo_path, &["rev-parse", "HEAD"], None).ok();
-    mark_project_repo_synced(project, repo_path)?;
-    Ok(current_head_oid)
+    Ok(git_output(target_path, &["rev-parse", "HEAD"], None).ok())
 }
 
 fn enforce_remote_project_app_version(
@@ -1944,6 +2040,61 @@ mod tests {
             " M chapters/file.txt\n"
         ));
         assert!(!git_status_porcelain_has_unmerged_entries("?? stray.txt\n"));
+    }
+
+    fn init_test_repo(name: &str) -> std::path::PathBuf {
+        let repo_path = env::temp_dir().join(format!("gnosis-tms-{name}-{}", Uuid::now_v7()));
+        fs::create_dir_all(&repo_path).expect("create repo");
+        run_git(&repo_path, &["init", "--initial-branch", "main"]);
+        run_git(&repo_path, &["config", "user.email", "test@example.com"]);
+        run_git(&repo_path, &["config", "user.name", "Test User"]);
+        fs::write(repo_path.join("project.json"), "{}\n").expect("write file");
+        run_git(&repo_path, &["add", "project.json"]);
+        run_git(&repo_path, &["commit", "-m", "Initial"]);
+        repo_path
+    }
+
+    #[test]
+    fn restore_checkout_repopulates_empty_working_tree_from_head() {
+        let repo_path = init_test_repo("restore-checkout");
+        // Simulate a clone that was fetched but never checked out: HEAD resolves but the
+        // working tree is empty.
+        fs::remove_file(repo_path.join("project.json")).expect("empty working tree");
+        assert!(!super::working_tree_has_files(&repo_path));
+
+        super::restore_checkout_if_working_tree_empty(&repo_path).expect("restore checkout");
+
+        assert!(repo_path.join("project.json").exists());
+        assert!(super::working_tree_has_files(&repo_path));
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn restore_checkout_leaves_populated_working_tree_untouched() {
+        let repo_path = init_test_repo("restore-noop");
+        // An uncommitted local edit must survive — the helper must never reset a repo
+        // whose working tree still holds files.
+        fs::write(repo_path.join("project.json"), "{\"local\":true}\n").expect("local edit");
+
+        super::restore_checkout_if_working_tree_empty(&repo_path).expect("noop");
+
+        assert_eq!(
+            fs::read_to_string(repo_path.join("project.json")).expect("read file"),
+            "{\"local\":true}\n"
+        );
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn restore_checkout_skips_repo_without_commits() {
+        let repo_path =
+            env::temp_dir().join(format!("gnosis-tms-restore-empty-{}", Uuid::now_v7()));
+        fs::create_dir_all(&repo_path).expect("create repo");
+        run_git(&repo_path, &["init", "--initial-branch", "main"]);
+
+        // No HEAD yet — must be a no-op, not an error.
+        super::restore_checkout_if_working_tree_empty(&repo_path).expect("noop on empty repo");
+        let _ = fs::remove_dir_all(repo_path);
     }
 
     #[test]
