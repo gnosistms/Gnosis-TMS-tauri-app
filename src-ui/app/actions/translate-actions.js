@@ -34,6 +34,7 @@ import {
   addTargetLanguageManagerLanguage,
   moveTargetLanguageManagerLanguageToIndex,
   openEditorFootnote,
+  openEditorFootnoteEntry,
   openEditorImageCaption,
   closeTargetLanguageManager,
   openTargetLanguageManagerPicker,
@@ -137,6 +138,7 @@ const SESSION_WRITE_ACTIONS = new Set([
   "open-editor-insert-link",
   "submit-editor-insert-link",
   "open-editor-footnote",
+  "open-editor-footnote-entry",
   "open-editor-image-caption",
   "open-editor-image-url",
   "open-editor-image-upload",
@@ -563,6 +565,17 @@ export function createTranslateActions(render) {
       const rowId = button?.dataset.rowId ?? null;
       const languageCode = button?.dataset.languageCode ?? null;
       openEditorFootnote(render, rowId, languageCode, { target: event?.target ?? null });
+      return true;
+    }
+
+    if (action === "open-editor-footnote-entry") {
+      const button = event?.target instanceof Element
+        ? event.target.closest("[data-editor-footnote-display]")
+        : null;
+      const rowId = button?.dataset.rowId ?? null;
+      const languageCode = button?.dataset.languageCode ?? null;
+      const marker = button?.dataset.footnoteMarker ?? null;
+      openEditorFootnoteEntry(render, rowId, languageCode, marker, { target: event?.target ?? null });
       return true;
     }
 

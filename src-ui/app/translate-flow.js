@@ -110,6 +110,7 @@ import {
   flushDirtyEditorRows as flushDirtyEditorRowsFlow,
   openEditorClearTranslationsModal as openEditorClearTranslationsModalFlow,
   openEditorFootnote as openEditorFootnoteFlow,
+  openEditorFootnoteEntry as openEditorFootnoteEntryFlow,
   openEditorImageCaption as openEditorImageCaptionFlow,
   openEditorUnreviewAllModal as openEditorUnreviewAllModalFlow,
   persistEditorRowOnBlur as persistEditorRowOnBlurFlow,
@@ -928,6 +929,12 @@ export function openEditorFootnote(render, rowId, languageCode, options = {}) {
   openEditorFootnoteFlow(render, rowId, languageCode, {
     viewportSnapshot: resolveEditorMainFieldViewportSnapshot(rowId, languageCode, options),
     updateEditorChapterRow,
+  });
+}
+
+export function openEditorFootnoteEntry(render, rowId, languageCode, marker, options = {}) {
+  openEditorFootnoteEntryFlow(render, rowId, languageCode, marker, {
+    viewportSnapshot: resolveEditorMainFieldViewportSnapshot(rowId, languageCode, options),
   });
 }
 

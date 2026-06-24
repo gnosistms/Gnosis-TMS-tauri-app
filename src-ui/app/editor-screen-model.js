@@ -203,6 +203,9 @@ function buildLiveTranslationRows(editorChapter, languages) {
         const text = row.fields?.[language.code] ?? "";
         const footnote = editorLanguageFootnoteText(row, language.code);
         const footnotes = editorLanguageFootnotes(row, language.code);
+        const openFootnoteMarkerValue = editorFootnoteEditorMatches(editorChapter, row.rowId, language.code)
+          ? Number.parseInt(String(editorChapter?.footnoteEditor?.marker ?? ""), 10)
+          : Number.NaN;
         return {
           code: language.code,
           baseCode: languageBaseCode(language),
@@ -211,6 +214,7 @@ function buildLiveTranslationRows(editorChapter, languages) {
           searchText: persistedLanguageText(row, "persistedFields", language.code, text),
           footnote,
           footnotes,
+          openFootnoteMarker: Number.isInteger(openFootnoteMarkerValue) ? openFootnoteMarkerValue : null,
           searchFootnote: persistedFootnoteText(row, language.code, footnote),
           imageCaption,
           searchImageCaption: persistedLanguageText(
@@ -512,6 +516,8 @@ export function buildEditorScreenViewModel(appState) {
             && row.canEdit === true
             && !isAiTranslating,
           isFootnoteEditorOpen: row.canEdit === true && section.isFootnoteEditorOpen === true,
+          openFootnoteMarker:
+            row.canEdit === true && !isAiTranslating ? section.openFootnoteMarker ?? null : null,
           isImageCaptionEditorOpen: row.canEdit === true && section.isImageCaptionEditorOpen === true,
           isImageUrlEditorOpen: row.canEdit === true && section.isImageUrlEditorOpen === true,
           isImageUploadEditorOpen: row.canEdit === true && section.isImageUploadEditorOpen === true,

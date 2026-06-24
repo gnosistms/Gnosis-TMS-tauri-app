@@ -305,7 +305,7 @@ export function registerTranslateEditorDomEvents(app, render) {
 
     const editorControlButton = closestEventTarget(
       event.target,
-      "[data-editor-row-text-style-button], [data-editor-inline-style-button], [data-editor-separator-button], [data-editor-link-button], [data-editor-footnote-button], [data-editor-image-button], [data-editor-image-caption-button], [data-editor-image-upload-close-button], [data-editor-image-url-close-button], [data-editor-image-url-status-button], [data-editor-language-image-remove-button], [data-action^=\"switch-editor-sidebar-tab:\"]",
+      "[data-editor-row-text-style-button], [data-editor-inline-style-button], [data-editor-separator-button], [data-editor-link-button], [data-editor-footnote-button], [data-editor-footnote-display], [data-editor-image-button], [data-editor-image-caption-button], [data-editor-image-upload-close-button], [data-editor-image-url-close-button], [data-editor-image-url-status-button], [data-editor-language-image-remove-button], [data-action^=\"switch-editor-sidebar-tab:\"]",
     );
     const imageOpenButton = closestEventTarget(
       event.target,

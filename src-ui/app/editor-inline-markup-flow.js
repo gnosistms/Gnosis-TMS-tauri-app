@@ -1,5 +1,9 @@
 import { applyEditorRowFieldInput } from "./editor-row-input.js";
-import { cancelPendingTranslateViewportRestores } from "./translate-viewport.js";
+import {
+  cancelPendingTranslateViewportRestores,
+  captureTranslateViewport,
+  renderTranslateBodyPreservingViewport,
+} from "./translate-viewport.js";
 import {
   describeInlineMarkupSelection,
   toggleInlineMarkupSelection,
@@ -114,6 +118,8 @@ export function toggleEditorInlineStyle(render, button, operations = {}) {
     syncEditorVirtualizationRowLayout: operations.syncEditorVirtualizationRowLayout,
     syncEditorGlossaryHighlightRowDom: operations.syncEditorGlossaryHighlightRowDom,
     cancelPendingTranslateViewportRestores,
+    captureTranslateViewport,
+    renderTranslateBodyPreservingViewport,
   });
 
   if (

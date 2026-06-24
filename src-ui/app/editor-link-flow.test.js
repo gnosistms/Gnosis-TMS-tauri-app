@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { applyInsertLinkToValue, validateEditorLinkUrl } from "./editor-link-flow.js";
+import { applyInsertLinkToValue, submitEditorInsertLink, validateEditorLinkUrl } from "./editor-link-flow.js";
+import { state } from "./state.js";
 
 test("validateEditorLinkUrl accepts explicit http(s) urls", () => {
   assert.equal(validateEditorLinkUrl("https://example.com/page?a=1"), "https://example.com/page?a=1");
@@ -61,4 +62,87 @@ test("applyInsertLinkToValue replaces the href of an enclosing link instead of n
 
 test("applyInsertLinkToValue returns null for invalid hrefs", () => {
   assert.equal(applyInsertLinkToValue("text", 0, 4, "not a url"), null);
+});
+
+test("submitEditorInsertLink inserts the link into a focused footnote field, not the main field", () => {
+  class FakeTextarea {
+    constructor(props) {
+      Object.assign(this, { disabled: false, readOnly: false, ...props });
+    }
+
+    setSelectionRange() {}
+  }
+
+  const previous = {
+    CSS: globalThis.CSS,
+    document: globalThis.document,
+    HTMLTextAreaElement: globalThis.HTMLTextAreaElement,
+    editorChapter: state.editorChapter,
+  };
+
+  globalThis.CSS = { escape: (value) => String(value) };
+  globalThis.HTMLTextAreaElement = FakeTextarea;
+
+  const mainTextarea = new FakeTextarea({
+    value: "Main body text",
+    dataset: { rowId: "row-1", languageCode: "es" },
+  });
+  const footnoteTextarea = new FakeTextarea({
+    value: "See note",
+    dataset: {
+      rowId: "row-1",
+      languageCode: "es",
+      contentKind: "footnote",
+      footnoteMarker: "1",
+    },
+  });
+
+  globalThis.document = {
+    querySelector(selector) {
+      return selector.includes('data-content-kind="footnote"') ? footnoteTextarea : mainTextarea;
+    },
+  };
+
+  state.editorChapter = {
+    chapterId: "chap-1",
+    filters: {},
+    insertLinkModal: {
+      isOpen: true,
+      mode: "url",
+      rowId: "row-1",
+      languageCode: "es",
+      contentKind: "footnote",
+      footnoteMarker: "1",
+      selectionStart: 4,
+      selectionEnd: 8,
+      selectedText: "note",
+      urlDraft: "example.com",
+    },
+  };
+
+  const updateCalls = [];
+  try {
+    submitEditorInsertLink(() => {}, {
+      updateEditorRowFieldValueForContentKind: (...args) => updateCalls.push(args),
+      syncEditorRowTextareaHeight() {},
+      syncEditorVirtualizationRowLayout() {},
+      syncEditorGlossaryHighlightRowDom() {},
+    });
+
+    assert.equal(footnoteTextarea.value, 'See <a href="https://example.com">note</a>');
+    assert.equal(mainTextarea.value, "Main body text");
+    assert.equal(updateCalls.length, 1);
+    assert.deepEqual(updateCalls[0].slice(0, 4), [
+      "row-1",
+      "es",
+      'See <a href="https://example.com">note</a>',
+      "footnote",
+    ]);
+    assert.deepEqual(updateCalls[0][4], { marker: "1" });
+  } finally {
+    globalThis.CSS = previous.CSS;
+    globalThis.document = previous.document;
+    globalThis.HTMLTextAreaElement = previous.HTMLTextAreaElement;
+    state.editorChapter = previous.editorChapter;
+  }
 });

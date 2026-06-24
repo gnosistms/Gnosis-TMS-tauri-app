@@ -540,6 +540,8 @@ export function createEditorInsertLinkModalState() {
     mode: null,
     rowId: null,
     languageCode: null,
+    contentKind: "field",
+    footnoteMarker: "",
     selectionStart: 0,
     selectionEnd: 0,
     selectedText: "",

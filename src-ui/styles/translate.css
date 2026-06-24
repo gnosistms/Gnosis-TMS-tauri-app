@@ -468,6 +468,22 @@
   word-break: break-word;
 }
 
+/* Content links in preview use the same color as in translate mode (the global
+   `a { color: inherit }` otherwise renders them black, indistinguishable from
+   underlined text). Footnote reference markers are not content links, so they keep
+   the text color, matching translate mode where footnote markers are not colored. */
+.translate-preview__document a {
+  color: var(--link);
+}
+
+.translate-preview__document a:hover {
+  color: var(--link-hover);
+}
+
+.translate-preview__footnote-ref a {
+  color: inherit;
+}
+
 .translate-preview__block--heading1 {
   font-size: calc(var(--translation-editor-font-size, 14px) * 1.4);
   font-weight: 700;
@@ -1708,6 +1724,13 @@
   background: rgba(255, 251, 246, 0.96);
 }
 
+/* While a filtered body re-render restores focus, the focused row is rebuilt from
+   scratch; skip the focus transition so the orange outline does not flicker on each
+   keystroke. Genuine click-focus never re-renders, so it keeps its fade-in. */
+.is-restoring-field-focus .translation-language-panel__field-stack {
+  transition: none;
+}
+
 .translation-language-panel__editor:focus-within .translation-row-text-style-actions {
   display: flex;
 }
@@ -1778,6 +1801,40 @@
 
 .translation-language-panel__footnote-static .translation-language-panel__footnote-marker {
   margin-right: 6px;
+}
+
+/* Closed footnote: a button styled to look exactly like the footnote textarea
+   (italic, borderless, full width) so toggling between display and edit is seamless. */
+.translation-language-panel__footnote-editor-row .translation-language-panel__footnote-display {
+  grid-column: 2;
+  grid-row: 1;
+  box-sizing: border-box;
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  cursor: text;
+  color: var(--text);
+  font-family: var(--font-serif);
+  font-size: var(--translation-editor-font-size, 14px);
+  font-style: italic;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.translation-language-panel__footnote-editor-row .translation-language-panel__footnote-display:focus-visible {
+  outline: none;
+}
+
+.translation-language-panel__footnote-display-text {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .translation-language-panel__field-stack--footnote .translation-language-panel__field-highlight,
@@ -1909,7 +1966,8 @@
 }
 
 .translation-language-panel__field-static-text a,
-.translation-language-panel__footnote-static a {
+.translation-language-panel__footnote-static a,
+.translation-language-panel__footnote-display-text a {
   color: var(--link);
   text-decoration: underline;
   text-decoration-thickness: 0.06em;
@@ -1919,7 +1977,8 @@
 }
 
 .translation-language-panel__field-static-text a:hover,
-.translation-language-panel__footnote-static a:hover {
+.translation-language-panel__footnote-static a:hover,
+.translation-language-panel__footnote-display-text a:hover {
   color: var(--link-hover);
 }
 

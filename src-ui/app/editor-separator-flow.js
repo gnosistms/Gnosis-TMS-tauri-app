@@ -1,6 +1,10 @@
 import { applyEditorRowFieldInput } from "./editor-row-input.js";
 import { state } from "./state.js";
-import { cancelPendingTranslateViewportRestores } from "./translate-viewport.js";
+import {
+  cancelPendingTranslateViewportRestores,
+  captureTranslateViewport,
+  renderTranslateBodyPreservingViewport,
+} from "./translate-viewport.js";
 import { syncEditorInlineStyleButtonsForTextarea } from "./editor-inline-markup-flow.js";
 
 const EDITOR_SEPARATOR_TOKEN = "<hr>";
@@ -61,6 +65,8 @@ export function insertEditorSeparator(render, button, operations = {}) {
     syncEditorVirtualizationRowLayout: operations.syncEditorVirtualizationRowLayout,
     syncEditorGlossaryHighlightRowDom: operations.syncEditorGlossaryHighlightRowDom,
     cancelPendingTranslateViewportRestores,
+    captureTranslateViewport,
+    renderTranslateBodyPreservingViewport,
   });
 
   if (

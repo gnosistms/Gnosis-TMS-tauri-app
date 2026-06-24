@@ -191,6 +191,7 @@ test("renderTranslationContentRow renders editor row textareas with one intrinsi
       footnotes: [{ marker: 1, text: "Footnote" }],
       hasVisibleFootnote: true,
       isTextEditorOpen: true,
+      openFootnoteMarker: 1,
     }),
     canEdit: true,
   });
@@ -200,6 +201,26 @@ test("renderTranslationContentRow renders editor row textareas with one intrinsi
   for (const tag of textareaTags) {
     assert.match(tag, /\srows="1"/);
   }
+});
+
+test("renderTranslationContentRow renders a closed footnote as a static live-markup display", () => {
+  const html = renderTranslationContentRow({
+    ...rowWithSection({
+      canEdit: true,
+      text: "CHUONG 4",
+      footnotes: [{ marker: 1, text: 'See <a href="https://example.com">link</a>' }],
+      hasVisibleFootnote: true,
+      isTextEditorOpen: true,
+      openFootnoteMarker: null,
+    }),
+    canEdit: true,
+  });
+
+  // The closed footnote renders as a click-to-edit display button, not a textarea,
+  // with its inline markup rendered as a live link.
+  assert.match(html, /data-editor-footnote-display[\s\S]*?data-footnote-marker="1"/);
+  assert.match(html, /<a href="https:\/\/example\.com">link<\/a>/);
+  assert.doesNotMatch(html, /<textarea[^>]*data-content-kind="footnote"/);
 });
 
 test("renderTranslationContentRow renders valid static footnote markers as non-link superscripts", () => {
