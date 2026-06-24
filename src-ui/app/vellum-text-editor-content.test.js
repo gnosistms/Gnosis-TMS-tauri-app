@@ -11,6 +11,7 @@ import {
 
 const VELLUM_ATTACHMENT_CHARACTER = "\uFFFC";
 const VELLUM_PARAGRAPH_SEPARATOR = "\u2029";
+const VELLUM_LINE_SEPARATOR = "\u2028";
 
 function decodedNsByteValues(xml) {
   const values = [];
@@ -131,6 +132,35 @@ test("buildVellumOgElementPrivateDecodedXml writes a chapter element and promote
   const byteValues = decodedNsByteValues(xml);
   assert.ok(byteValues.some((value) => value.equals(Buffer.from([5, 0, 4, 1, 1, 0]))));
   assert.doesNotMatch(xml, /<string>Fallback title<\/string>/);
+});
+
+test("buildVellumOgElementPrivateDecodedXml writes a within-row newline as a soft line break", () => {
+  const xml = buildVellumOgElementPrivateDecodedXml([
+    {
+      kind: "text",
+      rowId: "row-a",
+      languageCode: "en",
+      textStyle: "paragraph",
+      text: "Line one\nLine two",
+      footnotes: [],
+    },
+    {
+      kind: "text",
+      rowId: "row-b",
+      languageCode: "en",
+      textStyle: "paragraph",
+      text: "Next paragraph",
+      footnotes: [],
+    },
+  ], { title: "Soft break chapter" });
+
+  // The within-row newline becomes a U+2028 line separator (no paragraph
+  // spacing); the boundary between rows stays a U+000A paragraph separator.
+  assert.match(
+    xml,
+    new RegExp(`<string>Line one${VELLUM_LINE_SEPARATOR}Line two\nNext paragraph\n</string>`),
+  );
+  assert.doesNotMatch(xml, /Line one\nLine two/);
 });
 
 test("buildVellumOgElementPrivateDecodedXml appends an editable plain text section after a final image", () => {
