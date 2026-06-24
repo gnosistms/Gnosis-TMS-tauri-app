@@ -33,6 +33,7 @@ import {
 import {
   applyPreparedVellumImageResources,
   buildVellumImageResourceRequests,
+  buildVellumOgElementPrivateDecodedXml,
   buildVellumTextEditorContentDecodedXml,
 } from "./vellum-text-editor-content.js";
 
@@ -403,6 +404,7 @@ async function submitEditorCopyExport(render, option, operations) {
   const copyVellum = operations.copyVellumTextEditorContent ?? copyVellumTextEditorContentToClipboard;
   const prepareVellumImages = operations.prepareVellumImageResources ?? prepareVellumImageResources;
   const languageCode = selectedEditorPreviewLanguageCode(state.editorChapter);
+  const context = findChapterContext(currentExportModal()?.chapterId);
   const blocks = buildEditorPreviewDocument(state.editorChapter?.rows, languageCode);
   const plainText = serializeEditorPreviewPlainText(blocks);
   const html = serializeEditorPreviewHtml(blocks);
@@ -431,8 +433,12 @@ async function submitEditorCopyExport(render, option, operations) {
       if (!decodedPropertyListXml) {
         throw new Error("Nothing to copy.");
       }
+      const ogElementPrivateDecodedPropertyListXml = buildVellumOgElementPrivateDecodedXml(vellumBlocks, {
+        title: state.editorChapter?.fileTitle || context?.chapter?.name || "",
+      });
       await copyVellum({
         decodedPropertyListXml,
+        ogElementPrivateDecodedPropertyListXml,
         plainText,
         html,
       });

@@ -363,6 +363,26 @@ function serializeNodes(nodes, highlightRanges = [], markRenderer = null, option
     .join("");
 }
 
+function serializeNodesAsInlineMarkupSource(nodes) {
+  return (Array.isArray(nodes) ? nodes : [])
+    .map((node) => {
+      if (!node) {
+        return "";
+      }
+
+      if (node.type === "text") {
+        return node.text;
+      }
+
+      if (node.tag === "hr") {
+        return "<hr>";
+      }
+
+      return `<${node.tag}${serializeElementAttributes(node)}>${serializeNodesAsInlineMarkupSource(node.children)}</${node.tag}>`;
+    })
+    .join("");
+}
+
 export function splitInlineMarkupTextBySeparators(value) {
   const parsed = parseInlineMarkup(value);
   return splitNodesOnInlineSeparators(parsed.nodes)
@@ -370,7 +390,7 @@ export function splitInlineMarkupTextBySeparators(value) {
       ? { kind: "separator" }
       : {
         kind: "text",
-        text: serializeNodes(part.nodes),
+        text: serializeNodesAsInlineMarkupSource(part.nodes),
       });
 }
 

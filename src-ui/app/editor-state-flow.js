@@ -303,7 +303,7 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
       : new Set(),
     filters: isSameChapter
       ? normalizeEditorChapterFilters(previousEditorChapter?.filters)
-      : createEditorChapterFilterState(),
+      : normalizeEditorChapterFilters(nextEditorChapter?.filters ?? createEditorChapterFilterState()),
     replace: isSameChapter
       ? normalizeEditorReplaceState(previousEditorChapter?.replace)
       : createEditorReplaceState(),

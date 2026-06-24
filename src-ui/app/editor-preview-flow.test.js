@@ -16,8 +16,10 @@ import {
 import {
   clearStoredEditorLocation,
   clearStoredEditorPreviewLanguageCode,
+  clearStoredEditorPreviewScrollTop,
   loadStoredEditorLocation,
   loadStoredEditorPreviewLanguageCode,
+  loadStoredEditorPreviewScrollTop,
 } from "./editor-preferences.js";
 import { setActiveStorageLogin } from "./team-storage.js";
 import {
@@ -27,6 +29,7 @@ import {
 } from "./state.js";
 
 const originalWindow = globalThis.window;
+const originalDocument = globalThis.document;
 const originalElement = globalThis.Element;
 const originalHTMLElement = globalThis.HTMLElement;
 
@@ -46,7 +49,7 @@ function installWindow() {
 class FakeElement {}
 
 class FakeHTMLElement extends FakeElement {
-  constructor({ dataset = {}, lang = "", rect = {}, scrollContainer = null } = {}) {
+  constructor({ dataset = {}, lang = "", rect = {}, scrollContainer = null, scrollTop = 0 } = {}) {
     super();
     this.dataset = dataset;
     this.lang = lang;
@@ -60,6 +63,7 @@ class FakeHTMLElement extends FakeElement {
       ...rect,
     };
     this.scrollContainer = scrollContainer;
+    this.scrollTop = scrollTop;
   }
 
   getAttribute(name) {
@@ -80,8 +84,15 @@ function installDomClasses() {
   globalThis.HTMLElement = FakeHTMLElement;
 }
 
-function previewBlockFixture({ rowId = "row-1", lang = "vi", blockTop = 180, containerTop = 100 } = {}) {
+function previewBlockFixture({
+  rowId = "row-1",
+  lang = "vi",
+  blockTop = 180,
+  containerTop = 100,
+  scrollTop = 0,
+} = {}) {
   const scrollContainer = new FakeHTMLElement({
+    scrollTop,
     rect: {
       top: containerTop,
       bottom: containerTop + 400,
@@ -112,6 +123,7 @@ test.afterEach(() => {
   queueTranslateRowAnchor(null);
   resetSessionState();
   globalThis.window = originalWindow;
+  globalThis.document = originalDocument;
   globalThis.Element = originalElement;
   globalThis.HTMLElement = originalHTMLElement;
   setActiveStorageLogin(null);
@@ -255,6 +267,7 @@ test("jumpFromPreviewBlockToTranslateMode switches to translate and replaces the
   const chapterId = "chapter-preview-jump";
   setActiveStorageLogin(login);
   clearStoredEditorLocation(chapterId, login);
+  clearStoredEditorPreviewScrollTop(chapterId, login);
   let renderCount = 0;
   state.screen = "translate";
   state.editorChapter = {
@@ -277,16 +290,24 @@ test("jumpFromPreviewBlockToTranslateMode switches to translate and replaces the
     ],
   };
 
+  const previewBlock = previewBlockFixture({
+    rowId: "row-target",
+    lang: "vi",
+    blockTop: 210,
+    containerTop: 90,
+    scrollTop: 384,
+  });
+  globalThis.document = {
+    querySelector(selector) {
+      return selector === ".translate-main-scroll" ? previewBlock.scrollContainer : null;
+    },
+  };
+
   const jumped = jumpFromPreviewBlockToTranslateMode(
     () => {
       renderCount += 1;
     },
-    previewBlockFixture({
-      rowId: "row-target",
-      lang: "vi",
-      blockTop: 210,
-      containerTop: 90,
-    }),
+    previewBlock,
   );
 
   assert.equal(jumped, true);
@@ -307,6 +328,8 @@ test("jumpFromPreviewBlockToTranslateMode switches to translate and replaces the
     languageCode: "vi",
     offsetTop: 120,
   });
+  assert.equal(loadStoredEditorPreviewScrollTop(chapterId, login), 384);
 
   clearStoredEditorLocation(chapterId, login);
+  clearStoredEditorPreviewScrollTop(chapterId, login);
 });

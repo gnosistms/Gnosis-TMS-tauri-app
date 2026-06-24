@@ -171,6 +171,19 @@ function createArchiveBuilder() {
     return id;
   }
 
+  function addDate(value = Date.now()) {
+    const seconds = value instanceof Date
+      ? value.getTime() / 1000
+      : Number(value);
+    const appleReferenceSeconds = Number.isFinite(seconds)
+      ? seconds - 978307200
+      : Date.now() / 1000 - 978307200;
+    const classId = addClass(["NSDate", "NSObject"]);
+    return addKeyedObject(classId, [
+      ["NS.time", `<real>${escapeXml(String(appleReferenceSeconds))}</real>`],
+    ]);
+  }
+
   function addClass(classes, className = classes[0]) {
     const key = `${className}:${classes.join("|")}`;
     if (classIds.has(key)) {
@@ -267,6 +280,10 @@ function createArchiveBuilder() {
     objects[1] = xml;
   }
 
+  function objectXml(id) {
+    return objects[id] ?? "";
+  }
+
   function toXml() {
     return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -284,6 +301,7 @@ ${dictXml([
     addAttributedString,
     addBoolean,
     addClass,
+    addDate,
     addFont,
     addInteger,
     addKeyedObject,
@@ -294,6 +312,7 @@ ${dictXml([
     addReal,
     addString,
     addUrl,
+    objectXml,
     setRoot,
     toXml,
   };
@@ -608,6 +627,227 @@ function addAttributeObjects(builder, attachmentAttributes = {}) {
   };
 }
 
+function addWholeChapterAttributeObjects(builder, attachmentAttributes = {}) {
+  const footnoteAttributes = attachmentAttributes.footnoteAttributes ?? new Map();
+  const imageAttributes = attachmentAttributes.imageAttributes ?? new Map();
+  const subheadAttributes = attachmentAttributes.subheadAttributes ?? new Map();
+  const trueId = builder.addBoolean(true);
+  const quoteFormatId = builder.addOgParagraphFormat("blockquote", [
+    ["includeInPrint", trueId],
+    ["blockquoteType", builder.addString("prose")],
+    ["includeInEbook", trueId],
+  ]);
+  const centeredFormatId = builder.addOgParagraphFormat("alignment", [
+    ["includeInPrint", trueId],
+    ["alignment", builder.addString("center")],
+    ["includeInEbook", trueId],
+  ]);
+  const indentedFormatId = builder.addOgParagraphFormat("alignment", [
+    ["alignment", builder.addString("left")],
+    ["includeInPrint", trueId],
+    ["includeInEbook", trueId],
+    ["inset", trueId],
+  ], true);
+
+  const baseAttributes = new Map([
+    ["default", builder.addNsDictionary([])],
+    ["bold", builder.addNsDictionary([["OGBoldText", trueId]])],
+    ["italic", builder.addNsDictionary([["OGItalicText", trueId]])],
+    ["underline", builder.addNsDictionary([["OGUnderlineText", trueId]])],
+    ["quote", builder.addNsDictionary([["OGParagraphFormat", quoteFormatId]])],
+    ["centered", builder.addNsDictionary([["OGParagraphFormat", centeredFormatId]])],
+    ["indented", builder.addNsDictionary([["OGParagraphFormat", indentedFormatId]])],
+  ]);
+
+  function linkAttributeId(href) {
+    const normalizedHref = String(href ?? "").trim();
+    const key = `link:${normalizedHref}`;
+    if (baseAttributes.has(key)) {
+      return baseAttributes.get(key);
+    }
+    const urlId = builder.addUrl(normalizedHref);
+    const linkStateId = builder.addNsDictionary([
+      ["webLinkURL", urlId],
+      ["type", builder.addString("web")],
+    ]);
+    const attributeId = builder.addNsDictionary([
+      ["OGLink", linkStateId],
+    ]);
+    baseAttributes.set(key, attributeId);
+    return attributeId;
+  }
+
+  function footnoteAttributeId(attributeKey) {
+    if (baseAttributes.has(attributeKey)) {
+      return baseAttributes.get(attributeKey);
+    }
+
+    const footnote = footnoteAttributes.get(attributeKey);
+    if (!footnote) {
+      return baseAttributes.get("default");
+    }
+
+    const cellClassId = builder.addClass([
+      "OGFootnoteAttachmentCell",
+      "OGRefnoteAttachmentCell",
+      "OGTextAttachmentCell",
+      "OGAttachmentCell",
+      "NSTextAttachmentCell",
+      "NSCell",
+      "NSObject",
+    ]);
+    const cellId = builder.addKeyedObject(cellClassId, [
+      ["NSCellFlags", "<integer>0</integer>"],
+      ["NSCellFlags2", "<integer>0</integer>"],
+    ]);
+    const attachmentClassId = builder.addClass(["NSTextAttachment", "NSObject"]);
+    const attachmentId = builder.addKeyedObject(attachmentClassId, [
+      ["NSCell", uidXml(cellId)],
+      ["NSFileWrapper", uidXml(0)],
+    ]);
+    const stateId = builder.addNsDictionary([
+      ["text", builder.addAttributedString(footnote.text)],
+    ]);
+    const formatClassId = builder.addClass(["OGAttachmentFormat", "NSObject"]);
+    const formatId = builder.addKeyedObject(formatClassId, [
+      ["kind", uidXml(builder.addString("footnote"))],
+      ["state", uidXml(stateId)],
+      ["uniqueID", uidXml(builder.addString(footnote.uniqueId))],
+    ]);
+    const attributeId = builder.addNsDictionary([
+      ["OGAttachmentFormat", formatId],
+      ["NSAttachment", attachmentId],
+    ]);
+    baseAttributes.set(attributeKey, attributeId);
+    return attributeId;
+  }
+
+  function subheadAttributeId(attributeKey) {
+    if (baseAttributes.has(attributeKey)) {
+      return baseAttributes.get(attributeKey);
+    }
+
+    const subhead = subheadAttributes.get(attributeKey);
+    if (!subhead) {
+      return baseAttributes.get("default");
+    }
+
+    const cellClassId = builder.addClass([
+      "OGSubheadAttachmentCell",
+      "OGTextAttachmentCell",
+      "OGAttachmentCell",
+      "NSTextAttachmentCell",
+      "NSCell",
+      "NSObject",
+    ]);
+    const cellId = builder.addKeyedObject(cellClassId, [
+      ["NSCellFlags", "<integer>0</integer>"],
+      ["NSCellFlags2", "<integer>0</integer>"],
+    ]);
+    const attachmentClassId = builder.addClass(["NSTextAttachment", "NSObject"]);
+    const attachmentId = builder.addKeyedObject(attachmentClassId, [
+      ["NSCell", uidXml(cellId)],
+      ["NSFileWrapper", uidXml(0)],
+    ]);
+    const stateId = builder.addNsDictionary([
+      ["level", builder.addInteger(subhead.level)],
+      ["keepWithNext", trueId],
+      ["text", builder.addAttributedString(subhead.text)],
+    ]);
+    const formatClassId = builder.addClass(["OGAttachmentFormat", "NSObject"]);
+    const formatId = builder.addKeyedObject(formatClassId, [
+      ["kind", uidXml(builder.addString("subhead"))],
+      ["state", uidXml(stateId)],
+      ["uniqueID", uidXml(builder.addString(subhead.uniqueId))],
+    ]);
+    const attributeId = builder.addNsDictionary([
+      ["OGAttachmentFormat", formatId],
+      ["NSAttachment", attachmentId],
+    ]);
+    baseAttributes.set(attributeKey, attributeId);
+    return attributeId;
+  }
+
+  function imageAttributeId(attributeKey) {
+    if (baseAttributes.has(attributeKey)) {
+      return baseAttributes.get(attributeKey);
+    }
+
+    const image = imageAttributes.get(attributeKey);
+    if (!image) {
+      return baseAttributes.get("default");
+    }
+
+    const metadataEntries = imageMetadataEntries(builder, image);
+    const metadataClassId = builder.addClass(["NSMutableDictionary", "NSDictionary", "NSObject"]);
+    const metadataId = builder.addNsDictionary(metadataEntries, metadataClassId);
+    const handleClassId = builder.addClass(["OGImageHandle", "OGImageToken", "NSObject"]);
+    const sourceUrlId = builder.addUrl(image.preservedUrl || image.source);
+    const handleId = builder.addKeyedObject(handleClassId, [
+      ["imageKey", uidXml(builder.addString(image.imageKey))],
+      ["preservedMetadata", uidXml(sourceUrlId)],
+      ["preservedURL", uidXml(metadataId)],
+    ]);
+    const stateId = builder.addNsDictionary([
+      ["imageHasCaption", builder.addBoolean(Boolean(image.caption))],
+      ["imageHandle", handleId],
+      ["imageSize", builder.addString("full")],
+      ["text", builder.addAttributedString(image.caption)],
+    ]);
+    const formatClassId = builder.addClass([
+      "OGMutableAttachmentFormat",
+      "OGAttachmentFormat",
+      "NSObject",
+    ]);
+    const formatId = builder.addKeyedObject(formatClassId, [
+      ["kind", uidXml(builder.addString("image"))],
+      ["state", uidXml(stateId)],
+    ]);
+    const cellClassId = builder.addClass([
+      "OGImageAttachmentCell",
+      "OGTextAttachmentCell",
+      "OGAttachmentCell",
+      "NSTextAttachmentCell",
+      "NSCell",
+      "NSObject",
+    ]);
+    const cellId = builder.addKeyedObject(cellClassId, [
+      ["NSCellFlags", "<integer>0</integer>"],
+      ["NSCellFlags2", "<integer>0</integer>"],
+    ]);
+    const attachmentClassId = builder.addClass(["NSTextAttachment", "NSObject"]);
+    const attachmentId = builder.addKeyedObject(attachmentClassId, [
+      ["NSCell", uidXml(cellId)],
+      ["NSFileWrapper", uidXml(0)],
+    ]);
+    const attributeId = builder.addNsDictionary([
+      ["NSAttachment", attachmentId],
+      ["OGAttachmentFormat", formatId],
+      ["NSToolTip", builder.addString(image.tooltip)],
+    ]);
+    baseAttributes.set(attributeKey, attributeId);
+    return attributeId;
+  }
+
+  return {
+    attributeIdForKey(attributeKey) {
+      if (String(attributeKey ?? "").startsWith("link:")) {
+        return linkAttributeId(attributeKey.slice("link:".length));
+      }
+      if (String(attributeKey ?? "").startsWith("footnote:")) {
+        return footnoteAttributeId(attributeKey);
+      }
+      if (String(attributeKey ?? "").startsWith("image:")) {
+        return imageAttributeId(attributeKey);
+      }
+      if (String(attributeKey ?? "").startsWith("subhead:")) {
+        return subheadAttributeId(attributeKey);
+      }
+      return baseAttributes.get(attributeKey) ?? baseAttributes.get("default");
+    },
+  };
+}
+
 function imageMetadataEntries(builder, image) {
   const entries = [];
   const addStringEntry = (key, value) => {
@@ -746,6 +986,25 @@ function createVellumAttachmentUniqueId(block, kind, discriminator, index) {
   return fallbackVellumAttachmentUniqueId(block, kind, discriminator, index);
 }
 
+function fallbackVellumElementUniqueId(title) {
+  const source = `chapter:${normalizeText(title)}`;
+  let hash = 0x811c9dc5;
+  for (let cursor = 0; cursor < source.length; cursor += 1) {
+    hash ^= source.charCodeAt(cursor);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  const first = (hash >>> 0).toString(16).padStart(8, "0").toUpperCase();
+  const second = first.split("").reverse().join("");
+  return `id${first}-${second.slice(0, 4)}-4${second.slice(1, 4)}-8${second.slice(4, 7)}-${first}${second}`;
+}
+
+function createVellumElementUniqueId(title) {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `id${crypto.randomUUID().toUpperCase()}`;
+  }
+  return fallbackVellumElementUniqueId(title);
+}
+
 function createFootnoteContext(block, target) {
   const footnotes = normalizeEditorFootnotes(block?.footnotes);
   if (footnotes.length === 0) {
@@ -778,6 +1037,20 @@ function headingLevel(block) {
     default:
       return 0;
   }
+}
+
+function leadingChapterTitleBlock(blocks) {
+  const first = (Array.isArray(blocks) ? blocks : [])[0];
+  if (headingLevel(first) !== 1 || normalizeEditorFootnotes(first?.footnotes).length > 0) {
+    return null;
+  }
+
+  const title = visibleInlineText(first?.text ?? "");
+  return title ? { block: first, title } : null;
+}
+
+export function extractVellumLeadingHeadingTitle(blocks) {
+  return leadingChapterTitleBlock(blocks)?.title ?? null;
 }
 
 function appendSubheadRuns(block, target, level) {
@@ -1122,6 +1395,57 @@ function buildVellumTextRuns(blocks) {
   return target;
 }
 
+function appendTrailingPlainTextSection(target) {
+  appendTextRun(target, "\n", "default");
+  target.runs = mergeAdjacentRuns(target.runs);
+}
+
+function buildResolvedAttributeArchive(builder, runs, attributes) {
+  const attributeIds = [];
+  const attributeIndexes = new Map();
+  const resolvedRuns = runs.map((run) => {
+    const attributeId = attributes.attributeIdForKey(run.attributeKey);
+    if (!attributeIndexes.has(attributeId)) {
+      attributeIndexes.set(attributeId, attributeIds.length);
+      attributeIds.push(attributeId);
+    }
+    return {
+      length: run.length,
+      attributeIndex: attributeIndexes.get(attributeId),
+    };
+  });
+  return { attributeIds, resolvedRuns };
+}
+
+function addAttributedStringArchiveObject(builder, text, attributeIds, resolvedRuns, options = {}) {
+  const arrayClassId = builder.addClass(options.mutableArray
+    ? ["NSMutableArray", "NSArray", "NSObject"]
+    : ["NSArray", "NSObject"]);
+  const dataClassId = builder.addClass(options.mutableData
+    ? ["NSMutableData", "NSData", "NSObject"]
+    : ["NSData", "NSObject"]);
+  const attributedStringClassId = builder.addClass(options.mutableString
+    ? ["NSMutableAttributedString", "NSAttributedString", "NSObject"]
+    : ["NSAttributedString", "NSObject"]);
+  const stringObjectId = options.stringAsData
+    ? builder.addKeyedObject(builder.addClass(["NSMutableString", "NSString", "NSObject"]), [
+      ["NS.bytes", stringDataXml(text)],
+    ])
+    : builder.addString(text);
+  const attributesObjectId = builder.addKeyedObject(arrayClassId, [
+    ["NS.objects", arrayXml(attributeIds.map(uidXml))],
+  ]);
+  const attributeInfoObjectId = builder.addKeyedObject(dataClassId, [
+    ["NS.bytes", bytesDataXml(encodeAttributeRuns(resolvedRuns))],
+  ]);
+
+  return builder.addKeyedObject(attributedStringClassId, [
+    ["NSAttributeInfo", uidXml(attributeInfoObjectId)],
+    ["NSAttributes", uidXml(attributesObjectId)],
+    ["NSString", uidXml(stringObjectId)],
+  ]);
+}
+
 export function buildVellumTextEditorContentDecodedXml(blocks) {
   const {
     text,
@@ -1140,43 +1464,81 @@ export function buildVellumTextEditorContentDecodedXml(blocks) {
     imageAttributes,
     subheadAttributes,
   });
-  const attributeIds = [];
-  const attributeIndexes = new Map();
-  const resolvedRuns = runs.map((run) => {
-    const attributeId = attributes.attributeIdForKey(run.attributeKey);
-    if (!attributeIndexes.has(attributeId)) {
-      attributeIndexes.set(attributeId, attributeIds.length);
-      attributeIds.push(attributeId);
-    }
-    return {
-      length: run.length,
-      attributeIndex: attributeIndexes.get(attributeId),
-    };
+  const { attributeIds, resolvedRuns } = buildResolvedAttributeArchive(builder, runs, attributes);
+  const rootObjectId = addAttributedStringArchiveObject(builder, text, attributeIds, resolvedRuns, {
+    mutableArray: true,
+    mutableData: true,
+    mutableString: true,
+    stringAsData: true,
   });
 
-  const stringClassId = builder.addClass(["NSMutableString", "NSString", "NSObject"]);
-  const arrayClassId = builder.addClass(["NSMutableArray", "NSArray", "NSObject"]);
-  const dataClassId = builder.addClass(["NSMutableData", "NSData", "NSObject"]);
-  const attributedStringClassId = builder.addClass([
-    "NSMutableAttributedString",
-    "NSAttributedString",
+  builder.setRoot(builder.objectXml(rootObjectId));
+
+  return builder.toXml();
+}
+
+export function buildVellumOgElementPrivateDecodedXml(blocks, options = {}) {
+  const allBlocks = Array.isArray(blocks) ? blocks : [];
+  const titleEntry = leadingChapterTitleBlock(allBlocks);
+  const bodyBlocks = titleEntry ? allBlocks.slice(1) : allBlocks;
+  const title = titleEntry?.title || normalizeText(options.title) || "Untitled Chapter";
+  const body = buildVellumTextRuns(bodyBlocks);
+  appendTrailingPlainTextSection(body);
+  const {
+    text,
+    runs,
+    footnoteAttributes,
+    imageAttributes,
+    subheadAttributes,
+  } = body;
+
+  const builder = createArchiveBuilder();
+  const attributes = addWholeChapterAttributeObjects(builder, {
+    footnoteAttributes,
+    imageAttributes,
+    subheadAttributes,
+  });
+  const { attributeIds, resolvedRuns } = buildResolvedAttributeArchive(builder, runs, attributes);
+  const textObjectId = addAttributedStringArchiveObject(builder, text, attributeIds, resolvedRuns, {
+    mutableArray: false,
+    mutableData: true,
+    mutableString: false,
+    stringAsData: false,
+  });
+  const elementClassId = builder.addClass([
+    "OGTypedTextElement",
+    "OGTextElementBase",
+    "OGElement",
+    "OGElementContainer",
     "NSObject",
   ]);
-  const stringObjectId = builder.addKeyedObject(stringClassId, [
-    ["NS.bytes", stringDataXml(text)],
+  const elementId = builder.addKeyedObject(elementClassId, [
+    ["children", uidXml(0)],
+    ["displayTitleInHeading", "<true/>"],
+    ["explicitOwningBook", uidXml(0)],
+    ["includeInEBook", "<true/>"],
+    ["includeInPrint", "<true/>"],
+    ["isExpanded", "<true/>"],
+    ["mtime", uidXml(builder.addDate(options.now))],
+    ["numbered", "<true/>"],
+    ["parent", uidXml(builder.addString("$null"))],
+    ["text", uidXml(textObjectId)],
+    ["title", uidXml(builder.addString(title))],
+    ["typeName", uidXml(builder.addString("chapter"))],
+    ["uniqueID", uidXml(builder.addString(createVellumElementUniqueId(title)))],
+    ["wasCreatedByImport", "<false/>"],
   ]);
-  const attributesObjectId = builder.addKeyedObject(arrayClassId, [
-    ["NS.objects", arrayXml(attributeIds.map(uidXml))],
+  const arrayClassId = builder.addClass(["NSArray", "NSObject"]);
+  const elementsArrayId = builder.addKeyedObject(arrayClassId, [
+    ["NS.objects", arrayXml([uidXml(elementId)])],
   ]);
-  const attributeInfoObjectId = builder.addKeyedObject(dataClassId, [
-    ["NS.bytes", bytesDataXml(encodeAttributeRuns(resolvedRuns))],
-  ]);
+  const dictionaryClassId = builder.addClass(["NSDictionary", "NSObject"]);
+  const keysObjectId = builder.addString("elements");
 
   builder.setRoot(dictXml([
-    ["$class", uidXml(attributedStringClassId)],
-    ["NSAttributeInfo", uidXml(attributeInfoObjectId)],
-    ["NSAttributes", uidXml(attributesObjectId)],
-    ["NSString", uidXml(stringObjectId)],
+    ["$class", uidXml(dictionaryClassId)],
+    ["NS.keys", arrayXml([uidXml(keysObjectId)])],
+    ["NS.objects", arrayXml([uidXml(elementsArrayId)])],
   ]));
 
   return builder.toXml();

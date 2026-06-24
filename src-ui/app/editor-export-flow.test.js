@@ -341,7 +341,13 @@ test("submitEditorExport copy Vellum uses the native Vellum writer with fallback
   assert.equal(vellumCalls.length, 1);
   assert.match(vellumCalls[0].decodedPropertyListXml, /OGImagePreservingArchiver/);
   assert.match(vellumCalls[0].decodedPropertyListXml, /NSMutableAttributedString/);
+  assert.match(vellumCalls[0].decodedPropertyListXml, /OGSubheadAttachmentCell/);
+  assert.match(vellumCalls[0].decodedPropertyListXml, /<string>Heading bold<\/string>/);
   assert.match(vellumCalls[0].decodedPropertyListXml, /OGBoldText/);
+  assert.match(vellumCalls[0].ogElementPrivateDecodedPropertyListXml, /OGTypedTextElement/);
+  assert.match(vellumCalls[0].ogElementPrivateDecodedPropertyListXml, /<string>Heading bold<\/string>/);
+  assert.doesNotMatch(vellumCalls[0].ogElementPrivateDecodedPropertyListXml, /OGSubheadAttachmentCell/);
+  assert.doesNotMatch(vellumCalls[0].ogElementPrivateDecodedPropertyListXml, /NSMutableAttributedString/);
   assert.equal(vellumCalls[0].plainText, "Heading bold");
   assert.match(vellumCalls[0].html, /<!-- wp:heading/);
   assert.equal(state.editorChapter.exportModal.isOpen, false);
@@ -405,6 +411,9 @@ test("submitEditorExport copy Vellum prepares image resources before building th
   assert.match(vellumCalls[0].decodedPropertyListXml, /file:\/\/\/tmp\/co\.180g\.Vellum\/preserved-images\.abc123\/Diogenes\.webp/);
   assert.match(vellumCalls[0].decodedPropertyListXml, /\/tmp\/co\.180g\.Vellum\/vellum-process-attachment\.def456\/Diogenes\.webp/);
   assert.doesNotMatch(vellumCalls[0].decodedPropertyListXml, /https:\/\/example\.com\/images\/Diogenes\.webp/);
+  assert.match(vellumCalls[0].ogElementPrivateDecodedPropertyListXml, /file:\/\/\/tmp\/co\.180g\.Vellum\/preserved-images\.abc123\/Diogenes\.webp/);
+  assert.match(vellumCalls[0].ogElementPrivateDecodedPropertyListXml, /\/tmp\/co\.180g\.Vellum\/vellum-process-attachment\.def456\/Diogenes\.webp/);
+  assert.doesNotMatch(vellumCalls[0].ogElementPrivateDecodedPropertyListXml, /https:\/\/example\.com\/images\/Diogenes\.webp/);
   assert.equal(vellumCalls[0].plainText, "Image caption");
   assert.equal(state.editorChapter.exportModal.isOpen, false);
 });

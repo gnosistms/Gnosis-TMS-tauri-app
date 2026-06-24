@@ -6,12 +6,16 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(target_os = "macos")]
 pub(crate) const VELLUM_TEXT_EDITOR_CONTENT_TYPE: &str = "co.180g.Vellum.TextEditorContent";
+#[cfg(target_os = "macos")]
+pub(crate) const VELLUM_OG_ELEMENT_PRIVATE_TYPE: &str = "OGElementPrivate";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct VellumClipboardInput {
     decoded_property_list_xml: Option<String>,
     binary_property_list_base64: Option<String>,
+    og_element_private_decoded_property_list_xml: Option<String>,
+    og_element_private_binary_property_list_base64: Option<String>,
     plain_text: Option<String>,
     html: Option<String>,
 }
@@ -56,7 +60,13 @@ pub(crate) fn copy_vellum_text_editor_content_to_clipboard(
     input: VellumClipboardInput,
 ) -> Result<(), String> {
     let payload = vellum_payload_bytes(&input)?;
-    write_vellum_pasteboard(&payload, input.plain_text.as_deref(), input.html.as_deref())
+    let og_element_payload = vellum_og_element_private_payload_bytes(&input)?;
+    write_vellum_pasteboard(
+        &payload,
+        og_element_payload.as_deref(),
+        input.plain_text.as_deref(),
+        input.html.as_deref(),
+    )
 }
 
 #[tauri::command]
@@ -77,6 +87,26 @@ fn vellum_payload_bytes(input: &VellumClipboardInput) -> Result<Vec<u8>, String>
         (None, Some(base64)) => binary_plist_from_base64(base64),
         (None, None) => Err("Provide Vellum binary plist base64 or decoded plist XML.".to_string()),
         (Some(_), Some(_)) => Err("Provide only one Vellum pasteboard payload format.".to_string()),
+    }
+}
+
+fn vellum_og_element_private_payload_bytes(
+    input: &VellumClipboardInput,
+) -> Result<Option<Vec<u8>>, String> {
+    match (
+        input
+            .og_element_private_decoded_property_list_xml
+            .as_deref(),
+        input
+            .og_element_private_binary_property_list_base64
+            .as_deref(),
+    ) {
+        (Some(xml), None) => binary_plist_from_decoded_xml(xml).map(Some),
+        (None, Some(base64)) => binary_plist_from_base64(base64).map(Some),
+        (None, None) => Ok(None),
+        (Some(_), Some(_)) => {
+            Err("Provide only one OGElementPrivate pasteboard payload format.".to_string())
+        }
     }
 }
 
@@ -166,6 +196,7 @@ fn validate_vellum_archive(value: &Value) -> Result<(), String> {
 #[cfg(target_os = "macos")]
 fn write_vellum_pasteboard(
     payload: &[u8],
+    og_element_payload: Option<&[u8]>,
     plain_text: Option<&str>,
     html: Option<&str>,
 ) -> Result<(), String> {
@@ -179,6 +210,14 @@ fn write_vellum_pasteboard(
     let vellum_data = NSData::with_bytes(payload);
     if !pasteboard.setData_forType(Some(&vellum_data), &vellum_type) {
         return Err("Could not write Vellum data to the pasteboard.".to_string());
+    }
+
+    if let Some(og_element_payload) = og_element_payload {
+        let og_element_type = NSString::from_str(VELLUM_OG_ELEMENT_PRIVATE_TYPE);
+        let og_element_data = NSData::with_bytes(og_element_payload);
+        if !pasteboard.setData_forType(Some(&og_element_data), &og_element_type) {
+            return Err("Could not write Vellum chapter data to the pasteboard.".to_string());
+        }
     }
 
     if let Some(text) = non_empty_string(plain_text) {
@@ -199,6 +238,7 @@ fn write_vellum_pasteboard(
 #[cfg(not(target_os = "macos"))]
 fn write_vellum_pasteboard(
     _payload: &[u8],
+    _og_element_payload: Option<&[u8]>,
     _plain_text: Option<&str>,
     _html: Option<&str>,
 ) -> Result<(), String> {
@@ -764,6 +804,8 @@ mod tests {
         let none = VellumClipboardInput {
             decoded_property_list_xml: None,
             binary_property_list_base64: None,
+            og_element_private_decoded_property_list_xml: None,
+            og_element_private_binary_property_list_base64: None,
             plain_text: None,
             html: None,
         };
@@ -772,10 +814,38 @@ mod tests {
         let both = VellumClipboardInput {
             decoded_property_list_xml: Some(decoded_vellum_xml().to_string()),
             binary_property_list_base64: Some("YmFk".to_string()),
+            og_element_private_decoded_property_list_xml: None,
+            og_element_private_binary_property_list_base64: None,
             plain_text: None,
             html: None,
         };
         assert!(vellum_payload_bytes(&both).is_err());
+    }
+
+    #[test]
+    fn optional_og_element_payload_is_validated_independently() {
+        let input = VellumClipboardInput {
+            decoded_property_list_xml: Some(decoded_vellum_xml().to_string()),
+            binary_property_list_base64: None,
+            og_element_private_decoded_property_list_xml: Some(decoded_vellum_xml().to_string()),
+            og_element_private_binary_property_list_base64: None,
+            plain_text: None,
+            html: None,
+        };
+        let payload = vellum_og_element_private_payload_bytes(&input)
+            .expect("valid OGElementPrivate payload")
+            .expect("OGElementPrivate payload present");
+        assert!(payload.starts_with(b"bplist00"));
+
+        let both = VellumClipboardInput {
+            decoded_property_list_xml: Some(decoded_vellum_xml().to_string()),
+            binary_property_list_base64: None,
+            og_element_private_decoded_property_list_xml: Some(decoded_vellum_xml().to_string()),
+            og_element_private_binary_property_list_base64: Some("YmFk".to_string()),
+            plain_text: None,
+            html: None,
+        };
+        assert!(vellum_og_element_private_payload_bytes(&both).is_err());
     }
 
     #[test]
@@ -889,6 +959,8 @@ mod tests {
         let input = VellumClipboardInput {
             decoded_property_list_xml: Some(xml),
             binary_property_list_base64: None,
+            og_element_private_decoded_property_list_xml: None,
+            og_element_private_binary_property_list_base64: None,
             plain_text: Some("Gnosis TMS Vellum clipboard smoke test".to_string()),
             html: None,
         };
