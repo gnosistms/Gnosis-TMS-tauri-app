@@ -17,6 +17,7 @@ import {
   normalizeEditorPreviewSearchState,
   selectedEditorPreviewLanguageCode,
 } from "./editor-preview.js";
+import { loadStoredEditorPreviewLanguageCode } from "./editor-preferences.js";
 import { normalizeEditorReplaceState } from "./editor-replace.js";
 import { normalizeEditorRowTextStyle } from "./editor-row-text-style.js";
 import {
@@ -104,6 +105,18 @@ function preserveEditorPreviewSearch(previousEditorChapter, isSameChapter) {
 
 function preserveEditorPreviewLanguage(nextEditorChapter, previousEditorChapter, isSameChapter) {
   if (!isSameChapter) {
+    const storedPreviewLanguageCode = loadStoredEditorPreviewLanguageCode(nextEditorChapter?.chapterId);
+    if (!storedPreviewLanguageCode) {
+      return null;
+    }
+
+    const selectedCode = selectedEditorPreviewLanguageCode({
+      ...nextEditorChapter,
+      previewLanguageCode: storedPreviewLanguageCode,
+    });
+    if (selectedCode === storedPreviewLanguageCode) {
+      return storedPreviewLanguageCode;
+    }
     return null;
   }
 
