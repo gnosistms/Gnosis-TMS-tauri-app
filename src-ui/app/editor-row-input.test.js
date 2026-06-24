@@ -49,6 +49,34 @@ test("filtered editor row input rerenders only the translate body", () => {
   assert.equal(syncEditorGlossaryHighlightRowDom.calls.length, 0);
 });
 
+test("filtered editor row input preserves the viewport across the body re-render", () => {
+  const render = createSpy();
+  const updateEditorRowFieldValue = createSpy();
+  const cancelPendingTranslateViewportRestores = createSpy();
+  const viewportSnapshot = { anchor: { rowId: "row-1" }, scrollTop: 120 };
+  const captureTranslateViewport = (...args) => {
+    captureTranslateViewport.calls.push(args);
+    return viewportSnapshot;
+  };
+  captureTranslateViewport.calls = [];
+  const renderTranslateBodyPreservingViewport = createSpy();
+  const input = createInput();
+
+  applyEditorRowFieldInput({
+    input,
+    filters: { searchQuery: "distintos", caseSensitive: false },
+    render,
+    updateEditorRowFieldValue,
+    cancelPendingTranslateViewportRestores,
+    captureTranslateViewport,
+    renderTranslateBodyPreservingViewport,
+  });
+
+  assert.deepEqual(captureTranslateViewport.calls, [[input]]);
+  assert.deepEqual(renderTranslateBodyPreservingViewport.calls, [[render, viewportSnapshot]]);
+  assert.equal(render.calls.length, 0);
+});
+
 test("dropdown-only editor filters also rerender only the translate body", () => {
   const render = createSpy();
   const updateEditorRowFieldValue = createSpy();

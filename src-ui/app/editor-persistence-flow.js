@@ -743,6 +743,49 @@ export function openEditorFootnote(render, rowId, languageCode, options = {}) {
   }
 }
 
+export function openEditorFootnoteEntry(render, rowId, languageCode, marker, options = {}) {
+  const normalizedMarker = Number.parseInt(String(marker ?? ""), 10);
+  if (!rowId || !languageCode || !Number.isInteger(normalizedMarker) || !state.editorChapter?.chapterId) {
+    return;
+  }
+
+  pendingEditorFootnoteOpenRequest = {
+    rowId,
+    languageCode,
+    marker: normalizedMarker,
+  };
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    footnoteEditor: {
+      rowId,
+      languageCode,
+      marker: normalizedMarker,
+    },
+  };
+  renderTranslateBodyPreservingViewport(render, options?.viewportSnapshot ?? null);
+
+  if (typeof window !== "undefined") {
+    window.requestAnimationFrame(() => {
+      const input = document.querySelector(
+        `${buildEditorFieldSelector(rowId, languageCode, "footnote")}[data-footnote-marker="${CSS.escape(String(normalizedMarker))}"]`,
+      );
+      if (input instanceof HTMLTextAreaElement) {
+        input.focus({ preventScroll: true });
+        const caret = input.value.length;
+        input.setSelectionRange(caret, caret);
+      }
+      if (
+        pendingEditorFootnoteOpenRequest?.rowId === rowId
+        && pendingEditorFootnoteOpenRequest?.languageCode === languageCode
+        && pendingEditorFootnoteOpenRequest?.marker === normalizedMarker
+      ) {
+        pendingEditorFootnoteOpenRequest = null;
+      }
+    });
+  }
+}
+
 export function openEditorImageCaption(render, rowId, languageCode, options = {}) {
   if (!rowId || !languageCode || !state.editorChapter?.chapterId) {
     return;
@@ -808,15 +851,15 @@ export function collapseEmptyEditorFootnote(render, rowId, languageCode, options
   const activeEntry = Number.isInteger(activeMarker)
     ? currentEntries.find((entry) => entry.marker === activeMarker) ?? null
     : null;
-  const shouldKeepOpen =
+  // A blurred footnote with text stays in the document but closes its editor so it
+  // renders as static inline markup (live links). An empty footnote is collapsed:
+  // its marker and entry are stripped via the normalized row.
+  const shouldStripEmptyFootnotes =
     activeEntry
-      ? activeEntry.text.trim().length > 0
-      : currentEntries.some((entry) => entry.text.trim());
-  if (shouldKeepOpen) {
-    return;
-  }
+      ? activeEntry.text.trim().length === 0
+      : !currentEntries.some((entry) => entry.text.trim());
 
-  if (normalizedRow !== row) {
+  if (shouldStripEmptyFootnotes && normalizedRow !== row) {
     state.editorChapter = {
       ...state.editorChapter,
       rows: state.editorChapter.rows.map((currentRow) =>

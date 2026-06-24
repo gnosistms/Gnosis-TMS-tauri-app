@@ -714,10 +714,19 @@ function renderEditorFootnoteField(row, language) {
     `;
   }
 
+  const openFootnoteMarker = Number.isInteger(language?.openFootnoteMarker)
+    ? language.openFootnoteMarker
+    : null;
   const footnoteInputs = footnotes
-    .map((entry) => `
+    .map((entry) => {
+      const markerHtml = `<span class="translation-language-panel__footnote-marker" aria-hidden="true">[${escapeHtml(entry.marker)}]</span>`;
+      // Open footnote: editable textarea (shows raw inline markup while editing,
+      // like the main field). Closed footnote: static display rendering inline
+      // markup as live links, click to edit.
+      if (openFootnoteMarker !== null && entry.marker === openFootnoteMarker) {
+        return `
       <div class="translation-language-panel__footnote-editor-row">
-        <span class="translation-language-panel__footnote-marker" aria-hidden="true">[${escapeHtml(entry.marker)}]</span>
+        ${markerHtml}
         <textarea
           class="translation-language-panel__field translation-language-panel__field--footnote"
           data-editor-row-field
@@ -731,7 +740,25 @@ function renderEditorFootnoteField(row, language) {
           placeholder="Enter footnote text here."
         >${escapeHtml(entry.text)}</textarea>
       </div>
-    `)
+        `;
+      }
+
+      return `
+      <div class="translation-language-panel__footnote-editor-row">
+        ${markerHtml}
+        <button
+          class="translation-language-panel__field--footnote translation-language-panel__footnote-display"
+          type="button"
+          data-action="open-editor-footnote-entry"
+          data-editor-footnote-display
+          data-footnote-marker="${escapeHtml(entry.marker)}"
+          data-row-id="${escapeHtml(row.id)}"
+          data-language-code="${escapeHtml(language.code)}"
+          lang="${escapeHtml(language.baseCode || language.code)}"
+        ><span class="translation-language-panel__footnote-display-text">${renderSanitizedInlineMarkupHtml(entry.text)}</span></button>
+      </div>
+      `;
+    })
     .join("");
 
   return `

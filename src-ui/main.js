@@ -398,6 +398,31 @@ function resolveTranslateRenderAnchor(options = {}) {
   };
 }
 
+// A filtered body re-render rebuilds the focused row from scratch, so the new
+// field-stack mounts unfocused and only turns orange once focus is restored —
+// replaying its 140ms focus transition on every keystroke as a flicker. Suppress
+// that transition while the user is actively driving re-renders, then re-enable it
+// once typing settles (the focused stack is steady orange by then, so re-enabling
+// triggers no transition). Genuine click-focus never re-renders, so it keeps its
+// fade-in. The cleanup is a debounce, not a frame counter: rapid keystrokes keep
+// resetting it, so the class is reliably present for every intermediate paint.
+let editorFieldFocusTransitionResetTimer = null;
+
+function suppressEditorFieldFocusTransitionForRerender(root) {
+  if (!(root instanceof HTMLElement)) {
+    return;
+  }
+
+  root.classList.add("is-restoring-field-focus");
+  if (editorFieldFocusTransitionResetTimer !== null) {
+    clearTimeout(editorFieldFocusTransitionResetTimer);
+  }
+  editorFieldFocusTransitionResetTimer = setTimeout(() => {
+    editorFieldFocusTransitionResetTimer = null;
+    root.classList.remove("is-restoring-field-focus");
+  }, 200);
+}
+
 function renderTranslateBodyOnly(options = {}) {
   const body = app.querySelector(".page-body.page-body--editor");
   if (!(body instanceof HTMLElement)) {
@@ -435,6 +460,9 @@ function renderTranslateBodyOnly(options = {}) {
     restoredAnchor,
     usedVisibleFallback,
   });
+  if (focusSnapshot?.kind === "editor-row-field") {
+    suppressEditorFieldFocusTransitionForRerender(body);
+  }
   const restoredFocus = shouldRestoreFocusedInputStateForScope(focusSnapshot, "translate-body")
     ? restoreFocusedInputState(focusSnapshot)
     : false;

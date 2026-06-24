@@ -2,8 +2,13 @@ import { applyEditorRowFieldInput } from "./editor-row-input.js";
 import { parseInlineMarkup, sanitizeInlineLinkHref } from "./editor-inline-markup/parser.js";
 import { escapeHtml } from "./editor-inline-markup/serialize.js";
 import { findElementContainingSelection } from "./editor-inline-markup/ranges.js";
+import { buildEditorFieldSelector } from "./editor-utils.js";
 import { createEditorInsertLinkModalState, state } from "./state.js";
-import { cancelPendingTranslateViewportRestores } from "./translate-viewport.js";
+import {
+  cancelPendingTranslateViewportRestores,
+  captureTranslateViewport,
+  renderTranslateBodyPreservingViewport,
+} from "./translate-viewport.js";
 
 function languageClusterForButton(button) {
   return button?.closest?.("[data-editor-language-cluster]") ?? null;
@@ -24,13 +29,13 @@ function resolveTargetTextarea(button) {
   return field instanceof HTMLTextAreaElement ? field : null;
 }
 
-function findClusterTextarea(rowId, languageCode) {
+function findClusterTextarea(rowId, languageCode, contentKind = "field", footnoteMarker = "") {
   if (typeof document === "undefined" || !rowId || !languageCode) {
     return null;
   }
 
   const field = document.querySelector(
-    `[data-editor-row-field][data-row-id="${CSS.escape(rowId)}"][data-language-code="${CSS.escape(languageCode)}"]:not([data-content-kind])`,
+    buildEditorFieldSelector(rowId, languageCode, contentKind, { footnoteMarker }),
   );
   return field instanceof HTMLTextAreaElement ? field : null;
 }
@@ -105,13 +110,13 @@ function focusInsertLinkUrlInput() {
   });
 }
 
-function refocusInsertLinkTextarea(rowId, languageCode, selectionStart, selectionEnd) {
+function refocusInsertLinkTextarea(rowId, languageCode, selectionStart, selectionEnd, contentKind = "field", footnoteMarker = "") {
   if (typeof window === "undefined") {
     return;
   }
 
   window.requestAnimationFrame(() => {
-    const textarea = findClusterTextarea(rowId, languageCode);
+    const textarea = findClusterTextarea(rowId, languageCode, contentKind, footnoteMarker);
     if (!(textarea instanceof HTMLTextAreaElement)) {
       return;
     }
@@ -129,8 +134,12 @@ export function openEditorInsertLink(render, button) {
   }
 
   const textarea = resolveTargetTextarea(button);
-  const rowId = button?.dataset?.rowId ?? "";
-  const languageCode = button?.dataset?.languageCode ?? "";
+  // Target whichever field the user was actually editing — main text, footnote,
+  // or image caption — not just the cluster's first (main) field.
+  const rowId = textarea?.dataset?.rowId ?? button?.dataset?.rowId ?? "";
+  const languageCode = textarea?.dataset?.languageCode ?? button?.dataset?.languageCode ?? "";
+  const contentKind = textarea?.dataset?.contentKind ?? "field";
+  const footnoteMarker = textarea?.dataset?.footnoteMarker ?? "";
   const selectionStart = textarea?.selectionStart ?? 0;
   const selectionEnd = textarea?.selectionEnd ?? 0;
   const hasSelection =
@@ -153,6 +162,8 @@ export function openEditorInsertLink(render, button) {
     mode: "url",
     rowId,
     languageCode,
+    contentKind,
+    footnoteMarker,
     selectionStart,
     selectionEnd,
     selectedText: textarea.value.slice(selectionStart, selectionEnd),
@@ -182,11 +193,11 @@ export function closeEditorInsertLinkModal(render) {
     return;
   }
 
-  const { mode, rowId, languageCode, selectionStart, selectionEnd } = modal;
+  const { mode, rowId, languageCode, contentKind, footnoteMarker, selectionStart, selectionEnd } = modal;
   setInsertLinkModalState(null);
   render?.({ scope: "translate-insert-link-modal" });
   if (mode === "url") {
-    refocusInsertLinkTextarea(rowId, languageCode, selectionStart, selectionEnd);
+    refocusInsertLinkTextarea(rowId, languageCode, selectionStart, selectionEnd, contentKind, footnoteMarker);
   }
 }
 
@@ -242,8 +253,8 @@ export function submitEditorInsertLink(render, operations = {}) {
     return;
   }
 
-  const { rowId, languageCode, selectionStart, selectionEnd, selectedText } = modal;
-  const textarea = findClusterTextarea(rowId, languageCode);
+  const { rowId, languageCode, contentKind, footnoteMarker, selectionStart, selectionEnd, selectedText } = modal;
+  const textarea = findClusterTextarea(rowId, languageCode, contentKind, footnoteMarker);
   const selectionIntact =
     textarea instanceof HTMLTextAreaElement
     && !textarea.disabled
@@ -271,9 +282,11 @@ export function submitEditorInsertLink(render, operations = {}) {
     syncEditorVirtualizationRowLayout: operations.syncEditorVirtualizationRowLayout,
     syncEditorGlossaryHighlightRowDom: operations.syncEditorGlossaryHighlightRowDom,
     cancelPendingTranslateViewportRestores,
+    captureTranslateViewport,
+    renderTranslateBodyPreservingViewport,
   });
 
   setInsertLinkModalState(null);
   render?.({ scope: "translate-insert-link-modal" });
-  refocusInsertLinkTextarea(rowId, languageCode, result.selectionStart, result.selectionEnd);
+  refocusInsertLinkTextarea(rowId, languageCode, result.selectionStart, result.selectionEnd, contentKind, footnoteMarker);
 }

@@ -89,6 +89,14 @@ export function registerAppEvents(render) {
       return;
     }
 
+    // Keep the active editor field focused (and its selection intact) when the
+    // Insert-link button is pressed, so the link targets whichever field the user
+    // was editing — including footnotes — instead of falling back to the main field.
+    if (event.target instanceof Element && event.target.closest("[data-editor-link-button]")) {
+      event.preventDefault();
+      return;
+    }
+
     focusEditorFieldFromGlossaryMark(event);
   });
 

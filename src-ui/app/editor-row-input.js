@@ -10,6 +10,8 @@ export function applyEditorRowFieldInput({
   syncEditorVirtualizationRowLayout,
   syncEditorGlossaryHighlightRowDom,
   cancelPendingTranslateViewportRestores,
+  captureTranslateViewport,
+  renderTranslateBodyPreservingViewport,
 }) {
   const rowId = input?.dataset?.rowId ?? "";
   const languageCode = input?.dataset?.languageCode ?? "";
@@ -37,7 +39,21 @@ export function applyEditorRowFieldInput({
   }
 
   if (editorChapterFiltersAreActive(filters)) {
-    render({ scope: "translate-body" });
+    // A filtered body re-render rebuilds every row via innerHTML, so the focused
+    // textarea is recreated at its collapsed default height and only regrown by
+    // autosize after the scroll/anchor restore runs. That late reflow pushes the
+    // caret row away from where the user is looking — the per-keystroke scroll
+    // jump. Preserve the viewport across the re-render so the focused row stays
+    // put, mirroring the search-filter and AI-translate body re-render paths.
+    if (
+      typeof captureTranslateViewport === "function"
+      && typeof renderTranslateBodyPreservingViewport === "function"
+    ) {
+      const viewportSnapshot = captureTranslateViewport(input);
+      renderTranslateBodyPreservingViewport(render, viewportSnapshot);
+    } else {
+      render({ scope: "translate-body" });
+    }
     return;
   }
 
