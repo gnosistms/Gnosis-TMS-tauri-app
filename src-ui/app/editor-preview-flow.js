@@ -16,7 +16,10 @@ import {
   unlockScreenScrollSnapshot,
 } from "./scroll-state.js";
 import { buildEditorShowRowInContextChapterState } from "./editor-show-context.js";
-import { replaceCurrentEditorLocation } from "./editor-location.js";
+import {
+  persistCurrentPreviewScroll,
+  replaceCurrentEditorLocation,
+} from "./editor-location.js";
 import {
   clearStoredEditorPreviewLanguageCode,
   saveStoredEditorPreviewLanguageCode,
@@ -221,6 +224,8 @@ export function setEditorMode(render, nextMode, options = {}) {
 
   if (previousMode === EDITOR_MODE_TRANSLATE) {
     previewModeTranslateScrollSnapshot = captureRenderScrollSnapshot("translate");
+  } else if (previousMode === EDITOR_MODE_PREVIEW && normalizedMode === EDITOR_MODE_TRANSLATE) {
+    persistCurrentPreviewScroll(state);
   }
 
   const nextEditorChapter = {

@@ -201,6 +201,29 @@ test("preview rendering and serialization preserve supported inline markup", () 
   assert.match(serialized, /<ruby>漢字<rt>よみ<\/rt><\/ruby>/);
 });
 
+test("preview rendering and export escape literal quotes only once", () => {
+  const quotedText = '"Hỡi các vị thần, hãy biết rằng Thượng Đế tồn tại."';
+  const blocks = buildEditorPreviewDocument([{
+    rowId: "row-1",
+    lifecycleState: "active",
+    textStyle: "paragraph",
+    fields: { vi: quotedText },
+    footnotes: {},
+    imageCaptions: {},
+    images: {},
+  }], "vi");
+
+  const rendered = renderEditorPreviewDocumentHtml(blocks).html;
+  const serialized = serializeEditorPreviewHtml(blocks);
+  const plainText = serializeEditorPreviewPlainText(blocks);
+
+  assert.match(rendered, /&quot;Hỡi các vị thần/);
+  assert.doesNotMatch(rendered, /&amp;quot;/);
+  assert.match(serialized, /<p>&quot;Hỡi các vị thần/);
+  assert.doesNotMatch(serialized, /&amp;quot;/);
+  assert.equal(plainText, quotedText);
+});
+
 test("preview rendering splits separator markup into a horizontal rule block", () => {
   const blocks = buildEditorPreviewDocument([{
     rowId: "row-1",

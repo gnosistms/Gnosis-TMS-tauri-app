@@ -4,7 +4,9 @@ import assert from "node:assert/strict";
 import {
   applyPreparedVellumImageResources,
   buildVellumImageResourceRequests,
+  buildVellumOgElementPrivateDecodedXml,
   buildVellumTextEditorContentDecodedXml,
+  extractVellumLeadingHeadingTitle,
 } from "./vellum-text-editor-content.js";
 
 const VELLUM_ATTACHMENT_CHARACTER = "\uFFFC";
@@ -71,12 +73,113 @@ function uidForKey(objectXml, key) {
   return Number(match[1]);
 }
 
+function uidsForArrayKey(objectXml, key) {
+  const pattern = new RegExp(`<key>${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}</key><array>([\\s\\S]*?)</array>`);
+  const match = objectXml.match(pattern);
+  assert.ok(match, `missing UID array for ${key}`);
+  return [...match[1].matchAll(/<key>CF\$UID<\/key><integer>(\d+)<\/integer>/g)]
+    .map((entry) => Number(entry[1]));
+}
+
 function classNameForArchiveObject(xml, objectXml) {
   const classObject = archiveObjectAtUid(xml, uidForKey(objectXml, "$class"));
   const match = classObject.match(/<key>\$classname<\/key><string>([^<]+)<\/string>/);
   assert.ok(match, "class object is missing $classname");
   return match[1];
 }
+
+test("buildVellumOgElementPrivateDecodedXml writes a chapter element and promotes a leading H1", () => {
+  const xml = buildVellumOgElementPrivateDecodedXml([
+    {
+      kind: "text",
+      rowId: "row-title",
+      languageCode: "en",
+      textStyle: "heading1",
+      text: "WordPress <strong>Style</strong> Sample",
+      footnotes: [],
+    },
+    {
+      kind: "text",
+      rowId: "row-body",
+      languageCode: "en",
+      textStyle: "paragraph",
+      text: "Body <em>text</em>",
+      footnotes: [],
+    },
+  ], { title: "Fallback title", now: new Date("2026-06-23T00:00:00Z") });
+
+  const root = archiveObjectAtUid(xml, 1);
+  assert.equal(classNameForArchiveObject(xml, root), "NSDictionary");
+  assert.match(archiveObjectAtUid(xml, uidsForArrayKey(root, "NS.keys")[0]), /<string>elements<\/string>/);
+  const elementsArray = archiveObjectAtUid(xml, uidsForArrayKey(root, "NS.objects")[0]);
+  const element = archiveObjectAtUid(xml, uidsForArrayKey(elementsArray, "NS.objects")[0]);
+  assert.equal(classNameForArchiveObject(xml, element), "OGTypedTextElement");
+  assert.match(archiveObjectAtUid(xml, uidForKey(element, "title")), /<string>WordPress Style Sample<\/string>/);
+  assert.match(archiveObjectAtUid(xml, uidForKey(element, "typeName")), /<string>chapter<\/string>/);
+  assert.match(xml, /<string>OGTypedTextElement<\/string>/);
+  assert.match(xml, /<string>NSDate<\/string>/);
+  assert.equal(extractVellumLeadingHeadingTitle([
+    {
+      kind: "text",
+      textStyle: "heading1",
+      text: "WordPress <strong>Style</strong> Sample",
+      footnotes: [],
+    },
+  ]), "WordPress Style Sample");
+
+  assert.match(xml, /<string>Body text\n<\/string>/);
+  const byteValues = decodedNsByteValues(xml);
+  assert.ok(byteValues.some((value) => value.equals(Buffer.from([5, 0, 4, 1, 1, 0]))));
+  assert.doesNotMatch(xml, /<string>Fallback title<\/string>/);
+});
+
+test("buildVellumOgElementPrivateDecodedXml appends an editable plain text section after a final image", () => {
+  const xml = buildVellumOgElementPrivateDecodedXml([
+    {
+      kind: "image",
+      rowId: "row-image",
+      languageCode: "en",
+      image: {
+        kind: "upload",
+        filePath: "/tmp/Diogenes.webp",
+        fileName: "Diogenes.webp",
+      },
+      caption: "A caption",
+    },
+  ], { title: "Image chapter" });
+
+  assert.match(xml, /OGImageAttachmentCell/);
+  assert.ok(xml.includes(`<string>${VELLUM_ATTACHMENT_CHARACTER}\n</string>`));
+  const byteValues = decodedNsByteValues(xml);
+  assert.ok(byteValues.some((value) => value.equals(Buffer.from([1, 0, 1, 1]))));
+});
+
+test("buildVellumOgElementPrivateDecodedXml keeps non-leading headings as subheads", () => {
+  const xml = buildVellumOgElementPrivateDecodedXml([
+    {
+      kind: "text",
+      rowId: "row-body",
+      languageCode: "en",
+      textStyle: "paragraph",
+      text: "Intro",
+      footnotes: [],
+    },
+    {
+      kind: "text",
+      rowId: "row-h2",
+      languageCode: "en",
+      textStyle: "heading2",
+      text: "Internal H2",
+      footnotes: [],
+    },
+  ], { title: "Chapter fallback" });
+
+  assert.match(xml, /<string>Chapter fallback<\/string>/);
+  assert.match(xml, /OGSubheadAttachmentCell/);
+  assert.match(xml, /<string>Internal H2<\/string>/);
+  assert.match(xml, /<string>level<\/string>/);
+  assert.match(xml, /<integer>2<\/integer>/);
+});
 
 test("buildVellumTextEditorContentDecodedXml writes footnote markers as Vellum attachments", () => {
   const xml = buildVellumTextEditorContentDecodedXml([{

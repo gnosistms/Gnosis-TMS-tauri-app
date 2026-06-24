@@ -7,14 +7,18 @@ import {
 } from "./scroll-state.js";
 import {
   clearStoredEditorLocation,
+  clearStoredEditorPreviewScrollTop,
   loadStoredEditorLocation,
+  loadStoredEditorPreviewScrollTop,
   saveStoredEditorLocation,
+  saveStoredEditorPreviewScrollTop,
 } from "./editor-preferences.js";
 import { setActiveStorageLogin } from "./team-storage.js";
 import {
   prepareEditorLocationBeforeRender,
   queuePendingEditorLocationRestore,
   replaceCurrentEditorLocation,
+  restorePendingEditorLocation,
   skipNextEditorLocationRestore,
 } from "./editor-location.js";
 
@@ -98,6 +102,18 @@ function readyTranslateState(chapterId) {
   };
 }
 
+function readyPreviewState(chapterId) {
+  return {
+    screen: "translate",
+    editorChapter: {
+      status: "ready",
+      chapterId,
+      mode: "preview",
+      rows: [{ rowId: "row-1" }],
+    },
+  };
+}
+
 test("queuePendingEditorLocationRestore queues the saved row when restore is enabled", () => {
   const login = "editor-location-restore";
   const chapterId = "chapter-restore";
@@ -117,30 +133,41 @@ test("queuePendingEditorLocationRestore queues the saved row when restore is ena
   setActiveStorageLogin(null);
 });
 
-test("queuePendingEditorLocationRestore ignores preview mode", () => {
+test("queuePendingEditorLocationRestore restores preview mode scrollTop", () => {
   const login = "editor-location-preview";
   const chapterId = "chapter-preview";
   setActiveStorageLogin(login);
   queueTranslateRowAnchor(null);
-  saveStoredEditorLocation(chapterId, {
-    rowId: "row-saved",
-    languageCode: "en",
-    offsetTop: 12,
-  }, login);
-
-  queuePendingEditorLocationRestore({
-    screen: "translate",
-    editorChapter: {
-      status: "ready",
-      chapterId,
-      mode: "preview",
-      rows: [{ rowId: "row-1" }],
+  const container = new FakeHTMLElement(
+    {
+      top: 100,
+      bottom: 500,
+      left: 0,
+      right: 600,
+      width: 600,
+      height: 400,
     },
-  });
+    {
+      scrollTop: 0,
+    },
+  );
+  globalThis.document = {
+    activeElement: null,
+    querySelector(selector) {
+      return selector === ".translate-main-scroll" ? container : null;
+    },
+  };
+  saveStoredEditorPreviewScrollTop(chapterId, 512, login);
+
+  const appState = readyPreviewState(chapterId);
+  queuePendingEditorLocationRestore(appState);
 
   assert.equal(pendingTranslateAnchorRowId(), "");
+  assert.equal(restorePendingEditorLocation(appState), true);
+  assert.equal(container.scrollTop, 512);
 
   queueTranslateRowAnchor(null);
+  clearStoredEditorPreviewScrollTop(chapterId, login);
   setActiveStorageLogin(null);
 });
 
@@ -231,6 +258,59 @@ test("prepareEditorLocationBeforeRender saves the latest visible location when l
   });
 
   clearStoredEditorLocation(chapterId, login);
+  setActiveStorageLogin(null);
+});
+
+test("prepareEditorLocationBeforeRender saves preview scroll when leaving preview mode", () => {
+  const login = "editor-location-leave-preview";
+  const chapterId = "chapter-leave-preview";
+  setActiveStorageLogin(login);
+  clearStoredEditorLocation(chapterId, login);
+  installVisibleEditorLocationFixture({ scrollTop: 678 });
+
+  prepareEditorLocationBeforeRender("translate", {
+    screen: "glossaryEditor",
+    editorChapter: {
+      status: "ready",
+      chapterId,
+      mode: "preview",
+      rows: [{ rowId: "row-visible" }],
+    },
+  }, { wasPreviewMode: true });
+
+  assert.equal(loadStoredEditorPreviewScrollTop(chapterId, login), 678);
+
+  clearStoredEditorPreviewScrollTop(chapterId, login);
+  setActiveStorageLogin(null);
+});
+
+test("prepareEditorLocationBeforeRender does not clobber preview scroll when entering preview mode", () => {
+  const login = "editor-location-enter-preview";
+  const chapterId = "chapter-enter-preview";
+  setActiveStorageLogin(login);
+  clearStoredEditorLocation(chapterId, login);
+  clearStoredEditorPreviewScrollTop(chapterId, login);
+  // A real preview scroll position the user left earlier.
+  saveStoredEditorPreviewScrollTop(chapterId, 2000, login);
+  // The old DOM still shows translate mode, scrolled to a different (taller) offset.
+  installVisibleEditorLocationFixture({ scrollTop: 5000 });
+
+  // State mode is already "preview" (the switch is in progress) but the on-screen
+  // mode was translate, so wasPreviewMode is false.
+  prepareEditorLocationBeforeRender("translate", {
+    screen: "translate",
+    editorChapter: {
+      status: "ready",
+      chapterId,
+      mode: "preview",
+      rows: [{ rowId: "row-visible" }],
+    },
+  }, { wasPreviewMode: false });
+
+  assert.equal(loadStoredEditorPreviewScrollTop(chapterId, login), 2000);
+
+  clearStoredEditorLocation(chapterId, login);
+  clearStoredEditorPreviewScrollTop(chapterId, login);
   setActiveStorageLogin(null);
 });
 

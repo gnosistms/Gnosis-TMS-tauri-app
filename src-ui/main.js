@@ -633,14 +633,24 @@ function renderWithOptions(options = {}) {
   }
 
   const previousScreen = app.firstElementChild?.getAttribute("data-screen") ?? null;
-  prepareEditorLocationBeforeRender(previousScreen, state);
+  const previousTranslateWasPreview =
+    previousScreen === "translate"
+    && app.querySelector(".translate-layout--preview") instanceof HTMLElement;
+  const enteringPreviewMode =
+    previousScreen === "translate"
+    && state.screen === "translate"
+    && !previousTranslateWasPreview
+    && currentTranslateMode() === EDITOR_MODE_PREVIEW;
+  prepareEditorLocationBeforeRender(previousScreen, state, {
+    wasPreviewMode: previousTranslateWasPreview,
+  });
   const focusSnapshot = captureFocusedInputState();
   const {
     anchor: translateAnchor,
     hadPendingAnchor,
     usedVisibleFallback,
   } =
-    previousScreen === "translate" && state.screen === "translate"
+    previousScreen === "translate" && state.screen === "translate" && !enteringPreviewMode
       ? resolveTranslateRenderAnchor({ includeVisibleFallback: false })
       : { anchor: null, hadPendingAnchor: false, usedVisibleFallback: false };
   const scrollSnapshot = captureRenderScrollSnapshot(previousScreen);
@@ -661,7 +671,9 @@ function renderWithOptions(options = {}) {
   if (app.firstElementChild instanceof HTMLElement) {
     app.firstElementChild.dataset.screen = state.screen;
   }
-  restoreRenderScrollSnapshot(previousScreen, state.screen, scrollSnapshot);
+  if (!enteringPreviewMode) {
+    restoreRenderScrollSnapshot(previousScreen, state.screen, scrollSnapshot);
+  }
   if (!hadPendingAnchor && translateAnchor?.rowId) {
     queueTranslateRowAnchor(translateAnchor);
   }

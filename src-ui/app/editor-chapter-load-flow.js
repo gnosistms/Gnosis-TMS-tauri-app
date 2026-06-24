@@ -108,12 +108,12 @@ function applyEditorPayloadToState(
   glossaryState = null,
   derivedGlossariesByRowId = {},
   operations = {},
+  previousEditorChapter = state.editorChapter,
 ) {
   if (!hasEditorChapterReloadOperations(operations)) {
     return;
   }
 
-  const previousEditorChapter = state.editorChapter;
   const { selectedSourceLanguageCode, selectedTargetLanguageCode } = normalizeLanguageSelections(
     payload.languages,
     existingChapter.selectedSourceLanguageCode ?? payload.selectedSourceLanguageCode,
@@ -150,6 +150,7 @@ function applyEditorPayloadToState(
     persistedSourceLanguageCode: selectedSourceLanguageCode,
     persistedTargetLanguageCode: selectedTargetLanguageCode,
     selectionPersistStatus: "idle",
+    filters: initialEditorChapterFiltersForContext(existingChapter),
     assistant: previousEditorChapter?.assistant,
     commentSeenRevisions: loadEditorCommentSeenRevisionsForChapter(
       payload.chapterId,
@@ -316,6 +317,7 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
     context.project.id,
     context.chapter.id,
   );
+  const previousEditorChapter = state.editorChapter;
 
   state.selectedProjectId = context.project.id;
   state.editorChapter = {
@@ -424,6 +426,7 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
       glossaryState,
       hydratedDerivedGlossariesByRowId,
       operations,
+      previousEditorChapter,
     );
     openLanguageManagerForSingleLanguageFile(payload, preserveVisibleRows, team);
     render?.();

@@ -189,6 +189,7 @@ const {
 const {
   loadSelectedChapterEditorData: loadSelectedChapterEditorDataFlow,
 } = await import("./editor-chapter-load-flow.js");
+const { selectedEditorPreviewLanguageCode } = await import("./editor-preview.js");
 const { EDITOR_ROW_FILTER_MODE_HAS_CONFLICT } = await import("./editor-filters.js");
 const {
   decryptTeamAiWrappedKey,
@@ -4059,6 +4060,126 @@ test("loadSelectedChapterEditorData refreshes shared team action preferences whi
     invokeLog.some((entry) => entry.command === "load_team_ai_settings"),
     true,
   );
+});
+
+test("loadSelectedChapterEditorData does not carry preview language from the previously opened chapter", async () => {
+  resetSessionState();
+  installSelectedTeam({ canDelete: false, login: "tester" });
+  state.screen = "translate";
+  state.selectedProjectId = "project-1";
+  state.offline = {
+    ...state.offline,
+    isEnabled: true,
+  };
+  state.projects = [{
+    id: "project-1",
+    name: "Project One",
+    chapters: [
+      {
+        id: "chapter-tri",
+        name: "Spanish to Vietnamese",
+        selectedSourceLanguageCode: "es",
+        selectedTargetLanguageCode: "vi",
+        languages: [
+          { code: "es", name: "Spanish" },
+          { code: "en", name: "English" },
+          { code: "vi", name: "Vietnamese" },
+        ],
+        linkedGlossary: null,
+      },
+      {
+        id: "chapter-en",
+        name: "English Only",
+        selectedSourceLanguageCode: "en",
+        selectedTargetLanguageCode: "en",
+        languages: [
+          { code: "en", name: "English" },
+        ],
+        linkedGlossary: null,
+      },
+    ],
+  }];
+
+  const payloads = {
+    "chapter-tri": {
+      chapterId: "chapter-tri",
+      fileTitle: "Spanish to Vietnamese",
+      languages: [
+        { code: "es", name: "Spanish" },
+        { code: "en", name: "English" },
+        { code: "vi", name: "Vietnamese" },
+      ],
+      selectedSourceLanguageCode: "es",
+      selectedTargetLanguageCode: "vi",
+      wordCounts: { es: 1 },
+      rows: [{
+        rowId: "row-1",
+        fields: {
+          es: "Hola",
+          en: "Hello",
+          vi: "Xin chao",
+        },
+        fieldStates: {},
+      }],
+    },
+    "chapter-en": {
+      chapterId: "chapter-en",
+      fileTitle: "English Only",
+      languages: [
+        { code: "en", name: "English" },
+      ],
+      selectedSourceLanguageCode: "en",
+      selectedTargetLanguageCode: "en",
+      wordCounts: { en: 1 },
+      rows: [{
+        rowId: "row-1",
+        fields: {
+          en: "Only English",
+        },
+        fieldStates: {},
+      }],
+    },
+  };
+
+  invokeHandler = async (command, payload) => {
+    if (command === "load_gtms_chapter_editor_data") {
+      return payloads[payload?.input?.chapterId];
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const operations = {
+    applyEditorUiState,
+    normalizeEditorRows,
+    applyChapterMetadataToState() {},
+    loadActiveEditorFieldHistory() {},
+    async flushDirtyEditorRows() {
+      return true;
+    },
+    persistEditorChapterSelections() {},
+  };
+
+  state.selectedChapterId = "chapter-tri";
+  await loadSelectedChapterEditorDataFlow(() => {}, {}, operations);
+  assert.equal(selectedEditorPreviewLanguageCode(state.editorChapter), "vi");
+  state.editorChapter = {
+    ...state.editorChapter,
+    previewLanguageCode: selectedEditorPreviewLanguageCode(state.editorChapter),
+  };
+
+  state.selectedChapterId = "chapter-en";
+  await loadSelectedChapterEditorDataFlow(() => {}, {}, operations);
+  assert.equal(selectedEditorPreviewLanguageCode(state.editorChapter), "en");
+  state.editorChapter = {
+    ...state.editorChapter,
+    previewLanguageCode: selectedEditorPreviewLanguageCode(state.editorChapter),
+  };
+
+  state.selectedChapterId = "chapter-tri";
+  await loadSelectedChapterEditorDataFlow(() => {}, {}, operations);
+
+  assert.equal(state.editorChapter.previewLanguageCode, null);
+  assert.equal(selectedEditorPreviewLanguageCode(state.editorChapter), "vi");
 });
 
 test("loadSelectedChapterEditorData starts on the conflict filter for chapters with imported conflicts", async () => {

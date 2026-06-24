@@ -1,6 +1,7 @@
 import { invoke } from "./runtime.js";
 
 export const VELLUM_TEXT_EDITOR_CONTENT_TYPE = "co.180g.Vellum.TextEditorContent";
+export const VELLUM_OG_ELEMENT_PRIVATE_TYPE = "OGElementPrivate";
 
 export async function copyVellumTextEditorContentToClipboard(input, operations = {}) {
   const invokeCommand = operations.invoke ?? invoke;

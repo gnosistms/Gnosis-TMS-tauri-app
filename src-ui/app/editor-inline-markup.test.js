@@ -12,6 +12,7 @@ import {
   renderSanitizedInlineMarkupWithEditorHighlightState,
   renderSanitizedInlineMarkupWithGlossaryHighlightHtml,
   rubyButtonConfig,
+  splitInlineMarkupTextBySeparators,
   toggleInlineMarkupSelection,
 } from "./editor-inline-markup.js";
 
@@ -61,6 +62,17 @@ test("separator markup renders as a horizontal line without visible/base text", 
   );
   assert.equal(extractInlineMarkupVisibleText("Alpha<hr>Beta"), "AlphaBeta");
   assert.equal(extractInlineMarkupBaseText("Alpha<hr>Beta"), "AlphaBeta");
+});
+
+test("separator splitting preserves unescaped text for downstream sanitization", () => {
+  assert.deepEqual(
+    splitInlineMarkupTextBySeparators('"Alpha" & <strong>Beta</strong><hr>Gamma'),
+    [
+      { kind: "text", text: '"Alpha" & <strong>Beta</strong>' },
+      { kind: "separator" },
+      { kind: "text", text: "Gamma" },
+    ],
+  );
 });
 
 test("separator markup rejects unsupported hr variants as escaped text", () => {

@@ -4,16 +4,19 @@ import {
   readTranslateMainScrollTop,
   restoreTranslateRowAnchor,
 } from "./scroll-state.js";
-import { EDITOR_MODE_TRANSLATE, normalizeEditorMode } from "./editor-preview.js";
+import { EDITOR_MODE_PREVIEW, EDITOR_MODE_TRANSLATE, normalizeEditorMode } from "./editor-preview.js";
 import {
   clearStoredEditorLocation,
   loadStoredEditorLocation,
+  loadStoredEditorPreviewScrollTop,
   saveStoredEditorLocation,
+  saveStoredEditorPreviewScrollTop,
 } from "./editor-preferences.js";
 
 const EDITOR_LOCATION_SAVE_DEBOUNCE_MS = 180;
 
 let restoredChapterId = null;
+let restoredPreviewChapterId = null;
 let pendingRestoreSnapshot = null;
 let saveTimerId = null;
 let skippedRestoreChapterId = null;
@@ -36,6 +39,17 @@ function currentEditorChapterId(appState) {
   if (
     appState?.screen !== "translate"
     || normalizeEditorMode(appState?.editorChapter?.mode) !== EDITOR_MODE_TRANSLATE
+  ) {
+    return null;
+  }
+
+  return loadedEditorChapterId(appState);
+}
+
+function currentPreviewChapterId(appState) {
+  if (
+    appState?.screen !== "translate"
+    || normalizeEditorMode(appState?.editorChapter?.mode) !== EDITOR_MODE_PREVIEW
   ) {
     return null;
   }
@@ -77,6 +91,19 @@ function persistEditorLocationForChapter(chapterId, { requireRestored = true } =
   });
 }
 
+function persistPreviewScrollForChapter(chapterId) {
+  if (!chapterId) {
+    return;
+  }
+
+  const scrollTop = readTranslateMainScrollTop();
+  if (!Number.isFinite(scrollTop)) {
+    return;
+  }
+
+  saveStoredEditorPreviewScrollTop(chapterId, scrollTop);
+}
+
 function isHtmlElement(value) {
   return typeof HTMLElement === "function" && value instanceof HTMLElement;
 }
@@ -101,15 +128,41 @@ function updatePendingEditorLocationRestore(appState) {
     pendingRestoreSnapshot = null;
     if (appState?.screen !== "translate") {
       restoredChapterId = null;
+      restoredPreviewChapterId = null;
     }
     return;
   }
+
+  const previewChapterId = currentPreviewChapterId(appState);
+  if (previewChapterId) {
+    if (restoredPreviewChapterId === previewChapterId) {
+      pendingRestoreSnapshot = null;
+      return;
+    }
+
+    const scrollTop = Number(loadStoredEditorPreviewScrollTop(previewChapterId));
+    if (Number.isFinite(scrollTop)) {
+      pendingRestoreSnapshot = {
+        chapterId: previewChapterId,
+        type: "preview-scroll",
+        rowId: "__preview_scroll__",
+        offsetTop: 0,
+        scrollTop,
+      };
+    } else {
+      restoredPreviewChapterId = previewChapterId;
+      pendingRestoreSnapshot = null;
+    }
+    return;
+  }
+  restoredPreviewChapterId = null;
 
   const chapterId = currentEditorChapterId(appState);
   if (!chapterId) {
     pendingRestoreSnapshot = null;
     if (appState?.screen !== "translate") {
       restoredChapterId = null;
+      restoredPreviewChapterId = null;
     }
     return;
   }
@@ -142,13 +195,21 @@ function updatePendingEditorLocationRestore(appState) {
   };
 }
 
-export function prepareEditorLocationBeforeRender(previousScreen, appState) {
+export function prepareEditorLocationBeforeRender(previousScreen, appState, options = {}) {
   clearEditorLocationSaveTimer();
 
   if (previousScreen === "translate") {
-    persistEditorLocationForChapter(loadedEditorChapterId(appState), {
-      requireRestored: appState?.screen === "translate",
-    });
+    // Persist based on the mode that was actually on screen (the old DOM), not the
+    // new state mode. On a mode switch the state mode is already updated while the
+    // old DOM — and therefore its scroll position — still belongs to the old mode.
+    // Reading the wrong container clobbers the saved scroll for the other mode.
+    if (options.wasPreviewMode) {
+      persistPreviewScrollForChapter(loadedEditorChapterId(appState));
+    } else {
+      persistEditorLocationForChapter(loadedEditorChapterId(appState), {
+        requireRestored: appState?.screen === "translate",
+      });
+    }
   }
 }
 
@@ -195,27 +256,49 @@ export function replaceCurrentEditorLocation(appState, snapshot) {
 export function queuePendingEditorLocationRestore(appState) {
   updatePendingEditorLocationRestore(appState);
 
-  if (pendingRestoreSnapshot?.chapterId === currentEditorChapterId(appState)) {
+  if (
+    pendingRestoreSnapshot?.chapterId === currentEditorChapterId(appState)
+    && pendingRestoreSnapshot?.type !== "preview-scroll"
+  ) {
     queueTranslateRowAnchor(pendingRestoreSnapshot);
   }
 }
 
 export function restorePendingEditorLocation(appState) {
-  if (pendingRestoreSnapshot?.chapterId !== currentEditorChapterId(appState)) {
+  const expectedChapterId = currentPreviewChapterId(appState) ?? currentEditorChapterId(appState);
+  if (pendingRestoreSnapshot?.chapterId !== expectedChapterId) {
     return false;
   }
 
   const restored = restoreEditorLocationSnapshot(pendingRestoreSnapshot);
-  if (!restored) {
+  if (!restored && pendingRestoreSnapshot?.type !== "preview-scroll") {
     clearStoredEditorLocation(pendingRestoreSnapshot.chapterId);
   }
 
-  restoredChapterId = pendingRestoreSnapshot.chapterId;
+  if (pendingRestoreSnapshot.type === "preview-scroll") {
+    restoredPreviewChapterId = pendingRestoreSnapshot.chapterId;
+  } else {
+    restoredChapterId = pendingRestoreSnapshot.chapterId;
+  }
   pendingRestoreSnapshot = null;
   return restored;
 }
 
 export function scheduleEditorLocationSave(appState) {
+  const previewChapterId = currentPreviewChapterId(appState);
+  if (previewChapterId) {
+    clearEditorLocationSaveTimer();
+    saveTimerId = window.setTimeout(() => {
+      saveTimerId = null;
+      if (currentPreviewChapterId(appState) !== previewChapterId) {
+        return;
+      }
+
+      persistPreviewScrollForChapter(previewChapterId);
+    }, EDITOR_LOCATION_SAVE_DEBOUNCE_MS);
+    return;
+  }
+
   const scheduledChapterId = currentEditorChapterId(appState);
   if (!scheduledChapterId || restoredChapterId !== scheduledChapterId) {
     return;
@@ -233,7 +316,17 @@ export function scheduleEditorLocationSave(appState) {
 }
 
 export function persistCurrentEditorLocation(appState) {
+  const previewChapterId = currentPreviewChapterId(appState);
+  if (previewChapterId) {
+    persistPreviewScrollForChapter(previewChapterId);
+    return;
+  }
+
   persistEditorLocationForChapter(currentEditorChapterId(appState), {
     requireRestored: false,
   });
+}
+
+export function persistCurrentPreviewScroll(appState) {
+  persistPreviewScrollForChapter(currentPreviewChapterId(appState));
 }

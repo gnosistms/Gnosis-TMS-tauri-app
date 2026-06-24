@@ -4,6 +4,7 @@ import { readPersistentValue, removePersistentValue, writePersistentValue } from
 const EDITOR_FONT_SIZE_STORAGE_KEY = "gnosis-tms-editor-font-size";
 const EDITOR_LOCATION_STORAGE_KEY = "gnosis-tms-editor-location";
 const EDITOR_PREVIEW_LANGUAGE_STORAGE_KEY = "gnosis-tms-editor-preview-language";
+const EDITOR_PREVIEW_SCROLL_STORAGE_KEY = "gnosis-tms-editor-preview-scroll";
 
 function normalizeStorageLogin(login) {
   return typeof login === "string" && login.trim() ? login.trim().toLowerCase() : null;
@@ -26,6 +27,11 @@ function scopedEditorLocationKey(login = getActiveStorageLogin()) {
 function scopedEditorPreviewLanguageKey(login = getActiveStorageLogin()) {
   const normalizedLogin = resolveStorageLogin(login);
   return normalizedLogin ? `${EDITOR_PREVIEW_LANGUAGE_STORAGE_KEY}:${normalizedLogin}` : null;
+}
+
+function scopedEditorPreviewScrollKey(login = getActiveStorageLogin()) {
+  const normalizedLogin = resolveStorageLogin(login);
+  return normalizedLogin ? `${EDITOR_PREVIEW_SCROLL_STORAGE_KEY}:${normalizedLogin}` : null;
 }
 
 function isPlainObject(value) {
@@ -147,6 +153,51 @@ function loadStoredEditorPreviewLanguageMap(login = getActiveStorageLogin()) {
     }
 
     normalizedMap[chapterId] = normalizedCode;
+  }
+
+  if (removedInvalidEntry) {
+    if (Object.keys(normalizedMap).length > 0) {
+      writePersistentValue(key, normalizedMap);
+    } else {
+      removePersistentValue(key);
+    }
+  }
+
+  return normalizedMap;
+}
+
+function loadStoredEditorPreviewScrollMap(login = getActiveStorageLogin()) {
+  const key = scopedEditorPreviewScrollKey(login);
+  if (!key) {
+    return {};
+  }
+
+  const rawValue = readPersistentValue(key, null);
+  if (rawValue === null || rawValue === undefined) {
+    return {};
+  }
+
+  if (!isPlainObject(rawValue)) {
+    removePersistentValue(key);
+    return {};
+  }
+
+  const normalizedMap = {};
+  let removedInvalidEntry = false;
+
+  for (const [chapterId, value] of Object.entries(rawValue)) {
+    if (typeof chapterId !== "string" || !chapterId.trim()) {
+      removedInvalidEntry = true;
+      continue;
+    }
+
+    const scrollTop = Number(value);
+    if (!Number.isFinite(scrollTop) || scrollTop < 0) {
+      removedInvalidEntry = true;
+      continue;
+    }
+
+    normalizedMap[chapterId] = scrollTop;
   }
 
   if (removedInvalidEntry) {
@@ -323,6 +374,63 @@ export function clearStoredEditorPreviewLanguageCode(chapterId, login = getActiv
   delete languageCodes[chapterId];
   if (Object.keys(languageCodes).length > 0) {
     writePersistentValue(key, languageCodes);
+  } else {
+    removePersistentValue(key);
+  }
+}
+
+export function loadStoredEditorPreviewScrollTop(chapterId, login = getActiveStorageLogin()) {
+  if (typeof chapterId !== "string" || !chapterId.trim()) {
+    return null;
+  }
+
+  const scrollTop = Number(loadStoredEditorPreviewScrollMap(login)[chapterId]);
+  return Number.isFinite(scrollTop) && scrollTop >= 0 ? scrollTop : null;
+}
+
+export function saveStoredEditorPreviewScrollTop(
+  chapterId,
+  scrollTop,
+  login = getActiveStorageLogin(),
+) {
+  if (typeof chapterId !== "string" || !chapterId.trim()) {
+    return;
+  }
+
+  const normalizedScrollTop = Number(scrollTop);
+  if (!Number.isFinite(normalizedScrollTop) || normalizedScrollTop < 0) {
+    clearStoredEditorPreviewScrollTop(chapterId, login);
+    return;
+  }
+
+  const key = scopedEditorPreviewScrollKey(login);
+  if (!key) {
+    return;
+  }
+
+  const scrollMap = loadStoredEditorPreviewScrollMap(login);
+  scrollMap[chapterId] = normalizedScrollTop;
+  writePersistentValue(key, scrollMap);
+}
+
+export function clearStoredEditorPreviewScrollTop(chapterId, login = getActiveStorageLogin()) {
+  if (typeof chapterId !== "string" || !chapterId.trim()) {
+    return;
+  }
+
+  const key = scopedEditorPreviewScrollKey(login);
+  if (!key) {
+    return;
+  }
+
+  const scrollMap = loadStoredEditorPreviewScrollMap(login);
+  if (!Object.prototype.hasOwnProperty.call(scrollMap, chapterId)) {
+    return;
+  }
+
+  delete scrollMap[chapterId];
+  if (Object.keys(scrollMap).length > 0) {
+    writePersistentValue(key, scrollMap);
   } else {
     removePersistentValue(key);
   }
