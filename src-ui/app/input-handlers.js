@@ -31,6 +31,7 @@ import { updateProjectSearchQuery } from "./project-search-flow.js";
 import {
   selectEditorExportLanguage,
   toggleEditorExportFootnoteLinks,
+  toggleEditorExportOmitCustomHtml,
 } from "./editor-export-flow.js";
 import { updateProjectAddTranslationPaste } from "./project-add-translation-flow.js";
 import {
@@ -624,6 +625,20 @@ function handleEditorExportFootnoteLinksToggleInput(event, render) {
   return true;
 }
 
+function handleEditorExportOmitCustomHtmlToggleInput(event, render) {
+  if (event.type !== "change") {
+    return false;
+  }
+
+  const input = event.target.closest("[data-editor-export-omit-custom-html-toggle]");
+  if (!(input instanceof HTMLInputElement)) {
+    return false;
+  }
+
+  toggleEditorExportOmitCustomHtml(render, input.checked);
+  return true;
+}
+
 function handleEditorReplaceInput(event, render) {
   const input = event.target.closest("[data-editor-replace-input]");
   if (!input) {
@@ -1108,6 +1123,7 @@ const inputHandlers = [
   handlePreviewSearchInput,
   handleEditorReplaceToggleInput,
   handleEditorExportFootnoteLinksToggleInput,
+  handleEditorExportOmitCustomHtmlToggleInput,
   handleEditorReplaceInput,
   handleEditorReplaceRowSelectionInput,
   handleEditorRowFieldInput,

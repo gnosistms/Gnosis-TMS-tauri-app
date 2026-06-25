@@ -1895,6 +1895,22 @@
   text-align: center;
 }
 
+/* Custom-HTML rows show raw HTML while editing (monospace, so tags read clearly)
+   and the rendered, sanitized HTML when not editing. */
+.translation-language-panel__field--custom-html {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.85em;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+/* The non-editing preview can contain links/blocks. Make it non-interactive so a
+   single click always lands on the edit button instead of a link inside it —
+   otherwise the first click hits the link and editing takes a second click. */
+.translation-language-panel__field-static[data-row-text-style="custom_html"] [data-editor-display-text] {
+  pointer-events: none;
+}
+
 .translation-language-panel__glossary-mark {
   display: inline;
   background: transparent;

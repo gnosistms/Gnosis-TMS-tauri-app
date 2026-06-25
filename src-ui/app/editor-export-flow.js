@@ -2,6 +2,7 @@ import { formatErrorForDisplay } from "./error-display.js";
 import { invoke, isMacPlatform } from "./runtime.js";
 import { findChapterContext, selectedProjectsTeam } from "./project-context.js";
 import {
+  applyCustomHtmlPlainTextPolicy,
   buildEditorPreviewDocument,
   selectedEditorPreviewLanguageCode,
   serializeEditorPreviewHtml,
@@ -43,20 +44,20 @@ const BASE_EDITOR_EXPORT_CATEGORIES = [
     label: "Save to file",
     options: [
       { id: "file:html", label: "HTML", kind: "file", format: "html", available: true },
-      { id: "file:xlsx", label: "XLSX", kind: "file", format: "xlsx", available: true },
-      { id: "file:docx", label: "DOCX", kind: "file", format: "docx", available: true, printLinkFallback: true },
-      { id: "file:txt", label: "TXT", kind: "file", format: "txt", available: true },
-      { id: "file:rtf", label: "RTF", kind: "file", format: "rtf", available: true, printLinkFallback: true },
-      { id: "file:md", label: "Markdown", kind: "file", format: "md", available: true },
+      { id: "file:xlsx", label: "XLSX", kind: "file", format: "xlsx", available: true, omitCustomHtmlOption: true },
+      { id: "file:docx", label: "DOCX", kind: "file", format: "docx", available: true, printLinkFallback: true, omitCustomHtmlOption: true },
+      { id: "file:txt", label: "TXT", kind: "file", format: "txt", available: true, omitCustomHtmlOption: true },
+      { id: "file:rtf", label: "RTF", kind: "file", format: "rtf", available: true, printLinkFallback: true, omitCustomHtmlOption: true },
+      { id: "file:md", label: "Markdown", kind: "file", format: "md", available: true, omitCustomHtmlOption: true },
     ],
   },
   {
     id: "copy",
     label: "Copy and paste",
     options: [
-      { id: "copy:text", label: "Plain text", kind: "copy", format: "text", available: true, printLinkFallback: true },
+      { id: "copy:text", label: "Plain text", kind: "copy", format: "text", available: true, printLinkFallback: true, omitCustomHtmlOption: true },
       { id: "copy:html", label: "HTML", kind: "copy", format: "html", available: true },
-      { id: "copy:vellum", label: "Vellum", kind: "copy", format: "vellum", available: true, platform: "mac", printLinkFallback: true },
+      { id: "copy:vellum", label: "Vellum", kind: "copy", format: "vellum", available: true, platform: "mac", printLinkFallback: true, omitCustomHtmlOption: true },
       { id: "copy:docx", label: "DOCX", kind: "copy", format: "docx", available: false },
     ],
   },
@@ -270,6 +271,16 @@ export function toggleEditorExportFootnoteLinks(render, checked) {
   render();
 }
 
+export function toggleEditorExportOmitCustomHtml(render, checked) {
+  const modal = currentExportModal();
+  if (!modal?.isOpen || modal.status === "exporting") {
+    return;
+  }
+
+  updateEditorExportModal({ omitCustomHtml: checked === true, error: "" });
+  render();
+}
+
 function sanitizeExportFileName(value) {
   const normalized = String(value ?? "")
     .trim()
@@ -399,6 +410,9 @@ async function submitEditorFileExport(render, option, operations) {
         footnoteLinksAsPlainText:
           option.printLinkFallback === true
           && currentExportModal()?.footnoteLinksAsPlainText === true,
+        omitCustomHtml:
+          option.omitCustomHtmlOption === true
+          && currentExportModal()?.omitCustomHtml === true,
       },
     });
     updateEditorExportModal({ isOpen: false, status: "idle", error: "" });
@@ -422,7 +436,10 @@ async function submitEditorCopyExport(render, option, operations) {
   const showFootnoteLinkUrls =
     option.printLinkFallback === true
     && currentExportModal()?.footnoteLinksAsPlainText === true;
-  const plainText = serializeEditorPreviewPlainText(blocks, { showFootnoteLinkUrls });
+  const omitCustomHtml =
+    option.omitCustomHtmlOption === true
+    && currentExportModal()?.omitCustomHtml === true;
+  const plainText = serializeEditorPreviewPlainText(blocks, { showFootnoteLinkUrls, omitCustomHtml });
   const html = serializeEditorPreviewHtml(blocks);
   const formats = option.format === "html"
     ? { "text/html": serializeEditorPreviewHtml(blocks), "text/plain": plainText }
@@ -438,13 +455,15 @@ async function submitEditorCopyExport(render, option, operations) {
 
   try {
     if (option.format === "vellum") {
-      const imageRequests = buildVellumImageResourceRequests(blocks);
+      // Vellum can't carry raw HTML — drop or flatten custom-HTML rows first.
+      const policyBlocks = applyCustomHtmlPlainTextPolicy(blocks, omitCustomHtml);
+      const imageRequests = buildVellumImageResourceRequests(policyBlocks);
       const vellumBlocks = imageRequests.length > 0
         ? applyPreparedVellumImageResources(
-          blocks,
+          policyBlocks,
           await prepareVellumImages({ images: imageRequests }),
         )
-        : blocks;
+        : policyBlocks;
       const decodedPropertyListXml = buildVellumTextEditorContentDecodedXml(vellumBlocks, {
         showFootnoteLinkUrls,
       });

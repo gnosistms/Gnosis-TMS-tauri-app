@@ -11,6 +11,7 @@ import {
   renderSanitizedInlineMarkupWithGlossaryHighlightHtml,
 } from "./editor-inline-markup.js";
 import { buildStaticInlineFootnoteMarkerRanges } from "./editor-static-footnote-markers.js";
+import { isCustomHtmlRowTextStyle } from "./editor-row-text-style.js";
 import { editorFootnotesPlainText, findEditorRowById } from "./editor-utils.js";
 import { invoke } from "./runtime.js";
 import { createEditorChapterGlossaryState, state } from "./state.js";
@@ -129,6 +130,13 @@ function applyEditorTextHighlightLayersToRowCard(
 ) {
   rowCard.querySelectorAll("[data-editor-glossary-field-stack]").forEach((stack) => {
     if (!(stack instanceof HTMLElement)) {
+      return;
+    }
+
+    // Custom-HTML rows render their (sanitized) raw HTML in the static display and
+    // opt out of glossary/search highlighting. Re-running the inline-markup
+    // highlighter here would escape the HTML back into visible tags, so skip them.
+    if (isCustomHtmlRowTextStyle(stack.dataset.rowTextStyle)) {
       return;
     }
 

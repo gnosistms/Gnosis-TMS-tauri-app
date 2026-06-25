@@ -438,6 +438,7 @@ pub(super) fn normalize_editor_text_style_value(value: Option<&str>) -> String {
         "q" | "quote" => "quote".to_string(),
         "i" | "indented" => "indented".to_string(),
         "c" | "center" | "centered" => "centered".to_string(),
+        "html" | "custom-html" | "custom_html" => "custom_html".to_string(),
         _ => DEFAULT_EDITOR_TEXT_STYLE.to_string(),
     }
 }

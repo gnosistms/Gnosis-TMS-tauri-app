@@ -24,6 +24,8 @@ function exportState(overrides = {}) {
         languageCode: "",
         status: "idle",
         error: "",
+        footnoteLinksAsPlainText: true,
+        omitCustomHtml: true,
         ...overrides,
       },
     },
@@ -352,14 +354,37 @@ test("print-oriented file options offer the footnote-links-as-plain-text checkbo
 });
 
 test("the footnote-links checkbox reflects the modal state", () => {
-  const unchecked = renderEditorExportModal(projectsPageExportState({ selectedOptionId: "file:docx" }));
+  const unchecked = renderEditorExportModal(projectsPageExportState({
+    selectedOptionId: "file:docx",
+    footnoteLinksAsPlainText: false,
+  }));
   assert.doesNotMatch(unchecked, /data-editor-export-footnote-links-toggle[^>]*checked/);
 
-  const checked = renderEditorExportModal(projectsPageExportState({
-    selectedOptionId: "file:docx",
-    footnoteLinksAsPlainText: true,
-  }));
+  // On by default for print formats.
+  const checked = renderEditorExportModal(projectsPageExportState({ selectedOptionId: "file:docx" }));
   assert.match(checked, /data-editor-export-footnote-links-toggle[^>]*checked/);
+});
+
+test("formats that cannot render HTML offer the omit-custom-html checkbox, checked by default", () => {
+  for (const selectedOptionId of ["file:docx", "file:txt", "file:md", "file:xlsx"]) {
+    const html = renderEditorExportModal(projectsPageExportState({ selectedOptionId }));
+    assert.match(html, /data-editor-export-omit-custom-html-toggle/);
+    assert.match(html, /Omit custom HTML/);
+    // Default-on: the box is checked unless explicitly turned off.
+    assert.match(html, /data-editor-export-omit-custom-html-toggle[^>]*checked/);
+  }
+
+  // HTML export carries raw custom HTML verbatim, so no omit checkbox.
+  const htmlFile = renderEditorExportModal(projectsPageExportState({ selectedOptionId: "file:html" }));
+  assert.doesNotMatch(htmlFile, /data-editor-export-omit-custom-html-toggle/);
+});
+
+test("the omit-custom-html checkbox reflects the modal state", () => {
+  const off = renderEditorExportModal(projectsPageExportState({
+    selectedOptionId: "file:docx",
+    omitCustomHtml: false,
+  }));
+  assert.doesNotMatch(off, /data-editor-export-omit-custom-html-toggle[^>]*checked/);
 });
 
 test("clipboard and WordPress panes require the chapter open in the editor", () => {

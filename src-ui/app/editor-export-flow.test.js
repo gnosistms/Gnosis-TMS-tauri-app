@@ -479,6 +479,7 @@ test("submitEditorExport saves a file through the native dialog and export comma
       format: "html",
       outputPath: "/tmp/chapter-one.html",
       footnoteLinksAsPlainText: false,
+      omitCustomHtml: false,
     },
   });
   assert.equal(state.editorChapter.exportModal.isOpen, false);

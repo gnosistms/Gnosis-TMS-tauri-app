@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  applyCustomHtmlPlainTextPolicy,
   buildEditorPreviewDocument,
   countEditorPreviewSearchMatches,
   EDITOR_MODE_PREVIEW,
@@ -14,6 +15,53 @@ import {
   serializeEditorPreviewWordPress,
   stepEditorPreviewSearchState,
 } from "./editor-preview.js";
+
+function customHtmlBlocks() {
+  return buildEditorPreviewDocument([
+    {
+      rowId: "row-1",
+      lifecycleState: "active",
+      textStyle: "paragraph",
+      fields: { vi: "Keep me" },
+    },
+    {
+      rowId: "row-2",
+      lifecycleState: "active",
+      textStyle: "custom_html",
+      fields: { vi: "<div class=\"callout\"><hr>Raw <b>HTML</b></div>" },
+    },
+  ], "vi");
+}
+
+test("serializeEditorPreviewHtml passes custom HTML rows through as a wp:html block", () => {
+  const html = serializeEditorPreviewHtml(customHtmlBlocks());
+  assert.match(html, /<!-- wp:html -->/);
+  assert.match(html, /<div class="callout"><hr>Raw <b>HTML<\/b><\/div>/);
+  // The inner "<hr>" must not be split into a separator block.
+  assert.doesNotMatch(html, /wp:separator/);
+});
+
+test("serializeEditorPreviewPlainText omits or flattens custom HTML rows", () => {
+  const omitted = serializeEditorPreviewPlainText(customHtmlBlocks(), { omitCustomHtml: true });
+  assert.match(omitted, /Keep me/);
+  assert.doesNotMatch(omitted, /Raw/);
+
+  const flattened = serializeEditorPreviewPlainText(customHtmlBlocks(), { omitCustomHtml: false });
+  assert.match(flattened, /Keep me/);
+  assert.match(flattened, /Raw HTML/);
+  assert.doesNotMatch(flattened, /<b>/);
+});
+
+test("applyCustomHtmlPlainTextPolicy drops or flattens custom HTML blocks", () => {
+  const omitted = applyCustomHtmlPlainTextPolicy(customHtmlBlocks(), true);
+  assert.equal(omitted.length, 1);
+  assert.equal(omitted[0].text, "Keep me");
+
+  const flattened = applyCustomHtmlPlainTextPolicy(customHtmlBlocks(), false);
+  assert.equal(flattened.length, 2);
+  assert.equal(flattened[1].textStyle, "paragraph");
+  assert.equal(flattened[1].text, "Raw HTML");
+});
 
 test("selectedEditorPreviewLanguageCode allows previewing the source language", () => {
   const chapterState = {

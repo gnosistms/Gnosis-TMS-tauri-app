@@ -1420,6 +1420,32 @@ mod tests {
     }
 
     #[test]
+    fn apply_editor_text_style_update_accepts_custom_html_style() {
+        let mut row_value = json!({
+          "text_style": "paragraph",
+          "fields": {
+            "en": {
+              "value_kind": "text",
+              "plain_text": "<b>raw</b>",
+              "html_preview": "<p>old</p>",
+              "editor_flags": {
+                "reviewed": false,
+                "please_check": false
+              }
+            }
+          }
+        });
+
+        let (text_style, changed) = apply_editor_text_style_update(&mut row_value, "custom_html")
+            .expect("text style update should succeed");
+
+        assert!(changed);
+        assert_eq!(text_style, "custom_html");
+        assert_eq!(row_value["text_style"], json!("custom_html"));
+        assert!(row_value["fields"]["en"].get("html_preview").is_none());
+    }
+
+    #[test]
     fn apply_editor_field_flag_update_reports_changes_and_preserves_other_flags() {
         let mut row_value = json!({
           "fields": {
