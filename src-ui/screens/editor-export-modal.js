@@ -340,6 +340,32 @@ function teamCopyDetail(teamCopy, isExporting, appState) {
   };
 }
 
+const FOOTNOTE_LINKS_TOOLTIP =
+  "When a footnote contains a link like “click here to read more”, the website "
+  + "URL isn’t visible when printed on paper. If you are exporting for print, this "
+  + "option should be checked so that “click here to read more” will be followed "
+  + "by (http://website.com/url) so that readers can type the address by hand if they "
+  + "want to read it.";
+
+// Print-oriented options (DOCX, RTF, plain text, Vellum) offer a fallback that prints
+// each footnote link's URL in parentheses, since a hyperlink is useless on paper.
+function footnoteLinkFallbackSection(option, modal) {
+  if (option.printLinkFallback !== true) {
+    return "";
+  }
+  const checked = modal?.footnoteLinksAsPlainText === true;
+  return `
+    <label class="field__checkbox editor-export-modal__footnote-links" title="${escapeHtml(FOOTNOTE_LINKS_TOOLTIP)}">
+      <input
+        type="checkbox"
+        data-editor-export-footnote-links-toggle
+        ${checked ? "checked" : ""}
+      />
+      <span>Show links in footnotes as plain text</span>
+    </label>
+  `;
+}
+
 function exportDetail(option, isExporting, modal, appState) {
   if (!option || option.available !== true) {
     return {
@@ -372,6 +398,7 @@ function exportDetail(option, isExporting, modal, appState) {
       bodyMarkup: `
         ${supportingText(`Click Save to export a ${option.label} file.`)}
         ${fileExportLanguageSection(option, modal, appState)}
+        ${footnoteLinkFallbackSection(option, modal)}
       `,
       submitButton: loadingPrimaryButton({
         label: "Save",
@@ -383,7 +410,10 @@ function exportDetail(option, isExporting, modal, appState) {
   }
 
   return {
-    bodyMarkup: supportingText(`Click Copy to export ${option.label.toLowerCase()} data to the clipboard for pasting into other apps.`),
+    bodyMarkup: `
+      ${supportingText(`Click Copy to export ${option.label.toLowerCase()} data to the clipboard for pasting into other apps.`)}
+      ${footnoteLinkFallbackSection(option, modal)}
+    `,
     submitButton: loadingPrimaryButton({
       label: "Copy",
       loadingLabel: "Copying...",

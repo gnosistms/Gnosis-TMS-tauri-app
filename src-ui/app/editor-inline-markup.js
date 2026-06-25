@@ -5,6 +5,7 @@ export {
 export {
   extractInlineMarkupVisibleText,
   extractInlineMarkupVisibleTextWithLinkUrls,
+  extractInlineMarkupFootnoteLinkSegments,
   extractInlineMarkupBaseText,
   renderSanitizedInlineMarkupHtml,
   renderSanitizedInlineMarkupHtmlWithAllowedTags,

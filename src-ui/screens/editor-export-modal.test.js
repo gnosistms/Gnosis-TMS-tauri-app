@@ -339,6 +339,29 @@ test("file panes opened from the editor keep following the preview language", ()
   assert.doesNotMatch(html, /data-editor-export-language-select/);
 });
 
+test("print-oriented file options offer the footnote-links-as-plain-text checkbox", () => {
+  const docx = renderEditorExportModal(projectsPageExportState({ selectedOptionId: "file:docx" }));
+  assert.match(docx, /data-editor-export-footnote-links-toggle/);
+  assert.match(docx, /Show links in footnotes as plain text/);
+
+  // HTML and XLSX are not print formats, so no checkbox.
+  const html = renderEditorExportModal(projectsPageExportState({ selectedOptionId: "file:html" }));
+  assert.doesNotMatch(html, /data-editor-export-footnote-links-toggle/);
+  const xlsx = renderEditorExportModal(projectsPageExportState({ selectedOptionId: "file:xlsx" }));
+  assert.doesNotMatch(xlsx, /data-editor-export-footnote-links-toggle/);
+});
+
+test("the footnote-links checkbox reflects the modal state", () => {
+  const unchecked = renderEditorExportModal(projectsPageExportState({ selectedOptionId: "file:docx" }));
+  assert.doesNotMatch(unchecked, /data-editor-export-footnote-links-toggle[^>]*checked/);
+
+  const checked = renderEditorExportModal(projectsPageExportState({
+    selectedOptionId: "file:docx",
+    footnoteLinksAsPlainText: true,
+  }));
+  assert.match(checked, /data-editor-export-footnote-links-toggle[^>]*checked/);
+});
+
 test("clipboard and WordPress panes require the chapter open in the editor", () => {
   for (const selectedOptionId of ["copy:text", "copy:html", "link:wordpress"]) {
     const html = renderEditorExportModal(projectsPageExportState({

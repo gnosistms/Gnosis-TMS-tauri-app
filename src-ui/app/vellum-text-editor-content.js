@@ -2,6 +2,7 @@ import {
   parseInlineMarkup,
   splitRubyNodeChildren,
 } from "./editor-inline-markup/parser.js";
+import { extractInlineMarkupFootnoteLinkSegments } from "./editor-inline-markup/serialize.js";
 import {
   normalizeEditorFootnotes,
   parseUnescapedFootnoteMarkers,
@@ -481,7 +482,7 @@ function addAttributeObjects(builder, attachmentAttributes = {}) {
       ["NSFileWrapper", uidXml(0)],
     ]);
     const stateId = builder.addNsDictionary([
-      ["text", builder.addAttributedString(footnote.text)],
+      ["text", buildFootnoteTextAttributedStringId(builder, footnote.segments)],
     ]);
     const formatClassId = builder.addClass([
       "OGMutableAttachmentFormat",
@@ -718,7 +719,7 @@ function addWholeChapterAttributeObjects(builder, attachmentAttributes = {}) {
       ["NSFileWrapper", uidXml(0)],
     ]);
     const stateId = builder.addNsDictionary([
-      ["text", builder.addAttributedString(footnote.text)],
+      ["text", buildFootnoteTextAttributedStringId(builder, footnote.segments)],
     ]);
     const formatClassId = builder.addClass(["OGAttachmentFormat", "NSObject"]);
     const formatId = builder.addKeyedObject(formatClassId, [
@@ -958,11 +959,71 @@ function trimTrailingHorizontalSpace(target) {
   }
 }
 
-function footnoteBodyText(text, showLinkUrls = false) {
+function footnoteLinkSegments(text, showLinkUrls = false) {
   const source = unescapeLiteralFootnoteMarkers(text);
-  return (showLinkUrls
-    ? extractInlineMarkupVisibleTextWithLinkUrls(source)
-    : parseInlineMarkup(source).visibleText).trim();
+  const segments = extractInlineMarkupFootnoteLinkSegments(source, { showLinkUrls });
+  // Trim leading/trailing whitespace across the run sequence, matching the old
+  // single-string footnote body while keeping per-run link boundaries intact.
+  while (segments.length > 0 && !segments[0].text.trimStart()) {
+    segments.shift();
+  }
+  if (segments.length > 0) {
+    segments[0] = { ...segments[0], text: segments[0].text.replace(/^\s+/, "") };
+  }
+  while (segments.length > 0 && !segments[segments.length - 1].text.trimEnd()) {
+    segments.pop();
+  }
+  if (segments.length > 0) {
+    const lastIndex = segments.length - 1;
+    segments[lastIndex] = { ...segments[lastIndex], text: segments[lastIndex].text.replace(/\s+$/, "") };
+  }
+  return segments;
+}
+
+// Builds the footnote's nested attributed string. Footnotes with no link keep the
+// simple plain form (byte-identical to earlier exports). When a link is present, each
+// link is encoded as a run carrying only an OGLink attribute and plain runs carry an
+// empty attribute dictionary — matching a Vellum-authored footnote pasteboard capture
+// (see plans/footnote-link-plain-text-export-plan.md).
+function buildFootnoteTextAttributedStringId(builder, segments) {
+  const normalizedSegments = (Array.isArray(segments) ? segments : [])
+    .filter((segment) => segment && segment.text);
+  const text = normalizedSegments.map((segment) => segment.text).join("");
+  if (!normalizedSegments.some((segment) => segment.href)) {
+    return builder.addAttributedString(text);
+  }
+
+  const attributeIds = [builder.addNsDictionary([])];
+  const attributeIndexByHref = new Map();
+  const runs = [];
+  for (const segment of normalizedSegments) {
+    const href = String(segment.href ?? "").trim();
+    let attributeIndex = 0;
+    if (href) {
+      if (!attributeIndexByHref.has(href)) {
+        const linkStateId = builder.addNsDictionary([
+          ["type", builder.addString("web")],
+          ["webLinkURL", builder.addUrl(href)],
+        ]);
+        attributeIndexByHref.set(href, attributeIds.length);
+        attributeIds.push(builder.addNsDictionary([["OGLink", linkStateId]]));
+      }
+      attributeIndex = attributeIndexByHref.get(href);
+    }
+    const previous = runs[runs.length - 1];
+    if (previous && previous.attributeIndex === attributeIndex) {
+      previous.length += segment.text.length;
+    } else {
+      runs.push({ length: segment.text.length, attributeIndex });
+    }
+  }
+
+  return addAttributedStringArchiveObject(builder, text, attributeIds, runs, {
+    mutableArray: true,
+    mutableData: true,
+    mutableString: false,
+    stringAsData: false,
+  });
 }
 
 function visibleInlineText(text) {
@@ -1035,7 +1096,7 @@ function createFootnoteContext(block, target, showFootnoteLinkUrls = false) {
       const attributeKey = `footnote:${index}`;
       target.footnoteAttributes.set(attributeKey, {
         marker: entry.marker,
-        text: footnoteBodyText(entry.text, showFootnoteLinkUrls),
+        segments: footnoteLinkSegments(entry.text, showFootnoteLinkUrls),
         uniqueId: createVellumAttachmentUniqueId(block, "footnote", entry.marker, index),
       });
       return attributeKey;
@@ -1503,7 +1564,9 @@ export function buildVellumOgElementPrivateDecodedXml(blocks, options = {}) {
   const titleEntry = leadingChapterTitleBlock(allBlocks);
   const bodyBlocks = titleEntry ? allBlocks.slice(1) : allBlocks;
   const title = titleEntry?.title || normalizeText(options.title) || "Untitled Chapter";
-  const body = buildVellumTextRuns(bodyBlocks);
+  const body = buildVellumTextRuns(bodyBlocks, {
+    showFootnoteLinkUrls: options.showFootnoteLinkUrls === true,
+  });
   appendTrailingPlainTextSection(body);
   const {
     text,

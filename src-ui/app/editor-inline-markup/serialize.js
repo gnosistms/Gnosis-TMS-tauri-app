@@ -441,6 +441,69 @@ export function extractInlineMarkupVisibleTextWithLinkUrls(value) {
   return flattenNodesToVisibleTextWithLinkUrls(parseInlineMarkup(value).nodes);
 }
 
+function nodesVisibleText(nodes) {
+  return (Array.isArray(nodes) ? nodes : [])
+    .map((node) => {
+      if (!node) {
+        return "";
+      }
+      return node.type === "text" ? node.text : nodesVisibleText(node.children);
+    })
+    .join("");
+}
+
+function pushFootnoteLinkSegment(segments, text, href) {
+  if (!text) {
+    return;
+  }
+  const normalizedHref = href || null;
+  const last = segments[segments.length - 1];
+  if (last && (last.href ?? null) === normalizedHref) {
+    last.text += text;
+    return;
+  }
+  segments.push({ text, href: normalizedHref });
+}
+
+function collectFootnoteLinkSegments(nodes, showLinkUrls, segments) {
+  for (const node of (Array.isArray(nodes) ? nodes : [])) {
+    if (!node) {
+      continue;
+    }
+    if (node.type === "text") {
+      pushFootnoteLinkSegment(segments, node.text, null);
+      continue;
+    }
+    if (node.tag === "a") {
+      const href = typeof node.attributes?.href === "string" ? node.attributes.href : "";
+      const linkText = nodesVisibleText(node.children);
+      if (href) {
+        // The link always stays clickable (for ebooks/PDF). Only when exporting for
+        // print do we also spell out its destination in parentheses.
+        pushFootnoteLinkSegment(segments, linkText, href);
+        if (showLinkUrls && !linkVisibleTextIsUrl(linkText, href)) {
+          pushFootnoteLinkSegment(segments, ` (${href})`, null);
+        }
+      } else {
+        pushFootnoteLinkSegment(segments, linkText, null);
+      }
+      continue;
+    }
+    collectFootnoteLinkSegments(node.children, showLinkUrls, segments);
+  }
+}
+
+// Splits a footnote's inline markup into runs of `{ text, href }`, where `href` is a
+// string for clickable-link runs and `null` for plain runs. Links always stay clickable
+// (Vellum produces both ebooks and print). When `showLinkUrls` is on, each non-URL link
+// is additionally followed by a plain " (url)" run so the destination is readable on
+// paper; when off (electronic distribution) the link is clickable with no printed URL.
+export function extractInlineMarkupFootnoteLinkSegments(value, { showLinkUrls = false } = {}) {
+  const segments = [];
+  collectFootnoteLinkSegments(parseInlineMarkup(value).nodes, showLinkUrls === true, segments);
+  return segments;
+}
+
 export function extractInlineMarkupBaseText(value) {
   return flattenNodesToBaseText(parseInlineMarkup(value).nodes);
 }

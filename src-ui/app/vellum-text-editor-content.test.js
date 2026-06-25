@@ -233,6 +233,95 @@ test("buildVellumTextEditorContentDecodedXml writes footnote markers as Vellum a
   assert.ok(byteValues.some((value) => value.equals(Buffer.from([13, 0, 1, 1]))));
 });
 
+test("buildVellumTextEditorContentDecodedXml appends footnote link URLs when the option is on", () => {
+  const blocks = [{
+    kind: "text",
+    rowId: "row-1",
+    languageCode: "en",
+    textStyle: "paragraph",
+    text: "footnote test [1]",
+    footnotes: [{ marker: 1, text: "read <a href=\"https://example.com/page\">the page</a>" }],
+  }];
+
+  const withUrls = buildVellumTextEditorContentDecodedXml(blocks, { showFootnoteLinkUrls: true });
+  assert.match(withUrls, /<string>read the page \(https:\/\/example\.com\/page\)<\/string>/);
+
+  // Off means electronic distribution: the link stays clickable, but the URL is not
+  // printed in parentheses.
+  const withoutUrls = buildVellumTextEditorContentDecodedXml(blocks);
+  assert.match(withoutUrls, /<string>read the page<\/string>/);
+  assert.doesNotMatch(withoutUrls, /\(https:\/\/example\.com\/page\)/);
+  assert.match(withoutUrls, /<string>OGLink<\/string>/);
+  assert.match(withoutUrls, /<string>https:\/\/example\.com\/page<\/string>/);
+});
+
+test("buildVellumTextEditorContentDecodedXml keeps footnote links clickable when the option is on", () => {
+  const blocks = [{
+    kind: "text",
+    rowId: "row-1",
+    languageCode: "en",
+    textStyle: "paragraph",
+    text: "footnote test [1]",
+    footnotes: [{ marker: 1, text: "read <a href=\"https://example.com/page\">the page</a>" }],
+  }];
+
+  const withUrls = buildVellumTextEditorContentDecodedXml(blocks, { showFootnoteLinkUrls: true });
+  // The footnote text carries an OGLink web link so ebook/PDF readers can click it.
+  assert.match(withUrls, /<string>OGLink<\/string>/);
+  assert.match(withUrls, /<string>webLinkURL<\/string>/);
+  assert.match(withUrls, /<string>https:\/\/example\.com\/page<\/string>/);
+
+  // A URL-text link stays clickable but is not suffixed with a duplicate URL.
+  const urlTextBlocks = [{
+    kind: "text",
+    rowId: "row-1",
+    languageCode: "en",
+    textStyle: "paragraph",
+    text: "footnote test [1]",
+    footnotes: [{ marker: 1, text: "<a href=\"https://example.com/raw\">https://example.com/raw</a>" }],
+  }];
+  const urlText = buildVellumTextEditorContentDecodedXml(urlTextBlocks, { showFootnoteLinkUrls: true });
+  assert.match(urlText, /<string>OGLink<\/string>/);
+  // The visible string is the URL once, with no " (https://...)" suffix appended.
+  assert.match(urlText, /<string>https:\/\/example\.com\/raw<\/string>/);
+  assert.doesNotMatch(urlText, /\(https:\/\/example\.com\/raw\)/);
+});
+
+test("body-text links export as clickable links with no printed URL", () => {
+  const blocks = [{
+    kind: "text",
+    rowId: "row-1",
+    languageCode: "en",
+    textStyle: "paragraph",
+    text: "see <a href=\"https://example.com/page\">the page</a>",
+    footnotes: [],
+  }];
+
+  // The printed-URL option is footnote-only; body links are always clickable and never
+  // get a "(url)" suffix, regardless of the checkbox.
+  const xml = buildVellumTextEditorContentDecodedXml(blocks, { showFootnoteLinkUrls: true });
+  // The body string is byte-encoded (NSMutableString); its visible text omits the URL.
+  const byteValues = decodedNsByteValues(xml);
+  assert.ok(byteValues.some((value) => value.toString("utf8") === "see the page"));
+  assert.match(xml, /<string>OGLink<\/string>/);
+  assert.match(xml, /<string>https:\/\/example\.com\/page<\/string>/);
+  assert.doesNotMatch(xml, /\(https:\/\/example\.com\/page\)/);
+});
+
+test("a footnote without links keeps the simple plain attributed-string form", () => {
+  const blocks = [{
+    kind: "text",
+    rowId: "row-1",
+    languageCode: "en",
+    textStyle: "paragraph",
+    text: "footnote test [1]",
+    footnotes: [{ marker: 1, text: "just a note" }],
+  }];
+  const xml = buildVellumTextEditorContentDecodedXml(blocks, { showFootnoteLinkUrls: true });
+  assert.match(xml, /<string>just a note<\/string>/);
+  assert.doesNotMatch(xml, /<string>OGLink<\/string>/);
+});
+
 test("buildVellumTextEditorContentDecodedXml keeps escaped footnote markers literal", () => {
   const xml = buildVellumTextEditorContentDecodedXml([{
     kind: "text",

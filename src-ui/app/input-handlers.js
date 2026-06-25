@@ -28,7 +28,10 @@ import {
   updateProjectRenameName,
 } from "./project-flow.js";
 import { updateProjectSearchQuery } from "./project-search-flow.js";
-import { selectEditorExportLanguage } from "./editor-export-flow.js";
+import {
+  selectEditorExportLanguage,
+  toggleEditorExportFootnoteLinks,
+} from "./editor-export-flow.js";
 import { updateProjectAddTranslationPaste } from "./project-add-translation-flow.js";
 import {
   updateProjectImportLinkUrl,
@@ -607,6 +610,20 @@ function handleEditorReplaceToggleInput(event, render) {
   return true;
 }
 
+function handleEditorExportFootnoteLinksToggleInput(event, render) {
+  if (event.type !== "change") {
+    return false;
+  }
+
+  const input = event.target.closest("[data-editor-export-footnote-links-toggle]");
+  if (!(input instanceof HTMLInputElement)) {
+    return false;
+  }
+
+  toggleEditorExportFootnoteLinks(render, input.checked);
+  return true;
+}
+
 function handleEditorReplaceInput(event, render) {
   const input = event.target.closest("[data-editor-replace-input]");
   if (!input) {
@@ -1090,6 +1107,7 @@ const inputHandlers = [
   handleEditorSearchInput,
   handlePreviewSearchInput,
   handleEditorReplaceToggleInput,
+  handleEditorExportFootnoteLinksToggleInput,
   handleEditorReplaceInput,
   handleEditorReplaceRowSelectionInput,
   handleEditorRowFieldInput,
