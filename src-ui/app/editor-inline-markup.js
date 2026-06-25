@@ -4,6 +4,7 @@ export {
 } from "./editor-inline-markup/ruby.js";
 export {
   extractInlineMarkupVisibleText,
+  extractInlineMarkupVisibleTextWithLinkUrls,
   extractInlineMarkupBaseText,
   renderSanitizedInlineMarkupHtml,
   renderSanitizedInlineMarkupHtmlWithAllowedTags,

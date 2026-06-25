@@ -398,6 +398,49 @@ export function extractInlineMarkupVisibleText(value) {
   return parseInlineMarkup(value).visibleText;
 }
 
+// True when a link's visible text is already a URL, so appending the destination
+// in parentheses would be redundant. Matches a bare http(s) URL with no internal
+// whitespace, or visible text equal to the href (ignoring case and a trailing slash).
+function linkVisibleTextIsUrl(text, href) {
+  const trimmed = String(text ?? "").trim();
+  if (!trimmed) {
+    return false;
+  }
+  if (/^https?:\/\/\S+$/i.test(trimmed)) {
+    return true;
+  }
+  const normalize = (value) => String(value ?? "").trim().replace(/\/+$/, "").toLowerCase();
+  return normalize(trimmed) === normalize(href);
+}
+
+function flattenNodesToVisibleTextWithLinkUrls(nodes) {
+  return (Array.isArray(nodes) ? nodes : [])
+    .map((node) => {
+      if (!node) {
+        return "";
+      }
+      if (node.type === "text") {
+        return node.text;
+      }
+      const inner = flattenNodesToVisibleTextWithLinkUrls(node.children);
+      if (node.tag === "a") {
+        const href = typeof node.attributes?.href === "string" ? node.attributes.href : "";
+        if (href && !linkVisibleTextIsUrl(inner, href)) {
+          return `${inner} (${href})`;
+        }
+      }
+      return inner;
+    })
+    .join("");
+}
+
+// Like extractInlineMarkupVisibleText, but appends each link's destination as plain
+// text " (url)" after its visible text, unless that text already is a URL. Used for
+// footnotes in print-oriented exports where a hyperlink cannot be clicked.
+export function extractInlineMarkupVisibleTextWithLinkUrls(value) {
+  return flattenNodesToVisibleTextWithLinkUrls(parseInlineMarkup(value).nodes);
+}
+
 export function extractInlineMarkupBaseText(value) {
   return flattenNodesToBaseText(parseInlineMarkup(value).nodes);
 }

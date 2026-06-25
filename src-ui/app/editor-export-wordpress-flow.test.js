@@ -329,7 +329,7 @@ test("submitWordPressExport strips the leading H1 and sends it as the overwrite 
   assert.equal(input.title, "Chương 3");
   assert.doesNotMatch(input.content, /wp:heading/);
   assert.match(input.content, /Body/);
-  assert.match(input.content, /\[no_toc\]/);
+  assert.doesNotMatch(input.content, /no_toc/);
 });
 
 test("submitWordPressExport sends no overwrite title without a leading H1", async () => {

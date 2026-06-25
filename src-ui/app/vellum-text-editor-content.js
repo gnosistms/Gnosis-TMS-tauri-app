@@ -958,8 +958,11 @@ function trimTrailingHorizontalSpace(target) {
   }
 }
 
-function footnoteBodyText(text) {
-  return parseInlineMarkup(unescapeLiteralFootnoteMarkers(text)).visibleText.trim();
+function footnoteBodyText(text, showLinkUrls = false) {
+  const source = unescapeLiteralFootnoteMarkers(text);
+  return (showLinkUrls
+    ? extractInlineMarkupVisibleTextWithLinkUrls(source)
+    : parseInlineMarkup(source).visibleText).trim();
 }
 
 function visibleInlineText(text) {
@@ -1017,7 +1020,7 @@ function createVellumElementUniqueId(title) {
   return fallbackVellumElementUniqueId(title);
 }
 
-function createFootnoteContext(block, target) {
+function createFootnoteContext(block, target, showFootnoteLinkUrls = false) {
   const footnotes = normalizeEditorFootnotes(block?.footnotes);
   if (footnotes.length === 0) {
     return null;
@@ -1032,7 +1035,7 @@ function createFootnoteContext(block, target) {
       const attributeKey = `footnote:${index}`;
       target.footnoteAttributes.set(attributeKey, {
         marker: entry.marker,
-        text: footnoteBodyText(entry.text),
+        text: footnoteBodyText(entry.text, showFootnoteLinkUrls),
         uniqueId: createVellumAttachmentUniqueId(block, "footnote", entry.marker, index),
       });
       return attributeKey;
@@ -1370,7 +1373,7 @@ function appendInlineNodeRuns(nodes, target, fallbackKey, active = {}, footnoteC
   }
 }
 
-function appendBlockRuns(block, target) {
+function appendBlockRuns(block, target, options = {}) {
   const fallbackKey = blockAttributeKey(block);
   const level = headingLevel(block);
   if (level > 0) {
@@ -1384,12 +1387,12 @@ function appendBlockRuns(block, target) {
   }
 
   const parsed = parseInlineMarkup(block?.text ?? "");
-  const footnoteContext = createFootnoteContext(block, target);
+  const footnoteContext = createFootnoteContext(block, target, options.showFootnoteLinkUrls === true);
   appendInlineNodeRuns(parsed.nodes, target, fallbackKey, {}, footnoteContext);
   appendRemainingFootnoteRuns(target, footnoteContext);
 }
 
-function buildVellumTextRuns(blocks) {
+function buildVellumTextRuns(blocks, options = {}) {
   const target = {
     text: "",
     runs: [],
@@ -1404,7 +1407,7 @@ function buildVellumTextRuns(blocks) {
     if (index > 0 && !target.text.endsWith("\n") && !target.text.endsWith(VELLUM_PARAGRAPH_SEPARATOR)) {
       appendTextRun(target, "\n", blockAttributeKey(block));
     }
-    appendBlockRuns(block, target);
+    appendBlockRuns(block, target, options);
   });
 
   target.runs = mergeAdjacentRuns(target.runs);
@@ -1462,14 +1465,16 @@ function addAttributedStringArchiveObject(builder, text, attributeIds, resolvedR
   ]);
 }
 
-export function buildVellumTextEditorContentDecodedXml(blocks) {
+export function buildVellumTextEditorContentDecodedXml(blocks, options = {}) {
   const {
     text,
     runs,
     footnoteAttributes,
     imageAttributes,
     subheadAttributes,
-  } = buildVellumTextRuns(blocks);
+  } = buildVellumTextRuns(blocks, {
+    showFootnoteLinkUrls: options.showFootnoteLinkUrls === true,
+  });
   if (!text) {
     return "";
   }

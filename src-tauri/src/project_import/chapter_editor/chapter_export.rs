@@ -25,6 +25,10 @@ pub(crate) struct ExportChapterFileInput {
     language_code: String,
     format: String,
     output_path: String,
+    // Print-oriented option: append each footnote link's destination as plain text
+    // "(url)" after the link, since a clickable hyperlink is useless on paper.
+    #[serde(default)]
+    footnote_links_as_plain_text: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -142,15 +146,21 @@ pub(crate) fn export_gtms_chapter_file_sync(
             .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
         "txt" => fs::write(&output_path, render_txt_document(&document))
             .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
-        "docx" => fs::write(&output_path, render_docx_document(&document)?)
-            .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
+        "docx" => fs::write(
+            &output_path,
+            render_docx_document(&document, input.footnote_links_as_plain_text)?,
+        )
+        .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
         "xlsx" => fs::write(
             &output_path,
             render_xlsx_workbook(&chapter_file.title, &languages, &rows)?,
         )
         .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
-        "rtf" => fs::write(&output_path, render_rtf_document(&document))
-            .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
+        "rtf" => fs::write(
+            &output_path,
+            render_rtf_document(&document, input.footnote_links_as_plain_text),
+        )
+        .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
         "md" => fs::write(&output_path, render_md_document(&document))
             .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
         _ => Err("Unsupported export format.".to_string()),
@@ -473,6 +483,92 @@ fn inline_visible_text(value: &str) -> String {
         cursor += ch.len_utf8();
     }
     output
+}
+
+/// True when a link's visible text is already a URL, so appending the destination
+/// in parentheses would be redundant. Matches a bare http(s) URL with no internal
+/// whitespace, or visible text equal to the href (ignoring case and a trailing slash).
+fn link_text_is_url(text: &str, href: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let lowered = trimmed.to_ascii_lowercase();
+    if (lowered.starts_with("http://") || lowered.starts_with("https://"))
+        && !trimmed.chars().any(char::is_whitespace)
+    {
+        return true;
+    }
+    let normalize = |value: &str| value.trim().trim_end_matches('/').to_ascii_lowercase();
+    normalize(trimmed) == normalize(href)
+}
+
+/// Rewrites canonical inline markup so each link's destination is appended as plain
+/// text " (url)" after its closing tag, unless the link's visible text already is a
+/// URL. All tags are copied verbatim, so the appended text re-parses as ordinary,
+/// non-link text in the downstream renderers (DOCX/RTF). Used for footnotes in print
+/// formats where a hyperlink cannot be clicked.
+fn append_link_urls_to_inline(value: &str) -> String {
+    let mut output = String::new();
+    let mut cursor = 0usize;
+    let mut open_href: Option<String> = None;
+    let mut link_text = String::new();
+    while cursor < value.len() {
+        let remaining = &value[cursor..];
+        if let Some(link_tag) = inline_link_tag(remaining) {
+            match link_tag {
+                InlineLinkTag::Open { source_len, href } => {
+                    output.push_str(&remaining[..source_len]);
+                    open_href = Some(href);
+                    link_text.clear();
+                    cursor += source_len;
+                    continue;
+                }
+                InlineLinkTag::Close { source_len } => {
+                    output.push_str(&remaining[..source_len]);
+                    if let Some(href) = open_href.take() {
+                        if !link_text_is_url(&link_text, &href) {
+                            // Angle brackets would re-open tag parsing; URL-encode them.
+                            let safe = href.replace('<', "%3C").replace('>', "%3E");
+                            let _ = write!(output, " ({safe})");
+                        }
+                    }
+                    link_text.clear();
+                    cursor += source_len;
+                    continue;
+                }
+            }
+        }
+        if remaining.starts_with("<hr>") {
+            output.push_str("<hr>");
+            cursor += "<hr>".len();
+            continue;
+        }
+        if let Some((source, _)) = allowed_inline_tag(remaining) {
+            output.push_str(&remaining[..source.len()]);
+            cursor += source.len();
+            continue;
+        }
+        let Some(ch) = remaining.chars().next() else {
+            break;
+        };
+        output.push(ch);
+        if open_href.is_some() {
+            link_text.push(ch);
+        }
+        cursor += ch.len_utf8();
+    }
+    output
+}
+
+/// The footnote inline text for a print export: the stored markup, with link
+/// destinations appended as plain text when the option is enabled.
+fn print_footnote_text(text: &str, footnote_links_as_plain_text: bool) -> String {
+    if footnote_links_as_plain_text {
+        append_link_urls_to_inline(text)
+    } else {
+        text.to_string()
+    }
 }
 
 fn render_html_document(document: &ExportDocument) -> Result<String, String> {
@@ -942,7 +1038,10 @@ fn merge_inline_segments(segments: Vec<InlineSegment>) -> Vec<InlineSegment> {
     merged
 }
 
-fn render_docx_document(document: &ExportDocument) -> Result<Vec<u8>, String> {
+fn render_docx_document(
+    document: &ExportDocument,
+    footnote_links_as_plain_text: bool,
+) -> Result<Vec<u8>, String> {
     let mut relationships = Vec::<String>::new();
     let mut media = Vec::<(String, Vec<u8>)>::new();
     let mut body = String::new();
@@ -958,6 +1057,7 @@ fn render_docx_document(document: &ExportDocument) -> Result<Vec<u8>, String> {
                 body.push_str(&docx_separator_paragraph_xml());
             }
             ExportBlock::Footnote { number, text } => {
+                let text = print_footnote_text(text, footnote_links_as_plain_text);
                 body.push_str(&docx_text_paragraph_xml(
                     None,
                     &format!("[{number}] {text}"),
@@ -1499,7 +1599,7 @@ fn nonzero_dimensions(width: u32, height: u32) -> Option<(u32, u32)> {
     }
 }
 
-fn render_rtf_document(document: &ExportDocument) -> String {
+fn render_rtf_document(document: &ExportDocument, footnote_links_as_plain_text: bool) -> String {
     let mut body = String::new();
     for block in &document.blocks {
         match block {
@@ -1510,6 +1610,7 @@ fn render_rtf_document(document: &ExportDocument) -> String {
                 body.push_str(&rtf_separator_paragraph());
             }
             ExportBlock::Footnote { number, text } => {
+                let text = print_footnote_text(text, footnote_links_as_plain_text);
                 body.push_str(&rtf_text_paragraph(
                     None,
                     &format!("[{number}] {text}"),
@@ -2057,10 +2158,10 @@ mod tests {
         let md = render_md_document(&doc);
         assert!(md.contains("Before\n\n---\n\nAfter"));
 
-        let rtf = render_rtf_document(&doc);
+        let rtf = render_rtf_document(&doc, false);
         assert!(rtf.contains("\\brdrb\\brdrs\\brdrw10"));
 
-        let bytes = render_docx_document(&doc).expect("docx should render");
+        let bytes = render_docx_document(&doc, false).expect("docx should render");
         let mut archive = ZipArchive::new(Cursor::new(bytes)).expect("docx should be zip");
         let mut xml = String::new();
         archive
@@ -2143,11 +2244,79 @@ mod tests {
     }
 
     #[test]
-    fn rtf_export_renders_links_as_hyperlink_fields() {
-        let output = render_rtf_document(&document(vec![ExportBlock::Text {
-            text_style: "paragraph".to_string(),
+    fn append_link_urls_to_inline_appends_destination_for_named_links() {
+        let output = append_link_urls_to_inline(
+            "read <a href=\"https://example.com/page\">the page</a> now",
+        );
+        assert_eq!(
+            output,
+            "read <a href=\"https://example.com/page\">the page</a> (https://example.com/page) now"
+        );
+    }
+
+    #[test]
+    fn append_link_urls_to_inline_skips_links_whose_text_is_a_url() {
+        let output =
+            append_link_urls_to_inline("<a href=\"https://example.com/\">https://example.com</a>");
+        assert_eq!(
+            output,
+            "<a href=\"https://example.com/\">https://example.com</a>"
+        );
+    }
+
+    #[test]
+    fn docx_footnote_links_render_as_plain_text_when_option_enabled() {
+        let blocks = vec![ExportBlock::Footnote {
+            number: 1,
             text: "see <a href=\"https://example.com/page\">the page</a>".to_string(),
-        }]));
+        }];
+        let bytes = render_docx_document(&document(blocks.clone()), true).expect("docx renders");
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).expect("docx zip");
+        let mut xml = String::new();
+        archive
+            .by_name("word/document.xml")
+            .expect("document exists")
+            .read_to_string(&mut xml)
+            .expect("document xml reads");
+        // The hyperlink field is still present, followed by the URL as plain text.
+        assert!(xml.contains("HYPERLINK \"https://example.com/page\""));
+        assert!(xml.contains(r#"<w:t xml:space="preserve"> (https://example.com/page)</w:t>"#));
+
+        // Off by default: no plain-text URL.
+        let bytes = render_docx_document(&document(blocks), false).expect("docx renders");
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).expect("docx zip");
+        let mut xml = String::new();
+        archive
+            .by_name("word/document.xml")
+            .expect("document exists")
+            .read_to_string(&mut xml)
+            .expect("document xml reads");
+        assert!(!xml.contains("(https://example.com/page)"));
+    }
+
+    #[test]
+    fn rtf_footnote_links_render_as_plain_text_when_option_enabled() {
+        let blocks = vec![ExportBlock::Footnote {
+            number: 1,
+            text: "see <a href=\"https://example.com/page\">the page</a>".to_string(),
+        }];
+        let output = render_rtf_document(&document(blocks.clone()), true);
+        assert!(output.contains("HYPERLINK \"https://example.com/page\""));
+        assert!(output.contains("(https://example.com/page)"));
+
+        let output = render_rtf_document(&document(blocks), false);
+        assert!(!output.contains("(https://example.com/page)"));
+    }
+
+    #[test]
+    fn rtf_export_renders_links_as_hyperlink_fields() {
+        let output = render_rtf_document(
+            &document(vec![ExportBlock::Text {
+                text_style: "paragraph".to_string(),
+                text: "see <a href=\"https://example.com/page\">the page</a>".to_string(),
+            }]),
+            false,
+        );
 
         assert!(output.contains(
             "{\\field{\\*\\fldinst HYPERLINK \"https://example.com/page\"}{\\fldrslt {\\ul the page}}}"
@@ -2226,10 +2395,13 @@ mod tests {
 
     #[test]
     fn docx_export_contains_required_parts_and_inline_markers() {
-        let bytes = render_docx_document(&document(vec![ExportBlock::Text {
-            text_style: "heading2".to_string(),
-            text: "<strong>Bold</strong> <em>Italic</em> <u>Under</u>".to_string(),
-        }]))
+        let bytes = render_docx_document(
+            &document(vec![ExportBlock::Text {
+                text_style: "heading2".to_string(),
+                text: "<strong>Bold</strong> <em>Italic</em> <u>Under</u>".to_string(),
+            }]),
+            false,
+        )
         .expect("docx should render");
         let mut archive = ZipArchive::new(Cursor::new(bytes)).expect("docx should be zip");
         assert!(archive.by_name("[Content_Types].xml").is_ok());
@@ -2250,10 +2422,13 @@ mod tests {
 
     #[test]
     fn docx_export_renders_within_row_newline_as_line_break() {
-        let bytes = render_docx_document(&document(vec![ExportBlock::Text {
-            text_style: "paragraph".to_string(),
-            text: "Line one\nLine two".to_string(),
-        }]))
+        let bytes = render_docx_document(
+            &document(vec![ExportBlock::Text {
+                text_style: "paragraph".to_string(),
+                text: "Line one\nLine two".to_string(),
+            }]),
+            false,
+        )
         .expect("docx should render");
         let mut archive = ZipArchive::new(Cursor::new(bytes)).expect("docx should be zip");
         let mut xml = String::new();
@@ -2273,10 +2448,13 @@ mod tests {
 
     #[test]
     fn docx_export_renders_well_formed_ruby_markup() {
-        let bytes = render_docx_document(&document(vec![ExportBlock::Text {
-            text_style: "paragraph".to_string(),
-            text: "<ruby>字<rt>zi</rt></ruby>".to_string(),
-        }]))
+        let bytes = render_docx_document(
+            &document(vec![ExportBlock::Text {
+                text_style: "paragraph".to_string(),
+                text: "<ruby>字<rt>zi</rt></ruby>".to_string(),
+            }]),
+            false,
+        )
         .expect("docx should render");
         let mut archive = ZipArchive::new(Cursor::new(bytes)).expect("docx should be zip");
         let mut xml = String::new();
@@ -2438,7 +2616,7 @@ mod tests {
         assert!(!html.contains("Deleted caption"));
         assert!(!html.contains("https://example.com/deleted.png"));
 
-        let docx = render_docx_document(&document).expect("docx should render");
+        let docx = render_docx_document(&document, false).expect("docx should render");
         let mut archive = ZipArchive::new(Cursor::new(docx)).expect("docx should be zip");
         let mut docx_text = String::new();
         archive
@@ -2649,24 +2827,27 @@ mod tests {
 
     #[test]
     fn rtf_export_renders_styles_inline_marks_and_unicode() {
-        let output = render_rtf_document(&document(vec![
-            ExportBlock::Text {
-                text_style: "heading2".to_string(),
-                text: "<b>Bold</b> <u>Under</u>".to_string(),
-            },
-            ExportBlock::Text {
-                text_style: "quote".to_string(),
-                text: "Quote".to_string(),
-            },
-            ExportBlock::Text {
-                text_style: "paragraph".to_string(),
-                text: "字 {braces} \\slash".to_string(),
-            },
-            ExportBlock::Footnote {
-                number: 1,
-                text: "Note".to_string(),
-            },
-        ]));
+        let output = render_rtf_document(
+            &document(vec![
+                ExportBlock::Text {
+                    text_style: "heading2".to_string(),
+                    text: "<b>Bold</b> <u>Under</u>".to_string(),
+                },
+                ExportBlock::Text {
+                    text_style: "quote".to_string(),
+                    text: "Quote".to_string(),
+                },
+                ExportBlock::Text {
+                    text_style: "paragraph".to_string(),
+                    text: "字 {braces} \\slash".to_string(),
+                },
+                ExportBlock::Footnote {
+                    number: 1,
+                    text: "Note".to_string(),
+                },
+            ]),
+            false,
+        );
 
         assert!(output.starts_with("{\\rtf1\\ansi"));
         assert!(output.contains("\\sb240\\b\\fs26"));
@@ -2689,14 +2870,17 @@ mod tests {
         ));
         fs::write(&image_path, &image_bytes).expect("image should be written");
 
-        let output = render_rtf_document(&document(vec![ExportBlock::Image {
-            image: ExportImage::Upload {
-                repo_relative_path: "chapters/ch-1/images/row/image.png".to_string(),
-                raw_url: None,
-                absolute_path: image_path.clone(),
-            },
-            caption: "Caption".to_string(),
-        }]));
+        let output = render_rtf_document(
+            &document(vec![ExportBlock::Image {
+                image: ExportImage::Upload {
+                    repo_relative_path: "chapters/ch-1/images/row/image.png".to_string(),
+                    raw_url: None,
+                    absolute_path: image_path.clone(),
+                },
+                caption: "Caption".to_string(),
+            }]),
+            false,
+        );
         let _ = fs::remove_file(&image_path);
 
         assert!(output.contains("\\pict\\pngblip\\picw12\\pich8\\picwgoal180\\pichgoal120"));
@@ -2713,10 +2897,13 @@ mod tests {
     fn rtf_export_falls_back_to_a_link_for_unfetchable_image_urls() {
         // A non-public host fails URL validation before any network request, which
         // exercises the link fallback without fetching anything in tests.
-        let output = render_rtf_document(&document(vec![ExportBlock::Image {
-            image: ExportImage::Url("http://127.0.0.1/image.png".to_string()),
-            caption: String::new(),
-        }]));
+        let output = render_rtf_document(
+            &document(vec![ExportBlock::Image {
+                image: ExportImage::Url("http://127.0.0.1/image.png".to_string()),
+                caption: String::new(),
+            }]),
+            false,
+        );
 
         assert!(output.contains("HYPERLINK \"http://127.0.0.1/image.png\""));
         assert!(!output.contains("\\pict"));

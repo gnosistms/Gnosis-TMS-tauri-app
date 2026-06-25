@@ -143,7 +143,7 @@ function wordpressDetail(wordpress, isExporting) {
         <input
           class="field__input"
           type="text"
-          placeholder="Search your posts"
+          placeholder="Search posts or paste URL"
           value="${escapeHtml(wordpress.searchQuery)}"
           data-wordpress-search-input
         />
@@ -151,7 +151,7 @@ function wordpressDetail(wordpress, isExporting) {
       </div>
       ${renderWordPressSearchResults(wordpress)}
       ${selectedPost
-        ? `<p class="editor-export-modal__wordpress-warning" role="alert">Exporting will replace the content of &ldquo;${escapeHtml(selectedPost.title)}&rdquo; on ${escapeHtml(blogLabel)}. This cannot be undone.</p>`
+        ? `<p class="editor-export-modal__wordpress-warning" role="alert">Exporting will replace the content of &ldquo;${escapeHtml(selectedPost.title)}&rdquo; on ${escapeHtml(blogLabel)}.</p>`
         : supportingText("Search for the post to overwrite, then choose it from the results.")}
     `
     : "";

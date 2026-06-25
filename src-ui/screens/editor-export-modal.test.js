@@ -260,7 +260,7 @@ test("editor export modal shows the WordPress overwrite pane with search and war
   assert.match(html, /Draft Post <span class="editor-export-modal__wordpress-post-status">draft<\/span>/);
   assert.match(html, /Exporting will replace the content of/);
   assert.match(html, /Hello World/);
-  assert.match(html, /This cannot be undone\./);
+  assert.doesNotMatch(html, /This cannot be undone\./);
   assert.match(html, /Overwrite post/);
 });
 
