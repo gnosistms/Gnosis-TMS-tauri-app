@@ -146,11 +146,26 @@ test("mergeEditorRowVersions keeps a remote-only reviewed marker change when loc
   });
 });
 
-test("mergeDirtyEditorRowWithRemote keeps overlapping image changes conservative", () => {
+test("mergeDirtyEditorRowWithRemote surfaces overlapping image URL changes as a conflict", () => {
   const result = mergeDirtyEditorRowWithRemote(
     rowFixture({
       baseImages: { en: { kind: "url", url: "https://example.com/base.png" } },
       images: { en: { kind: "url", url: "https://example.com/local.png" } },
+    }),
+    remoteRowFixture({
+      images: { en: { kind: "url", url: "https://example.com/remote.png" } },
+    }),
+  );
+
+  assert.equal(result.status, "conflict");
+  assert.deepEqual(result.conflicts, [{ languageCode: "en", contentKind: "image" }]);
+});
+
+test("mergeDirtyEditorRowWithRemote keeps overlapping uploaded image changes unsupported", () => {
+  const result = mergeDirtyEditorRowWithRemote(
+    rowFixture({
+      baseImages: { en: { kind: "url", url: "https://example.com/base.png" } },
+      images: { en: { kind: "upload", path: "images/local.png", fileName: "local.png" } },
     }),
     remoteRowFixture({
       images: { en: { kind: "url", url: "https://example.com/remote.png" } },

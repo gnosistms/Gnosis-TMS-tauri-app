@@ -35,6 +35,63 @@ test("conflict modal renders only final text and final footnote as editable text
   assert.match(html, /<div class="field__textarea editor-conflict-modal__version-text">Remote text<\/div>/);
 });
 
+test("conflict modal renders the resolved image URL field for image conflicts", () => {
+  const html = renderEditorConflictResolutionModal({
+    editorChapter: {
+      conflictResolutionModal: {
+        isOpen: true,
+        status: "idle",
+        error: "",
+        localText: "Text",
+        localFootnote: "",
+        remoteText: "Text",
+        remoteFootnote: "",
+        finalText: "Text",
+        finalFootnote: "",
+        localImageCaption: "",
+        remoteImageCaption: "",
+        finalImageCaption: "",
+        localImageUrl: "https://example.com/local.png",
+        remoteImageUrl: "https://example.com/remote.png",
+        finalImageUrl: "https://example.com/remote.png",
+        remoteVersion: null,
+      },
+    },
+  });
+
+  assert.match(html, /data-editor-conflict-final-image-input/);
+  assert.match(html, /Resolved image URL/);
+  assert.match(html, /https:\/\/example\.com\/local\.png/);
+  assert.match(html, /https:\/\/example\.com\/remote\.png/);
+});
+
+test("conflict modal hides the image URL field without an image conflict", () => {
+  const html = renderEditorConflictResolutionModal({
+    editorChapter: {
+      conflictResolutionModal: {
+        isOpen: true,
+        status: "idle",
+        error: "",
+        localText: "Local text",
+        localFootnote: "",
+        remoteText: "Remote text",
+        remoteFootnote: "",
+        finalText: "Final text",
+        finalFootnote: "",
+        localImageCaption: "",
+        remoteImageCaption: "",
+        finalImageCaption: "",
+        localImageUrl: "",
+        remoteImageUrl: "",
+        finalImageUrl: "",
+        remoteVersion: null,
+      },
+    },
+  });
+
+  assert.doesNotMatch(html, /data-editor-conflict-final-image-input/);
+});
+
 test("conflict modal omits empty read-only version blocks", () => {
   const html = renderEditorConflictResolutionModal({
     editorChapter: {

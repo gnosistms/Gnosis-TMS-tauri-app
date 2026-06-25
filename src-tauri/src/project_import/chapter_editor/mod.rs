@@ -75,7 +75,11 @@ use self::history::{
     load_latest_row_version_metadata, load_latest_row_version_metadata_by_path,
     status_note_for_field_flag,
 };
-use self::images::{editor_field_image_from_stored, row_uploaded_image_relative_paths};
+use self::images::{
+    apply_editor_field_image_update, editor_field_image_from_stored,
+    normalize_editor_field_image_input, row_language_stored_image,
+    row_uploaded_image_relative_paths,
+};
 pub(super) use self::images::{
     remove_gtms_editor_language_image_sync, save_gtms_editor_language_image_url_sync,
     upload_gtms_editor_language_image_sync,
@@ -266,12 +270,19 @@ pub(crate) struct UpdateEditorRowFieldsInput {
     footnotes: BTreeMap<String, String>,
     #[serde(default)]
     image_captions: BTreeMap<String, String>,
+    // Image conflicts are only resolved through this command when an image URL
+    // conflict is being finalized; otherwise these stay empty and images are
+    // left untouched. Each value is `null` to clear the image.
+    #[serde(default)]
+    images: BTreeMap<String, Option<EditorFieldImageInput>>,
     #[serde(default)]
     base_fields: BTreeMap<String, String>,
     #[serde(default)]
     base_footnotes: BTreeMap<String, String>,
     #[serde(default)]
     base_image_captions: BTreeMap<String, String>,
+    #[serde(default)]
+    base_images: BTreeMap<String, Option<EditorFieldImageInput>>,
     #[serde(default)]
     operation: String,
     #[serde(default)]
@@ -687,7 +698,7 @@ struct EditorRowImportedConflict {
     base_row: Option<Box<EditorRow>>,
 }
 
-#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 struct StoredFieldImage {
     kind: String,

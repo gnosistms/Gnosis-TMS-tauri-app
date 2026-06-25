@@ -25,6 +25,17 @@ test("normalizeEditorFootnotes reads adjacent blank legacy markers as separate n
   ]);
 });
 
+test("normalizeEditorFootnotes trims leading/trailing whitespace left by deleting a sibling footnote", () => {
+  // A leading newline survives in the unlabeled single-note fallback and renders
+  // as a blank line above the note in the pre-wrap display. Trim it instead.
+  assert.deepEqual(normalizeEditorFootnotes("\n\nhttps://example.org/path"), [
+    { marker: 1, text: "https://example.org/path" },
+  ]);
+  assert.deepEqual(normalizeEditorFootnotes([{ marker: 1, text: "\n  spaced  \n" }]), [
+    { marker: 1, text: "spaced" },
+  ]);
+});
+
 test("normalizeEditorFootnotes preserves inline marker references in note text", () => {
   assert.deepEqual(normalizeEditorFootnotes("[1] see [3]"), [
     { marker: 1, text: "see [3]" },

@@ -4,9 +4,30 @@ import assert from "node:assert/strict";
 import {
   buildEditorConflictResolutionModalState,
   buildEditorConflictResolutionSaveState,
-  buildEditorConflictResolutionVersionCopyText,
+  buildEditorConflictResolutionVersionSelection,
   editorConflictResolutionShowsFootnotes,
+  editorConflictResolutionShowsImages,
 } from "./editor-conflict-resolution-model.js";
+
+function buildImageConflictRow(overrides = {}) {
+  return {
+    rowId: "row-1",
+    fields: { es: "Hola" },
+    footnotes: {},
+    imageCaptions: {},
+    images: { es: { kind: "url", url: "https://example.com/local.png" } },
+    conflictState: {
+      remoteRow: {
+        fields: { es: "Hola" },
+        footnotes: {},
+        imageCaptions: {},
+        images: { es: { kind: "url", url: "https://example.com/remote.png" } },
+      },
+      remoteVersion: { authorName: "Octocat", committedAt: "2026-04-17T10:00:00Z" },
+    },
+    ...overrides,
+  };
+}
 
 function buildConflictRow(overrides = {}) {
   return {
@@ -68,11 +89,62 @@ test("editorConflictResolutionShowsFootnotes stays true for footnote-only confli
   assert.equal(editorConflictResolutionShowsFootnotes(modal), true);
 });
 
-test("buildEditorConflictResolutionVersionCopyText includes the footnote text", () => {
+test("buildEditorConflictResolutionModalState includes image URLs and defaults to GitHub", () => {
+  const modal = buildEditorConflictResolutionModalState(buildImageConflictRow(), "es");
+
+  assert.equal(modal.localImageUrl, "https://example.com/local.png");
+  assert.equal(modal.remoteImageUrl, "https://example.com/remote.png");
+  assert.equal(modal.finalImageUrl, "https://example.com/remote.png");
+  assert.equal(editorConflictResolutionShowsImages(modal), true);
+});
+
+test("buildEditorConflictResolutionSaveState persists the resolved image URL and base", () => {
+  const row = buildImageConflictRow();
+  const modal = buildEditorConflictResolutionModalState(row, "es");
+  modal.finalImageUrl = "https://example.com/local.png";
+
+  const saveState = buildEditorConflictResolutionSaveState(row, "es", modal);
+
+  assert.deepEqual(saveState.imagesToPersist, {
+    es: { kind: "url", url: "https://example.com/local.png" },
+  });
+  assert.deepEqual(saveState.baseImages, {
+    es: { kind: "url", url: "https://example.com/remote.png" },
+  });
+});
+
+test("buildEditorConflictResolutionSaveState omits images when no image conflict", () => {
   const modal = buildEditorConflictResolutionModalState(buildConflictRow(), "es");
 
-  assert.equal(
-    buildEditorConflictResolutionVersionCopyText(modal, "remote"),
-    "Hola\n\nRemote note",
-  );
+  const saveState = buildEditorConflictResolutionSaveState(buildConflictRow(), "es", modal);
+
+  assert.equal(saveState.imagesToPersist, null);
+  assert.equal(saveState.baseImages, null);
+});
+
+test("buildEditorConflictResolutionSaveState clears the image when resolved to empty", () => {
+  const row = buildImageConflictRow();
+  const modal = buildEditorConflictResolutionModalState(row, "es");
+  modal.finalImageUrl = "";
+
+  const saveState = buildEditorConflictResolutionSaveState(row, "es", modal);
+
+  assert.deepEqual(saveState.imagesToPersist, { es: null });
+});
+
+test("buildEditorConflictResolutionVersionSelection returns the chosen side's text and footnote", () => {
+  const modal = buildEditorConflictResolutionModalState(buildConflictRow(), "es");
+
+  assert.deepEqual(buildEditorConflictResolutionVersionSelection(modal, "remote"), {
+    finalText: "Hola",
+    finalFootnote: "Remote note",
+    finalImageCaption: "",
+    finalImageUrl: "",
+  });
+  assert.deepEqual(buildEditorConflictResolutionVersionSelection(modal, "local"), {
+    finalText: "Hola",
+    finalFootnote: "Local note",
+    finalImageCaption: "",
+    finalImageUrl: "",
+  });
 });

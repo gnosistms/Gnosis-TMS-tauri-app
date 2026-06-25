@@ -257,6 +257,63 @@ test("chapter rename modal input focus survives full refresh renders", () => {
   }]);
 });
 
+test("glossary term editor footnote and notes textareas keep focus across full renders", () => {
+  for (const selector of ["[data-glossary-term-footnote-input]", "[data-glossary-term-notes-input]"]) {
+    const textarea = new FakeHTMLTextAreaElement();
+    textarea.matches = (candidate) => candidate === selector;
+    textarea.selectionStart = 4;
+    textarea.selectionEnd = 4;
+    textarea.selectionDirection = "none";
+    document.activeElement = textarea;
+
+    const snapshot = captureFocusedInputState();
+    assert.equal(snapshot?.selector, selector);
+    assert.equal(snapshot?.kind, "generic");
+
+    const rerendered = new FakeHTMLTextAreaElement();
+    selectorMap = new Map([[selector, rerendered]]);
+    assert.equal(restoreFocusedInputState(snapshot), true);
+    assert.deepEqual(rerendered.focusCalls, [{ preventScroll: true }]);
+    assert.deepEqual(rerendered.selectionCalls, [{ start: 4, end: 4, direction: "none" }]);
+  }
+});
+
+test("glossary term editor variant fields restore focus to the edited row, not the first one", () => {
+  const variant = new FakeHTMLTextAreaElement();
+  variant.dataset.variantSide = "target";
+  variant.dataset.variantIndex = "2";
+  variant.matches = (candidate) => candidate === "[data-glossary-term-variant-input]";
+  variant.selectionStart = 1;
+  variant.selectionEnd = 3;
+  variant.selectionDirection = "forward";
+  document.activeElement = variant;
+
+  const snapshot = captureFocusedInputState();
+  assert.equal(
+    snapshot?.selector,
+    '[data-glossary-term-variant-input][data-variant-side="target"][data-variant-index="2"]',
+  );
+
+  const firstVariant = new FakeHTMLTextAreaElement();
+  const editedVariant = new FakeHTMLTextAreaElement();
+  selectorMap = new Map([
+    ['[data-glossary-term-variant-input][data-variant-side="target"][data-variant-index="0"]', firstVariant],
+    ['[data-glossary-term-variant-input][data-variant-side="target"][data-variant-index="2"]', editedVariant],
+  ]);
+  assert.equal(restoreFocusedInputState(snapshot), true);
+  assert.deepEqual(firstVariant.focusCalls, []);
+  assert.deepEqual(editedVariant.focusCalls, [{ preventScroll: true }]);
+
+  const note = new FakeHTMLTextAreaElement();
+  note.dataset.variantIndex = "1";
+  note.matches = (candidate) => candidate === "[data-glossary-term-variant-note-input]";
+  document.activeElement = note;
+  assert.equal(
+    captureFocusedInputState()?.selector,
+    '[data-glossary-term-variant-note-input][data-variant-index="1"]',
+  );
+});
+
 test("shouldRestoreFocusedInputStateForScope skips editor-row-field focus restore for sidebar and header renders", () => {
   const editorFieldSnapshot = {
     kind: "editor-row-field",

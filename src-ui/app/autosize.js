@@ -104,6 +104,7 @@ export function syncEditorConflictResolutionTextareaHeights(root = document) {
         "[data-editor-conflict-final-input]",
         "[data-editor-conflict-final-footnote-input]",
         "[data-editor-conflict-final-image-caption-input]",
+        "[data-editor-conflict-final-image-input]",
       ].join(", "),
     )
     .forEach((element) => syncEditorConflictResolutionTextareaHeight(element));

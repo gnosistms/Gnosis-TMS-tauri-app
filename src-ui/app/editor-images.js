@@ -93,6 +93,29 @@ export function rowImagesEqual(left, right) {
   return leftEntries.every(([code, image]) => editorFieldImageEqual(image, rightImages[code]));
 }
 
+export function editorFieldImageUrl(image) {
+  const normalizedImage = normalizeEditorFieldImage(image);
+  if (!normalizedImage || normalizedImage.kind !== "url") {
+    return "";
+  }
+
+  return normalizedImage.url ?? "";
+}
+
+export function imageUrlIsResolvable(image) {
+  const normalizedImage = normalizeEditorFieldImage(image);
+  return normalizedImage === null || normalizedImage.kind === "url";
+}
+
+export function urlImageFromString(value) {
+  const url = normalizeText(value);
+  if (!url) {
+    return null;
+  }
+
+  return { kind: "url", url };
+}
+
 export function editorFieldImageMetadataText(image) {
   const normalizedImage = normalizeEditorFieldImage(image);
   if (!normalizedImage) {

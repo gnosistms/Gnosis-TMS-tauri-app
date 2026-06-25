@@ -972,7 +972,7 @@ fn editor_uploaded_image_file_name_from_relative_path(relative_path: &str) -> Op
         .map(ToOwned::to_owned)
 }
 
-fn apply_editor_field_image_update(
+pub(super) fn apply_editor_field_image_update(
     row_value: &mut Value,
     language_code: &str,
     image: Option<StoredFieldImage>,
