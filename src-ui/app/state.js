@@ -829,6 +829,9 @@ export function createEditorConflictResolutionModalState() {
     localImageCaption: "",
     remoteImageCaption: "",
     finalImageCaption: "",
+    localImageUrl: "",
+    remoteImageUrl: "",
+    finalImageUrl: "",
     remoteVersion: null,
   });
 }

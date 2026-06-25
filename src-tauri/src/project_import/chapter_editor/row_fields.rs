@@ -62,6 +62,55 @@ where
     Some(merged)
 }
 
+/// Three-way merge for per-language field images, restricted to URL images.
+///
+/// Only the languages present in `local` are considered, so unrelated images are
+/// never touched. Returns `None` (conflict) when both the local resolution and the
+/// current on-disk image diverge from the base, or when an uploaded image is involved
+/// (uploaded-file conflicts are out of scope and must not be silently overwritten).
+fn merge_editor_image_maps(
+    base: &BTreeMap<String, Option<EditorFieldImageInput>>,
+    local: &BTreeMap<String, Option<EditorFieldImageInput>>,
+    current_row: &StoredRowFile,
+) -> Option<BTreeMap<String, Option<StoredFieldImage>>> {
+    let mut merged = BTreeMap::new();
+
+    for (language_code, local_image) in local {
+        let base_value = normalize_editor_field_image_input(
+            base.get(language_code).and_then(|value| value.as_ref()),
+        );
+        let local_value = normalize_editor_field_image_input(local_image.as_ref());
+        let current_value = row_language_stored_image(current_row, language_code);
+
+        let local_changed = local_value != base_value;
+        let current_changed = current_value != base_value;
+
+        let next_value = if !local_changed {
+            // The resolution matches the base it was computed against; leave the
+            // current on-disk image in place.
+            continue;
+        } else if !current_changed || local_value == current_value {
+            local_value
+        } else {
+            return None;
+        };
+
+        // URL-only scope: never replace or produce an uploaded image through the
+        // conflict-resolution path.
+        let involves_upload = [&next_value, &current_value]
+            .into_iter()
+            .flatten()
+            .any(|image| image.kind == "upload");
+        if involves_upload {
+            return None;
+        }
+
+        merged.insert(language_code.clone(), next_value);
+    }
+
+    Some(merged)
+}
+
 fn normalize_editor_footnote_merge_value(value: &str) -> String {
     let normalized = normalize_editor_footnote_value(value);
     if normalized.is_empty() {
@@ -298,7 +347,13 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
         &input.image_captions,
         &current_image_captions,
     );
-    if merged_fields.is_none() || merged_footnotes.is_none() || merged_image_captions.is_none() {
+    let merged_images =
+        merge_editor_image_maps(&input.base_images, &input.images, &original_row_file);
+    if merged_fields.is_none()
+        || merged_footnotes.is_none()
+        || merged_image_captions.is_none()
+        || merged_images.is_none()
+    {
         if cfg!(debug_assertions) {
             eprintln!("[gtms row-save] conflict row='{}'", input.row_id);
         }
@@ -329,6 +384,9 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
                 &current_image_captions,
             );
         }
+        if merged_images.is_none() && cfg!(debug_assertions) {
+            eprintln!("[gtms row-save] image conflict row='{}'", input.row_id);
+        }
         return Ok(SaveEditorRowWithConcurrencyResponse {
             row_id: input.row_id,
             status: "conflict".to_string(),
@@ -351,6 +409,7 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
     let merged_fields = merged_fields.unwrap_or_default();
     let merged_footnotes = merged_footnotes.unwrap_or_default();
     let merged_image_captions = merged_image_captions.unwrap_or_default();
+    let merged_images = merged_images.unwrap_or_default();
 
     let mut row_value: Value = serde_json::from_str(&original_row_text).map_err(|error| {
         format!(
@@ -361,6 +420,9 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
     apply_editor_plain_text_updates(&mut row_value, &merged_fields)?;
     apply_editor_footnote_updates(&mut row_value, &merged_footnotes)?;
     apply_editor_image_caption_updates(&mut row_value, &merged_image_captions)?;
+    for (language_code, image) in merged_images {
+        apply_editor_field_image_update(&mut row_value, &language_code, image)?;
+    }
 
     let updated_row_json = serde_json::to_string_pretty(&row_value).map_err(|error| {
         format!(
@@ -520,6 +582,100 @@ mod tests {
         );
 
         assert_eq!(merged, Some(map(&[("es", "hola"), ("vi", "")])));
+    }
+
+    fn url_input(url: &str) -> Option<EditorFieldImageInput> {
+        Some(EditorFieldImageInput {
+            kind: "url".to_string(),
+            url: url.to_string(),
+            path: String::new(),
+        })
+    }
+
+    fn upload_input(path: &str) -> Option<EditorFieldImageInput> {
+        Some(EditorFieldImageInput {
+            kind: "upload".to_string(),
+            url: String::new(),
+            path: path.to_string(),
+        })
+    }
+
+    fn image_input_map(
+        entries: &[(&str, Option<EditorFieldImageInput>)],
+    ) -> BTreeMap<String, Option<EditorFieldImageInput>> {
+        entries
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.clone()))
+            .collect()
+    }
+
+    fn stored_row_with_image(language_code: &str, image_url: Option<&str>) -> StoredRowFile {
+        let image_json = match image_url {
+            Some(url) => serde_json::json!({ "kind": "url", "url": url }),
+            None => serde_json::Value::Null,
+        };
+        serde_json::from_value(serde_json::json!({
+            "row_id": "row-1",
+            "structure": { "order_key": "00001" },
+            "status": { "review_state": "pending" },
+            "origin": { "source_row_number": 1 },
+            "fields": {
+                language_code: { "plain_text": "hola", "image": image_json },
+            },
+        }))
+        .expect("stored row fixture")
+    }
+
+    #[test]
+    fn merge_editor_image_maps_applies_resolved_url_when_disk_matches_base() {
+        let merged = merge_editor_image_maps(
+            &image_input_map(&[("es", url_input("https://example.com/remote.png"))]),
+            &image_input_map(&[("es", url_input("https://example.com/local.png"))]),
+            &stored_row_with_image("es", Some("https://example.com/remote.png")),
+        )
+        .expect("resolvable image merge");
+
+        assert_eq!(
+            merged
+                .get("es")
+                .and_then(|image| image.as_ref())
+                .map(|image| image.url.clone()),
+            Some(Some("https://example.com/local.png".to_string())),
+        );
+    }
+
+    #[test]
+    fn merge_editor_image_maps_conflicts_when_disk_changed_again() {
+        let merged = merge_editor_image_maps(
+            &image_input_map(&[("es", url_input("https://example.com/remote.png"))]),
+            &image_input_map(&[("es", url_input("https://example.com/local.png"))]),
+            &stored_row_with_image("es", Some("https://example.com/changed.png")),
+        );
+
+        assert_eq!(merged, None);
+    }
+
+    #[test]
+    fn merge_editor_image_maps_rejects_uploaded_resolutions() {
+        let merged = merge_editor_image_maps(
+            &image_input_map(&[("es", url_input("https://example.com/remote.png"))]),
+            &image_input_map(&[("es", upload_input("images/local.png"))]),
+            &stored_row_with_image("es", Some("https://example.com/remote.png")),
+        );
+
+        assert_eq!(merged, None);
+    }
+
+    #[test]
+    fn merge_editor_image_maps_clears_image_when_resolved_to_none() {
+        let merged = merge_editor_image_maps(
+            &image_input_map(&[("es", url_input("https://example.com/remote.png"))]),
+            &image_input_map(&[("es", None)]),
+            &stored_row_with_image("es", Some("https://example.com/remote.png")),
+        )
+        .expect("resolvable image clear");
+
+        assert_eq!(merged.get("es"), Some(&None));
     }
 
     #[test]

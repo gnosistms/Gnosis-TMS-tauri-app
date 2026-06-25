@@ -18,6 +18,8 @@ const SUPPORTED_FOCUSED_INPUT_SELECTORS = [
   "[data-glossary-rename-input]",
   "[data-glossary-permanent-delete-input]",
   "[data-glossary-term-search-input]",
+  "[data-glossary-term-notes-input]",
+  "[data-glossary-term-footnote-input]",
   "[data-editor-export-language-select]",
   "[data-team-copy-team-select]",
   "[data-team-copy-project-select]",
@@ -61,6 +63,18 @@ function focusSnapshotSelector(activeElement) {
 
   if (activeElement instanceof HTMLSelectElement && activeElement.matches("[data-chapter-status-select]")) {
     return `[data-chapter-status-select][data-chapter-id="${activeElement.dataset.chapterId}"]`;
+  }
+
+  // Glossary term editor variant fields are repeated per variant, so a bare
+  // attribute selector would restore focus to the first row. Qualify by
+  // side/index so focus returns to the field the user was actually editing
+  // when a background render rebuilds the modal.
+  if (activeElement instanceof HTMLTextAreaElement && activeElement.matches("[data-glossary-term-variant-input]")) {
+    return `[data-glossary-term-variant-input][data-variant-side="${activeElement.dataset.variantSide}"][data-variant-index="${activeElement.dataset.variantIndex}"]`;
+  }
+
+  if (activeElement instanceof HTMLTextAreaElement && activeElement.matches("[data-glossary-term-variant-note-input]")) {
+    return `[data-glossary-term-variant-note-input][data-variant-index="${activeElement.dataset.variantIndex}"]`;
   }
 
   return SUPPORTED_FOCUSED_INPUT_SELECTORS.find((candidate) => activeElement.matches(candidate)) ?? null;

@@ -1,4 +1,4 @@
-import { editorFieldImageEqual, normalizeEditorFieldImage } from "./editor-images.js";
+import { editorFieldImageEqual, imageUrlIsResolvable, normalizeEditorFieldImage } from "./editor-images.js";
 import { serializeEditorFootnotesForLegacy } from "./editor-footnotes.js";
 import { normalizeEditorRow } from "./editor-state-flow.js";
 import { cloneRowFields, cloneRowFieldStates, cloneRowFootnotes, cloneRowImages, normalizeFieldState } from "./editor-utils.js";
@@ -85,6 +85,7 @@ function imageValue(map, key) {
 
 function mergeImageSlices(baseImages, localImages, remoteImages) {
   const mergedImages = cloneRowImages(remoteImages);
+  const conflicts = [];
   let hasUnsupportedConflict = false;
 
   for (const languageCode of unionKeys(baseImages, localImages, remoteImages)) {
@@ -112,11 +113,20 @@ function mergeImageSlices(baseImages, localImages, remoteImages) {
       continue;
     }
 
+    // Both sides changed the image differently. URL-vs-URL (or URL-vs-removed)
+    // divergence is resolvable in the conflict modal; anything involving an
+    // uploaded file stays an unsupported merge.
+    if (imageUrlIsResolvable(localValue) && imageUrlIsResolvable(remoteValue)) {
+      conflicts.push({ languageCode, contentKind: "image" });
+      continue;
+    }
+
     hasUnsupportedConflict = true;
   }
 
   return {
     mergedImages,
+    conflicts,
     hasUnsupportedConflict,
   };
 }
@@ -210,6 +220,7 @@ export function mergeEditorRowVersions(input = {}) {
     ...fieldMerge.conflicts,
     ...footnoteMerge.conflicts,
     ...imageCaptionMerge.conflicts,
+    ...imageMerge.conflicts,
   ];
   if (conflicts.length > 0) {
     return {

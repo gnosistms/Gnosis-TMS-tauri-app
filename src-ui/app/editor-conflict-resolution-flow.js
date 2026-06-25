@@ -25,7 +25,7 @@ import { cloneRowFields, findEditorRowById } from "./editor-utils.js";
 import {
   buildEditorConflictResolutionModalState,
   buildEditorConflictResolutionSaveState,
-  buildEditorConflictResolutionVersionCopyText,
+  buildEditorConflictResolutionVersionSelection,
   normalizeEditorConflictResolutionValue,
 } from "./editor-conflict-resolution-model.js";
 import { invokeEditorWriteCommand } from "./editor-write-permission.js";
@@ -150,6 +150,10 @@ export function updateEditorConflictResolutionFinalImageCaption(nextValue) {
   updateEditorConflictResolutionModalValue("finalImageCaption", nextValue);
 }
 
+export function updateEditorConflictResolutionFinalImageUrl(nextValue) {
+  updateEditorConflictResolutionModalValue("finalImageUrl", nextValue);
+}
+
 function updateEditorConflictResolutionModalValue(fieldName, nextValue) {
   if (!state.editorChapter?.conflictResolutionModal?.isOpen) {
     return;
@@ -164,29 +168,26 @@ function updateEditorConflictResolutionModalValue(fieldName, nextValue) {
   };
 }
 
-export async function copyEditorConflictResolutionVersion(render, side) {
+export function copyEditorConflictResolutionVersion(render, side) {
   const modal = state.editorChapter?.conflictResolutionModal;
-  if (!modal?.isOpen) {
+  if (!modal?.isOpen || modal.status === "loading") {
     return;
   }
 
-  const text = buildEditorConflictResolutionVersionCopyText(modal, side);
-  if (!text) {
-    return;
-  }
+  const { finalText, finalFootnote, finalImageCaption, finalImageUrl } =
+    buildEditorConflictResolutionVersionSelection(modal, side);
 
-  if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
-    showNoticeBadge("Clipboard access is not available.", render, 1800);
-    return;
-  }
-
-  try {
-    await navigator.clipboard.writeText(text);
-    showNoticeBadge("Copied.", render, 1200);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    showNoticeBadge(message || "The text could not be copied.", render, 1800);
-  }
+  state.editorChapter = {
+    ...state.editorChapter,
+    conflictResolutionModal: {
+      ...modal,
+      finalText,
+      finalFootnote,
+      finalImageCaption,
+      finalImageUrl,
+    },
+  };
+  render?.();
 }
 
 export async function saveEditorConflictResolution(render, operations = {}) {
@@ -214,6 +215,8 @@ export async function saveEditorConflictResolution(render, operations = {}) {
     fieldsToPersist,
     footnotesToPersist,
     imageCaptionsToPersist,
+    imagesToPersist,
+    baseImages,
   } = buildEditorConflictResolutionSaveState(row, languageCode, modal);
 
   state.editorChapter = {
@@ -237,6 +240,7 @@ export async function saveEditorConflictResolution(render, operations = {}) {
         baseFields: remoteFields,
         baseFootnotes: remoteFootnotes,
         baseImageCaptions: remoteImageCaptions,
+        ...(imagesToPersist ? { images: imagesToPersist, baseImages } : {}),
       },
     }, { render, actionKind: "sharedWrite", rowId });
   } catch (error) {

@@ -3,7 +3,7 @@ export function normalizeEditorFootnotes(value) {
     return value
       .map((entry, index) => ({
         marker: normalizeFootnoteMarker(entry?.marker, index + 1),
-        text: typeof entry?.text === "string" ? entry.text : String(entry?.text ?? ""),
+        text: normalizeFootnoteText(entry?.text),
       }))
       .filter((entry) => Number.isInteger(entry.marker) && entry.marker > 0);
   }
@@ -14,7 +14,7 @@ export function normalizeEditorFootnotes(value) {
   }
 
   const parsed = parseLabeledFootnoteText(text);
-  return parsed.length > 0 ? parsed : [{ marker: 1, text }];
+  return parsed.length > 0 ? parsed : [{ marker: 1, text: normalizeFootnoteText(text) }];
 }
 
 export function cloneRowFootnotes(footnotes) {
@@ -114,6 +114,15 @@ export function normalizeEditorRowFootnotesForSave(text, footnotes) {
     text: nextText,
     footnotes: entries,
   };
+}
+
+function normalizeFootnoteText(value) {
+  const text = typeof value === "string" ? value : String(value ?? "");
+  // Footnote text is a single logical note; leading/trailing whitespace is never
+  // meaningful and round-tripping it through the pre-wrap display drops the text
+  // onto a blank line below the marker. parseLabeledFootnoteText already trims,
+  // so trim the non-labeled paths too for consistency.
+  return text.trim();
 }
 
 function normalizeFootnoteMarker(value, fallback) {

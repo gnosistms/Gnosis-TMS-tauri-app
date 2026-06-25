@@ -77,6 +77,7 @@ import {
   syncEditorGlossaryHighlightRowDom,
   updateEditorConflictResolutionFinalFootnote,
   updateEditorConflictResolutionFinalImageCaption,
+  updateEditorConflictResolutionFinalImageUrl,
   updateEditorImageUrlDraft,
   updateEditorPreviewSearchQuery,
   updateEditorInsertLinkUrlDraft,
@@ -798,6 +799,13 @@ function handleEditorInsertLinkUrlInput(event) {
 }
 
 function handleEditorConflictResolutionInput(event) {
+  const imageInput = event.target.closest("[data-editor-conflict-final-image-input]");
+  if (imageInput) {
+    updateEditorConflictResolutionFinalImageUrl(imageInput.value);
+    syncEditorConflictResolutionTextareaHeight(imageInput);
+    return true;
+  }
+
   const imageCaptionInput = event.target.closest("[data-editor-conflict-final-image-caption-input]");
   if (imageCaptionInput) {
     updateEditorConflictResolutionFinalImageCaption(imageCaptionInput.value);

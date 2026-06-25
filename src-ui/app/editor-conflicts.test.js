@@ -73,6 +73,50 @@ test("conflictedLanguageCodesForRow detects footnote array conflicts", () => {
   assert.deepEqual([...codes], ["vi"]);
 });
 
+test("conflictedLanguageCodesForRow detects image URL conflicts", () => {
+  const codes = conflictedLanguageCodesForRow(
+    {
+      fields: { es: "uno", vi: "mot" },
+      images: {
+        vi: { kind: "url", url: "https://example.com/local.png" },
+      },
+      conflictState: {
+        remoteRow: {
+          fields: { es: "uno", vi: "mot" },
+          images: {
+            vi: { kind: "url", url: "https://example.com/remote.png" },
+          },
+        },
+      },
+    },
+    [{ code: "es" }, { code: "vi" }],
+  );
+
+  assert.deepEqual([...codes], ["vi"]);
+});
+
+test("conflictedLanguageCodesForRow ignores uploaded image divergence", () => {
+  const codes = conflictedLanguageCodesForRow(
+    {
+      fields: { es: "uno" },
+      images: {
+        es: { kind: "upload", path: "images/local.png", fileName: "local.png" },
+      },
+      conflictState: {
+        remoteRow: {
+          fields: { es: "uno" },
+          images: {
+            es: { kind: "url", url: "https://example.com/remote.png" },
+          },
+        },
+      },
+    },
+    [{ code: "es" }],
+  );
+
+  assert.deepEqual([...codes], []);
+});
+
 test("editorChapterHasUnresolvedConflicts checks the chapter rows", () => {
   assert.equal(editorChapterHasUnresolvedConflicts({
     rows: [
