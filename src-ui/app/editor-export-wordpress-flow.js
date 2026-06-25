@@ -14,7 +14,10 @@ import {
   state,
 } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
-import { saveStoredEditorExportDefault } from "./editor-export-defaults.js";
+import {
+  loadStoredEditorExportDefault,
+  saveStoredEditorExportDefault,
+} from "./editor-export-defaults.js";
 
 function currentExportModal() {
   return state.editorChapter?.exportModal ?? null;
@@ -85,6 +88,13 @@ export function ensureWordPressPaneReady(render, operations = {}) {
   const wordpress = currentWordPressExportState();
   if (!wordpress) {
     return;
+  }
+
+  if (wordpress.selectedPostId == null) {
+    const stored = loadStoredEditorExportDefault(currentExportModal()?.chapterId);
+    if (stored?.wordpress) {
+      seedWordPressOverwriteDefault(stored.wordpress);
+    }
   }
 
   if (!wordpress.title) {

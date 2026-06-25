@@ -34,6 +34,21 @@ test("export defaults round-trip per chapter and login", () => {
   assert.equal(loadStoredEditorExportDefault("chapter-1"), null);
 });
 
+test("export defaults preserve remembered wordpress post across other export options", () => {
+  setActiveStorageLogin("tester");
+
+  saveStoredEditorExportDefault("chapter-1", {
+    optionId: "link:wordpress",
+    wordpress: { postId: 24994, postTitle: "Chương 3" },
+  });
+  saveStoredEditorExportDefault("chapter-1", { optionId: "copy:vellum" });
+
+  assert.deepEqual(loadStoredEditorExportDefault("chapter-1"), {
+    optionId: "copy:vellum",
+    wordpress: { postId: 24994, postTitle: "Chương 3" },
+  });
+});
+
 test("export defaults drop invalid wordpress entries and blank options", () => {
   setActiveStorageLogin("tester");
 
