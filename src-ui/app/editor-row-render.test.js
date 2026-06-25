@@ -342,3 +342,51 @@ test("renderTranslationContentRow reuses cached image preview dimensions without
   assert.match(html, /--editor-image-preview-width: 51px;/);
   assert.match(html, /--editor-image-preview-content-height: 100px;/);
 });
+
+test("renderTranslationContentRow offers a custom HTML style button to the left of P", () => {
+  const html = renderTranslationContentRow({
+    ...rowWithSection({ canEdit: true }),
+    canEdit: true,
+  });
+
+  // The <> button is the first style option, before the paragraph (P) button.
+  assert.match(html, /data-text-style="custom_html"[\s\S]*?data-text-style="paragraph"/);
+  assert.match(html, /Custom HTML styling/);
+  assert.match(html, /&lt;&gt;<\/span>/);
+});
+
+test("renderTranslationContentRow hides inline and secondary buttons for custom HTML rows", () => {
+  const html = renderTranslationContentRow({
+    ...rowWithSection({
+      canEdit: true,
+      showAddFootnoteButton: true,
+      showAddImageButtons: true,
+    }),
+    canEdit: true,
+    textStyle: "custom_html",
+  });
+
+  // The style radiogroup (including <>) stays so the user can switch back...
+  assert.match(html, /data-text-style="custom_html"/);
+  // ...but inline-markup and secondary buttons do not apply to raw HTML.
+  assert.doesNotMatch(html, /data-editor-inline-style-button/);
+  assert.doesNotMatch(html, /data-action="open-editor-insert-link"/);
+  assert.doesNotMatch(html, /data-action="insert-editor-separator"/);
+  assert.doesNotMatch(html, /data-action="open-editor-footnote"/);
+  assert.doesNotMatch(html, /data-action="open-editor-image-url"/);
+});
+
+test("renderTranslationContentRow gives custom HTML rows a monospace editing field", () => {
+  const html = renderTranslationContentRow({
+    ...rowWithSection({
+      canEdit: true,
+      isTextEditorOpen: true,
+      text: "<b>raw</b>",
+    }),
+    canEdit: true,
+    textStyle: "custom_html",
+  });
+
+  assert.match(html, /translation-language-panel__field--custom-html/);
+  assert.match(html, /data-row-text-style="custom_html"/);
+});

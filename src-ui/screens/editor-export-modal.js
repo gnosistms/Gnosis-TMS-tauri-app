@@ -366,6 +366,30 @@ function footnoteLinkFallbackSection(option, modal) {
   `;
 }
 
+const OMIT_CUSTOM_HTML_TOOLTIP =
+  "Sections of editor text that are styled as custom HTML are usually intended for "
+  + "export to electronic formats only. Check this to omit those sections from the "
+  + "output. (recommended)";
+
+// Formats that cannot render raw HTML (DOCX, RTF, TXT, Markdown, XLSX, plain text,
+// Vellum) offer to omit custom-HTML rows, which are usually meant for the web.
+function omitCustomHtmlSection(option, modal) {
+  if (option.omitCustomHtmlOption !== true) {
+    return "";
+  }
+  const checked = modal?.omitCustomHtml === true;
+  return `
+    <label class="field__checkbox editor-export-modal__omit-custom-html" title="${escapeHtml(OMIT_CUSTOM_HTML_TOOLTIP)}">
+      <input
+        type="checkbox"
+        data-editor-export-omit-custom-html-toggle
+        ${checked ? "checked" : ""}
+      />
+      <span>Omit custom HTML</span>
+    </label>
+  `;
+}
+
 function exportDetail(option, isExporting, modal, appState) {
   if (!option || option.available !== true) {
     return {
@@ -399,6 +423,7 @@ function exportDetail(option, isExporting, modal, appState) {
         ${supportingText(`Click Save to export a ${option.label} file.`)}
         ${fileExportLanguageSection(option, modal, appState)}
         ${footnoteLinkFallbackSection(option, modal)}
+        ${omitCustomHtmlSection(option, modal)}
       `,
       submitButton: loadingPrimaryButton({
         label: "Save",
@@ -413,6 +438,7 @@ function exportDetail(option, isExporting, modal, appState) {
     bodyMarkup: `
       ${supportingText(`Click Copy to export ${option.label.toLowerCase()} data to the clipboard for pasting into other apps.`)}
       ${footnoteLinkFallbackSection(option, modal)}
+      ${omitCustomHtmlSection(option, modal)}
     `,
     submitButton: loadingPrimaryButton({
       label: "Copy",

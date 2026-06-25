@@ -4,8 +4,18 @@ export const EDITOR_ROW_TEXT_STYLE_HEADING2 = "heading2";
 export const EDITOR_ROW_TEXT_STYLE_QUOTE = "quote";
 export const EDITOR_ROW_TEXT_STYLE_INDENTED = "indented";
 export const EDITOR_ROW_TEXT_STYLE_CENTERED = "centered";
+export const EDITOR_ROW_TEXT_STYLE_CUSTOM_HTML = "custom_html";
+
+export function isCustomHtmlRowTextStyle(value) {
+  return normalizeEditorRowTextStyle(value) === EDITOR_ROW_TEXT_STYLE_CUSTOM_HTML;
+}
 
 export const EDITOR_ROW_TEXT_STYLE_OPTIONS = [
+  {
+    value: EDITOR_ROW_TEXT_STYLE_CUSTOM_HTML,
+    label: "<>",
+    tooltip: "Custom HTML styling",
+  },
   {
     value: EDITOR_ROW_TEXT_STYLE_PARAGRAPH,
     label: "P",
@@ -64,6 +74,10 @@ export function normalizeEditorRowTextStyle(value) {
     case "center":
     case EDITOR_ROW_TEXT_STYLE_CENTERED:
       return EDITOR_ROW_TEXT_STYLE_CENTERED;
+    case "html":
+    case "custom-html":
+    case EDITOR_ROW_TEXT_STYLE_CUSTOM_HTML:
+      return EDITOR_ROW_TEXT_STYLE_CUSTOM_HTML;
     default:
       return EDITOR_ROW_TEXT_STYLE_PARAGRAPH;
   }

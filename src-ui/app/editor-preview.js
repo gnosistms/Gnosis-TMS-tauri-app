@@ -20,8 +20,13 @@ import {
   EDITOR_ROW_TEXT_STYLE_INDENTED,
   EDITOR_ROW_TEXT_STYLE_PARAGRAPH,
   EDITOR_ROW_TEXT_STYLE_QUOTE,
+  isCustomHtmlRowTextStyle,
   normalizeEditorRowTextStyle,
 } from "./editor-row-text-style.js";
+import {
+  customHtmlToPlainText,
+  sanitizeCustomHtmlForDisplay,
+} from "./editor-custom-html.js";
 
 export const EDITOR_MODE_TRANSLATE = "translate";
 export const EDITOR_MODE_PREVIEW = "preview";
@@ -565,6 +570,14 @@ export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
         return "";
       }
 
+      if (isCustomHtmlRowTextStyle(block.textStyle)) {
+        const customHtml = sanitizeCustomHtmlForDisplay(block.text);
+        if (!customHtml.trim()) {
+          return "";
+        }
+        return `<div class="translate-preview__block translate-preview__block--custom-html" data-preview-block="custom-html" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}">${customHtml}</div>`;
+      }
+
       const tagName = previewTextTagForStyle(block.textStyle);
       const variant = previewTextVariantForStyle(block.textStyle);
       const parts = previewTextParts(block);
@@ -742,6 +755,14 @@ function serializeEditorPreviewBlocks(blocks) {
         return serializePreviewImageHtml(block);
       }
 
+      // Custom-HTML rows export the author's raw HTML verbatim, wrapped as a
+      // WordPress Custom HTML block (the comment markers are inert in plain
+      // clipboard HTML and make it a native block on WordPress.com).
+      if (block?.kind === "text" && isCustomHtmlRowTextStyle(block.textStyle)) {
+        const rawHtml = String(block.text ?? "").trim();
+        return rawHtml ? `<!-- wp:html -->\n${rawHtml}\n<!-- /wp:html -->` : "";
+      }
+
       return serializePreviewTextBlockParts(block, footnoteState);
     })
     .filter(Boolean)
@@ -865,8 +886,26 @@ function plainTextWithFootnoteRefs(block, footnoteItems, options = {}) {
   return `${result}${separator}${appendedRefs.join(" ")}`;
 }
 
+// Block-list transform for serializers that can't carry raw HTML (Vellum):
+// drop custom-HTML rows when omitting, otherwise flatten them to plain paragraphs.
+export function applyCustomHtmlPlainTextPolicy(blocks, omitCustomHtml = false) {
+  return (Array.isArray(blocks) ? blocks : []).flatMap((block) => {
+    if (block?.kind !== "text" || !isCustomHtmlRowTextStyle(block.textStyle)) {
+      return [block];
+    }
+    if (omitCustomHtml) {
+      return [];
+    }
+    const text = customHtmlToPlainText(block.text);
+    return text
+      ? [{ ...block, textStyle: EDITOR_ROW_TEXT_STYLE_PARAGRAPH, text, footnotes: [] }]
+      : [];
+  });
+}
+
 export function serializeEditorPreviewPlainText(blocks, options = {}) {
   const showFootnoteLinkUrls = options.showFootnoteLinkUrls === true;
+  const omitCustomHtml = options.omitCustomHtml === true;
   const footnoteItems = [];
   const sections = (Array.isArray(blocks) ? blocks : [])
     .flatMap((block) => {
@@ -875,6 +914,11 @@ export function serializeEditorPreviewPlainText(blocks, options = {}) {
       }
       if (block?.kind !== "text") {
         return "";
+      }
+      // Plain text can't carry HTML: drop custom-HTML rows when the export omits
+      // them, otherwise fall back to their text content.
+      if (isCustomHtmlRowTextStyle(block.textStyle)) {
+        return omitCustomHtml ? "" : customHtmlToPlainText(block.text);
       }
       const parts = previewTextParts(block);
       const usedMarkers = new Set();

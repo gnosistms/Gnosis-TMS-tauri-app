@@ -776,8 +776,14 @@ export function createEditorExportModalState() {
     chapterId: "",
     languageCode: "",
     // Print-oriented option for formats where a hyperlink cannot be clicked: append
-    // each footnote link's URL as plain text after the link. Off by default.
-    footnoteLinksAsPlainText: false,
+    // each footnote link's URL as plain text after the link. On by default — a bare
+    // hyperlink is useless on paper, so print/electronic-incompatible formats should
+    // surface the URL unless the user opts out.
+    footnoteLinksAsPlainText: true,
+    // Print-oriented option: omit custom-HTML rows from formats that can't render
+    // raw HTML (DOCX/RTF/TXT/MD/XLSX/plain text/Vellum). On by default — custom HTML
+    // is usually intended for electronic export only.
+    omitCustomHtml: true,
     wordpress: createEditorExportWordPressState(),
     teamCopy: createEditorExportTeamCopyState(),
   });

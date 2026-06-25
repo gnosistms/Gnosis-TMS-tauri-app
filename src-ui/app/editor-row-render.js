@@ -16,8 +16,10 @@ import {
 } from "./editor-virtualization-shared.js";
 import {
   EDITOR_ROW_TEXT_STYLE_OPTIONS,
+  isCustomHtmlRowTextStyle,
   normalizeEditorRowTextStyle,
 } from "./editor-row-text-style.js";
+import { sanitizeCustomHtmlForDisplay } from "./editor-custom-html.js";
 import {
   renderSanitizedInlineMarkupHtml,
   renderSanitizedInlineMarkupWithEditorHighlightState,
@@ -197,10 +199,14 @@ function renderRowTextStyleButtons(row, language) {
     return "";
   }
   const selectedTextStyle = normalizeEditorRowTextStyle(row?.textStyle);
-  const showAddFootnoteButton = language.showAddFootnoteButton === true;
+  // Custom-HTML rows hold raw HTML, so inline-markup buttons (bold/italic/link/
+  // footnote/image/separator) don't apply — only the style radiogroup is shown so
+  // the user can switch back out of HTML mode.
+  const isCustomHtmlRow = isCustomHtmlRowTextStyle(selectedTextStyle);
+  const showAddFootnoteButton = language.showAddFootnoteButton === true && !isCustomHtmlRow;
   const rubyConfig = rubyButtonConfig(language.baseCode || language.code);
   const secondaryButtons = [];
-  const inlineButtons = [
+  const inlineButtons = isCustomHtmlRow ? [] : [
     {
       style: "bold",
       label: "b",
@@ -239,6 +245,7 @@ function renderRowTextStyleButtons(row, language) {
     `);
   }
 
+  if (!isCustomHtmlRow) {
   secondaryButtons.push(`
     <button
       class="translation-row-text-style-button translation-row-text-style-button--link"
@@ -258,8 +265,9 @@ function renderRowTextStyleButtons(row, language) {
       </span>
     </button>
   `);
+  }
 
-  if (language.showAddImageButtons === true) {
+  if (language.showAddImageButtons === true && !isCustomHtmlRow) {
     secondaryButtons.push(`
       <button
         class="translation-row-text-style-button translation-row-text-style-button--image"
@@ -288,6 +296,7 @@ function renderRowTextStyleButtons(row, language) {
     `);
   }
 
+  if (!isCustomHtmlRow) {
   secondaryButtons.push(`
     <button
       class="translation-row-text-style-button translation-row-text-style-button--separator"
@@ -301,6 +310,7 @@ function renderRowTextStyleButtons(row, language) {
       <span class="translation-row-text-style-button__label">--</span>
     </button>
   `);
+  }
 
   return `
     <div class="translation-row-text-style-actions">
@@ -322,24 +332,30 @@ function renderRowTextStyleButtons(row, language) {
           </button>
         `).join("")}
       </div>
-      <span class="translation-row-text-style-actions__separator" aria-hidden="true"></span>
-      <div class="translation-row-text-style-actions__group translation-row-text-style-actions__group--inline" aria-label="Inline formatting">
-        ${inlineButtons.map((button) => `
-          <button
-            class="translation-row-text-style-button translation-row-inline-style-button"
-            type="button"
-            data-action="toggle-editor-inline-style"
-            data-editor-inline-style-button
-            data-row-id="${escapeHtml(row.id)}"
-            data-language-code="${escapeHtml(language.code)}"
-            data-inline-style="${escapeHtml(button.style)}"
-            aria-pressed="false"
-            ${tooltipAttributes(button.tooltip, { side: "top" })}
-          >
-            <span class="translation-row-text-style-button__label">${escapeHtml(button.label)}</span>
-          </button>
-        `).join("")}
-      </div>
+      ${
+        inlineButtons.length > 0
+          ? `
+            <span class="translation-row-text-style-actions__separator" aria-hidden="true"></span>
+            <div class="translation-row-text-style-actions__group translation-row-text-style-actions__group--inline" aria-label="Inline formatting">
+              ${inlineButtons.map((button) => `
+                <button
+                  class="translation-row-text-style-button translation-row-inline-style-button"
+                  type="button"
+                  data-action="toggle-editor-inline-style"
+                  data-editor-inline-style-button
+                  data-row-id="${escapeHtml(row.id)}"
+                  data-language-code="${escapeHtml(language.code)}"
+                  data-inline-style="${escapeHtml(button.style)}"
+                  aria-pressed="false"
+                  ${tooltipAttributes(button.tooltip, { side: "top" })}
+                >
+                  <span class="translation-row-text-style-button__label">${escapeHtml(button.label)}</span>
+                </button>
+              `).join("")}
+            </div>
+          `
+          : ""
+      }
       ${
         secondaryButtons.length > 0
           ? `
@@ -776,16 +792,22 @@ function renderEditorFootnoteField(row, language) {
 
 function renderEditorLanguageField(row, language) {
   const textStyle = normalizeEditorRowTextStyle(row?.textStyle);
+  const isCustomHtmlRow = isCustomHtmlRowTextStyle(textStyle);
+  // Custom-HTML rows bypass inline-markup rendering and glossary/search highlight
+  // overlays — the static display shows the user's HTML (sanitized so it cannot run
+  // inside the webview), and the editing field shows the raw HTML as plain text.
   const glossaryHighlightHtml =
-    language.isAiTranslating === true
+    language.isAiTranslating === true || isCustomHtmlRow
       ? ""
       : typeof language.glossaryHighlightHtml === "string"
         ? language.glossaryHighlightHtml
         : "";
-  const staticFieldTextHtml = renderStaticEditorFieldTextHtml(language, {
-    glossaryHighlightHtml,
-    searchRanges: Array.isArray(language.searchHighlightRanges) ? language.searchHighlightRanges : [],
-  });
+  const staticFieldTextHtml = isCustomHtmlRow
+    ? sanitizeCustomHtmlForDisplay(language.text)
+    : renderStaticEditorFieldTextHtml(language, {
+      glossaryHighlightHtml,
+      searchRanges: Array.isArray(language.searchHighlightRanges) ? language.searchHighlightRanges : [],
+    });
   const staticFieldStackClassName =
     "translation-language-panel__field-stack translation-language-panel__field-stack--static";
   if (row.hasConflict) {
@@ -867,7 +889,7 @@ function renderEditorLanguageField(row, language) {
     `;
   }
 
-  const fieldClassName = `translation-language-panel__field${language.isAiTranslating ? " translation-language-panel__field--loading" : ""}`;
+  const fieldClassName = `translation-language-panel__field${language.isAiTranslating ? " translation-language-panel__field--loading" : ""}${isCustomHtmlRow ? " translation-language-panel__field--custom-html" : ""}`;
   const loadingAttributes = language.isAiTranslating
     ? ' readonly aria-busy="true"'
     : "";

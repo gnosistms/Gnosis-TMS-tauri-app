@@ -29,6 +29,10 @@ pub(crate) struct ExportChapterFileInput {
     // "(url)" after the link, since a clickable hyperlink is useless on paper.
     #[serde(default)]
     footnote_links_as_plain_text: bool,
+    // Print-oriented option: drop custom-HTML rows from formats that can't carry
+    // raw HTML (DOCX/RTF/TXT/MD/XLSX). HTML export always passes them through.
+    #[serde(default)]
+    omit_custom_html: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -141,27 +145,36 @@ pub(crate) fn export_gtms_chapter_file_sync(
             .map_err(|error| format!("Could not create '{}': {error}", parent.display()))?;
     }
 
+    // HTML carries the author's raw custom HTML verbatim; every other format gets
+    // the print policy applied (custom-HTML rows dropped or flattened to text).
+    let print_document = apply_print_custom_html_policy(&document, input.omit_custom_html);
+
     match format.as_str() {
         "html" => fs::write(&output_path, render_html_document(&document)?)
             .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
-        "txt" => fs::write(&output_path, render_txt_document(&document))
+        "txt" => fs::write(&output_path, render_txt_document(&print_document))
             .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
         "docx" => fs::write(
             &output_path,
-            render_docx_document(&document, input.footnote_links_as_plain_text)?,
+            render_docx_document(&print_document, input.footnote_links_as_plain_text)?,
         )
         .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
         "xlsx" => fs::write(
             &output_path,
-            render_xlsx_workbook(&chapter_file.title, &languages, &rows)?,
+            render_xlsx_workbook(
+                &chapter_file.title,
+                &languages,
+                &rows,
+                input.omit_custom_html,
+            )?,
         )
         .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
         "rtf" => fs::write(
             &output_path,
-            render_rtf_document(&document, input.footnote_links_as_plain_text),
+            render_rtf_document(&print_document, input.footnote_links_as_plain_text),
         )
         .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
-        "md" => fs::write(&output_path, render_md_document(&document))
+        "md" => fs::write(&output_path, render_md_document(&print_document))
             .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
         _ => Err("Unsupported export format.".to_string()),
     }
@@ -184,11 +197,21 @@ fn build_export_document(
         }
 
         let field = row.fields.get(language_code);
+        let style = row_text_style(row);
         if let Some(text) = field
             .map(|value| value.plain_text.trim())
             .filter(|text| !text.is_empty())
         {
-            push_text_blocks_with_separators(&mut blocks, row_text_style(row), text);
+            if normalize_editor_text_style_value(Some(&style)) == "custom_html" {
+                // Custom HTML is opaque — never split it on "<hr>" markers, which
+                // may be intentional content rather than separators.
+                blocks.push(ExportBlock::Text {
+                    text_style: style,
+                    text: text.to_string(),
+                });
+            } else {
+                push_text_blocks_with_separators(&mut blocks, style, text);
+            }
         }
 
         if let Some(image) = field
@@ -257,6 +280,62 @@ fn push_text_blocks_with_separators(blocks: &mut Vec<ExportBlock>, text_style: S
             text_style,
             text: tail.trim().to_string(),
         });
+    }
+}
+
+// Strip tags from custom HTML for print formats that can't render raw markup.
+fn custom_html_to_plain_text(html: &str) -> String {
+    let mut result = String::new();
+    let mut in_tag = false;
+    for ch in html.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => result.push(ch),
+            _ => {}
+        }
+    }
+    let decoded = result
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'");
+    decoded.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+// For print/electronic-incompatible formats (DOCX/RTF/TXT/MD) custom-HTML blocks
+// are dropped when omitting, otherwise flattened to plain paragraphs. HTML export
+// keeps the original document and renders the raw HTML verbatim.
+fn apply_print_custom_html_policy(document: &ExportDocument, omit: bool) -> ExportDocument {
+    let blocks = document
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            ExportBlock::Text { text_style, text }
+                if normalize_editor_text_style_value(Some(text_style)) == "custom_html" =>
+            {
+                if omit {
+                    return None;
+                }
+                let plain = custom_html_to_plain_text(text);
+                if plain.is_empty() {
+                    None
+                } else {
+                    Some(ExportBlock::Text {
+                        text_style: "paragraph".to_string(),
+                        text: plain,
+                    })
+                }
+            }
+            other => Some(other.clone()),
+        })
+        .collect();
+    ExportDocument {
+        title: document.title.clone(),
+        language_code: document.language_code.clone(),
+        blocks,
     }
 }
 
@@ -576,6 +655,11 @@ fn render_html_document(document: &ExportDocument) -> Result<String, String> {
     for block in &document.blocks {
         match block {
             ExportBlock::Text { text_style, text } => {
+                if normalize_editor_text_style_value(Some(text_style)) == "custom_html" {
+                    // Custom HTML rows carry the author's raw HTML — emit it verbatim.
+                    let _ = writeln!(body, "{text}");
+                    continue;
+                }
                 let text = sanitize_inline_html(text).replace('\n', "<br>");
                 match normalize_editor_text_style_value(Some(text_style)).as_str() {
                     "heading1" => {
@@ -1751,6 +1835,7 @@ fn render_xlsx_workbook(
     title: &str,
     languages: &[ChapterLanguage],
     rows: &[StoredRowFile],
+    omit_custom_html: bool,
 ) -> Result<Vec<u8>, String> {
     if languages.is_empty() {
         return Err("The file does not have any languages to export.".to_string());
@@ -1761,7 +1846,10 @@ fn render_xlsx_workbook(
         .map(|language| xlsx_export_header_code(language).to_string())
         .collect::<Vec<_>>();
     let mut sheet_rows = xlsx_row_xml(1, &header);
-    for (index, cells) in xlsx_export_rows(languages, rows).iter().enumerate() {
+    for (index, cells) in xlsx_export_rows(languages, rows, omit_custom_html)
+        .iter()
+        .enumerate()
+    {
         sheet_rows.push_str(&xlsx_row_xml(index + 2, cells));
     }
 
@@ -1802,9 +1890,20 @@ fn xlsx_export_header_code(language: &ChapterLanguage) -> &str {
         .unwrap_or(language.code.as_str())
 }
 
-fn xlsx_export_rows(languages: &[ChapterLanguage], rows: &[StoredRowFile]) -> Vec<Vec<String>> {
+fn xlsx_export_rows(
+    languages: &[ChapterLanguage],
+    rows: &[StoredRowFile],
+    omit_custom_html: bool,
+) -> Vec<Vec<String>> {
     rows.iter()
         .filter(|row| row.lifecycle.state != "deleted")
+        // Custom-HTML rows carry raw HTML in their cells; when omitting we drop the
+        // whole row, otherwise the raw HTML is kept verbatim so an XLSX round-trip
+        // back into the editor preserves it.
+        .filter(|row| {
+            !(omit_custom_html
+                && normalize_editor_text_style_value(Some(&row_text_style(row))) == "custom_html")
+        })
         .map(|row| {
             languages
                 .iter()
@@ -2133,6 +2232,54 @@ mod tests {
         assert!(output.contains("<figure><img src=\"https://example.com/image.png\""));
         assert!(output.contains("<figcaption><em><em>Caption</em></em></figcaption>"));
         assert!(output.contains("<p class=\"footnote\"><em>[1] <u>Note</u></em></p>"));
+    }
+
+    #[test]
+    fn html_export_emits_custom_html_rows_verbatim() {
+        let output = render_html_document(&document(vec![ExportBlock::Text {
+            text_style: "custom_html".to_string(),
+            text: "<div class=\"callout\"><hr>Raw &amp; <b>bold</b></div>".to_string(),
+        }]))
+        .expect("html should render");
+
+        // Raw HTML passes through untouched — not escaped, not wrapped in <p>, and
+        // its inner "<hr>" is not treated as a separator.
+        assert!(output.contains("<div class=\"callout\"><hr>Raw &amp; <b>bold</b></div>"));
+        assert!(!output.contains("<p><div"));
+    }
+
+    #[test]
+    fn print_policy_omits_or_flattens_custom_html_rows() {
+        let doc = document(vec![
+            ExportBlock::Text {
+                text_style: "paragraph".to_string(),
+                text: "Keep".to_string(),
+            },
+            ExportBlock::Text {
+                text_style: "custom_html".to_string(),
+                text: "<p>Hello&nbsp;<b>world</b></p>".to_string(),
+            },
+        ]);
+
+        let omitted = apply_print_custom_html_policy(&doc, true);
+        assert_eq!(omitted.blocks.len(), 1);
+        let omitted_txt = render_txt_document(&omitted);
+        assert!(omitted_txt.contains("Keep"));
+        assert!(!omitted_txt.contains("world"));
+
+        let flattened = apply_print_custom_html_policy(&doc, false);
+        let flattened_txt = render_txt_document(&flattened);
+        assert!(flattened_txt.contains("Keep"));
+        assert!(flattened_txt.contains("Hello world"));
+        assert!(!flattened_txt.contains("<b>"));
+    }
+
+    #[test]
+    fn custom_html_to_plain_text_strips_tags_and_decodes_entities() {
+        assert_eq!(
+            custom_html_to_plain_text("<p>Hi&nbsp;<a href=\"x\">there</a> &amp; more</p>"),
+            "Hi there & more"
+        );
     }
 
     #[test]
@@ -2723,8 +2870,9 @@ mod tests {
         let mut blank = row("row-3", "c", "", "paragraph");
         blank.fields.clear();
 
-        let bytes = render_xlsx_workbook("Chapter: One?", &languages, &[first, deleted, blank])
-            .expect("xlsx should render");
+        let bytes =
+            render_xlsx_workbook("Chapter: One?", &languages, &[first, deleted, blank], false)
+                .expect("xlsx should render");
         let mut workbook =
             open_workbook_auto_from_rs(Cursor::new(bytes)).expect("workbook should open");
         assert_eq!(workbook.sheet_names(), vec!["Chapter One".to_string()]);
