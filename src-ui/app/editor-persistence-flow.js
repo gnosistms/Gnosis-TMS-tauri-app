@@ -437,6 +437,18 @@ export function hasPendingEditorWrites(chapterState = state.editorChapter, optio
   );
 }
 
+function activeEditorRowFieldIsFocused() {
+  if (typeof document === "undefined" || typeof HTMLTextAreaElement !== "function") {
+    return false;
+  }
+
+  const activeElement = document.activeElement;
+  return (
+    activeElement instanceof HTMLTextAreaElement
+    && activeElement.matches("[data-editor-row-field]")
+  );
+}
+
 function chapterNeedsRefreshBeforeMarkerBatchUpdate(chapterState = state.editorChapter) {
   if (chapterState?.deferredStructuralChanges === true) {
     return true;
@@ -972,8 +984,10 @@ export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, ope
     },
   };
 
-  const renderStyleChange = () => {
-    render?.({ scope: "translate-body" });
+  const renderStyleChange = (options = {}) => {
+    if (options.preserveActiveEditorUndo !== true || !activeEditorRowFieldIsFocused()) {
+      render?.({ scope: "translate-body" });
+    }
     if (state.editorChapter?.activeRowId === rowId) {
       render?.({ scope: "translate-sidebar" });
     }
@@ -1043,7 +1057,7 @@ export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, ope
         chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
       };
       reconcileDirtyTrackedEditorRows([value.rowId]);
-      renderStyleChange();
+      renderStyleChange({ preserveActiveEditorUndo: true });
 
       if (state.editorChapter.activeRowId === value.rowId) {
         loadActiveEditorFieldHistory(render, {
@@ -1065,7 +1079,7 @@ export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, ope
         chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
       };
       reconcileDirtyTrackedEditorRows([value.rowId]);
-      renderStyleChange();
+      renderStyleChange({ preserveActiveEditorUndo: true });
     },
     onError: (error, operation) => {
       const message = error instanceof Error ? error.message : String(error);

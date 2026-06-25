@@ -343,14 +343,14 @@ test("renderTranslationContentRow reuses cached image preview dimensions without
   assert.match(html, /--editor-image-preview-content-height: 100px;/);
 });
 
-test("renderTranslationContentRow offers a custom HTML style button to the left of P", () => {
+test("renderTranslationContentRow offers a custom HTML style button to the right of C", () => {
   const html = renderTranslationContentRow({
     ...rowWithSection({ canEdit: true }),
     canEdit: true,
   });
 
-  // The <> button is the first style option, before the paragraph (P) button.
-  assert.match(html, /data-text-style="custom_html"[\s\S]*?data-text-style="paragraph"/);
+  // The <> button stays near the least common styles, immediately after centered (C).
+  assert.match(html, /data-text-style="indented"[\s\S]*?data-text-style="centered"[\s\S]*?data-text-style="custom_html"/);
   assert.match(html, /Custom HTML styling/);
   assert.match(html, /&lt;&gt;<\/span>/);
 });

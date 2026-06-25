@@ -12,11 +12,6 @@ export function isCustomHtmlRowTextStyle(value) {
 
 export const EDITOR_ROW_TEXT_STYLE_OPTIONS = [
   {
-    value: EDITOR_ROW_TEXT_STYLE_CUSTOM_HTML,
-    label: "<>",
-    tooltip: "Custom HTML styling",
-  },
-  {
     value: EDITOR_ROW_TEXT_STYLE_PARAGRAPH,
     label: "P",
     tooltip: "Plain text",
@@ -45,6 +40,11 @@ export const EDITOR_ROW_TEXT_STYLE_OPTIONS = [
     value: EDITOR_ROW_TEXT_STYLE_CENTERED,
     label: "C",
     tooltip: "Centered",
+  },
+  {
+    value: EDITOR_ROW_TEXT_STYLE_CUSTOM_HTML,
+    label: "<>",
+    tooltip: "Custom HTML styling",
   },
 ];
 

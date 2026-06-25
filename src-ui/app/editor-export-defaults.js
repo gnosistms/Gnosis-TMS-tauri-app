@@ -83,8 +83,9 @@ export function saveStoredEditorExportDefault(
     return;
   }
 
-  const normalized = normalizeStoredEditorExportDefault(value);
   const defaults = loadStoredEditorExportDefaultsMap(login);
+  const previous = normalizeStoredEditorExportDefault(defaults[chapterId]);
+  const normalized = normalizeStoredEditorExportDefault(value);
   if (!normalized) {
     if (!Object.prototype.hasOwnProperty.call(defaults, chapterId)) {
       return;
@@ -96,6 +97,10 @@ export function saveStoredEditorExportDefault(
       removePersistentValue(key);
     }
     return;
+  }
+
+  if (normalized.optionId !== "link:wordpress" && !normalized.wordpress && previous?.wordpress) {
+    normalized.wordpress = previous.wordpress;
   }
 
   defaults[chapterId] = normalized;
