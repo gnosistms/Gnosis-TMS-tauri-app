@@ -4424,6 +4424,66 @@ test.describe("editor regressions", () => {
     expect(resetMetrics.fontSizePx).toBeCloseTo(paragraphMetrics.fontSizePx, 3);
   });
 
+  test("custom HTML textarea keeps native undo after the style save settles", async ({ page }) => {
+    await page.addInitScript(() => {
+      globalThis.__customHtmlStyleSaveResolved = false;
+      globalThis.__gnosisMockTauriHandlers = {
+        ...(globalThis.__gnosisMockTauriHandlers ?? {}),
+        async update_gtms_editor_row_text_style(payload) {
+          await new Promise((resolve) => window.setTimeout(resolve, 140));
+          const input = payload?.input ?? {};
+          globalThis.__customHtmlStyleSaveResolved = true;
+          return {
+            rowId: input.rowId,
+            textStyle: input.textStyle ?? "paragraph",
+          };
+        },
+      };
+    });
+
+    await mountEditorFixture(page, { rowCount: 40 }, { mockTauri: true });
+    const telemetrySaveButton = page.getByRole("button", { name: "Save" });
+    if (await telemetrySaveButton.count()) {
+      await telemetrySaveButton.click();
+      await expect(page.locator(".modal-backdrop")).toHaveCount(0);
+    }
+
+    const rowId = "fixture-row-0001";
+    const languageCode = "vi";
+    const originalValue = "alpha 0001 target text";
+    const typedHtml = " <strong>draft</strong>";
+    const targetField = await activateMainEditorField(page, rowId, languageCode);
+    const customHtmlButton = page.locator(
+      `[data-editor-row-text-style-button][data-row-id="${rowId}"][data-language-code="${languageCode}"][data-text-style="custom_html"]`,
+    );
+
+    await targetField.evaluate((element) => {
+      element.focus();
+      element.selectionStart = element.value.length;
+      element.selectionEnd = element.value.length;
+    });
+    await clickLocatorCenter(page, customHtmlButton);
+    await expect(targetField).toHaveClass(/translation-language-panel__field--custom-html/);
+
+    await targetField.evaluate((element) => {
+      element.focus();
+      element.selectionStart = element.value.length;
+      element.selectionEnd = element.value.length;
+    });
+    await page.keyboard.type(typedHtml);
+    const editedValue = `${originalValue}${typedHtml}`;
+    await expect(targetField).toHaveValue(editedValue);
+
+    await page.waitForFunction(() => globalThis.__customHtmlStyleSaveResolved === true);
+    await expect(targetField).toBeFocused();
+
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+Z" : "Control+Z");
+    await expect.poll(async () => {
+      return (await targetField.inputValue()).length;
+    }).toBeLessThan(editedValue.length);
+    await expect(targetField).toHaveValue(/alpha 0001 target text/);
+  });
+
   test("footnotes keep fixed styling while row text styles change, and the add button matches the style buttons", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 40 }, { mockTauri: true });
 
