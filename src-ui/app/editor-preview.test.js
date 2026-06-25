@@ -661,11 +661,10 @@ test("serializeEditorPreviewWordPress promotes a leading H1 to the post title", 
   assert.doesNotMatch(content, /wp:heading/);
   assert.doesNotMatch(content, /Chương 3/);
   assert.match(content, /Body text/);
-  // No H1 headings remain inside the article: the auto TOC is suppressed.
-  assert.match(content, /<!-- wp:shortcode -->\n\[no_toc\]\n<!-- \/wp:shortcode -->$/);
+  assert.doesNotMatch(content, /no_toc/);
 });
 
-test("serializeEditorPreviewWordPress keeps the TOC when internal H1 headings remain", () => {
+test("serializeEditorPreviewWordPress keeps internal H1 headings in the article", () => {
   const rows = [
     ...wordPressTitleFixtureRows(),
     {

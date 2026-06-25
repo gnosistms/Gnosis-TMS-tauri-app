@@ -6,6 +6,7 @@ import {
 } from "./editor-footnotes.js";
 import {
   extractInlineMarkupVisibleText,
+  extractInlineMarkupVisibleTextWithLinkUrls,
   renderSanitizedInlineMarkupHtml,
   renderSanitizedInlineMarkupWithRanges,
   renderSanitizedInlineMarkupWithHighlights,
@@ -778,10 +779,6 @@ export function extractWordPressLeadingHeadingTitle(blocks) {
   return wordPressLeadingTitleBlock(blocks)?.title ?? null;
 }
 
-// Easy Table of Contents' documented per-post off switch; its disable
-// checkbox writes protected post meta the wp/v2 API cannot set.
-const WORDPRESS_NO_TOC_BLOCK = "<!-- wp:shortcode -->\n[no_toc]\n<!-- /wp:shortcode -->";
-
 // Core separator block used when the user inserts explicit `<hr>` markup.
 const WORDPRESS_SEPARATOR_BLOCK = [
   "<!-- wp:separator -->",
@@ -793,21 +790,15 @@ const WORDPRESS_SEPARATOR_BLOCK = [
 // minus the clipboard charset prefix, plus the footnote bodies that the core
 // footnotes block stores in the `footnotes` post meta (ids match the
 // `data-fn` refs already present in the markup). A leading H1 is promoted to
-// `title` and removed from the content; when no H1 headings remain inside the
-// article, a [no_toc] shortcode block suppresses the auto table of contents.
+// `title` and removed from the content.
 export function serializeEditorPreviewWordPress(blocks) {
   const allBlocks = Array.isArray(blocks) ? blocks : [];
   const titleEntry = wordPressLeadingTitleBlock(allBlocks);
   const bodyBlocks = titleEntry ? allBlocks.slice(1) : allBlocks;
   const { bodyHtml, footnotesHtml, footnoteState } = serializeEditorPreviewBlocks(bodyBlocks);
-  const hasInternalHeading1 = bodyBlocks.some(isHeading1Block);
 
   return {
-    content: [
-      bodyHtml,
-      footnotesHtml,
-      hasInternalHeading1 ? "" : WORDPRESS_NO_TOC_BLOCK,
-    ]
+    content: [bodyHtml, footnotesHtml]
       .filter(Boolean)
       .join("\n\n"),
     footnotes: footnoteState.items.map((item) => ({
@@ -837,12 +828,16 @@ function plainTextWithFootnoteRefs(block, footnoteItems, options = {}) {
     ));
   const appendedRefs = [];
 
+  const showLinkUrls = options.showFootnoteLinkUrls === true;
   const appendReference = (entry) => {
     usedMarkers.add(entry.marker);
     const number = footnoteItems.length + 1;
+    const footnoteText = showLinkUrls
+      ? extractInlineMarkupVisibleTextWithLinkUrls(previewTextValue(entry.text))
+      : extractInlineMarkupVisibleText(previewTextValue(entry.text));
     footnoteItems.push({
       number,
-      text: extractInlineMarkupVisibleText(previewTextValue(entry.text)).trim(),
+      text: footnoteText.trim(),
     });
     return `[${number}]`;
   };
@@ -870,7 +865,8 @@ function plainTextWithFootnoteRefs(block, footnoteItems, options = {}) {
   return `${result}${separator}${appendedRefs.join(" ")}`;
 }
 
-export function serializeEditorPreviewPlainText(blocks) {
+export function serializeEditorPreviewPlainText(blocks, options = {}) {
+  const showFootnoteLinkUrls = options.showFootnoteLinkUrls === true;
   const footnoteItems = [];
   const sections = (Array.isArray(blocks) ? blocks : [])
     .flatMap((block) => {
@@ -890,6 +886,7 @@ export function serializeEditorPreviewPlainText(blocks) {
         return plainTextWithFootnoteRefs(part.block, footnoteItems, {
           usedMarkers,
           appendRemaining: index === appendPartIndex,
+          showFootnoteLinkUrls,
         }).trim();
       });
     })

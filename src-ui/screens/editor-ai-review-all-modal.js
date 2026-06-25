@@ -157,7 +157,12 @@ function renderFilterEnabledModal() {
         <div class="card__body modal-card__body ai-translate-all-modal">
           <p class="card__eyebrow">AI REVIEW</p>
           <h2 class="modal__title">Please check filter enabled</h2>
-          <p class="modal__supporting">AI Review is finished. The Please check filter is now enabled so you can review translations that need attention.</p>
+          <p class="modal__supporting">AI Review is finished. The Please check filter is now enabled so you can review translations that need attention. The AI Review has already made the recommended corrections and marked the corrected sections by setting the red &quot;please check&quot; (?) button on each one. Your job now is to open the history tab so you can see what changed.</p>
+          <ul class="modal__list">
+            <li>If you like what the AI did, just click the &quot;mark reviewed&quot; [&#10003;] button and then click the [?] button to remove the &quot;please check&quot; status.</li>
+            <li>If you don't like the changes, use the history to restore the previous version or edit the text as desired.</li>
+          </ul>
+          <p class="modal__supporting">When you're done checking, you can repeat the AI review again. The AI review will only review the text that doesn't have the &quot;mark reviewed&quot; [&#10003;] mark set.</p>
           <div class="modal__actions">
             ${loadingPrimaryButton({
               label: "Ok",

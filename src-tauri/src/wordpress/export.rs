@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use reqwest::blocking::Client;
 use tauri::{AppHandle, Emitter};
+use url::Url;
 
 use crate::{
     constants::WORDPRESS_EXPORT_PROGRESS_EVENT,
@@ -24,6 +25,10 @@ const MAX_WORDPRESS_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
 // scrolling. Only the block's display size is set — the uploaded media file
 // keeps its full resolution.
 const MAX_WORDPRESS_IMAGE_DISPLAY_HEIGHT_PX: u64 = 750;
+const WORDPRESS_POST_LIST_BASE_PATH: &str = concat!(
+    "posts?per_page=20&context=edit&status=publish,future,draft,pending,private",
+    "&_fields=id,title,status,link,modified&orderby=modified&order=desc",
+);
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -100,17 +105,7 @@ pub(crate) async fn search_wordpress_posts(
         let site = WordPressSite::wordpress_com(&connection)?;
         let client = wordpress_http_client()?;
 
-        let mut path = String::from(
-            "posts?per_page=20&context=edit&status=publish,future,draft,pending,private\
-             &_fields=id,title,status,link,modified&orderby=modified&order=desc",
-        );
-        let trimmed = search.trim();
-        if !trimmed.is_empty() {
-            path.push_str("&search=");
-            path.push_str(
-                &url::form_urlencoded::byte_serialize(trimmed.as_bytes()).collect::<String>(),
-            );
-        }
+        let path = wordpress_post_search_path(&search, &connection);
 
         let response = site.get_json(&client, &path)?;
         let posts = response
@@ -120,6 +115,135 @@ pub(crate) async fn search_wordpress_posts(
     })
     .await
     .map_err(|error| format!("Could not run the WordPress post search: {error}"))?
+}
+
+enum WordPressPostSearchTarget {
+    PostId(u64),
+    Slug(String),
+}
+
+fn wordpress_post_search_path(search: &str, connection: &WordPressConnection) -> String {
+    let trimmed = search.trim();
+    let mut path = WORDPRESS_POST_LIST_BASE_PATH.to_string();
+    match wordpress_post_search_target_from_url(trimmed, connection) {
+        Some(WordPressPostSearchTarget::PostId(post_id)) => {
+            append_encoded_query_param(&mut path, "include", &post_id.to_string());
+        }
+        Some(WordPressPostSearchTarget::Slug(slug)) => {
+            append_encoded_query_param(&mut path, "slug", &slug);
+        }
+        None if !trimmed.is_empty() => {
+            append_encoded_query_param(&mut path, "search", trimmed);
+        }
+        None => {}
+    }
+    path
+}
+
+fn append_encoded_query_param(path: &mut String, key: &str, value: &str) {
+    path.push('&');
+    path.push_str(key);
+    path.push('=');
+    path.push_str(&url::form_urlencoded::byte_serialize(value.as_bytes()).collect::<String>());
+}
+
+fn wordpress_post_search_target_from_url(
+    search: &str,
+    connection: &WordPressConnection,
+) -> Option<WordPressPostSearchTarget> {
+    let parsed = Url::parse(search).ok()?;
+    let host = parsed.host_str()?;
+    if host_matches_wordpress_com(host) {
+        if let Some(post_id) = wordpress_com_editor_post_id(&parsed, connection) {
+            return Some(WordPressPostSearchTarget::PostId(post_id));
+        }
+    }
+    if !url_host_matches_connection(&parsed, connection) {
+        return None;
+    }
+    if let Some(post_id) = wordpress_post_id_from_query(&parsed) {
+        return Some(WordPressPostSearchTarget::PostId(post_id));
+    }
+    wordpress_slug_from_permalink(&parsed).map(WordPressPostSearchTarget::Slug)
+}
+
+fn host_matches_wordpress_com(host: &str) -> bool {
+    normalized_host(host) == "wordpress.com"
+}
+
+fn url_host_matches_connection(url: &Url, connection: &WordPressConnection) -> bool {
+    let Some(input_host) = url.host_str() else {
+        return false;
+    };
+    let Ok(site_url) = Url::parse(connection.blog_url.trim()) else {
+        return false;
+    };
+    let Some(site_host) = site_url.host_str() else {
+        return false;
+    };
+    normalized_host(input_host) == normalized_host(site_host)
+}
+
+fn normalized_host(host: &str) -> String {
+    let lower = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    lower.trim_start_matches("www.").to_string()
+}
+
+fn wordpress_com_editor_post_id(url: &Url, connection: &WordPressConnection) -> Option<u64> {
+    let segments: Vec<&str> = url.path_segments()?.collect();
+    if segments.len() < 3 || segments.first()? != &"post" {
+        return None;
+    }
+    if segments.get(1)?.trim() != connection.blog_id.trim() {
+        return None;
+    }
+    parse_positive_u64(segments.get(2)?)
+}
+
+fn wordpress_post_id_from_query(url: &Url) -> Option<u64> {
+    url.query_pairs()
+        .find_map(|(key, value)| match key.as_ref() {
+            "p" | "post" | "post_id" => parse_positive_u64(value.as_ref()),
+            _ => None,
+        })
+}
+
+fn wordpress_slug_from_permalink(url: &Url) -> Option<String> {
+    let segment = url
+        .path_segments()?
+        .rfind(|segment| !segment.trim().is_empty())?;
+    let slug = percent_decode_path_segment(segment).trim().to_string();
+    if slug.is_empty() {
+        None
+    } else {
+        Some(slug)
+    }
+}
+
+fn parse_positive_u64(value: &str) -> Option<u64> {
+    let parsed = value.trim().parse::<u64>().ok()?;
+    (parsed > 0).then_some(parsed)
+}
+
+fn percent_decode_path_segment(segment: &str) -> String {
+    let bytes = segment.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            if let (Some(high), Some(low)) = (
+                char::from(bytes[index + 1]).to_digit(16),
+                char::from(bytes[index + 2]).to_digit(16),
+            ) {
+                decoded.push(((high << 4) + low) as u8);
+                index += 3;
+                continue;
+            }
+        }
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8(decoded).unwrap_or_else(|_| segment.to_string())
 }
 
 /// Validates input, then runs the export in a background task. The IPC call
@@ -733,6 +857,14 @@ fn escape_html_attribute(value: &str) -> String {
 mod tests {
     use super::*;
 
+    fn test_connection() -> WordPressConnection {
+        WordPressConnection {
+            access_token: "token".to_string(),
+            blog_id: "12345".to_string(),
+            blog_url: "https://gnosisvn.org".to_string(),
+        }
+    }
+
     #[test]
     fn wordpress_editor_link_targets_the_wordpress_com_editor() {
         assert_eq!(
@@ -743,6 +875,73 @@ mod tests {
             wordpress_editor_link(" 12345 ", 678),
             "https://wordpress.com/post/12345/678"
         );
+    }
+
+    #[test]
+    fn wordpress_post_search_path_uses_text_search_for_plain_text() {
+        let path = wordpress_post_search_path("hello world", &test_connection());
+
+        assert!(path.contains("&search=hello+world"));
+        assert!(!path.contains("&slug="));
+        assert!(!path.contains("&include="));
+    }
+
+    #[test]
+    fn wordpress_post_search_path_uses_slug_for_connected_permalink() {
+        let path = wordpress_post_search_path(
+            "https://www.gnosisvn.org/2015/03/06/hn/",
+            &test_connection(),
+        );
+
+        assert!(path.contains("&slug=hn"));
+        assert!(!path.contains("&search="));
+        assert!(!path.contains("&include="));
+    }
+
+    #[test]
+    fn wordpress_post_search_path_decodes_permalink_slug_before_query_encoding() {
+        let path = wordpress_post_search_path(
+            "https://gnosisvn.org/2015/03/06/chuong%203/",
+            &test_connection(),
+        );
+
+        assert!(path.contains("&slug=chuong+3"));
+        assert!(!path.contains("chuong%25203"));
+    }
+
+    #[test]
+    fn wordpress_post_search_path_uses_id_for_post_query_urls() {
+        let connection = test_connection();
+
+        assert!(
+            wordpress_post_search_path("https://gnosisvn.org/?p=24994", &connection)
+                .contains("&include=24994")
+        );
+        assert!(wordpress_post_search_path(
+            "https://gnosisvn.org/wp-admin/post.php?post=24995&action=edit",
+            &connection,
+        )
+        .contains("&include=24995"));
+    }
+
+    #[test]
+    fn wordpress_post_search_path_uses_id_for_wordpress_com_editor_urls() {
+        let path = wordpress_post_search_path(
+            "https://wordpress.com/post/12345/24994",
+            &test_connection(),
+        );
+
+        assert!(path.contains("&include=24994"));
+        assert!(!path.contains("&search="));
+    }
+
+    #[test]
+    fn wordpress_post_search_path_keeps_unrelated_urls_as_text_search() {
+        let path =
+            wordpress_post_search_path("https://example.com/2015/03/06/hn/", &test_connection());
+
+        assert!(path.contains("&search=https%3A%2F%2Fexample.com%2F2015%2F03%2F06%2Fhn%2F"));
+        assert!(!path.contains("&slug=hn"));
     }
 
     #[test]
