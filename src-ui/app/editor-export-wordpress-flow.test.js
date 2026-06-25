@@ -43,6 +43,7 @@ const {
 } = await import("./editor-export-defaults.js");
 const { EDITOR_MODE_PREVIEW } = await import("./editor-preview.js");
 const {
+  findEditorExportOption,
   openEditorExportOptions,
   selectEditorExportOption,
 } = await import("./editor-export-flow.js");
@@ -170,7 +171,7 @@ test("a successful export remembers the post and reopening defaults to overwriti
   assert.equal(wordpress.searchResults[0].title, "Chương 3");
 });
 
-test("remembered wordpress post survives a later Vellum default and restores when selected", () => {
+test("remembered wordpress post survives a later non-WordPress default and restores when selected", () => {
   installWordPressFixture();
   setActiveStorageLogin("tester");
   setWordPress({ jobId: "job-1" });
@@ -187,10 +188,11 @@ test("remembered wordpress post survives a later Vellum default and restores whe
     postId: 24994,
     postTitle: "Chương 3",
   }, () => {});
-  saveStoredEditorExportDefault("chapter-1", { optionId: "copy:vellum" });
+  const nonWordPressOptionId = findEditorExportOption("copy:vellum")?.id ?? "copy:text";
+  saveStoredEditorExportDefault("chapter-1", { optionId: nonWordPressOptionId });
 
   openEditorExportOptions(() => {});
-  assert.equal(state.editorChapter.exportModal.selectedOptionId, "copy:vellum");
+  assert.equal(state.editorChapter.exportModal.selectedOptionId, nonWordPressOptionId);
 
   selectEditorExportOption(() => {}, "link:wordpress");
 
