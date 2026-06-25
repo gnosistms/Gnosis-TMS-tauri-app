@@ -53,6 +53,7 @@ const {
   selectEditorExportOption,
   submitEditorExport,
   toggleEditorExportCategory,
+  toggleEditorExportFootnoteLinks,
   writeClipboardFormats,
 } = await import("./editor-export-flow.js");
 
@@ -477,9 +478,30 @@ test("submitEditorExport saves a file through the native dialog and export comma
       languageCode: "vi",
       format: "html",
       outputPath: "/tmp/chapter-one.html",
+      footnoteLinksAsPlainText: false,
     },
   });
   assert.equal(state.editorChapter.exportModal.isOpen, false);
+});
+
+test("submitEditorExport forwards the footnote-link-as-plain-text option for DOCX", async () => {
+  installEditorExportFixture();
+  openExportModal("file:docx");
+  toggleEditorExportFootnoteLinks(() => {}, true);
+  const invokeCalls = [];
+
+  await submitEditorExport(() => {}, {
+    saveDialog: async () => "/tmp/chapter-one.docx",
+    invoke: async (command, payload) => {
+      invokeCalls.push({ command, payload });
+      return null;
+    },
+    waitForRepoQueue: async () => {},
+  });
+
+  assert.equal(invokeCalls.length, 1);
+  assert.equal(invokeCalls[0].payload.input.format, "docx");
+  assert.equal(invokeCalls[0].payload.input.footnoteLinksAsPlainText, true);
 });
 
 test("submitEditorExport keeps the modal open with an error when the command fails", async () => {

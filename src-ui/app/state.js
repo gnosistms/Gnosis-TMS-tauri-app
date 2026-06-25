@@ -775,6 +775,9 @@ export function createEditorExportModalState() {
     // toolbar language).
     chapterId: "",
     languageCode: "",
+    // Print-oriented option for formats where a hyperlink cannot be clicked: append
+    // each footnote link's URL as plain text after the link. Off by default.
+    footnoteLinksAsPlainText: false,
     wordpress: createEditorExportWordPressState(),
     teamCopy: createEditorExportTeamCopyState(),
   });

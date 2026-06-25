@@ -44,9 +44,9 @@ const BASE_EDITOR_EXPORT_CATEGORIES = [
     options: [
       { id: "file:html", label: "HTML", kind: "file", format: "html", available: true },
       { id: "file:xlsx", label: "XLSX", kind: "file", format: "xlsx", available: true },
-      { id: "file:docx", label: "DOCX", kind: "file", format: "docx", available: true },
+      { id: "file:docx", label: "DOCX", kind: "file", format: "docx", available: true, printLinkFallback: true },
       { id: "file:txt", label: "TXT", kind: "file", format: "txt", available: true },
-      { id: "file:rtf", label: "RTF", kind: "file", format: "rtf", available: true },
+      { id: "file:rtf", label: "RTF", kind: "file", format: "rtf", available: true, printLinkFallback: true },
       { id: "file:md", label: "Markdown", kind: "file", format: "md", available: true },
     ],
   },
@@ -54,9 +54,9 @@ const BASE_EDITOR_EXPORT_CATEGORIES = [
     id: "copy",
     label: "Copy and paste",
     options: [
-      { id: "copy:text", label: "Plain text", kind: "copy", format: "text", available: true },
+      { id: "copy:text", label: "Plain text", kind: "copy", format: "text", available: true, printLinkFallback: true },
       { id: "copy:html", label: "HTML", kind: "copy", format: "html", available: true },
-      { id: "copy:vellum", label: "Vellum", kind: "copy", format: "vellum", available: true, platform: "mac" },
+      { id: "copy:vellum", label: "Vellum", kind: "copy", format: "vellum", available: true, platform: "mac", printLinkFallback: true },
       { id: "copy:docx", label: "DOCX", kind: "copy", format: "docx", available: false },
     ],
   },
@@ -260,6 +260,16 @@ export function selectEditorExportOption(render, optionId) {
   render();
 }
 
+export function toggleEditorExportFootnoteLinks(render, checked) {
+  const modal = currentExportModal();
+  if (!modal?.isOpen || modal.status === "exporting") {
+    return;
+  }
+
+  updateEditorExportModal({ footnoteLinksAsPlainText: checked === true, error: "" });
+  render();
+}
+
 function sanitizeExportFileName(value) {
   const normalized = String(value ?? "")
     .trim()
@@ -386,6 +396,9 @@ async function submitEditorFileExport(render, option, operations) {
         languageCode,
         format: option.format,
         outputPath,
+        footnoteLinksAsPlainText:
+          option.printLinkFallback === true
+          && currentExportModal()?.footnoteLinksAsPlainText === true,
       },
     });
     updateEditorExportModal({ isOpen: false, status: "idle", error: "" });
@@ -406,7 +419,10 @@ async function submitEditorCopyExport(render, option, operations) {
   const languageCode = selectedEditorPreviewLanguageCode(state.editorChapter);
   const context = findChapterContext(currentExportModal()?.chapterId);
   const blocks = buildEditorPreviewDocument(state.editorChapter?.rows, languageCode);
-  const plainText = serializeEditorPreviewPlainText(blocks);
+  const showFootnoteLinkUrls =
+    option.printLinkFallback === true
+    && currentExportModal()?.footnoteLinksAsPlainText === true;
+  const plainText = serializeEditorPreviewPlainText(blocks, { showFootnoteLinkUrls });
   const html = serializeEditorPreviewHtml(blocks);
   const formats = option.format === "html"
     ? { "text/html": serializeEditorPreviewHtml(blocks), "text/plain": plainText }
@@ -429,12 +445,15 @@ async function submitEditorCopyExport(render, option, operations) {
           await prepareVellumImages({ images: imageRequests }),
         )
         : blocks;
-      const decodedPropertyListXml = buildVellumTextEditorContentDecodedXml(vellumBlocks);
+      const decodedPropertyListXml = buildVellumTextEditorContentDecodedXml(vellumBlocks, {
+        showFootnoteLinkUrls,
+      });
       if (!decodedPropertyListXml) {
         throw new Error("Nothing to copy.");
       }
       const ogElementPrivateDecodedPropertyListXml = buildVellumOgElementPrivateDecodedXml(vellumBlocks, {
         title: state.editorChapter?.fileTitle || context?.chapter?.name || "",
+        showFootnoteLinkUrls,
       });
       await copyVellum({
         decodedPropertyListXml,

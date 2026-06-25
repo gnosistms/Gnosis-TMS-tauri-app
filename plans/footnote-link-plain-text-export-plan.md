@@ -66,6 +66,33 @@ collection → `footnoteBodyText`.
 - Thread the bool into `render_docx_document` / `render_rtf_document`; apply
   `append_link_urls_to_inline` to footnote `text` when set. TXT/HTML/MD/XLSX untouched.
 
+## Vellum: clickable link + printed URL (added after a pasteboard capture)
+
+Vellum produces both print books and ebooks, so when the option is on, a footnote link
+should stay **clickable** (ebook/PDF) **and** show its URL in parentheses (print).
+
+Ground truth from a Vellum-authored footnote pasteboard capture
+(`co.180g.Vellum.TextEditorContent`), decoded:
+
+- The footnote's `state.text` is an `NSAttributedString` whose `NSAttributes` is an
+  `NSMutableArray` and whose `NSAttributeInfo` is run-length bytes
+  (`encodeVarUint(length)` + 1 attribute-index byte) — the same encoding the body uses.
+- A **footnote link run carries only `OGLink` = { type:"web", webLinkURL: NSURL }`** —
+  no `NSLink`/`NSFont`/`NSParagraphStyle`/`NSColor` (unlike the body link).
+- **Plain footnote runs carry an empty `{}` attribute dictionary.**
+- The `NSString` is the full concatenated visible text; runs annotate ranges.
+
+Implementation:
+- `extractInlineMarkupFootnoteLinkSegments(value, { showLinkUrls })` in serialize.js
+  returns `{ text, href }` runs. Footnote links are **always** clickable in Vellum
+  (it produces ebooks and print). The checkbox only controls the printed URL: option-on
+  appends a plain ` (url)` run unless the link text is itself a URL; option-off
+  (electronic distribution) keeps the link clickable with no printed URL.
+- `buildFootnoteTextAttributedStringId(builder, segments)` in vellum builds the
+  attributed string: empty `{}` dict for plain runs, `OGLink`-only dict per href, reusing
+  `addAttributedStringArchiveObject` (mutableArray + mutableData, immutable string).
+  Footnotes with no links keep the prior simple `addAttributedString` form (byte-identical).
+
 ## Tests
 - Rust: docx + rtf footnote with link → `(url)` appended when flag set, skipped when
   link text is a URL, untouched when flag unset; TXT unchanged.

@@ -5,8 +5,10 @@ import {
   extractInlineMarkupBaseText,
   buildInlineMarkupSearchHighlightMarkup,
   describeInlineMarkupSelection,
+  extractInlineMarkupFootnoteLinkSegments,
   extractInlineMarkupHistoryText,
   extractInlineMarkupVisibleText,
+  extractInlineMarkupVisibleTextWithLinkUrls,
   renderSanitizedInlineMarkupHtml,
   renderSanitizedInlineMarkupHistoryHtml,
   renderSanitizedInlineMarkupWithEditorHighlightState,
@@ -85,6 +87,68 @@ test("extractInlineMarkupVisibleText omits supported tag syntax and keeps ruby t
   assert.equal(
     extractInlineMarkupVisibleText("<strong>Alpha</strong> <ruby>漢字<rt>よみ</rt></ruby>"),
     "Alpha 漢字よみ",
+  );
+});
+
+test("extractInlineMarkupVisibleTextWithLinkUrls appends link destinations as plain text", () => {
+  assert.equal(
+    extractInlineMarkupVisibleTextWithLinkUrls(
+      "read <a href=\"https://example.com/page\">the page</a> now",
+    ),
+    "read the page (https://example.com/page) now",
+  );
+});
+
+test("extractInlineMarkupVisibleTextWithLinkUrls skips links whose text is already a URL", () => {
+  assert.equal(
+    extractInlineMarkupVisibleTextWithLinkUrls(
+      "<a href=\"https://example.com/\">https://example.com</a>",
+    ),
+    "https://example.com",
+  );
+});
+
+test("extractInlineMarkupVisibleTextWithLinkUrls leaves link-free text unchanged", () => {
+  assert.equal(
+    extractInlineMarkupVisibleTextWithLinkUrls("<strong>Alpha</strong> <ruby>漢字<rt>よみ</rt></ruby>"),
+    "Alpha 漢字よみ",
+  );
+});
+
+test("extractInlineMarkupFootnoteLinkSegments marks clickable link runs and appends URLs", () => {
+  assert.deepEqual(
+    extractInlineMarkupFootnoteLinkSegments(
+      "read <a href=\"https://example.com/page\">the page</a> now",
+      { showLinkUrls: true },
+    ),
+    [
+      { text: "read ", href: null },
+      { text: "the page", href: "https://example.com/page" },
+      { text: " (https://example.com/page) now", href: null },
+    ],
+  );
+});
+
+test("extractInlineMarkupFootnoteLinkSegments keeps URL-text links clickable without a suffix", () => {
+  assert.deepEqual(
+    extractInlineMarkupFootnoteLinkSegments(
+      "<a href=\"https://example.com/raw\">https://example.com/raw</a>",
+      { showLinkUrls: true },
+    ),
+    [{ text: "https://example.com/raw", href: "https://example.com/raw" }],
+  );
+});
+
+test("extractInlineMarkupFootnoteLinkSegments keeps links clickable without a URL when the option is off", () => {
+  assert.deepEqual(
+    extractInlineMarkupFootnoteLinkSegments(
+      "read <a href=\"https://example.com/page\">the page</a> now",
+    ),
+    [
+      { text: "read ", href: null },
+      { text: "the page", href: "https://example.com/page" },
+      { text: " now", href: null },
+    ],
   );
 });
 
