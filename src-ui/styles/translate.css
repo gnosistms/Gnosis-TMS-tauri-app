@@ -988,7 +988,7 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
-  padding: 8px 16px 10px;
+  padding: 8px 0 10px;
 }
 
 .translation-row-text-style-actions__group {
