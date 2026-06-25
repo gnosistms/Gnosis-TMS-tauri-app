@@ -93,9 +93,9 @@ EOF
   fi
   echo "Secret scan passed."
 else
-  echo "gitleaks not installed — secret scanning skipped."
-  echo "  Install: https://github.com/gitleaks/gitleaks"
-  echo "  WARNING: There is no secret scan in CI — this hook is the only automated gate."
+  echo "gitleaks not installed — local secret scanning skipped."
+  echo "  Install for a faster pre-push gate: https://github.com/gitleaks/gitleaks"
+  echo "  CI runs the authoritative secret scan (Secret Scan job in quality-check.yml)."
 fi
 
 echo "Pre-push checks passed."
