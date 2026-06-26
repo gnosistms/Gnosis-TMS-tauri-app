@@ -136,7 +136,9 @@ function applyReviewResultToRow(row, languageCode, payload) {
   const fields = cloneRowFields(row.fields);
   fields[languageCode] = nextText;
   const footnotes = cloneRowFootnotes(row.footnotes);
-  footnotes[languageCode] = applyEditorFootnoteText(footnotes[languageCode], 1, nextFootnote);
+  if (nextFootnote.trim()) {
+    footnotes[languageCode] = applyEditorFootnoteText(footnotes[languageCode], 1, nextFootnote);
+  }
   const imageCaptions = cloneRowFields(row.imageCaptions);
   imageCaptions[languageCode] = nextImageCaption;
   return {
@@ -559,6 +561,7 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
 }
 
 export const editorAiReviewAllTestApi = {
+  applyReviewResultToRow,
   buildEditorAiReviewAllCounts,
   buildEditorAiReviewAllWork,
   getActiveReviewAllRunId: () => activeReviewAllRunId,

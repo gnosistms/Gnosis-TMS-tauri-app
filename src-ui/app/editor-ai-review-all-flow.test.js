@@ -122,6 +122,37 @@ test("AI Review All work includes footnote-only and caption-only rows", () => {
 });
 
 
+test("AI Review All does not create an empty footnote on rows without one", () => {
+  const reviewedRow = row("row-1", { es: "Uno", vi: "Mot" }, { vi: { reviewed: false, pleaseCheck: false } });
+
+  const result = editorAiReviewAllTestApi.applyReviewResultToRow(reviewedRow, "vi", {
+    text: "Mot sua",
+    footnote: "",
+    imageCaption: "",
+    reviewed: false,
+    pleaseCheck: true,
+  });
+
+  assert.equal(result.footnotes.vi, undefined);
+  assert.equal(result.persistedFootnotes.vi, undefined);
+  assert.equal(result.fields.vi, "Mot sua");
+});
+
+test("AI Review All applies a non-empty footnote suggestion", () => {
+  const reviewedRow = row("row-1", { es: "Uno", vi: "Mot" }, { vi: { reviewed: false, pleaseCheck: false } });
+
+  const result = editorAiReviewAllTestApi.applyReviewResultToRow(reviewedRow, "vi", {
+    text: "Mot sua",
+    footnote: "Ghi chu",
+    imageCaption: "",
+    reviewed: false,
+    pleaseCheck: true,
+  });
+
+  assert.deepEqual(result.footnotes.vi, [{ marker: 1, text: "Ghi chu" }]);
+  assert.deepEqual(result.persistedFootnotes.vi, [{ marker: 1, text: "Ghi chu" }]);
+});
+
 test("AI Review All opens preflight when reviewed translations exist", () => {
   resetSessionState();
   state.editorChapter = chapter();
