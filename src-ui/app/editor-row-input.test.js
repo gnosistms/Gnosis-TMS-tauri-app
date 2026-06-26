@@ -22,43 +22,16 @@ function createInput() {
   };
 }
 
-test("filtered editor row input rerenders only the translate body", () => {
+test("filtered editor row input updates the focused field in place without a body re-render", () => {
+  // Re-rendering the body on a keystroke rebuilds every row via innerHTML, which
+  // recreates the focused textarea and wipes its native undo stack. With a search
+  // filter active the input must still update in place so Cmd/Ctrl+Z keeps working.
   const render = createSpy();
   const updateEditorRowFieldValue = createSpy();
   const syncEditorRowTextareaHeight = createSpy();
   const syncEditorVirtualizationRowLayout = createSpy();
   const syncEditorGlossaryHighlightRowDom = createSpy();
   const cancelPendingTranslateViewportRestores = createSpy();
-
-  applyEditorRowFieldInput({
-    input: createInput(),
-    filters: { searchQuery: "distintos", caseSensitive: false },
-    render,
-    updateEditorRowFieldValue,
-    syncEditorRowTextareaHeight,
-    syncEditorVirtualizationRowLayout,
-    syncEditorGlossaryHighlightRowDom,
-    cancelPendingTranslateViewportRestores,
-  });
-
-  assert.deepEqual(updateEditorRowFieldValue.calls, [["row-1", "es", "nuevo texto"]]);
-  assert.deepEqual(cancelPendingTranslateViewportRestores.calls, [[]]);
-  assert.deepEqual(render.calls, [[{ scope: "translate-body" }]]);
-  assert.equal(syncEditorRowTextareaHeight.calls.length, 0);
-  assert.equal(syncEditorVirtualizationRowLayout.calls.length, 0);
-  assert.equal(syncEditorGlossaryHighlightRowDom.calls.length, 0);
-});
-
-test("filtered editor row input preserves the viewport across the body re-render", () => {
-  const render = createSpy();
-  const updateEditorRowFieldValue = createSpy();
-  const cancelPendingTranslateViewportRestores = createSpy();
-  const viewportSnapshot = { anchor: { rowId: "row-1" }, scrollTop: 120 };
-  const captureTranslateViewport = (...args) => {
-    captureTranslateViewport.calls.push(args);
-    return viewportSnapshot;
-  };
-  captureTranslateViewport.calls = [];
   const renderTranslateBodyPreservingViewport = createSpy();
   const input = createInput();
 
@@ -67,25 +40,32 @@ test("filtered editor row input preserves the viewport across the body re-render
     filters: { searchQuery: "distintos", caseSensitive: false },
     render,
     updateEditorRowFieldValue,
+    syncEditorRowTextareaHeight,
+    syncEditorVirtualizationRowLayout,
+    syncEditorGlossaryHighlightRowDom,
     cancelPendingTranslateViewportRestores,
-    captureTranslateViewport,
     renderTranslateBodyPreservingViewport,
   });
 
-  assert.deepEqual(captureTranslateViewport.calls, [[input]]);
-  assert.deepEqual(renderTranslateBodyPreservingViewport.calls, [[render, viewportSnapshot]]);
+  assert.deepEqual(updateEditorRowFieldValue.calls, [["row-1", "es", "nuevo texto"]]);
+  assert.deepEqual(cancelPendingTranslateViewportRestores.calls, [[]]);
   assert.equal(render.calls.length, 0);
+  assert.equal(renderTranslateBodyPreservingViewport.calls.length, 0);
+  assert.deepEqual(syncEditorRowTextareaHeight.calls, [[input]]);
+  assert.deepEqual(syncEditorGlossaryHighlightRowDom.calls, [["row-1"]]);
+  assert.deepEqual(syncEditorVirtualizationRowLayout.calls, [[input]]);
 });
 
-test("dropdown-only editor filters also rerender only the translate body", () => {
+test("dropdown-only editor filters also update the focused field in place", () => {
   const render = createSpy();
   const updateEditorRowFieldValue = createSpy();
   const syncEditorRowTextareaHeight = createSpy();
   const syncEditorVirtualizationRowLayout = createSpy();
   const syncEditorGlossaryHighlightRowDom = createSpy();
+  const input = createInput();
 
   applyEditorRowFieldInput({
-    input: createInput(),
+    input,
     filters: { searchQuery: "", caseSensitive: false, rowFilterMode: "reviewed" },
     render,
     updateEditorRowFieldValue,
@@ -95,10 +75,10 @@ test("dropdown-only editor filters also rerender only the translate body", () =>
   });
 
   assert.deepEqual(updateEditorRowFieldValue.calls, [["row-1", "es", "nuevo texto"]]);
-  assert.deepEqual(render.calls, [[{ scope: "translate-body" }]]);
-  assert.equal(syncEditorRowTextareaHeight.calls.length, 0);
-  assert.equal(syncEditorVirtualizationRowLayout.calls.length, 0);
-  assert.equal(syncEditorGlossaryHighlightRowDom.calls.length, 0);
+  assert.equal(render.calls.length, 0);
+  assert.deepEqual(syncEditorRowTextareaHeight.calls, [[input]]);
+  assert.deepEqual(syncEditorVirtualizationRowLayout.calls, [[input]]);
+  assert.deepEqual(syncEditorGlossaryHighlightRowDom.calls, [["row-1"]]);
 });
 
 test("unfiltered editor row input keeps the local autosize and virtualization updates", () => {

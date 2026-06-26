@@ -1,8 +1,6 @@
 import { applyEditorRowFieldInput } from "./editor-row-input.js";
 import {
   cancelPendingTranslateViewportRestores,
-  captureTranslateViewport,
-  renderTranslateBodyPreservingViewport,
 } from "./translate-viewport.js";
 import {
   describeInlineMarkupSelection,
@@ -111,15 +109,12 @@ export function toggleEditorInlineStyle(render, button, operations = {}) {
 
   applyEditorRowFieldInput({
     input: textarea,
-    filters: state.editorChapter?.filters,
     render,
     updateEditorRowFieldValueForContentKind: operations.updateEditorRowFieldValueForContentKind,
     syncEditorRowTextareaHeight: operations.syncEditorRowTextareaHeight,
     syncEditorVirtualizationRowLayout: operations.syncEditorVirtualizationRowLayout,
     syncEditorGlossaryHighlightRowDom: operations.syncEditorGlossaryHighlightRowDom,
     cancelPendingTranslateViewportRestores,
-    captureTranslateViewport,
-    renderTranslateBodyPreservingViewport,
   });
 
   if (

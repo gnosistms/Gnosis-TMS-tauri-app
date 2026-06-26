@@ -6,8 +6,6 @@ import { buildEditorFieldSelector } from "./editor-utils.js";
 import { createEditorInsertLinkModalState, state } from "./state.js";
 import {
   cancelPendingTranslateViewportRestores,
-  captureTranslateViewport,
-  renderTranslateBodyPreservingViewport,
 } from "./translate-viewport.js";
 
 function languageClusterForButton(button) {
@@ -275,15 +273,12 @@ export function submitEditorInsertLink(render, operations = {}) {
   textarea.setSelectionRange(result.selectionStart, result.selectionEnd);
   applyEditorRowFieldInput({
     input: textarea,
-    filters: state.editorChapter?.filters,
     render,
     updateEditorRowFieldValueForContentKind: operations.updateEditorRowFieldValueForContentKind,
     syncEditorRowTextareaHeight: operations.syncEditorRowTextareaHeight,
     syncEditorVirtualizationRowLayout: operations.syncEditorVirtualizationRowLayout,
     syncEditorGlossaryHighlightRowDom: operations.syncEditorGlossaryHighlightRowDom,
     cancelPendingTranslateViewportRestores,
-    captureTranslateViewport,
-    renderTranslateBodyPreservingViewport,
   });
 
   setInsertLinkModalState(null);
