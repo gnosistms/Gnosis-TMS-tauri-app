@@ -114,10 +114,14 @@ jobs:
       # Required by scripts/generate-third-party-notices.mjs, which runs in
       # the Tauri beforeBuildCommand to produce the bundled
       # THIRD-PARTY-NOTICES.md resource.
+      #
+      # Installed with an explicit version and --features cli: since 0.9.x the
+      # cargo-about binary is gated behind the non-default `cli` feature, so a
+      # bare `cargo install cargo-about` compiles successfully but installs no
+      # binary (cargo only warns and exits 0, which broke the v0.8.53 release).
       - name: Install cargo-about
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-about
+        shell: bash
+        run: cargo install --locked cargo-about@0.9.1 --features cli
 
       - name: Install macOS Rust targets
         if: matrix.platform == 'macos-latest'
