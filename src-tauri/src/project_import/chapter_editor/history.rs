@@ -941,21 +941,27 @@ pub(super) fn load_latest_row_version_metadata(
 
 pub(super) fn load_latest_row_version_metadata_by_path(
     repo_path: &Path,
+    relative_rows_dir: &str,
     relative_row_json_paths: &[String],
 ) -> Result<BTreeMap<String, EditorRowVersionMetadata>, String> {
     if relative_row_json_paths.is_empty() {
         return Ok(BTreeMap::new());
     }
 
-    let mut args = vec![
-        "log".to_string(),
-        "--name-only".to_string(),
-        "--format=%x1e%H%x1f%an%x1f%aI%x1f%B%x1f".to_string(),
-        "--".to_string(),
-    ];
-    args.extend(relative_row_json_paths.iter().cloned());
-    let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
-    let output = git_output(repo_path, &arg_refs)?;
+    // Pass the rows directory as a single pathspec instead of one argument per row
+    // file: Windows caps a process command line at ~32K characters, which a chapter
+    // with a few hundred rows exceeds. Rows outside the requested set are filtered
+    // out of the output below.
+    let output = git_output(
+        repo_path,
+        &[
+            "log",
+            "--name-only",
+            "--format=%x1e%H%x1f%an%x1f%aI%x1f%B%x1f",
+            "--",
+            relative_rows_dir,
+        ],
+    )?;
     if output.is_empty() {
         return Ok(BTreeMap::new());
     }
@@ -1205,6 +1211,76 @@ mod tests {
         assert_eq!(entries[1].operation_type.as_deref(), Some("insert"));
         assert_eq!(entries[1].plain_text, "");
         assert_eq!(entries[1].text_style, DEFAULT_EDITOR_TEXT_STYLE);
+    }
+
+    fn run_git(repo_path: &Path, args: &[&str]) {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(repo_path)
+            .output()
+            .unwrap_or_else(|error| panic!("failed to run git {}: {error}", args.join(" ")));
+        assert!(
+            output.status.success(),
+            "git {} failed: {}{}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout),
+        );
+    }
+
+    #[test]
+    fn load_latest_row_version_metadata_by_path_returns_latest_commit_per_requested_row() {
+        let repo_path =
+            std::env::temp_dir().join(format!("gnosis-tms-row-metadata-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(repo_path.join("chapters/ch-1/rows")).expect("create rows dir");
+        std::fs::create_dir_all(repo_path.join("chapters/ch-2/rows")).expect("create other dir");
+        run_git(&repo_path, &["init", "--initial-branch", "main"]);
+        run_git(&repo_path, &["config", "user.email", "test@example.com"]);
+        run_git(&repo_path, &["config", "user.name", "Test User"]);
+
+        std::fs::write(repo_path.join("chapters/ch-1/rows/row-a.json"), "{}\n")
+            .expect("write row a");
+        std::fs::write(repo_path.join("chapters/ch-1/rows/row-b.json"), "{}\n")
+            .expect("write row b");
+        std::fs::write(repo_path.join("chapters/ch-2/rows/row-c.json"), "{}\n")
+            .expect("write row c");
+        run_git(&repo_path, &["add", "."]);
+        run_git(&repo_path, &["commit", "-m", "Create rows"]);
+
+        std::fs::write(
+            repo_path.join("chapters/ch-1/rows/row-a.json"),
+            "{\"v\":2}\n",
+        )
+        .expect("update row a");
+        run_git(&repo_path, &["add", "."]);
+        run_git(
+            &repo_path,
+            &[
+                "commit",
+                "-m",
+                "Update row a\n\nGTMS-Operation: ai-translation\nGTMS-AI-Model: test-model",
+            ],
+        );
+
+        let metadata = load_latest_row_version_metadata_by_path(
+            &repo_path,
+            "chapters/ch-1/rows",
+            &[
+                "chapters/ch-1/rows/row-a.json".to_string(),
+                "chapters/ch-1/rows/row-b.json".to_string(),
+            ],
+        )
+        .expect("load metadata");
+
+        assert_eq!(metadata.len(), 2);
+        let row_a = &metadata["chapters/ch-1/rows/row-a.json"];
+        let row_b = &metadata["chapters/ch-1/rows/row-b.json"];
+        assert_ne!(row_a.commit_sha, row_b.commit_sha);
+        assert_eq!(row_a.operation_type.as_deref(), Some("ai-translation"));
+        assert_eq!(row_a.ai_model.as_deref(), Some("test-model"));
+        assert_eq!(row_b.operation_type, None);
+        assert!(!metadata.contains_key("chapters/ch-2/rows/row-c.json"));
+        let _ = std::fs::remove_dir_all(repo_path);
     }
 
     #[test]

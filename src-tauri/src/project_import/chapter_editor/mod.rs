@@ -975,6 +975,7 @@ pub(super) fn load_gtms_chapter_editor_data_sync(
         .collect::<Result<BTreeMap<_, _>, _>>()?;
     let latest_update_by_path = load_latest_row_version_metadata_by_path(
         &repo_path,
+        &repo_relative_path(&repo_path, &chapter_path.join("rows"))?,
         &row_update_paths_by_id.values().cloned().collect::<Vec<_>>(),
     )?;
     let selected_source_language_code = preferred_source_language_code(&chapter_file, &languages);
