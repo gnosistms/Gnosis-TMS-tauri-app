@@ -1240,6 +1240,9 @@ export async function removeEditorLanguageImage(render, rowId, languageCode, ope
     return;
   }
 
+  const viewportSnapshot = captureTranslateViewport(null, {
+    fallbackAnchor: currentImageEditorAnchor(rowId, languageCode),
+  });
   const row = await ensureEditorRowReadyForWrite(render, rowId, { allowStaleDirty: true });
   if (editorImageWriteBlocked(row, render)) {
     return;
@@ -1278,6 +1281,7 @@ export async function removeEditorLanguageImage(render, rowId, languageCode, ope
     previousImage: image,
     nextImage: null,
     operations,
+    viewportSnapshot,
     failureMessage: "The image could not be removed.",
     notice: "The image changed on disk. Reloaded the latest version.",
   });

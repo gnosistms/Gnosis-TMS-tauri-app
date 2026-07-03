@@ -621,6 +621,86 @@ test("removeEditorLanguageImage stays clickable while row text save is pending",
   assert.equal(state.editorChapter.rows[0].images.vi, undefined);
 });
 
+test("removeEditorLanguageImage preserves the captured viewport across renders", async () => {
+  installEditorFixture();
+  installFixtureImage("https://example.com/remove-me.png");
+
+  class FakeElement extends globalThis.HTMLElement {
+    constructor({ rectTop = 0, dataset = {}, scrollTop = 0, scrollContainer = null } = {}) {
+      super();
+      this.dataset = dataset;
+      this.scrollTop = scrollTop;
+      this.scrollLeft = 0;
+      this.clientHeight = 600;
+      // Document-space position; the viewport rect tracks the container's
+      // scrollTop like real layout so anchor restores compute true deltas.
+      this._documentTop = rectTop;
+      this._scrollContainer = scrollContainer;
+    }
+
+    getBoundingClientRect() {
+      const top = this._scrollContainer
+        ? this._documentTop - this._scrollContainer.scrollTop
+        : this._documentTop;
+      return {
+        top,
+        bottom: top + 100,
+        height: 100,
+      };
+    }
+  }
+
+  const container = new FakeElement({ rectTop: 0, scrollTop: 240 });
+  const rowCard = new FakeElement({
+    // Sits 96px below the viewport top at the captured scrollTop of 240.
+    rectTop: 336,
+    dataset: { rowId: "row-1" },
+    scrollContainer: container,
+  });
+  const originalQuerySelector = fakeDocument.querySelector;
+  fakeDocument.querySelector = (selector) => {
+    if (selector === ".translate-main-scroll") {
+      return container;
+    }
+    if (selector.startsWith("[data-editor-row-card]")) {
+      return rowCard;
+    }
+    return selector === "#app" ? fakeApp : null;
+  };
+
+  const renderCalls = [];
+  const render = (...args) => {
+    renderCalls.push(args);
+    // Simulate the translate-body remount resetting the scroll container.
+    container.scrollTop = 0;
+  };
+
+  invokeHandler = async (command) => {
+    assert.equal(command, "remove_gtms_editor_language_image");
+    return {
+      status: "saved",
+      row: {
+        ...state.editorChapter.rows[0],
+        images: {},
+      },
+      chapterBaseCommitSha: "abc123",
+    };
+  };
+
+  const {
+    removeEditorLanguageImage,
+  } = await import("./editor-image-flow.js");
+
+  try {
+    await removeEditorLanguageImage(render, "row-1", "vi", { updateEditorChapterRow });
+
+    assert.ok(renderCalls.length > 0);
+    assert.equal(container.scrollTop, 240);
+  } finally {
+    fakeDocument.querySelector = originalQuerySelector;
+  }
+});
+
 test("handleDroppedEditorImageFile applies a saved uploaded image to the editor row", async () => {
   installEditorFixture();
   const render = createRenderSpy();
