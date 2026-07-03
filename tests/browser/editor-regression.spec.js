@@ -573,6 +573,27 @@ async function installMockTauri(page) {
         };
       }
 
+      if (command === "load_gtms_chapter_editor_data") {
+        const chapterId = payload?.input?.chapterId;
+        const fixture = fixtureByChapterId.get(chapterId);
+        if (!fixture) {
+          return null;
+        }
+
+        return {
+          chapterId,
+          chapterBaseCommitSha: "mock-chapter-base",
+          fileTitle: "Editor Regression Fixture",
+          languages: clone(fixture.languages ?? []),
+          wordCounts: {},
+          selectedSourceLanguageCode: fixture.sourceCode,
+          selectedTargetLanguageCode: fixture.targetCode,
+          rows: (Array.isArray(fixture.rows) ? fixture.rows : [])
+            .map((row) => buildRowPayload(chapterId, row.rowId))
+            .filter(Boolean),
+        };
+      }
+
       return null;
     }
 
@@ -634,6 +655,21 @@ async function mountEditorFixture(page, options = {}, setup = {}) {
     await window.__gnosisDebug.mountEditorFixture(fixtureOptions);
   }, options);
   await expect(page.locator("[data-editor-search-input]")).toBeVisible();
+  await dismissTelemetryDisclosureModal(page);
+}
+
+// The first-run telemetry disclosure opens during bootstrap in the browser
+// harness (consent cannot persist there because the browser-mode persistent
+// store reads and writes different localStorage keys), so it would intercept
+// pointer events in every test. Dismiss it before the test interacts.
+async function dismissTelemetryDisclosureModal(page) {
+  const disclosureSave = page
+    .locator(".modal-backdrop")
+    .getByRole("button", { name: "Save" });
+  if (await disclosureSave.count()) {
+    await disclosureSave.click();
+    await expect(page.locator(".modal-backdrop")).toHaveCount(0);
+  }
 }
 
 async function readMockTauriState(page) {
@@ -5312,5 +5348,255 @@ test.describe("editor regressions", () => {
     await expect(page.locator(
       '[data-action="open-editor-comments"][data-row-id="fixture-row-0001"][data-language-code="vi"]',
     )).not.toHaveClass(/is-active/);
+  });
+
+  // Scroll guarantee acceptance suite — pins the invariants listed in
+  // plans/editor-scroll-ownership-redesign-plan.md. Every redesign phase must
+  // keep these green (except the expected failure flagged for Phase 1).
+  test.describe("scroll guarantees", () => {
+    const STABLE_SCROLL_TOLERANCE_PX = 4;
+    const FIXTURE_IMAGE_SVG_URL = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="360" height="240"><rect width="360" height="240" fill="#3366aa"/></svg>',
+    )}`;
+
+    async function waitForStableRowLayout(page, rowId) {
+      let previous = null;
+      await expect.poll(async () => {
+        const metrics = await readSingleRowLayoutMetrics(page, rowId);
+        const stable =
+          previous !== null
+          && metrics !== null
+          && Math.abs(metrics.targetHeight - previous.targetHeight) < 1
+          && Math.abs(metrics.targetTop - previous.targetTop) < 1;
+        previous = metrics;
+        return stable;
+      }).toBe(true);
+      return previous;
+    }
+
+    // Virtualization only mounts rows near the viewport, so scroll toward the
+    // target row in viewport-sized steps until its card exists, then position
+    // it precisely near the top of the viewport.
+    async function bringRowNearTop(page, rowId, offset = 100) {
+      await expect.poll(async () => {
+        const mounted = await page
+          .locator(`[data-editor-row-card][data-row-id="${rowId}"]`)
+          .count();
+        if (mounted > 0) {
+          return true;
+        }
+
+        await page.evaluate(() => {
+          const container = document.querySelector(".translate-main-scroll");
+          if (container instanceof HTMLElement) {
+            container.scrollTop += Math.max(200, container.clientHeight * 0.8);
+            container.dispatchEvent(new Event("scroll"));
+          }
+        });
+        return false;
+      }, { timeout: 20_000, intervals: [100] }).toBe(true);
+      await scrollTranslateRowNearTop(page, rowId, offset);
+      await expect(page.locator(`[data-editor-row-card][data-row-id="${rowId}"]`)).toBeVisible();
+    }
+
+    test("guarantee 5: deleting an image keeps the image row anchored in the viewport", async ({ page }) => {
+      const rowId = "fixture-row-0010";
+      const languageCode = "vi";
+      await mountEditorFixture(page, {
+        rowCount: 40,
+        imagesByRowId: {
+          [rowId]: {
+            [languageCode]: {
+              kind: "url",
+              url: FIXTURE_IMAGE_SVG_URL,
+            },
+          },
+        },
+      }, { mockTauri: true });
+
+      await bringRowNearTop(page, rowId, 120);
+      const imagePreview = page.locator(
+        `[data-editor-language-image-preview-img][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+      );
+      await expect(imagePreview).toBeVisible();
+
+      // Activate the row's field first: clicking the remove button then moves
+      // focus in Chrome, which is the anchor-capture path that regressed.
+      await activateMainEditorField(page, rowId, languageCode);
+      const before = await waitForStableRowLayout(page, rowId);
+      expect(before).not.toBeNull();
+
+      await page.locator(
+        `[data-action="remove-editor-language-image"][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+      ).click();
+      await expect(imagePreview).toHaveCount(0);
+
+      await expect.poll(async () => {
+        const after = await readSingleRowLayoutMetrics(page, rowId);
+        return after ? Math.abs(after.targetTop - before.targetTop) : Number.POSITIVE_INFINITY;
+      }).toBeLessThan(STABLE_SCROLL_TOLERANCE_PX);
+    });
+
+    test("guarantee 1: a queued image save completing after the user scrolls away must not snap the viewport back", async ({ page }) => {
+      // Root cause D in the redesign plan: restores from stale snapshots must
+      // not fight the user's scroll. Guarded by the generation arbitration in
+      // editor-scroll-session.js (redesign Phase 1).
+      const rowId = "fixture-row-0008";
+      const languageCode = "vi";
+      await mountEditorFixture(page, { rowCount: 60 }, { mockTauri: true });
+
+      await page.evaluate(() => {
+        globalThis.__gnosisMockTauriHandlers = {
+          async save_gtms_editor_language_image_url() {
+            await new Promise((resolve) => window.setTimeout(resolve, 900));
+            return null;
+          },
+        };
+      });
+
+      await bringRowNearTop(page, rowId, 120);
+      await activateMainEditorField(page, rowId, languageCode);
+      await page.locator(
+        `[data-action="open-editor-image-url"][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+      ).click();
+      const urlInput = page.locator(
+        `[data-editor-image-url-input][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+      );
+      await expect(urlInput).toBeVisible();
+      await urlInput.fill("https://example.com/pending.png");
+      await urlInput.press("Enter");
+
+      // The user scrolls away with the wheel while the save is in flight.
+      const containerBox = await page.locator(".translate-main-scroll").boundingBox();
+      expect(containerBox).not.toBeNull();
+      await page.mouse.move(
+        containerBox.x + containerBox.width / 2,
+        containerBox.y + containerBox.height / 2,
+      );
+      await page.mouse.wheel(0, 900);
+      await page.waitForTimeout(120);
+      await page.mouse.wheel(0, 900);
+      await page.waitForTimeout(200);
+      const scrolledTo = await readTranslateScrollTop(page);
+      expect(scrolledTo).toBeGreaterThan(0);
+
+      await expect.poll(async () => {
+        const mockState = await readMockTauriState(page);
+        return mockState?.invocations?.some(
+          (entry) => entry.command === "save_gtms_editor_language_image_url",
+        ) ?? false;
+      }).toBe(true);
+      // Let the delayed save resolve and any (buggy) viewport restore fire.
+      await page.waitForTimeout(1400);
+
+      expect(Math.abs((await readTranslateScrollTop(page)) - scrolledTo)).toBeLessThan(48);
+    });
+
+    test("guarantee 3: activating a row filter and returning to show-all restores the viewport", async ({ page }) => {
+      const rowId = "fixture-row-0030";
+      await mountEditorFixture(page, { rowCount: 60 }, { mockTauri: true });
+
+      await bringRowNearTop(page, rowId, 100);
+      const before = await waitForStableRowLayout(page, rowId);
+      expect(before).not.toBeNull();
+
+      await page.locator("[data-editor-filter-select]").selectOption("not-reviewed");
+      await expect.poll(async () => await readTranslateScrollTop(page)).toBeLessThan(4);
+
+      await page.locator("[data-editor-filter-select]").selectOption("show-all");
+      await expect.poll(async () => {
+        const after = await readSingleRowLayoutMetrics(page, rowId);
+        return after ? Math.abs(after.targetTop - before.targetTop) : Number.POSITIVE_INFINITY;
+      }).toBeLessThan(STABLE_SCROLL_TOLERANCE_PX);
+    });
+
+    test("guarantee 2: leaving to the glossary screen and returning restores the editor viewport", async ({ page }) => {
+      await page.addInitScript(() => {
+        globalThis.__gnosisMockTauriHandlers = {
+          async load_gtms_glossary_editor_data() {
+            return {
+              glossaryId: "fixture-glossary",
+              title: "Fixture Glossary",
+              sourceLanguage: {
+                code: "es",
+                name: "Spanish",
+              },
+              targetLanguage: {
+                code: "vi",
+                name: "Vietnamese",
+              },
+              termCount: 1,
+              terms: [
+                {
+                  termId: "term-1",
+                  sourceTerms: ["alpha"],
+                  targetTerms: ["alpha"],
+                  notesToTranslators: "",
+                  footnote: "",
+                },
+              ],
+            };
+          },
+        };
+      });
+
+      const rowId = "fixture-row-0025";
+      await mountEditorFixture(page, {
+        rowCount: 60,
+        glossary: true,
+        chapterStatus: "ready",
+      }, { mockTauri: true });
+
+      await bringRowNearTop(page, rowId, 100);
+      const before = await waitForStableRowLayout(page, rowId);
+      expect(before).not.toBeNull();
+      // Let the debounced editor-location save settle.
+      await page.waitForTimeout(400);
+
+      await page.locator('[data-action="open-editor-glossary"]').click();
+      await expect(page.locator("h1.page-header__title")).toHaveText("Fixture Glossary");
+
+      // Return by re-mounting the translate fixture in-page (no reload, so the
+      // persisted location survives). This exercises the real persist-on-leave
+      // and restore-on-return render paths; the full `[data-nav-target=
+      // "translate"]` navigation additionally needs team-access and chapter
+      // reload mocks the harness does not have yet — upgrade this in redesign
+      // Phase 4 when editor-location is reworked.
+      await page.evaluate(async (fixtureOptions) => {
+        await window.__gnosisDebug.mountEditorFixture(fixtureOptions);
+      }, { rowCount: 60, glossary: true, chapterStatus: "ready" });
+      await expect(page.locator("[data-editor-search-input]")).toBeVisible();
+      await expect(page.locator(`[data-editor-row-card][data-row-id="${rowId}"]`)).toBeVisible();
+
+      // The restore aligns the saved anchor element exactly, but the re-mounted
+      // fixture lays out content above it slightly differently (async glossary
+      // marks), so the row top can drift a few px. Guard against "landed at the
+      // top" regressions, not pixel identity.
+      await expect.poll(async () => {
+        const after = await readSingleRowLayoutMetrics(page, rowId);
+        return after ? Math.abs(after.targetTop - before.targetTop) : Number.POSITIVE_INFINITY;
+      }).toBeLessThan(40);
+    });
+
+    test("guarantee 2: switching to preview mode and back restores the translate viewport", async ({ page }) => {
+      const rowId = "fixture-row-0020";
+      await mountEditorFixture(page, { rowCount: 60 }, { mockTauri: true });
+
+      await bringRowNearTop(page, rowId, 100);
+      const before = await waitForStableRowLayout(page, rowId);
+      expect(before).not.toBeNull();
+
+      await page.locator('[data-action="set-editor-mode:preview"]').click();
+      await expect(page.locator(".translate-layout--preview")).toBeVisible();
+
+      await page.locator('[data-action="set-editor-mode:translate"]').click();
+      await expect(page.locator(".translate-layout--preview")).toHaveCount(0);
+      await expect(page.locator(`[data-editor-row-card][data-row-id="${rowId}"]`)).toBeVisible();
+
+      await expect.poll(async () => {
+        const after = await readSingleRowLayoutMetrics(page, rowId);
+        return after ? Math.abs(after.targetTop - before.targetTop) : Number.POSITIVE_INFINITY;
+      }).toBeLessThan(STABLE_SCROLL_TOLERANCE_PX);
+    });
   });
 });

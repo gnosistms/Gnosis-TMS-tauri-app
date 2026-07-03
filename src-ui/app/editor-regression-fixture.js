@@ -5,6 +5,7 @@ import {
 } from "./editor-deleted-rows.js";
 import { normalizeStoredAiActionPreferences } from "./ai-action-config.js";
 import { buildEditorGlossaryModel } from "./editor-glossary-highlighting.js";
+import { setActiveStorageLogin } from "./team-storage.js";
 import {
   createEditorChapterGlossaryState,
   createEditorChapterState,
@@ -359,7 +360,9 @@ export function applyEditorRegressionFixture(appState, options = {}) {
   const editorChapter = {
     ...createEditorChapterState(),
     fixtureMode: FIXTURE_MODE,
-    status: "idle",
+    // "ready" opts a test into editor-location persistence (scroll save/restore
+    // across screen and mode switches), which requires a ready chapter.
+    status: options?.chapterStatus === "ready" ? "ready" : "idle",
     error: "",
     projectId,
     chapterId,
@@ -435,6 +438,9 @@ export function applyEditorRegressionFixture(appState, options = {}) {
     },
     pendingAutoOpenSingleTeam: false,
   };
+  // Login-scoped preferences (editor location, font size) silently no-op
+  // without an active storage login, which real auth normally sets.
+  setActiveStorageLogin("fixture-user");
   appState.offline = {
     ...appState.offline,
     checked: true,
