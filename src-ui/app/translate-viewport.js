@@ -1,7 +1,13 @@
 import { waitForNextPaint } from "./runtime.js";
+import { logEditorScrollDebug } from "./editor-scroll-debug.js";
+import {
+  isUserScrollBasisCurrent,
+  readUserScrollGeneration,
+} from "./editor-scroll-session.js";
 import {
   consumePrimedTranslateInteractionAnchor,
   consumePrimedTranslateMainScrollTop,
+  findTranslateAnchorElement,
   queueTranslateRowAnchor,
   resolveTranslateRowAnchor,
   restoreTranslateRowAnchor,
@@ -46,7 +52,19 @@ export function captureTranslateViewport(target = null, options = {}) {
       Number.isFinite(primedScrollTop)
         ? primedScrollTop
         : readTranslateMainScrollTop(),
+    // Arbitration basis: restores from this snapshot are refused once the
+    // user scrolls again (see editor-scroll-session.js), unless the restore
+    // is itself the user's current intent.
+    userScrollGeneration: readUserScrollGeneration(),
   };
+}
+
+function viewportRestoreBasisIsStale(viewportSnapshot, options = {}) {
+  if (options?.userIntent === true) {
+    return false;
+  }
+
+  return !isUserScrollBasisCurrent(viewportSnapshot?.userScrollGeneration);
 }
 
 export function restoreTranslateViewport(viewportSnapshot, options = {}) {
@@ -54,13 +72,37 @@ export function restoreTranslateViewport(viewportSnapshot, options = {}) {
     return;
   }
 
-  const container = document.querySelector(".translate-main-scroll");
-  if (isHtmlElement(container) && Number.isFinite(viewportSnapshot.scrollTop)) {
-    container.scrollTop = viewportSnapshot.scrollTop;
+  if (viewportRestoreBasisIsStale(viewportSnapshot, options)) {
+    logEditorScrollDebug("translate-viewport-restore-refused", {
+      reason: "stale-user-scroll-basis",
+      basisGeneration: viewportSnapshot.userScrollGeneration ?? null,
+      currentGeneration: readUserScrollGeneration(),
+      anchorRowId: viewportSnapshot.anchor?.rowId ?? "",
+    });
+    return;
   }
 
-  if (options?.skipAnchorRestore !== true && viewportSnapshot.anchor?.rowId) {
-    restoreTranslateRowAnchor(viewportSnapshot.anchor);
+  const container = document.querySelector(".translate-main-scroll");
+  if (!isHtmlElement(container)) {
+    return;
+  }
+
+  // Anchor-first: when the anchor element is mounted, aligning it is the
+  // whole restore — re-applying the raw scrollTop afterwards would undo the
+  // anchor correction whenever content height changed above the viewport.
+  // The raw offset is only the fallback for an unmounted anchor (the
+  // after-paint retries re-anchor once the virtualizer mounts it).
+  const anchor =
+    options?.skipAnchorRestore !== true && viewportSnapshot.anchor?.rowId
+      ? viewportSnapshot.anchor
+      : null;
+  if (anchor && findTranslateAnchorElement(anchor)) {
+    restoreTranslateRowAnchor(anchor);
+    return;
+  }
+
+  if (Number.isFinite(viewportSnapshot.scrollTop)) {
+    container.scrollTop = viewportSnapshot.scrollTop;
   }
 }
 
@@ -85,7 +127,8 @@ export function restoreTranslateViewportAfterPaints(viewportSnapshot, extraPaint
 
 export function renderTranslateBodyPreservingViewport(render, viewportSnapshot, options = {}) {
   const skipAnchorRestore = options?.skipAnchorRestore === true;
-  if (!skipAnchorRestore && viewportSnapshot?.anchor?.rowId) {
+  const staleBasis = viewportRestoreBasisIsStale(viewportSnapshot, options);
+  if (!skipAnchorRestore && !staleBasis && viewportSnapshot?.anchor?.rowId) {
     queueTranslateRowAnchor(viewportSnapshot.anchor);
   }
 
@@ -93,7 +136,19 @@ export function renderTranslateBodyPreservingViewport(render, viewportSnapshot, 
     scope: options.scope ?? "translate-body",
     ...(skipAnchorRestore ? { skipTranslateAnchorRestore: true } : {}),
   });
+  if (staleBasis) {
+    // The user scrolled since this snapshot was captured; the render above
+    // anchors to the current DOM instead of rewinding to the stale basis.
+    logEditorScrollDebug("translate-viewport-restore-refused", {
+      reason: "stale-user-scroll-basis-render",
+      basisGeneration: viewportSnapshot?.userScrollGeneration ?? null,
+      currentGeneration: readUserScrollGeneration(),
+      anchorRowId: viewportSnapshot?.anchor?.rowId ?? "",
+    });
+    return;
+  }
   restoreTranslateViewportAfterPaints(viewportSnapshot, options.extraPaints, {
     skipAnchorRestore,
+    ...(options.userIntent === true ? { userIntent: true } : {}),
   });
 }

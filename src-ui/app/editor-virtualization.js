@@ -8,8 +8,10 @@ import {
   EDITOR_USES_TANSTACK_VIRTUALIZER,
 } from "./editor-scroll-policy.js";
 import {
+  captureVisibleTranslateRowLocation,
   restoreTranslateRowAnchor,
 } from "./scroll-state.js";
+import { clearSessionAnchor, updateSessionAnchor } from "./editor-scroll-session.js";
 import { createEditorVisibleGlossarySync } from "./editor-visible-glossary-sync.js";
 import {
   EDITOR_VIRTUALIZATION_MIN_ROWS,
@@ -82,6 +84,7 @@ export function initializeEditorVirtualization(root, appState) {
   activeController = null;
 
   if (appState?.screen !== "translate") {
+    clearSessionAnchor();
     return;
   }
 
@@ -190,6 +193,10 @@ export function initializeEditorVirtualization(root, appState) {
       scrollTop: scrollContainer.scrollTop,
       rangeKey,
     });
+    updateSessionAnchor(
+      captureVisibleTranslateRowLocation(),
+      initialModel.editorChapter?.chapterId ?? initialModel.chapter?.id ?? "",
+    );
     glossarySync.schedule();
   };
 

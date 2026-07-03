@@ -346,15 +346,9 @@ export function resolveTranslateRowAnchor(target = null) {
   return null;
 }
 
-export function restoreTranslateRowAnchor(snapshot) {
+export function findTranslateAnchorElement(snapshot) {
   if (!snapshot?.rowId) {
-    pendingTranslateAnchor = null;
-    return false;
-  }
-
-  const container = document.querySelector(".translate-main-scroll");
-  if (!isHtmlElement(container)) {
-    return false;
+    return null;
   }
 
   let anchor = null;
@@ -380,6 +374,21 @@ export function restoreTranslateRowAnchor(snapshot) {
     anchor = document.querySelector(`[data-editor-row-card][data-row-id="${CSS.escape(snapshot.rowId)}"]`);
   }
 
+  return isHtmlElement(anchor) ? anchor : null;
+}
+
+export function restoreTranslateRowAnchor(snapshot) {
+  if (!snapshot?.rowId) {
+    pendingTranslateAnchor = null;
+    return false;
+  }
+
+  const container = document.querySelector(".translate-main-scroll");
+  if (!isHtmlElement(container)) {
+    return false;
+  }
+
+  const anchor = findTranslateAnchorElement(snapshot);
   if (!isHtmlElement(anchor)) {
     pendingTranslateAnchor = null;
     return false;

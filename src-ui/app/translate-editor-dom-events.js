@@ -9,6 +9,7 @@ import {
   primeTranslateMainScrollTop,
 } from "./scroll-state.js";
 import { captureTranslateViewport } from "./translate-viewport.js";
+import { noteUserScrollIntent } from "./editor-scroll-session.js";
 import { state } from "./state.js";
 import {
   collapseEditorMainField,
@@ -190,8 +191,74 @@ function displayFieldOffsetFromPoint(displayField, clientX, clientY) {
   return displayText.textContent?.length ?? 0;
 }
 
+const SCROLL_INTENT_KEYS = new Set([
+  "PageUp",
+  "PageDown",
+  "Home",
+  "End",
+  "ArrowUp",
+  "ArrowDown",
+  " ",
+]);
+
+// User scroll intent must come from input events: `scroll` events fire for
+// programmatic scrollTop writes too, so listening to them would let the app
+// treat its own restores as user scrolling. Listeners are delegated (checked
+// via closest) because the scroll container is destroyed and recreated on
+// every translate-body render.
+function registerTranslateScrollIntentEvents(app) {
+  const withinTranslateScroll = (target) =>
+    target instanceof Element && target.closest(".translate-main-scroll") !== null;
+
+  app.addEventListener("wheel", (event) => {
+    if (withinTranslateScroll(event.target)) {
+      noteUserScrollIntent("wheel");
+    }
+  }, { passive: true, capture: true });
+
+  app.addEventListener("touchmove", (event) => {
+    if (withinTranslateScroll(event.target)) {
+      noteUserScrollIntent("touch");
+    }
+  }, { passive: true, capture: true });
+
+  // A pointerdown whose target IS the scroll container (not a child) hits the
+  // scrollbar gutter — the start of a scrollbar drag.
+  app.addEventListener("pointerdown", (event) => {
+    if (
+      event.target instanceof HTMLElement
+      && event.target.classList.contains("translate-main-scroll")
+    ) {
+      noteUserScrollIntent("scrollbar");
+    }
+  }, { passive: true, capture: true });
+
+  app.addEventListener("keydown", (event) => {
+    if (!SCROLL_INTENT_KEYS.has(event.key)) {
+      return;
+    }
+
+    // Keys typed into editor fields edit text; they only scroll when focus is
+    // on the scroll container or a non-editing element inside it.
+    const target = event.target;
+    if (
+      target instanceof HTMLTextAreaElement
+      || target instanceof HTMLInputElement
+      || target instanceof HTMLSelectElement
+    ) {
+      return;
+    }
+
+    if (withinTranslateScroll(target)) {
+      noteUserScrollIntent("key");
+    }
+  }, { passive: true, capture: true });
+}
+
 export function registerTranslateEditorDomEvents(app, render) {
   let pendingImageUrlCloseRequest = null;
+
+  registerTranslateScrollIntentEvents(app);
 
   void onCurrentWebviewDragDrop((event) => {
     if (event?.payload?.type !== "drop") {

@@ -43,6 +43,11 @@ globalThis.window = {
     animationFrameQueue.push(callback);
     return animationFrameQueue.length;
   },
+  addEventListener() {},
+  setTimeout() {
+    return 1;
+  },
+  clearTimeout() {},
 };
 
 async function flushAnimationFrames(cycles = 8) {
@@ -56,9 +61,15 @@ async function flushAnimationFrames(cycles = 8) {
 
 const {
   cancelPendingTranslateViewportRestores,
+  captureTranslateViewport,
   restoreTranslateViewport,
   restoreTranslateViewportAfterPaints,
 } = await import("./translate-viewport.js");
+const {
+  noteUserScrollIntent,
+  readUserScrollGeneration,
+  resetEditorScrollSessionForTests,
+} = await import("./editor-scroll-session.js");
 
 test("viewport restore can skip unstable row-anchor correction", () => {
   container.scrollTop = 10;
@@ -102,4 +113,70 @@ test("viewport restores still run after paints when they are not canceled", asyn
   await flushAnimationFrames();
 
   assert.equal(container.scrollTop, 100);
+});
+
+test("captured viewports record the user scroll generation at capture time", () => {
+  resetEditorScrollSessionForTests();
+  noteUserScrollIntent("wheel");
+  noteUserScrollIntent("wheel");
+
+  const viewportSnapshot = captureTranslateViewport();
+
+  assert.equal(viewportSnapshot.userScrollGeneration, readUserScrollGeneration());
+  assert.equal(viewportSnapshot.userScrollGeneration, 2);
+});
+
+test("a restore from a snapshot older than the user's last scroll is refused", () => {
+  resetEditorScrollSessionForTests();
+  container.scrollTop = 300;
+  const viewportSnapshot = captureTranslateViewport();
+  assert.equal(viewportSnapshot.scrollTop, 300);
+
+  // The user scrolls after the snapshot was captured (e.g. while a queued
+  // write is in flight).
+  container.scrollTop = 900;
+  noteUserScrollIntent("wheel");
+
+  restoreTranslateViewport(viewportSnapshot);
+
+  assert.equal(container.scrollTop, 900);
+});
+
+test("delayed restores are refused when the user scrolls between paints", async () => {
+  resetEditorScrollSessionForTests();
+  animationFrameQueue = [];
+  container.scrollTop = 200;
+  const viewportSnapshot = captureTranslateViewport();
+
+  restoreTranslateViewportAfterPaints(viewportSnapshot, 2);
+  assert.equal(container.scrollTop, 200);
+
+  container.scrollTop = 700;
+  noteUserScrollIntent("wheel");
+  await flushAnimationFrames();
+
+  assert.equal(container.scrollTop, 700);
+});
+
+test("a user-intent restore applies even from a stale basis", () => {
+  resetEditorScrollSessionForTests();
+  container.scrollTop = 250;
+  const viewportSnapshot = captureTranslateViewport();
+
+  container.scrollTop = 800;
+  noteUserScrollIntent("wheel");
+
+  restoreTranslateViewport(viewportSnapshot, { userIntent: true });
+
+  assert.equal(container.scrollTop, 250);
+});
+
+test("snapshots without a recorded generation are never refused", () => {
+  resetEditorScrollSessionForTests();
+  noteUserScrollIntent("wheel");
+  container.scrollTop = 0;
+
+  restoreTranslateViewport({ scrollTop: 140 });
+
+  assert.equal(container.scrollTop, 140);
 });

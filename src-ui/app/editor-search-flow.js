@@ -190,7 +190,11 @@ function prepareEditorFilterViewportTransition(previousFilters, nextFilters) {
 function renderEditorFilterChange(render, viewportTransition) {
   render?.();
   if (viewportTransition?.restoreViewport) {
-    restoreTranslateViewportAfterPaints(viewportTransition.restoreViewport);
+    // Restoring the pre-filter viewport is the direct response to the user
+    // clearing the filter, so it bypasses stale-basis arbitration.
+    restoreTranslateViewportAfterPaints(viewportTransition.restoreViewport, undefined, {
+      userIntent: true,
+    });
     return;
   }
 

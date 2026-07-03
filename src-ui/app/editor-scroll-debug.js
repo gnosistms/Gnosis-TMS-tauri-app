@@ -165,7 +165,7 @@ export function clearEditorScrollDebugEntries() {
   }
 }
 
-if (typeof window === "object") {
+if (typeof window === "object" && typeof window.addEventListener === "function") {
   window.addEventListener("beforeunload", () => {
     if (queuedLines.length > 0) {
       void flushEditorScrollDebugLog();

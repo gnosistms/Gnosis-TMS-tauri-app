@@ -14,6 +14,12 @@ class FakeElement {
     this.scrollTop = options.scrollTop ?? 0;
     this.scrollLeft = options.scrollLeft ?? 0;
     this.clientHeight = options.clientHeight ?? 600;
+    // A physical element: when documentTop and a scroll container are given,
+    // the viewport rect tracks the container's scrollTop the way layout
+    // would, so anchor-delta scroll restores compute real corrections.
+    this.documentTop = Number.isFinite(options.documentTop) ? options.documentTop : null;
+    this.scrollContainer = options.scrollContainer ?? null;
+    this.height = options.height ?? this.clientHeight;
     this.rect = options.rect ?? {
       top: 0,
       bottom: this.clientHeight,
@@ -22,6 +28,15 @@ class FakeElement {
   }
 
   getBoundingClientRect() {
+    if (this.documentTop !== null && this.scrollContainer) {
+      const top = this.documentTop - this.scrollContainer.scrollTop;
+      return {
+        top,
+        bottom: top + this.height,
+        height: this.height,
+      };
+    }
+
     return this.rect;
   }
 
@@ -53,11 +68,11 @@ function installTranslateScrollDom(options = {}) {
     dataset: {
       rowId: options.rowId ?? "row-10",
     },
-    rect: {
-      top: rowTop,
-      bottom: rowTop + 60,
-      height: 60,
-    },
+    // Fixed document position chosen so the row sits at `rowTop` in the
+    // viewport at the initial scrollTop; it then moves with scrolling.
+    documentTop: (options.scrollTop ?? 480) + rowTop,
+    height: 60,
+    scrollContainer: container,
   });
 
   globalThis.CSS = {
