@@ -31,7 +31,6 @@ test("filtered editor row input updates the focused field in place without a bod
   const syncEditorRowTextareaHeight = createSpy();
   const syncEditorVirtualizationRowLayout = createSpy();
   const syncEditorGlossaryHighlightRowDom = createSpy();
-  const cancelPendingTranslateViewportRestores = createSpy();
   const renderTranslateBodyPreservingViewport = createSpy();
   const input = createInput();
 
@@ -43,12 +42,10 @@ test("filtered editor row input updates the focused field in place without a bod
     syncEditorRowTextareaHeight,
     syncEditorVirtualizationRowLayout,
     syncEditorGlossaryHighlightRowDom,
-    cancelPendingTranslateViewportRestores,
     renderTranslateBodyPreservingViewport,
   });
 
   assert.deepEqual(updateEditorRowFieldValue.calls, [["row-1", "es", "nuevo texto"]]);
-  assert.deepEqual(cancelPendingTranslateViewportRestores.calls, [[]]);
   assert.equal(render.calls.length, 0);
   assert.equal(renderTranslateBodyPreservingViewport.calls.length, 0);
   assert.deepEqual(syncEditorRowTextareaHeight.calls, [[input]]);
@@ -85,9 +82,6 @@ test("unfiltered editor row input keeps the local autosize and virtualization up
   const render = createSpy();
   const updateEditorRowFieldValue = createSpy();
   const callOrder = [];
-  const cancelPendingTranslateViewportRestores = () => {
-    callOrder.push(["cancel-viewport-restores"]);
-  };
   const syncEditorRowTextareaHeight = (...args) => {
     callOrder.push(["autosize", ...args]);
   };
@@ -110,13 +104,11 @@ test("unfiltered editor row input keeps the local autosize and virtualization up
     syncEditorRowTextareaHeight,
     syncEditorVirtualizationRowLayout,
     syncEditorGlossaryHighlightRowDom,
-    cancelPendingTranslateViewportRestores,
   });
 
   assert.deepEqual(updateEditorRowFieldValue.calls, [["row-1", "es", "nuevo texto"]]);
   assert.equal(render.calls.length, 0);
   assert.deepEqual(callOrder, [
-    ["cancel-viewport-restores"],
     ["autosize", input],
     ["glossary", "row-1"],
     ["virtualization", input],

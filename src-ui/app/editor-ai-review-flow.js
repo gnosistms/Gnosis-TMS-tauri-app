@@ -15,7 +15,6 @@ import {
   resolveAiReviewProviderAndModel,
 } from "./ai-settings-flow.js";
 import { ensureSelectedTeamAiProviderReady } from "./team-ai-flow.js";
-import { captureTranslateAnchorForRow } from "./scroll-state.js";
 import { findEditorRowById, hasActiveEditorField } from "./editor-utils.js";
 import { selectedProjectsTeam, selectedProjectsTeamInstallationId } from "./project-context.js";
 import {
@@ -31,10 +30,7 @@ import { loadAssistantTargetLanguageHistory } from "./editor-ai-assistant-flow.j
 import { invoke } from "./runtime.js";
 import { state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
-import {
-  captureTranslateViewport,
-  renderTranslateBodyPreservingViewport,
-} from "./translate-viewport.js";
+import { renderEditorRowScoped } from "./editor-row-scoped-render.js";
 
 function createAiReviewRequestKey(chapterId, rowId, languageCode) {
   const uniqueSuffix =
@@ -356,12 +352,6 @@ export async function applyEditorAiReview(render, operations = {}) {
   state.editorChapter = applyEditorAiReviewApplying(state.editorChapter);
   render?.({ scope: "translate-sidebar" });
 
-  const reviewViewportSnapshot = captureTranslateViewport(null, {
-    fallbackAnchor: captureTranslateAnchorForRow(
-      context.rowId,
-      context.languageCode,
-    ),
-  });
   try {
     if (visibleAiReview.suggestedText?.trim()) {
       updateEditorRowFieldValue(
@@ -386,7 +376,7 @@ export async function applyEditorAiReview(render, operations = {}) {
         "image-caption",
       );
     }
-    renderTranslateBodyPreservingViewport(render, reviewViewportSnapshot);
+    renderEditorRowScoped(render, context.rowId, "ai-review-applied");
 
     const queued = await persistEditorRowOnBlur(render, context.rowId, {
       waitForDurable: false,

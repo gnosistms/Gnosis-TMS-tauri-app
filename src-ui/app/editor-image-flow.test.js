@@ -292,7 +292,11 @@ test("submitEditorImageUrl clears an empty draft back to the pre-open state", as
     urlErrorMessage: "",
     status: "idle",
   });
-  assert.deepEqual(render.calls, [[{ scope: "translate-body" }]]);
+  assert.deepEqual(render.calls, [[{
+    scope: "translate-visible-rows",
+    rowIds: ["row-1"],
+    reason: render.calls[0][0].reason,
+  }]]);
   assert.equal(invokeLog.length, 0);
 });
 
@@ -555,7 +559,11 @@ test("dismissActiveIdleEditorImageUpload clears an idle upload editor back to th
     urlErrorMessage: "",
     status: "idle",
   });
-  assert.deepEqual(render.calls, [[{ scope: "translate-body" }]]);
+  assert.deepEqual(render.calls, [[{
+    scope: "translate-visible-rows",
+    rowIds: ["row-1"],
+    reason: render.calls[0][0].reason,
+  }]]);
 });
 
 test("dismissActiveIdleEditorImageUpload keeps active upload work in place", () => {
@@ -619,6 +627,78 @@ test("removeEditorLanguageImage stays clickable while row text save is pending",
 
   assert.equal(invokeLog.at(-1)?.command, "remove_gtms_editor_language_image");
   assert.equal(state.editorChapter.rows[0].images.vi, undefined);
+});
+
+test("removeEditorLanguageImage renders only the affected row and never writes scroll", async () => {
+  installEditorFixture();
+  installFixtureImage("https://example.com/remove-me.png");
+
+  // Row patching preserves the viewport by construction: the flow must not
+  // remount the body or write the scroll container's scrollTop at all.
+  const scrollWrites = [];
+  const container = new (class extends globalThis.HTMLElement {
+    constructor() {
+      super();
+      this._scrollTop = 240;
+      this.scrollLeft = 0;
+      this.clientHeight = 600;
+    }
+
+    get scrollTop() {
+      return this._scrollTop;
+    }
+
+    set scrollTop(value) {
+      scrollWrites.push(value);
+      this._scrollTop = value;
+    }
+
+    getBoundingClientRect() {
+      return { top: 0, bottom: 600, height: 600 };
+    }
+  })();
+  const originalQuerySelector = fakeDocument.querySelector;
+  fakeDocument.querySelector = (selector) => {
+    if (selector === ".translate-main-scroll") {
+      return container;
+    }
+    return selector === "#app" ? fakeApp : null;
+  };
+
+  const render = createRenderSpy();
+
+  invokeHandler = async (command) => {
+    assert.equal(command, "remove_gtms_editor_language_image");
+    return {
+      status: "saved",
+      row: {
+        ...state.editorChapter.rows[0],
+        images: {},
+      },
+      chapterBaseCommitSha: "abc123",
+    };
+  };
+
+  const {
+    removeEditorLanguageImage,
+  } = await import("./editor-image-flow.js");
+
+  try {
+    await removeEditorLanguageImage(render, "row-1", "vi", { updateEditorChapterRow });
+
+    assert.ok(render.calls.length > 0);
+    for (const [options] of render.calls) {
+      if (options?.scope === "translate-sidebar") {
+        continue;
+      }
+      assert.equal(options?.scope, "translate-visible-rows");
+      assert.deepEqual(options?.rowIds, ["row-1"]);
+    }
+    assert.deepEqual(scrollWrites, []);
+    assert.equal(container.scrollTop, 240);
+  } finally {
+    fakeDocument.querySelector = originalQuerySelector;
+  }
 });
 
 test("handleDroppedEditorImageFile applies a saved uploaded image to the editor row", async () => {

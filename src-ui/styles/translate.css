@@ -353,7 +353,13 @@
   scrollbar-color: rgba(164, 112, 41, 0.32) transparent;
 }
 
-.app-platform--windows .translate-main-scroll {
+/* The editor owns all scroll compensation (anchor restores, virtualizer
+   adjustments). Native scroll anchoring is a competing corrector: Chromium
+   engines silently shift scrollTop when row heights change above the
+   viewport, and our anchor restores then pin the shifted position. Disable
+   it everywhere — WebView2 on Windows and browser-harness Chrome are
+   Chromium too, and WKWebView ignores the property. */
+.translate-main-scroll {
   overflow-anchor: none;
 }
 

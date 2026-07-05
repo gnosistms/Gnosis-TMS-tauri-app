@@ -4,9 +4,6 @@ import { escapeHtml } from "./editor-inline-markup/serialize.js";
 import { findElementContainingSelection } from "./editor-inline-markup/ranges.js";
 import { buildEditorFieldSelector } from "./editor-utils.js";
 import { createEditorInsertLinkModalState, state } from "./state.js";
-import {
-  cancelPendingTranslateViewportRestores,
-} from "./translate-viewport.js";
 
 function languageClusterForButton(button) {
   return button?.closest?.("[data-editor-language-cluster]") ?? null;
@@ -278,7 +275,6 @@ export function submitEditorInsertLink(render, operations = {}) {
     syncEditorRowTextareaHeight: operations.syncEditorRowTextareaHeight,
     syncEditorVirtualizationRowLayout: operations.syncEditorVirtualizationRowLayout,
     syncEditorGlossaryHighlightRowDom: operations.syncEditorGlossaryHighlightRowDom,
-    cancelPendingTranslateViewportRestores,
   });
 
   setInsertLinkModalState(null);

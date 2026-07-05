@@ -64,12 +64,17 @@ import { refreshCurrentScreen as refreshCurrentScreenFlow } from "./app/navigati
 import {
   captureRenderScrollSnapshot,
   captureVisibleTranslateLocation,
+  captureVisibleTranslateRowLocation,
   queueTranslateRowAnchor,
   readPendingTranslateAnchor,
   resolveTranslateRowAnchor,
   restoreRenderScrollSnapshot,
   restoreTranslateRowAnchor,
 } from "./app/scroll-state.js";
+import {
+  readSessionAnchor,
+  updateSessionAnchor,
+} from "./app/editor-scroll-session.js";
 import {
   createEditorPendingSelectionState,
   hydratePersistentAppState,
@@ -390,12 +395,35 @@ function resolveTranslateRenderAnchor(options = {}) {
     };
   }
 
+  // Default-safe fallback: the continuously maintained session anchor makes
+  // every translate render viewport-preserving even when the mutation that
+  // triggered it did not capture its own snapshot.
+  const sessionAnchor = readSessionAnchor(state.editorChapter?.chapterId ?? "");
+  if (sessionAnchor?.rowId) {
+    return {
+      anchor: sessionAnchor,
+      hadPendingAnchor: false,
+      usedVisibleFallback: false,
+    };
+  }
+
   const visibleAnchor = includeVisibleFallback ? captureVisibleTranslateLocation() : null;
   return {
     anchor: visibleAnchor,
     hadPendingAnchor: false,
     usedVisibleFallback: Boolean(visibleAnchor?.rowId),
   };
+}
+
+function refreshTranslateSessionAnchorAfterRender() {
+  if (state.screen !== "translate") {
+    return;
+  }
+
+  updateSessionAnchor(
+    captureVisibleTranslateRowLocation(),
+    state.editorChapter?.chapterId ?? "",
+  );
 }
 
 // A filtered body re-render rebuilds the focused row from scratch, so the new
@@ -473,6 +501,7 @@ function renderTranslateBodyOnly(options = {}) {
   restorePendingEditorSelection(body);
   restoreAssistantTranscriptScrollTop(assistantTranscriptScrollTop, app);
   scrollActivePreviewSearchMatchIntoView(body);
+  refreshTranslateSessionAnchorAfterRender();
 }
 
 function renderTranslateSidebarOnly() {
@@ -536,9 +565,13 @@ function renderTranslateHeaderOnly() {
 }
 
 function renderTranslateVisibleRowsOnly(options = {}) {
-  return patchMountedEditorRows(app, state, options?.rowIds, {
+  const patchResult = patchMountedEditorRows(app, state, options?.rowIds, {
     reason: options?.reason,
   });
+  // Main-field activation renders through row patches too, so the pending
+  // caret placement must apply here just like after a body render.
+  restorePendingEditorSelection(app);
+  return patchResult;
 }
 
 function renderTranslateAiTranslateAllModalOnly() {
@@ -736,6 +769,7 @@ function renderWithOptions(options = {}) {
   scrollActivePreviewSearchMatchIntoView(app);
   syncLanguagePickerAlphabetIndexes(app);
   restoreTargetLanguageManagerPickerScrollTop(targetLanguageManagerPickerScrollTop);
+  refreshTranslateSessionAnchorAfterRender();
   document.title = titles[state.screen] ?? "Gnosis TMS";
   syncTauriEditorCloseGuardRegistration();
 }

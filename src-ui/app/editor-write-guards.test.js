@@ -249,7 +249,8 @@ test("flushDirtyEditorRows removes empty unreferenced footnotes from live state 
   assert.equal(flushed, true);
   assert.deepEqual(state.editorChapter.rows[0].footnotes.es, [{ marker: 1, text: "kept note" }]);
   assert.deepEqual(invokeLog, []);
-  assert.ok(renderScopes.includes("translate-body"));
+  // Row-scoped mutations render via row patching (scroll redesign P3).
+  assert.ok(renderScopes.includes("translate-visible-rows"));
 });
 
 test("collapseEmptyEditorFootnote removes only the active empty unreferenced footnote", () => {
@@ -289,7 +290,8 @@ test("collapseEmptyEditorFootnote removes only the active empty unreferenced foo
     languageCode: null,
     marker: null,
   });
-  assert.ok(renderScopes.includes("translate-body"));
+  // Row-scoped mutations render via row patching (scroll redesign P3).
+  assert.ok(renderScopes.includes("translate-visible-rows"));
 });
 
 test("collapseEmptyEditorFootnote closes a referenced empty active footnote without deleting it", () => {
@@ -1334,7 +1336,8 @@ test("updateEditorRowTextStyle rerenders the active-row sidebar for live review 
   );
   await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
 
-  assert.ok(renderScopes.includes("translate-body"));
+  // Row-scoped mutations render via row patching (scroll redesign P3).
+  assert.ok(renderScopes.includes("translate-visible-rows"));
   assert.ok(renderScopes.includes("translate-sidebar"));
 });
 

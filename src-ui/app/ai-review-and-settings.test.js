@@ -802,7 +802,7 @@ test("runEditorAiTranslate auto-applies without waiting for durable row persiste
   assert.ok(
     renderCalls.some(
       ({ request, status, targetText }) =>
-        request?.scope === "translate-body" &&
+        request?.scope === "translate-visible-rows" &&
         status === "idle" &&
         targetText === "Xin chao",
     ),
@@ -959,7 +959,7 @@ test("runEditorAiTranslate keeps first-run team AI setup renders scoped to the e
   assert.equal(
     startupRenderCalls.every(([options]) =>
       options
-      && (options.scope === "translate-sidebar" || options.scope === "translate-body")
+      && (options.scope === "translate-sidebar" || options.scope === "translate-visible-rows")
     ),
     true,
   );

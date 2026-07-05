@@ -47,10 +47,11 @@ function readBrowserStorageEntries() {
         continue;
       }
 
-      entries[key] = JSON.parse(rawValue);
+      entries[key.slice(BROWSER_STORAGE_KEY_PREFIX.length)] = JSON.parse(rawValue);
     } catch {
       try {
-        entries[key] = window.localStorage?.getItem(key);
+        entries[key.slice(BROWSER_STORAGE_KEY_PREFIX.length)] =
+          window.localStorage?.getItem(key);
       } catch {}
     }
   }
@@ -117,7 +118,10 @@ export function writePersistentValue(key, value) {
   }
 
   try {
-    window.localStorage?.setItem(key, JSON.stringify(memoryState[key]));
+    window.localStorage?.setItem(
+      BROWSER_STORAGE_KEY_PREFIX + key,
+      JSON.stringify(memoryState[key]),
+    );
   } catch {}
 }
 
@@ -130,6 +134,6 @@ export function removePersistentValue(key) {
   }
 
   try {
-    window.localStorage?.removeItem(key);
+    window.localStorage?.removeItem(BROWSER_STORAGE_KEY_PREFIX + key);
   } catch {}
 }

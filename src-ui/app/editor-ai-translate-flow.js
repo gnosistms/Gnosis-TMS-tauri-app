@@ -27,9 +27,6 @@ import {
   resolveEditorDerivedGlossaryUsage,
   resolveLanguageCode,
 } from "./editor-derived-glossary-flow.js";
-import {
-  captureTranslateAnchorForRow,
-} from "./scroll-state.js";
 import { selectedProjectsTeam, selectedProjectsTeamInstallationId } from "./project-context.js";
 import { invoke } from "./runtime.js";
 import { showNoticeBadge } from "./status-feedback.js";
@@ -46,10 +43,7 @@ import {
   languageBaseCodesMatch,
   languageSemanticLabel,
 } from "./editor-language-utils.js";
-import {
-  captureTranslateViewport,
-  renderTranslateBodyPreservingViewport,
-} from "./translate-viewport.js";
+import { renderEditorRowScoped } from "./editor-row-scoped-render.js";
 
 function createAiTranslateRequestKey(
   chapterId,
@@ -264,50 +258,8 @@ function activeEditorTranslateContext(chapterState = state.editorChapter) {
   return buildEditorAiTranslateContext(chapterState);
 }
 
-function captureEditorAiTranslateAnchor(context) {
-  if (!context) {
-    return null;
-  }
-
-  return (
-    captureTranslateAnchorForRow(context.rowId, context.targetLanguageCode, { preferRow: true })
-    ?? captureTranslateAnchorForRow(context.rowId, context.sourceLanguageCode, { preferRow: true })
-  );
-}
-
-function captureEditorAiTranslateViewport(context, options = {}) {
-  const stableAnchor = captureEditorAiTranslateAnchor(context);
-  const viewportSnapshot = captureTranslateViewport(null, {
-    preferPrimed: options.preferPrimed === true,
-    expectedRowId: context?.rowId ?? "",
-    fallbackAnchor: stableAnchor,
-  });
-  if (stableAnchor?.rowId) {
-    viewportSnapshot.anchor = stableAnchor;
-  }
-  return viewportSnapshot;
-}
-
-function renderEditorAiTranslateBody(render, viewportSnapshot = null) {
-  renderTranslateBodyPreservingViewport(render, viewportSnapshot);
-}
-
 function renderEditorAiTranslateRow(render, context, options = {}) {
-  if (options.renderMode === "visible-rows") {
-    render?.({
-      scope: "translate-visible-rows",
-      rowIds: [context.rowId],
-      reason: options.reason ?? "ai-translate",
-    });
-    return;
-  }
-
-  renderEditorAiTranslateBody(
-    render,
-    captureEditorAiTranslateViewport(context, {
-      preferPrimed: options.preferPrimed === true,
-    }),
-  );
+  renderEditorRowScoped(render, context?.rowId, options.reason ?? "ai-translate");
 }
 
 function createEditorAiTranslateConfigRender(render) {
@@ -349,7 +301,7 @@ function failEditorAiTranslate(render, actionId, context, message, options = {})
   );
   render?.({ scope: "translate-sidebar" });
   if (options.rerenderBody === true) {
-    renderEditorAiTranslateBody(render, captureEditorAiTranslateViewport(context));
+    renderEditorAiTranslateRow(render, context, { reason: "ai-translate-failed" });
   }
 }
 
@@ -449,18 +401,8 @@ export async function runEditorAiTranslateForContext(
     requestKey,
     context.sourceText,
   );
-  const loadingViewportSnapshot = captureEditorAiTranslateViewport(context, {
-    preferPrimed: true,
-  });
   render?.({ scope: "translate-sidebar" });
-  if (options.renderMode === "visible-rows") {
-    renderEditorAiTranslateRow(render, context, {
-      renderMode: "visible-rows",
-      reason: "ai-translate-loading",
-    });
-  } else {
-    renderEditorAiTranslateBody(render, loadingViewportSnapshot);
-  }
+  renderEditorAiTranslateRow(render, context, { reason: "ai-translate-loading" });
 
   const usedStoredTeamActionPreferences = applyStoredSelectedTeamAiActionPreferences(configRender);
   try {

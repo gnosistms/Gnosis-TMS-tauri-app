@@ -1,10 +1,9 @@
 import { buildEditorFieldSelector } from "./editor-utils.js";
+import { noteUserScrollIntent } from "./editor-scroll-session.js";
 
 let lockedScreen = null;
 let lockedSnapshot = null;
 let pendingTranslateAnchor = null;
-let primedTranslateInteractionAnchor = null;
-let primedTranslateMainScrollTop = null;
 
 function isHtmlElement(value) {
   return typeof HTMLElement === "function" && value instanceof HTMLElement;
@@ -248,39 +247,6 @@ export function captureLanguageToggleVisibilityAnchor(
   return snapshot;
 }
 
-export function primeTranslateInteractionAnchor(target = null) {
-  const snapshot = resolveTranslateRowAnchor(target);
-  primedTranslateInteractionAnchor = snapshot;
-  return snapshot;
-}
-
-export function primeTranslateMainScrollTop() {
-  primedTranslateMainScrollTop = readTranslateMainScrollTop();
-  return primedTranslateMainScrollTop;
-}
-
-export function consumePrimedTranslateMainScrollTop() {
-  const scrollTop = primedTranslateMainScrollTop;
-  primedTranslateMainScrollTop = null;
-  return Number.isFinite(scrollTop) ? scrollTop : null;
-}
-
-export function consumePrimedTranslateInteractionAnchor(expectedRowId = "") {
-  const snapshot = primedTranslateInteractionAnchor;
-  primedTranslateInteractionAnchor = null;
-  if (!snapshot?.rowId) {
-    return null;
-  }
-
-  if (expectedRowId && snapshot.rowId !== expectedRowId) {
-    return null;
-  }
-
-  return {
-    ...snapshot,
-  };
-}
-
 export function resolveTranslateRowAnchor(target = null) {
   const source = target instanceof Element ? target : document.activeElement;
   const container = document.querySelector(".translate-main-scroll");
@@ -346,15 +312,9 @@ export function resolveTranslateRowAnchor(target = null) {
   return null;
 }
 
-export function restoreTranslateRowAnchor(snapshot) {
+export function findTranslateAnchorElement(snapshot) {
   if (!snapshot?.rowId) {
-    pendingTranslateAnchor = null;
-    return false;
-  }
-
-  const container = document.querySelector(".translate-main-scroll");
-  if (!isHtmlElement(container)) {
-    return false;
+    return null;
   }
 
   let anchor = null;
@@ -380,6 +340,21 @@ export function restoreTranslateRowAnchor(snapshot) {
     anchor = document.querySelector(`[data-editor-row-card][data-row-id="${CSS.escape(snapshot.rowId)}"]`);
   }
 
+  return isHtmlElement(anchor) ? anchor : null;
+}
+
+export function restoreTranslateRowAnchor(snapshot) {
+  if (!snapshot?.rowId) {
+    pendingTranslateAnchor = null;
+    return false;
+  }
+
+  const container = document.querySelector(".translate-main-scroll");
+  if (!isHtmlElement(container)) {
+    return false;
+  }
+
+  const anchor = findTranslateAnchorElement(snapshot);
   if (!isHtmlElement(anchor)) {
     pendingTranslateAnchor = null;
     return false;
@@ -430,6 +405,8 @@ export function centerTranslateRowInView(rowId) {
     return false;
   }
 
+  // Deliberate jump: anchors captured before it must go stale.
+  noteUserScrollIntent("center-row");
   container.scrollTop += scrollDelta;
   pendingTranslateAnchor = null;
   return true;

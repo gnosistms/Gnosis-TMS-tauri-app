@@ -194,14 +194,8 @@ import {
   hideNavigationLoadingModal,
   showNavigationLoadingModal,
 } from "./navigation-loading.js";
-import {
-  captureTranslateAnchorForRow,
-} from "./scroll-state.js";
 import { syncEditorVirtualizationRowLayout } from "./editor-virtualization.js";
-import {
-  captureTranslateViewport,
-  renderTranslateBodyPreservingViewport,
-} from "./translate-viewport.js";
+import { renderEditorRowScoped } from "./editor-row-scoped-render.js";
 import {
   coerceEditorFontSizePx,
   createEditorMainFieldEditorState,
@@ -250,14 +244,6 @@ function buildEditorPendingSelection(rowId, languageCode, offset) {
   };
 }
 
-function resolveEditorMainFieldViewportSnapshot(rowId, languageCode, options = {}) {
-  return options.viewportSnapshot ?? captureTranslateViewport(options.target ?? null, {
-    preferPrimed: true,
-    expectedRowId: rowId,
-    fallbackAnchor: captureTranslateAnchorForRow(rowId, languageCode),
-  });
-}
-
 export function openEditorReplaceUndoModal(commitSha) {
   openEditorReplaceUndoModalFlow(commitSha);
 }
@@ -297,7 +283,7 @@ export function loadActiveEditorRowComments(render) {
   loadActiveEditorRowCommentsFlow(render);
 }
 
-export function collapseEditorMainField(render, rowId, languageCode, options = {}) {
+export function collapseEditorMainField(render, rowId, languageCode) {
   if (!rowId || !languageCode || !editorMainFieldMatches(rowId, languageCode)) {
     return;
   }
@@ -308,10 +294,31 @@ export function collapseEditorMainField(render, rowId, languageCode, options = {
     pendingSelection: createEditorPendingSelectionState(),
   };
 
-  renderTranslateBodyPreservingViewport(
-    render,
-    resolveEditorMainFieldViewportSnapshot(rowId, languageCode, options),
-  );
+  renderEditorRowScoped(render, rowId, "main-field-collapse");
+}
+
+// Logical identity of the focused text control, stable across DOM remounts.
+// Empty string when focus is not on a text-editing control (body, buttons).
+function describeFocusedTextControl() {
+  const activeElement = typeof document !== "undefined" ? document.activeElement : null;
+  if (!(activeElement instanceof HTMLElement)) {
+    return "";
+  }
+
+  const isTextControl =
+    activeElement instanceof HTMLTextAreaElement
+    || activeElement instanceof HTMLInputElement
+    || activeElement.isContentEditable === true;
+  if (!isTextControl) {
+    return "";
+  }
+
+  const cluster = activeElement.closest("[data-editor-language-cluster]");
+  if (cluster instanceof HTMLElement) {
+    return `cluster:${cluster.dataset.rowId ?? ""}:${cluster.dataset.languageCode ?? ""}`;
+  }
+
+  return `control:${activeElement.getAttributeNames().filter((name) => name.startsWith("data-")).join(",")}`;
 }
 
 export async function setActiveEditorField(render, rowId, languageCode, options = {}) {
@@ -319,7 +326,20 @@ export async function setActiveEditorField(render, rowId, languageCode, options 
     return;
   }
 
+  const focusBeforeActivation = describeFocusedTextControl();
   if (!(await ensureEditorRowReadyForActivation(render, rowId, options))) {
+    return;
+  }
+
+  // A slow row load must not resurrect editing controls after the user moved
+  // on: if focus landed on a different text control while we waited (search
+  // box, another row), this activation is superseded.
+  const focusAfterActivation = describeFocusedTextControl();
+  if (
+    focusAfterActivation !== focusBeforeActivation
+    && focusAfterActivation !== ""
+    && focusAfterActivation !== `cluster:${rowId}:${languageCode}`
+  ) {
     return;
   }
 
@@ -336,6 +356,8 @@ export async function setActiveEditorField(render, rowId, languageCode, options 
       ? options.pendingSelectionOffset
       : null;
   const wasEditorOpen = editorMainFieldMatches(rowId, languageCode);
+  const previousMainFieldRowId = state.editorChapter.mainFieldEditor?.rowId ?? null;
+  const previousActiveRowId = state.editorChapter.activeRowId ?? null;
   const isSameSelection =
     state.editorChapter.activeRowId === rowId
     && state.editorChapter.activeLanguageCode === languageCode;
@@ -370,10 +392,13 @@ export async function setActiveEditorField(render, rowId, languageCode, options 
     shouldOpenEditor
     && (!wasEditorOpen || !isSameSelection || pendingSelectionOffset !== null);
   if (shouldRenderBody) {
-    renderTranslateBodyPreservingViewport(
+    // Activation touches the newly active row plus the rows losing their
+    // open-editor and active states; patching them avoids the body remount
+    // that raced blur-saves and dropped clicks mid-activation.
+    renderEditorRowScoped(
       render,
-      resolveEditorMainFieldViewportSnapshot(rowId, languageCode, options),
-      { extraPaints: 0, skipAnchorRestore: true },
+      [rowId, previousMainFieldRowId, previousActiveRowId],
+      "main-field-activate",
     );
   }
   if (state.editorChapter.sidebarTab === "comments") {
@@ -930,23 +955,18 @@ export function submitEditorInsertLink(render) {
   });
 }
 
-export function openEditorFootnote(render, rowId, languageCode, options = {}) {
+export function openEditorFootnote(render, rowId, languageCode) {
   openEditorFootnoteFlow(render, rowId, languageCode, {
-    viewportSnapshot: resolveEditorMainFieldViewportSnapshot(rowId, languageCode, options),
     updateEditorChapterRow,
   });
 }
 
-export function openEditorFootnoteEntry(render, rowId, languageCode, marker, options = {}) {
-  openEditorFootnoteEntryFlow(render, rowId, languageCode, marker, {
-    viewportSnapshot: resolveEditorMainFieldViewportSnapshot(rowId, languageCode, options),
-  });
+export function openEditorFootnoteEntry(render, rowId, languageCode, marker) {
+  openEditorFootnoteEntryFlow(render, rowId, languageCode, marker);
 }
 
-export function openEditorImageCaption(render, rowId, languageCode, options = {}) {
-  openEditorImageCaptionFlow(render, rowId, languageCode, {
-    viewportSnapshot: resolveEditorMainFieldViewportSnapshot(rowId, languageCode, options),
-  });
+export function openEditorImageCaption(render, rowId, languageCode) {
+  openEditorImageCaptionFlow(render, rowId, languageCode);
 }
 
 export function collapseEmptyEditorFootnote(render, rowId, languageCode, options = {}) {
@@ -1081,16 +1101,13 @@ export async function replaceSelectedEditorRows(render) {
   });
 }
 
-export async function toggleEditorRowFieldMarker(render, rowId, languageCode, kind, options = {}) {
+export async function toggleEditorRowFieldMarker(render, rowId, languageCode, kind) {
   await toggleEditorRowFieldMarkerFlow(
     render,
     rowId,
     languageCode,
     kind,
     editorPersistenceOperations(),
-    {
-      viewportSnapshot: resolveEditorMainFieldViewportSnapshot(rowId, languageCode, options),
-    },
   );
 }
 

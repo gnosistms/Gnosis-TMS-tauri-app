@@ -83,9 +83,7 @@ import {
   projectRepoScope,
   publishRepoInvalidation,
 } from "./repo-write-queue.js";
-import {
-  renderTranslateBodyPreservingViewport,
-} from "./translate-viewport.js";
+import { renderEditorRowScoped } from "./editor-row-scoped-render.js";
 
 const pendingEditorDirtyRowScanFrameByRowId = new Map();
 const pendingEditorRowCommitMetadataByRowId = new Map();
@@ -734,7 +732,7 @@ export function openEditorFootnote(render, rowId, languageCode, options = {}) {
       marker,
     },
   };
-  renderTranslateBodyPreservingViewport(render, options?.viewportSnapshot ?? null);
+  renderEditorRowScoped(render, rowId, "footnote-open");
 
   if (typeof window !== "undefined") {
     window.requestAnimationFrame(() => {
@@ -775,7 +773,7 @@ export function openEditorFootnoteEntry(render, rowId, languageCode, marker, opt
       marker: normalizedMarker,
     },
   };
-  renderTranslateBodyPreservingViewport(render, options?.viewportSnapshot ?? null);
+  renderEditorRowScoped(render, rowId, "footnote-entry-open");
 
   if (typeof window !== "undefined") {
     window.requestAnimationFrame(() => {
@@ -815,7 +813,7 @@ export function openEditorImageCaption(render, rowId, languageCode, options = {}
       languageCode,
     },
   };
-  renderTranslateBodyPreservingViewport(render, options?.viewportSnapshot ?? null);
+  renderEditorRowScoped(render, rowId, "image-caption-open");
 
   if (typeof window !== "undefined") {
     window.requestAnimationFrame(() => {
@@ -883,7 +881,7 @@ export function collapseEmptyEditorFootnote(render, rowId, languageCode, options
     ...state.editorChapter,
     footnoteEditor: createEditorFootnoteEditorState(),
   };
-  renderTranslateBodyPreservingViewport(render, options?.viewportSnapshot ?? null);
+  renderEditorRowScoped(render, rowId, "footnote-collapse");
 }
 
 export function collapseEditorImageCaption(render, rowId, languageCode) {
@@ -909,7 +907,7 @@ export function collapseEditorImageCaption(render, rowId, languageCode) {
     ...state.editorChapter,
     imageCaptionEditor: createEditorImageCaptionEditorState(),
   };
-  render?.({ scope: "translate-body" });
+  renderEditorRowScoped(render, rowId, "image-caption-collapse");
 }
 
 export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, operations = {}) {
@@ -986,7 +984,7 @@ export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, ope
 
   const renderStyleChange = (options = {}) => {
     if (options.preserveActiveEditorUndo !== true || !activeEditorRowFieldIsFocused()) {
-      render?.({ scope: "translate-body" });
+      renderEditorRowScoped(render, rowId, "text-style-change");
     }
     if (state.editorChapter?.activeRowId === rowId) {
       render?.({ scope: "translate-sidebar" });
@@ -1173,7 +1171,6 @@ export async function toggleEditorRowFieldMarker(
   }
 
   const previousFieldState = currentFieldState;
-  const viewportSnapshot = options?.viewportSnapshot ?? null;
 
   if (rowHasFieldChanges(row)) {
     const queued = await persistEditorRowOnBlur(render, rowId, operations, { waitForDurable: false });
@@ -1247,7 +1244,7 @@ export async function toggleEditorRowFieldMarker(
       if (previousOperation?.status === "queued") {
         reconcileDirtyTrackedEditorRows([rowId]);
       }
-      renderTranslateBodyPreservingViewport(render, viewportSnapshot);
+      renderEditorRowScoped(render, rowId, "marker-optimistic");
       render?.({ scope: "translate-sidebar" });
     },
     run: async (operation) => {
@@ -1278,7 +1275,7 @@ export async function toggleEditorRowFieldMarker(
         chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
       };
       reconcileDirtyTrackedEditorRows([value.rowId]);
-      renderTranslateBodyPreservingViewport(render, viewportSnapshot);
+      renderEditorRowScoped(render, value.rowId, "marker-saved");
       render?.({ scope: "translate-sidebar" });
 
       if (
@@ -1305,7 +1302,7 @@ export async function toggleEditorRowFieldMarker(
           ),
         );
         reconcileDirtyTrackedEditorRows([value.rowId]);
-        renderTranslateBodyPreservingViewport(render, viewportSnapshot);
+        renderEditorRowScoped(render, value.rowId, "marker-save-failed");
         render?.({ scope: "translate-sidebar" });
       }
       showNoticeBadge(message || "The review marker could not be saved.", render);
@@ -1843,7 +1840,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
   const normalizedRow = normalizeEditorRowFootnotesBeforePersist(row);
   if (normalizedRow !== row) {
     row = updateEditorChapterRow(rowId, () => normalizedRow) ?? normalizedRow;
-    render?.({ scope: "translate-body" });
+    renderEditorRowScoped(render, rowId, "footnote-normalized");
   }
 
   if (!rowHasFieldChanges(row)) {

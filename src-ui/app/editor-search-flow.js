@@ -25,6 +25,7 @@ import {
 } from "./editor-utils.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import { waitForNextPaint } from "./runtime.js";
+import { noteUserScrollIntent, readSessionAnchor } from "./editor-scroll-session.js";
 import { state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import {
@@ -40,18 +41,14 @@ import {
 } from "./editor-queued-write.js";
 import { projectRepoScope } from "./repo-write-queue.js";
 import {
-  consumePrimedTranslateInteractionAnchor,
-  consumePrimedTranslateMainScrollTop,
   captureVisibleTranslateLocation,
   captureTranslateRowAnchor,
   centerTranslateRowInView,
+  findTranslateAnchorElement,
   queueTranslateRowAnchor,
+  readTranslateMainScrollTop,
   restoreTranslateRowAnchor,
 } from "./scroll-state.js";
-import {
-  captureTranslateViewport,
-  restoreTranslateViewportAfterPaints,
-} from "./translate-viewport.js";
 
 let editorFilterRestoreChapterId = null;
 let editorFilterRestoreViewport = null;
@@ -122,6 +119,8 @@ function scrollTranslateMainToTop() {
     return;
   }
 
+  // Deliberate jump: anchors captured before it must go stale.
+  noteUserScrollIntent("filter-scroll-top");
   container.scrollTop = 0;
 }
 
@@ -137,9 +136,12 @@ function captureEditorFilterRestoreViewport(chapterId) {
   }
 
   editorFilterRestoreChapterId = chapterId;
-  editorFilterRestoreViewport = captureTranslateViewport(null, {
-    fallbackAnchor: captureVisibleTranslateLocation(),
-  });
+  // Prefer the continuously tracked session anchor (scroll redesign P4); the
+  // DOM scan remains as fallback before the session's first update.
+  editorFilterRestoreViewport = {
+    anchor: readSessionAnchor(chapterId) ?? captureVisibleTranslateLocation(),
+    scrollTop: readTranslateMainScrollTop(),
+  };
 }
 
 function clearEditorFilterRestoreViewport(chapterId = null) {
@@ -187,10 +189,40 @@ function prepareEditorFilterViewportTransition(previousFilters, nextFilters) {
   };
 }
 
+function restoreEditorFilterViewport(restoreViewport) {
+  // Deliberate jump: restoring the pre-filter viewport is the direct
+  // response to the user clearing the filter, so anchors captured before it
+  // must go stale rather than dragging the viewport back.
+  noteUserScrollIntent("filter-restore");
+  const applyRestore = () => {
+    const container = document.querySelector(".translate-main-scroll");
+    if (!(container instanceof HTMLElement)) {
+      return;
+    }
+
+    // Anchor-first; the raw offset only positions the window until the
+    // anchor row mounts, then the paint retries align it exactly.
+    const anchor = restoreViewport.anchor?.rowId ? restoreViewport.anchor : null;
+    if (anchor && findTranslateAnchorElement(anchor)) {
+      restoreTranslateRowAnchor(anchor);
+      return;
+    }
+
+    if (Number.isFinite(restoreViewport.scrollTop)) {
+      container.scrollTop = restoreViewport.scrollTop;
+    }
+  };
+  applyRestore();
+  void waitForNextPaint().then(() => {
+    applyRestore();
+    void waitForNextPaint().then(applyRestore);
+  });
+}
+
 function renderEditorFilterChange(render, viewportTransition) {
   render?.();
   if (viewportTransition?.restoreViewport) {
-    restoreTranslateViewportAfterPaints(viewportTransition.restoreViewport);
+    restoreEditorFilterViewport(viewportTransition.restoreViewport);
     return;
   }
 
@@ -355,15 +387,10 @@ export function updateEditorReplaceQuery(render, nextValue) {
   render?.();
 }
 
-export function toggleEditorReplaceRowSelected(render, rowId, selected, anchorTarget = null) {
+export function toggleEditorReplaceRowSelected(render, rowId, selected) {
   if (!rowId || !state.editorChapter?.chapterId) {
     return;
   }
-
-  const scrollAnchor =
-    consumePrimedTranslateInteractionAnchor(rowId)
-    ?? captureTranslateRowAnchor(anchorTarget);
-  const scrollTop = consumePrimedTranslateMainScrollTop();
 
   const matchingRowIds = new Set(
     currentMatchingEditorReplaceRowIds(
@@ -390,26 +417,9 @@ export function toggleEditorReplaceRowSelected(render, rowId, selected, anchorTa
       error: "",
     };
   });
+  // Only the toolbar selection count re-renders; the checkbox itself toggles
+  // natively and the scroll container is untouched.
   render?.({ scope: "translate-header" });
-  const restoreSelectionViewport = () => {
-    if (Number.isFinite(scrollTop)) {
-      const container = document.querySelector(".translate-main-scroll");
-      if (container instanceof HTMLElement) {
-        container.scrollTop = scrollTop;
-      }
-    }
-
-    if (scrollAnchor) {
-      restoreTranslateRowAnchor(scrollAnchor);
-    }
-  };
-  restoreSelectionViewport();
-  void waitForNextPaint().then(() => {
-    restoreSelectionViewport();
-    void waitForNextPaint().then(() => {
-      restoreSelectionViewport();
-    });
-  });
 }
 
 export function selectAllEditorReplaceRows(render) {

@@ -36,6 +36,11 @@ import {
   resolveTranslateRowAnchor,
   restoreTranslateRowAnchor,
 } from "./scroll-state.js";
+import {
+  isUserScrollBasisCurrent,
+  readUserScrollGeneration,
+  updateSessionAnchor,
+} from "./editor-scroll-session.js";
 import { logEditorScrollDebug } from "./editor-scroll-debug.js";
 
 const EDITOR_VIRTUALIZER_OVERSCAN_ROWS = 0;
@@ -212,12 +217,20 @@ function pinnedFocusedRowId(root, scrollContainer) {
 }
 
 function captureEditorLayoutAnchor(root) {
-  const activeAnchor = resolveTranslateRowAnchor(root.ownerDocument?.activeElement ?? null);
-  if (activeAnchor?.rowId) {
-    return activeAnchor;
+  const anchor =
+    resolveTranslateRowAnchor(root.ownerDocument?.activeElement ?? null)
+    ?? captureVisibleTranslateRowLocation();
+  if (!anchor?.rowId) {
+    return anchor;
   }
 
-  return captureVisibleTranslateRowLocation();
+  return {
+    ...anchor,
+    // Arbitration basis: a deliberate viewport jump (bottom-pin, scroll-to-
+    // top) advances the generation, making anchors captured before the jump
+    // stale so their restore cannot drag the viewport back.
+    userScrollGeneration: readUserScrollGeneration(),
+  };
 }
 
 function updateSpacerHeight(spacer, height) {
@@ -304,6 +317,13 @@ export function createEditorVirtualListController({
   let renderedImageDebugEntries = [];
   let isRendering = false;
   let needsPostMeasureRender = false;
+  // Exactly one scroll-compensation mechanism may act on a resize. During
+  // scroll-driven window renders, virtual-core's built-in adjustment keeps
+  // upward scrolling smooth when estimates correct to measured heights.
+  // During mutation/layout renders, anchor restoration owns compensation —
+  // letting both act shifts the viewport twice and anchors then pin the
+  // shifted position as truth (the historic image-delete jump).
+  let allowResizeScrollAdjustment = true;
   let glossarySync = {
     schedule() {},
     restoreMounted() {},
@@ -377,11 +397,28 @@ export function createEditorVirtualListController({
   });
 
   const virtualizer = new Virtualizer(buildVirtualizerOptions());
+  // Instance field, not an option: gates virtual-core's built-in scroll
+  // compensation on resizeItem to scroll-driven measurement only (see
+  // allowResizeScrollAdjustment above).
+  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) =>
+    allowResizeScrollAdjustment
+    && item.start < instance.getScrollOffset() + instance.scrollAdjustments;
   const cleanupVirtualizer = virtualizer._didMount();
   virtualizer._willUpdate();
 
   const restoreAnchorSnapshot = (anchorSnapshot, reason) => {
     if (!anchorSnapshot?.rowId) {
+      return false;
+    }
+
+    if (!isUserScrollBasisCurrent(anchorSnapshot.userScrollGeneration)) {
+      logEditorScrollDebug("virtualization-anchor-restore-refused", {
+        engine: "tanstack",
+        reason,
+        rowAnchorId: anchorSnapshot.rowId ?? "",
+        basisGeneration: anchorSnapshot.userScrollGeneration ?? null,
+        scrollTop: scrollContainer.scrollTop,
+      });
       return false;
     }
 
@@ -516,6 +553,16 @@ export function createEditorVirtualListController({
     syncRenderedImageDebugEntries(reason);
   };
 
+  const withResizeScrollAdjustment = (enabled, callback) => {
+    const previous = allowResizeScrollAdjustment;
+    allowResizeScrollAdjustment = enabled;
+    try {
+      return callback();
+    } finally {
+      allowResizeScrollAdjustment = previous;
+    }
+  };
+
   const renderWindow = (force = false, options = {}) => {
     const anchorSnapshot = options?.anchorSnapshot?.rowId
       ? options.anchorSnapshot
@@ -531,6 +578,7 @@ export function createEditorVirtualListController({
     updateVirtualizerModel();
     isRendering = true;
     needsPostMeasureRender = false;
+    const isScrollDrivenRender = reason === EDITOR_VIRTUALIZATION_SCROLL_REASON;
 
     try {
       const rangeState = readRangeState();
@@ -545,7 +593,10 @@ export function createEditorVirtualListController({
 
       currentRangeKey = rangeState.rangeKey;
       renderRange(rangeState, reason);
-      const heightsChanged = measureVisibleRowHeights();
+      const heightsChanged = withResizeScrollAdjustment(
+        isScrollDrivenRender,
+        () => measureVisibleRowHeights(),
+      );
       const measuredRangeState = readRangeState();
       applyRangeState(measuredRangeState);
 
@@ -562,7 +613,10 @@ export function createEditorVirtualListController({
       if (measuredRangeState.rangeKey !== currentRangeKey) {
         currentRangeKey = measuredRangeState.rangeKey;
         renderRange(measuredRangeState, `${reason}:measured-range-adjusted`);
-        measureVisibleRowHeights();
+        withResizeScrollAdjustment(
+          isScrollDrivenRender,
+          () => measureVisibleRowHeights(),
+        );
         applyRangeState(readRangeState());
       }
 
@@ -643,9 +697,10 @@ export function createEditorVirtualListController({
     }
 
     clearCachedRowHeights([resolvedRowId], rowHeightCache);
-    const changed = isMountedEditorElement(rowCard)
-      ? measureRowCardHeight(rowCard)
-      : updateRowEstimate(resolvedRowId);
+    const changed = withResizeScrollAdjustment(false, () =>
+      isMountedEditorElement(rowCard)
+        ? measureRowCardHeight(rowCard)
+        : updateRowEstimate(resolvedRowId));
     if (!changed) {
       return false;
     }
@@ -682,11 +737,13 @@ export function createEditorVirtualListController({
       }
     });
 
-    changed = measureRowCards(mountedRowCards) || changed;
-    normalizedRowIds.forEach((nextRowId) => {
-      if (!mountedRowIds.has(nextRowId) && updateRowEstimate(nextRowId)) {
-        changed = true;
-      }
+    withResizeScrollAdjustment(false, () => {
+      changed = measureRowCards(mountedRowCards) || changed;
+      normalizedRowIds.forEach((nextRowId) => {
+        if (!mountedRowIds.has(nextRowId) && updateRowEstimate(nextRowId)) {
+          changed = true;
+        }
+      });
     });
 
     if (!changed) {
@@ -735,6 +792,10 @@ export function createEditorVirtualListController({
       suppressNextScrollRender,
       pendingAnchorRowId: pendingTranslateAnchorRowId(),
     });
+    updateSessionAnchor(
+      captureVisibleTranslateRowLocation(),
+      currentModel.editorChapter?.chapterId ?? "",
+    );
     if (suppressNextScrollRender) {
       suppressNextScrollRender = false;
       glossarySync.schedule();

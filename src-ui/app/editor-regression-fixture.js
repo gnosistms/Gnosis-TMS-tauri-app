@@ -5,6 +5,7 @@ import {
 } from "./editor-deleted-rows.js";
 import { normalizeStoredAiActionPreferences } from "./ai-action-config.js";
 import { buildEditorGlossaryModel } from "./editor-glossary-highlighting.js";
+import { setActiveStorageLogin } from "./team-storage.js";
 import {
   createEditorChapterGlossaryState,
   createEditorChapterState,
@@ -324,7 +325,10 @@ export function applyEditorRegressionFixture(appState, options = {}) {
     ?? sourceCode;
   const chapterId = "fixture-chapter";
   const projectId = "fixture-project";
-  const teamId = "fixture-team";
+  // Matches buildTeamRecordFromInstallation's id derivation for
+  // installationId 1, so a mocked installations listing reconciles to the
+  // same team and refresh flows keep the fixture team selected.
+  const teamId = "github-app-installation-1";
   const fileTitle = typeof options?.fileTitle === "string" && options.fileTitle.trim()
     ? options.fileTitle.trim()
     : "Editor Regression Fixture";
@@ -359,7 +363,9 @@ export function applyEditorRegressionFixture(appState, options = {}) {
   const editorChapter = {
     ...createEditorChapterState(),
     fixtureMode: FIXTURE_MODE,
-    status: "idle",
+    // "ready" opts a test into editor-location persistence (scroll save/restore
+    // across screen and mode switches), which requires a ready chapter.
+    status: options?.chapterStatus === "ready" ? "ready" : "idle",
     error: "",
     projectId,
     chapterId,
@@ -435,6 +441,9 @@ export function applyEditorRegressionFixture(appState, options = {}) {
     },
     pendingAutoOpenSingleTeam: false,
   };
+  // Login-scoped preferences (editor location, font size) silently no-op
+  // without an active storage login, which real auth normally sets.
+  setActiveStorageLogin("fixture-user");
   appState.offline = {
     ...appState.offline,
     checked: true,

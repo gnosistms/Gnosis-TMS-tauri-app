@@ -112,14 +112,33 @@ Derive it from `membershipRole` in `permissions.js`. Role normalization rules:
 
 ### Scroll Preservation
 
-Scroll state is expensive to restore correctly. Key rules:
+One module owns scroll arbitration; renders preserve the viewport by
+construction. Key rules (see plans/editor-scroll-ownership-redesign-plan.md):
 
-- **Viewport MUST be preserved** across: first save, AI translate, filter clear, image
-  uploads, row edits, and large structural changes.
-- **Delayed viewport restores MUST be cancelled** when the user types or focuses an
-  input field. Active user input takes precedence over a scheduled anchor restore.
-- `translate-viewport.js` owns translate-flow viewport preservation.
-  `scroll-state.js` owns general scroll position save/restore.
+- **`editor-scroll-session.js` is the single owner** of the viewport anchor
+  (model-space, chapter-scoped, updated continuously on scroll) and of the
+  user-scroll-intent generation. Programmatic restores that carry a stale
+  generation are refused; deliberate jumps (bottom pin, filter scroll-to-top,
+  center-row, filter restore) call `noteUserScrollIntent` so anchors captured
+  before them go stale.
+- **Row-scoped mutations render via `renderEditorRowScoped`** (row patching —
+  no snapshot threading, no post-render restores). It falls back to a body
+  render while filters are active, because membership can change and a patch
+  cannot add or remove row cards. Structural changes (insert/delete/merge,
+  filters, collapse, font size, chapter load) and conflict resolution stay on
+  body renders, which are default-safe: the render pipeline anchors from the
+  session anchor.
+- **Never capture-and-restore scroll around a render.** If a new mutation
+  seems to need it, it is either row-scoped (use `renderEditorRowScoped`) or
+  a deliberate jump (bump the intent generation and write once).
+- Exactly one resize-compensation mechanism may act: virtual-core's built-in
+  adjustment is regime-gated (`allowResizeScrollAdjustment`) to scroll-driven
+  measurement; anchored renders own compensation everywhere else.
+  `shouldAdjustScrollPositionOnItemSizeChange` is an instance field, not an
+  option. `overflow-anchor: none` on `.translate-main-scroll` is deliberate.
+- `scroll-state.js` owns general raw scroll save/restore for non-translate
+  screens plus the anchor-element helpers; `editor-location.js` persists the
+  session anchor across leave/return.
 
 ### Write Permission Queue
 
