@@ -10,7 +10,9 @@ import {
   visibleProjectFileCount,
 } from "./project-chapter-list-render.js";
 
-export function renderProjectCard(project, expanded, options = {}) {
+// Shared derivation for both card layouts: the article-based card (deleted
+// projects section) and the flat virtualizable item list (active projects).
+export function deriveProjectRenderState(project, options = {}) {
   const canManageProjects = options.canManageProjects !== false;
   const canDownloadFiles = options.canDownloadFiles !== false;
   const canPermanentlyDeleteFiles = options.canPermanentlyDeleteFiles === true;
@@ -87,43 +89,60 @@ export function renderProjectCard(project, expanded, options = {}) {
       })
     : "";
 
+  return {
+    isDeleted,
+    actions,
+    fileCount,
+    resolutionMarkup,
+    fileRowOptions: {
+      canManageProjects,
+      canDownloadFiles,
+      canPermanentlyDeleteFiles,
+      offlineMode,
+      lifecycleActionsDisabled,
+      glossaryChangesDisabled,
+      disableContentActions,
+      localRepoUnavailable,
+      localHardDeleteActionsDisabled,
+      showDeletedFiles: options.showDeletedFiles === true,
+      glossaryOptions: options.glossaries ?? [],
+    },
+  };
+}
+
+export function renderProjectCardHeader(project, expanded, derived) {
+  return `
+    <div class="expandable-card__header">
+      <button
+        class="expandable-card__summary-button collapse-affordance"
+        data-action="toggle-project:${project.id}"
+        aria-expanded="${expanded ? "true" : "false"}"
+      >
+        ${renderCollapseChevron(expanded, "expandable-card__chevron")}
+        <span class="expandable-card__title-wrap">
+          <span class="expandable-card__title">${escapeHtml(project.title ?? project.name)}</span>
+          <span class="expandable-card__meta">${escapeHtml(derived.fileCount)}</span>
+        </span>
+      </button>
+      <div class="expandable-card__actions">
+        ${derived.actions.join("")}
+      </div>
+    </div>
+    ${derived.resolutionMarkup}
+  `;
+}
+
+export function renderProjectCard(project, expanded, options = {}) {
+  const derived = deriveProjectRenderState(project, options);
   const fileRows = expanded
-    ? renderProjectFilesBody(project, {
-        canManageProjects,
-        canDownloadFiles,
-        canPermanentlyDeleteFiles,
-        offlineMode,
-        lifecycleActionsDisabled,
-        glossaryChangesDisabled,
-        disableContentActions,
-        localRepoUnavailable,
-        localHardDeleteActionsDisabled,
-        showDeletedFiles: options.showDeletedFiles === true,
-        glossaryOptions: options.glossaries ?? [],
-      })
+    ? renderProjectFilesBody(project, derived.fileRowOptions)
     : "";
 
   return `
     <article class="card card--expandable ${expanded ? "is-expanded" : ""} ${
-      isDeleted ? "card--deleted" : ""
+      derived.isDeleted ? "card--deleted" : ""
     }">
-      <div class="expandable-card__header">
-        <button
-          class="expandable-card__summary-button collapse-affordance"
-          data-action="toggle-project:${project.id}"
-          aria-expanded="${expanded ? "true" : "false"}"
-        >
-          ${renderCollapseChevron(expanded, "expandable-card__chevron")}
-          <span class="expandable-card__title-wrap">
-            <span class="expandable-card__title">${escapeHtml(project.title ?? project.name)}</span>
-            <span class="expandable-card__meta">${escapeHtml(fileCount)}</span>
-          </span>
-        </button>
-        <div class="expandable-card__actions">
-          ${actions.join("")}
-        </div>
-      </div>
-      ${resolutionMarkup}
+      ${renderProjectCardHeader(project, expanded, derived)}
       ${fileRows}
     </article>
   `;

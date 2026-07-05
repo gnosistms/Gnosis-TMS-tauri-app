@@ -829,7 +829,7 @@ test("expanded deleted files section shows clear all action below hide deleted f
 
   const hideIndex = html.indexOf("Hide deleted files");
   const clearIndex = html.indexOf('data-action="clear-deleted-files:project-1"');
-  const tableIndex = html.indexOf("chapter-table chapter-table--deleted");
+  const tableIndex = html.indexOf("chapter-table__row--deleted");
 
   assert.ok(hideIndex >= 0);
   assert.ok(clearIndex > hideIndex);

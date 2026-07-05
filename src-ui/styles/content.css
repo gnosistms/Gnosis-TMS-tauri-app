@@ -544,6 +544,108 @@
   white-space: nowrap;
 }
 
+/* Flat, virtualizable projects list. Each item is a sibling row; a project's
+   card chrome is composed from contiguous segments: the card-start row draws
+   the top edge, middle rows draw the side borders, the card-end row draws the
+   bottom edge. clip-path confines each segment's copy of the surface shadow
+   to its own horizontal band so the stack casts one continuous card shadow.
+   Inter-card spacing is padding on the item wrapper (outside the card chrome)
+   rather than margin, so measured item heights stay additive for the
+   virtualizer's spacer math. */
+.project-vlist {
+  overflow-anchor: none;
+}
+
+.project-vlist__item--card-start {
+  padding-top: 16px;
+}
+
+.project-vlist__item--first {
+  padding-top: 0;
+}
+
+.project-vlist__card {
+  /* --panel-surface is a vertical gradient; painting it per segment restarts
+     the fade on every row and bands. Use the flat composite of its two layers
+     at the gradient midpoint instead. (Fully opaque precomputed composites
+     were also tried to cut rasterization blending — no perceptible scroll
+     improvement on macOS, so token-based colors stay.) */
+  background: rgba(255, 249, 240, 0.66);
+  border-left: 1px solid var(--surface-border);
+  border-right: 1px solid var(--surface-border);
+}
+
+/* Only the edge segments carry the card shadow: box-shadow + clip-path on
+   every middle row is expensive to paint in WebKit (visibly laggy scrolling
+   on macOS, fine on Chromium/Windows), and --surface-shadow is a soft
+   downward shadow whose side bleed along the card body is imperceptible at
+   its 0.07 alpha. Each edge segment's shadow is clipped to stop at the seam
+   with its neighbor so no shadow band paints inside the card. */
+.project-vlist__card--start {
+  border-top: 1px solid var(--surface-border);
+  border-top-left-radius: var(--radius-card);
+  border-top-right-radius: var(--radius-card);
+  box-shadow: var(--surface-shadow);
+  clip-path: inset(-48px -48px 0);
+}
+
+.project-vlist__card--end {
+  border-bottom: 1px solid var(--surface-border);
+  border-bottom-left-radius: var(--radius-card);
+  border-bottom-right-radius: var(--radius-card);
+  box-shadow: var(--surface-shadow);
+  clip-path: inset(0 -48px -48px);
+}
+
+.project-vlist__card--start.project-vlist__card--end {
+  clip-path: none;
+}
+
+/* Body segment spacing mirrors .expandable-card__body (padding 24px 26px 28px)
+   plus .chapter-table's 12px row gap and the deleted-section margins. */
+.project-vlist__card--file,
+.project-vlist__card--deleted-file {
+  padding: 12px 26px 0;
+}
+
+.project-vlist__card--deleted-file-first {
+  padding-top: 10px;
+}
+
+.project-vlist__card--deleted-toggle {
+  padding: 18px 26px 0;
+}
+
+.project-vlist__card--deleted-clear {
+  padding: 0 26px;
+}
+
+.project-vlist__card--empty-body {
+  padding: 24px 26px 28px;
+}
+
+.project-vlist__card--body-start {
+  border-top: 1px solid rgba(164, 112, 41, 0.16);
+  padding-top: 24px;
+}
+
+.project-vlist__card--body-start.project-vlist__card--deleted-toggle {
+  padding-top: 42px;
+}
+
+.project-vlist__card--end {
+  padding-bottom: 28px;
+}
+
+.project-vlist__card--header.project-vlist__card--end {
+  padding-bottom: 0;
+}
+
+.project-vlist__card .message-box.resource-state-box.expandable-card__status {
+  width: calc(100% - 44px);
+  margin: 14px 22px 18px;
+}
+
 .glossary-pill,
 .select-pill,
 .pill {

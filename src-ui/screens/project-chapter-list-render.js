@@ -19,24 +19,10 @@ import {
   LUCIDE_TRASH_2_ICON,
 } from "./project-icons.js";
 
-export function compareFilesByName(left, right) {
-  const leftName = typeof left?.name === "string" ? left.name.trim() : "";
-  const rightName = typeof right?.name === "string" ? right.name.trim() : "";
-  const nameComparison = leftName.localeCompare(rightName, undefined, {
-    sensitivity: "base",
-    numeric: true,
-  });
-  if (nameComparison !== 0) {
-    return nameComparison;
-  }
+export { compareFilesByName } from "../app/projects-list-model.js";
+import { compareFilesByName } from "../app/projects-list-model.js";
 
-  return String(left?.id ?? "").localeCompare(String(right?.id ?? ""), undefined, {
-    sensitivity: "base",
-    numeric: true,
-  });
-}
-
-function renderActiveChapterRow(chapter, options) {
+export function renderActiveChapterRow(chapter, options) {
   const sourceWordCount = resolveChapterSourceWordCount(chapter);
   const sourceWordText = sourceWordCount > 0 ? `${sourceWordCount} source words` : "";
   const hasImportedEditorConflicts = chapter.hasImportedEditorConflicts === true;
@@ -97,7 +83,7 @@ function renderActiveChapterRow(chapter, options) {
   `;
 }
 
-function renderDeletedChapterRow(chapter, options) {
+export function renderDeletedChapterRow(chapter, options) {
   return `
     <div class="chapter-table__row chapter-table__row--file chapter-table__row--deleted">
       <div class="chapter-table__title-wrap">
@@ -118,6 +104,25 @@ function renderDeletedChapterRow(chapter, options) {
   `;
 }
 
+export function renderDeletedFilesToggle(project, options) {
+  return sectionSeparator({
+    label: options.showDeletedFiles ? "Hide deleted files" : "Show deleted files",
+    action: `toggle-deleted-files:${project.id}`,
+    isOpen: options.showDeletedFiles,
+  });
+}
+
+export function renderClearDeletedFilesAction(project, options) {
+  return `<div class="chapter-table__actions">
+    ${textAction("Clear all deleted files", `clear-deleted-files:${project.id}`, {
+      disabled:
+        options.localHardDeleteActionsDisabled
+        || options.disableContentActions
+        || projectHasPendingDeletedFileMutation(project),
+    })}
+  </div>`;
+}
+
 function renderDeletedFilesSection(project, deletedFiles, options) {
   if (deletedFiles.length === 0) {
     return "";
@@ -125,24 +130,13 @@ function renderDeletedFilesSection(project, deletedFiles, options) {
 
   return `
     <div class="project-files__deleted">
-      ${sectionSeparator({
-        label: options.showDeletedFiles ? "Hide deleted files" : "Show deleted files",
-        action: `toggle-deleted-files:${project.id}`,
-        isOpen: options.showDeletedFiles,
-      })}
+      ${renderDeletedFilesToggle(project, options)}
       ${
         options.showDeletedFiles
           ? `
             ${
               options.canPermanentlyDeleteFiles
-                ? `<div class="chapter-table__actions">
-                    ${textAction("Clear all deleted files", `clear-deleted-files:${project.id}`, {
-                      disabled:
-                        options.localHardDeleteActionsDisabled
-                        || options.disableContentActions
-                        || projectHasPendingDeletedFileMutation(project),
-                    })}
-                  </div>`
+                ? renderClearDeletedFilesAction(project, options)
                 : ""
             }
             <div class="chapter-table chapter-table--deleted">
