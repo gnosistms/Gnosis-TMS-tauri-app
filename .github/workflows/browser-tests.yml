@@ -15,7 +15,9 @@ name: Browser Tests
 
 on:
   push:
-    branches: [main]
+    # fix/editor-scroll-ownership is temporary, to validate this workflow
+    # before it lands on main — drop it when the branch merges.
+    branches: [main, fix/editor-scroll-ownership]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
