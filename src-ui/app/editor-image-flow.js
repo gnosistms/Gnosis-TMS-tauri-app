@@ -8,6 +8,7 @@ import {
 import { invoke, convertLocalFileSrc, waitForNextPaint } from "./runtime.js";
 import { logEditorScrollDebug } from "./editor-scroll-debug.js";
 import { noteUserScrollIntent } from "./editor-scroll-session.js";
+import { renderEditorRowScoped } from "./editor-row-scoped-render.js";
 import {
   createEditorImageEditorState,
   createEditorImageInvalidFileModalState,
@@ -39,16 +40,6 @@ const IMAGE_FILE_ACCEPT =
   ".jpg,.jpeg,.png,.gif,.svg,.webp,.avif,.bmp,.ico,.apng,image/jpeg,image/png,image/gif,image/svg+xml,image/webp,image/avif,image/bmp,image/x-icon";
 const TRANSLATE_MAIN_BOTTOM_PIN_TOLERANCE_PX = 80;
 
-// P3 (scroll ownership redesign): image mutations are row-scoped, so they
-// render through row patching instead of remounting the translate body.
-// Patching preserves the viewport by construction; no snapshot threading.
-function renderEditorImageRow(render, rowId, reason) {
-  render?.({
-    scope: "translate-visible-rows",
-    rowIds: [rowId],
-    reason,
-  });
-}
 
 function nextChapterBaseCommitSha(payload, chapterState = state.editorChapter) {
   return typeof payload?.chapterBaseCommitSha === "string" && payload.chapterBaseCommitSha.trim()
@@ -537,7 +528,7 @@ async function applyImageCommandPayload(render, rowId, languageCode, payload, op
   if (payload?.status === "deleted") {
     await reloadEditorRowFromDisk(render, rowId, { suppressNotice: false });
     state.editorChapter = resetImageEditor(state.editorChapter);
-    renderEditorImageRow(render, rowId, "image-row-deleted");
+    renderEditorRowScoped(render, rowId, "image-row-deleted");
     return;
   }
 
@@ -550,7 +541,7 @@ async function applyImageCommandPayload(render, rowId, languageCode, payload, op
     chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
   };
   closeImagePreviewIfTarget(rowId, languageCode);
-  renderEditorImageRow(render, rowId, "image-saved");
+  renderEditorRowScoped(render, rowId, "image-saved");
 
   if (
     typeof loadActiveEditorFieldHistory === "function"
@@ -640,7 +631,7 @@ function queueEditorImageWrite({
       );
       onQueued?.();
       closeImagePreviewIfTarget(rowId, languageCode);
-      renderEditorImageRow(render, rowId, "image-optimistic");
+      renderEditorRowScoped(render, rowId, "image-optimistic");
     },
     run: async (operation) => {
       assertQueuedEditorRowsReady({
@@ -687,7 +678,7 @@ function queueEditorImageWrite({
         removeOptimisticImageHistory(render, operation);
         applyOptimisticImage(value.rowId, value.languageCode, value.previousImage, operations);
         onFailure?.(message);
-        renderEditorImageRow(render, value.rowId, "image-write-failed");
+        renderEditorRowScoped(render, value.rowId, "image-write-failed");
       }
       showNoticeBadge(message || failureMessage, render);
     },
@@ -713,7 +704,7 @@ export function openEditorImageUrl(render, rowId, languageCode) {
     urlErrorMessage: "",
     status: "idle",
   });
-  renderEditorImageRow(render, rowId, "image-url-open");
+  renderEditorRowScoped(render, rowId, "image-url-open");
   focusEditorImageControl(
     `[data-editor-image-url-input][data-row-id="${CSS.escape(rowId)}"][data-language-code="${CSS.escape(languageCode)}"]`,
     rowId,
@@ -752,7 +743,7 @@ function closeEditorImageInput(render, rowId) {
   }
 
   state.editorChapter = resetImageEditor(state.editorChapter);
-  renderEditorImageRow(render, rowId, "image-editor-closed");
+  renderEditorRowScoped(render, rowId, "image-editor-closed");
 }
 
 export async function persistEditorImageUrlOnBlur(render, rowId, languageCode, operations = {}, options = {}) {
@@ -786,7 +777,7 @@ export async function persistEditorImageUrlOnBlur(render, rowId, languageCode, o
     urlErrorMessage: "",
     status: closeInput ? "submitting" : "saving",
   });
-  renderEditorImageRow(render, rowId, "image-url-saving");
+  renderEditorRowScoped(render, rowId, "image-url-saving");
 
   const urlSyntaxError = validateImageUrlSyntax(draft);
   if (urlSyntaxError) {
@@ -807,7 +798,7 @@ export async function persistEditorImageUrlOnBlur(render, rowId, languageCode, o
         urlErrorMessage: urlSyntaxError,
         status: "idle",
       });
-      renderEditorImageRow(render, rowId, "image-url-invalid");
+      renderEditorRowScoped(render, rowId, "image-url-invalid");
     }
     return;
   }
@@ -831,7 +822,7 @@ export async function persistEditorImageUrlOnBlur(render, rowId, languageCode, o
         urlErrorMessage: "",
         status: "idle",
       });
-      renderEditorImageRow(render, rowId, "image-url-blocked");
+      renderEditorRowScoped(render, rowId, "image-url-blocked");
     }
     return;
   }
@@ -849,7 +840,7 @@ export async function persistEditorImageUrlOnBlur(render, rowId, languageCode, o
       urlErrorMessage: "",
       status: "idle",
     });
-    renderEditorImageRow(render, rowId, "image-url-context-missing");
+    renderEditorRowScoped(render, rowId, "image-url-context-missing");
     return;
   }
 
@@ -927,7 +918,7 @@ export function openEditorImageUpload(render, rowId, languageCode) {
     invalidUrl: false,
     status: "idle",
   });
-  renderEditorImageRow(render, rowId, "image-upload-open");
+  renderEditorRowScoped(render, rowId, "image-upload-open");
   logEditorScrollDebug("editor-image-upload-open", {
     stage: "after-render",
     rowId,
@@ -996,7 +987,7 @@ export function dismissActiveIdleEditorImageUpload(render) {
 
   const rowId = state.editorChapter.imageEditor?.rowId ?? "";
   state.editorChapter = resetImageEditor(state.editorChapter);
-  renderEditorImageRow(render, rowId, "image-upload-dismissed");
+  renderEditorRowScoped(render, rowId, "image-upload-dismissed");
   return true;
 }
 
@@ -1010,7 +1001,7 @@ export function collapseEmptyEditorImageEditor(render, rowId, languageCode) {
   }
 
   state.editorChapter = resetImageEditor(state.editorChapter);
-  renderEditorImageRow(render, rowId, "image-editor-collapsed");
+  renderEditorRowScoped(render, rowId, "image-editor-collapsed");
 }
 
 async function saveUploadedEditorImage(render, rowId, languageCode, file, operations = {}) {
@@ -1032,7 +1023,7 @@ async function saveUploadedEditorImage(render, rowId, languageCode, file, operat
         status: "idle",
       });
       setImageInvalidFileModal(true);
-      renderEditorImageRow(render, rowId, "image-upload-state");
+      renderEditorRowScoped(render, rowId, "image-upload-state");
     }
     return;
   }
@@ -1044,7 +1035,7 @@ async function saveUploadedEditorImage(render, rowId, languageCode, file, operat
     mode: "upload",
     status: "saving",
   });
-  renderEditorImageRow(render, rowId, "image-upload-state");
+  renderEditorRowScoped(render, rowId, "image-upload-state");
 
   try {
     await validateUploadedImageFile(fileBlob);
@@ -1057,7 +1048,7 @@ async function saveUploadedEditorImage(render, rowId, languageCode, file, operat
         status: "idle",
       });
       setImageInvalidFileModal(true);
-      renderEditorImageRow(render, rowId, "image-upload-state");
+      renderEditorRowScoped(render, rowId, "image-upload-state");
     }
     return;
   }
@@ -1071,7 +1062,7 @@ async function saveUploadedEditorImage(render, rowId, languageCode, file, operat
         mode: "upload",
         status: "idle",
       });
-      renderEditorImageRow(render, rowId, "image-upload-state");
+      renderEditorRowScoped(render, rowId, "image-upload-state");
     }
     return;
   }
@@ -1086,7 +1077,7 @@ async function saveUploadedEditorImage(render, rowId, languageCode, file, operat
       mode: "upload",
       status: "idle",
     });
-    renderEditorImageRow(render, rowId, "image-upload-state");
+    renderEditorRowScoped(render, rowId, "image-upload-state");
     return;
   }
 
@@ -1140,7 +1131,7 @@ async function saveUploadedEditorImage(render, rowId, languageCode, file, operat
         mode: "upload",
         status: "idle",
       });
-      renderEditorImageRow(render, rowId, "image-upload-state");
+      renderEditorRowScoped(render, rowId, "image-upload-state");
     }
     const message = error instanceof Error ? error.message : String(error);
     showNoticeBadge(message || "The image could not be uploaded.", render);
@@ -1176,7 +1167,7 @@ export async function openEditorImageUploadPicker(render, rowId, languageCode, o
       mode: "upload",
       status: "idle",
     });
-    renderEditorImageRow(render, rowId, "image-upload-state");
+    renderEditorRowScoped(render, rowId, "image-upload-state");
     return;
   }
 

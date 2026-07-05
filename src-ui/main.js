@@ -565,9 +565,13 @@ function renderTranslateHeaderOnly() {
 }
 
 function renderTranslateVisibleRowsOnly(options = {}) {
-  return patchMountedEditorRows(app, state, options?.rowIds, {
+  const patchResult = patchMountedEditorRows(app, state, options?.rowIds, {
     reason: options?.reason,
   });
+  // Main-field activation renders through row patches too, so the pending
+  // caret placement must apply here just like after a body render.
+  restorePendingEditorSelection(app);
+  return patchResult;
 }
 
 function renderTranslateAiTranslateAllModalOnly() {

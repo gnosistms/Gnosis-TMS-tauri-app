@@ -198,10 +198,8 @@ import {
   captureTranslateAnchorForRow,
 } from "./scroll-state.js";
 import { syncEditorVirtualizationRowLayout } from "./editor-virtualization.js";
-import {
-  captureTranslateViewport,
-  renderTranslateBodyPreservingViewport,
-} from "./translate-viewport.js";
+import { captureTranslateViewport } from "./translate-viewport.js";
+import { renderEditorRowScoped } from "./editor-row-scoped-render.js";
 import {
   coerceEditorFontSizePx,
   createEditorMainFieldEditorState,
@@ -297,7 +295,7 @@ export function loadActiveEditorRowComments(render) {
   loadActiveEditorRowCommentsFlow(render);
 }
 
-export function collapseEditorMainField(render, rowId, languageCode, options = {}) {
+export function collapseEditorMainField(render, rowId, languageCode) {
   if (!rowId || !languageCode || !editorMainFieldMatches(rowId, languageCode)) {
     return;
   }
@@ -308,10 +306,7 @@ export function collapseEditorMainField(render, rowId, languageCode, options = {
     pendingSelection: createEditorPendingSelectionState(),
   };
 
-  renderTranslateBodyPreservingViewport(
-    render,
-    resolveEditorMainFieldViewportSnapshot(rowId, languageCode, options),
-  );
+  renderEditorRowScoped(render, rowId, "main-field-collapse");
 }
 
 // Logical identity of the focused text control, stable across DOM remounts.
@@ -373,6 +368,8 @@ export async function setActiveEditorField(render, rowId, languageCode, options 
       ? options.pendingSelectionOffset
       : null;
   const wasEditorOpen = editorMainFieldMatches(rowId, languageCode);
+  const previousMainFieldRowId = state.editorChapter.mainFieldEditor?.rowId ?? null;
+  const previousActiveRowId = state.editorChapter.activeRowId ?? null;
   const isSameSelection =
     state.editorChapter.activeRowId === rowId
     && state.editorChapter.activeLanguageCode === languageCode;
@@ -407,10 +404,13 @@ export async function setActiveEditorField(render, rowId, languageCode, options 
     shouldOpenEditor
     && (!wasEditorOpen || !isSameSelection || pendingSelectionOffset !== null);
   if (shouldRenderBody) {
-    renderTranslateBodyPreservingViewport(
+    // Activation touches the newly active row plus the rows losing their
+    // open-editor and active states; patching them avoids the body remount
+    // that raced blur-saves and dropped clicks mid-activation.
+    renderEditorRowScoped(
       render,
-      resolveEditorMainFieldViewportSnapshot(rowId, languageCode, options),
-      { extraPaints: 0, skipAnchorRestore: true },
+      [rowId, previousMainFieldRowId, previousActiveRowId],
+      "main-field-activate",
     );
   }
   if (state.editorChapter.sidebarTab === "comments") {

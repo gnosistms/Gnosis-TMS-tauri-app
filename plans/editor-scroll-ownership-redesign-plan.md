@@ -1,8 +1,9 @@
 # Editor Scroll Ownership Redesign — Implementation Plan
 
-Status: P0–P2 implemented locally 2026-07-02 (not yet committed/released);
-P3–P5 pending. See "Implementation log" at the end for what landed and what
-implementation taught us that revised the design below.
+Status: P0–P3 implemented (P0–P2 committed 2026-07-02; pre-existing test
+repair + P3 committed 2026-07-05, pending Windows soak before release).
+P4–P5 pending. See the implementation logs at the end for what landed and
+what implementation taught us that revised the design below.
 
 ## Problem
 
@@ -378,3 +379,69 @@ Harness fixes required to get there:
   persist-triggered body remount (9/10 pass on the current tree) — the same
   race its sibling tests hit deterministically, and precisely the remount
   class P3's row patching removes. Zero regressions from P0–P2.
+
+## Implementation log (2026-07-05, pre-existing failures + P3)
+
+### Pre-existing browser-suite repair (commit 89b701bc)
+
+Triage of the 29 failures confirmed all pre-existing (28 identical with
+scroll changes stashed, 1 flaky helper race). Root causes were UI evolution
+the dark suite never saw: the display-field refactor (tests clicked
+always-mounted textareas), the assistant redesign (three-part thread keys,
+`sourceLanguageCode` required on threads, Shift+Return send, AI-Assistant
+default tab, translate buttons hidden for translated rows), structured
+footnotes (`{marker, text}` arrays, inline ` [1]` markers), the tooltip
+payload schema, and the refresh flow's reload-then-sync contract. Two real
+bugs surfaced and were fixed:
+
+1. **Deliberate jumps now advance the scroll-intent generation** (bottom
+   pin, filter scroll-to-top, center-row) and virtualizer layout anchors
+   carry/check the generation — a stale anchor restore was un-pinning the
+   bottom pin.
+2. **`setActiveEditorField` aborts superseded activations**: a slow row
+   load completing after the user focused another text control no longer
+   resurrects editing controls (logical focus descriptors, robust across
+   remounts).
+
+Harness: the mock serves `list_accessible_github_app_installations`
+matching the fixture team (`github-app-installation-1`), unblocking
+team-access refresh flows and the P4 full-navigation test.
+
+### P3 — row-scoped mutations render via row patching (commit c5ece497 + this chunk)
+
+`renderEditorRowScoped(render, rowIdOrIds, reason)` in
+`editor-row-scoped-render.js` is the single primitive: it renders
+`translate-visible-rows` patches (viewport preserved by construction — no
+snapshot threading, no post-render restores) and falls back to a body
+render **while filters are active**, because a row change can alter
+filtered membership (reviewed / has-image / has-footnote / search text)
+and a patch cannot add or remove row cards.
+
+Migrated: all image operations; footnote open/entry/collapse; image-caption
+open/collapse; marker toggle optimistic/saved/failed; text-style changes;
+footnote-normalization saves; and **main-field activation/collapse** (the
+biggest remount source — activation patches the new row plus the rows
+losing open-editor/active state, and `renderTranslateVisibleRowsOnly` now
+applies `restorePendingEditorSelection` so caret placement works through
+patches). Kept on body renders: conflict resolution (always changes
+has-conflict membership) and structural changes (insert/delete/merge,
+filters, collapse, font size, chapter load).
+
+Focus findings that the migration surfaced (both fixed):
+
+- A patch-queued focusout collapse ran before the dismiss path's rAF
+  refocus and closed the editor; the refocus is now synchronous when the
+  replacement field exists, and the dismissing pointerdown prevents the
+  default focus action (it would land on the detached node's container and
+  re-blur).
+- `clickLocatorCenter` in the browser harness read `boundingBox()`
+  manually and raced row patches; it now uses `locator.click()` (centered
+  by default, retries on detach). The historically flaky
+  "typing in one row then focusing another row" test is 8/8 stable.
+
+### Remaining before P4
+
+- Windows soak of P3 before release (root AGENTS.md: virtualization scroll
+  differs; also validates the unconditional `overflow-anchor: none`).
+- Open decision 3 (AI translate-all/review-all render migration) deferred
+  to P5 as allowed.

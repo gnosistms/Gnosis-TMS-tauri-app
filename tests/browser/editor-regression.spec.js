@@ -1449,14 +1449,10 @@ async function activateImageCaptionEditor(page, rowId, languageCode) {
 async function clickLocatorCenter(page, locator) {
   await locator.scrollIntoViewIfNeeded();
   await expect(locator).toBeVisible();
-  const box = await locator.boundingBox();
-  expect(box).not.toBeNull();
-  await locator.click({
-    position: {
-      x: box.width / 2,
-      y: box.height / 2,
-    },
-  });
+  // locator.click() targets the element center by default and retries when a
+  // row patch replaces the node mid-action; a manual boundingBox read races
+  // that replacement and fails on detached elements.
+  await locator.click();
 }
 
 async function setTranslateScrollTop(page, top) {
