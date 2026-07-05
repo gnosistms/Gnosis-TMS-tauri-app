@@ -45,7 +45,12 @@ import {
 } from "../app/project-write-coordinator.js";
 import { getRepoWriteQueueSnapshot } from "../app/repo-write-queue.js";
 import { renderDeletedProjectsSection } from "./project-deleted-section.js";
-import { renderProjectCard } from "./project-list-render.js";
+import { buildProjectsListItems } from "../app/projects-list-model.js";
+import { resolveProjectsInitialWindowState } from "../app/projects-virtual-list.js";
+import {
+  createProjectsListRenderContext,
+  renderProjectsVirtualList,
+} from "./project-list-flat-render.js";
 
 function renderProjectSearchResult(result, searchQuery) {
   const matchCount = Number.isFinite(result?.matchCount) ? result.matchCount : 0;
@@ -210,7 +215,7 @@ function renderProjectRepoConflictRecovery(state, selectedTeam) {
   `;
 }
 
-export function renderProjectsScreen(state) {
+function computeProjectsScreenFlags(state) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? state.teams[0];
   const canManageProjects = canMutateProjectFiles(selectedTeam);
   const canDownloadFiles = canDownloadProjectFiles(selectedTeam);
@@ -241,14 +246,75 @@ export function renderProjectsScreen(state) {
     state.projectsPage?.isRefreshing === true
     || state.projectsPageSync?.status === "syncing"
     || discoveryLoading;
-  const syncSnapshotsByProjectId = state.projectRepoSyncByProjectId ?? {};
+  const glossaryChangesDisabled = importInProgress;
+
+  return {
+    selectedTeam,
+    canManageProjects,
+    canDownloadFiles,
+    canCreateProjects,
+    canPermanentlyDeleteFiles,
+    canManageAiSettings,
+    offlineMode,
+    discovery,
+    discoveryLoading,
+    pageWritesDisabled,
+    heavyActionsDisabled,
+    mutatingWriteActionsDisabled,
+    lifecycleActionsDisabled,
+    localHardDeleteActionsDisabled,
+    importInProgress,
+    refreshInProgress,
+    glossaryChangesDisabled,
+  };
+}
+
+/**
+ * Flat item list + render context for the active projects stack. Shared by
+ * the full screen render and the virtual list controller so scroll-driven
+ * window renders produce identical markup.
+ */
+export function buildProjectsScreenListState(state) {
+  const flags = computeProjectsScreenFlags(state);
+  const items = buildProjectsListItems(state, {
+    canPermanentlyDeleteFiles: flags.canPermanentlyDeleteFiles,
+  });
+  const context = createProjectsListRenderContext(state, {
+    canManageProjects: flags.canManageProjects,
+    canDownloadFiles: flags.canDownloadFiles,
+    canPermanentlyDeleteFiles: flags.canPermanentlyDeleteFiles,
+    offlineMode: flags.offlineMode,
+    pageWritesDisabled: flags.pageWritesDisabled,
+    heavyActionsDisabled: flags.heavyActionsDisabled,
+    localHardDeleteActionsDisabled: flags.localHardDeleteActionsDisabled,
+    addFilesWriteDisabled: flags.lifecycleActionsDisabled,
+    lifecycleActionsDisabled: flags.lifecycleActionsDisabled,
+    addFilesDisabled: flags.importInProgress,
+    glossaryChangesDisabled: flags.glossaryChangesDisabled,
+    glossaries: state.glossaries,
+    suppressMissingLocalRepoRepair: flags.refreshInProgress,
+  });
+
+  return { items, context };
+}
+
+export function renderProjectsScreen(state) {
+  const {
+    selectedTeam,
+    canCreateProjects,
+    canManageAiSettings,
+    offlineMode,
+    discovery,
+    discoveryLoading,
+    mutatingWriteActionsDisabled,
+    refreshInProgress,
+  } = computeProjectsScreenFlags(state);
   const recoveryMessage =
     typeof discovery.recoveryMessage === "string" && discovery.recoveryMessage.trim()
       ? discovery.recoveryMessage.trim()
       : "";
   const projectsSyncBadgeText = getScopedSyncBadgeText("projects");
   const searchModeActive = projectsSearchModeIsActiveForState(state);
-  const glossaryChangesDisabled = importInProgress;
   const recoveryMarkup = recoveryMessage
     ? `
       <div class="message-box message-box--warning">
@@ -287,6 +353,7 @@ export function renderProjectsScreen(state) {
       && discovery.status !== "error"
     );
 
+  const { items: listItems, context: listRenderContext } = buildProjectsScreenListState(state);
   const projectsBody =
     shouldShowLoadingState
       ? loadingState
@@ -294,27 +361,11 @@ export function renderProjectsScreen(state) {
         ? errorState
         : state.projects.length === 0
           ? emptyState
-          : `<section class="stack project-card-stack">${state.projects
-              .map((project) =>
-                renderProjectCard(project, state.expandedProjects.has(project.id), {
-                  canManageProjects,
-                  canDownloadFiles,
-                  canPermanentlyDeleteFiles,
-                  offlineMode,
-                  pageWritesDisabled,
-                  heavyActionsDisabled,
-                  localHardDeleteActionsDisabled,
-                  addFilesWriteDisabled: lifecycleActionsDisabled,
-                  lifecycleActionsDisabled,
-                  addFilesDisabled: importInProgress,
-                  glossaryChangesDisabled,
-                  showDeletedFiles: state.expandedDeletedFiles.has(project.id),
-                  glossaries: state.glossaries,
-                  syncSnapshot: syncSnapshotsByProjectId[project.id] ?? null,
-                  suppressMissingLocalRepoRepair: refreshInProgress,
-                }),
-              )
-              .join("")}</section>`;
+          : renderProjectsVirtualList(
+              listItems,
+              listRenderContext,
+              resolveProjectsInitialWindowState(state, listItems),
+            );
 
   const body = `
     <section class="stack">
