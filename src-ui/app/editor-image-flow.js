@@ -7,6 +7,7 @@ import {
 } from "./editor-persistence-state.js";
 import { invoke, convertLocalFileSrc, waitForNextPaint } from "./runtime.js";
 import { logEditorScrollDebug } from "./editor-scroll-debug.js";
+import { noteUserScrollIntent } from "./editor-scroll-session.js";
 import {
   captureTranslateAnchorForRow,
   captureVisibleTranslateLocation,
@@ -38,6 +39,7 @@ import {
 } from "./editor-history-state.js";
 import { projectRepoScope } from "./repo-write-queue.js";
 import {
+  cancelPendingTranslateViewportRestores,
   captureTranslateViewport,
   renderTranslateBodyPreservingViewport,
 } from "./translate-viewport.js";
@@ -979,6 +981,13 @@ export function openEditorImageUpload(render, rowId, languageCode) {
         return;
       }
 
+      // Pinning to the bottom is the deliberate response to opening the
+      // upload editor at the bottom. Cancel pending after-paint restores and
+      // advance the scroll-intent generation so anchors captured before the
+      // pin (viewport snapshots, virtualizer layout anchors) go stale instead
+      // of dragging the viewport back up.
+      cancelPendingTranslateViewportRestores();
+      noteUserScrollIntent("image-upload-bottom-pin");
       scrollTranslateMainToBottom();
       logEditorScrollDebug("editor-image-upload-open", {
         stage: "after-bottom-pin",

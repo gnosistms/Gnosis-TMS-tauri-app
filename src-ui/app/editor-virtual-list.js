@@ -36,7 +36,11 @@ import {
   resolveTranslateRowAnchor,
   restoreTranslateRowAnchor,
 } from "./scroll-state.js";
-import { updateSessionAnchor } from "./editor-scroll-session.js";
+import {
+  isUserScrollBasisCurrent,
+  readUserScrollGeneration,
+  updateSessionAnchor,
+} from "./editor-scroll-session.js";
 import { logEditorScrollDebug } from "./editor-scroll-debug.js";
 
 const EDITOR_VIRTUALIZER_OVERSCAN_ROWS = 0;
@@ -213,12 +217,20 @@ function pinnedFocusedRowId(root, scrollContainer) {
 }
 
 function captureEditorLayoutAnchor(root) {
-  const activeAnchor = resolveTranslateRowAnchor(root.ownerDocument?.activeElement ?? null);
-  if (activeAnchor?.rowId) {
-    return activeAnchor;
+  const anchor =
+    resolveTranslateRowAnchor(root.ownerDocument?.activeElement ?? null)
+    ?? captureVisibleTranslateRowLocation();
+  if (!anchor?.rowId) {
+    return anchor;
   }
 
-  return captureVisibleTranslateRowLocation();
+  return {
+    ...anchor,
+    // Arbitration basis: a deliberate viewport jump (bottom-pin, scroll-to-
+    // top) advances the generation, making anchors captured before the jump
+    // stale so their restore cannot drag the viewport back.
+    userScrollGeneration: readUserScrollGeneration(),
+  };
 }
 
 function updateSpacerHeight(spacer, height) {
@@ -396,6 +408,17 @@ export function createEditorVirtualListController({
 
   const restoreAnchorSnapshot = (anchorSnapshot, reason) => {
     if (!anchorSnapshot?.rowId) {
+      return false;
+    }
+
+    if (!isUserScrollBasisCurrent(anchorSnapshot.userScrollGeneration)) {
+      logEditorScrollDebug("virtualization-anchor-restore-refused", {
+        engine: "tanstack",
+        reason,
+        rowAnchorId: anchorSnapshot.rowId ?? "",
+        basisGeneration: anchorSnapshot.userScrollGeneration ?? null,
+        scrollTop: scrollContainer.scrollTop,
+      });
       return false;
     }
 

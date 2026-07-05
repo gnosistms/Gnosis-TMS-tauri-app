@@ -314,12 +314,49 @@ export function collapseEditorMainField(render, rowId, languageCode, options = {
   );
 }
 
+// Logical identity of the focused text control, stable across DOM remounts.
+// Empty string when focus is not on a text-editing control (body, buttons).
+function describeFocusedTextControl() {
+  const activeElement = typeof document !== "undefined" ? document.activeElement : null;
+  if (!(activeElement instanceof HTMLElement)) {
+    return "";
+  }
+
+  const isTextControl =
+    activeElement instanceof HTMLTextAreaElement
+    || activeElement instanceof HTMLInputElement
+    || activeElement.isContentEditable === true;
+  if (!isTextControl) {
+    return "";
+  }
+
+  const cluster = activeElement.closest("[data-editor-language-cluster]");
+  if (cluster instanceof HTMLElement) {
+    return `cluster:${cluster.dataset.rowId ?? ""}:${cluster.dataset.languageCode ?? ""}`;
+  }
+
+  return `control:${activeElement.getAttributeNames().filter((name) => name.startsWith("data-")).join(",")}`;
+}
+
 export async function setActiveEditorField(render, rowId, languageCode, options = {}) {
   if (!rowId || !languageCode) {
     return;
   }
 
+  const focusBeforeActivation = describeFocusedTextControl();
   if (!(await ensureEditorRowReadyForActivation(render, rowId, options))) {
+    return;
+  }
+
+  // A slow row load must not resurrect editing controls after the user moved
+  // on: if focus landed on a different text control while we waited (search
+  // box, another row), this activation is superseded.
+  const focusAfterActivation = describeFocusedTextControl();
+  if (
+    focusAfterActivation !== focusBeforeActivation
+    && focusAfterActivation !== ""
+    && focusAfterActivation !== `cluster:${rowId}:${languageCode}`
+  ) {
     return;
   }
 

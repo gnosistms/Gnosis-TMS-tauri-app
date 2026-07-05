@@ -1,4 +1,5 @@
 import { buildEditorFieldSelector } from "./editor-utils.js";
+import { noteUserScrollIntent } from "./editor-scroll-session.js";
 
 let lockedScreen = null;
 let lockedSnapshot = null;
@@ -439,6 +440,8 @@ export function centerTranslateRowInView(rowId) {
     return false;
   }
 
+  // Deliberate jump: anchors captured before it must go stale.
+  noteUserScrollIntent("center-row");
   container.scrollTop += scrollDelta;
   pendingTranslateAnchor = null;
   return true;

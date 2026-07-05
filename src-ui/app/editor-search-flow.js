@@ -25,6 +25,7 @@ import {
 } from "./editor-utils.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import { waitForNextPaint } from "./runtime.js";
+import { noteUserScrollIntent } from "./editor-scroll-session.js";
 import { state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import {
@@ -122,6 +123,8 @@ function scrollTranslateMainToTop() {
     return;
   }
 
+  // Deliberate jump: anchors captured before it must go stale.
+  noteUserScrollIntent("filter-scroll-top");
   container.scrollTop = 0;
 }
 

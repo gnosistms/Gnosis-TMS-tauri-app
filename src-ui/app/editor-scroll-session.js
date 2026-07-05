@@ -23,6 +23,12 @@ let sessionAnchorChapterId = "";
  * drag, or a scroll key). Never call this for programmatic scrollTop writes —
  * `scroll` events do not distinguish the two, which is why intent is captured
  * from input events instead.
+ *
+ * Deliberate viewport jumps the app performs as the direct response to a user
+ * action (bottom-pin on opening the upload editor, scroll-to-top on filter
+ * activation, center-row on show-in-context) also count: they represent the
+ * user's current intent, so anchors and snapshots captured before the jump
+ * must go stale and not drag the viewport back.
  */
 export function noteUserScrollIntent(source = "") {
   userScrollGeneration += 1;

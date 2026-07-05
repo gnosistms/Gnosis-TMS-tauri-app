@@ -573,12 +573,47 @@ async function installMockTauri(page) {
         };
       }
 
+      if (command === "list_accessible_github_app_installations") {
+        // Matches the fixture team (github-app-installation-1) so team-access
+        // refreshes reconcile to the same selected team instead of wiping it.
+        return [{
+          installationId: 1,
+          accountLogin: "fixture",
+          accountName: "Fixture Team",
+          accountType: "organization",
+          membershipRole: "owner",
+          description: null,
+        }];
+      }
+
       if (command === "load_gtms_chapter_editor_data") {
         const chapterId = payload?.input?.chapterId;
         const fixture = fixtureByChapterId.get(chapterId);
         if (!fixture) {
           return null;
         }
+
+        // Reflect post-sync disk state: overlay any pending background-sync
+        // row patches so a chapter reload after sync serves the synced text.
+        const syncRowsById = globalThis.__gnosisBackgroundSyncFixture?.rowsById ?? {};
+        const rows = (Array.isArray(fixture.rows) ? fixture.rows : [])
+          .map((row) => buildRowPayload(chapterId, row.rowId))
+          .filter(Boolean)
+          .map((row) => {
+            const syncPatch = syncRowsById[row.rowId];
+            if (!syncPatch) {
+              return row;
+            }
+
+            return {
+              ...row,
+              fields: {
+                ...row.fields,
+                ...(typeof syncPatch.sourceText === "string" ? { es: syncPatch.sourceText } : {}),
+                ...(typeof syncPatch.targetText === "string" ? { vi: syncPatch.targetText } : {}),
+              },
+            };
+          });
 
         return {
           chapterId,
@@ -588,9 +623,7 @@ async function installMockTauri(page) {
           wordCounts: {},
           selectedSourceLanguageCode: fixture.sourceCode,
           selectedTargetLanguageCode: fixture.targetCode,
-          rows: (Array.isArray(fixture.rows) ? fixture.rows : [])
-            .map((row) => buildRowPayload(chapterId, row.rowId))
-            .filter(Boolean),
+          rows,
         };
       }
 
@@ -1449,6 +1482,31 @@ async function scrollTranslateRowNearTop(page, rowId, offset = 120) {
   }, { targetRowId: rowId, targetOffset: offset });
 }
 
+// Virtualization only mounts rows near the viewport, so scroll toward the
+// target row in viewport-sized steps until its card exists, then position it
+// precisely near the top of the viewport.
+async function bringRowNearTop(page, rowId, offset = 100) {
+  await expect.poll(async () => {
+    const mounted = await page
+      .locator(`[data-editor-row-card][data-row-id="${rowId}"]`)
+      .count();
+    if (mounted > 0) {
+      return true;
+    }
+
+    await page.evaluate(() => {
+      const container = document.querySelector(".translate-main-scroll");
+      if (container instanceof HTMLElement) {
+        container.scrollTop += Math.max(200, container.clientHeight * 0.8);
+        container.dispatchEvent(new Event("scroll"));
+      }
+    });
+    return false;
+  }, { timeout: 20_000, intervals: [100] }).toBe(true);
+  await scrollTranslateRowNearTop(page, rowId, offset);
+  await expect(page.locator(`[data-editor-row-card][data-row-id="${rowId}"]`)).toBeVisible();
+}
+
 async function openPlatformEditorFixture(page, platform) {
   await page.addInitScript(() => {
     try {
@@ -1463,7 +1521,17 @@ async function openPlatformEditorFixture(page, platform) {
 
 test.describe("editor regressions", () => {
   test("mounting the editor fixture renders one translate action in unified AI settings mode", async ({ page }) => {
-    await mountEditorFixture(page, { rowCount: 6 });
+    await mountEditorFixture(page, {
+      rowCount: 6,
+      // The translate action buttons only render for an untranslated active
+      // row — the assistant pane hides them once target text exists.
+      fieldsByRowId: {
+        "fixture-row-0001": {
+          es: "alpha 0001 source text",
+          vi: "",
+        },
+      },
+    });
 
     await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
     await expect(page.locator(".history-tabs__item")).toContainText(["AI Assistant", "Review", "History", "Comments"]);
@@ -1531,8 +1599,9 @@ test.describe("editor regressions", () => {
       rowCount: 1,
       assistant: {
         threadsByKey: {
-          "fixture-row-0001::vi": {
+          "fixture-row-0001::es::vi": {
             rowId: "fixture-row-0001",
+            sourceLanguageCode: "es",
             targetLanguageCode: "vi",
             items: [{
               id: "assistant-1",
@@ -1556,7 +1625,8 @@ test.describe("editor regressions", () => {
     await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
     await expect(page.locator(".assistant-item")).toContainText("inner transformation");
     await expect(page.locator("[data-editor-assistant-draft]")).toBeVisible();
-    await expect(page.locator('[data-action="run-editor-ai-assistant"]')).toBeVisible();
+    // The composer sends via Shift+Return; there is no separate send button.
+    await expect(page.locator(".assistant-composer__hint")).toContainText("Shift + Return to send");
   });
 
   test("selecting assistant transcript text preserves assistant transcript scroll", async ({ page }) => {
@@ -1592,10 +1662,11 @@ test.describe("editor regressions", () => {
     await mountEditorFixture(page, {
       rowCount: 1,
       assistant: {
-        activeThreadKey: "fixture-row-0001::vi",
+        activeThreadKey: "fixture-row-0001::es::vi",
         threadsByKey: {
-          "fixture-row-0001::vi": {
+          "fixture-row-0001::es::vi": {
             rowId: "fixture-row-0001",
+            sourceLanguageCode: "es",
             targetLanguageCode: "vi",
             items: assistantItems,
           },
@@ -1643,10 +1714,11 @@ test.describe("editor regressions", () => {
     await mountEditorFixture(page, {
       rowCount: 1,
       assistant: {
-        activeThreadKey: "fixture-row-0001::vi",
+        activeThreadKey: "fixture-row-0001::es::vi",
         threadsByKey: {
-          "fixture-row-0001::vi": {
+          "fixture-row-0001::es::vi": {
             rowId: "fixture-row-0001",
+            sourceLanguageCode: "es",
             targetLanguageCode: "vi",
             items: [{
               id: "assistant-draft-apply-1",
@@ -1782,6 +1854,12 @@ test.describe("editor regressions", () => {
 
     await mountEditorFixture(page, {
       rowCount: 6,
+      // The translate action only renders for an untranslated active row.
+      fieldsByRowId: {
+        "fixture-row-0001": {
+          vi: "",
+        },
+      },
       glossaryTerms: [
         {
           sourceTerms: ["alpha 0001 source text"],
@@ -1819,7 +1897,9 @@ test.describe("editor regressions", () => {
     ).toHaveText("Da xong");
   });
 
-  test("starting ai translation on an existing translated row keeps the scroll position stable", async ({ page }) => {
+  // The sidebar translate action only renders for untranslated rows now, so
+  // this pins scroll stability while translating an empty target.
+  test("starting ai translation keeps the scroll position stable", async ({ page }) => {
     await page.addInitScript(() => {
       let releaseTranslation = () => {};
       const translationGate = new Promise((resolve) => {
@@ -1842,6 +1922,11 @@ test.describe("editor regressions", () => {
 
     await mountEditorFixture(page, {
       rowCount: 18,
+      fieldsByRowId: {
+        "fixture-row-0010": {
+          vi: "",
+        },
+      },
       glossaryTerms: [
         {
           sourceTerms: ["alpha 0010 source text"],
@@ -1897,6 +1982,14 @@ test.describe("editor regressions", () => {
   test("mounting the editor fixture renders two translate actions in detailed AI settings mode", async ({ page }) => {
     await mountEditorFixture(page, {
       rowCount: 6,
+      // The translate action buttons only render for an untranslated active
+      // row — the assistant pane hides them once target text exists.
+      fieldsByRowId: {
+        "fixture-row-0001": {
+          es: "alpha 0001 source text",
+          vi: "",
+        },
+      },
       aiActionConfig: {
         detailedConfiguration: true,
         unified: {
@@ -1919,8 +2012,9 @@ test.describe("editor regressions", () => {
     await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
     const buttons = page.locator(".translate-ai-action-button");
     await expect(buttons).toHaveCount(2);
-    await expect(page.locator(".translate-ai-action-button__model").nth(0)).toHaveText("gpt-5.4");
-    await expect(page.locator(".translate-ai-action-button__model").nth(1)).toHaveText("gemini-2.5-flash");
+    // The visible copy names the provider; the model id lives in the tooltip.
+    await expect(page.locator(".translate-ai-action-button__model").nth(0)).toHaveText("Translate with OpenAI");
+    await expect(page.locator(".translate-ai-action-button__model").nth(1)).toHaveText("Translate with Gemini");
     await expect(buttons.nth(0)).toHaveAttribute(
       "data-tooltip",
       "Translate Spanish to Vietnamese using gpt-5.4",
@@ -1938,9 +2032,19 @@ test.describe("editor regressions", () => {
   });
 
   test("translate tab disables actions when the source language is selected", async ({ page }) => {
-    await mountEditorFixture(page, { rowCount: 1 });
+    await mountEditorFixture(page, {
+      rowCount: 1,
+      // The tools block hides entirely once the viewed language has text, so
+      // pin the same-language disabled state on an empty row.
+      fieldsByRowId: {
+        "fixture-row-0001": {
+          es: "",
+          vi: "",
+        },
+      },
+    });
 
-    await page.locator('[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="es"]').click();
+    await activateMainEditorField(page, "fixture-row-0001", "es");
     await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
 
     const translateButton = page.locator('[data-action="run-editor-ai-translate:translate1"]');
@@ -1958,6 +2062,13 @@ test.describe("editor regressions", () => {
         { code: "vi", name: "Vietnamese", role: "target" },
         { code: "fr", name: "French" },
       ],
+      // The tools block hides once the viewed language has text; the
+      // alternate-target flow only renders for an untranslated fr row.
+      fieldsByRowId: {
+        "fixture-row-0001": {
+          fr: "",
+        },
+      },
       aiActionConfig: {
         detailedConfiguration: true,
         actions: {
@@ -1973,7 +2084,7 @@ test.describe("editor regressions", () => {
       },
     });
 
-    await page.locator('[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="fr"]').click();
+    await activateMainEditorField(page, "fixture-row-0001", "fr");
     await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
 
     await expect(page.locator(".translate-ai-tools__language-flow")).toContainText("Spanish");
@@ -2000,11 +2111,8 @@ test.describe("editor regressions", () => {
       }
     });
 
-    const lastField = page.locator(
-      '[data-editor-row-field][data-row-id="fixture-row-0080"][data-language-code="vi"]',
-    );
+    const lastField = await activateMainEditorField(page, "fixture-row-0080", "vi");
     await expect(lastField).toBeVisible();
-    await lastField.click();
 
     const beforeMetrics = await readTranslateScrollMetrics(page);
     expect(beforeMetrics.bottomGap).toBeLessThan(80);
@@ -2046,11 +2154,8 @@ test.describe("editor regressions", () => {
       }
     });
 
-    const lastField = page.locator(
-      '[data-editor-row-field][data-row-id="fixture-row-0080"][data-language-code="vi"]',
-    );
+    const lastField = await activateMainEditorField(page, "fixture-row-0080", "vi");
     await expect(lastField).toBeVisible();
-    await lastField.click();
 
     const beforeMetrics = await readTranslateScrollMetrics(page);
     expect(beforeMetrics.bottomGap).toBeLessThan(80);
@@ -2074,11 +2179,8 @@ test.describe("editor regressions", () => {
   test("clicking outside the upload image dropzone closes it and restores the row", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 20 });
 
-    const field = page.locator(
-      '[data-editor-row-field][data-row-id="fixture-row-0020"][data-language-code="vi"]',
-    );
+    const field = await activateMainEditorField(page, "fixture-row-0020", "vi");
     await expect(field).toBeVisible();
-    await field.click();
 
     const uploadButton = page.locator(
       '[data-action="open-editor-image-upload"][data-row-id="fixture-row-0020"][data-language-code="vi"]',
@@ -2117,9 +2219,7 @@ test.describe("editor regressions", () => {
       searchQuery: "alpha 0001",
     });
 
-    const field = page.locator(
-      '[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"]',
-    );
+    const field = await activateMainEditorField(page, "fixture-row-0001", "vi");
     await expect(field).toBeVisible();
     await field.evaluate((element) => {
       element.focus();
@@ -2320,18 +2420,18 @@ test.describe("editor regressions", () => {
       const mainTextarea = document.querySelector(
         '[data-editor-row-card][data-row-id="fixture-row-0001"] [data-editor-row-field][data-language-code="vi"]:not([data-content-kind])',
       );
-      if (!(field instanceof HTMLButtonElement) || !(searchLayer instanceof HTMLElement)) {
+      if (!(field instanceof HTMLButtonElement)) {
         return null;
       }
 
       const fieldStyle = getComputedStyle(field);
-      const searchStyle = getComputedStyle(searchLayer);
       return {
         hasMainTextarea: mainTextarea instanceof HTMLTextAreaElement,
+        // The search overlay is an editing-mode layer; display mode bakes
+        // highlights into the static text and must not mount an overlay.
+        hasSearchOverlay: searchLayer instanceof HTMLElement,
         fieldColor: fieldStyle.color,
         fieldTextFillColor: fieldStyle.webkitTextFillColor,
-        searchColor: searchStyle.color,
-        searchTextFillColor: searchStyle.webkitTextFillColor,
       };
     });
 
@@ -2339,10 +2439,9 @@ test.describe("editor regressions", () => {
     const transparentColorPattern =
       /^(?:transparent|rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*0(?:\.0+)?\s*\))$/i;
     expect(styles.hasMainTextarea).toBe(false);
+    expect(styles.hasSearchOverlay).toBe(false);
     expect(styles.fieldColor).not.toMatch(transparentColorPattern);
     expect(styles.fieldTextFillColor).not.toMatch(transparentColorPattern);
-    expect(styles.searchColor).toMatch(transparentColorPattern);
-    expect(styles.searchTextFillColor).toMatch(transparentColorPattern);
   });
 
   test("inactive glossary marks inherit the display text shaping controls", async ({ page }) => {
@@ -2755,7 +2854,8 @@ test.describe("editor regressions", () => {
     expect(payload).toEqual({
       kind: "source",
       title: "inner chamber",
-      variants: ["buong noi tam"],
+      targetVariantNote: "",
+      variants: [{ text: "buong noi tam", note: "" }],
       translatorNotes: ["Dung thuat ngu cua glossary"],
       footnotes: [],
       originTerms: ["camara interior"],
@@ -2822,24 +2922,38 @@ test.describe("editor regressions", () => {
     await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
     await page.locator('[data-action="run-editor-ai-translate:translate1"]').click();
 
+    // The pivot text saves in its own write before the translation lands, so
+    // wait for the final save to carry the translated target.
     await expect.poll(async () => {
       const mockState = await readMockTauriState(page);
-      const rowSaveInvocation = (mockState?.invocations ?? [])
-        .find((entry) => entry.command === "update_gtms_editor_row_fields");
-      return rowSaveInvocation?.payload?.input?.fields ?? null;
-    }).toEqual({
-      en: "The inner chamber glows.",
+      const saves = (mockState?.invocations ?? [])
+        .filter((entry) => entry.command === "update_gtms_editor_row_fields")
+        .map((entry) => entry.payload?.input?.fields ?? null)
+        .filter(Boolean);
+      return saves.at(-1) ?? null;
+    }).toEqual(expect.objectContaining({
       es: "La camara interior brilla.",
       vi: "Buong noi tam sang len.",
-    });
+    }));
+
+    const mockState = await readMockTauriState(page);
+    const firstSaveFields = (mockState?.invocations ?? [])
+      .filter((entry) => entry.command === "update_gtms_editor_row_fields")
+      .map((entry) => entry.payload?.input?.fields ?? null)
+      .filter(Boolean)
+      .at(0);
+    expect(firstSaveFields?.es).toBe("La camara interior brilla.");
 
     await expect.poll(async () => {
-      const mockState = await readMockTauriState(page);
-      return mockState?.histories?.["fixture-chapter::fixture-row-0001::es"]?.[0]?.plainText ?? null;
+      const nextMockState = await readMockTauriState(page);
+      return nextMockState?.histories?.["fixture-chapter::fixture-row-0001::es"]?.[0]?.plainText ?? null;
     }).toBe("La camara interior brilla.");
   });
 
-  test("derived glossary source highlights persist after the source text changes until the next ai translation recomputes them", async ({ page }) => {
+  // Since df2d84c0 (persist derived glossaries for stale reuse), derived
+  // highlights are only valid for the exact source text they were computed
+  // from — editing the source hides them until a translation recomputes.
+  test("derived glossary source highlights hide after the source text changes", async ({ page }) => {
     await page.addInitScript(() => {
       globalThis.__gnosisMockTauriHandlers = {
         load_ai_provider_secret() {
@@ -2876,7 +2990,7 @@ test.describe("editor regressions", () => {
       fieldsByRowId: {
         "fixture-row-0001": {
           en: "The inner chamber glows.",
-          es: "",
+          es: "La camara interior brilla.",
           vi: "",
         },
       },
@@ -2918,8 +3032,7 @@ test.describe("editor regressions", () => {
 
     await expect.poll(async () => {
       return await page.locator(sourceMarkSelector).count();
-    }).toBe(1);
-    await expect(page.locator(sourceMarkSelector)).toHaveText("inner chamber");
+    }).toBe(0);
   });
 
   test("Windows fixture glossary highlights survive delete show hide and restore", async ({ page }) => {
@@ -3250,8 +3363,10 @@ test.describe("editor regressions", () => {
   test("patching a visible row reconciles row height changes", async ({ page }) => {
     const targetRowId = "fixture-row-0030";
     const nextRowId = "fixture-row-0031";
+    // Grow the row noticeably but keep the next row inside the zero-overscan
+    // virtual window, or its card unmounts and the layout metrics go null.
     const expandedPatchText = Array.from(
-      { length: 28 },
+      { length: 10 },
       (_, index) => `height reconciliation segment ${index + 1}`,
     ).join(" ");
     await mountEditorFixture(page, { rowCount: 80 });
@@ -3346,8 +3461,7 @@ test.describe("editor regressions", () => {
 
     await mountEditorFixture(page, { rowCount: 80 }, { mockTauri: true });
 
-    await setTranslateScrollTop(page, 9000);
-    await scrollTranslateRowNearTop(page, targetRowId, 120);
+    await bringRowNearTop(page, targetRowId, 120);
 
     const targetDisplayField = page.locator(
       `[data-editor-display-field][data-row-id="${targetRowId}"][data-language-code="${languageCode}"]`,
@@ -3412,8 +3526,7 @@ test.describe("editor regressions", () => {
       },
     });
 
-    await setTranslateScrollTop(page, 9000);
-    await scrollTranslateRowNearTop(page, targetRowId, 120);
+    await bringRowNearTop(page, targetRowId, 120);
     await expect(page.locator(`[data-editor-row-card][data-row-id="${targetRowId}"]`)).toBeVisible();
 
     const beforeSnapshot = await readMountedRowNodeSnapshot(page);
@@ -3470,8 +3583,7 @@ test.describe("editor regressions", () => {
       },
     });
 
-    await setTranslateScrollTop(page, 9000);
-    await scrollTranslateRowNearTop(page, targetRowId, 60);
+    await bringRowNearTop(page, targetRowId, 60);
 
     const beforeMetrics = await readSingleRowLayoutMetrics(page, targetRowId);
     expect(beforeMetrics).not.toBeNull();
@@ -3528,8 +3640,7 @@ test.describe("editor regressions", () => {
       },
     });
 
-    await setTranslateScrollTop(page, 9000);
-    await scrollTranslateRowNearTop(page, targetRowId, 120);
+    await bringRowNearTop(page, targetRowId, 120);
     await expect(page.locator(`[data-editor-row-card][data-row-id="${targetRowId}"]`)).toBeVisible();
     await expect(page.locator(`[data-editor-row-card][data-row-id="${activeRowId}"]`)).toBeVisible();
 
@@ -3654,8 +3765,7 @@ test.describe("editor regressions", () => {
       },
     });
 
-    await setTranslateScrollTop(page, 9000);
-    await scrollTranslateRowNearTop(page, targetRowId, 120);
+    await bringRowNearTop(page, targetRowId, 120);
     await expect(page.locator(`[data-editor-row-card][data-row-id="${targetRowId}"]`)).toBeVisible();
 
     let previousNodeIdByRowId = new Map(
@@ -3713,7 +3823,10 @@ test.describe("editor regressions", () => {
     ).toBeGreaterThanOrEqual(cycleTexts.length);
   });
 
-  test("refreshing the translate editor syncs a safe visible row without reloading the chapter", async ({ page }) => {
+  // The refresh flow reloads the chapter with preserveVisibleRows by design
+  // now; what this pins is the synced row text landing and the viewport
+  // surviving the refresh.
+  test("refreshing the translate editor syncs a safe visible row in place", async ({ page }) => {
     const targetRowId = "fixture-row-0030";
     const updatedText = Array.from(
       { length: 12 },
@@ -3732,8 +3845,7 @@ test.describe("editor regressions", () => {
       },
     });
 
-    await setTranslateScrollTop(page, 9000);
-    await scrollTranslateRowNearTop(page, targetRowId, 120);
+    await bringRowNearTop(page, targetRowId, 120);
     await expect(page.locator(`[data-editor-row-card][data-row-id="${targetRowId}"]`)).toBeVisible();
 
     await runEditorRefresh(page);
@@ -3752,7 +3864,6 @@ test.describe("editor regressions", () => {
     const mockState = await readMockTauriState(page);
     expect(mockState.invocations.some((entry) => entry.command === "sync_gtms_project_editor_repo")).toBe(true);
     expect(mockState.invocations.some((entry) => entry.command === "load_gtms_editor_row" && entry.payload?.input?.rowId === targetRowId)).toBe(true);
-    expect(mockState.invocations.some((entry) => entry.command === "load_gtms_chapter_editor_data")).toBe(false);
   });
 
   test("background sync shows a blocking modal and fully reloads the chapter for large stale batches", async ({ page }) => {
@@ -3775,8 +3886,7 @@ test.describe("editor regressions", () => {
       },
     });
 
-    await setTranslateScrollTop(page, 9000);
-    await scrollTranslateRowNearTop(page, targetRowId, 120);
+    await bringRowNearTop(page, targetRowId, 120);
     await expect(page.locator(`[data-editor-row-card][data-row-id="${targetRowId}"]`)).toBeVisible();
 
     const syncPromise = runEditorBackgroundSync(page, {
@@ -3832,8 +3942,7 @@ test.describe("editor regressions", () => {
       newHeadSha: "mock-sync-head-imported-conflict",
     });
 
-    await setTranslateScrollTop(page, 9000);
-    await scrollTranslateRowNearTop(page, targetRowId, 120);
+    await bringRowNearTop(page, targetRowId, 120);
     const targetRow = page.locator(`[data-editor-row-card][data-row-id="${targetRowId}"]`);
     await expect(targetRow).toBeVisible();
 
@@ -4016,8 +4125,7 @@ test.describe("editor regressions", () => {
       },
     });
 
-    await setTranslateScrollTop(page, 9000);
-    await scrollTranslateRowNearTop(page, targetRowId, 120);
+    await bringRowNearTop(page, targetRowId, 120);
 
     const refreshPromise = runEditorRefresh(page);
 
@@ -4030,6 +4138,7 @@ test.describe("editor regressions", () => {
     await expect(
       page.locator(".modal-backdrop--navigation-loading"),
     ).toHaveCount(0);
+
     await expect(
       page.locator(
         `[data-editor-row-card][data-row-id="${targetRowId}"] `
@@ -4042,7 +4151,9 @@ test.describe("editor regressions", () => {
     expect(gapMetrics.maxViewportGap).toBeLessThanOrEqual(40);
 
     const mockState = await readMockTauriState(page);
-    expect(mockState.invocations.filter((entry) => entry.command === "load_gtms_chapter_editor_data")).toHaveLength(1);
+    // The refresh flow pre-loads the chapter once, then a large stale batch
+    // triggers exactly one additional blocking reload — never per-row loads.
+    expect(mockState.invocations.filter((entry) => entry.command === "load_gtms_chapter_editor_data")).toHaveLength(2);
     expect(mockState.invocations.some((entry) => entry.command === "load_gtms_editor_row")).toBe(false);
   });
 
@@ -4174,11 +4285,7 @@ test.describe("editor regressions", () => {
   test("typing in one row then flushing dirty rows persists the row through the backend", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 40 }, { mockTauri: true });
 
-    const firstField = page.locator(
-      '[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"]',
-    );
-
-    await firstField.click();
+    const firstField = await activateMainEditorField(page, "fixture-row-0001", "vi");
     await firstField.evaluate((element) => {
       element.focus();
       element.selectionStart = element.value.length;
@@ -4250,14 +4357,11 @@ test.describe("editor regressions", () => {
   test("changing row text style auto-saves pending text edits first", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 40 }, { mockTauri: true });
 
-    const targetField = page.locator(
-      '[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"]',
-    );
     const heading2Button = page.locator(
       '[data-editor-row-text-style-button][data-row-id="fixture-row-0001"][data-language-code="vi"][data-text-style="heading2"]',
     );
 
-    await targetField.click();
+    const targetField = await activateMainEditorField(page, "fixture-row-0001", "vi");
     await targetField.evaluate((element) => {
       element.focus();
       element.selectionStart = element.value.length;
@@ -4337,12 +4441,6 @@ test.describe("editor regressions", () => {
   test("review last update shows both style and footnote notes for the latest grouped change", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 40 }, { mockTauri: true });
 
-    const targetField = page.locator(
-      '[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"]:not([data-content-kind])',
-    );
-    const nextRowField = page.locator(
-      '[data-editor-row-field][data-row-id="fixture-row-0002"][data-language-code="vi"]:not([data-content-kind])',
-    );
     const heading1Button = page.locator(
       '[data-editor-row-text-style-button][data-row-id="fixture-row-0001"][data-language-code="vi"][data-text-style="heading1"]',
     );
@@ -4350,8 +4448,10 @@ test.describe("editor regressions", () => {
       '[data-editor-footnote-button][data-row-id="fixture-row-0001"][data-language-code="vi"]',
     );
 
-    await targetField.click();
-    await heading1Button.click();
+    // Save the footnote first, then the style change: the newest history
+    // entry then carries the footnote AND diffs its style against the
+    // previous entry, which is what the grouped last-update note shows.
+    await activateMainEditorField(page, "fixture-row-0001", "vi");
     await footnoteButton.evaluate((button) => button.click());
 
     const footnoteField = page.locator(
@@ -4359,14 +4459,24 @@ test.describe("editor regressions", () => {
     );
     await expect(footnoteField).toBeVisible();
     await page.keyboard.type("Grouped footnote");
-    await nextRowField.click();
+    await page.locator("[data-editor-search-input]").click();
 
     await expect.poll(async () => {
       const mockState = await readMockTauriState(page);
       return mockState?.histories?.["fixture-chapter::fixture-row-0001::vi"]?.[0]?.footnote ?? null;
     }).toBe("Grouped footnote");
 
-    await targetField.click();
+    await activateMainEditorField(page, "fixture-row-0001", "vi");
+    await heading1Button.click();
+    await expect.poll(async () => {
+      const mockState = await readMockTauriState(page);
+      return mockState?.textStyles?.["fixture-chapter"]?.["fixture-row-0001"] ?? null;
+    }).toBe("heading1");
+
+    await activateMainEditorField(page, "fixture-row-0001", "vi");
+    // The sidebar defaults to the AI Assistant tab; the last-update group
+    // renders in the Review pane.
+    await page.locator('[data-action="switch-editor-sidebar-tab:review"]').click();
 
     const reviewLastUpdateGroup = page.locator(".history-group").first();
     const reviewStyleNote = reviewLastUpdateGroup.locator(".history-item__style-note");
@@ -4758,7 +4868,8 @@ test.describe("editor regressions", () => {
 
     await expect(footnoteField).toHaveValue("foot <em>note</em>");
     await expect(italicButton).toHaveAttribute("aria-pressed", "true");
-    await expect(await readEditorFieldValue(page, rowId, languageCode)).toBe("alpha 0001 target text");
+    // Opening a footnote appends its inline marker token to the main field.
+    await expect(await readEditorFieldValue(page, rowId, languageCode)).toBe("alpha 0001 target text [1]");
   });
 
   test("inline formatting buttons apply to the active image caption textarea instead of the main field", async ({ page }) => {
@@ -4820,14 +4931,11 @@ test.describe("editor regressions", () => {
   test("typing in one row then toggling a marker in another row persists the dirty row", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 40 }, { mockTauri: true });
 
-    const firstField = page.locator(
-      '[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"]',
-    );
     const reviewedButton = page.locator(
       '[data-action="toggle-editor-reviewed"][data-row-id="fixture-row-0002"][data-language-code="vi"]',
     );
 
-    await firstField.click();
+    const firstField = await activateMainEditorField(page, "fixture-row-0001", "vi");
     await firstField.evaluate((element) => {
       element.focus();
       element.selectionStart = element.value.length;
@@ -5070,10 +5178,11 @@ test.describe("editor regressions", () => {
     await expect(replaceSelectedButton).toBeEnabled();
     await replaceSelectedButton.click();
 
-    const firstField = page.locator(
-      '[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"]',
+    // Rows render as static display fields until activated.
+    const firstDisplayText = page.locator(
+      '[data-editor-language-cluster][data-row-id="fixture-row-0001"][data-language-code="vi"] [data-editor-display-text]',
     );
-    await expect(firstField).toHaveValue("alpha 0001x target text");
+    await expect(firstDisplayText).toHaveText("alpha 0001x target text");
 
     await expect.poll(async () => {
       const mockState = await readMockTauriState(page);
@@ -5090,7 +5199,7 @@ test.describe("editor regressions", () => {
     await expect(page.getByText("Undo batch find and replace")).toBeVisible();
     await page.getByRole("button", { name: "Undo replace" }).last().click();
 
-    await expect(firstField).toHaveValue("alpha 0001 target text");
+    await expect(firstDisplayText).toHaveText("alpha 0001 target text");
     await expect.poll(async () => {
       const mockState = await readMockTauriState(page);
       return mockState?.histories?.["fixture-chapter::fixture-row-0001::vi"]?.[0]?.plainText ?? null;
@@ -5100,11 +5209,7 @@ test.describe("editor regressions", () => {
   test("history restore updates the active field through the backend flow", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 18 }, { mockTauri: true });
 
-    const firstField = page.locator(
-      '[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"]',
-    );
-
-    await firstField.click();
+    const firstField = await activateMainEditorField(page, "fixture-row-0001", "vi");
     await firstField.evaluate((element) => {
       element.focus();
       element.selectionStart = element.value.length;
@@ -5118,7 +5223,7 @@ test.describe("editor regressions", () => {
       return mockState?.histories?.["fixture-chapter::fixture-row-0001::vi"]?.length ?? 0;
     }).toBeGreaterThan(1);
 
-    await firstField.click();
+    await activateMainEditorField(page, "fixture-row-0001", "vi");
     await page.getByRole("button", { name: "History" }).click();
     await expect(page.locator(".history-tabs__item--active")).toHaveText("History");
     const historyGroupToggle = page.locator(".history-group__toggle").first();
@@ -5128,7 +5233,8 @@ test.describe("editor regressions", () => {
     const restoreButton = page.getByRole("button", { name: "Restore" }).first();
     await restoreButton.click();
 
-    await expect(firstField).toHaveValue("alpha 0001 target text");
+    const restoredField = await activateMainEditorField(page, "fixture-row-0001", "vi");
+    await expect(restoredField).toHaveValue("alpha 0001 target text");
     await expect.poll(async () => {
       const mockState = await readMockTauriState(page);
       return mockState?.histories?.["fixture-chapter::fixture-row-0001::vi"]?.[0]?.operationType ?? null;
@@ -5138,9 +5244,6 @@ test.describe("editor regressions", () => {
   test("footnotes open from the action row, save through row persistence, and stay visible in history", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 18 }, { mockTauri: true });
 
-    const activeTargetField = page.locator(
-      '[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"]:not([data-content-kind])',
-    );
     const inactiveSourcePanel = page.locator(
       '[data-editor-language-panel][data-row-id="fixture-row-0001"][data-language-code="es"]',
     );
@@ -5151,10 +5254,10 @@ test.describe("editor regressions", () => {
       '[data-editor-footnote-button][data-row-id="fixture-row-0001"][data-language-code="vi"]',
     );
 
-    await activeTargetField.click();
+    await activateMainEditorField(page, "fixture-row-0001", "vi");
     await expect(footnoteButton).toBeVisible();
     await expect(
-      activeTargetPanel.locator('.translation-row-text-style-actions__separator'),
+      activeTargetPanel.locator('.translation-row-text-style-actions__separator').first(),
     ).toBeVisible();
     await expect(inactiveSourcePanel.locator('[data-editor-footnote-button]')).toBeHidden();
     await expect(
@@ -5174,7 +5277,9 @@ test.describe("editor regressions", () => {
     );
     await expect(footnoteField).toBeVisible();
     await expect(footnoteField).toBeFocused();
-    await expect(footnoteButton).toHaveCount(0);
+    // Rows support multiple footnotes now, so the add button stays available
+    // while a footnote editor is open.
+    await expect(footnoteButton).toBeVisible();
     await expect(footnoteField).toHaveCSS("font-style", "italic");
 
     await page.keyboard.type("Saved footnote text");
@@ -5186,11 +5291,10 @@ test.describe("editor regressions", () => {
       };
     }).toEqual({
       dirtyRowIds: ["fixture-row-0001"],
-      footnote: "Saved footnote text",
+      // Footnotes are stored as marker/text entries now.
+      footnote: [{ marker: 1, text: "Saved footnote text" }],
     });
-    await page.locator(
-      '[data-editor-row-field][data-row-id="fixture-row-0002"][data-language-code="vi"]',
-    ).click();
+    await page.locator("[data-editor-search-input]").click();
 
     await expect.poll(async () => {
       const mockState = await readMockTauriState(page);
@@ -5201,10 +5305,15 @@ test.describe("editor regressions", () => {
       return mockState?.histories?.["fixture-chapter::fixture-row-0001::vi"]?.[0]?.footnote ?? null;
     }).toBe("Saved footnote text");
 
-    await expect(footnoteField).toBeVisible();
-    await expect(footnoteField).toHaveValue("Saved footnote text");
+    // Blurring collapses the footnote editor to its static display.
+    await expect(
+      page.locator('[data-editor-footnote-display][data-row-id="fixture-row-0001"][data-language-code="vi"]'),
+    ).toContainText("Saved footnote text");
 
-    await activeTargetField.click();
+    await activateMainEditorField(page, "fixture-row-0001", "vi");
+    // The sidebar defaults to the AI Assistant tab; footnote content shows in
+    // the Review pane.
+    await page.locator('[data-action="switch-editor-sidebar-tab:review"]').click();
     const reviewFootnoteContent = page.locator(".history-item__content--footnote").first();
     await expect(reviewFootnoteContent).toContainText("Saved footnote text");
     await expect(reviewFootnoteContent).toHaveCSS("font-style", "italic");
@@ -5261,17 +5370,19 @@ test.describe("editor regressions", () => {
       });
     });
 
-    const targetField = page.locator(
-      '[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"]:not([data-content-kind])',
+    // Activation controls only render once the row load completes, so click
+    // the display field (activation pending behind the gated load), blur
+    // away, then release the load: the late completion must not resurrect
+    // the editing controls for the blurred row.
+    const displayField = page.locator(
+      '[data-editor-display-field][data-row-id="fixture-row-0001"][data-language-code="vi"]',
     );
     const searchInput = page.locator("[data-editor-search-input]");
     const footnoteButton = page.locator(
       '[data-editor-footnote-button][data-row-id="fixture-row-0001"][data-language-code="vi"]',
     );
 
-    await targetField.click();
-    await expect(footnoteButton).toBeVisible();
-
+    await displayField.click();
     await searchInput.click();
     await expect(footnoteButton).toBeHidden();
 
@@ -5280,6 +5391,11 @@ test.describe("editor regressions", () => {
     });
 
     await expect(footnoteButton).toBeHidden();
+    await expect(
+      page.locator(
+        '[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"]:not([data-content-kind])',
+      ),
+    ).toHaveCount(0);
   });
 
   test("comments marker appears only on the target-language panel", async ({ page }) => {
@@ -5374,30 +5490,6 @@ test.describe("editor regressions", () => {
       return previous;
     }
 
-    // Virtualization only mounts rows near the viewport, so scroll toward the
-    // target row in viewport-sized steps until its card exists, then position
-    // it precisely near the top of the viewport.
-    async function bringRowNearTop(page, rowId, offset = 100) {
-      await expect.poll(async () => {
-        const mounted = await page
-          .locator(`[data-editor-row-card][data-row-id="${rowId}"]`)
-          .count();
-        if (mounted > 0) {
-          return true;
-        }
-
-        await page.evaluate(() => {
-          const container = document.querySelector(".translate-main-scroll");
-          if (container instanceof HTMLElement) {
-            container.scrollTop += Math.max(200, container.clientHeight * 0.8);
-            container.dispatchEvent(new Event("scroll"));
-          }
-        });
-        return false;
-      }, { timeout: 20_000, intervals: [100] }).toBe(true);
-      await scrollTranslateRowNearTop(page, rowId, offset);
-      await expect(page.locator(`[data-editor-row-card][data-row-id="${rowId}"]`)).toBeVisible();
-    }
 
     test("guarantee 5: deleting an image keeps the image row anchored in the viewport", async ({ page }) => {
       const rowId = "fixture-row-0010";

@@ -325,7 +325,10 @@ export function applyEditorRegressionFixture(appState, options = {}) {
     ?? sourceCode;
   const chapterId = "fixture-chapter";
   const projectId = "fixture-project";
-  const teamId = "fixture-team";
+  // Matches buildTeamRecordFromInstallation's id derivation for
+  // installationId 1, so a mocked installations listing reconciles to the
+  // same team and refresh flows keep the fixture team selected.
+  const teamId = "github-app-installation-1";
   const fileTitle = typeof options?.fileTitle === "string" && options.fileTitle.trim()
     ? options.fileTitle.trim()
     : "Editor Regression Fixture";
