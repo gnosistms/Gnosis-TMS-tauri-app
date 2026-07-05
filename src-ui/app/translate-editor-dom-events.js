@@ -3,12 +3,6 @@ import { syncEditorImagePreviewFrameWithResult } from "./editor-image-preview-si
 import { syncEditorVirtualizationRowLayout } from "./editor-virtualization.js";
 import { closestEventTarget } from "./event-target.js";
 import { onCurrentWebviewDragDrop, openExternalUrl } from "./runtime.js";
-import {
-  captureTranslateAnchorForRow,
-  primeTranslateInteractionAnchor,
-  primeTranslateMainScrollTop,
-} from "./scroll-state.js";
-import { captureTranslateViewport } from "./translate-viewport.js";
 import { noteUserScrollIntent } from "./editor-scroll-session.js";
 import { state } from "./state.js";
 import {
@@ -358,13 +352,6 @@ export function registerTranslateEditorDomEvents(app, render) {
       if (previouslyFocusedRowId && previouslyFocusedRowId !== rowId) {
         scheduleDirtyEditorRowScan(render, previouslyFocusedRowId);
       }
-      primeTranslateInteractionAnchor(displayField);
-      primeTranslateMainScrollTop();
-      const viewportSnapshot = captureTranslateViewport(displayField, {
-        preferPrimed: true,
-        expectedRowId: rowId,
-        fallbackAnchor: captureTranslateAnchorForRow(rowId, languageCode),
-      });
       const pendingSelectionOffset = displayFieldOffsetFromPoint(displayField, event.clientX, event.clientY);
       if (
         previouslyFocusedControl instanceof HTMLTextAreaElement
@@ -372,14 +359,13 @@ export function registerTranslateEditorDomEvents(app, render) {
         && previouslyFocusedRowId === rowId
         && previouslyFocusedControl.dataset.languageCode === languageCode
       ) {
-        collapseEmptyEditorFootnote(render, rowId, languageCode, { viewportSnapshot });
+        collapseEmptyEditorFootnote(render, rowId, languageCode);
       }
       event.preventDefault();
       void setActiveEditorField(render, rowId, languageCode, {
         openEditor: true,
         pendingSelectionOffset,
         target: displayField,
-        viewportSnapshot,
       });
       return;
     }
@@ -440,15 +426,11 @@ export function registerTranslateEditorDomEvents(app, render) {
     }
 
     if (aiTranslateButton instanceof HTMLButtonElement) {
-      primeTranslateInteractionAnchor();
-      primeTranslateMainScrollTop();
       event.preventDefault();
       return;
     }
 
     if (imageOpenButton instanceof HTMLButtonElement) {
-      primeTranslateInteractionAnchor(imageOpenButton);
-      primeTranslateMainScrollTop();
       event.preventDefault();
       return;
     }
@@ -467,11 +449,7 @@ export function registerTranslateEditorDomEvents(app, render) {
     const rowId = button.dataset.rowId ?? "";
     const languageCode = button.dataset.languageCode ?? "";
     const kind = button.dataset.action === "toggle-editor-reviewed" ? "reviewed" : "please-check";
-    void toggleEditorRowFieldMarker(render, rowId, languageCode, kind, {
-      viewportSnapshot: captureTranslateViewport(button, {
-        fallbackAnchor: captureTranslateAnchorForRow(rowId, languageCode),
-      }),
-    });
+    void toggleEditorRowFieldMarker(render, rowId, languageCode, kind);
   });
 
   app.addEventListener("click", (event) => {
@@ -502,9 +480,6 @@ export function registerTranslateEditorDomEvents(app, render) {
         openEditor: true,
         pendingSelectionOffset: displayField.textContent?.length ?? 0,
         target: displayField,
-        viewportSnapshot: captureTranslateViewport(displayField, {
-          fallbackAnchor: captureTranslateAnchorForRow(rowId, languageCode),
-        }),
       });
       return;
     }
@@ -556,17 +531,6 @@ export function registerTranslateEditorDomEvents(app, render) {
       pendingImageUrlCloseRequest = null;
       return;
     }
-    const viewportSnapshot = captureTranslateViewport(control, {
-      fallbackAnchor: captureTranslateAnchorForRow(rowId, languageCode),
-    });
-    if (
-      textarea instanceof HTMLTextAreaElement
-      && (contentKind === "" || contentKind === "footnote")
-    ) {
-      viewportSnapshot.anchor =
-        captureTranslateAnchorForRow(rowId, languageCode, { preferRow: true })
-        ?? viewportSnapshot.anchor;
-    }
     if (textarea instanceof HTMLTextAreaElement) {
       requestAnimationFrame(() => {
         syncEditorRowTextareaHeight(textarea);
@@ -609,8 +573,8 @@ export function registerTranslateEditorDomEvents(app, render) {
         return;
       }
 
-      collapseEditorMainField(render, rowId, languageCode, { viewportSnapshot });
-      collapseEmptyEditorFootnote(render, rowId, languageCode, { viewportSnapshot });
+      collapseEditorMainField(render, rowId, languageCode);
+      collapseEmptyEditorFootnote(render, rowId, languageCode);
       collapseEmptyEditorImageEditor(render, rowId, languageCode);
       void submitEditorImageUrl(render, rowId, languageCode);
     });

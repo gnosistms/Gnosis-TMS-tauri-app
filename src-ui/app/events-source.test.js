@@ -65,12 +65,13 @@ test("editor footnote collapse preserves the row viewport anchor", async () => {
   const translateEventsSource = await readFile(new URL("./translate-editor-dom-events.js", import.meta.url), "utf8");
   const persistenceSource = await readFile(new URL("./editor-persistence-flow.js", import.meta.url), "utf8");
 
-  assert.match(keyboardSource, /contentKind === "" \|\| contentKind === "footnote" \|\| contentKind === "image-caption"/);
-  assert.match(translateEventsSource, /contentKind === "" \|\| contentKind === "footnote"/);
-  assert.match(translateEventsSource, /collapseEmptyEditorFootnote\(render, rowId, languageCode, \{ viewportSnapshot \}\)/);
+  // Shift+Return blurs without a snapshot dance: the focusout path collapses
+  // via row patching, which preserves the viewport by construction (P5).
+  assert.match(keyboardSource, /event\.target\.blur\(\);/);
+  assert.doesNotMatch(keyboardSource, /captureTranslateViewport/);
   assert.match(
     translateEventsSource,
-    /previouslyFocusedControl instanceof HTMLTextAreaElement[\s\S]*?previouslyFocusedControl\.dataset\.contentKind === "footnote"[\s\S]*?previouslyFocusedRowId === rowId[\s\S]*?previouslyFocusedControl\.dataset\.languageCode === languageCode[\s\S]*?collapseEmptyEditorFootnote\(render, rowId, languageCode, \{ viewportSnapshot \}\)/,
+    /previouslyFocusedControl instanceof HTMLTextAreaElement[\s\S]*?previouslyFocusedControl\.dataset\.contentKind === "footnote"[\s\S]*?previouslyFocusedRowId === rowId[\s\S]*?previouslyFocusedControl\.dataset\.languageCode === languageCode[\s\S]*?collapseEmptyEditorFootnote\(render, rowId, languageCode\)/,
   );
   // Row-scoped mutations render via row patching (scroll redesign P3), which
   // preserves the viewport by construction.
@@ -82,9 +83,8 @@ test("editor image caption open preserves the clicked row viewport", async () =>
   const translateFlowSource = await readFile(new URL("./translate-flow.js", import.meta.url), "utf8");
   const persistenceSource = await readFile(new URL("./editor-persistence-flow.js", import.meta.url), "utf8");
 
-  assert.match(actionsSource, /openEditorImageCaption\(render, rowId, languageCode, \{ target: event\?\.target \?\? null \}\)/);
-  assert.match(translateFlowSource, /openEditorImageCaption\(render, rowId, languageCode, options = \{\}\)/);
-  assert.match(translateFlowSource, /resolveEditorMainFieldViewportSnapshot\(rowId, languageCode, options\)/);
+  assert.match(translateFlowSource, /openEditorImageCaption\(render, rowId, languageCode\)/);
+  assert.doesNotMatch(translateFlowSource, /resolveEditorMainFieldViewportSnapshot/);
   assert.match(persistenceSource, /export function openEditorImageCaption\(render, rowId, languageCode, options = \{\}\)/);
   // Row patching preserves the viewport by construction (scroll redesign P3).
   assert.match(persistenceSource, /renderEditorRowScoped\(render, rowId, "image-caption-open"\)/);
@@ -107,9 +107,8 @@ test("editor review marker toggles preserve the clicked row viewport", async () 
   const translateFlowSource = await readFile(new URL("./translate-flow.js", import.meta.url), "utf8");
   const persistenceSource = await readFile(new URL("./editor-persistence-flow.js", import.meta.url), "utf8");
 
-  assert.match(translateEventsSource, /toggleEditorRowFieldMarker\(render, rowId, languageCode, kind, \{\s*viewportSnapshot: captureTranslateViewport\(button/);
-  assert.match(actionsSource, /toggleEditorRowFieldMarker\(render, rowId, languageCode, kind, \{\s*target: event\?\.target \?\? null/);
-  assert.match(translateFlowSource, /toggleEditorRowFieldMarkerFlow\([\s\S]*viewportSnapshot: resolveEditorMainFieldViewportSnapshot\(rowId, languageCode, options\)/);
+  assert.match(translateEventsSource, /toggleEditorRowFieldMarker\(render, rowId, languageCode, kind\)/);
+  assert.doesNotMatch(translateFlowSource, /viewportSnapshot/);
   // Row patching preserves the viewport by construction (scroll redesign P3).
   assert.match(persistenceSource, /renderEditorRowScoped\(render, rowId, "marker-optimistic"\)/);
 });

@@ -3,7 +3,6 @@ import { handleNavigation } from "./navigation.js";
 import { createActionDispatcher } from "./action-dispatcher.js";
 import { checkForAppUpdate } from "./updater-flow.js";
 import { listen } from "./runtime.js";
-import { primeTranslateInteractionAnchor, primeTranslateMainScrollTop } from "./scroll-state.js";
 import { syncGlossaryTermInlineStyleButtons } from "./glossary-term-inline-markup-flow.js";
 import { syncQaTermInlineStyleButtons } from "./qa-term-inline-markup-flow.js";
 import { registerKeyboardShortcutEvents } from "./events/keyboard-shortcuts.js";
@@ -160,8 +159,6 @@ export function registerAppEvents(render) {
     }
 
     if (event.target instanceof Element && event.target.closest("[data-editor-replace-row-select]")) {
-      primeTranslateInteractionAnchor(event.target);
-      primeTranslateMainScrollTop();
       event.preventDefault();
       return;
     }

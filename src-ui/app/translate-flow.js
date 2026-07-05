@@ -194,11 +194,7 @@ import {
   hideNavigationLoadingModal,
   showNavigationLoadingModal,
 } from "./navigation-loading.js";
-import {
-  captureTranslateAnchorForRow,
-} from "./scroll-state.js";
 import { syncEditorVirtualizationRowLayout } from "./editor-virtualization.js";
-import { captureTranslateViewport } from "./translate-viewport.js";
 import { renderEditorRowScoped } from "./editor-row-scoped-render.js";
 import {
   coerceEditorFontSizePx,
@@ -246,14 +242,6 @@ function buildEditorPendingSelection(rowId, languageCode, offset) {
     languageCode,
     offset,
   };
-}
-
-function resolveEditorMainFieldViewportSnapshot(rowId, languageCode, options = {}) {
-  return options.viewportSnapshot ?? captureTranslateViewport(options.target ?? null, {
-    preferPrimed: true,
-    expectedRowId: rowId,
-    fallbackAnchor: captureTranslateAnchorForRow(rowId, languageCode),
-  });
 }
 
 export function openEditorReplaceUndoModal(commitSha) {
@@ -967,23 +955,18 @@ export function submitEditorInsertLink(render) {
   });
 }
 
-export function openEditorFootnote(render, rowId, languageCode, options = {}) {
+export function openEditorFootnote(render, rowId, languageCode) {
   openEditorFootnoteFlow(render, rowId, languageCode, {
-    viewportSnapshot: resolveEditorMainFieldViewportSnapshot(rowId, languageCode, options),
     updateEditorChapterRow,
   });
 }
 
-export function openEditorFootnoteEntry(render, rowId, languageCode, marker, options = {}) {
-  openEditorFootnoteEntryFlow(render, rowId, languageCode, marker, {
-    viewportSnapshot: resolveEditorMainFieldViewportSnapshot(rowId, languageCode, options),
-  });
+export function openEditorFootnoteEntry(render, rowId, languageCode, marker) {
+  openEditorFootnoteEntryFlow(render, rowId, languageCode, marker);
 }
 
-export function openEditorImageCaption(render, rowId, languageCode, options = {}) {
-  openEditorImageCaptionFlow(render, rowId, languageCode, {
-    viewportSnapshot: resolveEditorMainFieldViewportSnapshot(rowId, languageCode, options),
-  });
+export function openEditorImageCaption(render, rowId, languageCode) {
+  openEditorImageCaptionFlow(render, rowId, languageCode);
 }
 
 export function collapseEmptyEditorFootnote(render, rowId, languageCode, options = {}) {
@@ -1118,16 +1101,13 @@ export async function replaceSelectedEditorRows(render) {
   });
 }
 
-export async function toggleEditorRowFieldMarker(render, rowId, languageCode, kind, options = {}) {
+export async function toggleEditorRowFieldMarker(render, rowId, languageCode, kind) {
   await toggleEditorRowFieldMarkerFlow(
     render,
     rowId,
     languageCode,
     kind,
     editorPersistenceOperations(),
-    {
-      viewportSnapshot: resolveEditorMainFieldViewportSnapshot(rowId, languageCode, options),
-    },
   );
 }
 

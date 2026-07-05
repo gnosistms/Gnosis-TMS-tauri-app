@@ -1,11 +1,11 @@
 # Editor Scroll Ownership Redesign — Implementation Plan
 
-Status: P0–P4 implemented and committed on fix/editor-scroll-ownership
-(pushed 2026-07-05; browser suite green on Linux and Windows CI). P5
-(machinery deletion) pending. Before release: Windows-teammate canary for
-OS scrollbar/wheel input, the one thing CI cannot exercise. See the
-implementation logs at the end for what landed and what implementation
-taught us that revised the design below.
+Status: COMPLETE — P0–P5 implemented on fix/editor-scroll-ownership
+(2026-07-05; browser suite green locally and on Linux + Windows CI).
+Post-release: watch the first Windows field reports (OS scrollbar/wheel
+input is the one thing CI cannot exercise) via the editor scroll debug log.
+See the implementation logs at the end for what landed and what
+implementation taught us that revised the design.
 
 ## Problem
 
@@ -478,3 +478,28 @@ never in CI before.
   plumbing — the mechanisms still work, are generation-safe, and their
   removal belongs with the rest of P5's machinery deletion
   (`translate-viewport.js`, primed anchors, pending-anchor queue).
+
+
+## Implementation log (2026-07-05, P5)
+
+Deleted: `translate-viewport.js` (capture/restore/after-paints/cancel) and
+its test; the primed pointerdown anchors (`primeTranslateInteractionAnchor`,
+`primeTranslateMainScrollTop`, consumers and priming call sites); every
+remaining viewport-snapshot thread (AI translate/review flows, keyboard
+Shift+Return blur, display-field activation, marker toggles, focusout
+collapses, `resolveEditorMainFieldViewportSnapshot`); and all
+`cancelPendingTranslateViewportRestores` hooks (there are no delayed
+restores left to cancel). Filter restore is now a self-contained deliberate
+jump in `editor-search-flow.js` (generation bump + anchor-first apply with
+two paint retries). The replace-row-selection toggle dropped its triple
+restore dance — it only re-renders the toolbar count. Arbitration unit
+coverage moved to `editor-scroll-session.test.js`. `src-ui/AGENTS.md`
+Scroll Preservation now documents the ownership rules.
+
+Kept deliberately (load-bearing, small, session-integrated):
+- `scroll-state.js` anchor helpers + the pending-anchor queue (consumed by
+  the render pipeline, virtualizer, entry restore, and show-in-context).
+- `editor-location.js` entry-restore state machine (persists/restores the
+  session anchor; its DOM scan is only a first-render fallback).
+- `editor-scroll-debug.js` until a release cycle of field data confirms the
+  redesign on Windows.

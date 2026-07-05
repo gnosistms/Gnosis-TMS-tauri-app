@@ -1,11 +1,4 @@
 import { isMacPlatform } from "../runtime.js";
-import {
-  captureTranslateAnchorForRow,
-} from "../scroll-state.js";
-import {
-  captureTranslateViewport,
-  restoreTranslateViewportAfterPaints,
-} from "../translate-viewport.js";
 
 const PAGE_SEARCH_INPUT_SELECTOR = [
   "[data-project-search-input]",
@@ -132,19 +125,10 @@ export function registerKeyboardShortcutEvents(dispatchAction) {
     }
 
     if (shouldBlurActiveEditorField(event)) {
-      const viewportSnapshot = captureTranslateViewport(event.target);
-      const contentKind = event.target.dataset.contentKind ?? "";
-      if (contentKind === "" || contentKind === "footnote" || contentKind === "image-caption") {
-        viewportSnapshot.anchor =
-          captureTranslateAnchorForRow(
-            event.target.dataset.rowId ?? "",
-            event.target.dataset.languageCode ?? "",
-            { preferRow: true },
-          ) ?? viewportSnapshot.anchor;
-      }
+      // The focusout path saves and collapses via row patching, which
+      // preserves the viewport by construction — no snapshot dance needed.
       event.preventDefault();
       event.target.blur();
-      restoreTranslateViewportAfterPaints(viewportSnapshot);
       return;
     }
 

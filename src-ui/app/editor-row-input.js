@@ -5,7 +5,6 @@ export function applyEditorRowFieldInput({
   syncEditorRowTextareaHeight,
   syncEditorVirtualizationRowLayout,
   syncEditorGlossaryHighlightRowDom,
-  cancelPendingTranslateViewportRestores,
 }) {
   const rowId = input?.dataset?.rowId ?? "";
   const languageCode = input?.dataset?.languageCode ?? "";
@@ -18,7 +17,6 @@ export function applyEditorRowFieldInput({
   const nextValue = input?.value ?? "";
   const footnoteMarker = input?.dataset?.footnoteMarker ?? null;
 
-  cancelPendingTranslateViewportRestores?.();
 
   if (typeof updateEditorRowFieldValueForContentKind === "function") {
     if (contentKind === "footnote") {

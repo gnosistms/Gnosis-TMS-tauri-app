@@ -4,8 +4,6 @@ import { noteUserScrollIntent } from "./editor-scroll-session.js";
 let lockedScreen = null;
 let lockedSnapshot = null;
 let pendingTranslateAnchor = null;
-let primedTranslateInteractionAnchor = null;
-let primedTranslateMainScrollTop = null;
 
 function isHtmlElement(value) {
   return typeof HTMLElement === "function" && value instanceof HTMLElement;
@@ -247,39 +245,6 @@ export function captureLanguageToggleVisibilityAnchor(
   }
   pendingTranslateAnchor = snapshot;
   return snapshot;
-}
-
-export function primeTranslateInteractionAnchor(target = null) {
-  const snapshot = resolveTranslateRowAnchor(target);
-  primedTranslateInteractionAnchor = snapshot;
-  return snapshot;
-}
-
-export function primeTranslateMainScrollTop() {
-  primedTranslateMainScrollTop = readTranslateMainScrollTop();
-  return primedTranslateMainScrollTop;
-}
-
-export function consumePrimedTranslateMainScrollTop() {
-  const scrollTop = primedTranslateMainScrollTop;
-  primedTranslateMainScrollTop = null;
-  return Number.isFinite(scrollTop) ? scrollTop : null;
-}
-
-export function consumePrimedTranslateInteractionAnchor(expectedRowId = "") {
-  const snapshot = primedTranslateInteractionAnchor;
-  primedTranslateInteractionAnchor = null;
-  if (!snapshot?.rowId) {
-    return null;
-  }
-
-  if (expectedRowId && snapshot.rowId !== expectedRowId) {
-    return null;
-  }
-
-  return {
-    ...snapshot,
-  };
 }
 
 export function resolveTranslateRowAnchor(target = null) {
