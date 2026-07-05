@@ -292,7 +292,11 @@ test("submitEditorImageUrl clears an empty draft back to the pre-open state", as
     urlErrorMessage: "",
     status: "idle",
   });
-  assert.deepEqual(render.calls, [[{ scope: "translate-body" }]]);
+  assert.deepEqual(render.calls, [[{
+    scope: "translate-visible-rows",
+    rowIds: ["row-1"],
+    reason: render.calls[0][0].reason,
+  }]]);
   assert.equal(invokeLog.length, 0);
 });
 
@@ -555,7 +559,11 @@ test("dismissActiveIdleEditorImageUpload clears an idle upload editor back to th
     urlErrorMessage: "",
     status: "idle",
   });
-  assert.deepEqual(render.calls, [[{ scope: "translate-body" }]]);
+  assert.deepEqual(render.calls, [[{
+    scope: "translate-visible-rows",
+    rowIds: ["row-1"],
+    reason: render.calls[0][0].reason,
+  }]]);
 });
 
 test("dismissActiveIdleEditorImageUpload keeps active upload work in place", () => {
@@ -621,59 +629,43 @@ test("removeEditorLanguageImage stays clickable while row text save is pending",
   assert.equal(state.editorChapter.rows[0].images.vi, undefined);
 });
 
-test("removeEditorLanguageImage preserves the captured viewport across renders", async () => {
+test("removeEditorLanguageImage renders only the affected row and never writes scroll", async () => {
   installEditorFixture();
   installFixtureImage("https://example.com/remove-me.png");
 
-  class FakeElement extends globalThis.HTMLElement {
-    constructor({ rectTop = 0, dataset = {}, scrollTop = 0, scrollContainer = null } = {}) {
+  // Row patching preserves the viewport by construction: the flow must not
+  // remount the body or write the scroll container's scrollTop at all.
+  const scrollWrites = [];
+  const container = new (class extends globalThis.HTMLElement {
+    constructor() {
       super();
-      this.dataset = dataset;
-      this.scrollTop = scrollTop;
+      this._scrollTop = 240;
       this.scrollLeft = 0;
       this.clientHeight = 600;
-      // Document-space position; the viewport rect tracks the container's
-      // scrollTop like real layout so anchor restores compute true deltas.
-      this._documentTop = rectTop;
-      this._scrollContainer = scrollContainer;
+    }
+
+    get scrollTop() {
+      return this._scrollTop;
+    }
+
+    set scrollTop(value) {
+      scrollWrites.push(value);
+      this._scrollTop = value;
     }
 
     getBoundingClientRect() {
-      const top = this._scrollContainer
-        ? this._documentTop - this._scrollContainer.scrollTop
-        : this._documentTop;
-      return {
-        top,
-        bottom: top + 100,
-        height: 100,
-      };
+      return { top: 0, bottom: 600, height: 600 };
     }
-  }
-
-  const container = new FakeElement({ rectTop: 0, scrollTop: 240 });
-  const rowCard = new FakeElement({
-    // Sits 96px below the viewport top at the captured scrollTop of 240.
-    rectTop: 336,
-    dataset: { rowId: "row-1" },
-    scrollContainer: container,
-  });
+  })();
   const originalQuerySelector = fakeDocument.querySelector;
   fakeDocument.querySelector = (selector) => {
     if (selector === ".translate-main-scroll") {
       return container;
     }
-    if (selector.startsWith("[data-editor-row-card]")) {
-      return rowCard;
-    }
     return selector === "#app" ? fakeApp : null;
   };
 
-  const renderCalls = [];
-  const render = (...args) => {
-    renderCalls.push(args);
-    // Simulate the translate-body remount resetting the scroll container.
-    container.scrollTop = 0;
-  };
+  const render = createRenderSpy();
 
   invokeHandler = async (command) => {
     assert.equal(command, "remove_gtms_editor_language_image");
@@ -694,7 +686,15 @@ test("removeEditorLanguageImage preserves the captured viewport across renders",
   try {
     await removeEditorLanguageImage(render, "row-1", "vi", { updateEditorChapterRow });
 
-    assert.ok(renderCalls.length > 0);
+    assert.ok(render.calls.length > 0);
+    for (const [options] of render.calls) {
+      if (options?.scope === "translate-sidebar") {
+        continue;
+      }
+      assert.equal(options?.scope, "translate-visible-rows");
+      assert.deepEqual(options?.rowIds, ["row-1"]);
+    }
+    assert.deepEqual(scrollWrites, []);
     assert.equal(container.scrollTop, 240);
   } finally {
     fakeDocument.querySelector = originalQuerySelector;

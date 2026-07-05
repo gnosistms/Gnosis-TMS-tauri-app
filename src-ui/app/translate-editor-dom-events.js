@@ -115,13 +115,27 @@ function refocusEditorRowFieldAfterRender(rowId, languageCode) {
     return;
   }
 
-  requestAnimationFrame(() => {
+  const focusField = () => {
     const nextField = document.querySelector(
       `[data-editor-row-field][data-row-id="${CSS.escape(rowId)}"][data-language-code="${CSS.escape(languageCode)}"]`,
     );
     if (nextField instanceof HTMLTextAreaElement) {
       nextField.focus({ preventScroll: true });
+      return true;
     }
+    return false;
+  };
+
+  // Row patches render synchronously, so the replacement field usually exists
+  // already. Focusing it now (not next frame) matters: a focusout collapse
+  // check queued by the patch would otherwise run first, see focus on body,
+  // and close the editor this refocus targets.
+  if (focusField()) {
+    return;
+  }
+
+  requestAnimationFrame(() => {
+    focusField();
   });
 }
 
@@ -396,6 +410,10 @@ export function registerTranslateEditorDomEvents(app, render) {
         nextTextarea.dataset.rowId ?? "",
         nextTextarea.dataset.languageCode ?? "",
       );
+      // The dismissal patch replaced the pressed textarea, so the browser's
+      // default focus action would land on the detached node's container and
+      // blur the field just refocused above.
+      event.preventDefault();
     }
     if (uploadDropzone instanceof HTMLButtonElement) {
       event.preventDefault();
