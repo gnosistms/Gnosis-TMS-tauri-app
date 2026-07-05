@@ -5644,20 +5644,15 @@ test.describe("editor regressions", () => {
       await page.locator('[data-action="open-editor-glossary"]').click();
       await expect(page.locator("h1.page-header__title")).toHaveText("Fixture Glossary");
 
-      // Return by re-mounting the translate fixture in-page (no reload, so the
-      // persisted location survives). This exercises the real persist-on-leave
-      // and restore-on-return render paths; the full `[data-nav-target=
-      // "translate"]` navigation additionally needs team-access and chapter
-      // reload mocks the harness does not have yet — upgrade this in redesign
-      // Phase 4 when editor-location is reworked.
-      await page.evaluate(async (fixtureOptions) => {
-        await window.__gnosisDebug.mountEditorFixture(fixtureOptions);
-      }, { rowCount: 60, glossary: true, chapterStatus: "ready" });
+      // Return through real navigation: the nav handler refreshes team access
+      // (served by the installations mock) and reloads the chapter (served by
+      // the chapter-data mock), then editor-location restores the viewport.
+      await page.locator('[data-nav-target="translate"]').click();
       await expect(page.locator("[data-editor-search-input]")).toBeVisible();
       await expect(page.locator(`[data-editor-row-card][data-row-id="${rowId}"]`)).toBeVisible();
 
-      // The restore aligns the saved anchor element exactly, but the re-mounted
-      // fixture lays out content above it slightly differently (async glossary
+      // The restore aligns the saved anchor element exactly, but the reloaded
+      // chapter lays out content above it slightly differently (async glossary
       // marks), so the row top can drift a few px. Guard against "landed at the
       // top" regressions, not pixel identity.
       await expect.poll(async () => {

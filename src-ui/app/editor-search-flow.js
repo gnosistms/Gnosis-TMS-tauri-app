@@ -25,7 +25,7 @@ import {
 } from "./editor-utils.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import { waitForNextPaint } from "./runtime.js";
-import { noteUserScrollIntent } from "./editor-scroll-session.js";
+import { noteUserScrollIntent, readSessionAnchor } from "./editor-scroll-session.js";
 import { state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import {
@@ -140,8 +140,10 @@ function captureEditorFilterRestoreViewport(chapterId) {
   }
 
   editorFilterRestoreChapterId = chapterId;
+  // Prefer the continuously tracked session anchor (scroll redesign P4); the
+  // DOM scan remains as fallback before the session's first update.
   editorFilterRestoreViewport = captureTranslateViewport(null, {
-    fallbackAnchor: captureVisibleTranslateLocation(),
+    fallbackAnchor: readSessionAnchor(chapterId) ?? captureVisibleTranslateLocation(),
   });
 }
 

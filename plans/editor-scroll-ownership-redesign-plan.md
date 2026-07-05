@@ -1,9 +1,11 @@
 # Editor Scroll Ownership Redesign — Implementation Plan
 
-Status: P0–P3 implemented (P0–P2 committed 2026-07-02; pre-existing test
-repair + P3 committed 2026-07-05, pending Windows soak before release).
-P4–P5 pending. See the implementation logs at the end for what landed and
-what implementation taught us that revised the design below.
+Status: P0–P4 implemented and committed on fix/editor-scroll-ownership
+(pushed 2026-07-05; browser suite green on Linux and Windows CI). P5
+(machinery deletion) pending. Before release: Windows-teammate canary for
+OS scrollbar/wheel input, the one thing CI cannot exercise. See the
+implementation logs at the end for what landed and what implementation
+taught us that revised the design below.
 
 ## Problem
 
@@ -445,3 +447,34 @@ Focus findings that the migration surfaced (both fixed):
   differs; also validates the unconditional `overflow-anchor: none`).
 - Open decision 3 (AI translate-all/review-all render migration) deferred
   to P5 as allowed.
+
+## Implementation log (2026-07-05, P4 + Windows CI)
+
+### Windows soak substitute
+
+`.github/workflows/browser-tests.yml` runs the full Playwright suite on
+`ubuntu-latest` and `windows-latest` (push to main, ready PRs, dispatch).
+First run green on both legs. This is the standing substitute for the manual
+Windows soak (WebView2 is Chromium; the leg covers engine + Windows
+compositor/fonts/scroll timing). Residual uncovered risk: OS scrollbar drags
+and real wheel input — cover via a Windows-teammate canary before release.
+The Ubuntu leg also closes the gap that let the suite rot unseen: it was
+never in CI before.
+
+### P4 — persistence and filters read the session anchor
+
+- `persistEditorLocationForChapter` saves from `readSessionAnchor(chapterId)`
+  (model-space, DOM-independent); the DOM scan remains only as a fallback
+  before the session's first update. Successful entry restores seed the
+  session anchor so default-safe renders anchor correctly before the first
+  scroll event.
+- Filter restore captures the session anchor first (same fallback rule).
+- The guarantee-2 glossary roundtrip test now uses **real navigation**
+  (`open-editor-glossary` click out, `[data-nav-target="translate"]` back),
+  exercising team-access refresh, chapter reload, and location restore
+  end-to-end against the mocks added during the test repair.
+- Deliberately deferred to P5: deleting the `pendingRestoreSnapshot` /
+  `restoredChapterId` entry-restore state machine and the filter viewport
+  plumbing — the mechanisms still work, are generation-safe, and their
+  removal belongs with the rest of P5's machinery deletion
+  (`translate-viewport.js`, primed anchors, pending-anchor queue).

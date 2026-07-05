@@ -4,6 +4,7 @@ import {
   readTranslateMainScrollTop,
   restoreTranslateRowAnchor,
 } from "./scroll-state.js";
+import { readSessionAnchor, updateSessionAnchor } from "./editor-scroll-session.js";
 import { EDITOR_MODE_PREVIEW, EDITOR_MODE_TRANSLATE, normalizeEditorMode } from "./editor-preview.js";
 import {
   clearStoredEditorLocation,
@@ -79,7 +80,10 @@ function persistEditorLocationForChapter(chapterId, { requireRestored = true } =
     return;
   }
 
-  const location = captureVisibleTranslateLocation();
+  // The scroll session continuously tracks the viewport in model space
+  // (scroll redesign P4); the DOM scan remains only as a fallback for the
+  // moment before the first scroll/render updates the session.
+  const location = readSessionAnchor(chapterId) ?? captureVisibleTranslateLocation();
   if (!location?.rowId) {
     return;
   }
@@ -279,6 +283,11 @@ export function restorePendingEditorLocation(appState) {
     restoredPreviewChapterId = pendingRestoreSnapshot.chapterId;
   } else {
     restoredChapterId = pendingRestoreSnapshot.chapterId;
+    if (restored) {
+      // Seed the scroll session so default-safe renders anchor to the
+      // restored location before the first scroll event updates it.
+      updateSessionAnchor(pendingRestoreSnapshot, pendingRestoreSnapshot.chapterId);
+    }
   }
   pendingRestoreSnapshot = null;
   return restored;
