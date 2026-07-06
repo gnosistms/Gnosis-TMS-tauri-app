@@ -481,8 +481,21 @@ test("AI Translate All derives the glossary once for a derived-glossary batch", 
   resetSessionState();
   editorAiTranslateAllTestApi.resetActiveBatchRunId();
   // Glossary source language (en) differs from the chapter source (es) => derived.
+  // The chapter carries an en column with text per row — the pivot text the
+  // batch derivation combines (the flow translates the glossary-source language
+  // first for exactly this reason).
+  const chapterState = batchChapter();
   state.editorChapter = {
-    ...batchChapter(),
+    ...chapterState,
+    languages: [
+      { code: "es", name: "Spanish", role: "source" },
+      { code: "en", name: "English", role: "target" },
+      { code: "vi", name: "Vietnamese", role: "target" },
+    ],
+    rows: chapterState.rows.map((row, index) => ({
+      ...row,
+      fields: { ...row.fields, en: `en-${index}` },
+    })),
     glossary: {
       sourceLanguage: { code: "en" },
       targetLanguage: { code: "vi" },
@@ -508,7 +521,7 @@ test("AI Translate All derives the glossary once for a derived-glossary batch", 
     batchOperations({
       prepareEditorAiTranslatedGlossaryBatch: async (request) => {
         prepareCalls.push(request);
-        return { glossarySourceText: "combined", entries: [] };
+        return { glossarySourceText: request.glossarySourceText, entries: [] };
       },
       runAiTranslationBatch: async (request) => {
         batchCalls.push(request);
@@ -526,12 +539,134 @@ test("AI Translate All derives the glossary once for a derived-glossary batch", 
   // One batch-wide derivation call carrying every row's source text, not one per row.
   assert.equal(prepareCalls.length, 1);
   assert.deepEqual(prepareCalls[0].translationSourceTexts, ["Hola", "Adios", "Gracias"]);
+  // The combined pivot text is the join of the rows' glossary-source column text.
+  assert.equal(prepareCalls[0].glossarySourceText, "en-0\n\nen-1\n\nen-2");
   // Still a single batch translation call for the whole batch.
   assert.equal(batchCalls.length, 1);
   assert.equal(batchCalls[0].rows.length, 3);
   assert.deepEqual(
     state.editorChapter.rows.map((row) => row.fields.vi),
     ["vi:Hola", "vi:Adios", "vi:Gracias"],
+  );
+  // Per-row derived entries are stored so highlights and staleness checks work
+  // like the single-row path.
+  assert.equal(
+    state.editorChapter.rows.every(
+      (row) => state.editorChapter.derivedGlossariesByRowId?.[row.rowId]?.status === "ready",
+    ),
+    true,
+  );
+});
+
+test("AI Translate All skips applying a batch result when the source changed mid-flight", async () => {
+  resetSessionState();
+  editorAiTranslateAllTestApi.resetActiveBatchRunId();
+  state.editorChapter = batchChapter();
+
+  await confirmEditorAiTranslateAll(
+    () => {},
+    batchOperations({
+      runAiTranslationBatch: async (request) => {
+        // Simulate the user editing row-b's source while the batch is in flight.
+        const rowB = state.editorChapter.rows.find((row) => row.rowId === "row-b");
+        rowB.fields.es = "Adios edited";
+        return {
+          rows: request.rows.map((row) => ({
+            rowId: row.rowId,
+            translatedText: `vi:${row.sourceText}`,
+          })),
+          promptText: "P",
+        };
+      },
+    }),
+  );
+
+  // row-b's stale translation is NOT applied; the other rows are.
+  assert.equal(state.editorChapter.rows.find((row) => row.rowId === "row-a").fields.vi, "vi:Hola");
+  assert.equal(state.editorChapter.rows.find((row) => row.rowId === "row-b").fields.vi, "");
+  assert.equal(state.editorChapter.rows.find((row) => row.rowId === "row-c").fields.vi, "vi:Gracias");
+});
+
+test("AI Translate All skips applying a batch result when the target was filled mid-flight", async () => {
+  resetSessionState();
+  editorAiTranslateAllTestApi.resetActiveBatchRunId();
+  state.editorChapter = batchChapter();
+
+  await confirmEditorAiTranslateAll(
+    () => {},
+    batchOperations({
+      runAiTranslationBatch: async (request) => {
+        // Simulate background sync merging a teammate's translation mid-flight.
+        const rowB = state.editorChapter.rows.find((row) => row.rowId === "row-b");
+        rowB.fields.vi = "teammate translation";
+        return {
+          rows: request.rows.map((row) => ({
+            rowId: row.rowId,
+            translatedText: `vi:${row.sourceText}`,
+          })),
+          promptText: "P",
+        };
+      },
+    }),
+  );
+
+  // The teammate's translation is preserved, not overwritten.
+  assert.equal(
+    state.editorChapter.rows.find((row) => row.rowId === "row-b").fields.vi,
+    "teammate translation",
+  );
+  assert.equal(state.editorChapter.rows.find((row) => row.rowId === "row-a").fields.vi, "vi:Hola");
+});
+
+test("AI Translate All batches per language pair when multiple languages are selected", async () => {
+  resetSessionState();
+  editorAiTranslateAllTestApi.resetActiveBatchRunId();
+  const chapterState = batchChapter();
+  state.editorChapter = {
+    ...chapterState,
+    languages: [
+      { code: "es", name: "Spanish", role: "source" },
+      { code: "vi", name: "Vietnamese", role: "target" },
+      { code: "fr", name: "French", role: "target" },
+    ],
+    rows: chapterState.rows.map((row) => ({
+      ...row,
+      fields: { ...row.fields, fr: "" },
+    })),
+    aiTranslateAllModal: {
+      ...createEditorAiTranslateAllModalState(),
+      isOpen: true,
+      selectedLanguageCodes: ["vi", "fr"],
+    },
+  };
+  const batchCalls = [];
+
+  await confirmEditorAiTranslateAll(
+    () => {},
+    batchOperations({
+      runAiTranslationBatch: async (request) => {
+        batchCalls.push(request);
+        return {
+          rows: request.rows.map((row) => ({
+            rowId: row.rowId,
+            translatedText: `${request.targetLanguageCode}:${row.sourceText}`,
+          })),
+          promptText: "P",
+        };
+      },
+    }),
+  );
+
+  // Row-major work (r1-vi, r1-fr, r2-vi, ...) is regrouped into one batch per
+  // language pair — not six singleton fallbacks.
+  assert.equal(batchCalls.length, 2);
+  assert.deepEqual(
+    batchCalls.map((call) => [call.targetLanguageCode, call.rows.length]),
+    [["vi", 3], ["fr", 3]],
+  );
+  assert.deepEqual(
+    state.editorChapter.rows.map((row) => row.fields.fr),
+    ["fr:Hola", "fr:Adios", "fr:Gracias"],
   );
 });
 

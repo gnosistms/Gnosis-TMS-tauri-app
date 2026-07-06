@@ -77,7 +77,7 @@ function errorMeansMissingAiKey(message) {
   );
 }
 
-export function latestEditorTranslateSourceTextMatches(context) {
+function latestEditorTranslateSourceTextMatches(context) {
   const latestRow = findEditorRowById(context.rowId, state.editorChapter);
   return (
     (latestRow?.fields?.[context.sourceLanguageCode] ?? "") === context.sourceText
@@ -239,12 +239,16 @@ export function buildEditorAiTranslateContext(chapterState = state.editorChapter
     targetText: row.fields?.[targetLanguageCode] ?? "",
     targetFootnote: editorFootnotesPlainText(row.footnotes?.[targetLanguageCode]),
     targetImageCaption: row.imageCaptions?.[targetLanguageCode] ?? "",
-    rowWindow: buildRowSourceContextWindow(
-      chapterState,
-      rowId,
-      sourceLanguageCode,
-      targetLanguageCode,
-    ),
+    // The row window is an O(chapter rows) walk; batch callers that only need
+    // per-row fields (the window is sent once per batch) skip it.
+    rowWindow: options.skipRowWindow === true
+      ? []
+      : buildRowSourceContextWindow(
+        chapterState,
+        rowId,
+        sourceLanguageCode,
+        targetLanguageCode,
+      ),
     alternateLanguageTexts: buildEditorAssistantAlternateLanguageTexts(
       row,
       languages,

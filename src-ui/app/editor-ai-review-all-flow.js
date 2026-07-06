@@ -495,7 +495,10 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
 
   // Reviews one row through the single-row command path (fallback + length-1
   // batches). Returns "abort" | "chapter-changed" | "ok" | "skip".
-  const reviewSingleItem = async (item) => {
+  // preloadedHistory ({ targetText, history }) lets a batch fallback reuse the
+  // history it already loaded instead of re-running the git-history invoke,
+  // as long as the row text history was loaded for is still current.
+  const reviewSingleItem = async (item, preloadedHistory = null) => {
     if (!isReviewActive()) {
       return "abort";
     }
@@ -512,7 +515,10 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
     }
 
     started = true;
-    const targetLanguageHistory = await loadHistoryForItem(item, latestTranslation);
+    const targetLanguageHistory =
+      preloadedHistory && preloadedHistory.targetText === latestTranslation
+        ? preloadedHistory.history
+        : await loadHistoryForItem(item, latestTranslation);
     if (!isReviewActive()) {
       return "abort";
     }
@@ -549,7 +555,9 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
       ) {
         continue;
       }
-      liveItems.push({ item, row });
+      // Sent values are captured so results can be validated against what was
+      // actually reviewed once the (long) batch call returns.
+      liveItems.push({ item, row, latestTranslation, latestFootnote, latestImageCaption });
     }
     if (liveItems.length === 0) {
       return "ok";
@@ -588,6 +596,13 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
         ? operations.runAiReviewBatch
         : (batchRequest) => invoke("run_ai_review_batch", { request: batchRequest });
 
+    const preloadedHistoryForEntry = (entry) => {
+      const history = targetLanguageHistoryByRowId.get(entry.item.rowId);
+      return history === undefined
+        ? null
+        : { targetText: entry.latestTranslation, history };
+    };
+
     let payload;
     try {
       payload = await runBatch(request);
@@ -595,8 +610,8 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
       if (!isReviewActive()) {
         return "abort";
       }
-      for (const { item } of liveItems) {
-        const outcome = await reviewSingleItem(item);
+      for (const entry of liveItems) {
+        const outcome = await reviewSingleItem(entry.item, preloadedHistoryForEntry(entry));
         if (outcome === "abort" || outcome === "chapter-changed") {
           return outcome;
         }
@@ -610,14 +625,36 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
     const returnedById = new Map(
       (Array.isArray(payload?.rows) ? payload.rows : []).map((row) => [row.rowId, row]),
     );
-    for (const { item } of liveItems) {
+    for (const entry of liveItems) {
       if (!isReviewActive()) {
         return "abort";
       }
+      const { item } = entry;
+      // Re-validate against the CURRENT row: the batch call plus earlier
+      // per-row apply writes leave a long window in which the user or
+      // background sync may have changed this row.
+      const currentRow = findEditorRowById(item.rowId, state.editorChapter);
+      const currentTranslation = readEditorReviewRowFieldText(currentRow, targetLanguageCode);
+      const currentFootnote = readEditorReviewRowFootnote(currentRow, targetLanguageCode);
+      const currentImageCaption = readEditorReviewRowImageCaption(currentRow, targetLanguageCode);
+      if (
+        !currentRow
+        || (!currentTranslation.trim() && !currentFootnote.trim() && !currentImageCaption.trim())
+        || currentRow.fieldStates?.[targetLanguageCode]?.reviewed === true
+      ) {
+        // Row emptied or manually marked reviewed mid-flight — leave it alone.
+        continue;
+      }
       const rowResult = returnedById.get(item.rowId);
-      const outcome = rowResult
+      const textChangedMidFlight =
+        currentTranslation !== entry.latestTranslation
+        || currentFootnote !== entry.latestFootnote
+        || currentImageCaption !== entry.latestImageCaption;
+      // A changed row gets re-reviewed against its current text through the
+      // single-row path instead of receiving a verdict for text it no longer has.
+      const outcome = rowResult && !textChangedMidFlight
         ? await applyReviewOutcome(item, rowResult)
-        : await reviewSingleItem(item);
+        : await reviewSingleItem(item, preloadedHistoryForEntry(entry));
       if (outcome === "abort" || outcome === "chapter-changed") {
         return outcome;
       }
@@ -626,14 +663,16 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
   };
 
   try {
+    // Row lookup map: avoids an O(chapter rows) findEditorRowById scan per work
+    // item during chunking.
+    const rowsById = new Map(
+      (Array.isArray(state.editorChapter?.rows) ? state.editorChapter.rows : [])
+        .map((row) => [row.rowId, row]),
+    );
     const batches = chunkTranslateAllWork(work, {
-      glossaryKindForItem: () => "direct",
       sourceTokensForItem: (item) =>
         estimateSourceTokens(
-          readEditorReviewRowFieldText(
-            findEditorRowById(item.rowId, state.editorChapter),
-            targetLanguageCode,
-          ),
+          readEditorReviewRowFieldText(rowsById.get(item.rowId), targetLanguageCode),
         ),
     });
     for (const batch of batches) {

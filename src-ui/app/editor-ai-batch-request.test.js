@@ -5,11 +5,27 @@ import {
   AI_BATCH_MAX_ROWS,
   buildBatchGlossaryHints,
   chunkTranslateAllWork,
+  groupWorkByLanguagePair,
 } from "./editor-ai-batch-request.js";
 
 function item(rowId, source = "en", target = "vi") {
   return { rowId, sourceLanguageCode: source, targetLanguageCode: target };
 }
+
+test("groupWorkByLanguagePair regroups row-major work into contiguous pair runs", () => {
+  const work = [
+    item("r0", "es", "vi"),
+    item("r0", "es", "fr"),
+    item("r1", "es", "vi"),
+    item("r1", "es", "fr"),
+    item("r2", "es", "vi"),
+  ];
+  const grouped = groupWorkByLanguagePair(work);
+  assert.deepEqual(
+    grouped.map((entry) => `${entry.rowId}:${entry.targetLanguageCode}`),
+    ["r0:vi", "r1:vi", "r2:vi", "r0:fr", "r1:fr"],
+  );
+});
 
 test("chunkTranslateAllWork groups consecutive same-pair items into one batch", () => {
   const work = [item("r0"), item("r1"), item("r2")];

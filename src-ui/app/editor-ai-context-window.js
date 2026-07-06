@@ -9,9 +9,18 @@
 export const AI_CONTEXT_BEFORE_TOKEN_TARGET = 360;
 export const AI_CONTEXT_AFTER_TOKEN_TARGET = 220;
 
+// Window-budget estimate: chars/4, the semantics the 360/220 budgets were
+// calibrated with in the original review context builder. Deliberately NOT the
+// CJK-aware estimate below — switching the window walks to a CJK-weighted count
+// would shrink review context ~5x for CJK source chapters relative to what
+// shipped before the budgets were unified.
+function estimateWindowTokens(text) {
+  return Math.ceil(String(text ?? "").trim().length / 4);
+}
+
 // Script-aware source-token estimate: CJK characters are roughly one token each,
-// Latin-like text is ~4 chars per token. Shared by the context-window budgets and
-// the batch chunker's token cap so both size work the same way.
+// Latin-like text is ~4 chars per token. Used by the batch chunker's prompt-size
+// cap, where overestimating CJK is the safe direction.
 export function estimateSourceTokens(text) {
   const value = String(text ?? "").trim();
   if (!value) {
@@ -64,7 +73,7 @@ function collectBeforeRows(rows, index, sourceLanguageCode) {
   ) {
     const row = rows[cursor];
     previousRows.unshift(row);
-    tokenCount += estimateSourceTokens(readRowFieldText(row, sourceLanguageCode));
+    tokenCount += estimateWindowTokens(readRowFieldText(row, sourceLanguageCode));
   }
   return previousRows;
 }
@@ -79,7 +88,7 @@ function collectAfterRows(rows, index, sourceLanguageCode) {
   ) {
     const row = rows[cursor];
     nextRows.push(row);
-    tokenCount += estimateSourceTokens(readRowFieldText(row, sourceLanguageCode));
+    tokenCount += estimateWindowTokens(readRowFieldText(row, sourceLanguageCode));
   }
   return nextRows;
 }

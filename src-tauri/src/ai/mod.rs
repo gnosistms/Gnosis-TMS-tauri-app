@@ -659,7 +659,9 @@ pub(crate) fn build_review_batch_prompt(request: &AiReviewBatchRequest) -> Strin
 
 #[derive(serde::Deserialize)]
 struct AiTranslationBatchStructuredResponse {
-    #[serde(default)]
+    // No serde default: a JSON object without a `rows` array (an error wrapper,
+    // a differently-shaped payload) must fail to parse rather than read as a
+    // successful zero-row batch that silently sends every row to the fallback.
     rows: Vec<AiTranslationBatchStructuredRow>,
 }
 
@@ -678,7 +680,7 @@ struct AiTranslationBatchStructuredRow {
 
 #[derive(serde::Deserialize)]
 struct AiReviewBatchStructuredResponse {
-    #[serde(default)]
+    // No serde default — see AiTranslationBatchStructuredResponse.
     rows: Vec<AiReviewBatchStructuredRow>,
 }
 
@@ -693,8 +695,11 @@ struct AiReviewBatchStructuredRow {
     suggested_footnote: String,
     #[serde(default)]
     suggested_image_caption: String,
-    #[serde(default)]
-    reviewed: bool,
+    // Option, not defaulted bool: only OpenAI enforces the strict schema, and a
+    // model that omits `reviewed` on a row it judged correct must not have that
+    // row silently flagged please-check. Rows without a verdict are dropped so
+    // the caller retries them through the single-row path.
+    reviewed: Option<bool>,
 }
 
 fn batch_response_candidates(text: &str) -> Vec<String> {
@@ -736,19 +741,20 @@ fn parse_review_batch_response(text: &str) -> Result<Vec<AiReviewBatchRowResult>
             return Ok(parsed
                 .rows
                 .into_iter()
-                .map(|mut row| {
-                    if row.reviewed {
+                .filter_map(|mut row| {
+                    let reviewed = row.reviewed?;
+                    if reviewed {
                         row.suggested_text.clear();
                         row.suggested_footnote.clear();
                         row.suggested_image_caption.clear();
                     }
-                    AiReviewBatchRowResult {
+                    Some(AiReviewBatchRowResult {
                         row_id: row.row_id.trim().to_string(),
                         suggested_text: row.suggested_text,
                         suggested_footnote: row.suggested_footnote,
                         suggested_image_caption: row.suggested_image_caption,
-                        reviewed: row.reviewed,
-                    }
+                        reviewed,
+                    })
                 })
                 .collect());
         }
@@ -3401,6 +3407,34 @@ mod tests {
         assert_eq!(rows[0].row_id, "r3");
 
         assert!(parse_translation_batch_response("not json at all").is_err());
+    }
+
+    #[test]
+    fn parse_batch_responses_reject_objects_without_a_rows_array() {
+        // A provider error wrapper or shape drift must surface as malformed, not
+        // as a successful zero-row batch that silently falls back per row.
+        assert!(parse_translation_batch_response(r#"{"error":"rate limited"}"#).is_err());
+        assert!(parse_review_batch_response(r#"{"error":"rate limited"}"#).is_err());
+        assert!(
+            parse_translation_batch_response(r#"{"response":{"rows":[{"rowId":"r0"}]}}"#).is_err()
+        );
+    }
+
+    #[test]
+    fn parse_review_batch_response_drops_rows_without_a_reviewed_verdict() {
+        // Non-OpenAI providers have no strict schema; a row missing `reviewed`
+        // must not default to please-check — it is dropped so the caller retries
+        // it through the single-row path.
+        let rows = parse_review_batch_response(
+            r#"{"rows":[
+                {"rowId":"r0","suggestedText":""},
+                {"rowId":"r1","suggestedText":"fix","reviewed":false}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].row_id, "r1");
+        assert!(!rows[0].reviewed);
     }
 
     #[test]
