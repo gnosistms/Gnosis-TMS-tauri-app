@@ -24,6 +24,18 @@ pub(crate) struct TeamChapterCopyInput {
     title: String,
     source: TeamChapterCopySource,
     target: TeamChapterCopyTarget,
+    /// The target team's default glossary, applied to the copy exactly like a
+    /// fresh import would apply it. The source link never survives (its ids
+    /// are team-scoped); None leaves the copy without a glossary.
+    #[serde(default)]
+    default_glossary: Option<TeamCopyDefaultGlossaryInput>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TeamCopyDefaultGlossaryInput {
+    glossary_id: String,
+    repo_name: String,
 }
 
 #[derive(Deserialize)]
@@ -225,6 +237,7 @@ fn run_team_chapter_copy(
         &mut chapter_file,
         &rows,
         &target_repo_path,
+        input.default_glossary.as_ref(),
     )?;
 
     if let Err(error) = commit_chapter_copy(
@@ -272,15 +285,17 @@ struct WrittenChapterCopy {
 }
 
 /// Writes a faithful copy of the chapter into the target repo: fresh chapter and
-/// row ids, team-scoped glossary links stripped, uploaded image assets copied with
-/// their row paths rewritten to the new chapter slug. Everything else — languages,
-/// content, footnotes, captions, text styles, review states, comments, soft-deleted
-/// rows, order keys — carries over verbatim.
+/// row ids, the source's team-scoped glossary link replaced by the target
+/// team's default glossary (as an import would), uploaded image assets copied
+/// with their row paths rewritten to the new chapter slug. Everything else —
+/// languages, content, footnotes, captions, text styles, review states,
+/// comments, soft-deleted rows, order keys — carries over verbatim.
 fn write_chapter_copy(
     source_repo_path: &Path,
     chapter_file: &mut StoredChapterFile,
     rows: &[StoredRowFile],
     target_repo_path: &Path,
+    target_default_glossary: Option<&TeamCopyDefaultGlossaryInput>,
 ) -> Result<WrittenChapterCopy, String> {
     let chapters_root = target_repo_path.join("chapters");
     let chapter_slug =
@@ -296,9 +311,26 @@ fn write_chapter_copy(
         ensure_gitattributes(&target_repo_path.join(".gitattributes"))?;
 
         chapter_file.chapter_id = chapter_id.clone();
-        if let Some(settings) = chapter_file.settings.as_mut() {
-            // Glossary links are team-scoped ids; they would dangle in the target team.
-            settings.linked_glossaries = None;
+        // The source glossary link is a team-scoped id that would dangle in
+        // the target team; replace it with the target team's default (mirrors
+        // how imports assign the team default glossary), or clear it.
+        match target_default_glossary {
+            Some(link) => {
+                let settings = chapter_file
+                    .settings
+                    .get_or_insert_with(StoredChapterSettings::default);
+                settings.linked_glossaries = Some(StoredChapterLinkedGlossaries {
+                    glossary: Some(StoredChapterGlossaryLink {
+                        glossary_id: link.glossary_id.clone(),
+                        repo_name: link.repo_name.clone(),
+                    }),
+                });
+            }
+            None => {
+                if let Some(settings) = chapter_file.settings.as_mut() {
+                    settings.linked_glossaries = None;
+                }
+            }
         }
         write_json_pretty(&chapter_path.join("chapter.json"), &chapter_file)?;
 
@@ -631,8 +663,9 @@ mod tests {
             deleted,
         ];
 
-        let written = write_chapter_copy(&source_repo, &mut chapter_file, &rows, &target_repo)
-            .expect("copy should write");
+        let written =
+            write_chapter_copy(&source_repo, &mut chapter_file, &rows, &target_repo, None)
+                .expect("copy should write");
         let _ = fs::remove_dir_all(&source_repo);
 
         assert_ne!(written.chapter_id, "source-chapter");
@@ -715,6 +748,7 @@ mod tests {
             &mut chapter_file,
             &[row, missing_row],
             &target_repo,
+            None,
         )
         .expect("copy should write");
 
@@ -743,6 +777,43 @@ mod tests {
     }
 
     #[test]
+    fn chapter_copy_applies_the_target_team_default_glossary() {
+        let source_repo = temp_dir("source-default-glossary");
+        let target_repo = temp_dir("target-default-glossary");
+
+        let mut chapter_file = test_chapter_file("Chapter One");
+        let default_glossary = TeamCopyDefaultGlossaryInput {
+            glossary_id: "target-glossary".to_string(),
+            repo_name: "target-glossary-repo".to_string(),
+        };
+        let written = write_chapter_copy(
+            &source_repo,
+            &mut chapter_file,
+            &[test_row("row-1", "00000000000000000000000000000001", "A")],
+            &target_repo,
+            Some(&default_glossary),
+        )
+        .expect("copy should write");
+
+        let copied_chapter: StoredChapterFile = read_json_file(
+            &written.absolute_chapter_path.join("chapter.json"),
+            "chapter.json",
+        )
+        .expect("copied chapter.json should read");
+        let link = copied_chapter
+            .settings
+            .and_then(|settings| settings.linked_glossaries)
+            .and_then(|linked| linked.glossary)
+            .expect("target default glossary should be linked");
+        // The source's team-scoped link was replaced, not carried over.
+        assert_eq!(link.glossary_id, "target-glossary");
+        assert_eq!(link.repo_name, "target-glossary-repo");
+
+        let _ = fs::remove_dir_all(&source_repo);
+        let _ = fs::remove_dir_all(&target_repo);
+    }
+
+    #[test]
     fn chapter_copy_allocates_a_unique_slug_when_the_title_collides() {
         let source_repo = temp_dir("source-slug");
         let target_repo = temp_dir("target-slug");
@@ -753,6 +824,7 @@ mod tests {
             &mut first,
             &[test_row("row-1", "00000000000000000000000000000001", "A")],
             &target_repo,
+            None,
         )
         .expect("first copy should write");
 
@@ -762,6 +834,7 @@ mod tests {
             &mut second,
             &[test_row("row-1", "00000000000000000000000000000001", "B")],
             &target_repo,
+            None,
         )
         .expect("second copy should write");
 
@@ -795,6 +868,7 @@ mod tests {
             &mut chapter_file,
             &[test_row("row-1", "00000000000000000000000000000001", "A")],
             &target_repo,
+            None,
         )
         .expect("copy should write");
         assert!(written.absolute_chapter_path.exists());

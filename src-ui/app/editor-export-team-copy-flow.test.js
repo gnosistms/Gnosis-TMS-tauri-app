@@ -40,6 +40,7 @@ const { EDITOR_MODE_PREVIEW } = await import("./editor-preview.js");
 const { openEditorExportOptions } = await import("./editor-export-flow.js");
 const {
   currentTeamCopyState,
+  defaultGlossaryLinkForTeamCopy,
   eligibleTeamCopyTargets,
   ensureTeamCopyPaneReady,
   handleTeamChapterCopyProgressEvent,
@@ -316,6 +317,32 @@ test("submitTeamChapterCopy invokes the copy command with source and target", as
   });
   assert.equal(state.editorChapter.exportModal.status, "exporting");
   assert.equal(currentTeamCopyState().jobId, input.jobId);
+  // No default glossary cached for the target team: the copy carries none.
+  assert.equal(input.defaultGlossary, null);
+});
+
+test("defaultGlossaryLinkForTeamCopy resolves the target team's cached default", async () => {
+  const { setActiveStorageLogin } = await import("./team-storage.js");
+  const { saveStoredDefaultGlossaryIdForTeam } = await import("./glossary-default-cache.js");
+  const { saveStoredGlossariesForTeam } = await import("./glossary-cache.js");
+  setActiveStorageLogin("team-copy-tester");
+
+  const targetTeam = { id: "team-2", installationId: 77 };
+  assert.equal(defaultGlossaryLinkForTeamCopy(targetTeam), null);
+
+  saveStoredGlossariesForTeam(targetTeam, [
+    { id: "glossary-9", title: "Target Glossary", repoName: "target-glossary-repo", lifecycleState: "active" },
+    { id: "glossary-x", title: "Deleted", repoName: "deleted-repo", lifecycleState: "deleted" },
+  ]);
+  saveStoredDefaultGlossaryIdForTeam(targetTeam, "glossary-9");
+  assert.deepEqual(defaultGlossaryLinkForTeamCopy(targetTeam), {
+    glossaryId: "glossary-9",
+    repoName: "target-glossary-repo",
+  });
+
+  // A deleted default resolves to none.
+  saveStoredDefaultGlossaryIdForTeam(targetTeam, "glossary-x");
+  assert.equal(defaultGlossaryLinkForTeamCopy(targetTeam), null);
 });
 
 test("submitTeamChapterCopy requires a file name for the copy", async () => {

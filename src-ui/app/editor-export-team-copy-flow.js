@@ -13,6 +13,35 @@ import {
   projectRepoScope,
   waitForRepoWriteQueueIdle,
 } from "./repo-write-queue.js";
+import { loadStoredDefaultGlossaryIdForTeam } from "./glossary-default-cache.js";
+import { loadStoredGlossariesForTeam } from "./glossary-cache.js";
+
+/**
+ * The target team's default glossary, resolved from the per-team caches (the
+ * target team is usually not the selected team, so live state cannot answer
+ * this). The copy applies it exactly like an import applies the team default;
+ * null (no default configured, or caches not warmed for that team yet) leaves
+ * the copy without a glossary.
+ */
+export function defaultGlossaryLinkForTeamCopy(targetTeam) {
+  const defaultGlossaryId = loadStoredDefaultGlossaryIdForTeam(targetTeam);
+  if (!defaultGlossaryId) {
+    return null;
+  }
+
+  const cachedGlossaries = loadStoredGlossariesForTeam(targetTeam)?.glossaries;
+  const glossary = (Array.isArray(cachedGlossaries) ? cachedGlossaries : []).find(
+    (item) => item?.id === defaultGlossaryId && item.lifecycleState !== "deleted",
+  );
+  if (!glossary || typeof glossary.repoName !== "string" || !glossary.repoName.trim()) {
+    return null;
+  }
+
+  return {
+    glossaryId: glossary.id,
+    repoName: glossary.repoName,
+  };
+}
 
 function currentExportModal() {
   return state.editorChapter?.exportModal ?? null;
@@ -243,6 +272,7 @@ export async function submitTeamChapterCopy(render, operations = {}) {
           status: targetProject.status ?? null,
           projectTitle: targetProject.title ?? "",
         },
+        defaultGlossary: defaultGlossaryLinkForTeamCopy(targetTeam),
       },
       sessionToken,
     });

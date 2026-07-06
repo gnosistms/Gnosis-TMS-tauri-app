@@ -789,7 +789,7 @@ struct StoredChapterFile {
     source_files: Vec<StoredSourceFile>,
     #[serde(default)]
     languages: Vec<ChapterLanguage>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     settings: Option<StoredChapterSettings>,
     // Cached source-language word count for the projects-page file list, so it does not have to
     // read every row of every chapter on each refresh. None on legacy chapters (computed lazily and
@@ -827,11 +827,20 @@ struct StoredSourceFileMetadata {
     source_locale: Option<String>,
 }
 
+// `None` fields must serialize as absent, not `null`: full-file writers (e.g.
+// the cross-team chapter copy, which strips team-scoped glossary links) would
+// otherwise leave `"linked_glossaries": null` on disk — a non-object value the
+// targeted chapter.json updaters refuse to edit. Files already written with
+// null shapes are normalized by the chapter-settings repo migration.
 #[derive(Deserialize, Default, Serialize)]
 struct StoredChapterSettings {
+    #[serde(skip_serializing_if = "Option::is_none")]
     linked_glossaries: Option<StoredChapterLinkedGlossaries>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     default_source_language: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     default_target_language: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     workflow_status: Option<String>,
 }
 
@@ -856,7 +865,7 @@ fn normalize_chapter_workflow_status(value: Option<&str>) -> String {
 
 #[derive(Clone, Deserialize, Default, Serialize)]
 struct StoredChapterLinkedGlossaries {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     glossary: Option<StoredChapterGlossaryLink>,
 }
 

@@ -6,8 +6,9 @@ use tauri::AppHandle;
 use crate::{
     git_commit::{git_commit_as_signed_in_user_with_metadata, GitCommitMetadata},
     repo_layout_metadata::{
-        new_v2_repo_layout_metadata, parse_repo_layout_metadata_bytes, write_repo_layout_metadata,
-        RepoKind, RepoLayoutMetadata, MIGRATION_0810, REPO_METADATA_RELATIVE_PATH,
+        new_v2_repo_layout_metadata, parse_repo_layout_metadata_bytes, read_repo_layout_metadata,
+        write_repo_layout_metadata, RepoKind, RepoLayoutMetadata, MIGRATION_0810, MIGRATION_0856,
+        REPO_METADATA_RELATIVE_PATH,
     },
     repo_sync_shared::{format_git_spawn_error, git_command, git_output},
     short_path_names::{allocate_short_folder_name, allocate_short_image_filename},
@@ -27,7 +28,7 @@ pub(crate) enum RepoMigrationDecision {
 
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn ordered_repo_migrations() -> &'static [&'static str] {
-    &[MIGRATION_0810]
+    &[MIGRATION_0810, MIGRATION_0856]
 }
 
 pub(crate) const REMOTE_MIGRATED_LOCAL_OLD_LAYOUT_CHANGES_MESSAGE: &str =
@@ -232,7 +233,12 @@ pub(crate) fn migrate_no_checkout_project_repo_to_0810(
 
     write_repo_layout_metadata(repo_path, &new_v2_repo_layout_metadata(RepoKind::Project))?;
     git_output(repo_path, &["add", "-A"], None)?;
-    commit_migration_if_dirty(app, repo_path)
+    commit_migration_if_dirty(
+        app,
+        repo_path,
+        MIGRATION_0810,
+        "Migrate repo layout to 0.8.10",
+    )
 }
 
 fn migrate_simple_repo_to_0810(
@@ -242,7 +248,12 @@ fn migrate_simple_repo_to_0810(
 ) -> Result<(), String> {
     write_repo_layout_metadata(repo_path, &new_v2_repo_layout_metadata(repo_kind))?;
     git_output(repo_path, &["add", REPO_METADATA_RELATIVE_PATH], None)?;
-    commit_migration_if_dirty(app, repo_path)
+    commit_migration_if_dirty(
+        app,
+        repo_path,
+        MIGRATION_0810,
+        "Migrate repo layout to 0.8.10",
+    )
 }
 
 fn migrate_project_repo_to_0810(app: &AppHandle, repo_path: &Path) -> Result<(), String> {
@@ -250,7 +261,12 @@ fn migrate_project_repo_to_0810(app: &AppHandle, repo_path: &Path) -> Result<(),
     if !chapters_root.exists() {
         write_repo_layout_metadata(repo_path, &new_v2_repo_layout_metadata(RepoKind::Project))?;
         git_output(repo_path, &["add", REPO_METADATA_RELATIVE_PATH], None)?;
-        return commit_migration_if_dirty(app, repo_path);
+        return commit_migration_if_dirty(
+            app,
+            repo_path,
+            MIGRATION_0810,
+            "Migrate repo layout to 0.8.10",
+        );
     }
 
     let mut chapters = list_project_chapters(&chapters_root)?;
@@ -283,7 +299,12 @@ fn migrate_project_repo_to_0810(app: &AppHandle, repo_path: &Path) -> Result<(),
 
     write_repo_layout_metadata(repo_path, &new_v2_repo_layout_metadata(RepoKind::Project))?;
     git_output(repo_path, &["add", "-A"], None)?;
-    commit_migration_if_dirty(app, repo_path)
+    commit_migration_if_dirty(
+        app,
+        repo_path,
+        MIGRATION_0810,
+        "Migrate repo layout to 0.8.10",
+    )
 }
 
 #[derive(Debug)]
@@ -840,7 +861,12 @@ fn force_adopt_remote_migrated_layout(
     Ok(())
 }
 
-fn commit_migration_if_dirty(app: &AppHandle, repo_path: &Path) -> Result<(), String> {
+fn commit_migration_if_dirty(
+    app: &AppHandle,
+    repo_path: &Path,
+    migration: &'static str,
+    message: &str,
+) -> Result<(), String> {
     let status = git_output(repo_path, &["status", "--porcelain"], None)?;
     if status.trim().is_empty() {
         return Ok(());
@@ -848,16 +874,136 @@ fn commit_migration_if_dirty(app: &AppHandle, repo_path: &Path) -> Result<(), St
     git_commit_as_signed_in_user_with_metadata(
         app,
         repo_path,
-        "Migrate repo layout to 0.8.10",
+        message,
         &[],
         GitCommitMetadata {
             operation: Some("repo.migrate"),
-            migration: Some(MIGRATION_0810),
+            migration: Some(migration),
             status_note: None,
             ai_model: None,
         },
     )?;
     Ok(())
+}
+
+/// True when the repo's metadata exists but the 0.8.56 chapter-settings
+/// normalization has not been recorded. Repos without metadata still need the
+/// 0.8.10 layout migration, which runs first in the same sync and writes the
+/// metadata this check reads.
+pub(crate) fn repo_requires_0856_migration(repo_path: &Path) -> bool {
+    match read_repo_layout_metadata(repo_path) {
+        Ok(Some(metadata)) => !metadata
+            .applied_migrations
+            .iter()
+            .any(|migration| migration == MIGRATION_0856),
+        Ok(None) | Err(_) => false,
+    }
+}
+
+/// Normalizes legacy `chapter.json` shapes in place:
+/// - non-object `settings` / `settings.linked_glossaries` values (older app
+///   versions serialized `None` as `null`) are dropped;
+/// - explicit `null`s for the optional settings fields are dropped (current
+///   serializers omit absent fields);
+/// - the pre-0.8 `glossary_1` / `glossary_2` link keys are dropped.
+///
+/// Returns true when the value changed.
+fn normalize_chapter_settings_value(chapter_value: &mut Value) -> bool {
+    let Some(chapter_object) = chapter_value.as_object_mut() else {
+        return false;
+    };
+    let mut changed = false;
+
+    if let Some(settings_value) = chapter_object.get_mut("settings") {
+        if let Some(settings_object) = settings_value.as_object_mut() {
+            if let Some(linked_value) = settings_object.get_mut("linked_glossaries") {
+                if let Some(linked_object) = linked_value.as_object_mut() {
+                    changed |= linked_object.remove("glossary_1").is_some();
+                    changed |= linked_object.remove("glossary_2").is_some();
+                } else {
+                    settings_object.remove("linked_glossaries");
+                    changed = true;
+                }
+            }
+            for key in [
+                "linked_glossaries",
+                "default_source_language",
+                "default_target_language",
+                "workflow_status",
+            ] {
+                if settings_object
+                    .get(key)
+                    .map(Value::is_null)
+                    .unwrap_or(false)
+                {
+                    settings_object.remove(key);
+                    changed = true;
+                }
+            }
+        } else {
+            chapter_object.remove("settings");
+            changed = true;
+        }
+    }
+
+    changed
+}
+
+/// Content-only migration: normalize every chapter's `chapter.json` and record
+/// the marker. Runs inline during project repo sync — the edits are ordinary
+/// git-mergeable content, so no modal and no remote adoption/discard flow is
+/// needed (both sides may run it independently and merge cleanly). A dirty
+/// worktree skips the run; the next sync retries.
+pub(crate) fn migrate_project_repo_to_0856(
+    app: &AppHandle,
+    repo_path: &Path,
+) -> Result<(), String> {
+    let status = git_output(repo_path, &["status", "--porcelain"], None)?;
+    if !status.trim().is_empty() {
+        return Ok(());
+    }
+
+    let chapters_root = repo_path.join("chapters");
+    if chapters_root.exists() {
+        let entries = fs::read_dir(&chapters_root).map_err(|error| {
+            format!(
+                "Could not list the chapters folder '{}': {error}",
+                chapters_root.display()
+            )
+        })?;
+        for entry in entries {
+            let entry = entry
+                .map_err(|error| format!("Could not read a chapters folder entry: {error}"))?;
+            let chapter_json_path = entry.path().join("chapter.json");
+            if !chapter_json_path.is_file() {
+                continue;
+            }
+            let mut chapter_value = read_json_value(&chapter_json_path, "chapter.json")?;
+            if normalize_chapter_settings_value(&mut chapter_value) {
+                write_json_value(&chapter_json_path, &chapter_value)?;
+            }
+        }
+    }
+
+    let mut metadata = match read_repo_layout_metadata(repo_path)? {
+        Some(metadata) => metadata,
+        None => new_v2_repo_layout_metadata(RepoKind::Project),
+    };
+    if !metadata
+        .applied_migrations
+        .iter()
+        .any(|migration| migration == MIGRATION_0856)
+    {
+        metadata.applied_migrations.push(MIGRATION_0856.to_string());
+    }
+    write_repo_layout_metadata(repo_path, &metadata)?;
+    git_output(repo_path, &["add", "-A"], None)?;
+    commit_migration_if_dirty(
+        app,
+        repo_path,
+        MIGRATION_0856,
+        "Normalize chapter settings (0.8.56 migration)",
+    )
 }
 
 #[cfg(test)]
@@ -910,20 +1056,115 @@ mod tests {
     }
 
     #[test]
-    fn missing_metadata_with_old_app_version_schedules_0810() {
+    fn missing_metadata_with_old_app_version_schedules_all_migrations() {
         assert_eq!(
-            resolve_pending_repo_migrations(None, Some("0.8.9"), "0.8.10", false),
-            RepoMigrationDecision::Pending(vec!["0.8.10".to_string()])
+            resolve_pending_repo_migrations(None, Some("0.8.9"), "0.8.56", false),
+            RepoMigrationDecision::Pending(vec!["0.8.10".to_string(), "0.8.56".to_string()])
         );
     }
 
     #[test]
-    fn metadata_with_0810_is_up_to_date() {
+    fn metadata_with_only_0810_still_pends_0856() {
         let metadata = new_v2_repo_layout_metadata(RepoKind::Project);
         assert_eq!(
-            resolve_pending_repo_migrations(Some(&metadata), Some("0.8.10"), "0.8.10", false),
+            resolve_pending_repo_migrations(Some(&metadata), Some("0.8.10"), "0.8.56", false),
+            RepoMigrationDecision::Pending(vec!["0.8.56".to_string()])
+        );
+    }
+
+    #[test]
+    fn metadata_with_all_migrations_is_up_to_date() {
+        let mut metadata = new_v2_repo_layout_metadata(RepoKind::Project);
+        metadata.applied_migrations.push(MIGRATION_0856.to_string());
+        assert_eq!(
+            resolve_pending_repo_migrations(Some(&metadata), Some("0.8.56"), "0.8.56", false),
             RepoMigrationDecision::UpToDate
         );
+    }
+
+    #[test]
+    fn normalize_chapter_settings_drops_legacy_shapes() {
+        let mut chapter = serde_json::json!({
+            "chapter_id": "c1",
+            "title": "Chapter",
+            "settings": {
+                "linked_glossaries": null,
+                "workflow_status": null,
+                "default_source_language": "en",
+            },
+        });
+        assert!(normalize_chapter_settings_value(&mut chapter));
+        let settings = chapter.get("settings").and_then(Value::as_object).unwrap();
+        assert!(!settings.contains_key("linked_glossaries"));
+        assert!(!settings.contains_key("workflow_status"));
+        assert_eq!(
+            settings
+                .get("default_source_language")
+                .and_then(Value::as_str),
+            Some("en")
+        );
+
+        let mut non_object_settings = serde_json::json!({
+            "chapter_id": "c2",
+            "settings": null,
+        });
+        assert!(normalize_chapter_settings_value(&mut non_object_settings));
+        assert!(non_object_settings.get("settings").is_none());
+
+        let mut legacy_keys = serde_json::json!({
+            "chapter_id": "c3",
+            "settings": {
+                "linked_glossaries": {
+                    "glossary": { "glossary_id": "g1", "repo_name": "repo" },
+                    "glossary_1": "old",
+                    "glossary_2": "old",
+                },
+            },
+        });
+        assert!(normalize_chapter_settings_value(&mut legacy_keys));
+        let linked = legacy_keys
+            .pointer("/settings/linked_glossaries")
+            .and_then(Value::as_object)
+            .unwrap();
+        assert!(linked.contains_key("glossary"));
+        assert!(!linked.contains_key("glossary_1"));
+        assert!(!linked.contains_key("glossary_2"));
+
+        let mut array_linked = serde_json::json!({
+            "chapter_id": "c4",
+            "settings": { "linked_glossaries": ["repo-a"] },
+        });
+        assert!(normalize_chapter_settings_value(&mut array_linked));
+        assert!(array_linked
+            .pointer("/settings/linked_glossaries")
+            .is_none());
+    }
+
+    #[test]
+    fn normalize_chapter_settings_leaves_modern_files_untouched() {
+        let mut modern = serde_json::json!({
+            "chapter_id": "c1",
+            "title": "Chapter",
+            "settings": {
+                "linked_glossaries": {
+                    "glossary": { "glossary_id": "g1", "repo_name": "repo" },
+                },
+                "workflow_status": "review2",
+            },
+        });
+        let before = modern.clone();
+        assert!(!normalize_chapter_settings_value(&mut modern));
+        assert_eq!(modern, before);
+
+        // `"glossary": null` is the current cleared-link shape; keep it.
+        let mut cleared = serde_json::json!({
+            "chapter_id": "c2",
+            "settings": { "linked_glossaries": { "glossary": null } },
+        });
+        assert!(!normalize_chapter_settings_value(&mut cleared));
+
+        let mut no_settings = serde_json::json!({ "chapter_id": "c3" });
+        assert!(!normalize_chapter_settings_value(&mut no_settings));
     }
 
     #[test]
