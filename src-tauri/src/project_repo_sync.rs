@@ -35,9 +35,9 @@ use crate::{
         repo_requires_0810_migration, run_pending_repo_migrations,
     },
     repo_sync_shared::{
-        abort_rebase_after_failed_pull, ensure_repo_local_git_identity,
+        abort_rebase_after_failed_pull, acquire_repo_sync_lock, ensure_repo_local_git_identity,
         git_error_indicates_missing_remote_ref, git_output, load_git_transport_token,
-        read_current_head_oid, GitTransportAuth,
+        read_current_head_oid, repo_sync_lock, GitTransportAuth,
     },
 };
 
@@ -475,6 +475,11 @@ pub(crate) fn sync_gtms_project_editor_repo_sync(
             affected_chapter_ids: Vec::new(),
         });
     }
+    // Serialize with the reconcile-spawned background sync for the same repo —
+    // that path only guards via the `syncing` snapshot store, which this
+    // editor-driven sync does not participate in.
+    let repo_lock = repo_sync_lock(&repo_path);
+    let _repo_lock_guard = acquire_repo_sync_lock(&repo_lock);
     ensure_project_origin_remote(&project, &repo_path)?;
     ensure_repo_local_git_identity(app, &repo_path)?;
     backup_dirty_project_worktree(&repo_path, project_branch_name(&project).as_str())?;
@@ -549,6 +554,8 @@ fn spawn_project_repo_sync_job(
     git_transport_token: String,
 ) {
     tauri::async_runtime::spawn_blocking(move || {
+        let repo_lock = repo_sync_lock(&repo_path);
+        let _repo_lock_guard = acquire_repo_sync_lock(&repo_lock);
         let sync_result = sync_project_repo(
             &app,
             &project,

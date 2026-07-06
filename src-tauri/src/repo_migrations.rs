@@ -143,13 +143,32 @@ fn migrate_repo_to_0810(
     repo_path: &Path,
     repo_kind: RepoKind,
 ) -> Result<(), String> {
-    ensure_clean_repo(repo_path)?;
-    match repo_kind {
+    run_layout_migration_with_recovery(repo_path, || match repo_kind {
         RepoKind::Project => migrate_project_repo_to_0810(app, repo_path),
         RepoKind::Glossary | RepoKind::QaList => {
             migrate_simple_repo_to_0810(app, repo_path, repo_kind)
         }
+    })
+}
+
+/// Run an in-place layout migration and restore the pre-migration state if it
+/// fails partway. A partial migration (some chapter folders renamed, nothing
+/// committed) would otherwise leave a dirty worktree that blocks the retry
+/// with "save or discard your changes" — advice the user cannot follow for
+/// half-renamed folders. The worktree is verified clean (including untracked
+/// files) before the migration starts, so `reset --hard` + `clean -fd`
+/// provably restores the starting state.
+fn run_layout_migration_with_recovery(
+    repo_path: &Path,
+    migrate: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    ensure_clean_repo(repo_path)?;
+    if let Err(error) = migrate() {
+        let _ = git_output(repo_path, &["reset", "--hard", "HEAD"], None);
+        let _ = git_output(repo_path, &["clean", "-fd"], None);
+        return Err(error);
     }
+    Ok(())
 }
 
 fn sync_pending_repo_layout_migration(
@@ -926,6 +945,40 @@ fn commit_migration_if_dirty(
     Ok(())
 }
 
+/// Normalize every parseable chapter's `chapter.json` under `chapters_root`.
+/// Returns how many chapter files were skipped because they could not be
+/// parsed — a file the parser rejects is also one the normalizer has nothing
+/// to fix, and failing the whole sync over it would brick the repo on one
+/// corrupt file. Write failures still propagate.
+fn normalize_chapter_settings_files(chapters_root: &Path) -> Result<usize, String> {
+    let entries = fs::read_dir(chapters_root).map_err(|error| {
+        format!(
+            "Could not list the chapters folder '{}': {error}",
+            chapters_root.display()
+        )
+    })?;
+    let mut skipped_unreadable = 0usize;
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| format!("Could not read a chapters folder entry: {error}"))?;
+        let chapter_json_path = entry.path().join("chapter.json");
+        if !chapter_json_path.is_file() {
+            continue;
+        }
+        let mut chapter_value = match read_json_value(&chapter_json_path, "chapter.json") {
+            Ok(value) => value,
+            Err(_) => {
+                skipped_unreadable += 1;
+                continue;
+            }
+        };
+        if normalize_chapter_settings_value(&mut chapter_value) {
+            write_json_value(&chapter_json_path, &chapter_value)?;
+        }
+    }
+    Ok(skipped_unreadable)
+}
+
 /// Content-only migration: normalize every chapter's `chapter.json` and record
 /// the marker. Runs inline during project repo sync — the edits are ordinary
 /// git-mergeable content, so no modal and no remote adoption/discard flow is
@@ -939,23 +992,13 @@ fn migrate_project_repo_to_0856(app: &AppHandle, repo_path: &Path) -> Result<(),
 
     let chapters_root = repo_path.join("chapters");
     if chapters_root.exists() {
-        let entries = fs::read_dir(&chapters_root).map_err(|error| {
-            format!(
-                "Could not list the chapters folder '{}': {error}",
-                chapters_root.display()
-            )
-        })?;
-        for entry in entries {
-            let entry = entry
-                .map_err(|error| format!("Could not read a chapters folder entry: {error}"))?;
-            let chapter_json_path = entry.path().join("chapter.json");
-            if !chapter_json_path.is_file() {
-                continue;
-            }
-            let mut chapter_value = read_json_value(&chapter_json_path, "chapter.json")?;
-            if normalize_chapter_settings_value(&mut chapter_value) {
-                write_json_value(&chapter_json_path, &chapter_value)?;
-            }
+        let skipped_unreadable = normalize_chapter_settings_files(&chapters_root)?;
+        if skipped_unreadable > 0 {
+            crate::github::report_backend_nonfatal_error(
+                app,
+                "repo.migrate.chapter_settings",
+                "chapter_json_unreadable_skipped",
+            );
         }
     }
 
@@ -1246,6 +1289,68 @@ mod tests {
             "chapters/short-folder/images/photo.png"
         );
         assert_eq!(value["unknownFutureField"], true);
+    }
+
+    #[test]
+    fn failed_layout_migration_restores_the_pre_migration_worktree() {
+        let repo_path = temp_repo("layout-migration-recovery");
+        fs::create_dir_all(repo_path.join("chapters/original-folder")).expect("create chapter");
+        fs::write(
+            repo_path.join("chapters/original-folder/chapter.json"),
+            "{}\n",
+        )
+        .expect("write chapter");
+        run_git(&repo_path, &["add", "-A"]);
+        run_git(&repo_path, &["commit", "-m", "Initial"]);
+
+        // Simulate a migration failing after a partial folder rename.
+        let error = run_layout_migration_with_recovery(&repo_path, || {
+            fs::rename(
+                repo_path.join("chapters/original-folder"),
+                repo_path.join("chapters/renamed"),
+            )
+            .map_err(|error| error.to_string())?;
+            Err("simulated mid-migration failure".to_string())
+        })
+        .expect_err("migration failure must propagate");
+        assert!(error.contains("simulated"));
+
+        // Recovery must restore the original layout and a clean worktree, so
+        // the retry is not blocked by the clean-repo guard.
+        assert!(repo_path.join("chapters/original-folder").exists());
+        assert!(!repo_path.join("chapters/renamed").exists());
+        assert_eq!(git_stdout(&repo_path, &["status", "--porcelain"]), "");
+
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn chapter_settings_normalization_skips_unreadable_files() {
+        let root = env::temp_dir().join(format!("gnosis-tms-normalize-skip-{}", Uuid::now_v7()));
+        let chapters_root = root.join("chapters");
+        fs::create_dir_all(chapters_root.join("good")).expect("create good chapter");
+        fs::create_dir_all(chapters_root.join("corrupt")).expect("create corrupt chapter");
+        fs::write(
+            chapters_root.join("good/chapter.json"),
+            br#"{"settings": null}"#,
+        )
+        .expect("write good chapter");
+        fs::write(chapters_root.join("corrupt/chapter.json"), b"{not json")
+            .expect("write corrupt chapter");
+
+        let skipped = normalize_chapter_settings_files(&chapters_root).expect("normalization runs");
+
+        // One corrupt file must not brick the migration — it is skipped and
+        // counted, while parseable files still normalize.
+        assert_eq!(skipped, 1);
+        let good = fs::read_to_string(chapters_root.join("good/chapter.json"))
+            .expect("read normalized chapter");
+        assert!(!good.contains("settings"));
+        let corrupt = fs::read_to_string(chapters_root.join("corrupt/chapter.json"))
+            .expect("read corrupt chapter");
+        assert_eq!(corrupt, "{not json");
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
