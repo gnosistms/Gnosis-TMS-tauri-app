@@ -30,8 +30,8 @@ use crate::{
     repo_layout_metadata::{RepoKind, STORAGE_LAYOUT_VERSION_V2},
     repo_migrations::{
         discard_local_old_layout_changes_and_adopt_remote,
-        is_remote_migrated_local_old_layout_changes_error, repo_requires_0810_migration,
-        sync_pending_repo_layout_migration,
+        is_remote_migrated_local_old_layout_changes_error, pending_repo_migrations,
+        repo_requires_0810_migration, run_pending_repo_migrations,
     },
     repo_sync_shared::{
         abort_rebase_after_failed_pull, ensure_repo_local_git_identity,
@@ -389,9 +389,11 @@ pub(crate) fn discard_old_layout_repos(
             resource.resource_id.as_deref(),
             &resource.repo_name,
         )?;
+        // Skip only repos that verifiably finished the layout migration —
+        // unreadable metadata is one of the states this discard heals.
         if !repo_path.exists()
             || git_output(&repo_path, &["rev-parse", "--git-dir"], None).is_err()
-            || !repo_requires_0810_migration(&repo_path)
+            || matches!(repo_requires_0810_migration(&repo_path), Ok(false))
         {
             skipped_repo_names.push(resource.repo_name.clone());
             continue;
@@ -610,10 +612,18 @@ pub(crate) fn inspect_repo_state(
     } else {
         REPO_SYNC_STATUS_OUT_OF_SYNC
     };
-    let status = if repo_requires_0810_migration(repo_path) {
-        REPO_SYNC_STATUS_OUT_OF_SYNC
-    } else {
-        status
+    let status = match pending_repo_migrations(repo_path, &domain.repo_kind()) {
+        Ok(pending) if !pending.is_empty() => REPO_SYNC_STATUS_OUT_OF_SYNC,
+        Ok(_) => status,
+        Err(error) => {
+            return RepoSyncSnapshot {
+                local_head_oid,
+                remote_head_oid,
+                status: REPO_SYNC_STATUS_SYNC_ERROR.to_string(),
+                message: Some(error),
+                ..default_snapshot()
+            };
+        }
     };
 
     RepoSyncSnapshot {
@@ -786,15 +796,13 @@ fn sync_repo(
         branch_name,
         &git_transport_auth,
     )?;
-    if repo_requires_0810_migration(repo_path) {
-        sync_pending_repo_layout_migration(
-            app,
-            repo_path,
-            domain.repo_kind(),
-            branch_name,
-            remote_head_oid,
-        )?;
-    }
+    run_pending_repo_migrations(
+        app,
+        repo_path,
+        domain.repo_kind(),
+        branch_name,
+        remote_head_oid,
+    )?;
 
     if remote_head_oid.trim().is_empty() {
         if local_head_oid.is_some() {
@@ -908,8 +916,8 @@ fn clone_repo(
         branch_name,
         &git_transport_auth,
     )?;
-    if repo_requires_0810_migration(repo_path) {
-        sync_pending_repo_layout_migration(
+    if !pending_repo_migrations(repo_path, &domain.repo_kind())?.is_empty() {
+        run_pending_repo_migrations(
             app,
             repo_path,
             domain.repo_kind(),

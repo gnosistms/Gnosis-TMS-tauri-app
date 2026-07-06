@@ -1,34 +1,134 @@
-use std::{cmp::Ordering, collections::BTreeMap, fs, path::Path};
+use std::{collections::BTreeMap, fs, path::Path};
 
 use serde_json::Value;
 use tauri::AppHandle;
 
 use crate::{
     git_commit::{git_commit_as_signed_in_user_with_metadata, GitCommitMetadata},
+    project_import::normalize_chapter_settings_value,
     repo_layout_metadata::{
-        new_v2_repo_layout_metadata, parse_repo_layout_metadata_bytes, read_repo_layout_metadata,
-        write_repo_layout_metadata, RepoKind, RepoLayoutMetadata, MIGRATION_0810, MIGRATION_0856,
-        REPO_METADATA_RELATIVE_PATH,
+        new_v2_repo_layout_metadata, parse_repo_layout_metadata_bytes,
+        read_repo_layout_metadata_state, write_repo_layout_metadata, RepoKind, RepoLayoutMetadata,
+        RepoLayoutMetadataState, MIGRATION_0810, MIGRATION_0856, REPO_METADATA_RELATIVE_PATH,
     },
     repo_sync_shared::{format_git_spawn_error, git_command, git_output},
     short_path_names::{allocate_short_folder_name, allocate_short_image_filename},
 };
 
-#[cfg_attr(not(test), allow(dead_code))]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum RepoMigrationDecision {
-    UpToDate,
-    Pending(Vec<String>),
-    UpdateRequired {
-        required_version: String,
-        current_version: String,
-    },
-    UnknownLegacyState,
+/// How a migration executes. Layout migrations rewrite the storage layout and
+/// need the bespoke orchestration in `sync_pending_repo_layout_migration`
+/// (adopt-remote, discard flow, migration modal). Content migrations are
+/// ordinary git-mergeable edits that run inline during sync.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RepoMigrationKind {
+    Layout,
+    Content,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn ordered_repo_migrations() -> &'static [&'static str] {
-    &[MIGRATION_0810, MIGRATION_0856]
+type RepoMigrationRunFn = fn(&AppHandle, &Path) -> Result<(), String>;
+
+/// One entry in the ordered migration registry. Adding a migration means
+/// adding a descriptor here plus its run function — every dispatch site
+/// (sync, clone, status snapshots, the modal scan) derives its behavior from
+/// `pending_repo_migrations`, so nothing else needs wiring.
+#[derive(Debug)]
+pub(crate) struct RepoMigrationDescriptor {
+    pub(crate) id: &'static str,
+    pub(crate) kind: RepoMigrationKind,
+    applies_to: &'static [RepoKind],
+    /// Noun phrase for "This repo needs {pending_description}." status lines.
+    pub(crate) pending_description: &'static str,
+    /// Inline entry point for content migrations; layout migrations use the
+    /// bespoke orchestration instead.
+    run_content: Option<RepoMigrationRunFn>,
+}
+
+const REPO_MIGRATION_REGISTRY: &[RepoMigrationDescriptor] = &[
+    RepoMigrationDescriptor {
+        id: MIGRATION_0810,
+        kind: RepoMigrationKind::Layout,
+        applies_to: &[RepoKind::Project, RepoKind::Glossary, RepoKind::QaList],
+        pending_description: "a local layout migration",
+        run_content: None,
+    },
+    RepoMigrationDescriptor {
+        id: MIGRATION_0856,
+        kind: RepoMigrationKind::Content,
+        applies_to: &[RepoKind::Project],
+        pending_description: "the chapter settings migration",
+        run_content: Some(migrate_project_repo_to_0856),
+    },
+];
+
+/// The migrations still pending for this repo, in registry order. Missing
+/// metadata means a legacy repo: only the layout migration pends there — it
+/// writes the metadata the content checks read. Unreadable metadata is an
+/// error; see `read_repo_layout_metadata_state`.
+pub(crate) fn pending_repo_migrations(
+    repo_path: &Path,
+    repo_kind: &RepoKind,
+) -> Result<Vec<&'static RepoMigrationDescriptor>, String> {
+    let metadata = match read_repo_layout_metadata_state(repo_path) {
+        RepoLayoutMetadataState::Readable(metadata) => Some(metadata),
+        RepoLayoutMetadataState::Missing => None,
+        RepoLayoutMetadataState::Unreadable(detail) => {
+            return Err(unreadable_repo_metadata_error(&detail));
+        }
+    };
+    Ok(REPO_MIGRATION_REGISTRY
+        .iter()
+        .filter(|descriptor| {
+            if !descriptor.applies_to.contains(repo_kind) {
+                return false;
+            }
+            match &metadata {
+                Some(metadata) => !applied_migration(metadata, descriptor.id),
+                None => descriptor.kind == RepoMigrationKind::Layout,
+            }
+        })
+        .collect())
+}
+
+/// Run every pending migration for this repo in registry order. A pending
+/// layout migration goes through its adopt-remote orchestration first; the
+/// pending list is then recomputed — the layout step writes the metadata the
+/// content checks read — and content migrations run inline.
+pub(crate) fn run_pending_repo_migrations(
+    app: &AppHandle,
+    repo_path: &Path,
+    repo_kind: RepoKind,
+    branch_name: &str,
+    remote_head_oid: &str,
+) -> Result<(), String> {
+    if pending_repo_migrations(repo_path, &repo_kind)?
+        .iter()
+        .any(|descriptor| descriptor.kind == RepoMigrationKind::Layout)
+    {
+        sync_pending_repo_layout_migration(
+            app,
+            repo_path,
+            repo_kind.clone(),
+            branch_name,
+            remote_head_oid,
+        )?;
+    }
+    for descriptor in pending_repo_migrations(repo_path, &repo_kind)? {
+        if let Some(run) = descriptor.run_content {
+            run(app, repo_path)?;
+        }
+    }
+    Ok(())
+}
+
+/// The newest layout migration id — the version the modal migration flow
+/// reports as its target.
+pub(crate) fn latest_layout_migration_id() -> &'static str {
+    REPO_MIGRATION_REGISTRY
+        .iter()
+        .rev()
+        .find(|descriptor| descriptor.kind == RepoMigrationKind::Layout)
+        .map(|descriptor| descriptor.id)
+        .unwrap_or(MIGRATION_0810)
 }
 
 pub(crate) const REMOTE_MIGRATED_LOCAL_OLD_LAYOUT_CHANGES_MESSAGE: &str =
@@ -40,101 +140,40 @@ pub(crate) fn is_remote_migrated_local_old_layout_changes_error(error: &str) -> 
         .starts_with("REMOTE_MIGRATED_LOCAL_OLD_LAYOUT_CHANGES:")
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn resolve_pending_repo_migrations(
-    metadata: Option<&RepoLayoutMetadata>,
-    latest_commit_app_version: Option<&str>,
-    current_app_version: &str,
-    has_legacy_layout_evidence: bool,
-) -> RepoMigrationDecision {
-    if let Some(remote_version) = latest_commit_app_version
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        if compare_app_versions(remote_version, current_app_version) == Ordering::Greater {
-            return RepoMigrationDecision::UpdateRequired {
-                required_version: remote_version.to_string(),
-                current_version: current_app_version.to_string(),
-            };
-        }
-    }
-
-    let applied = metadata
-        .map(|metadata| metadata.applied_migrations.as_slice())
-        .unwrap_or(&[]);
-    let pending = ordered_repo_migrations()
-        .iter()
-        .filter(|migration| !applied.iter().any(|value| value == **migration))
-        .map(|migration| (*migration).to_string())
-        .collect::<Vec<_>>();
-
-    if metadata.is_some() {
-        return if pending.is_empty() {
-            RepoMigrationDecision::UpToDate
-        } else {
-            RepoMigrationDecision::Pending(pending)
-        };
-    }
-
-    if latest_commit_app_version
-        .map(|version| compare_app_versions(version, MIGRATION_0810) == Ordering::Less)
-        .unwrap_or(false)
-        || has_legacy_layout_evidence
-    {
-        return RepoMigrationDecision::Pending(pending);
-    }
-
-    RepoMigrationDecision::UnknownLegacyState
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn compare_app_versions(left: &str, right: &str) -> Ordering {
-    let left_parts = parse_version_parts(left);
-    let right_parts = parse_version_parts(right);
-    let max_len = left_parts.len().max(right_parts.len());
-
-    for index in 0..max_len {
-        let left_part = left_parts.get(index).copied().unwrap_or(0);
-        let right_part = right_parts.get(index).copied().unwrap_or(0);
-        match left_part.cmp(&right_part) {
-            Ordering::Equal => continue,
-            other => return other,
-        }
-    }
-
-    Ordering::Equal
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-fn parse_version_parts(value: &str) -> Vec<u64> {
-    value
-        .trim()
-        .trim_start_matches('v')
-        .trim_start_matches('V')
-        .split(['-', '+'])
-        .next()
-        .unwrap_or("")
-        .trim()
-        .split('.')
-        .map(|segment| segment.parse::<u64>().unwrap_or(0))
-        .collect()
-}
-
-pub(crate) fn migrate_repo_to_0810(
+fn migrate_repo_to_0810(
     app: &AppHandle,
     repo_path: &Path,
     repo_kind: RepoKind,
 ) -> Result<(), String> {
-    ensure_clean_repo(repo_path)?;
-    match repo_kind {
+    run_layout_migration_with_recovery(repo_path, || match repo_kind {
         RepoKind::Project => migrate_project_repo_to_0810(app, repo_path),
         RepoKind::Glossary | RepoKind::QaList => {
             migrate_simple_repo_to_0810(app, repo_path, repo_kind)
         }
-    }
+    })
 }
 
-pub(crate) fn sync_pending_repo_layout_migration(
+/// Run an in-place layout migration and restore the pre-migration state if it
+/// fails partway. A partial migration (some chapter folders renamed, nothing
+/// committed) would otherwise leave a dirty worktree that blocks the retry
+/// with "save or discard your changes" — advice the user cannot follow for
+/// half-renamed folders. The worktree is verified clean (including untracked
+/// files) before the migration starts, so `reset --hard` + `clean -fd`
+/// provably restores the starting state.
+fn run_layout_migration_with_recovery(
+    repo_path: &Path,
+    migrate: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    ensure_clean_repo(repo_path)?;
+    if let Err(error) = migrate() {
+        let _ = git_output(repo_path, &["reset", "--hard", "HEAD"], None);
+        let _ = git_output(repo_path, &["clean", "-fd"], None);
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn sync_pending_repo_layout_migration(
     app: &AppHandle,
     repo_path: &Path,
     repo_kind: RepoKind,
@@ -143,7 +182,7 @@ pub(crate) fn sync_pending_repo_layout_migration(
 ) -> Result<(), String> {
     let remote_tracking_ref = format!("origin/{branch_name}");
     if !remote_head_oid.trim().is_empty()
-        && !ref_requires_0810_migration(repo_path, &remote_tracking_ref)
+        && !ref_requires_0810_migration(repo_path, &remote_tracking_ref)?
     {
         adopt_remote_migrated_layout(repo_path, branch_name, &remote_tracking_ref)?;
         return Ok(());
@@ -158,10 +197,17 @@ pub(crate) fn discard_local_old_layout_changes_and_adopt_remote(
     branch_name: &str,
     remote_tracking_ref: &str,
 ) -> Result<(), String> {
-    if !repo_requires_0810_migration(repo_path) {
-        return Ok(());
+    // Only a readable, already-migrated local repo short-circuits. Unreadable
+    // local metadata is one of the states this user-confirmed discard heals —
+    // the remote must still prove readable and migrated below before anything
+    // destructive runs.
+    if let RepoLayoutMetadataState::Readable(metadata) = read_repo_layout_metadata_state(repo_path)
+    {
+        if applied_migration(&metadata, MIGRATION_0810) {
+            return Ok(());
+        }
     }
-    if ref_requires_0810_migration(repo_path, remote_tracking_ref) {
+    if ref_requires_0810_migration(repo_path, remote_tracking_ref)? {
         return Err(
             "The server repo is not migrated yet; local changes were not discarded.".to_string(),
         );
@@ -169,33 +215,48 @@ pub(crate) fn discard_local_old_layout_changes_and_adopt_remote(
     force_adopt_remote_migrated_layout(repo_path, branch_name, remote_tracking_ref)
 }
 
-pub(crate) fn repo_requires_0810_migration(repo_path: &Path) -> bool {
-    match crate::repo_layout_metadata::read_repo_layout_metadata(repo_path) {
-        Ok(Some(metadata)) => !metadata
-            .applied_migrations
-            .iter()
-            .any(|migration| migration == MIGRATION_0810),
-        Ok(None) | Err(_) => true,
+fn applied_migration(metadata: &RepoLayoutMetadata, migration: &str) -> bool {
+    metadata
+        .applied_migrations
+        .iter()
+        .any(|applied| applied == migration)
+}
+
+fn unreadable_repo_metadata_error(detail: &str) -> String {
+    format!(
+        "This repo's metadata file ({REPO_METADATA_RELATIVE_PATH}) could not be used: {detail} \
+         Update Gnosis TMS if a newer version wrote this repo; otherwise restore the file before syncing."
+    )
+}
+
+/// Whether the 0.8.10 layout migration still pends. Missing metadata means a
+/// legacy repo (migrate); unreadable metadata means data this app version must
+/// not touch, so it surfaces as an error instead of a migration.
+pub(crate) fn repo_requires_0810_migration(repo_path: &Path) -> Result<bool, String> {
+    match read_repo_layout_metadata_state(repo_path) {
+        RepoLayoutMetadataState::Readable(metadata) => {
+            Ok(!applied_migration(&metadata, MIGRATION_0810))
+        }
+        RepoLayoutMetadataState::Missing => Ok(true),
+        RepoLayoutMetadataState::Unreadable(detail) => Err(unreadable_repo_metadata_error(&detail)),
     }
 }
 
-pub(crate) fn head_requires_0810_migration(repo_path: &Path) -> bool {
+pub(crate) fn head_requires_0810_migration(repo_path: &Path) -> Result<bool, String> {
     ref_requires_0810_migration(repo_path, "HEAD")
 }
 
-pub(crate) fn ref_requires_0810_migration(repo_path: &Path, git_ref: &str) -> bool {
+pub(crate) fn ref_requires_0810_migration(repo_path: &Path, git_ref: &str) -> Result<bool, String> {
     match git_blob_bytes(
         repo_path,
         &format!("{git_ref}:{REPO_METADATA_RELATIVE_PATH}"),
     ) {
         Ok(bytes) => match parse_repo_layout_metadata_bytes(&bytes) {
-            Ok(metadata) => !metadata
-                .applied_migrations
-                .iter()
-                .any(|migration| migration == MIGRATION_0810),
-            Err(_) => true,
+            Ok(metadata) => Ok(!applied_migration(&metadata, MIGRATION_0810)),
+            Err(detail) => Err(unreadable_repo_metadata_error(&detail)),
         },
-        Err(_) => true,
+        // The ref has no metadata blob — a pre-0.8.10 layout.
+        Err(_) => Ok(true),
     }
 }
 
@@ -886,67 +947,38 @@ fn commit_migration_if_dirty(
     Ok(())
 }
 
-/// True when the repo's metadata exists but the 0.8.56 chapter-settings
-/// normalization has not been recorded. Repos without metadata still need the
-/// 0.8.10 layout migration, which runs first in the same sync and writes the
-/// metadata this check reads.
-pub(crate) fn repo_requires_0856_migration(repo_path: &Path) -> bool {
-    match read_repo_layout_metadata(repo_path) {
-        Ok(Some(metadata)) => !metadata
-            .applied_migrations
-            .iter()
-            .any(|migration| migration == MIGRATION_0856),
-        Ok(None) | Err(_) => false,
-    }
-}
-
-/// Normalizes legacy `chapter.json` shapes in place:
-/// - non-object `settings` / `settings.linked_glossaries` values (older app
-///   versions serialized `None` as `null`) are dropped;
-/// - explicit `null`s for the optional settings fields are dropped (current
-///   serializers omit absent fields);
-/// - the pre-0.8 `glossary_1` / `glossary_2` link keys are dropped.
-///
-/// Returns true when the value changed.
-fn normalize_chapter_settings_value(chapter_value: &mut Value) -> bool {
-    let Some(chapter_object) = chapter_value.as_object_mut() else {
-        return false;
-    };
-    let mut changed = false;
-
-    if let Some(settings_value) = chapter_object.get_mut("settings") {
-        if let Some(settings_object) = settings_value.as_object_mut() {
-            if let Some(linked_value) = settings_object.get_mut("linked_glossaries") {
-                if let Some(linked_object) = linked_value.as_object_mut() {
-                    changed |= linked_object.remove("glossary_1").is_some();
-                    changed |= linked_object.remove("glossary_2").is_some();
-                } else {
-                    settings_object.remove("linked_glossaries");
-                    changed = true;
-                }
+/// Normalize every parseable chapter's `chapter.json` under `chapters_root`.
+/// Returns how many chapter files were skipped because they could not be
+/// parsed — a file the parser rejects is also one the normalizer has nothing
+/// to fix, and failing the whole sync over it would brick the repo on one
+/// corrupt file. Write failures still propagate.
+fn normalize_chapter_settings_files(chapters_root: &Path) -> Result<usize, String> {
+    let entries = fs::read_dir(chapters_root).map_err(|error| {
+        format!(
+            "Could not list the chapters folder '{}': {error}",
+            chapters_root.display()
+        )
+    })?;
+    let mut skipped_unreadable = 0usize;
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| format!("Could not read a chapters folder entry: {error}"))?;
+        let chapter_json_path = entry.path().join("chapter.json");
+        if !chapter_json_path.is_file() {
+            continue;
+        }
+        let mut chapter_value = match read_json_value(&chapter_json_path, "chapter.json") {
+            Ok(value) => value,
+            Err(_) => {
+                skipped_unreadable += 1;
+                continue;
             }
-            for key in [
-                "linked_glossaries",
-                "default_source_language",
-                "default_target_language",
-                "workflow_status",
-            ] {
-                if settings_object
-                    .get(key)
-                    .map(Value::is_null)
-                    .unwrap_or(false)
-                {
-                    settings_object.remove(key);
-                    changed = true;
-                }
-            }
-        } else {
-            chapter_object.remove("settings");
-            changed = true;
+        };
+        if normalize_chapter_settings_value(&mut chapter_value) {
+            write_json_value(&chapter_json_path, &chapter_value)?;
         }
     }
-
-    changed
+    Ok(skipped_unreadable)
 }
 
 /// Content-only migration: normalize every chapter's `chapter.json` and record
@@ -954,10 +986,7 @@ fn normalize_chapter_settings_value(chapter_value: &mut Value) -> bool {
 /// git-mergeable content, so no modal and no remote adoption/discard flow is
 /// needed (both sides may run it independently and merge cleanly). A dirty
 /// worktree skips the run; the next sync retries.
-pub(crate) fn migrate_project_repo_to_0856(
-    app: &AppHandle,
-    repo_path: &Path,
-) -> Result<(), String> {
+fn migrate_project_repo_to_0856(app: &AppHandle, repo_path: &Path) -> Result<(), String> {
     let status = git_output(repo_path, &["status", "--porcelain"], None)?;
     if !status.trim().is_empty() {
         return Ok(());
@@ -965,29 +994,22 @@ pub(crate) fn migrate_project_repo_to_0856(
 
     let chapters_root = repo_path.join("chapters");
     if chapters_root.exists() {
-        let entries = fs::read_dir(&chapters_root).map_err(|error| {
-            format!(
-                "Could not list the chapters folder '{}': {error}",
-                chapters_root.display()
-            )
-        })?;
-        for entry in entries {
-            let entry = entry
-                .map_err(|error| format!("Could not read a chapters folder entry: {error}"))?;
-            let chapter_json_path = entry.path().join("chapter.json");
-            if !chapter_json_path.is_file() {
-                continue;
-            }
-            let mut chapter_value = read_json_value(&chapter_json_path, "chapter.json")?;
-            if normalize_chapter_settings_value(&mut chapter_value) {
-                write_json_value(&chapter_json_path, &chapter_value)?;
-            }
+        let skipped_unreadable = normalize_chapter_settings_files(&chapters_root)?;
+        if skipped_unreadable > 0 {
+            crate::github::report_backend_nonfatal_error(
+                app,
+                "repo.migrate.chapter_settings",
+                "chapter_json_unreadable_skipped",
+            );
         }
     }
 
-    let mut metadata = match read_repo_layout_metadata(repo_path)? {
-        Some(metadata) => metadata,
-        None => new_v2_repo_layout_metadata(RepoKind::Project),
+    let mut metadata = match read_repo_layout_metadata_state(repo_path) {
+        RepoLayoutMetadataState::Readable(metadata) => metadata,
+        RepoLayoutMetadataState::Missing => new_v2_repo_layout_metadata(RepoKind::Project),
+        RepoLayoutMetadataState::Unreadable(detail) => {
+            return Err(unreadable_repo_metadata_error(&detail));
+        }
     };
     if !metadata
         .applied_migrations
@@ -1055,127 +1077,64 @@ mod tests {
         String::from_utf8_lossy(&output.stdout).trim().to_string()
     }
 
-    #[test]
-    fn missing_metadata_with_old_app_version_schedules_all_migrations() {
-        assert_eq!(
-            resolve_pending_repo_migrations(None, Some("0.8.9"), "0.8.56", false),
-            RepoMigrationDecision::Pending(vec!["0.8.10".to_string(), "0.8.56".to_string()])
-        );
+    fn pending_ids(repo_path: &Path, repo_kind: &RepoKind) -> Vec<&'static str> {
+        pending_repo_migrations(repo_path, repo_kind)
+            .expect("pending migrations")
+            .iter()
+            .map(|descriptor| descriptor.id)
+            .collect()
     }
 
     #[test]
-    fn metadata_with_only_0810_still_pends_0856() {
-        let metadata = new_v2_repo_layout_metadata(RepoKind::Project);
-        assert_eq!(
-            resolve_pending_repo_migrations(Some(&metadata), Some("0.8.10"), "0.8.56", false),
-            RepoMigrationDecision::Pending(vec!["0.8.56".to_string()])
+    fn registry_orders_layout_before_content_and_wires_run_entry_points() {
+        let first_content = REPO_MIGRATION_REGISTRY
+            .iter()
+            .position(|descriptor| descriptor.kind == RepoMigrationKind::Content)
+            .unwrap_or(REPO_MIGRATION_REGISTRY.len());
+        assert!(
+            REPO_MIGRATION_REGISTRY[first_content..]
+                .iter()
+                .all(|descriptor| descriptor.kind == RepoMigrationKind::Content),
+            "layout migrations must precede content migrations"
         );
+        for descriptor in REPO_MIGRATION_REGISTRY {
+            assert_eq!(
+                descriptor.run_content.is_some(),
+                descriptor.kind == RepoMigrationKind::Content,
+                "content migrations run inline; layout migrations use the bespoke orchestration"
+            );
+        }
+        assert_eq!(latest_layout_migration_id(), MIGRATION_0810);
     }
 
     #[test]
-    fn metadata_with_all_migrations_is_up_to_date() {
+    fn pending_migrations_follow_metadata_state() {
+        let repo_path = temp_repo("pending-migrations-state");
+
+        // Missing metadata = legacy repo: only the layout migration pends —
+        // it writes the metadata the content checks read.
+        assert_eq!(
+            pending_ids(&repo_path, &RepoKind::Project),
+            vec![MIGRATION_0810]
+        );
+
+        // Metadata recording only 0.8.10 pends the project content migration,
+        // but not for glossaries, which 0.8.56 does not apply to.
+        write_repo_layout_metadata(&repo_path, &new_v2_repo_layout_metadata(RepoKind::Project))
+            .expect("write metadata");
+        assert_eq!(
+            pending_ids(&repo_path, &RepoKind::Project),
+            vec![MIGRATION_0856]
+        );
+        assert!(pending_ids(&repo_path, &RepoKind::Glossary).is_empty());
+
+        // Both markers recorded → nothing pends.
         let mut metadata = new_v2_repo_layout_metadata(RepoKind::Project);
         metadata.applied_migrations.push(MIGRATION_0856.to_string());
-        assert_eq!(
-            resolve_pending_repo_migrations(Some(&metadata), Some("0.8.56"), "0.8.56", false),
-            RepoMigrationDecision::UpToDate
-        );
-    }
+        write_repo_layout_metadata(&repo_path, &metadata).expect("write migrated metadata");
+        assert!(pending_ids(&repo_path, &RepoKind::Project).is_empty());
 
-    #[test]
-    fn normalize_chapter_settings_drops_legacy_shapes() {
-        let mut chapter = serde_json::json!({
-            "chapter_id": "c1",
-            "title": "Chapter",
-            "settings": {
-                "linked_glossaries": null,
-                "workflow_status": null,
-                "default_source_language": "en",
-            },
-        });
-        assert!(normalize_chapter_settings_value(&mut chapter));
-        let settings = chapter.get("settings").and_then(Value::as_object).unwrap();
-        assert!(!settings.contains_key("linked_glossaries"));
-        assert!(!settings.contains_key("workflow_status"));
-        assert_eq!(
-            settings
-                .get("default_source_language")
-                .and_then(Value::as_str),
-            Some("en")
-        );
-
-        let mut non_object_settings = serde_json::json!({
-            "chapter_id": "c2",
-            "settings": null,
-        });
-        assert!(normalize_chapter_settings_value(&mut non_object_settings));
-        assert!(non_object_settings.get("settings").is_none());
-
-        let mut legacy_keys = serde_json::json!({
-            "chapter_id": "c3",
-            "settings": {
-                "linked_glossaries": {
-                    "glossary": { "glossary_id": "g1", "repo_name": "repo" },
-                    "glossary_1": "old",
-                    "glossary_2": "old",
-                },
-            },
-        });
-        assert!(normalize_chapter_settings_value(&mut legacy_keys));
-        let linked = legacy_keys
-            .pointer("/settings/linked_glossaries")
-            .and_then(Value::as_object)
-            .unwrap();
-        assert!(linked.contains_key("glossary"));
-        assert!(!linked.contains_key("glossary_1"));
-        assert!(!linked.contains_key("glossary_2"));
-
-        let mut array_linked = serde_json::json!({
-            "chapter_id": "c4",
-            "settings": { "linked_glossaries": ["repo-a"] },
-        });
-        assert!(normalize_chapter_settings_value(&mut array_linked));
-        assert!(array_linked
-            .pointer("/settings/linked_glossaries")
-            .is_none());
-    }
-
-    #[test]
-    fn normalize_chapter_settings_leaves_modern_files_untouched() {
-        let mut modern = serde_json::json!({
-            "chapter_id": "c1",
-            "title": "Chapter",
-            "settings": {
-                "linked_glossaries": {
-                    "glossary": { "glossary_id": "g1", "repo_name": "repo" },
-                },
-                "workflow_status": "review2",
-            },
-        });
-        let before = modern.clone();
-        assert!(!normalize_chapter_settings_value(&mut modern));
-        assert_eq!(modern, before);
-
-        // `"glossary": null` is the current cleared-link shape; keep it.
-        let mut cleared = serde_json::json!({
-            "chapter_id": "c2",
-            "settings": { "linked_glossaries": { "glossary": null } },
-        });
-        assert!(!normalize_chapter_settings_value(&mut cleared));
-
-        let mut no_settings = serde_json::json!({ "chapter_id": "c3" });
-        assert!(!normalize_chapter_settings_value(&mut no_settings));
-    }
-
-    #[test]
-    fn newer_remote_version_blocks_before_migration() {
-        assert_eq!(
-            resolve_pending_repo_migrations(None, Some("0.8.11"), "0.8.10", true),
-            RepoMigrationDecision::UpdateRequired {
-                required_version: "0.8.11".to_string(),
-                current_version: "0.8.10".to_string(),
-            }
-        );
+        let _ = fs::remove_dir_all(repo_path);
     }
 
     #[test]
@@ -1332,6 +1291,122 @@ mod tests {
             "chapters/short-folder/images/photo.png"
         );
         assert_eq!(value["unknownFutureField"], true);
+    }
+
+    #[test]
+    fn failed_layout_migration_restores_the_pre_migration_worktree() {
+        let repo_path = temp_repo("layout-migration-recovery");
+        fs::create_dir_all(repo_path.join("chapters/original-folder")).expect("create chapter");
+        fs::write(
+            repo_path.join("chapters/original-folder/chapter.json"),
+            "{}\n",
+        )
+        .expect("write chapter");
+        run_git(&repo_path, &["add", "-A"]);
+        run_git(&repo_path, &["commit", "-m", "Initial"]);
+
+        // Simulate a migration failing after a partial folder rename.
+        let error = run_layout_migration_with_recovery(&repo_path, || {
+            fs::rename(
+                repo_path.join("chapters/original-folder"),
+                repo_path.join("chapters/renamed"),
+            )
+            .map_err(|error| error.to_string())?;
+            Err("simulated mid-migration failure".to_string())
+        })
+        .expect_err("migration failure must propagate");
+        assert!(error.contains("simulated"));
+
+        // Recovery must restore the original layout and a clean worktree, so
+        // the retry is not blocked by the clean-repo guard.
+        assert!(repo_path.join("chapters/original-folder").exists());
+        assert!(!repo_path.join("chapters/renamed").exists());
+        assert_eq!(git_stdout(&repo_path, &["status", "--porcelain"]), "");
+
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn chapter_settings_normalization_skips_unreadable_files() {
+        let root = env::temp_dir().join(format!("gnosis-tms-normalize-skip-{}", Uuid::now_v7()));
+        let chapters_root = root.join("chapters");
+        fs::create_dir_all(chapters_root.join("good")).expect("create good chapter");
+        fs::create_dir_all(chapters_root.join("corrupt")).expect("create corrupt chapter");
+        fs::write(
+            chapters_root.join("good/chapter.json"),
+            br#"{"settings": null}"#,
+        )
+        .expect("write good chapter");
+        fs::write(chapters_root.join("corrupt/chapter.json"), b"{not json")
+            .expect("write corrupt chapter");
+
+        let skipped = normalize_chapter_settings_files(&chapters_root).expect("normalization runs");
+
+        // One corrupt file must not brick the migration — it is skipped and
+        // counted, while parseable files still normalize.
+        assert_eq!(skipped, 1);
+        let good = fs::read_to_string(chapters_root.join("good/chapter.json"))
+            .expect("read normalized chapter");
+        assert!(!good.contains("settings"));
+        let corrupt = fs::read_to_string(chapters_root.join("corrupt/chapter.json"))
+            .expect("read corrupt chapter");
+        assert_eq!(corrupt, "{not json");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn unreadable_metadata_errors_instead_of_migrating() {
+        let repo_path = temp_repo("unreadable-metadata-checks");
+        let metadata_path = repo_path.join(REPO_METADATA_RELATIVE_PATH);
+        fs::create_dir_all(metadata_path.parent().expect("metadata parent"))
+            .expect("create metadata folder");
+        // A future app bumping the schema version must produce an error — an
+        // older client treating this as "needs the 0.8.10 layout rewrite"
+        // would rename folders in data it cannot read.
+        fs::write(
+            &metadata_path,
+            br#"{"schemaVersion":2,"repoKind":"project","storageLayoutVersion":3}"#,
+        )
+        .expect("write future metadata");
+
+        let error_0810 = repo_requires_0810_migration(&repo_path)
+            .expect_err("unreadable metadata must not schedule the layout migration");
+        assert!(error_0810.contains(".gtms/repo.json"));
+        let pending_error = pending_repo_migrations(&repo_path, &RepoKind::Project)
+            .expect_err("unreadable metadata must not schedule any migration");
+        assert!(pending_error.contains("Update Gnosis TMS"));
+
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn unreadable_remote_metadata_blocks_adoption_paths() {
+        let repo_path = temp_repo("unreadable-remote-metadata");
+        let metadata_path = repo_path.join(REPO_METADATA_RELATIVE_PATH);
+        fs::create_dir_all(metadata_path.parent().expect("metadata parent"))
+            .expect("create metadata folder");
+        fs::write(
+            &metadata_path,
+            br#"{"schemaVersion":2,"repoKind":"project","storageLayoutVersion":3}"#,
+        )
+        .expect("write future metadata");
+        run_git(&repo_path, &["add", REPO_METADATA_RELATIVE_PATH]);
+        run_git(&repo_path, &["commit", "-m", "Future metadata"]);
+        let head = git_stdout(&repo_path, &["rev-parse", "HEAD"]);
+        run_git(
+            &repo_path,
+            &["update-ref", "refs/remotes/origin/main", &head],
+        );
+
+        // Discarding local changes to adopt an unreadable remote would hand
+        // the checkout to a layout this app cannot verify — it must error.
+        let error =
+            discard_local_old_layout_changes_and_adopt_remote(&repo_path, "main", "origin/main")
+                .expect_err("unreadable remote metadata must block adoption");
+        assert!(error.contains(".gtms/repo.json"));
+
+        let _ = fs::remove_dir_all(repo_path);
     }
 
     #[test]

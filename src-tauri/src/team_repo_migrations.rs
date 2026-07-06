@@ -2,9 +2,11 @@ use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
 use crate::{
-    glossary_repo_sync::find_glossary_repo_path, project_repo_paths::find_project_repo_path,
-    qa_list_repo_sync::find_qa_list_repo_path, repo_layout_metadata::MIGRATION_0810,
-    repo_migrations::repo_requires_0810_migration,
+    glossary_repo_sync::find_glossary_repo_path,
+    project_repo_paths::find_project_repo_path,
+    qa_list_repo_sync::find_qa_list_repo_path,
+    repo_layout_metadata::RepoKind,
+    repo_migrations::{latest_layout_migration_id, pending_repo_migrations, RepoMigrationKind},
 };
 
 #[derive(Debug, Deserialize)]
@@ -104,6 +106,20 @@ fn is_deleted_resource_candidate(resource: &ResourceMigrationCandidate) -> bool 
         || is_deleted_state(resource.remote_state.as_deref())
 }
 
+/// Only a definitive "a layout migration pends" verdict may enqueue the
+/// modal migration. Content migrations run inline during sync, and unreadable
+/// metadata (corrupt, or written by a future app) is skipped here — the sync
+/// paths surface it as a per-repo sync error, and migrating would rewrite
+/// data this app version cannot read.
+fn repo_pends_layout_migration_for_scan(repo_path: &std::path::Path, repo_kind: &RepoKind) -> bool {
+    matches!(
+        pending_repo_migrations(repo_path, repo_kind),
+        Ok(pending) if pending
+            .iter()
+            .any(|descriptor| descriptor.kind == RepoMigrationKind::Layout)
+    )
+}
+
 fn list_pending_team_repo_layout_migrations_sync(
     app: &AppHandle,
     input: TeamRepoMigrationScanInput,
@@ -125,7 +141,7 @@ fn list_pending_team_repo_layout_migrations_sync(
             project_id.as_deref(),
             Some(&repo_name),
         )? {
-            if repo_requires_0810_migration(&repo_path) {
+            if repo_pends_layout_migration_for_scan(&repo_path, &RepoKind::Project) {
                 pending.push(pending_migration(
                     "project",
                     project_id,
@@ -152,7 +168,7 @@ fn list_pending_team_repo_layout_migrations_sync(
             resource_id.as_deref(),
             Some(&repo_name),
         )? {
-            if repo_requires_0810_migration(&repo_path) {
+            if repo_pends_layout_migration_for_scan(&repo_path, &RepoKind::Glossary) {
                 pending.push(pending_migration(
                     "glossary",
                     resource_id,
@@ -179,7 +195,7 @@ fn list_pending_team_repo_layout_migrations_sync(
             resource_id.as_deref(),
             Some(&repo_name),
         )? {
-            if repo_requires_0810_migration(&repo_path) {
+            if repo_pends_layout_migration_for_scan(&repo_path, &RepoKind::QaList) {
                 pending.push(pending_migration(
                     "qaList",
                     resource_id,
@@ -194,6 +210,14 @@ fn list_pending_team_repo_layout_migrations_sync(
     Ok(pending)
 }
 
+/// The version the frontend's clean-verdict cache keys on. Served from the
+/// backend registry so a future layout migration invalidates stored verdicts
+/// without a lockstep constant bump in JS.
+#[tauri::command]
+pub(crate) fn team_repo_migration_target_version() -> String {
+    latest_layout_migration_id().to_string()
+}
+
 #[tauri::command]
 pub(crate) async fn list_pending_team_repo_layout_migrations(
     app: AppHandle,
@@ -206,7 +230,7 @@ pub(crate) async fn list_pending_team_repo_layout_migrations(
     .map_err(|error| format!("Could not inspect pending repo migrations: {error}"))??;
 
     Ok(PendingTeamRepoMigrationScan {
-        target_version: MIGRATION_0810.to_string(),
+        target_version: latest_layout_migration_id().to_string(),
         migrations,
     })
 }

@@ -156,7 +156,9 @@ use crate::{
         upsert_local_gnosis_glossary_metadata_record, upsert_local_gnosis_project_metadata_record,
         upsert_local_gnosis_qa_list_metadata_record,
     },
-    team_repo_migrations::list_pending_team_repo_layout_migrations,
+    team_repo_migrations::{
+        list_pending_team_repo_layout_migrations, team_repo_migration_target_version,
+    },
     updater::{check_for_app_update, install_app_update, PendingUpdate},
     window::read_local_dropped_file,
 };
@@ -584,6 +586,7 @@ pub fn run() {
             list_gnosis_projects_for_installation,
             list_gnosis_resources_for_installation,
             list_pending_team_repo_layout_migrations,
+            team_repo_migration_target_version,
             reconcile_project_repo_sync_states,
             list_project_repo_sync_states,
             sync_gtms_project_editor_repo,

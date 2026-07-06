@@ -1,9 +1,10 @@
 use std::{
+    collections::HashMap,
     fs,
     io::ErrorKind,
     path::{Path, PathBuf},
     process::Command,
-    sync::OnceLock,
+    sync::{Arc, Mutex, MutexGuard, OnceLock},
 };
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
@@ -31,6 +32,28 @@ use crate::{
     broker::{broker_client, broker_get_json_with_session},
     broker_auth_storage::load_broker_auth_session_internal,
 };
+
+static REPO_SYNC_LOCKS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
+
+/// The per-repo lock serializing git-mutating sync entry points. The reconcile
+/// loop already skips repos whose snapshot reads `syncing`, but the
+/// editor-driven sync does not participate in that store — without a shared
+/// lock the two can race the same repo into `index.lock` failures, or sweep a
+/// concurrent write into a migration commit.
+pub(crate) fn repo_sync_lock(repo_path: &Path) -> Arc<Mutex<()>> {
+    let locks = REPO_SYNC_LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut locks = locks
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    locks.entry(repo_path.to_path_buf()).or_default().clone()
+}
+
+/// Blockingly acquire the per-repo sync lock. A poisoned lock is recovered —
+/// it only serializes git subprocesses, so a panicked holder leaves no
+/// in-memory state to protect.
+pub(crate) fn acquire_repo_sync_lock(lock: &Arc<Mutex<()>>) -> MutexGuard<'_, ()> {
+    lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 static RESOLVED_GIT_EXECUTABLE: OnceLock<PathBuf> = OnceLock::new();
 static APP_GIT_HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -732,7 +755,20 @@ fn prepare_app_git_environment(app_config_dir: &Path) -> Result<AppGitEnvironmen
 
 #[cfg(test)]
 mod tests {
-    use super::{git_error_indicates_missing_remote_ref, GitTransportAuth};
+    use super::{git_error_indicates_missing_remote_ref, repo_sync_lock, GitTransportAuth};
+    use std::{path::Path, sync::Arc};
+
+    #[test]
+    fn repo_sync_lock_is_shared_per_path() {
+        let lock_a = repo_sync_lock(Path::new("/tmp/gnosis-lock-test/repo-a"));
+        let lock_a_again = repo_sync_lock(Path::new("/tmp/gnosis-lock-test/repo-a"));
+        let lock_b = repo_sync_lock(Path::new("/tmp/gnosis-lock-test/repo-b"));
+
+        // Same path → same mutex (entry points serialize); different paths
+        // must not block each other.
+        assert!(Arc::ptr_eq(&lock_a, &lock_a_again));
+        assert!(!Arc::ptr_eq(&lock_a, &lock_b));
+    }
 
     #[test]
     fn git_transport_auth_uses_basic_auth_header_with_app_token_identity() {

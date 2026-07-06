@@ -120,6 +120,9 @@ pub(super) use self::shared::{
     commit_chapter_json_update, validated_row_json_path, write_row_files_and_commit,
     PreparedRowFileWrite,
 };
+// Re-exported for the 0.8.56 repo migration, which runs the same normalization
+// over every chapter once.
+pub(crate) use self::shared::normalize_chapter_settings_value;
 
 const ORDER_KEY_SPACING: u128 = 1u128 << 104;
 const DEFAULT_EDITOR_TEXT_STYLE: &str = "paragraph";

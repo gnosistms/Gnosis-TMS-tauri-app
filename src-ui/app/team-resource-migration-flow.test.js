@@ -4,6 +4,11 @@ import assert from "node:assert/strict";
 let invokeHandler = async () => null;
 
 async function dispatchMockInvoke(command, payload) {
+  if (command === "team_repo_migration_target_version") {
+    // Answered centrally: the flow resolves the verdict-cache key from the
+    // backend before every scan, independent of the per-test command stubs.
+    return "0.8.10";
+  }
   if (command === "list_gnosis_resources_for_installation") {
     // The migration flow only reads glossaries and QA lists from the combined listing
     // (projects come from options.remoteProjects or its own legacy call), so the
