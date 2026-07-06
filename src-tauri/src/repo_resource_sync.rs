@@ -30,8 +30,8 @@ use crate::{
     repo_layout_metadata::{RepoKind, STORAGE_LAYOUT_VERSION_V2},
     repo_migrations::{
         discard_local_old_layout_changes_and_adopt_remote,
-        is_remote_migrated_local_old_layout_changes_error, repo_requires_0810_migration,
-        sync_pending_repo_layout_migration,
+        is_remote_migrated_local_old_layout_changes_error, pending_repo_migrations,
+        repo_requires_0810_migration, run_pending_repo_migrations,
     },
     repo_sync_shared::{
         abort_rebase_after_failed_pull, ensure_repo_local_git_identity,
@@ -612,9 +612,9 @@ pub(crate) fn inspect_repo_state(
     } else {
         REPO_SYNC_STATUS_OUT_OF_SYNC
     };
-    let status = match repo_requires_0810_migration(repo_path) {
-        Ok(true) => REPO_SYNC_STATUS_OUT_OF_SYNC,
-        Ok(false) => status,
+    let status = match pending_repo_migrations(repo_path, &domain.repo_kind()) {
+        Ok(pending) if !pending.is_empty() => REPO_SYNC_STATUS_OUT_OF_SYNC,
+        Ok(_) => status,
         Err(error) => {
             return RepoSyncSnapshot {
                 local_head_oid,
@@ -796,15 +796,13 @@ fn sync_repo(
         branch_name,
         &git_transport_auth,
     )?;
-    if repo_requires_0810_migration(repo_path)? {
-        sync_pending_repo_layout_migration(
-            app,
-            repo_path,
-            domain.repo_kind(),
-            branch_name,
-            remote_head_oid,
-        )?;
-    }
+    run_pending_repo_migrations(
+        app,
+        repo_path,
+        domain.repo_kind(),
+        branch_name,
+        remote_head_oid,
+    )?;
 
     if remote_head_oid.trim().is_empty() {
         if local_head_oid.is_some() {
@@ -918,8 +916,8 @@ fn clone_repo(
         branch_name,
         &git_transport_auth,
     )?;
-    if repo_requires_0810_migration(repo_path)? {
-        sync_pending_repo_layout_migration(
+    if !pending_repo_migrations(repo_path, &domain.repo_kind())?.is_empty() {
+        run_pending_repo_migrations(
             app,
             repo_path,
             domain.repo_kind(),

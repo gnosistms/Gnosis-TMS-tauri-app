@@ -27,12 +27,12 @@ use crate::{
         encode_repo_app_update_requirement, parse_repo_app_update_requirement_error,
         remote_ref_requires_newer_app,
     },
-    repo_layout_metadata::STORAGE_LAYOUT_VERSION_V2,
+    repo_layout_metadata::{RepoKind, STORAGE_LAYOUT_VERSION_V2},
     repo_migrations::{
         discard_local_old_layout_changes_and_adopt_remote, head_requires_0810_migration,
         is_remote_migrated_local_old_layout_changes_error,
-        migrate_no_checkout_project_repo_to_0810, repo_requires_0810_migration,
-        sync_pending_repo_layout_migration,
+        migrate_no_checkout_project_repo_to_0810, pending_repo_migrations,
+        repo_requires_0810_migration, run_pending_repo_migrations,
     },
     repo_sync_shared::{
         abort_rebase_after_failed_pull, ensure_repo_local_git_identity,
@@ -969,8 +969,24 @@ fn inspect_project_repo_state(
         };
     };
 
-    let pending_0810 = match repo_requires_0810_migration(repo_path) {
-        Ok(pending) => pending,
+    // Pending migrations run inside sync_project_repo, but the reconcile loop
+    // only spawns a sync when this snapshot needs transport — a head-equal
+    // repo would otherwise read upToDate and never migrate.
+    match pending_repo_migrations(repo_path, &RepoKind::Project) {
+        Ok(pending) => {
+            if let Some(descriptor) = pending.first() {
+                return ProjectRepoSyncSnapshot {
+                    local_head_oid,
+                    remote_head_oid,
+                    status: PROJECT_REPO_SYNC_STATUS_OUT_OF_SYNC.to_string(),
+                    message: Some(format!(
+                        "This project repo needs {}.",
+                        descriptor.pending_description
+                    )),
+                    ..default_snapshot()
+                };
+            }
+        }
         Err(error) => {
             return ProjectRepoSyncSnapshot {
                 local_head_oid,
@@ -980,40 +996,6 @@ fn inspect_project_repo_state(
                 ..default_snapshot()
             };
         }
-    };
-    if pending_0810 {
-        return ProjectRepoSyncSnapshot {
-            local_head_oid,
-            remote_head_oid,
-            status: PROJECT_REPO_SYNC_STATUS_OUT_OF_SYNC.to_string(),
-            message: Some("This project repo needs a local layout migration.".to_string()),
-            ..default_snapshot()
-        };
-    }
-
-    // The 0.8.56 migration runs inside sync_project_repo, but the reconcile loop only
-    // spawns a sync when this snapshot needs transport — a head-equal repo would
-    // otherwise read upToDate and never migrate.
-    let pending_0856 = match crate::repo_migrations::repo_requires_0856_migration(repo_path) {
-        Ok(pending) => pending,
-        Err(error) => {
-            return ProjectRepoSyncSnapshot {
-                local_head_oid,
-                remote_head_oid,
-                status: PROJECT_REPO_SYNC_STATUS_SYNC_ERROR.to_string(),
-                message: Some(error),
-                ..default_snapshot()
-            };
-        }
-    };
-    if pending_0856 {
-        return ProjectRepoSyncSnapshot {
-            local_head_oid,
-            remote_head_oid,
-            status: PROJECT_REPO_SYNC_STATUS_OUT_OF_SYNC.to_string(),
-            message: Some("This project repo needs the chapter settings migration.".to_string()),
-            ..default_snapshot()
-        };
     }
 
     let status = if local_head_oid.as_deref() == Some(remote_head_oid_value.as_str()) {
@@ -1086,18 +1068,13 @@ pub(crate) fn sync_project_repo(
         .unwrap_or("main");
     let git_transport_auth = GitTransportAuth::from_token(git_transport_token)?;
     enforce_remote_project_app_version(repo_path, project, branch_name, &git_transport_auth)?;
-    if repo_requires_0810_migration(repo_path)? {
-        sync_pending_repo_layout_migration(
-            app,
-            repo_path,
-            crate::repo_layout_metadata::RepoKind::Project,
-            branch_name,
-            remote_head_oid,
-        )?;
-    }
-    if crate::repo_migrations::repo_requires_0856_migration(repo_path)? {
-        crate::repo_migrations::migrate_project_repo_to_0856(app, repo_path)?;
-    }
+    run_pending_repo_migrations(
+        app,
+        repo_path,
+        RepoKind::Project,
+        branch_name,
+        remote_head_oid,
+    )?;
     backup_dirty_project_worktree(repo_path, branch_name)?;
     let local_head_oid = git_output(repo_path, &["rev-parse", "HEAD"], None).ok();
     let local_sync_state = read_local_repo_sync_state(repo_path)?;

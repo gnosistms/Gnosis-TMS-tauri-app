@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, collections::BTreeMap, fs, path::Path};
+use std::{collections::BTreeMap, fs, path::Path};
 
 use serde_json::Value;
 use tauri::AppHandle;
@@ -15,21 +15,118 @@ use crate::{
     short_path_names::{allocate_short_folder_name, allocate_short_image_filename},
 };
 
-#[cfg_attr(not(test), allow(dead_code))]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum RepoMigrationDecision {
-    UpToDate,
-    Pending(Vec<String>),
-    UpdateRequired {
-        required_version: String,
-        current_version: String,
-    },
-    UnknownLegacyState,
+/// How a migration executes. Layout migrations rewrite the storage layout and
+/// need the bespoke orchestration in `sync_pending_repo_layout_migration`
+/// (adopt-remote, discard flow, migration modal). Content migrations are
+/// ordinary git-mergeable edits that run inline during sync.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RepoMigrationKind {
+    Layout,
+    Content,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn ordered_repo_migrations() -> &'static [&'static str] {
-    &[MIGRATION_0810, MIGRATION_0856]
+/// One entry in the ordered migration registry. Adding a migration means
+/// adding a descriptor here plus its run function — every dispatch site
+/// (sync, clone, status snapshots, the modal scan) derives its behavior from
+/// `pending_repo_migrations`, so nothing else needs wiring.
+#[derive(Debug)]
+pub(crate) struct RepoMigrationDescriptor {
+    pub(crate) id: &'static str,
+    pub(crate) kind: RepoMigrationKind,
+    applies_to: &'static [RepoKind],
+    /// Noun phrase for "This repo needs {pending_description}." status lines.
+    pub(crate) pending_description: &'static str,
+    /// Inline entry point for content migrations; layout migrations use the
+    /// bespoke orchestration instead.
+    run_content: Option<fn(&AppHandle, &Path) -> Result<(), String>>,
+}
+
+const REPO_MIGRATION_REGISTRY: &[RepoMigrationDescriptor] = &[
+    RepoMigrationDescriptor {
+        id: MIGRATION_0810,
+        kind: RepoMigrationKind::Layout,
+        applies_to: &[RepoKind::Project, RepoKind::Glossary, RepoKind::QaList],
+        pending_description: "a local layout migration",
+        run_content: None,
+    },
+    RepoMigrationDescriptor {
+        id: MIGRATION_0856,
+        kind: RepoMigrationKind::Content,
+        applies_to: &[RepoKind::Project],
+        pending_description: "the chapter settings migration",
+        run_content: Some(migrate_project_repo_to_0856),
+    },
+];
+
+/// The migrations still pending for this repo, in registry order. Missing
+/// metadata means a legacy repo: only the layout migration pends there — it
+/// writes the metadata the content checks read. Unreadable metadata is an
+/// error; see `read_repo_layout_metadata_state`.
+pub(crate) fn pending_repo_migrations(
+    repo_path: &Path,
+    repo_kind: &RepoKind,
+) -> Result<Vec<&'static RepoMigrationDescriptor>, String> {
+    let metadata = match read_repo_layout_metadata_state(repo_path) {
+        RepoLayoutMetadataState::Readable(metadata) => Some(metadata),
+        RepoLayoutMetadataState::Missing => None,
+        RepoLayoutMetadataState::Unreadable(detail) => {
+            return Err(unreadable_repo_metadata_error(&detail));
+        }
+    };
+    Ok(REPO_MIGRATION_REGISTRY
+        .iter()
+        .filter(|descriptor| {
+            if !descriptor.applies_to.contains(repo_kind) {
+                return false;
+            }
+            match &metadata {
+                Some(metadata) => !applied_migration(metadata, descriptor.id),
+                None => descriptor.kind == RepoMigrationKind::Layout,
+            }
+        })
+        .collect())
+}
+
+/// Run every pending migration for this repo in registry order. A pending
+/// layout migration goes through its adopt-remote orchestration first; the
+/// pending list is then recomputed — the layout step writes the metadata the
+/// content checks read — and content migrations run inline.
+pub(crate) fn run_pending_repo_migrations(
+    app: &AppHandle,
+    repo_path: &Path,
+    repo_kind: RepoKind,
+    branch_name: &str,
+    remote_head_oid: &str,
+) -> Result<(), String> {
+    if pending_repo_migrations(repo_path, &repo_kind)?
+        .iter()
+        .any(|descriptor| descriptor.kind == RepoMigrationKind::Layout)
+    {
+        sync_pending_repo_layout_migration(
+            app,
+            repo_path,
+            repo_kind.clone(),
+            branch_name,
+            remote_head_oid,
+        )?;
+    }
+    for descriptor in pending_repo_migrations(repo_path, &repo_kind)? {
+        if let Some(run) = descriptor.run_content {
+            run(app, repo_path)?;
+        }
+    }
+    Ok(())
+}
+
+/// The newest layout migration id — the version the modal migration flow
+/// reports as its target.
+pub(crate) fn latest_layout_migration_id() -> &'static str {
+    REPO_MIGRATION_REGISTRY
+        .iter()
+        .rev()
+        .find(|descriptor| descriptor.kind == RepoMigrationKind::Layout)
+        .map(|descriptor| descriptor.id)
+        .unwrap_or(MIGRATION_0810)
 }
 
 pub(crate) const REMOTE_MIGRATED_LOCAL_OLD_LAYOUT_CHANGES_MESSAGE: &str =
@@ -41,87 +138,7 @@ pub(crate) fn is_remote_migrated_local_old_layout_changes_error(error: &str) -> 
         .starts_with("REMOTE_MIGRATED_LOCAL_OLD_LAYOUT_CHANGES:")
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn resolve_pending_repo_migrations(
-    metadata: Option<&RepoLayoutMetadata>,
-    latest_commit_app_version: Option<&str>,
-    current_app_version: &str,
-    has_legacy_layout_evidence: bool,
-) -> RepoMigrationDecision {
-    if let Some(remote_version) = latest_commit_app_version
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        if compare_app_versions(remote_version, current_app_version) == Ordering::Greater {
-            return RepoMigrationDecision::UpdateRequired {
-                required_version: remote_version.to_string(),
-                current_version: current_app_version.to_string(),
-            };
-        }
-    }
-
-    let applied = metadata
-        .map(|metadata| metadata.applied_migrations.as_slice())
-        .unwrap_or(&[]);
-    let pending = ordered_repo_migrations()
-        .iter()
-        .filter(|migration| !applied.iter().any(|value| value == **migration))
-        .map(|migration| (*migration).to_string())
-        .collect::<Vec<_>>();
-
-    if metadata.is_some() {
-        return if pending.is_empty() {
-            RepoMigrationDecision::UpToDate
-        } else {
-            RepoMigrationDecision::Pending(pending)
-        };
-    }
-
-    if latest_commit_app_version
-        .map(|version| compare_app_versions(version, MIGRATION_0810) == Ordering::Less)
-        .unwrap_or(false)
-        || has_legacy_layout_evidence
-    {
-        return RepoMigrationDecision::Pending(pending);
-    }
-
-    RepoMigrationDecision::UnknownLegacyState
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn compare_app_versions(left: &str, right: &str) -> Ordering {
-    let left_parts = parse_version_parts(left);
-    let right_parts = parse_version_parts(right);
-    let max_len = left_parts.len().max(right_parts.len());
-
-    for index in 0..max_len {
-        let left_part = left_parts.get(index).copied().unwrap_or(0);
-        let right_part = right_parts.get(index).copied().unwrap_or(0);
-        match left_part.cmp(&right_part) {
-            Ordering::Equal => continue,
-            other => return other,
-        }
-    }
-
-    Ordering::Equal
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-fn parse_version_parts(value: &str) -> Vec<u64> {
-    value
-        .trim()
-        .trim_start_matches('v')
-        .trim_start_matches('V')
-        .split(['-', '+'])
-        .next()
-        .unwrap_or("")
-        .trim()
-        .split('.')
-        .map(|segment| segment.parse::<u64>().unwrap_or(0))
-        .collect()
-}
-
-pub(crate) fn migrate_repo_to_0810(
+fn migrate_repo_to_0810(
     app: &AppHandle,
     repo_path: &Path,
     repo_kind: RepoKind,
@@ -135,7 +152,7 @@ pub(crate) fn migrate_repo_to_0810(
     }
 }
 
-pub(crate) fn sync_pending_repo_layout_migration(
+fn sync_pending_repo_layout_migration(
     app: &AppHandle,
     repo_path: &Path,
     repo_kind: RepoKind,
@@ -909,30 +926,12 @@ fn commit_migration_if_dirty(
     Ok(())
 }
 
-/// True when the repo's metadata exists but the 0.8.56 chapter-settings
-/// normalization has not been recorded. Repos without metadata still need the
-/// 0.8.10 layout migration, which runs first in the same sync and writes the
-/// metadata this check reads. Unreadable metadata surfaces as an error, never
-/// as a migration.
-pub(crate) fn repo_requires_0856_migration(repo_path: &Path) -> Result<bool, String> {
-    match read_repo_layout_metadata_state(repo_path) {
-        RepoLayoutMetadataState::Readable(metadata) => {
-            Ok(!applied_migration(&metadata, MIGRATION_0856))
-        }
-        RepoLayoutMetadataState::Missing => Ok(false),
-        RepoLayoutMetadataState::Unreadable(detail) => Err(unreadable_repo_metadata_error(&detail)),
-    }
-}
-
 /// Content-only migration: normalize every chapter's `chapter.json` and record
 /// the marker. Runs inline during project repo sync — the edits are ordinary
 /// git-mergeable content, so no modal and no remote adoption/discard flow is
 /// needed (both sides may run it independently and merge cleanly). A dirty
 /// worktree skips the run; the next sync retries.
-pub(crate) fn migrate_project_repo_to_0856(
-    app: &AppHandle,
-    repo_path: &Path,
-) -> Result<(), String> {
+fn migrate_project_repo_to_0856(app: &AppHandle, repo_path: &Path) -> Result<(), String> {
     let status = git_output(repo_path, &["status", "--porcelain"], None)?;
     if !status.trim().is_empty() {
         return Ok(());
@@ -1033,42 +1032,64 @@ mod tests {
         String::from_utf8_lossy(&output.stdout).trim().to_string()
     }
 
-    #[test]
-    fn missing_metadata_with_old_app_version_schedules_all_migrations() {
-        assert_eq!(
-            resolve_pending_repo_migrations(None, Some("0.8.9"), "0.8.56", false),
-            RepoMigrationDecision::Pending(vec!["0.8.10".to_string(), "0.8.56".to_string()])
-        );
+    fn pending_ids(repo_path: &Path, repo_kind: &RepoKind) -> Vec<&'static str> {
+        pending_repo_migrations(repo_path, repo_kind)
+            .expect("pending migrations")
+            .iter()
+            .map(|descriptor| descriptor.id)
+            .collect()
     }
 
     #[test]
-    fn metadata_with_only_0810_still_pends_0856() {
-        let metadata = new_v2_repo_layout_metadata(RepoKind::Project);
-        assert_eq!(
-            resolve_pending_repo_migrations(Some(&metadata), Some("0.8.10"), "0.8.56", false),
-            RepoMigrationDecision::Pending(vec!["0.8.56".to_string()])
+    fn registry_orders_layout_before_content_and_wires_run_entry_points() {
+        let first_content = REPO_MIGRATION_REGISTRY
+            .iter()
+            .position(|descriptor| descriptor.kind == RepoMigrationKind::Content)
+            .unwrap_or(REPO_MIGRATION_REGISTRY.len());
+        assert!(
+            REPO_MIGRATION_REGISTRY[first_content..]
+                .iter()
+                .all(|descriptor| descriptor.kind == RepoMigrationKind::Content),
+            "layout migrations must precede content migrations"
         );
+        for descriptor in REPO_MIGRATION_REGISTRY {
+            assert_eq!(
+                descriptor.run_content.is_some(),
+                descriptor.kind == RepoMigrationKind::Content,
+                "content migrations run inline; layout migrations use the bespoke orchestration"
+            );
+        }
+        assert_eq!(latest_layout_migration_id(), MIGRATION_0810);
     }
 
     #[test]
-    fn metadata_with_all_migrations_is_up_to_date() {
+    fn pending_migrations_follow_metadata_state() {
+        let repo_path = temp_repo("pending-migrations-state");
+
+        // Missing metadata = legacy repo: only the layout migration pends —
+        // it writes the metadata the content checks read.
+        assert_eq!(
+            pending_ids(&repo_path, &RepoKind::Project),
+            vec![MIGRATION_0810]
+        );
+
+        // Metadata recording only 0.8.10 pends the project content migration,
+        // but not for glossaries, which 0.8.56 does not apply to.
+        write_repo_layout_metadata(&repo_path, &new_v2_repo_layout_metadata(RepoKind::Project))
+            .expect("write metadata");
+        assert_eq!(
+            pending_ids(&repo_path, &RepoKind::Project),
+            vec![MIGRATION_0856]
+        );
+        assert!(pending_ids(&repo_path, &RepoKind::Glossary).is_empty());
+
+        // Both markers recorded → nothing pends.
         let mut metadata = new_v2_repo_layout_metadata(RepoKind::Project);
         metadata.applied_migrations.push(MIGRATION_0856.to_string());
-        assert_eq!(
-            resolve_pending_repo_migrations(Some(&metadata), Some("0.8.56"), "0.8.56", false),
-            RepoMigrationDecision::UpToDate
-        );
-    }
+        write_repo_layout_metadata(&repo_path, &metadata).expect("write migrated metadata");
+        assert!(pending_ids(&repo_path, &RepoKind::Project).is_empty());
 
-    #[test]
-    fn newer_remote_version_blocks_before_migration() {
-        assert_eq!(
-            resolve_pending_repo_migrations(None, Some("0.8.11"), "0.8.10", true),
-            RepoMigrationDecision::UpdateRequired {
-                required_version: "0.8.11".to_string(),
-                current_version: "0.8.10".to_string(),
-            }
-        );
+        let _ = fs::remove_dir_all(repo_path);
     }
 
     #[test]
@@ -1228,18 +1249,6 @@ mod tests {
     }
 
     #[test]
-    fn missing_metadata_pends_0810_but_not_0856() {
-        let repo_path = temp_repo("missing-metadata-checks");
-
-        assert_eq!(repo_requires_0810_migration(&repo_path), Ok(true));
-        // 0.8.10 runs first in the same sync and writes the metadata the
-        // 0.8.56 check reads, so a missing file does not pend 0.8.56 directly.
-        assert_eq!(repo_requires_0856_migration(&repo_path), Ok(false));
-
-        let _ = fs::remove_dir_all(repo_path);
-    }
-
-    #[test]
     fn unreadable_metadata_errors_instead_of_migrating() {
         let repo_path = temp_repo("unreadable-metadata-checks");
         let metadata_path = repo_path.join(REPO_METADATA_RELATIVE_PATH);
@@ -1257,9 +1266,9 @@ mod tests {
         let error_0810 = repo_requires_0810_migration(&repo_path)
             .expect_err("unreadable metadata must not schedule the layout migration");
         assert!(error_0810.contains(".gtms/repo.json"));
-        let error_0856 = repo_requires_0856_migration(&repo_path)
-            .expect_err("unreadable metadata must not schedule the settings migration");
-        assert!(error_0856.contains("Update Gnosis TMS"));
+        let pending_error = pending_repo_migrations(&repo_path, &RepoKind::Project)
+            .expect_err("unreadable metadata must not schedule any migration");
+        assert!(pending_error.contains("Update Gnosis TMS"));
 
         let _ = fs::remove_dir_all(repo_path);
     }
