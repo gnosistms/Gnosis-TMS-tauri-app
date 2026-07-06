@@ -719,7 +719,7 @@ fn parse_translation_batch_response(
                 .rows
                 .into_iter()
                 .map(|row| AiTranslationBatchRowResult {
-                    row_id: row.row_id,
+                    row_id: row.row_id.trim().to_string(),
                     translated_text: row.translated_text,
                     translated_footnote: row.translated_footnote,
                     translated_image_caption: row.translated_image_caption,
@@ -743,7 +743,7 @@ fn parse_review_batch_response(text: &str) -> Result<Vec<AiReviewBatchRowResult>
                         row.suggested_image_caption.clear();
                     }
                     AiReviewBatchRowResult {
-                        row_id: row.row_id,
+                        row_id: row.row_id.trim().to_string(),
                         suggested_text: row.suggested_text,
                         suggested_footnote: row.suggested_footnote,
                         suggested_image_caption: row.suggested_image_caption,
@@ -3394,6 +3394,11 @@ mod tests {
         let prose = "Here you go:\n{\"rows\":[{\"rowId\":\"r2\",\"translatedText\":\"C\"}]}\nHope that helps.";
         let rows = parse_translation_batch_response(prose).unwrap();
         assert_eq!(rows[0].row_id, "r2");
+
+        // Row ids are trimmed so a whitespaced id still matches the requested id.
+        let padded = "{\"rows\":[{\"rowId\":\"  r3  \",\"translatedText\":\"D\"}]}";
+        let rows = parse_translation_batch_response(padded).unwrap();
+        assert_eq!(rows[0].row_id, "r3");
 
         assert!(parse_translation_batch_response("not json at all").is_err());
     }
