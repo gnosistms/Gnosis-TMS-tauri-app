@@ -98,6 +98,33 @@ function offsetOfItem(page, itemKey) {
 
 const LARGE_FIXTURE = { projectCount: 120, filesPerProject: 15, expandAll: true };
 
+// Minimal Tauri mock so chapter metadata writes run their full optimistic +
+// queued pipeline in the browser harness. Unknown commands resolve to null;
+// metadata updates resolve asynchronously like a real backend.
+async function installProjectsMockTauri(page) {
+  await page.addInitScript(() => {
+    const invokeLog = [];
+    window.__projectsInvokeLog = invokeLog;
+    window.__TAURI__ = {
+      core: {
+        async invoke(command, payload = {}) {
+          invokeLog.push({ command, payload });
+          if (command.startsWith("update_gtms_chapter_")) {
+            return new Promise((resolve) => setTimeout(() => resolve(null), 30));
+          }
+          return null;
+        },
+      },
+      event: {
+        listen: async () => () => {},
+      },
+      opener: {
+        openUrl() {},
+      },
+    };
+  });
+}
+
 test.describe("projects page virtualization", () => {
   test("small lists render without virtualization", async ({ page }) => {
     await mountProjectsFixture(page, { projectCount: 5, filesPerProject: 4 });
@@ -408,6 +435,99 @@ test.describe("projects page virtualization", () => {
 
     const anchorAfter = await topVisibleAnchor(page);
     expect(anchorAfter.key).toBe(`p:${projectId}`);
+  });
+
+  test("rapid status and glossary selections stick across rows", async ({ page }) => {
+    await installProjectsMockTauri(page);
+    await mountProjectsFixture(page, {
+      projectCount: 3,
+      filesPerProject: 4,
+      glossaryCount: 2,
+      expandedProjectIds: ["fixture-project-001"],
+    });
+
+    // Click through as fast as Playwright can: alternate glossary and status
+    // selects across the first project's rows.
+    const rows = [0, 1, 2, 3];
+    for (const rowIndex of rows) {
+      const chapterId = `fixture-chapter-0-${rowIndex}`;
+      await page.selectOption(
+        `[data-chapter-glossary-select][data-chapter-id="${chapterId}"]`,
+        "fixture-glossary-2",
+      );
+      await page.selectOption(
+        `[data-chapter-status-select][data-chapter-id="${chapterId}"]`,
+        "review2",
+      );
+    }
+
+    // Optimistic: every pill reflects the choice immediately.
+    for (const rowIndex of rows) {
+      const chapterId = `fixture-chapter-0-${rowIndex}`;
+      await expect(
+        page.locator(`[data-chapter-glossary-select][data-chapter-id="${chapterId}"]`),
+      ).toHaveValue("fixture-glossary-2");
+      await expect(
+        page.locator(`[data-chapter-status-select][data-chapter-id="${chapterId}"]`),
+      ).toHaveValue("review2");
+    }
+
+    // Every write reached the backend queue, and nothing reverted after the
+    // async completions landed.
+    await page.waitForFunction(() =>
+      (window.__projectsInvokeLog ?? []).filter((entry) =>
+        entry.command.startsWith("update_gtms_chapter_"),
+      ).length === 8,
+    );
+    await page.waitForTimeout(150);
+    for (const rowIndex of rows) {
+      const chapterId = `fixture-chapter-0-${rowIndex}`;
+      await expect(
+        page.locator(`[data-chapter-glossary-select][data-chapter-id="${chapterId}"]`),
+      ).toHaveValue("fixture-glossary-2");
+      await expect(
+        page.locator(`[data-chapter-status-select][data-chapter-id="${chapterId}"]`),
+      ).toHaveValue("review2");
+    }
+  });
+
+  test("background renders hold while a chapter select is engaged", async ({ page }) => {
+    await mountProjectsFixture(page, {
+      projectCount: 3,
+      filesPerProject: 4,
+      glossaryCount: 2,
+      expandedProjectIds: ["fixture-project-001"],
+    });
+
+    const selectSelector =
+      '[data-chapter-glossary-select][data-chapter-id="fixture-chapter-0-0"]';
+    await page.focus(selectSelector);
+    await page.evaluate((selector) => {
+      document.querySelector(selector).__holdMarker = true;
+    }, selectSelector);
+
+    // A full render arriving while the select is engaged must not replace it.
+    await page.evaluate(async (fixtureOptions) => {
+      await window.__gnosisDebug.mountProjectsFixture(fixtureOptions);
+    }, { projectCount: 3, filesPerProject: 4, glossaryCount: 2, expandedProjectIds: ["fixture-project-001"] });
+    const heldState = await page.evaluate((selector) => {
+      const element = document.querySelector(selector);
+      return {
+        stillSameElement: element?.__holdMarker === true,
+        stillFocused: document.activeElement === element,
+      };
+    }, selectSelector);
+    expect(heldState.stillSameElement).toBe(true);
+    expect(heldState.stillFocused).toBe(true);
+
+    // Disengaging flushes the held render: the element is rebuilt.
+    await page.evaluate((selector) => {
+      document.querySelector(selector).blur();
+    }, selectSelector);
+    await page.waitForFunction(
+      (selector) => document.querySelector(selector)?.__holdMarker === undefined,
+      selectSelector,
+    );
   });
 
   test("expand and collapse work on virtualized rows", async ({ page }) => {
