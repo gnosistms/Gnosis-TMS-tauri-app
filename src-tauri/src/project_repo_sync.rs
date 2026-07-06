@@ -979,6 +979,19 @@ fn inspect_project_repo_state(
         };
     }
 
+    // The 0.8.56 migration runs inside sync_project_repo, but the reconcile loop only
+    // spawns a sync when this snapshot needs transport — a head-equal repo would
+    // otherwise read upToDate and never migrate.
+    if crate::repo_migrations::repo_requires_0856_migration(repo_path) {
+        return ProjectRepoSyncSnapshot {
+            local_head_oid,
+            remote_head_oid,
+            status: PROJECT_REPO_SYNC_STATUS_OUT_OF_SYNC.to_string(),
+            message: Some("This project repo needs the chapter settings migration.".to_string()),
+            ..default_snapshot()
+        };
+    }
+
     let status = if local_head_oid.as_deref() == Some(remote_head_oid_value.as_str()) {
         PROJECT_REPO_SYNC_STATUS_UP_TO_DATE
     } else {
@@ -2097,6 +2110,56 @@ mod tests {
 
         // No HEAD yet — must be a no-op, not an error.
         super::restore_checkout_if_working_tree_empty(&repo_path).expect("noop on empty repo");
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn snapshot_forces_transport_sync_while_chapter_settings_migration_pends() {
+        use crate::repo_layout_metadata::{
+            new_v2_repo_layout_metadata, write_repo_layout_metadata, RepoKind, MIGRATION_0856,
+        };
+
+        let repo_path = init_test_repo("pending-0856-snapshot");
+        // Metadata records only 0.8.10, so the 0.8.56 chapter-settings migration pends.
+        write_repo_layout_metadata(&repo_path, &new_v2_repo_layout_metadata(RepoKind::Project))
+            .expect("write metadata");
+        run_git(&repo_path, &["add", "-A"]);
+        run_git(&repo_path, &["commit", "-m", "Record 0.8.10 migration"]);
+        let head = git_stdout(&repo_path, &["rev-parse", "HEAD"]);
+        let descriptor = ProjectRepoSyncDescriptor {
+            project_id: "project-1".to_string(),
+            repo_name: "repo-one".to_string(),
+            full_name: "org/repo-one".to_string(),
+            repo_id: None,
+            default_branch_name: Some("main".to_string()),
+            default_branch_head_oid: Some(head),
+            lifecycle_state: None,
+            record_state: None,
+            remote_state: None,
+            status: None,
+        };
+
+        // Head-equal repos would otherwise read upToDate and never get the transport
+        // sync that runs the migration.
+        let snapshot = super::inspect_project_repo_state(&descriptor, &repo_path);
+        assert_eq!(snapshot.status, super::PROJECT_REPO_SYNC_STATUS_OUT_OF_SYNC);
+
+        let mut metadata = new_v2_repo_layout_metadata(RepoKind::Project);
+        metadata.applied_migrations.push(MIGRATION_0856.to_string());
+        write_repo_layout_metadata(&repo_path, &metadata).expect("write migrated metadata");
+        run_git(&repo_path, &["add", "-A"]);
+        run_git(&repo_path, &["commit", "-m", "Record 0.8.56 migration"]);
+        let migrated_head = git_stdout(&repo_path, &["rev-parse", "HEAD"]);
+        let migrated_descriptor = ProjectRepoSyncDescriptor {
+            default_branch_head_oid: Some(migrated_head),
+            ..descriptor
+        };
+
+        let migrated_snapshot = super::inspect_project_repo_state(&migrated_descriptor, &repo_path);
+        assert_eq!(
+            migrated_snapshot.status,
+            super::PROJECT_REPO_SYNC_STATUS_UP_TO_DATE
+        );
         let _ = fs::remove_dir_all(repo_path);
     }
 
