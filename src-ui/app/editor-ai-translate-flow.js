@@ -77,7 +77,7 @@ function errorMeansMissingAiKey(message) {
   );
 }
 
-function latestEditorTranslateSourceTextMatches(context) {
+export function latestEditorTranslateSourceTextMatches(context) {
   const latestRow = findEditorRowById(context.rowId, state.editorChapter);
   return (
     (latestRow?.fields?.[context.sourceLanguageCode] ?? "") === context.sourceText
@@ -103,11 +103,11 @@ function requestedSourceImageCaption(context) {
     : "";
 }
 
-function translatedSectionValue(payload, key) {
+export function translatedSectionValue(payload, key) {
   return typeof payload?.[key] === "string" ? payload[key] : "";
 }
 
-function applyEditorAiTranslatePayloadToRow(context, payload, updateEditorRowFieldValue) {
+export function applyEditorAiTranslatePayloadToRow(context, payload, updateEditorRowFieldValue) {
   const translatedText = translatedSectionValue(payload, "translatedText");
   const translatedFootnote = translatedSectionValue(payload, "translatedFootnote");
   const translatedImageCaption = translatedSectionValue(payload, "translatedImageCaption");
@@ -892,4 +892,44 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
     applyMode: "draft",
     autoApplyDraft: true,
   });
+}
+
+// Resolves the provider/model and ensures the API key is ready for a batch run.
+// Mirrors the config/key resolution the single-row path does inline, but returns
+// a plain result the batch caller can surface through its own modal instead of a
+// per-row failure. { ok, providerId, modelId, error?, missingKey? }.
+export async function ensureEditorAiTranslateProviderReady(render, actionId) {
+  const configRender = createEditorAiTranslateConfigRender(render);
+  const usedStoredTeamActionPreferences = applyStoredSelectedTeamAiActionPreferences(configRender);
+  try {
+    await ensureSharedAiActionConfigurationLoaded(configRender);
+  } catch (error) {
+    if (selectedProjectsTeam()?.canDelete !== true && !usedStoredTeamActionPreferences) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  const { providerId, modelId } = resolveAiActionProviderAndModel(actionId);
+  if (!modelId) {
+    return {
+      ok: false,
+      providerId,
+      error: `Select a model for ${AI_ACTION_LABELS[actionId]} on the AI Settings page first.`,
+    };
+  }
+
+  try {
+    const ensureKeyResult = await ensureSelectedTeamAiProviderReady(configRender, providerId);
+    if (!ensureKeyResult?.ok) {
+      return { ok: false, providerId, error: "The AI provider is not ready.", missingKey: true };
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      providerId,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  return { ok: true, providerId, modelId };
 }

@@ -1,11 +1,32 @@
-import { AI_TRANSLATE_ACTION_IDS } from "./ai-action-config.js";
+import { AI_ACTION_LABELS, AI_TRANSLATE_ACTION_IDS } from "./ai-action-config.js";
 import {
+  applyEditorAiTranslatePayloadToRow,
   buildEditorAiTranslateContext,
+  ensureEditorAiTranslateProviderReady,
+  latestEditorTranslateSourceTextMatches,
   runEditorAiTranslateForContext,
+  translatedSectionValue,
 } from "./editor-ai-translate-flow.js";
 import { clearEditorAiTranslateAction } from "./editor-ai-translate-state.js";
 import { editorFootnotesPlainText, findEditorRowById } from "./editor-utils.js";
-import { languageBaseCode, languageBaseCodesMatch } from "./editor-language-utils.js";
+import {
+  languageBaseCode,
+  languageBaseCodesMatch,
+  languageSemanticLabel,
+} from "./editor-language-utils.js";
+import {
+  buildEditorAssistantAlternateLanguageTexts,
+  logEditorAssistantTranslation,
+} from "./editor-ai-assistant-flow.js";
+import {
+  buildBatchGlossaryHints,
+  chunkTranslateAllWork,
+  estimateSourceTokens,
+} from "./editor-ai-batch-request.js";
+import { buildBatchSourceContext } from "./editor-ai-context-window.js";
+import { openAiMissingKeyModal } from "./ai-settings-flow.js";
+import { selectedProjectsTeamInstallationId } from "./project-context.js";
+import { invoke } from "./runtime.js";
 import { createEditorAiTranslateAllModalState, state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 
@@ -302,6 +323,90 @@ export function updateEditorAiTranslateAllLanguageSelection(render, languageCode
   render?.();
 }
 
+function glossaryUsageKindForPair(chapterState, sourceLanguageCode, targetLanguageCode) {
+  const glossaryState = chapterState?.glossary ?? null;
+  const glossaryModel = glossaryState?.matcherModel ?? null;
+  const glossarySourceLanguageCode = resolveLanguageCode(
+    glossaryState?.sourceLanguage ?? glossaryModel?.sourceLanguage,
+  );
+  const glossaryTargetLanguageCode = resolveLanguageCode(
+    glossaryState?.targetLanguage ?? glossaryModel?.targetLanguage,
+  );
+  const languages = Array.isArray(chapterState?.languages) ? chapterState.languages : [];
+  const sourceLanguage = languages.find((language) => language?.code === sourceLanguageCode) ?? null;
+  const targetLanguage = languages.find((language) => language?.code === targetLanguageCode) ?? null;
+
+  if (
+    !glossarySourceLanguageCode
+    || !glossaryTargetLanguageCode
+    || glossaryTargetLanguageCode !== languageBaseCode(targetLanguage)
+  ) {
+    return "none";
+  }
+  if (glossarySourceLanguageCode === languageBaseCode(sourceLanguage)) {
+    return "direct";
+  }
+  return "derived";
+}
+
+function buildTranslateBatchRequest(chapterState, items, glossaryKind, providerId, modelId) {
+  const sourceLanguageCode = items[0].sourceLanguageCode;
+  const targetLanguageCode = items[0].targetLanguageCode;
+  const languages = Array.isArray(chapterState?.languages) ? chapterState.languages : [];
+  const sourceLanguage = languages.find((language) => language?.code === sourceLanguageCode) ?? null;
+  const targetLanguage = languages.find((language) => language?.code === targetLanguageCode) ?? null;
+
+  const rows = items.map((item) => {
+    const row = findEditorRowById(item.rowId, chapterState);
+    return {
+      rowId: item.rowId,
+      sourceText: readRowFieldText(row, sourceLanguageCode),
+      sourceFootnote: readRowFootnoteText(row, sourceLanguageCode),
+      sourceImageCaption: readRowImageCaptionText(row, sourceLanguageCode),
+      targetFootnote: readRowFootnoteText(row, targetLanguageCode),
+      targetImageCaption: readRowImageCaptionText(row, targetLanguageCode),
+      alternateLanguageTexts: buildEditorAssistantAlternateLanguageTexts(
+        row,
+        languages,
+        sourceLanguageCode,
+        targetLanguageCode,
+      ),
+    };
+  });
+
+  const glossaryHints = glossaryKind === "direct"
+    ? buildBatchGlossaryHints(
+      rows.map((row) => row.sourceText),
+      languageBaseCode(sourceLanguage),
+      languageBaseCode(targetLanguage),
+      chapterState?.glossary?.matcherModel ?? null,
+    )
+    : [];
+
+  const { contextBefore, contextAfter } = buildBatchSourceContext(
+    chapterState,
+    items[0].rowId,
+    items[items.length - 1].rowId,
+    sourceLanguageCode,
+    targetLanguageCode,
+  );
+
+  const installationId = selectedProjectsTeamInstallationId();
+  const request = {
+    providerId,
+    modelId,
+    sourceLanguage: languageSemanticLabel(sourceLanguage) || sourceLanguageCode,
+    targetLanguage: languageSemanticLabel(targetLanguage) || targetLanguageCode,
+    sourceLanguageCode,
+    targetLanguageCode,
+    glossaryHints,
+    contextBefore,
+    contextAfter,
+    rows,
+  };
+  return installationId === null ? request : { ...request, installationId };
+}
+
 export async function confirmEditorAiTranslateAll(render, operations = {}) {
   if (!state.editorChapter?.chapterId) {
     return;
@@ -365,14 +470,46 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
   activeBatchRunId = batchRunId;
   let translatedCount = 0;
   let currentLanguageProgress = languageProgress;
-  for (const item of work) {
-    if (
-      activeBatchRunId !== batchRunId
-      || state.editorChapter?.aiTranslateAllModal?.status !== "loading"
-    ) {
-      return;
-    }
 
+  const isRunActive = () =>
+    activeBatchRunId === batchRunId
+    && state.editorChapter?.aiTranslateAllModal?.status === "loading";
+
+  const recordTranslated = (item) => {
+    translatedCount += 1;
+    currentLanguageProgress = incrementEditorAiTranslateAllProgress(
+      currentLanguageProgress,
+      item.targetLanguageCode,
+    );
+    applyEditorAiTranslateAllModal({
+      status: "loading",
+      selectedLanguageCodes,
+      languageProgress: currentLanguageProgress,
+      translatedCount,
+      totalCount: work.length,
+    });
+    render?.({ scope: "translate-ai-translate-all-modal" });
+  };
+
+  const failRun = (message) => {
+    applyEditorAiTranslateAllModal({
+      isOpen: true,
+      status: "idle",
+      error: message || "AI translation failed.",
+      selectedLanguageCodes,
+      languageProgress: currentLanguageProgress,
+      translatedCount,
+      totalCount: work.length,
+    });
+    render?.();
+  };
+
+  // Returns "abort" (run cancelled/changed) or "run-error" (modal error shown) —
+  // both stop the whole run — otherwise "ok"/"skip"/"done" to continue.
+  const translateSingleItem = async (item) => {
+    if (!isRunActive()) {
+      return "abort";
+    }
     const row = findEditorRowById(item.rowId, state.editorChapter);
     if (
       !row
@@ -382,28 +519,16 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
         && !readRowImageCaptionText(row, item.sourceLanguageCode).trim()
       )
     ) {
-      continue;
+      return "skip";
     }
     if (!rowHasTranslateAllWork(row, item.sourceLanguageCode, item.targetLanguageCode)) {
-      translatedCount += 1;
-      currentLanguageProgress = incrementEditorAiTranslateAllProgress(
-        currentLanguageProgress,
-        item.targetLanguageCode,
-      );
-      applyEditorAiTranslateAllModal({
-        status: "loading",
-        selectedLanguageCodes,
-        languageProgress: currentLanguageProgress,
-        translatedCount,
-        totalCount: work.length,
-      });
-      render?.({ scope: "translate-ai-translate-all-modal" });
-      continue;
+      recordTranslated(item);
+      return "done";
     }
 
     const context = buildEditorAiTranslateContext(state.editorChapter, item);
     if (!context) {
-      continue;
+      return "skip";
     }
 
     const translateForContext =
@@ -415,48 +540,212 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
       BATCH_TRANSLATE_ACTION_ID,
       context,
       operations,
-      {
-        renderMode: "visible-rows",
-        showNotice: false,
-      },
+      { renderMode: "visible-rows", showNotice: false },
     );
-    if (
-      activeBatchRunId !== batchRunId
-      || state.editorChapter?.aiTranslateAllModal?.status !== "loading"
-    ) {
-      return;
+    if (!isRunActive()) {
+      return "abort";
     }
     if (result?.ok) {
-      translatedCount += 1;
-      currentLanguageProgress = incrementEditorAiTranslateAllProgress(
-        currentLanguageProgress,
-        item.targetLanguageCode,
-      );
-      applyEditorAiTranslateAllModal({
-        status: "loading",
-        selectedLanguageCodes,
-        languageProgress: currentLanguageProgress,
-        translatedCount,
-        totalCount: work.length,
-      });
-      render?.({ scope: "translate-ai-translate-all-modal" });
-      continue;
+      recordTranslated(item);
+      return "ok";
     }
     if (result?.skipped) {
+      return "skip";
+    }
+    failRun(result?.error);
+    return "run-error";
+  };
+
+  const applyBatchRowResult = async (item, rowResult, provider, promptText) => {
+    const context = buildEditorAiTranslateContext(state.editorChapter, item);
+    if (!context || !latestEditorTranslateSourceTextMatches(context)) {
+      return;
+    }
+    applyEditorAiTranslatePayloadToRow(context, rowResult, operations.updateEditorRowFieldValue);
+    render?.({
+      scope: "translate-visible-rows",
+      rowIds: [item.rowId],
+      reason: "ai-translate-all-batch",
+    });
+    await operations.persistEditorRowOnBlur?.(render, item.rowId, {
+      commitMetadata: { operation: "ai-translation", aiModel: provider.modelId },
+      waitForDurable: false,
+    });
+    if (state.editorChapter?.chapterId !== context.chapterId) {
+      return;
+    }
+    operations.syncEditorGlossaryHighlightRowDom?.(item.rowId);
+    logEditorAssistantTranslation({
+      rowId: item.rowId,
+      sourceLanguageCode: context.sourceLanguageCode,
+      targetLanguageCode: context.targetLanguageCode,
+      sourceLanguageLabel: context.sourceLanguageLabel,
+      targetLanguageLabel: context.targetLanguageLabel,
+      providerId: provider.providerId,
+      modelId: provider.modelId,
+      sourceText: context.sourceText,
+      glossarySourceText: context.sourceText,
+      glossaryHints: [],
+      promptText,
+      translatedText: translatedSectionValue(rowResult, "translatedText"),
+      translatedFootnote: translatedSectionValue(rowResult, "translatedFootnote"),
+      translatedImageCaption: translatedSectionValue(rowResult, "translatedImageCaption"),
+      appliedText: translatedSectionValue(rowResult, "translatedText"),
+      providerContinuation: null,
+      summary: `${AI_ACTION_LABELS[BATCH_TRANSLATE_ACTION_ID]} applied to ${context.targetLanguageLabel}.`,
+    });
+    recordTranslated(item);
+  };
+
+  const translateBatch = async (batch, provider) => {
+    const chapterState = state.editorChapter;
+    const liveItems = [];
+    for (const item of batch.items) {
+      const row = findEditorRowById(item.rowId, chapterState);
+      const hasSource =
+        row
+        && (
+          readRowFieldText(row, item.sourceLanguageCode).trim()
+          || readRowFootnoteText(row, item.sourceLanguageCode).trim()
+          || readRowImageCaptionText(row, item.sourceLanguageCode).trim()
+        );
+      if (!hasSource) {
+        continue;
+      }
+      if (!rowHasTranslateAllWork(row, item.sourceLanguageCode, item.targetLanguageCode)) {
+        recordTranslated(item);
+        continue;
+      }
+      liveItems.push(item);
+    }
+    if (liveItems.length === 0) {
+      return "ok";
+    }
+
+    const request = buildTranslateBatchRequest(
+      chapterState,
+      liveItems,
+      batch.glossaryKind,
+      provider.providerId,
+      provider.modelId,
+    );
+
+    const runBatch =
+      typeof operations.runAiTranslationBatch === "function"
+        ? operations.runAiTranslationBatch
+        : (batchRequest) => invoke("run_ai_translation_batch", { request: batchRequest });
+
+    let payload;
+    try {
+      payload = await runBatch(request);
+    } catch {
+      if (!isRunActive()) {
+        return "abort";
+      }
+      for (const item of liveItems) {
+        const outcome = await translateSingleItem(item);
+        if (outcome === "abort" || outcome === "run-error") {
+          return outcome;
+        }
+      }
+      return "ok";
+    }
+    if (!isRunActive()) {
+      return "abort";
+    }
+
+    const promptText = typeof payload?.promptText === "string" ? payload.promptText : "";
+    const returnedById = new Map(
+      (Array.isArray(payload?.rows) ? payload.rows : []).map((row) => [row.rowId, row]),
+    );
+    for (const item of liveItems) {
+      if (!isRunActive()) {
+        return "abort";
+      }
+      const rowResult = returnedById.get(item.rowId);
+      if (!rowResult) {
+        const outcome = await translateSingleItem(item);
+        if (outcome === "abort" || outcome === "run-error") {
+          return outcome;
+        }
+        continue;
+      }
+      await applyBatchRowResult(item, rowResult, provider, promptText);
+    }
+    return "ok";
+  };
+
+  const canApplyBatchLocally =
+    typeof operations.updateEditorRowFieldValue === "function"
+    && typeof operations.persistEditorRowOnBlur === "function";
+
+  const batches = chunkTranslateAllWork(work, {
+    glossaryKindForItem: (item) =>
+      glossaryUsageKindForPair(
+        state.editorChapter,
+        item.sourceLanguageCode,
+        item.targetLanguageCode,
+      ),
+    sourceTokensForItem: (item) =>
+      estimateSourceTokens(
+        readRowFieldText(
+          findEditorRowById(item.rowId, state.editorChapter),
+          item.sourceLanguageCode,
+        ),
+      ),
+  });
+
+  let provider = null;
+  for (const batch of batches) {
+    if (!isRunActive()) {
+      return;
+    }
+
+    // Single-item, derived-glossary, or non-applyable batches use the proven
+    // single-row path (which owns its own provider/key/glossary handling).
+    if (batch.glossaryKind === "derived" || batch.items.length === 1 || !canApplyBatchLocally) {
+      for (const item of batch.items) {
+        const outcome = await translateSingleItem(item);
+        if (outcome === "abort" || outcome === "run-error") {
+          return;
+        }
+      }
       continue;
     }
 
-    applyEditorAiTranslateAllModal({
-      isOpen: true,
-      status: "idle",
-      error: result?.error || "AI translation failed.",
-      selectedLanguageCodes,
-      languageProgress: currentLanguageProgress,
-      translatedCount,
-      totalCount: work.length,
-    });
-    render?.();
-    return;
+    if (!provider) {
+      const ensureReady =
+        typeof operations.ensureEditorAiTranslateProviderReady === "function"
+          ? operations.ensureEditorAiTranslateProviderReady
+          : ensureEditorAiTranslateProviderReady;
+      const ready = await ensureReady(render, BATCH_TRANSLATE_ACTION_ID);
+      if (!isRunActive()) {
+        return;
+      }
+      if (!ready.ok) {
+        if (ready.missingKey) {
+          state.editorChapter = clearEditorAiTranslateAction(
+            state.editorChapter,
+            BATCH_TRANSLATE_ACTION_ID,
+          );
+          state.editorChapter = {
+            ...state.editorChapter,
+            aiTranslateAllModal: createEditorAiTranslateAllModalState(),
+          };
+          render?.();
+          openAiMissingKeyModal(ready.providerId);
+          return;
+        }
+        failRun(ready.error);
+        return;
+      }
+      provider = { providerId: ready.providerId, modelId: ready.modelId };
+    }
+
+    const outcome = await translateBatch(batch, provider);
+    if (outcome === "abort" || outcome === "run-error") {
+      return;
+    }
   }
 
   if (
@@ -478,7 +767,9 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
 export const editorAiTranslateAllTestApi = {
   buildEditorAiTranslateAllWork,
   buildEditorAiTranslateAllLanguageProgress,
+  buildTranslateBatchRequest,
   getActiveBatchRunId: () => activeBatchRunId,
+  glossaryUsageKindForPair,
   incrementEditorAiTranslateAllProgress,
   prioritizeGlossarySourceLanguageCode,
   resetActiveBatchRunId: () => {
