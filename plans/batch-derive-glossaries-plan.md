@@ -1,5 +1,20 @@
 # Batch Glossary Derivation Plan (shared procedure for Derive Glossaries + Translate All)
 
+## Status (2026-07-06)
+
+Implemented on `feat/batch-derive-glossaries` (increments 1–3 committed; unit
+tests green, knip clean — the two `vellum-clipboard.js` findings pre-date this
+branch). Manual verification pending: a real pivot-glossary chapter through the
+modal (rows without pivot text; cancel mid-run) and Translate All over
+derived-glossary rows missing pivot text.
+
+Two deltas from the plan as written, both discovered during extraction and
+strictly safer: batch-derived entries now also persist to the disk cache (the
+inlined Translate All version skipped the save the single-row path does), and
+the modal's per-item progress granularity was preserved after all (the shared
+flow settles items individually via `onItemSettled`, so per-chunk ticking never
+became necessary).
+
 ## Problem
 
 Two flows perform derived (pivot) glossary preparation, with very different
