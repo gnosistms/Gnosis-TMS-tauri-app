@@ -1,4 +1,6 @@
 import { state } from "../state.js";
+import { anchorProjectsSessionToItem } from "../projects-scroll-session.js";
+import { projectHeaderItemKey } from "../projects-list-model.js";
 import { showNoticeBadge } from "../status-feedback.js";
 import { getProjectWritePolicy } from "../resource-write-policy.js";
 import {
@@ -264,6 +266,9 @@ export function createProjectActions(render) {
     {
       prefix: "toggle-project:",
       handler: (projectId) => {
+        // Pin the toggled header at its current viewport offset so the card
+        // unfolds/folds beneath it instead of the list jumping.
+        anchorProjectsSessionToItem(projectHeaderItemKey(projectId), state.selectedTeamId);
         if (state.expandedProjects.has(projectId)) {
           state.expandedProjects.delete(projectId);
         } else {

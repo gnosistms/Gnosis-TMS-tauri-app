@@ -1,4 +1,5 @@
 import { invoke, waitForNextPaint } from "./runtime.js";
+import { anchorProjectsSessionToItem } from "./projects-scroll-session.js";
 import {
   beginProjectsPageSync,
   completeProjectsPageSync,
@@ -1298,6 +1299,9 @@ export function toggleDeletedFiles(render, projectId) {
     return;
   }
 
+  // Pin the toggled separator at its current viewport offset so the deleted
+  // rows unfold/fold beneath it instead of the list jumping.
+  anchorProjectsSessionToItem(`dt:${projectId}`, state.selectedTeamId);
   if (state.expandedDeletedFiles.has(projectId)) {
     state.expandedDeletedFiles.delete(projectId);
   } else {

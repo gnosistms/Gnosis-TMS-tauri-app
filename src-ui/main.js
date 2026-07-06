@@ -38,6 +38,7 @@ import {
   applyEditorRegressionSoftDelete,
   readEditorRegressionSnapshot,
 } from "./app/editor-regression-fixture.js";
+import { applyProjectsPageFixture } from "./app/projects-page-fixture.js";
 import { patchMountedEditorRows } from "./app/editor-row-patch.js";
 import { readDevRuntimeFlags } from "./app/dev-runtime-flags.js";
 import {
@@ -107,7 +108,13 @@ import { renderEditorInsertLinkModal } from "./screens/editor-insert-link-modal.
 import { renderGlossariesScreen } from "./screens/glossaries.js";
 import { renderGlossaryEditorScreen } from "./screens/glossary-editor.js";
 import { renderNavigationLoadingModal } from "./screens/navigation-loading-modal.js";
-import { renderProjectsScreen } from "./screens/projects.js";
+import { buildProjectsScreenListState, renderProjectsScreen } from "./screens/projects.js";
+import { renderProjectsListItemsRange } from "./screens/project-list-flat-render.js";
+import {
+  initializeProjectsVirtualization,
+  setProjectsVirtualizationDisabled,
+} from "./app/projects-virtual-list.js";
+import { reconcileProjectsScrollOnRender } from "./app/projects-scroll-store.js";
 import { renderQaListEditorScreen } from "./screens/qa-list-editor.js";
 import { renderQaScreen } from "./screens/qa.js";
 import { renderTeamResourceMigrationModal } from "./screens/team-resource-migration-modal.js";
@@ -705,6 +712,9 @@ function renderWithOptions(options = {}) {
   prepareEditorLocationBeforeRender(previousScreen, state, {
     wasPreviewMode: previousTranslateWasPreview,
   });
+  // Must run before the screen renderer: the projects initial window is
+  // computed from the session anchor this reconciliation seeds or clears.
+  reconcileProjectsScrollOnRender(previousScreen, state);
   const focusSnapshot = captureFocusedInputState();
   const {
     anchor: translateAnchor,
@@ -740,6 +750,10 @@ function renderWithOptions(options = {}) {
   }
   queuePendingEditorLocationRestore(state);
   initializeEditorVirtualization(app, state);
+  initializeProjectsVirtualization(app, state, {
+    buildListState: buildProjectsScreenListState,
+    renderItemsRange: renderProjectsListItemsRange,
+  });
   const restoredPendingLocation = restorePendingEditorLocation(state);
   let restoredAnchor = false;
   if (!restoredPendingLocation && translateAnchor?.rowId) {
@@ -912,6 +926,17 @@ window.__gnosisDebug = {
       ...summary,
       state: readEditorRegressionSnapshot(state),
     };
+  },
+  async mountProjectsFixture(options = {}) {
+    await bootstrapPromise.catch(() => undefined);
+    const summary = applyProjectsPageFixture(state, options);
+    render();
+    return summary;
+  },
+  setProjectsVirtualizationDisabled(disabled = true) {
+    const applied = setProjectsVirtualizationDisabled(disabled);
+    render();
+    return { virtualizationDisabled: applied };
   },
   async flushDirtyRows() {
     await flushDirtyEditorRows(render);
