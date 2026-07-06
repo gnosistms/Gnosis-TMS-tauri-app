@@ -1,15 +1,22 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+// runtime.js binds core.invoke at import time, so tests swap the handler
+// rather than reassigning core.invoke.
+let invokeHandler = async () => null;
 globalThis.window = {
   __TAURI__: {
     core: {
-      invoke: async () => null,
+      invoke: async (command, payload) => invokeHandler(command, payload),
     },
     event: {
       listen: async () => () => {},
     },
   },
+  setTimeout() {
+    return 1;
+  },
+  clearTimeout() {},
 };
 globalThis.document = {
   querySelector() {
@@ -21,6 +28,7 @@ globalThis.document = {
 };
 
 const {
+  confirmEditorDeriveGlossaries,
   editorDeriveGlossariesTestApi,
 } = await import("./editor-derive-glossaries-flow.js");
 const {
@@ -266,6 +274,156 @@ test("Derive glossaries work keeps stale derived glossary cache items eligible",
     ),
     false,
   );
+});
+
+function seedDeriveRunEnvironment() {
+  resetSessionState();
+  // No team selected: the shared AI configuration load is skipped and the
+  // provider-key check takes the local-secret path.
+  invokeHandler = async (command) =>
+    command === "load_ai_provider_secret" ? "sk-test" : null;
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      detailedConfiguration: false,
+      unified: { providerId: "openai", modelId: "test-model" },
+    },
+  };
+  state.editorChapter = chapter();
+}
+
+function deriveRunOperations(overrides = {}) {
+  return {
+    updateEditorRowFieldValue: (rowId, languageCode, nextValue) => {
+      state.editorChapter = {
+        ...state.editorChapter,
+        rows: state.editorChapter.rows.map((candidate) =>
+          candidate.rowId === rowId
+            ? {
+              ...candidate,
+              fields: { ...candidate.fields, [languageCode]: nextValue },
+            }
+            : candidate,
+        ),
+      };
+    },
+    persistEditorRowOnBlur: async () => {},
+    ...overrides,
+  };
+}
+
+test("Derive glossaries batches generation and derivation per language pair", async () => {
+  seedDeriveRunEnvironment();
+  const generationCalls = [];
+  const prepareCalls = [];
+
+  await confirmEditorDeriveGlossaries(
+    () => {},
+    deriveRunOperations({
+      runAiTranslationBatch: async (request) => {
+        generationCalls.push(request);
+        return {
+          rows: request.rows.map((row) => ({
+            rowId: row.rowId,
+            translatedText: `en:${row.sourceText}`,
+          })),
+        };
+      },
+      prepareEditorAiTranslatedGlossaryBatch: async (request) => {
+        prepareCalls.push(request);
+        return { glossarySourceText: request.glossarySourceText, entries: [] };
+      },
+    }),
+  );
+
+  // The pivot (en) column was empty, so the first language-pair group makes
+  // ONE batched generation call; later groups reuse the freshly written texts.
+  assert.equal(generationCalls.length, 1);
+  assert.equal(generationCalls[0].targetLanguageCode, "en");
+  assert.deepEqual(
+    generationCalls[0].rows.map((row) => row.sourceText),
+    ["Oracion", "Paz"],
+  );
+  assert.equal(
+    state.editorChapter.rows.find((row) => row.rowId === "row-1").fields.en,
+    "en:Oracion",
+  );
+  assert.equal(
+    state.editorChapter.rows.find((row) => row.rowId === "row-3").fields.en,
+    "en:Paz",
+  );
+  // One combined derivation call per language pair (es, ja, fr -> vi), not one
+  // per work item.
+  assert.deepEqual(
+    prepareCalls.map((request) => request.translationSourceTexts),
+    [["Oracion", "Paz"], ["祈り"], ["Priere", "Paix"]],
+  );
+  assert.equal(state.editorChapter.deriveGlossariesModal.isOpen, false);
+  assert.equal(state.statusBadges.left.text, "Derived 5 glossaries.");
+  assert.equal(state.editorChapter.derivedGlossariesByRowId["row-1"].status, "ready");
+  assert.equal(state.editorChapter.derivedGlossariesByRowId["row-3"].status, "ready");
+});
+
+test("Derive glossaries falls back to the single-row path when batch derivation fails", async () => {
+  seedDeriveRunEnvironment();
+  const fallbackItems = [];
+
+  await confirmEditorDeriveGlossaries(
+    () => {},
+    deriveRunOperations({
+      runAiTranslationBatch: async (request) => ({
+        rows: request.rows.map((row) => ({
+          rowId: row.rowId,
+          translatedText: `en:${row.sourceText}`,
+        })),
+      }),
+      prepareEditorAiTranslatedGlossaryBatch: async () => {
+        throw new Error("provider error");
+      },
+      prepareEditorDerivedGlossaryForContext: async ({ context }) => {
+        fallbackItems.push([context.rowId, context.sourceLanguageCode]);
+        return { ok: true };
+      },
+    }),
+  );
+
+  // Every work item retried through the single-row path, in group order.
+  assert.deepEqual(fallbackItems, [
+    ["row-1", "es"],
+    ["row-3", "es"],
+    ["row-1", "ja"],
+    ["row-1", "fr"],
+    ["row-3", "fr"],
+  ]);
+  assert.equal(state.editorChapter.deriveGlossariesModal.isOpen, false);
+  assert.equal(state.statusBadges.left.text, "Derived 5 glossaries.");
+});
+
+test("Derive glossaries surfaces a single-row fallback error in the modal and stops", async () => {
+  seedDeriveRunEnvironment();
+
+  await confirmEditorDeriveGlossaries(
+    () => {},
+    deriveRunOperations({
+      runAiTranslationBatch: async (request) => ({
+        rows: request.rows.map((row) => ({
+          rowId: row.rowId,
+          translatedText: `en:${row.sourceText}`,
+        })),
+      }),
+      prepareEditorAiTranslatedGlossaryBatch: async () => {
+        throw new Error("provider error");
+      },
+      prepareEditorDerivedGlossaryForContext: async () => {
+        throw new Error("row failed");
+      },
+    }),
+  );
+
+  assert.equal(state.editorChapter.deriveGlossariesModal.isOpen, true);
+  assert.equal(state.editorChapter.deriveGlossariesModal.status, "idle");
+  assert.equal(state.editorChapter.deriveGlossariesModal.error, "row failed");
 });
 
 test("Derived glossary preparation saves generated glossary source text before building the entry", async () => {
