@@ -26,11 +26,7 @@ import {
 } from "./editor-ai-batch-request.js";
 import { buildBatchSourceContext } from "./editor-ai-context-window.js";
 import { buildEditorAiTranslationGlossaryHints } from "./editor-glossary-highlighting.js";
-import {
-  buildDerivedGlossaryState,
-  resolveEditorDerivedGlossaryUsage,
-} from "./editor-derived-glossary-flow.js";
-import { applyEditorDerivedGlossaryEntry } from "./editor-derived-glossary-state.js";
+import { ensureBatchDerivedGlossaries } from "./editor-derived-glossary-batch-flow.js";
 import { openAiMissingKeyModal } from "./ai-settings-flow.js";
 import { selectedProjectsTeamInstallationId } from "./project-context.js";
 import { invoke } from "./runtime.js";
@@ -404,14 +400,6 @@ function buildTranslateBatchRequest(chapterState, entries, glossaryHints, provid
   return installationId === null ? request : { ...request, installationId };
 }
 
-function createBatchDerivedRequestKey(chapterId) {
-  const uniqueSuffix =
-    typeof globalThis.crypto?.randomUUID === "function"
-      ? globalThis.crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  return `${chapterId}:batch-derived:${uniqueSuffix}`;
-}
-
 export async function confirmEditorAiTranslateAll(render, operations = {}) {
   if (!state.editorChapter?.chapterId) {
     return;
@@ -628,119 +616,49 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
     recordTranslated(item);
   };
 
-  // Resolves the batch's derived glossary per row: fresh cached entries are
-  // reused, rows with a pivot text get ONE combined derivation call (entries
-  // stored back into chapter state so highlights and staleness checks work like
-  // the single-row path), and rows with no pivot text yet are returned for the
-  // single-row fallback (which generates one). Mutates entries in place with
-  // { hints, glossarySourceText }. Returns { fallbackEntries } or "abort".
+  // Resolves the batch's derived glossary per row via the shared batch
+  // derivation flow (fresh cached entries reused, the rest derived in combined
+  // calls with entries stored back into chapter state so highlights and
+  // staleness checks work like the single-row path). Mutates entries in place
+  // with { hints, glossarySourceText }; unresolved rows (no pivot text yet,
+  // derivation failure, mid-flight edits) are returned for the single-row
+  // fallback. Returns { fallbackEntries } or "abort".
   const resolveBatchDerivedGlossary = async (chapterState, entries, provider) => {
-    const fallbackEntries = [];
-    const needy = [];
+    const entryByItem = new Map(entries.map((entry) => [entry.item, entry]));
+    const { aborted, results } = await ensureBatchDerivedGlossaries({
+      chapterState,
+      items: entries.map((entry) => entry.item),
+      providerId: provider.providerId,
+      modelId: provider.modelId,
+      isRunActive,
+      operations,
+    });
+    if (aborted) {
+      return "abort";
+    }
 
-    for (const entry of entries) {
-      const context = buildEditorAiTranslateContext(chapterState, {
-        ...entry.item,
-        skipRowWindow: true,
-      });
-      if (!context) {
-        fallbackEntries.push(entry);
+    const fallbackEntries = [];
+    for (const result of results) {
+      const entry = entryByItem.get(result.item);
+      if (!entry) {
         continue;
       }
-      const usage = resolveEditorDerivedGlossaryUsage(context);
-      if (usage.kind !== "derived") {
+      if (result.status === "none") {
         entry.hints = [];
         continue;
       }
-      if (usage.cachedDerivedEntry && !usage.cachedDerivedEntryIsStale) {
+      if (result.status === "cached" || result.status === "derived") {
         entry.hints = buildEditorAiTranslationGlossaryHints(
-          context.sourceText,
-          context.sourceLanguageCode,
-          context.targetLanguageCode,
-          usage.cachedDerivedEntry.matcherModel ?? null,
+          entry.sourceText,
+          entry.item.sourceLanguageCode,
+          entry.item.targetLanguageCode,
+          result.matcherModel ?? null,
         );
-        entry.glossarySourceText = usage.cachedDerivedEntry.glossarySourceText ?? "";
+        entry.glossarySourceText = result.glossarySourceText ?? "";
         continue;
       }
-      if (!String(usage.preparationGlossarySourceText ?? "").trim()) {
-        fallbackEntries.push(entry);
-        continue;
-      }
-      needy.push({ entry, context, usage });
+      fallbackEntries.push(entry);
     }
-
-    if (needy.length > 0) {
-      const prepareBatch =
-        typeof operations.prepareEditorAiTranslatedGlossaryBatch === "function"
-          ? operations.prepareEditorAiTranslatedGlossaryBatch
-          : (batchRequest) =>
-            invoke("prepare_editor_ai_translated_glossary_batch", { request: batchRequest });
-      const installationId = selectedProjectsTeamInstallationId();
-      const firstUsage = needy[0].usage;
-      const firstContext = needy[0].context;
-
-      let payload = null;
-      try {
-        payload = await prepareBatch({
-          providerId: provider.providerId,
-          modelId: provider.modelId,
-          translationSourceTexts: needy.map((n) => n.entry.sourceText),
-          translationSourceLanguage: firstContext.sourceLanguageLabel,
-          glossarySourceLanguage: firstUsage.glossarySourceLanguageLabel,
-          targetLanguage: firstContext.targetLanguageLabel,
-          glossarySourceText: needy
-            .map((n) => n.usage.preparationGlossarySourceText.trim())
-            .join("\n\n"),
-          glossaryTerms: firstUsage.glossaryTerms,
-          ...(installationId === null ? {} : { installationId }),
-        });
-      } catch {
-        // Derivation failed — those rows fall back to the single-row path,
-        // which derives each row's glossary on its own.
-        if (!isRunActive()) {
-          return "abort";
-        }
-        fallbackEntries.push(...needy.map((n) => n.entry));
-        return { fallbackEntries };
-      }
-      if (!isRunActive()) {
-        return "abort";
-      }
-
-      const preparedEntries = Array.isArray(payload?.entries) ? payload.entries : [];
-      const requestKey = createBatchDerivedRequestKey(chapterState.chapterId);
-      for (const { entry, context, usage } of needy) {
-        const rowEntries = preparedEntries.filter((prepared) =>
-          typeof prepared?.sourceTerm === "string"
-          && prepared.sourceTerm
-          && entry.sourceText.includes(prepared.sourceTerm),
-        );
-        const derivedEntry = buildDerivedGlossaryState({
-          glossaryState: usage.glossaryState,
-          sourceLanguage: context.sourceLanguage,
-          targetLanguage: context.targetLanguage,
-          requestKey,
-          derivedContext: usage.derivedContext,
-          payload: {
-            glossarySourceText: usage.preparationGlossarySourceText,
-            entries: rowEntries,
-          },
-        });
-        state.editorChapter = applyEditorDerivedGlossaryEntry(
-          state.editorChapter,
-          entry.item.rowId,
-          derivedEntry,
-        );
-        entry.hints = buildEditorAiTranslationGlossaryHints(
-          context.sourceText,
-          context.sourceLanguageCode,
-          context.targetLanguageCode,
-          derivedEntry.matcherModel ?? null,
-        );
-        entry.glossarySourceText = usage.preparationGlossarySourceText;
-      }
-    }
-
     return { fallbackEntries };
   };
 
