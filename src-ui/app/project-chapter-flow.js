@@ -103,26 +103,37 @@ export function showProjectsNotice(render, text, durationMs) {
 }
 
 const GLOSSARY_REPO_SYNC_DEBOUNCE_MS = 2500;
+// Dirty projects awaiting a deferred repo sync, keyed per project. The timer
+// is shared per team (installation): every metadata write on any project
+// restarts one quiet period, so a click burst across projects produces zero
+// mid-burst syncs and a single sync wave once the user pauses.
 const deferredProjectRepoSyncs = new Map();
+const deferredProjectRepoSyncTimers = new Map();
 
-function deferredProjectRepoSyncKey(selectedTeam, project) {
-  const installationId = Number.isFinite(selectedTeam?.installationId)
+function deferredProjectRepoSyncTeamKey(selectedTeam) {
+  return Number.isFinite(selectedTeam?.installationId)
     ? String(selectedTeam.installationId)
     : "unknown";
+}
+
+function deferredProjectRepoSyncKey(selectedTeam, project) {
   const projectId =
     typeof project?.id === "string" && project.id.trim()
       ? project.id.trim()
       : "unknown";
-  return `${installationId}:${projectId}`;
+  return `${deferredProjectRepoSyncTeamKey(selectedTeam)}:${projectId}`;
 }
 
 function clearDeferredProjectRepoSync(selectedTeam, project) {
-  const key = deferredProjectRepoSyncKey(selectedTeam, project);
-  const existing = deferredProjectRepoSyncs.get(key);
-  if (existing?.timerId) {
-    window.clearTimeout(existing.timerId);
+  deferredProjectRepoSyncs.delete(deferredProjectRepoSyncKey(selectedTeam, project));
+}
+
+export function resetDeferredProjectRepoSyncsForTests() {
+  deferredProjectRepoSyncs.clear();
+  for (const timerId of deferredProjectRepoSyncTimers.values()) {
+    window.clearTimeout(timerId);
   }
-  deferredProjectRepoSyncs.delete(key);
+  deferredProjectRepoSyncTimers.clear();
 }
 
 function setProjectDiscoveryError(render, error) {
@@ -584,11 +595,8 @@ function scheduleDeferredProjectRepoSyncAfterLocalWrite(
   project,
   options = {},
 ) {
+  const teamKey = deferredProjectRepoSyncTeamKey(selectedTeam);
   const key = deferredProjectRepoSyncKey(selectedTeam, project);
-  const existing = deferredProjectRepoSyncs.get(key);
-  if (existing?.timerId) {
-    window.clearTimeout(existing.timerId);
-  }
 
   const delayMs =
     Number.isFinite(options.delayMs) && options.delayMs >= 0
@@ -597,28 +605,40 @@ function scheduleDeferredProjectRepoSyncAfterLocalWrite(
   const syncOptions = { ...options };
   delete syncOptions.delayMs;
 
-  const timerId = window.setTimeout(() => {
-    const latest = deferredProjectRepoSyncs.get(key);
-    if (latest?.timerId !== timerId) {
-      return;
-    }
-
-    deferredProjectRepoSyncs.delete(key);
-    scheduleProjectRepoSyncAfterLocalWrite(
-      latest.render,
-      latest.selectedTeam,
-      latest.project,
-      latest.options,
-    );
-  }, delayMs);
-
   deferredProjectRepoSyncs.set(key, {
-    timerId,
+    teamKey,
     render,
     selectedTeam,
     project,
     options: syncOptions,
   });
+
+  // Restart the team's quiet period on every write, whichever project it
+  // touched.
+  const existingTimerId = deferredProjectRepoSyncTimers.get(teamKey);
+  if (existingTimerId) {
+    window.clearTimeout(existingTimerId);
+  }
+  const timerId = window.setTimeout(() => {
+    if (deferredProjectRepoSyncTimers.get(teamKey) !== timerId) {
+      return;
+    }
+    deferredProjectRepoSyncTimers.delete(teamKey);
+
+    for (const [entryKey, entry] of [...deferredProjectRepoSyncs.entries()]) {
+      if (entry.teamKey !== teamKey) {
+        continue;
+      }
+      deferredProjectRepoSyncs.delete(entryKey);
+      scheduleProjectRepoSyncAfterLocalWrite(
+        entry.render,
+        entry.selectedTeam,
+        entry.project,
+        entry.options,
+      );
+    }
+  }, delayMs);
+  deferredProjectRepoSyncTimers.set(teamKey, timerId);
 }
 
 function resolveChapterContext(render, chapterId, missingMessage) {
@@ -1405,76 +1425,151 @@ export async function submitChapterRename(render) {
   });
 }
 
-async function persistChapterGlossaryLinks(render, chapterId, nextGlossary) {
-  const resolved = await resolveChapterMutationContext(render, chapterId, {
+// Chapter metadata fields (workflow status, glossary link) share one write
+// pipeline. Every guard before the optimistic apply is synchronous so the UI
+// updates in the same task as the select's change event — an async gap there
+// lets an unrelated render repaint the select from stale state, which reads
+// as the selection "reverting". The (async) tombstone verification runs
+// inside the queued intent instead, where a failure flows through the normal
+// onError rollback.
+function chapterWorkflowStatusFieldSpec(nextWorkflowStatus) {
+  return {
+    actionLabel: "change file status",
+    intentType: "chapterWorkflowStatus",
+    intentKey: chapterWorkflowStatusIntentKey,
+    nextValue: nextWorkflowStatus,
+    readValue: (chapter) => normalizeChapterWorkflowStatus(chapter.workflowStatus),
+    valuesEqual: (left, right) => left === right,
+    wrapValue: (workflowStatus) => ({ workflowStatus }),
+    unwrapValue: (value) => normalizeChapterWorkflowStatus(value?.workflowStatus),
+    patchChapter: (workflowStatus) => ({ workflowStatus }),
+    commandInput: (workflowStatus) => ({ workflowStatus }),
+    command: "update_gtms_chapter_workflow_status",
+    pendingFlag: "pendingWorkflowStatusMutation",
+    errorField: "workflowStatusMutationError",
+    pendingStatusText: "Updating file status...",
+    confirmedStatusText: "Status updated. Syncing shortly...",
+    successNotice: "Status updated.",
+  };
+}
+
+function chapterGlossaryFieldSpec(nextGlossary) {
+  return {
     actionLabel: "change file glossary links",
-    allowDuringRefresh: true,
-  });
+    intentType: "chapterGlossary",
+    intentKey: chapterGlossaryIntentKey,
+    nextValue: nextGlossary,
+    readValue: (chapter) => normalizeChapterGlossaryLink(chapter.linkedGlossary),
+    valuesEqual: (left, right) => JSON.stringify(left) === JSON.stringify(right),
+    wrapValue: (glossary) => ({ glossary }),
+    unwrapValue: (value) => normalizeChapterGlossaryLink(value?.glossary),
+    patchChapter: (glossary) => ({ linkedGlossary: glossary }),
+    commandInput: (glossary) => ({ glossary: chapterGlossaryLinkInput(glossary) }),
+    command: "update_gtms_chapter_glossary_links",
+    pendingFlag: "pendingGlossaryMutation",
+    errorField: "glossaryMutationError",
+    pendingStatusText: "Updating file glossary...",
+    confirmedStatusText: "Glossary updated. Syncing shortly...",
+    successNotice: "Glossary updated.",
+  };
+}
+
+function persistChapterMetadataField(render, chapterId, spec) {
+  const resolved = resolveChapterContext(render, chapterId, "Could not find the selected file.");
   if (!resolved) {
     return;
   }
 
   const { selectedTeam, context } = resolved;
+  if (!ensureChapterMutationAllowed(render, {
+    selectedTeam,
+    actionLabel: spec.actionLabel,
+    allowDuringRefresh: true,
+  })) {
+    return;
+  }
 
-  const currentGlossary = normalizeChapterGlossaryLink(context.chapter.linkedGlossary);
-  if (JSON.stringify(nextGlossary) === JSON.stringify(currentGlossary)) {
+  const policy = getProjectWritePolicy({
+    team: selectedTeam,
+    project: context.project,
+    chapter: context.chapter,
+    actionKind: "sharedWrite",
+  });
+  if (!policy.allowed) {
+    setProjectDiscoveryError(render, policy.message);
+    return;
+  }
+
+  const currentValue = spec.readValue(context.chapter);
+  if (spec.valuesEqual(spec.nextValue, currentValue)) {
     return;
   }
 
   requestProjectWriteIntent({
-    key: chapterGlossaryIntentKey(context.project.id, chapterId),
+    key: spec.intentKey(context.project.id, chapterId),
     scope: projectRepoWriteScope(selectedTeam, context.project),
     teamId: selectedTeam.id,
     projectId: context.project.id,
     chapterId,
-    type: "chapterGlossary",
-    value: {
-      glossary: nextGlossary,
-    },
-    previousValue: {
-      glossary: currentGlossary,
-    },
+    type: spec.intentType,
+    value: spec.wrapValue(spec.nextValue),
+    previousValue: spec.wrapValue(currentValue),
   }, {
     applyOptimistic: (intent) => {
-      showProjectsStatus(render, "Updating file glossary...");
+      showProjectsStatus(render, spec.pendingStatusText);
       updateChapterInState(chapterId, (chapter) => ({
         ...chapter,
-        linkedGlossary: intent.value.glossary,
-        pendingGlossaryMutation: true,
+        ...spec.patchChapter(spec.unwrapValue(intent.value)),
+        [spec.pendingFlag]: true,
       }));
       persistProjectsForTeam(selectedTeam);
       render();
     },
-    run: async (intent) => invoke("update_gtms_chapter_glossary_links", {
-      input: {
-        installationId: selectedTeam.installationId,
-        projectId: context.project.id,
-        repoName: context.project.name,
-        chapterId,
-        glossary: chapterGlossaryLinkInput(intent.value.glossary),
-      },
-    }),
+    run: async (intent) => {
+      // Deferred from the pre-apply guards so the optimistic update is
+      // synchronous with the click; still inside the serialized queue. A
+      // failed *lookup* (broker unreachable, metadata repo not synced) must
+      // not block the write — the write itself fails safely if the project
+      // is really gone.
+      const projectTombstoned = await ensureProjectNotTombstoned(
+        render,
+        selectedTeam,
+        context.project,
+      ).catch(() => false);
+      if (projectTombstoned) {
+        throw new Error("This project was permanently deleted and can no longer be edited.");
+      }
+      return invoke(spec.command, {
+        input: {
+          installationId: selectedTeam.installationId,
+          projectId: context.project.id,
+          repoName: context.project.name,
+          chapterId,
+          ...spec.commandInput(spec.unwrapValue(intent.value)),
+        },
+      });
+    },
     onSuccess: (intent) => {
       updateChapterInState(chapterId, (chapter) => ({
         ...chapter,
-        linkedGlossary: intent.value.glossary,
-        pendingGlossaryMutation: false,
+        ...spec.patchChapter(spec.unwrapValue(intent.value)),
+        [spec.pendingFlag]: false,
       }));
       persistProjectsForTeam(selectedTeam);
-      showProjectsStatus(render, "Glossary updated. Syncing shortly...");
+      showProjectsStatus(render, spec.confirmedStatusText);
       scheduleDeferredProjectRepoSyncAfterLocalWrite(render, selectedTeam, context.project, {
         syncText: "Syncing project repo...",
         refreshText: "Refreshing file list...",
-        successNotice: "Glossary updated.",
+        successNotice: spec.successNotice,
       });
     },
     onError: (error, intent) => {
       clearProjectsStatus(render);
       updateChapterInState(chapterId, (chapter) => ({
         ...chapter,
-        linkedGlossary: normalizeChapterGlossaryLink(intent.previousValue?.glossary),
-        pendingGlossaryMutation: false,
-        glossaryMutationError: error?.message ?? String(error),
+        ...spec.patchChapter(spec.unwrapValue(intent.previousValue)),
+        [spec.pendingFlag]: false,
+        [spec.errorField]: error?.message ?? String(error),
       }));
       setProjectDiscoveryError(render, intent.error || error?.message || String(error));
       persistProjectsForTeam(selectedTeam);
@@ -1496,91 +1591,14 @@ export async function updateChapterGlossaryLinks(render, chapterId, glossaryId) 
     return;
   }
 
-  await persistChapterGlossaryLinks(render, chapterId, nextLink);
-}
-
-async function persistChapterWorkflowStatus(render, chapterId, nextWorkflowStatus) {
-  const resolved = await resolveChapterMutationContext(render, chapterId, {
-    actionLabel: "change file status",
-    allowDuringRefresh: true,
-  });
-  if (!resolved) {
-    return;
-  }
-
-  const { selectedTeam, context } = resolved;
-  const currentWorkflowStatus = normalizeChapterWorkflowStatus(context.chapter.workflowStatus);
-  if (nextWorkflowStatus === currentWorkflowStatus) {
-    return;
-  }
-
-  requestProjectWriteIntent({
-    key: chapterWorkflowStatusIntentKey(context.project.id, chapterId),
-    scope: projectRepoWriteScope(selectedTeam, context.project),
-    teamId: selectedTeam.id,
-    projectId: context.project.id,
-    chapterId,
-    type: "chapterWorkflowStatus",
-    value: {
-      workflowStatus: nextWorkflowStatus,
-    },
-    previousValue: {
-      workflowStatus: currentWorkflowStatus,
-    },
-  }, {
-    applyOptimistic: (intent) => {
-      showProjectsStatus(render, "Updating file status...");
-      updateChapterInState(chapterId, (chapter) => ({
-        ...chapter,
-        workflowStatus: intent.value.workflowStatus,
-        pendingWorkflowStatusMutation: true,
-      }));
-      persistProjectsForTeam(selectedTeam);
-      render();
-    },
-    run: async (intent) => invoke("update_gtms_chapter_workflow_status", {
-      input: {
-        installationId: selectedTeam.installationId,
-        projectId: context.project.id,
-        repoName: context.project.name,
-        chapterId,
-        workflowStatus: intent.value.workflowStatus,
-      },
-    }),
-    onSuccess: (intent) => {
-      updateChapterInState(chapterId, (chapter) => ({
-        ...chapter,
-        workflowStatus: intent.value.workflowStatus,
-        pendingWorkflowStatusMutation: false,
-      }));
-      persistProjectsForTeam(selectedTeam);
-      showProjectsStatus(render, "Status updated. Syncing shortly...");
-      scheduleDeferredProjectRepoSyncAfterLocalWrite(render, selectedTeam, context.project, {
-        syncText: "Syncing project repo...",
-        refreshText: "Refreshing file list...",
-        successNotice: "Status updated.",
-      });
-    },
-    onError: (error, intent) => {
-      clearProjectsStatus(render);
-      updateChapterInState(chapterId, (chapter) => ({
-        ...chapter,
-        workflowStatus: normalizeChapterWorkflowStatus(intent.previousValue?.workflowStatus),
-        pendingWorkflowStatusMutation: false,
-        workflowStatusMutationError: error?.message ?? String(error),
-      }));
-      setProjectDiscoveryError(render, intent.error || error?.message || String(error));
-      persistProjectsForTeam(selectedTeam);
-      render();
-    },
-  });
+  persistChapterMetadataField(render, chapterId, chapterGlossaryFieldSpec(nextLink));
 }
 
 export async function updateChapterWorkflowStatus(render, chapterId, workflowStatus) {
-  await persistChapterWorkflowStatus(
+  persistChapterMetadataField(
     render,
     chapterId,
-    normalizeChapterWorkflowStatus(workflowStatus),
+    chapterWorkflowStatusFieldSpec(normalizeChapterWorkflowStatus(workflowStatus)),
   );
 }
 
