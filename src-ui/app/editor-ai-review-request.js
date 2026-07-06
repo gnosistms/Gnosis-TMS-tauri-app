@@ -1,9 +1,7 @@
 import { buildEditorAiTranslationGlossaryHints } from "./editor-glossary-highlighting.js";
+import { buildRowSourceContextWindow } from "./editor-ai-context-window.js";
 import { editorFootnotesPlainText } from "./editor-utils.js";
 import { languageBaseCode } from "./editor-language-utils.js";
-
-const REVIEW_SOURCE_CONTEXT_PREVIOUS_TOKEN_TARGET = 360;
-const REVIEW_SOURCE_CONTEXT_NEXT_TOKEN_TARGET = 220;
 
 export function normalizeEditorAiReviewMode(value) {
   return String(value ?? "").trim() === "meaning" ? "meaning" : "grammar";
@@ -32,10 +30,6 @@ export function readEditorReviewRowImageCaption(row, languageCode) {
   return typeof row?.imageCaptions?.[languageCode] === "string"
     ? row.imageCaptions[languageCode]
     : String(row?.imageCaptions?.[languageCode] ?? "");
-}
-
-function estimateReviewContextTokens(value) {
-  return Math.ceil(String(value ?? "").length / 4);
 }
 
 function normalizeReviewLanguageLabel(language, fallbackCode = "") {
@@ -98,58 +92,6 @@ export function buildEditorAiReviewAlternateLanguageTexts(
       && entry.languageCode !== normalizedTargetLanguageCode
       && entry.text.trim()
     );
-}
-
-export function buildEditorAiReviewSourceContextWindow(
-  chapterState,
-  rowId,
-  sourceLanguageCode,
-  targetLanguageCode,
-) {
-  const rows = Array.isArray(chapterState?.rows) ? chapterState.rows : [];
-  const normalizedRowId = String(rowId ?? "").trim();
-  const rowIndex = rows.findIndex((row) => rowIdentity(row) === normalizedRowId);
-  if (rowIndex < 0) {
-    return [];
-  }
-
-  const previousRows = [];
-  let previousTokenCount = 0;
-  for (
-    let index = rowIndex - 1;
-    index >= 0 && previousTokenCount < REVIEW_SOURCE_CONTEXT_PREVIOUS_TOKEN_TARGET;
-    index -= 1
-  ) {
-    const row = rows[index];
-    previousRows.unshift(row);
-    previousTokenCount += estimateReviewContextTokens(
-      readEditorReviewRowFieldText(row, sourceLanguageCode),
-    );
-  }
-
-  const nextRows = [];
-  let nextTokenCount = 0;
-  for (
-    let index = rowIndex + 1;
-    index < rows.length && nextTokenCount < REVIEW_SOURCE_CONTEXT_NEXT_TOKEN_TARGET;
-    index += 1
-  ) {
-    const row = rows[index];
-    nextRows.push(row);
-    nextTokenCount += estimateReviewContextTokens(
-      readEditorReviewRowFieldText(row, sourceLanguageCode),
-    );
-  }
-
-  return [
-    ...previousRows,
-    rows[rowIndex],
-    ...nextRows,
-  ].map((row) => ({
-    rowId: rowIdentity(row),
-    sourceText: readEditorReviewRowFieldText(row, sourceLanguageCode),
-    targetText: readEditorReviewRowFieldText(row, targetLanguageCode),
-  }));
 }
 
 export function buildEditorAiReviewGlossaryHints(
@@ -224,7 +166,7 @@ export function buildEditorAiReviewRequest({
       ? buildEditorAiReviewAlternateLanguageTexts(chapterState, row, sourceLanguageCode, targetLanguageCode)
       : [],
     rowWindow: normalizedReviewMode === "meaning"
-      ? buildEditorAiReviewSourceContextWindow(chapterState, rowId, sourceLanguageCode, targetLanguageCode)
+      ? buildRowSourceContextWindow(chapterState, rowId, sourceLanguageCode, targetLanguageCode)
       : [],
     targetLanguageHistory: normalizedReviewMode === "meaning" && Array.isArray(targetLanguageHistory)
       ? targetLanguageHistory

@@ -33,11 +33,11 @@ import { showNoticeBadge } from "./status-feedback.js";
 import { editorFootnotesPlainText, findEditorRowById } from "./editor-utils.js";
 import { state } from "./state.js";
 import {
-  buildAssistantSourceContextWindow,
   buildEditorAssistantAlternateLanguageTexts,
   logEditorAssistantTranslation,
   logEditorAssistantTranslationDraft,
 } from "./editor-ai-assistant-flow.js";
+import { buildRowSourceContextWindow } from "./editor-ai-context-window.js";
 import {
   languageBaseCode,
   languageBaseCodesMatch,
@@ -239,7 +239,7 @@ export function buildEditorAiTranslateContext(chapterState = state.editorChapter
     targetText: row.fields?.[targetLanguageCode] ?? "",
     targetFootnote: editorFootnotesPlainText(row.footnotes?.[targetLanguageCode]),
     targetImageCaption: row.imageCaptions?.[targetLanguageCode] ?? "",
-    rowWindow: buildAssistantSourceContextWindow(
+    rowWindow: buildRowSourceContextWindow(
       chapterState,
       rowId,
       sourceLanguageCode,
