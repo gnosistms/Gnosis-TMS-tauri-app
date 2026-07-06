@@ -104,6 +104,14 @@ fn is_deleted_resource_candidate(resource: &ResourceMigrationCandidate) -> bool 
         || is_deleted_state(resource.remote_state.as_deref())
 }
 
+/// Only a definitive "the layout migration pends" verdict may enqueue the
+/// modal migration. Unreadable metadata (corrupt, or written by a future app)
+/// is skipped here — the sync paths surface it as a per-repo sync error, and
+/// migrating would rewrite data this app version cannot read.
+fn repo_pends_0810_migration_for_scan(repo_path: &std::path::Path) -> bool {
+    matches!(repo_requires_0810_migration(repo_path), Ok(true))
+}
+
 fn list_pending_team_repo_layout_migrations_sync(
     app: &AppHandle,
     input: TeamRepoMigrationScanInput,
@@ -125,7 +133,7 @@ fn list_pending_team_repo_layout_migrations_sync(
             project_id.as_deref(),
             Some(&repo_name),
         )? {
-            if repo_requires_0810_migration(&repo_path) {
+            if repo_pends_0810_migration_for_scan(&repo_path) {
                 pending.push(pending_migration(
                     "project",
                     project_id,
@@ -152,7 +160,7 @@ fn list_pending_team_repo_layout_migrations_sync(
             resource_id.as_deref(),
             Some(&repo_name),
         )? {
-            if repo_requires_0810_migration(&repo_path) {
+            if repo_pends_0810_migration_for_scan(&repo_path) {
                 pending.push(pending_migration(
                     "glossary",
                     resource_id,
@@ -179,7 +187,7 @@ fn list_pending_team_repo_layout_migrations_sync(
             resource_id.as_deref(),
             Some(&repo_name),
         )? {
-            if repo_requires_0810_migration(&repo_path) {
+            if repo_pends_0810_migration_for_scan(&repo_path) {
                 pending.push(pending_migration(
                     "qaList",
                     resource_id,

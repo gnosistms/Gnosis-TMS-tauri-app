@@ -7,9 +7,9 @@ use crate::{
     git_commit::{git_commit_as_signed_in_user_with_metadata, GitCommitMetadata},
     project_import::normalize_chapter_settings_value,
     repo_layout_metadata::{
-        new_v2_repo_layout_metadata, parse_repo_layout_metadata_bytes, read_repo_layout_metadata,
-        write_repo_layout_metadata, RepoKind, RepoLayoutMetadata, MIGRATION_0810, MIGRATION_0856,
-        REPO_METADATA_RELATIVE_PATH,
+        new_v2_repo_layout_metadata, parse_repo_layout_metadata_bytes,
+        read_repo_layout_metadata_state, write_repo_layout_metadata, RepoKind, RepoLayoutMetadata,
+        RepoLayoutMetadataState, MIGRATION_0810, MIGRATION_0856, REPO_METADATA_RELATIVE_PATH,
     },
     repo_sync_shared::{format_git_spawn_error, git_command, git_output},
     short_path_names::{allocate_short_folder_name, allocate_short_image_filename},
@@ -144,7 +144,7 @@ pub(crate) fn sync_pending_repo_layout_migration(
 ) -> Result<(), String> {
     let remote_tracking_ref = format!("origin/{branch_name}");
     if !remote_head_oid.trim().is_empty()
-        && !ref_requires_0810_migration(repo_path, &remote_tracking_ref)
+        && !ref_requires_0810_migration(repo_path, &remote_tracking_ref)?
     {
         adopt_remote_migrated_layout(repo_path, branch_name, &remote_tracking_ref)?;
         return Ok(());
@@ -159,10 +159,17 @@ pub(crate) fn discard_local_old_layout_changes_and_adopt_remote(
     branch_name: &str,
     remote_tracking_ref: &str,
 ) -> Result<(), String> {
-    if !repo_requires_0810_migration(repo_path) {
-        return Ok(());
+    // Only a readable, already-migrated local repo short-circuits. Unreadable
+    // local metadata is one of the states this user-confirmed discard heals —
+    // the remote must still prove readable and migrated below before anything
+    // destructive runs.
+    if let RepoLayoutMetadataState::Readable(metadata) = read_repo_layout_metadata_state(repo_path)
+    {
+        if applied_migration(&metadata, MIGRATION_0810) {
+            return Ok(());
+        }
     }
-    if ref_requires_0810_migration(repo_path, remote_tracking_ref) {
+    if ref_requires_0810_migration(repo_path, remote_tracking_ref)? {
         return Err(
             "The server repo is not migrated yet; local changes were not discarded.".to_string(),
         );
@@ -170,33 +177,48 @@ pub(crate) fn discard_local_old_layout_changes_and_adopt_remote(
     force_adopt_remote_migrated_layout(repo_path, branch_name, remote_tracking_ref)
 }
 
-pub(crate) fn repo_requires_0810_migration(repo_path: &Path) -> bool {
-    match crate::repo_layout_metadata::read_repo_layout_metadata(repo_path) {
-        Ok(Some(metadata)) => !metadata
-            .applied_migrations
-            .iter()
-            .any(|migration| migration == MIGRATION_0810),
-        Ok(None) | Err(_) => true,
+fn applied_migration(metadata: &RepoLayoutMetadata, migration: &str) -> bool {
+    metadata
+        .applied_migrations
+        .iter()
+        .any(|applied| applied == migration)
+}
+
+fn unreadable_repo_metadata_error(detail: &str) -> String {
+    format!(
+        "This repo's metadata file ({REPO_METADATA_RELATIVE_PATH}) could not be used: {detail} \
+         Update Gnosis TMS if a newer version wrote this repo; otherwise restore the file before syncing."
+    )
+}
+
+/// Whether the 0.8.10 layout migration still pends. Missing metadata means a
+/// legacy repo (migrate); unreadable metadata means data this app version must
+/// not touch, so it surfaces as an error instead of a migration.
+pub(crate) fn repo_requires_0810_migration(repo_path: &Path) -> Result<bool, String> {
+    match read_repo_layout_metadata_state(repo_path) {
+        RepoLayoutMetadataState::Readable(metadata) => {
+            Ok(!applied_migration(&metadata, MIGRATION_0810))
+        }
+        RepoLayoutMetadataState::Missing => Ok(true),
+        RepoLayoutMetadataState::Unreadable(detail) => Err(unreadable_repo_metadata_error(&detail)),
     }
 }
 
-pub(crate) fn head_requires_0810_migration(repo_path: &Path) -> bool {
+pub(crate) fn head_requires_0810_migration(repo_path: &Path) -> Result<bool, String> {
     ref_requires_0810_migration(repo_path, "HEAD")
 }
 
-pub(crate) fn ref_requires_0810_migration(repo_path: &Path, git_ref: &str) -> bool {
+pub(crate) fn ref_requires_0810_migration(repo_path: &Path, git_ref: &str) -> Result<bool, String> {
     match git_blob_bytes(
         repo_path,
         &format!("{git_ref}:{REPO_METADATA_RELATIVE_PATH}"),
     ) {
         Ok(bytes) => match parse_repo_layout_metadata_bytes(&bytes) {
-            Ok(metadata) => !metadata
-                .applied_migrations
-                .iter()
-                .any(|migration| migration == MIGRATION_0810),
-            Err(_) => true,
+            Ok(metadata) => Ok(!applied_migration(&metadata, MIGRATION_0810)),
+            Err(detail) => Err(unreadable_repo_metadata_error(&detail)),
         },
-        Err(_) => true,
+        // The ref has no metadata blob — a pre-0.8.10 layout.
+        Err(_) => Ok(true),
     }
 }
 
@@ -890,14 +912,15 @@ fn commit_migration_if_dirty(
 /// True when the repo's metadata exists but the 0.8.56 chapter-settings
 /// normalization has not been recorded. Repos without metadata still need the
 /// 0.8.10 layout migration, which runs first in the same sync and writes the
-/// metadata this check reads.
-pub(crate) fn repo_requires_0856_migration(repo_path: &Path) -> bool {
-    match read_repo_layout_metadata(repo_path) {
-        Ok(Some(metadata)) => !metadata
-            .applied_migrations
-            .iter()
-            .any(|migration| migration == MIGRATION_0856),
-        Ok(None) | Err(_) => false,
+/// metadata this check reads. Unreadable metadata surfaces as an error, never
+/// as a migration.
+pub(crate) fn repo_requires_0856_migration(repo_path: &Path) -> Result<bool, String> {
+    match read_repo_layout_metadata_state(repo_path) {
+        RepoLayoutMetadataState::Readable(metadata) => {
+            Ok(!applied_migration(&metadata, MIGRATION_0856))
+        }
+        RepoLayoutMetadataState::Missing => Ok(false),
+        RepoLayoutMetadataState::Unreadable(detail) => Err(unreadable_repo_metadata_error(&detail)),
     }
 }
 
@@ -937,9 +960,12 @@ pub(crate) fn migrate_project_repo_to_0856(
         }
     }
 
-    let mut metadata = match read_repo_layout_metadata(repo_path)? {
-        Some(metadata) => metadata,
-        None => new_v2_repo_layout_metadata(RepoKind::Project),
+    let mut metadata = match read_repo_layout_metadata_state(repo_path) {
+        RepoLayoutMetadataState::Readable(metadata) => metadata,
+        RepoLayoutMetadataState::Missing => new_v2_repo_layout_metadata(RepoKind::Project),
+        RepoLayoutMetadataState::Unreadable(detail) => {
+            return Err(unreadable_repo_metadata_error(&detail));
+        }
     };
     if !metadata
         .applied_migrations
@@ -1199,6 +1225,72 @@ mod tests {
             "chapters/short-folder/images/photo.png"
         );
         assert_eq!(value["unknownFutureField"], true);
+    }
+
+    #[test]
+    fn missing_metadata_pends_0810_but_not_0856() {
+        let repo_path = temp_repo("missing-metadata-checks");
+
+        assert_eq!(repo_requires_0810_migration(&repo_path), Ok(true));
+        // 0.8.10 runs first in the same sync and writes the metadata the
+        // 0.8.56 check reads, so a missing file does not pend 0.8.56 directly.
+        assert_eq!(repo_requires_0856_migration(&repo_path), Ok(false));
+
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn unreadable_metadata_errors_instead_of_migrating() {
+        let repo_path = temp_repo("unreadable-metadata-checks");
+        let metadata_path = repo_path.join(REPO_METADATA_RELATIVE_PATH);
+        fs::create_dir_all(metadata_path.parent().expect("metadata parent"))
+            .expect("create metadata folder");
+        // A future app bumping the schema version must produce an error — an
+        // older client treating this as "needs the 0.8.10 layout rewrite"
+        // would rename folders in data it cannot read.
+        fs::write(
+            &metadata_path,
+            br#"{"schemaVersion":2,"repoKind":"project","storageLayoutVersion":3}"#,
+        )
+        .expect("write future metadata");
+
+        let error_0810 = repo_requires_0810_migration(&repo_path)
+            .expect_err("unreadable metadata must not schedule the layout migration");
+        assert!(error_0810.contains(".gtms/repo.json"));
+        let error_0856 = repo_requires_0856_migration(&repo_path)
+            .expect_err("unreadable metadata must not schedule the settings migration");
+        assert!(error_0856.contains("Update Gnosis TMS"));
+
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn unreadable_remote_metadata_blocks_adoption_paths() {
+        let repo_path = temp_repo("unreadable-remote-metadata");
+        let metadata_path = repo_path.join(REPO_METADATA_RELATIVE_PATH);
+        fs::create_dir_all(metadata_path.parent().expect("metadata parent"))
+            .expect("create metadata folder");
+        fs::write(
+            &metadata_path,
+            br#"{"schemaVersion":2,"repoKind":"project","storageLayoutVersion":3}"#,
+        )
+        .expect("write future metadata");
+        run_git(&repo_path, &["add", REPO_METADATA_RELATIVE_PATH]);
+        run_git(&repo_path, &["commit", "-m", "Future metadata"]);
+        let head = git_stdout(&repo_path, &["rev-parse", "HEAD"]);
+        run_git(
+            &repo_path,
+            &["update-ref", "refs/remotes/origin/main", &head],
+        );
+
+        // Discarding local changes to adopt an unreadable remote would hand
+        // the checkout to a layout this app cannot verify — it must error.
+        let error =
+            discard_local_old_layout_changes_and_adopt_remote(&repo_path, "main", "origin/main")
+                .expect_err("unreadable remote metadata must block adoption");
+        assert!(error.contains(".gtms/repo.json"));
+
+        let _ = fs::remove_dir_all(repo_path);
     }
 
     #[test]

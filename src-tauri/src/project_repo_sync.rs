@@ -969,7 +969,19 @@ fn inspect_project_repo_state(
         };
     };
 
-    if repo_requires_0810_migration(repo_path) {
+    let pending_0810 = match repo_requires_0810_migration(repo_path) {
+        Ok(pending) => pending,
+        Err(error) => {
+            return ProjectRepoSyncSnapshot {
+                local_head_oid,
+                remote_head_oid,
+                status: PROJECT_REPO_SYNC_STATUS_SYNC_ERROR.to_string(),
+                message: Some(error),
+                ..default_snapshot()
+            };
+        }
+    };
+    if pending_0810 {
         return ProjectRepoSyncSnapshot {
             local_head_oid,
             remote_head_oid,
@@ -982,7 +994,19 @@ fn inspect_project_repo_state(
     // The 0.8.56 migration runs inside sync_project_repo, but the reconcile loop only
     // spawns a sync when this snapshot needs transport — a head-equal repo would
     // otherwise read upToDate and never migrate.
-    if crate::repo_migrations::repo_requires_0856_migration(repo_path) {
+    let pending_0856 = match crate::repo_migrations::repo_requires_0856_migration(repo_path) {
+        Ok(pending) => pending,
+        Err(error) => {
+            return ProjectRepoSyncSnapshot {
+                local_head_oid,
+                remote_head_oid,
+                status: PROJECT_REPO_SYNC_STATUS_SYNC_ERROR.to_string(),
+                message: Some(error),
+                ..default_snapshot()
+            };
+        }
+    };
+    if pending_0856 {
         return ProjectRepoSyncSnapshot {
             local_head_oid,
             remote_head_oid,
@@ -1062,7 +1086,7 @@ pub(crate) fn sync_project_repo(
         .unwrap_or("main");
     let git_transport_auth = GitTransportAuth::from_token(git_transport_token)?;
     enforce_remote_project_app_version(repo_path, project, branch_name, &git_transport_auth)?;
-    if repo_requires_0810_migration(repo_path) {
+    if repo_requires_0810_migration(repo_path)? {
         sync_pending_repo_layout_migration(
             app,
             repo_path,
@@ -1071,7 +1095,7 @@ pub(crate) fn sync_project_repo(
             remote_head_oid,
         )?;
     }
-    if crate::repo_migrations::repo_requires_0856_migration(repo_path) {
+    if crate::repo_migrations::repo_requires_0856_migration(repo_path)? {
         crate::repo_migrations::migrate_project_repo_to_0856(app, repo_path)?;
     }
     backup_dirty_project_worktree(repo_path, branch_name)?;
@@ -1564,9 +1588,11 @@ fn discard_old_layout_gtms_project_repos_sync(
             Some(&project.project_id),
             &project.repo_name,
         )?;
+        // Skip only repos that verifiably finished the layout migration —
+        // unreadable metadata is one of the states this discard heals.
         if !repo_path.exists()
             || git_output(&repo_path, &["rev-parse", "--git-dir"], None).is_err()
-            || !repo_requires_0810_migration(&repo_path)
+            || matches!(repo_requires_0810_migration(&repo_path), Ok(false))
         {
             skipped_project_ids.push(project.project_id.clone());
             continue;
@@ -1897,7 +1923,7 @@ fn populate_cloned_project_repo(
     let branch_name = project_branch_name(project);
     enforce_remote_project_app_version(target_path, project, &branch_name, &git_transport_auth)?;
 
-    if !remote_head_oid.trim().is_empty() && head_requires_0810_migration(target_path) {
+    if !remote_head_oid.trim().is_empty() && head_requires_0810_migration(target_path)? {
         migrate_no_checkout_project_repo_to_0810(app, target_path)?;
         if !remote_head_oid.trim().is_empty() {
             git_output(

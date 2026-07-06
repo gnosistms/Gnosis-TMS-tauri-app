@@ -389,9 +389,11 @@ pub(crate) fn discard_old_layout_repos(
             resource.resource_id.as_deref(),
             &resource.repo_name,
         )?;
+        // Skip only repos that verifiably finished the layout migration —
+        // unreadable metadata is one of the states this discard heals.
         if !repo_path.exists()
             || git_output(&repo_path, &["rev-parse", "--git-dir"], None).is_err()
-            || !repo_requires_0810_migration(&repo_path)
+            || matches!(repo_requires_0810_migration(&repo_path), Ok(false))
         {
             skipped_repo_names.push(resource.repo_name.clone());
             continue;
@@ -610,10 +612,18 @@ pub(crate) fn inspect_repo_state(
     } else {
         REPO_SYNC_STATUS_OUT_OF_SYNC
     };
-    let status = if repo_requires_0810_migration(repo_path) {
-        REPO_SYNC_STATUS_OUT_OF_SYNC
-    } else {
-        status
+    let status = match repo_requires_0810_migration(repo_path) {
+        Ok(true) => REPO_SYNC_STATUS_OUT_OF_SYNC,
+        Ok(false) => status,
+        Err(error) => {
+            return RepoSyncSnapshot {
+                local_head_oid,
+                remote_head_oid,
+                status: REPO_SYNC_STATUS_SYNC_ERROR.to_string(),
+                message: Some(error),
+                ..default_snapshot()
+            };
+        }
     };
 
     RepoSyncSnapshot {
@@ -786,7 +796,7 @@ fn sync_repo(
         branch_name,
         &git_transport_auth,
     )?;
-    if repo_requires_0810_migration(repo_path) {
+    if repo_requires_0810_migration(repo_path)? {
         sync_pending_repo_layout_migration(
             app,
             repo_path,
@@ -908,7 +918,7 @@ fn clone_repo(
         branch_name,
         &git_transport_auth,
     )?;
-    if repo_requires_0810_migration(repo_path) {
+    if repo_requires_0810_migration(repo_path)? {
         sync_pending_repo_layout_migration(
             app,
             repo_path,

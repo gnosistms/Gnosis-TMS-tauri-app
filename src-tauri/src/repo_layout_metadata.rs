@@ -71,20 +71,36 @@ pub(crate) fn repo_metadata_path(repo_path: &Path) -> std::path::PathBuf {
     repo_path.join(REPO_METADATA_RELATIVE_PATH)
 }
 
-pub(crate) fn read_repo_layout_metadata(
-    repo_path: &Path,
-) -> Result<Option<RepoLayoutMetadata>, String> {
+/// The three states a repo's `.gtms/repo.json` can be in. `Missing` and
+/// `Unreadable` mean very different things — a missing file is a legacy repo
+/// that needs the 0.8.10 layout migration, while an unreadable file (corrupt,
+/// or written by a future app with a newer schema) describes data this app
+/// version must not touch. Callers must surface `Unreadable` as an error,
+/// never treat it as "needs migration".
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum RepoLayoutMetadataState {
+    Missing,
+    Readable(RepoLayoutMetadata),
+    Unreadable(String),
+}
+
+pub(crate) fn read_repo_layout_metadata_state(repo_path: &Path) -> RepoLayoutMetadataState {
     let metadata_path = repo_metadata_path(repo_path);
     if !metadata_path.exists() {
-        return Ok(None);
+        return RepoLayoutMetadataState::Missing;
     }
-    parse_repo_layout_metadata_bytes(&fs::read(&metadata_path).map_err(|error| {
-        format!(
-            "Could not read repo layout metadata '{}': {error}",
-            metadata_path.display()
-        )
-    })?)
-    .map(Some)
+    let bytes = match fs::read(&metadata_path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            return RepoLayoutMetadataState::Unreadable(format!(
+                "Could not read the repo metadata file: {error}"
+            ));
+        }
+    };
+    match parse_repo_layout_metadata_bytes(&bytes) {
+        Ok(metadata) => RepoLayoutMetadataState::Readable(metadata),
+        Err(error) => RepoLayoutMetadataState::Unreadable(error),
+    }
 }
 
 pub(crate) fn write_repo_layout_metadata(
@@ -200,5 +216,42 @@ mod tests {
         )
         .expect_err("invalid kind should fail");
         assert!(error.contains("Unsupported repo kind"));
+    }
+
+    #[test]
+    fn metadata_state_distinguishes_missing_readable_and_unreadable() {
+        let repo_path = std::env::temp_dir().join(format!(
+            "gnosis-tms-metadata-state-{}",
+            uuid::Uuid::now_v7()
+        ));
+        fs::create_dir_all(&repo_path).expect("create temp repo folder");
+
+        assert_eq!(
+            read_repo_layout_metadata_state(&repo_path),
+            RepoLayoutMetadataState::Missing
+        );
+
+        let metadata = new_v2_repo_layout_metadata(RepoKind::Project);
+        write_repo_layout_metadata(&repo_path, &metadata).expect("write metadata");
+        assert_eq!(
+            read_repo_layout_metadata_state(&repo_path),
+            RepoLayoutMetadataState::Readable(metadata)
+        );
+
+        // A future app writing schema version 2 must read as Unreadable — the
+        // migration checks turn that into a sync error instead of migrating.
+        fs::write(
+            repo_metadata_path(&repo_path),
+            br#"{"schemaVersion":2,"repoKind":"project","storageLayoutVersion":3}"#,
+        )
+        .expect("write future metadata");
+        match read_repo_layout_metadata_state(&repo_path) {
+            RepoLayoutMetadataState::Unreadable(detail) => {
+                assert!(detail.contains("schema version 2"));
+            }
+            other => panic!("expected Unreadable, got {other:?}"),
+        }
+
+        let _ = fs::remove_dir_all(repo_path);
     }
 }
