@@ -1,3 +1,4 @@
+use super::shared::{chapter_linked_glossaries_object_mut, chapter_settings_object_mut};
 use super::*;
 use crate::project_repo_sync::{sync_gtms_project_editor_repo_sync, ProjectEditorRepoSyncInput};
 
@@ -50,15 +51,7 @@ pub(crate) fn update_gtms_chapter_language_selection_sync(
         ));
     }
 
-    let chapter_object = chapter_value
-        .as_object_mut()
-        .ok_or_else(|| "The chapter.json file is not a JSON object.".to_string())?;
-    let settings_value = chapter_object
-        .entry("settings".to_string())
-        .or_insert_with(|| json!({}));
-    let settings_object = settings_value
-        .as_object_mut()
-        .ok_or_else(|| "The chapter settings are not a JSON object.".to_string())?;
+    let settings_object = chapter_settings_object_mut(&mut chapter_value)?;
 
     let source_changed = settings_object
         .get("default_source_language")
@@ -233,15 +226,7 @@ pub(crate) fn update_gtms_chapter_languages_sync(
     );
 
     let (previous_source_language_code, previous_target_language_code) = {
-        let chapter_object = chapter_value
-            .as_object_mut()
-            .ok_or_else(|| "The chapter.json file is not a JSON object.".to_string())?;
-        let settings_value = chapter_object
-            .entry("settings".to_string())
-            .or_insert_with(|| json!({}));
-        let settings_object = settings_value
-            .as_object_mut()
-            .ok_or_else(|| "The chapter settings are not a JSON object.".to_string())?;
+        let settings_object = chapter_settings_object_mut(&mut chapter_value)?;
         let previous_source_language_code = settings_object
             .get("default_source_language")
             .and_then(Value::as_str)
@@ -362,21 +347,7 @@ pub(crate) fn update_gtms_chapter_glossary_links_sync(
         .unwrap_or("file")
         .to_string();
 
-    let chapter_object = chapter_value
-        .as_object_mut()
-        .ok_or_else(|| "The chapter.json file is not a JSON object.".to_string())?;
-    let settings_value = chapter_object
-        .entry("settings".to_string())
-        .or_insert_with(|| json!({}));
-    let settings_object = settings_value
-        .as_object_mut()
-        .ok_or_else(|| "The chapter settings are not a JSON object.".to_string())?;
-    let linked_glossaries_value = settings_object
-        .entry("linked_glossaries".to_string())
-        .or_insert_with(|| json!({}));
-    let linked_glossaries_object = linked_glossaries_value
-        .as_object_mut()
-        .ok_or_else(|| "The chapter linked glossaries are not a JSON object.".to_string())?;
+    let linked_glossaries_object = chapter_linked_glossaries_object_mut(&mut chapter_value)?;
 
     let glossary_value = glossary_link_value_from_input(input.glossary.as_ref());
     let glossary_changed = linked_glossaries_object.get("glossary") != Some(&glossary_value);
@@ -424,15 +395,7 @@ pub(crate) fn update_gtms_chapter_workflow_status_sync(
         .unwrap_or("file")
         .to_string();
 
-    let chapter_object = chapter_value
-        .as_object_mut()
-        .ok_or_else(|| "The chapter.json file is not a JSON object.".to_string())?;
-    let settings_value = chapter_object
-        .entry("settings".to_string())
-        .or_insert_with(|| json!({}));
-    let settings_object = settings_value
-        .as_object_mut()
-        .ok_or_else(|| "The chapter settings are not a JSON object.".to_string())?;
+    let settings_object = chapter_settings_object_mut(&mut chapter_value)?;
 
     let next_value = Value::String(workflow_status.clone());
     let status_changed = settings_object.get("workflow_status") != Some(&next_value);
