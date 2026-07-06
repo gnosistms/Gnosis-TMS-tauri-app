@@ -25,6 +25,8 @@ pub(crate) enum RepoMigrationKind {
     Content,
 }
 
+type RepoMigrationRunFn = fn(&AppHandle, &Path) -> Result<(), String>;
+
 /// One entry in the ordered migration registry. Adding a migration means
 /// adding a descriptor here plus its run function — every dispatch site
 /// (sync, clone, status snapshots, the modal scan) derives its behavior from
@@ -38,7 +40,7 @@ pub(crate) struct RepoMigrationDescriptor {
     pub(crate) pending_description: &'static str,
     /// Inline entry point for content migrations; layout migrations use the
     /// bespoke orchestration instead.
-    run_content: Option<fn(&AppHandle, &Path) -> Result<(), String>>,
+    run_content: Option<RepoMigrationRunFn>,
 }
 
 const REPO_MIGRATION_REGISTRY: &[RepoMigrationDescriptor] = &[
