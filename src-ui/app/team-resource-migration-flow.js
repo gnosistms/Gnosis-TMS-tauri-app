@@ -30,34 +30,54 @@ import {
 } from "./team-cache.js";
 import { invalidateInstallationResourcesForTeam } from "./installation-resources-query.js";
 
+// Fallback when the backend target-version lookup is unavailable (e.g. unit
+// tests without a Tauri runtime). The authoritative value comes from the
+// team_repo_migration_target_version command, so a future layout migration
+// invalidates stored clean verdicts without a lockstep constant bump here.
 export const TEAM_REPO_LAYOUT_MIGRATION_TARGET_VERSION = "0.8.10";
 
 const MIGRATION_VERDICT_STORAGE_KEY = "gnosis-tms-team-migration-clean-verdict";
 
 const activeTeamMigrationPromises = new Map();
 let nextMigrationModalToken = 1;
+let cachedMigrationTargetVersionPromise = null;
+
+function migrationTargetVersion() {
+  if (!invoke) {
+    return Promise.resolve(TEAM_REPO_LAYOUT_MIGRATION_TARGET_VERSION);
+  }
+  if (!cachedMigrationTargetVersionPromise) {
+    cachedMigrationTargetVersionPromise = invoke("team_repo_migration_target_version")
+      .then((version) => normalizedText(version) || TEAM_REPO_LAYOUT_MIGRATION_TARGET_VERSION)
+      .catch(() => {
+        cachedMigrationTargetVersionPromise = null;
+        return TEAM_REPO_LAYOUT_MIGRATION_TARGET_VERSION;
+      });
+  }
+  return cachedMigrationTargetVersionPromise;
+}
 
 // The migration scan re-lists every resource from the broker, which is far too slow to
 // repeat on every refresh. Once a team scans clean for the current target version the
 // verdict is persisted and the scan skipped; a new target version (an app update that
 // introduces another migration) uses a different key and triggers a fresh scan.
-function hasStoredCleanMigrationVerdict(team) {
+function hasStoredCleanMigrationVerdict(team, targetVersion) {
   const cacheKey = teamCacheKey(team);
   if (!cacheKey) {
     return false;
   }
   const verdicts = loadTeamScopedCacheMap(MIGRATION_VERDICT_STORAGE_KEY);
-  return verdicts[cacheKey]?.targetVersion === TEAM_REPO_LAYOUT_MIGRATION_TARGET_VERSION;
+  return verdicts[cacheKey]?.targetVersion === targetVersion;
 }
 
-function storeCleanMigrationVerdict(team) {
+function storeCleanMigrationVerdict(team, targetVersion) {
   const cacheKey = teamCacheKey(team);
   if (!cacheKey) {
     return;
   }
   const verdicts = loadTeamScopedCacheMap(MIGRATION_VERDICT_STORAGE_KEY);
   verdicts[cacheKey] = {
-    targetVersion: TEAM_REPO_LAYOUT_MIGRATION_TARGET_VERSION,
+    targetVersion,
     completedAt: new Date().toISOString(),
   };
   saveTeamScopedCacheMap(MIGRATION_VERDICT_STORAGE_KEY, verdicts);
@@ -323,11 +343,11 @@ async function migratePendingProjects(render, team, resources, pending, token) {
       render,
       `Migrating projects: ${title}`,
     );
-    await setModalMessage(token, render, `Syncronizing with remote repo on GitHub: ${repoName}`);
+    await setModalMessage(token, render, `Synchronizing with remote repo on GitHub: ${repoName}`);
     await reconcileProjectRepoSyncStates(render, team, [project], {
       clearStatusOnComplete: false,
       onSnapshots: () => {
-        updateMigrationModal(token, `Syncronizing with remote repo on GitHub: ${repoName}`);
+        updateMigrationModal(token, `Synchronizing with remote repo on GitHub: ${repoName}`);
       },
     });
   }
@@ -346,7 +366,7 @@ async function migratePendingGlossaries(render, team, resources, pending, token)
       render,
       `Migrating glossaries: ${title}`,
     );
-    await setModalMessage(token, render, `Syncronizing with remote repo on GitHub: ${repoName}`);
+    await setModalMessage(token, render, `Synchronizing with remote repo on GitHub: ${repoName}`);
     await syncGlossaryReposForTeam(team, [glossary]);
   }
 }
@@ -364,7 +384,7 @@ async function migratePendingQaLists(render, team, resources, pending, token) {
       render,
       `Migrating QA lists: ${title}`,
     );
-    await setModalMessage(token, render, `Syncronizing with remote repo on GitHub: ${repoName}`);
+    await setModalMessage(token, render, `Synchronizing with remote repo on GitHub: ${repoName}`);
     await syncQaListReposForTeam(team, [qaList]);
   }
 }
@@ -378,7 +398,8 @@ async function runTeamResourceMigrationSyncInternal(render, team, options = {}) 
     return false;
   }
 
-  if (hasStoredCleanMigrationVerdict(team)) {
+  const targetVersion = await migrationTargetVersion();
+  if (hasStoredCleanMigrationVerdict(team, targetVersion)) {
     return false;
   }
 
@@ -396,7 +417,10 @@ async function runTeamResourceMigrationSyncInternal(render, team, options = {}) 
     ? pendingScan.migrations.filter(isActionableMigrationItem)
     : [];
   if (!Array.isArray(pending) || pending.length === 0) {
-    storeCleanMigrationVerdict(team);
+    storeCleanMigrationVerdict(
+      team,
+      normalizedText(pendingScan?.targetVersion) || targetVersion,
+    );
     return false;
   }
 
@@ -418,7 +442,10 @@ async function runTeamResourceMigrationSyncInternal(render, team, options = {}) 
         ? currentPendingScan.migrations.filter(isActionableMigrationItem)
         : [];
       if (currentPending.length === 0) {
-        storeCleanMigrationVerdict(team);
+        storeCleanMigrationVerdict(
+          team,
+          normalizedText(currentPendingScan?.targetVersion) || targetVersion,
+        );
         return true;
       }
 

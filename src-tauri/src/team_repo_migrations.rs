@@ -210,6 +210,14 @@ fn list_pending_team_repo_layout_migrations_sync(
     Ok(pending)
 }
 
+/// The version the frontend's clean-verdict cache keys on. Served from the
+/// backend registry so a future layout migration invalidates stored verdicts
+/// without a lockstep constant bump in JS.
+#[tauri::command]
+pub(crate) fn team_repo_migration_target_version() -> String {
+    latest_layout_migration_id().to_string()
+}
+
 #[tauri::command]
 pub(crate) async fn list_pending_team_repo_layout_migrations(
     app: AppHandle,
