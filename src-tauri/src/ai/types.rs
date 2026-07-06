@@ -191,6 +191,24 @@ pub struct AiTranslatedGlossaryPreparationResponse {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct AiTranslatedGlossaryBatchPreparationRequest {
+    pub provider_id: AiProviderId,
+    pub model_id: String,
+    #[serde(default)]
+    pub translation_source_texts: Vec<String>,
+    pub translation_source_language: String,
+    pub glossary_source_language: String,
+    pub target_language: String,
+    #[serde(default)]
+    pub glossary_source_text: String,
+    #[serde(default)]
+    pub glossary_terms: Vec<AiTranslatedGlossaryTermInput>,
+    #[serde(default)]
+    pub installation_id: Option<i64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct AiTranslationRequest {
     pub provider_id: AiProviderId,
     pub model_id: String,

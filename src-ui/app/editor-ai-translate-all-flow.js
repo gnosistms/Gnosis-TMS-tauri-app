@@ -24,6 +24,11 @@ import {
   estimateSourceTokens,
 } from "./editor-ai-batch-request.js";
 import { buildBatchSourceContext } from "./editor-ai-context-window.js";
+import { buildEditorDerivedGlossaryModel } from "./editor-glossary-highlighting.js";
+import {
+  buildDerivedGlossaryTermInputs,
+  resolveLanguageLabel,
+} from "./editor-derived-glossary-flow.js";
 import { openAiMissingKeyModal } from "./ai-settings-flow.js";
 import { selectedProjectsTeamInstallationId } from "./project-context.js";
 import { invoke } from "./runtime.js";
@@ -349,7 +354,7 @@ function glossaryUsageKindForPair(chapterState, sourceLanguageCode, targetLangua
   return "derived";
 }
 
-function buildTranslateBatchRequest(chapterState, items, glossaryKind, providerId, modelId) {
+function buildTranslateBatchRequest(chapterState, items, glossaryHints, providerId, modelId) {
   const sourceLanguageCode = items[0].sourceLanguageCode;
   const targetLanguageCode = items[0].targetLanguageCode;
   const languages = Array.isArray(chapterState?.languages) ? chapterState.languages : [];
@@ -374,15 +379,6 @@ function buildTranslateBatchRequest(chapterState, items, glossaryKind, providerI
     };
   });
 
-  const glossaryHints = glossaryKind === "direct"
-    ? buildBatchGlossaryHints(
-      rows.map((row) => row.sourceText),
-      languageBaseCode(sourceLanguage),
-      languageBaseCode(targetLanguage),
-      chapterState?.glossary?.matcherModel ?? null,
-    )
-    : [];
-
   const { contextBefore, contextAfter } = buildBatchSourceContext(
     chapterState,
     items[0].rowId,
@@ -399,12 +395,64 @@ function buildTranslateBatchRequest(chapterState, items, glossaryKind, providerI
     targetLanguage: languageSemanticLabel(targetLanguage) || targetLanguageCode,
     sourceLanguageCode,
     targetLanguageCode,
-    glossaryHints,
+    glossaryHints: Array.isArray(glossaryHints) ? glossaryHints : [],
     contextBefore,
     contextAfter,
     rows,
   };
   return installationId === null ? request : { ...request, installationId };
+}
+
+// Derives one glossary for the whole batch by pivot-translating the combined
+// batch source, matching, and aligning once — returning a derived matcher model,
+// or null when there is no usable derived glossary (so the caller can fall back).
+async function prepareBatchDerivedGlossaryModel({
+  chapterState,
+  sourceLanguage,
+  targetLanguage,
+  sourceTexts,
+  providerId,
+  modelId,
+  prepareBatch,
+}) {
+  const glossaryState = chapterState?.glossary ?? null;
+  const glossaryModel = glossaryState?.matcherModel ?? null;
+  const glossaryTerms = buildDerivedGlossaryTermInputs(glossaryState);
+  if (glossaryTerms.length === 0) {
+    return null;
+  }
+  const glossarySourceLanguageCode = resolveLanguageCode(
+    glossaryState?.sourceLanguage ?? glossaryModel?.sourceLanguage,
+  );
+
+  const payload = await prepareBatch({
+    providerId,
+    modelId,
+    translationSourceTexts: sourceTexts,
+    translationSourceLanguage: languageSemanticLabel(sourceLanguage) || sourceLanguage?.code || "",
+    glossarySourceLanguage: resolveLanguageLabel(
+      glossaryState?.sourceLanguage ?? glossaryModel?.sourceLanguage,
+      glossarySourceLanguageCode,
+    ),
+    targetLanguage: languageSemanticLabel(targetLanguage) || targetLanguage?.code || "",
+    glossaryTerms,
+    ...(selectedProjectsTeamInstallationId() === null
+      ? {}
+      : { installationId: selectedProjectsTeamInstallationId() }),
+  });
+
+  const entries = Array.isArray(payload?.entries) ? payload.entries : [];
+  if (entries.length === 0) {
+    return null;
+  }
+  return buildEditorDerivedGlossaryModel({
+    sourceLanguage,
+    targetLanguage,
+    entries,
+    glossaryId: glossaryState?.glossaryId ?? null,
+    repoName: glossaryState?.repoName ?? "",
+    title: glossaryState?.title ?? "",
+  });
 }
 
 export async function confirmEditorAiTranslateAll(render, operations = {}) {
@@ -622,10 +670,69 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
       return "ok";
     }
 
+    const runSingleRowFallback = async () => {
+      for (const item of liveItems) {
+        const outcome = await translateSingleItem(item);
+        if (outcome === "abort" || outcome === "run-error") {
+          return outcome;
+        }
+      }
+      return "ok";
+    };
+
+    const sourceLanguageCode = liveItems[0].sourceLanguageCode;
+    const targetLanguageCode = liveItems[0].targetLanguageCode;
+    const languages = Array.isArray(chapterState?.languages) ? chapterState.languages : [];
+    const sourceLanguage = languages.find((language) => language?.code === sourceLanguageCode) ?? null;
+    const targetLanguage = languages.find((language) => language?.code === targetLanguageCode) ?? null;
+    const sourceTexts = liveItems.map((item) =>
+      readRowFieldText(findEditorRowById(item.rowId, chapterState), sourceLanguageCode),
+    );
+
+    let glossaryHints = [];
+    if (batch.glossaryKind === "direct") {
+      glossaryHints = buildBatchGlossaryHints(
+        sourceTexts,
+        languageBaseCode(sourceLanguage),
+        languageBaseCode(targetLanguage),
+        chapterState?.glossary?.matcherModel ?? null,
+      );
+    } else if (batch.glossaryKind === "derived") {
+      const prepareBatch =
+        typeof operations.prepareEditorAiTranslatedGlossaryBatch === "function"
+          ? operations.prepareEditorAiTranslatedGlossaryBatch
+          : (batchRequest) => invoke("prepare_editor_ai_translated_glossary_batch", { request: batchRequest });
+      let derivedModel = null;
+      try {
+        derivedModel = await prepareBatchDerivedGlossaryModel({
+          chapterState,
+          sourceLanguage,
+          targetLanguage,
+          sourceTexts,
+          providerId: provider.providerId,
+          modelId: provider.modelId,
+          prepareBatch,
+        });
+      } catch {
+        // Batch derivation failed — fall back to the single-row path, which
+        // derives each row's glossary on its own.
+        if (!isRunActive()) {
+          return "abort";
+        }
+        return runSingleRowFallback();
+      }
+      if (!isRunActive()) {
+        return "abort";
+      }
+      glossaryHints = derivedModel
+        ? buildBatchGlossaryHints(sourceTexts, sourceLanguageCode, targetLanguageCode, derivedModel)
+        : [];
+    }
+
     const request = buildTranslateBatchRequest(
       chapterState,
       liveItems,
-      batch.glossaryKind,
+      glossaryHints,
       provider.providerId,
       provider.modelId,
     );
@@ -642,13 +749,7 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
       if (!isRunActive()) {
         return "abort";
       }
-      for (const item of liveItems) {
-        const outcome = await translateSingleItem(item);
-        if (outcome === "abort" || outcome === "run-error") {
-          return outcome;
-        }
-      }
-      return "ok";
+      return runSingleRowFallback();
     }
     if (!isRunActive()) {
       return "abort";
@@ -701,9 +802,11 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
       return;
     }
 
-    // Single-item, derived-glossary, or non-applyable batches use the proven
-    // single-row path (which owns its own provider/key/glossary handling).
-    if (batch.glossaryKind === "derived" || batch.items.length === 1 || !canApplyBatchLocally) {
+    // Single-item or non-applyable batches use the proven single-row path (which
+    // owns its own provider/key/glossary handling). Derived-glossary batches with
+    // more than one row go through translateBatch, which derives the pivot
+    // glossary once for the whole batch.
+    if (batch.items.length === 1 || !canApplyBatchLocally) {
       for (const item of batch.items) {
         const outcome = await translateSingleItem(item);
         if (outcome === "abort" || outcome === "run-error") {

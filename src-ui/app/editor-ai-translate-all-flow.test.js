@@ -477,6 +477,64 @@ test("AI Translate All falls back to single-row for the whole batch when the req
   );
 });
 
+test("AI Translate All derives the glossary once for a derived-glossary batch", async () => {
+  resetSessionState();
+  editorAiTranslateAllTestApi.resetActiveBatchRunId();
+  // Glossary source language (en) differs from the chapter source (es) => derived.
+  state.editorChapter = {
+    ...batchChapter(),
+    glossary: {
+      sourceLanguage: { code: "en" },
+      targetLanguage: { code: "vi" },
+      glossaryId: "g1",
+      repoName: "repo",
+      title: "Glossary",
+      matcherModel: {},
+      terms: [
+        {
+          lifecycleState: "active",
+          sourceTerms: ["hola"],
+          targetTerms: ["xin chao"],
+        },
+      ],
+    },
+  };
+
+  const prepareCalls = [];
+  const batchCalls = [];
+
+  await confirmEditorAiTranslateAll(
+    () => {},
+    batchOperations({
+      prepareEditorAiTranslatedGlossaryBatch: async (request) => {
+        prepareCalls.push(request);
+        return { glossarySourceText: "combined", entries: [] };
+      },
+      runAiTranslationBatch: async (request) => {
+        batchCalls.push(request);
+        return {
+          rows: request.rows.map((row) => ({
+            rowId: row.rowId,
+            translatedText: `vi:${row.sourceText}`,
+          })),
+          promptText: "P",
+        };
+      },
+    }),
+  );
+
+  // One batch-wide derivation call carrying every row's source text, not one per row.
+  assert.equal(prepareCalls.length, 1);
+  assert.deepEqual(prepareCalls[0].translationSourceTexts, ["Hola", "Adios", "Gracias"]);
+  // Still a single batch translation call for the whole batch.
+  assert.equal(batchCalls.length, 1);
+  assert.equal(batchCalls[0].rows.length, 3);
+  assert.deepEqual(
+    state.editorChapter.rows.map((row) => row.fields.vi),
+    ["vi:Hola", "vi:Adios", "vi:Gracias"],
+  );
+});
+
 test("glossaryUsageKindForPair classifies none/direct/derived from the chapter glossary", () => {
   const noGlossary = editorAiTranslateAllTestApi.glossaryUsageKindForPair(
     { languages: [{ code: "es" }, { code: "vi" }] },

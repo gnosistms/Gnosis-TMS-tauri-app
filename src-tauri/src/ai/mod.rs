@@ -12,7 +12,8 @@ use crate::ai::types::{
     AiAssistantTurnKind, AiAssistantTurnRequest, AiAssistantTurnResponse, AiModelProbeRequest,
     AiPromptOutputFormat, AiPromptRequest, AiProviderContinuationMetadata, AiProviderId,
     AiProviderModel, AiReviewBatchRequest, AiReviewBatchResponse, AiReviewBatchRowInput,
-    AiReviewBatchRowResult, AiReviewRequest, AiReviewResponse, AiTranslatedGlossaryEntry,
+    AiReviewBatchRowResult, AiReviewRequest, AiReviewResponse,
+    AiTranslatedGlossaryBatchPreparationRequest, AiTranslatedGlossaryEntry,
     AiTranslatedGlossaryPreparationRequest, AiTranslatedGlossaryPreparationResponse,
     AiTranslatedGlossaryTermInput, AiTranslationBatchRequest, AiTranslationBatchResponse,
     AiTranslationBatchRowInput, AiTranslationBatchRowResult, AiTranslationGlossaryHint,
@@ -2162,6 +2163,42 @@ pub(crate) fn prepare_ai_translated_glossary(
         glossary_source_text,
         entries: prepared_entries,
     })
+}
+
+/// Batch-wide derived glossary preparation. Instead of pivot-translating,
+/// matching, and aligning per translation row, this concatenates the batch's
+/// source rows into one combined text and derives the glossary once over the
+/// whole span — reusing `prepare_ai_translated_glossary`. The resulting entries
+/// cover every glossary term that appears anywhere in the batch.
+pub(crate) fn prepare_ai_translated_glossary_batch(
+    app: &AppHandle,
+    request: AiTranslatedGlossaryBatchPreparationRequest,
+) -> Result<AiTranslatedGlossaryPreparationResponse, String> {
+    let combined_source_text = request
+        .translation_source_texts
+        .iter()
+        .map(|text| text.trim())
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    if combined_source_text.trim().is_empty() {
+        return Err("There is no source text to translate yet.".to_string());
+    }
+
+    prepare_ai_translated_glossary(
+        app,
+        AiTranslatedGlossaryPreparationRequest {
+            provider_id: request.provider_id,
+            model_id: request.model_id,
+            translation_source_text: combined_source_text,
+            translation_source_language: request.translation_source_language,
+            glossary_source_language: request.glossary_source_language,
+            target_language: request.target_language,
+            glossary_source_text: request.glossary_source_text,
+            glossary_terms: request.glossary_terms,
+            installation_id: request.installation_id,
+        },
+    )
 }
 
 pub(crate) fn run_ai_translation(

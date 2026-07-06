@@ -25,19 +25,19 @@ test("chunkTranslateAllWork splits when the language pair changes", () => {
   assert.equal(batches.length, 3);
 });
 
-test("chunkTranslateAllWork isolates derived-glossary items into single-item batches", () => {
+test("chunkTranslateAllWork groups consecutive derived rows and splits on kind change", () => {
   const work = [item("r0"), item("r1"), item("r2"), item("r3")];
-  const derived = new Set(["r1"]);
+  const derived = new Set(["r1", "r2"]);
   const batches = chunkTranslateAllWork(work, {
     glossaryKindForItem: (i) => (derived.has(i.rowId) ? "derived" : "direct"),
   });
-  // r0 (direct) | r1 (derived, alone) | r2,r3 (direct)
+  // r0 (direct) | r1,r2 (derived, batched together) | r3 (direct)
   assert.deepEqual(
     batches.map((b) => ({ ids: b.items.map((i) => i.rowId), kind: b.glossaryKind })),
     [
       { ids: ["r0"], kind: "direct" },
-      { ids: ["r1"], kind: "derived" },
-      { ids: ["r2", "r3"], kind: "direct" },
+      { ids: ["r1", "r2"], kind: "derived" },
+      { ids: ["r3"], kind: "direct" },
     ],
   );
 });

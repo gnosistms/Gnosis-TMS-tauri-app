@@ -52,6 +52,7 @@ use crate::{
     ai::{
         load_ai_provider_models as load_ai_provider_models_task,
         prepare_ai_translated_glossary as prepare_ai_translated_glossary_task,
+        prepare_ai_translated_glossary_batch as prepare_ai_translated_glossary_batch_task,
         probe_ai_model as probe_ai_model_task, run_ai_assistant_turn as run_ai_assistant_turn_task,
         run_ai_review as run_ai_review_task, run_ai_review_batch as run_ai_review_batch_task,
         run_ai_translation as run_ai_translation_task,
@@ -59,9 +60,10 @@ use crate::{
         types::{
             AiAssistantTurnRequest, AiAssistantTurnResponse, AiModelProbeRequest, AiProviderId,
             AiProviderModel, AiReviewBatchRequest, AiReviewBatchResponse, AiReviewRequest,
-            AiReviewResponse, AiTranslatedGlossaryPreparationRequest,
-            AiTranslatedGlossaryPreparationResponse, AiTranslationBatchRequest,
-            AiTranslationBatchResponse, AiTranslationRequest, AiTranslationResponse,
+            AiReviewResponse, AiTranslatedGlossaryBatchPreparationRequest,
+            AiTranslatedGlossaryPreparationRequest, AiTranslatedGlossaryPreparationResponse,
+            AiTranslationBatchRequest, AiTranslationBatchResponse, AiTranslationRequest,
+            AiTranslationResponse,
         },
     },
     ai_secret_storage::{
@@ -301,6 +303,18 @@ async fn prepare_editor_ai_translated_glossary(
     tauri::async_runtime::spawn_blocking(move || prepare_ai_translated_glossary_task(&app, request))
         .await
         .map_err(|error| format!("The translated glossary worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn prepare_editor_ai_translated_glossary_batch(
+    app: tauri::AppHandle,
+    request: AiTranslatedGlossaryBatchPreparationRequest,
+) -> Result<AiTranslatedGlossaryPreparationResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        prepare_ai_translated_glossary_batch_task(&app, request)
+    })
+    .await
+    .map_err(|error| format!("The translated glossary batch worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -578,6 +592,7 @@ pub fn run() {
             clear_team_ai_provider_cache,
             run_ai_review,
             prepare_editor_ai_translated_glossary,
+            prepare_editor_ai_translated_glossary_batch,
             run_ai_translation,
             run_ai_translation_batch,
             run_ai_review_batch,
