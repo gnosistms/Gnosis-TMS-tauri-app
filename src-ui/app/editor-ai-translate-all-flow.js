@@ -619,7 +619,7 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
       commitMetadata: { operation: "ai-translation", aiModel: provider.modelId },
       waitForDurable: false,
     });
-    if (state.editorChapter?.chapterId !== context.chapterId) {
+    if (!isRunActive() || state.editorChapter?.chapterId !== context.chapterId) {
       return;
     }
     operations.syncEditorGlossaryHighlightRowDom?.(item.rowId);
