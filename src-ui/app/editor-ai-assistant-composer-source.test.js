@@ -74,25 +74,22 @@ test("assistant transcript scrolls to the newest message after prompt and reply 
   );
 });
 
-test("assistant source context uses token-budget expansion", () => {
+test("assistant source context uses the shared token-budget window builder", () => {
+  const contextWindowSource = readFileSync(
+    path.join(currentDir, "editor-ai-context-window.js"),
+    "utf8",
+  );
+  // The token-budget expansion now lives in the shared context-window module.
+  assert.equal(contextWindowSource.includes("AI_CONTEXT_BEFORE_TOKEN_TARGET"), true);
+  assert.equal(contextWindowSource.includes("AI_CONTEXT_AFTER_TOKEN_TARGET"), true);
+  assert.equal(contextWindowSource.includes("estimateSourceTokens"), true);
+  // The assistant flow consumes it rather than owning its own copy.
   assert.equal(
-    editorAiAssistantFlowSource.includes("ASSISTANT_SOURCE_CONTEXT_PREVIOUS_TOKEN_TARGET = 75"),
+    editorAiAssistantFlowSource.includes("buildRowSourceContextWindow"),
     true,
   );
   assert.equal(
-    editorAiAssistantFlowSource.includes("ASSISTANT_SOURCE_CONTEXT_NEXT_TOKEN_TARGET = 25"),
-    true,
-  );
-  assert.equal(
-    editorAiAssistantFlowSource.includes("estimateAssistantContextTokens"),
-    true,
-  );
-  assert.equal(
-    editorAiAssistantFlowSource.includes("previousTokenCount < ASSISTANT_SOURCE_CONTEXT_PREVIOUS_TOKEN_TARGET"),
-    true,
-  );
-  assert.equal(
-    editorAiAssistantFlowSource.includes("nextTokenCount < ASSISTANT_SOURCE_CONTEXT_NEXT_TOKEN_TARGET"),
+    editorAiAssistantFlowSource.includes("./editor-ai-context-window.js"),
     true,
   );
 });

@@ -7,15 +7,18 @@ use std::sync::OnceLock;
 use tauri::AppHandle;
 
 use crate::ai::types::{
-    AiAssistantConcordanceHit, AiAssistantRowContext, AiAssistantRowWindowEntry,
-    AiAssistantTargetLanguageHistoryEntry, AiAssistantTranscriptEntry, AiAssistantTurnKind,
-    AiAssistantTurnRequest, AiAssistantTurnResponse, AiModelProbeRequest, AiPromptOutputFormat,
-    AiPromptRequest, AiProviderContinuationMetadata, AiProviderId, AiProviderModel,
-    AiReviewRequest, AiReviewResponse, AiTranslatedGlossaryEntry,
+    AiAssistantConcordanceHit, AiAssistantRowContext, AiAssistantRowLanguageText,
+    AiAssistantRowWindowEntry, AiAssistantTargetLanguageHistoryEntry, AiAssistantTranscriptEntry,
+    AiAssistantTurnKind, AiAssistantTurnRequest, AiAssistantTurnResponse, AiModelProbeRequest,
+    AiPromptOutputFormat, AiPromptRequest, AiProviderContinuationMetadata, AiProviderId,
+    AiProviderModel, AiReviewBatchRequest, AiReviewBatchResponse, AiReviewBatchRowInput,
+    AiReviewBatchRowResult, AiReviewRequest, AiReviewResponse,
+    AiTranslatedGlossaryBatchPreparationRequest, AiTranslatedGlossaryEntry,
     AiTranslatedGlossaryPreparationRequest, AiTranslatedGlossaryPreparationResponse,
-    AiTranslatedGlossaryTermInput, AiTranslationGlossaryHint, AiTranslationGlossaryTargetVariant,
-    AiTranslationGlossaryTargetVariantObject, AiTranslationNoTranslationHint, AiTranslationRequest,
-    AiTranslationResponse,
+    AiTranslatedGlossaryTermInput, AiTranslationBatchRequest, AiTranslationBatchResponse,
+    AiTranslationBatchRowInput, AiTranslationBatchRowResult, AiTranslationGlossaryHint,
+    AiTranslationGlossaryTargetVariant, AiTranslationGlossaryTargetVariantObject,
+    AiTranslationNoTranslationHint, AiTranslationRequest, AiTranslationResponse,
 };
 use crate::ai_secret_storage::load_ai_provider_secret;
 
@@ -342,10 +345,7 @@ pub(crate) fn build_translation_prompt(request: &AiTranslationRequest) -> String
     ));
 
     if !glossary_hints.is_empty() {
-        sections.push(
-            "Glossary rules:\nGlossary hints are compact JSON. Apply a glossary hint only when its sourceTerm appears in source_text. targetVariants contains non-empty target text sorted in order of preference, best first. Use later variants only when grammar or context requires it. noTranslation means this glossary term may be omitted from the translation; noTranslation.position ranks omission against targetVariants: \"only\" means omit the source term because no target text is recommended, \"first\" means omission is preferred and targetVariants are fallbacks, and \"later\" means targetVariants are preferred while omission is allowed when smoother or clearer. If a target variant text uses the notation base[ruby: annotation], preserve that ruby annotation when using the term. Use target variant notes, noTranslation.note, globalNotes, and footnotes as translation guidance when present."
-                .to_string(),
-        );
+        sections.push(translation_glossary_rules().to_string());
         sections.push(format!(
             "<glossary_info format=\"json\">\n{glossary_hints}\n</glossary_info>"
         ));
@@ -382,6 +382,490 @@ pub(crate) fn build_translation_prompt(request: &AiTranslationRequest) -> String
         sections.push("Return only the translated text.".to_string());
     }
     sections.join("\n\n")
+}
+
+fn translation_glossary_rules() -> &'static str {
+    "Glossary rules:\nGlossary hints are compact JSON. Apply a glossary hint only when its sourceTerm appears in source_text. targetVariants contains non-empty target text sorted in order of preference, best first. Use later variants only when grammar or context requires it. noTranslation means this glossary term may be omitted from the translation; noTranslation.position ranks omission against targetVariants: \"only\" means omit the source term because no target text is recommended, \"first\" means omission is preferred and targetVariants are fallbacks, and \"later\" means targetVariants are preferred while omission is allowed when smoother or clearer. If a target variant text uses the notation base[ruby: annotation], preserve that ruby annotation when using the term. Use target variant notes, noTranslation.note, globalNotes, and footnotes as translation guidance when present."
+}
+
+// ---- Batch translate / review ----------------------------------------------
+
+fn translation_batch_response_contract() -> &'static str {
+    "Return only valid JSON:\n{\"rows\":[{\"rowId\":\"\",\"translatedText\":\"\",\"translatedFootnote\":\"\",\"translatedImageCaption\":\"\"}]}\nReturn exactly one entry per row in <rows_to_translate>, in the same order, each with its matching rowId."
+}
+
+fn review_batch_response_contract() -> &'static str {
+    "Return only valid JSON:\n{\"rows\":[{\"rowId\":\"\",\"suggestedText\":\"\",\"suggestedFootnote\":\"\",\"suggestedImageCaption\":\"\",\"reviewed\":true}]}\nReturn exactly one entry per row in <rows_to_review>, in the same order, each with its matching rowId."
+}
+
+fn format_batch_context(entries: &[AiAssistantRowWindowEntry]) -> String {
+    entries
+        .iter()
+        .filter_map(|entry| {
+            let source_text = entry.source_text.trim();
+            if source_text.is_empty() {
+                return None;
+            }
+            let target_text = entry.target_text.trim();
+            if target_text.is_empty() {
+                Some(source_text.to_string())
+            } else {
+                Some(format!("{source_text}\n\u{2192} {target_text}"))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn format_translation_batch_row(
+    row: &AiTranslationBatchRowInput,
+    request: &AiTranslationBatchRequest,
+) -> String {
+    let mut sections: Vec<String> = Vec::new();
+    sections.push(format!(
+        "<source_text>\n{}\n</source_text>",
+        row.source_text.trim()
+    ));
+    if let Some(section) = format_optional_tagged_section("source_footnote", &row.source_footnote) {
+        sections.push(section);
+    }
+    if let Some(section) =
+        format_optional_tagged_section("source_image_caption", &row.source_image_caption)
+    {
+        sections.push(section);
+    }
+    let reference_translations = format_reference_translations(
+        &row.alternate_language_texts,
+        &request.source_language_code,
+        &request.target_language_code,
+    );
+    if !reference_translations.trim().is_empty() {
+        sections.push(format!(
+            "<reference_translations>\n{reference_translations}\n</reference_translations>"
+        ));
+    }
+    format!(
+        "<row id=\"{}\">\n{}\n</row>",
+        row.row_id.trim(),
+        sections.join("\n\n")
+    )
+}
+
+pub(crate) fn build_translation_batch_prompt(request: &AiTranslationBatchRequest) -> String {
+    let source_language = request.source_language.trim();
+    let target_language = request.target_language.trim();
+    let source_label = if source_language.is_empty() {
+        "the source language"
+    } else {
+        source_language
+    };
+    let target_label = if target_language.is_empty() {
+        "the target language"
+    } else {
+        target_language
+    };
+    let glossary_hints = format_translation_glossary_hints(&request.glossary_hints);
+
+    let mut sections = Vec::new();
+    sections.push(format!(
+        "Task:\nTranslate each row's source-language sections from {source_label} to {target_label}."
+    ));
+    sections.push(translation_batch_response_contract().to_string());
+    sections.push(
+        "Output rule:\nReturn one entry per row in <rows_to_translate>, in the same order, each with its matching rowId. Do not merge, split, drop, reorder, or add rows. Keep each row's main text, footnote, and image caption translations in their matching fields; do not append footnotes or image captions to translatedText. If a row has no footnote or image caption, return an empty string for that field."
+            .to_string(),
+    );
+    sections.push(format!(
+        "<languages>\nsource: {source_label}\ntarget: {target_label}\n</languages>"
+    ));
+    if !glossary_hints.is_empty() {
+        sections.push(translation_glossary_rules().to_string());
+        sections.push(format!(
+            "<glossary_info format=\"json\">\n{glossary_hints}\n</glossary_info>"
+        ));
+    }
+
+    let context_before = format_batch_context(&request.context_before);
+    if !context_before.is_empty() {
+        sections.push(format!(
+            "<context_before>\nThese rows come immediately before the rows to translate, for context only. Do not translate them.\n\n{context_before}\n</context_before>"
+        ));
+    }
+
+    let rows_block = request
+        .rows
+        .iter()
+        .map(|row| format_translation_batch_row(row, request))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    sections.push(format!(
+        "<rows_to_translate>\n{rows_block}\n</rows_to_translate>"
+    ));
+
+    let context_after = format_batch_context(&request.context_after);
+    if !context_after.is_empty() {
+        sections.push(format!(
+            "<context_after>\nThese rows come immediately after the rows to translate, for context only. Do not translate them.\n\n{context_after}\n</context_after>"
+        ));
+    }
+
+    sections.push(translation_batch_response_contract().to_string());
+    sections.join("\n\n")
+}
+
+fn format_review_batch_row(
+    row: &AiReviewBatchRowInput,
+    review_mode: &str,
+    request: &AiReviewBatchRequest,
+) -> String {
+    let latest_translation = row.latest_translation.trim();
+    let target_sections =
+        format_review_target_sections(latest_translation, &row.footnote, &row.image_caption);
+
+    if review_mode != "meaning" {
+        return format!(
+            "<row id=\"{}\">\n{}\n</row>",
+            row.row_id.trim(),
+            target_sections
+        );
+    }
+
+    let mut sections: Vec<String> = Vec::new();
+    let source_text = row.source_text.trim();
+    sections.push(format_review_source_sections(
+        source_text,
+        &row.source_footnote,
+        &row.source_image_caption,
+    ));
+    sections.push(target_sections);
+    let reference_translations = format_reference_translations(
+        &row.alternate_language_texts,
+        &request.source_language_code,
+        if request.target_language_code.trim().is_empty() {
+            &request.language_code
+        } else {
+            &request.target_language_code
+        },
+    );
+    if !reference_translations.trim().is_empty() {
+        sections.push(format!(
+            "<reference_translations>\n{reference_translations}\n</reference_translations>"
+        ));
+    }
+    let target_language_history =
+        format_assistant_target_language_history(&row.target_language_history, latest_translation);
+    if !target_language_history.trim().is_empty() {
+        sections.push(format!(
+            "<target_language_history>\n{target_language_history}\n</target_language_history>"
+        ));
+    }
+
+    format!(
+        "<row id=\"{}\">\n{}\n</row>",
+        row.row_id.trim(),
+        sections.join("\n\n")
+    )
+}
+
+pub(crate) fn build_review_batch_prompt(request: &AiReviewBatchRequest) -> String {
+    let review_mode = match request.review_mode.as_deref().unwrap_or("").trim() {
+        "meaning" => "meaning",
+        _ => "grammar",
+    };
+
+    if review_mode == "grammar" {
+        let rows_block = request
+            .rows
+            .iter()
+            .map(|row| format_review_batch_row(row, "grammar", request))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let sections = [
+            review_batch_response_contract().to_string(),
+            "Task:\nReview each row's target-language sections only for spelling and grammar errors. Do not review translation accuracy or compare against source text.".to_string(),
+            "Decision rule (per row):\n- If every section is correct: set that row's suggested fields to empty strings and reviewed to true.\n- If any section has errors: set reviewed to false and put corrected content only in the matching suggested field; keep unchanged sections as empty strings.".to_string(),
+            "Preserve meaning, terminology, tone, and style unless a change is needed to correct spelling or grammar. Keep main text, footnotes, and image captions separate.".to_string(),
+            format!("<rows_to_review>\n{rows_block}\n</rows_to_review>"),
+            review_batch_response_contract().to_string(),
+        ];
+        return sections.join("\n\n");
+    }
+
+    let glossary_info = format_translation_glossary_hints(&request.glossary_hints);
+    let glossary_info = if glossary_info.trim().is_empty() {
+        "No glossary terms found in the source text.".to_string()
+    } else {
+        glossary_info
+    };
+    let source_language =
+        format_language_ref(&request.source_language, &request.source_language_code);
+    let target_language = format_language_ref(
+        &request.target_language,
+        if request.target_language_code.trim().is_empty() {
+            &request.language_code
+        } else {
+            &request.target_language_code
+        },
+    );
+
+    let mut sections = Vec::new();
+    sections.push(review_batch_response_contract().to_string());
+    sections.push(
+        "Task:\nReview each row's latest target-language sections against its source-language sections for translation accuracy, spelling, and grammar. Respect the user's word choices unless there is a real error. Pay attention to each row's target-language history: notice which edits are human and which are AI. If a human edited an AI translation, do not revert those human changes unless they introduced a real translation, spelling, or grammar error."
+            .to_string(),
+    );
+    sections.push(
+        "Decision rule (per row):\n- If every reviewed section is correct: set that row's suggested fields to empty strings and reviewed to true.\n- If any section has errors: set reviewed to false and put corrected content only in the matching suggested field; keep unchanged sections as empty strings."
+            .to_string(),
+    );
+    sections.push(
+        "Use supporting context when relevant. Do not treat reference translations or edit history as more authoritative than the source-language sections. Keep main text, footnotes, and image captions separate."
+            .to_string(),
+    );
+    sections.push(format!(
+        "<languages>\nsource: {source_language}\ntarget: {target_language}\n</languages>"
+    ));
+    sections.push(format!(
+        "<glossary_info format=\"json\">\n{glossary_info}\n</glossary_info>"
+    ));
+
+    let context_before = format_batch_context(&request.context_before);
+    if !context_before.is_empty() {
+        sections.push(format!(
+            "<context_before>\nThese rows come immediately before the rows to review, for context only.\n\n{context_before}\n</context_before>"
+        ));
+    }
+
+    let rows_block = request
+        .rows
+        .iter()
+        .map(|row| format_review_batch_row(row, "meaning", request))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    sections.push(format!(
+        "<rows_to_review>\nThese are the only rows you are reviewing.\n\n{rows_block}\n</rows_to_review>"
+    ));
+
+    let context_after = format_batch_context(&request.context_after);
+    if !context_after.is_empty() {
+        sections.push(format!(
+            "<context_after>\nThese rows come immediately after the rows to review, for context only.\n\n{context_after}\n</context_after>"
+        ));
+    }
+
+    sections.push(review_batch_response_contract().to_string());
+    sections.join("\n\n")
+}
+
+#[derive(serde::Deserialize)]
+struct AiTranslationBatchStructuredResponse {
+    // No serde default: a JSON object without a `rows` array (an error wrapper,
+    // a differently-shaped payload) must fail to parse rather than read as a
+    // successful zero-row batch that silently sends every row to the fallback.
+    rows: Vec<AiTranslationBatchStructuredRow>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AiTranslationBatchStructuredRow {
+    #[serde(default)]
+    row_id: String,
+    #[serde(default)]
+    translated_text: String,
+    #[serde(default)]
+    translated_footnote: String,
+    #[serde(default)]
+    translated_image_caption: String,
+}
+
+#[derive(serde::Deserialize)]
+struct AiReviewBatchStructuredResponse {
+    // No serde default — see AiTranslationBatchStructuredResponse.
+    rows: Vec<AiReviewBatchStructuredRow>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AiReviewBatchStructuredRow {
+    #[serde(default)]
+    row_id: String,
+    #[serde(default)]
+    suggested_text: String,
+    #[serde(default)]
+    suggested_footnote: String,
+    #[serde(default)]
+    suggested_image_caption: String,
+    // Option, not defaulted bool: only OpenAI enforces the strict schema, and a
+    // model that omits `reviewed` on a row it judged correct must not have that
+    // row silently flagged please-check. Rows without a verdict are dropped so
+    // the caller retries them through the single-row path.
+    reviewed: Option<bool>,
+}
+
+fn batch_response_candidates(text: &str) -> Vec<String> {
+    let trimmed = text.trim();
+    let stripped = strip_markdown_code_fence(trimmed);
+    let mut candidates = vec![trimmed.to_string(), stripped.to_string()];
+    if let (Some(start), Some(end)) = (trimmed.find('{'), trimmed.rfind('}')) {
+        if start <= end {
+            candidates.push(trimmed[start..=end].to_string());
+        }
+    }
+    candidates
+}
+
+fn parse_translation_batch_response(
+    text: &str,
+) -> Result<Vec<AiTranslationBatchRowResult>, String> {
+    for candidate in batch_response_candidates(text) {
+        if let Ok(parsed) = serde_json::from_str::<AiTranslationBatchStructuredResponse>(&candidate)
+        {
+            return Ok(parsed
+                .rows
+                .into_iter()
+                .map(|row| AiTranslationBatchRowResult {
+                    row_id: row.row_id.trim().to_string(),
+                    translated_text: row.translated_text,
+                    translated_footnote: row.translated_footnote,
+                    translated_image_caption: row.translated_image_caption,
+                })
+                .collect());
+        }
+    }
+    Err("The AI translation returned a malformed batch response.".to_string())
+}
+
+fn parse_review_batch_response(text: &str) -> Result<Vec<AiReviewBatchRowResult>, String> {
+    for candidate in batch_response_candidates(text) {
+        if let Ok(parsed) = serde_json::from_str::<AiReviewBatchStructuredResponse>(&candidate) {
+            return Ok(parsed
+                .rows
+                .into_iter()
+                .filter_map(|mut row| {
+                    let reviewed = row.reviewed?;
+                    if reviewed {
+                        row.suggested_text.clear();
+                        row.suggested_footnote.clear();
+                        row.suggested_image_caption.clear();
+                    }
+                    Some(AiReviewBatchRowResult {
+                        row_id: row.row_id.trim().to_string(),
+                        suggested_text: row.suggested_text,
+                        suggested_footnote: row.suggested_footnote,
+                        suggested_image_caption: row.suggested_image_caption,
+                        reviewed,
+                    })
+                })
+                .collect());
+        }
+    }
+    Err("The AI review returned a malformed batch response.".to_string())
+}
+
+/// Keeps only rows whose id was requested, in response order, dropping unknown ids
+/// and duplicate ids (first occurrence wins). Rows requested but absent from the
+/// response are simply not present in the result — the caller treats those as
+/// unresolved and retries them through the single-row path.
+fn retain_known_unique_rows<T>(
+    rows: Vec<T>,
+    allowed: &HashSet<String>,
+    id_of: impl Fn(&T) -> String,
+) -> Vec<T> {
+    let mut seen = HashSet::new();
+    rows.into_iter()
+        .filter(|row| {
+            let id = id_of(row);
+            !id.is_empty() && allowed.contains(&id) && seen.insert(id)
+        })
+        .collect()
+}
+
+pub(crate) fn run_ai_translation_batch(
+    app: &AppHandle,
+    request: AiTranslationBatchRequest,
+) -> Result<AiTranslationBatchResponse, String> {
+    if request.rows.is_empty() {
+        return Err("There are no rows to translate yet.".to_string());
+    }
+    if request.model_id.trim().is_empty() {
+        return Err(format!(
+            "Select a {} model on the AI Settings page before running Translate.",
+            request.provider_id.display_name()
+        ));
+    }
+
+    let api_key = load_ai_provider_api_key(app, request.provider_id, request.installation_id)?;
+    let prompt = build_translation_batch_prompt(&request);
+    let response = providers::run_prompt(
+        &AiPromptRequest {
+            provider_id: request.provider_id,
+            model_id: request.model_id.clone(),
+            prompt: prompt.clone(),
+            previous_response_id: None,
+            output_format: AiPromptOutputFormat::TranslationBatchJson,
+        },
+        &api_key,
+    )?;
+
+    let allowed: HashSet<String> = request
+        .rows
+        .iter()
+        .map(|row| row.row_id.trim().to_string())
+        .collect();
+    let rows = retain_known_unique_rows(
+        parse_translation_batch_response(&response.text)?,
+        &allowed,
+        |row| row.row_id.trim().to_string(),
+    );
+
+    Ok(AiTranslationBatchResponse {
+        rows,
+        prompt_text: prompt,
+    })
+}
+
+pub(crate) fn run_ai_review_batch(
+    app: &AppHandle,
+    request: AiReviewBatchRequest,
+) -> Result<AiReviewBatchResponse, String> {
+    if request.rows.is_empty() {
+        return Err("There are no rows to review yet.".to_string());
+    }
+    if request.model_id.trim().is_empty() {
+        return Err(format!(
+            "Select a {} model on the AI Settings page before running Review.",
+            request.provider_id.display_name()
+        ));
+    }
+
+    let api_key = load_ai_provider_api_key(app, request.provider_id, request.installation_id)?;
+    let prompt = build_review_batch_prompt(&request);
+    let response = providers::run_prompt(
+        &AiPromptRequest {
+            provider_id: request.provider_id,
+            model_id: request.model_id.clone(),
+            prompt: prompt.clone(),
+            previous_response_id: None,
+            output_format: AiPromptOutputFormat::ReviewBatchJson,
+        },
+        &api_key,
+    )?;
+
+    let allowed: HashSet<String> = request
+        .rows
+        .iter()
+        .map(|row| row.row_id.trim().to_string())
+        .collect();
+    let rows = retain_known_unique_rows(
+        parse_review_batch_response(&response.text)?,
+        &allowed,
+        |row| row.row_id.trim().to_string(),
+    );
+
+    Ok(AiReviewBatchResponse {
+        rows,
+        prompt_text: prompt,
+    })
 }
 
 fn format_translation_glossary_hints(hints: &[AiTranslationGlossaryHint]) -> String {
@@ -747,10 +1231,21 @@ fn format_assistant_source_context(
 }
 
 fn format_assistant_reference_translations(row: &AiAssistantRowContext) -> String {
-    let source_language_code = row.source_language_code.trim();
-    let target_language_code = row.target_language_code.trim();
-    let lines = row
-        .alternate_language_texts
+    format_reference_translations(
+        &row.alternate_language_texts,
+        &row.source_language_code,
+        &row.target_language_code,
+    )
+}
+
+fn format_reference_translations(
+    alternate_language_texts: &[AiAssistantRowLanguageText],
+    source_language_code: &str,
+    target_language_code: &str,
+) -> String {
+    let source_language_code = source_language_code.trim();
+    let target_language_code = target_language_code.trim();
+    let lines = alternate_language_texts
         .iter()
         .filter_map(|entry| {
             let language_code = entry.language_code.trim();
@@ -1676,6 +2171,42 @@ pub(crate) fn prepare_ai_translated_glossary(
     })
 }
 
+/// Batch-wide derived glossary preparation. Instead of pivot-translating,
+/// matching, and aligning per translation row, this concatenates the batch's
+/// source rows into one combined text and derives the glossary once over the
+/// whole span — reusing `prepare_ai_translated_glossary`. The resulting entries
+/// cover every glossary term that appears anywhere in the batch.
+pub(crate) fn prepare_ai_translated_glossary_batch(
+    app: &AppHandle,
+    request: AiTranslatedGlossaryBatchPreparationRequest,
+) -> Result<AiTranslatedGlossaryPreparationResponse, String> {
+    let combined_source_text = request
+        .translation_source_texts
+        .iter()
+        .map(|text| text.trim())
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    if combined_source_text.trim().is_empty() {
+        return Err("There is no source text to translate yet.".to_string());
+    }
+
+    prepare_ai_translated_glossary(
+        app,
+        AiTranslatedGlossaryPreparationRequest {
+            provider_id: request.provider_id,
+            model_id: request.model_id,
+            translation_source_text: combined_source_text,
+            translation_source_language: request.translation_source_language,
+            glossary_source_language: request.glossary_source_language,
+            target_language: request.target_language,
+            glossary_source_text: request.glossary_source_text,
+            glossary_terms: request.glossary_terms,
+            installation_id: request.installation_id,
+        },
+    )
+}
+
 pub(crate) fn run_ai_translation(
     app: &AppHandle,
     request: AiTranslationRequest,
@@ -1830,19 +2361,23 @@ pub(crate) fn probe_ai_model(app: &AppHandle, request: AiModelProbeRequest) -> R
 #[cfg(test)]
 mod tests {
     use super::{
-        build_assistant_chat_prompt, build_glossary_alignment_prompt_request, build_review_prompt,
+        build_assistant_chat_prompt, build_glossary_alignment_prompt_request,
+        build_review_batch_prompt, build_review_prompt, build_translation_batch_prompt,
         build_translation_prompt, find_matched_glossary_terms, parse_assistant_structured_response,
-        parse_review_structured_response, parse_translation_sections_response,
-        PreparedGlossaryMatch,
+        parse_review_batch_response, parse_review_structured_response,
+        parse_translation_batch_response, parse_translation_sections_response,
+        retain_known_unique_rows, PreparedGlossaryMatch,
     };
     use crate::ai::types::{
         AiAssistantRowContext, AiAssistantRowLanguageText, AiAssistantRowWindowEntry,
         AiAssistantTargetLanguageHistoryEntry, AiAssistantTranscriptEntry, AiAssistantTurnKind,
-        AiAssistantTurnRequest, AiPromptOutputFormat, AiProviderId, AiReviewRequest,
-        AiTranslatedGlossaryPreparationRequest, AiTranslatedGlossaryTermInput,
+        AiAssistantTurnRequest, AiPromptOutputFormat, AiProviderId, AiReviewBatchRequest,
+        AiReviewBatchRowInput, AiReviewRequest, AiTranslatedGlossaryPreparationRequest,
+        AiTranslatedGlossaryTermInput, AiTranslationBatchRequest, AiTranslationBatchRowInput,
         AiTranslationGlossaryHint, AiTranslationGlossaryTargetVariant,
         AiTranslationNoTranslationHint, AiTranslationRequest,
     };
+    use std::collections::HashSet;
 
     fn target_variant(value: &str) -> AiTranslationGlossaryTargetVariant {
         AiTranslationGlossaryTargetVariant::Text(value.to_string())
@@ -2764,5 +3299,237 @@ mod tests {
         assert!(prompt.contains(
             "<source_text>\nFuente actual\n</source_text>\n\n<updated_target_text>\n(empty)\n</updated_target_text>\n\n<conversation_history>\n- assistant: Earlier answer.\n</conversation_history>"
         ));
+    }
+
+    fn translation_batch_row(id: &str, source: &str) -> AiTranslationBatchRowInput {
+        AiTranslationBatchRowInput {
+            row_id: id.to_string(),
+            source_text: source.to_string(),
+            source_footnote: String::new(),
+            source_image_caption: String::new(),
+            target_footnote: String::new(),
+            target_image_caption: String::new(),
+            alternate_language_texts: vec![],
+        }
+    }
+
+    fn translation_batch_request(
+        rows: Vec<AiTranslationBatchRowInput>,
+    ) -> AiTranslationBatchRequest {
+        AiTranslationBatchRequest {
+            provider_id: AiProviderId::OpenAi,
+            model_id: "gpt-5.5".to_string(),
+            source_language: "English".to_string(),
+            target_language: "Vietnamese".to_string(),
+            source_language_code: "en".to_string(),
+            target_language_code: "vi".to_string(),
+            glossary_hints: vec![],
+            context_before: vec![],
+            context_after: vec![],
+            rows,
+            installation_id: None,
+        }
+    }
+
+    #[test]
+    fn build_translation_batch_prompt_emits_contract_twice_and_per_row_ids() {
+        let prompt = build_translation_batch_prompt(&translation_batch_request(vec![
+            translation_batch_row("r0", "The rain had not stopped."),
+            translation_batch_row("r1", "She looked up."),
+        ]));
+
+        assert_eq!(prompt.matches("Return only valid JSON:").count(), 2);
+        assert!(prompt.contains("<rows_to_translate>"));
+        assert!(prompt.contains("<row id=\"r0\">"));
+        assert!(prompt.contains("<row id=\"r1\">"));
+        assert!(prompt.contains("<source_text>\nThe rain had not stopped.\n</source_text>"));
+        // No context tags when no surrounding rows were supplied.
+        assert!(!prompt.contains("<context_before>"));
+        assert!(!prompt.contains("<context_after>"));
+        // No glossary block without hints.
+        assert!(!prompt.contains("<glossary_info"));
+    }
+
+    #[test]
+    fn build_translation_batch_prompt_renders_context_and_single_glossary_block() {
+        let mut request =
+            translation_batch_request(vec![translation_batch_row("r0", "Alpha term.")]);
+        request.context_before = vec![AiAssistantRowWindowEntry {
+            row_id: "before".to_string(),
+            source_text: "Prior line.".to_string(),
+            target_text: "Dòng trước.".to_string(),
+        }];
+        request.context_after = vec![AiAssistantRowWindowEntry {
+            row_id: "after".to_string(),
+            source_text: "Next line.".to_string(),
+            target_text: String::new(),
+        }];
+        request.glossary_hints = vec![AiTranslationGlossaryHint {
+            source_term: "Alpha".to_string(),
+            target_variants: vec![target_variant("Anpha")],
+            no_translation_position: None,
+            no_translation: None,
+            notes: vec![],
+            global_notes: vec![],
+            footnotes: vec![],
+        }];
+
+        let prompt = build_translation_batch_prompt(&request);
+
+        assert!(prompt.contains("<context_before>"));
+        assert!(prompt.contains("Prior line.\n\u{2192} Dòng trước."));
+        assert!(prompt.contains("<context_after>"));
+        assert!(prompt.contains("Next line."));
+        // Exactly one glossary block for the whole batch.
+        assert_eq!(prompt.matches("<glossary_info").count(), 1);
+    }
+
+    #[test]
+    fn parse_translation_batch_response_reads_well_formed_fenced_and_prose_wrapped() {
+        let plain = r#"{"rows":[{"rowId":"r0","translatedText":"A","translatedFootnote":"","translatedImageCaption":""}]}"#;
+        let rows = parse_translation_batch_response(plain).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].row_id, "r0");
+        assert_eq!(rows[0].translated_text, "A");
+
+        let fenced = "```json\n{\"rows\":[{\"rowId\":\"r1\",\"translatedText\":\"B\"}]}\n```";
+        let rows = parse_translation_batch_response(fenced).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].row_id, "r1");
+
+        let prose = "Here you go:\n{\"rows\":[{\"rowId\":\"r2\",\"translatedText\":\"C\"}]}\nHope that helps.";
+        let rows = parse_translation_batch_response(prose).unwrap();
+        assert_eq!(rows[0].row_id, "r2");
+
+        // Row ids are trimmed so a whitespaced id still matches the requested id.
+        let padded = "{\"rows\":[{\"rowId\":\"  r3  \",\"translatedText\":\"D\"}]}";
+        let rows = parse_translation_batch_response(padded).unwrap();
+        assert_eq!(rows[0].row_id, "r3");
+
+        assert!(parse_translation_batch_response("not json at all").is_err());
+    }
+
+    #[test]
+    fn parse_batch_responses_reject_objects_without_a_rows_array() {
+        // A provider error wrapper or shape drift must surface as malformed, not
+        // as a successful zero-row batch that silently falls back per row.
+        assert!(parse_translation_batch_response(r#"{"error":"rate limited"}"#).is_err());
+        assert!(parse_review_batch_response(r#"{"error":"rate limited"}"#).is_err());
+        assert!(
+            parse_translation_batch_response(r#"{"response":{"rows":[{"rowId":"r0"}]}}"#).is_err()
+        );
+    }
+
+    #[test]
+    fn parse_review_batch_response_drops_rows_without_a_reviewed_verdict() {
+        // Non-OpenAI providers have no strict schema; a row missing `reviewed`
+        // must not default to please-check — it is dropped so the caller retries
+        // it through the single-row path.
+        let rows = parse_review_batch_response(
+            r#"{"rows":[
+                {"rowId":"r0","suggestedText":""},
+                {"rowId":"r1","suggestedText":"fix","reviewed":false}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].row_id, "r1");
+        assert!(!rows[0].reviewed);
+    }
+
+    #[test]
+    fn retain_known_unique_rows_drops_unknown_and_duplicate_ids() {
+        let rows = parse_translation_batch_response(
+            r#"{"rows":[
+                {"rowId":"r0","translatedText":"A"},
+                {"rowId":"r0","translatedText":"A-dup"},
+                {"rowId":"ghost","translatedText":"?"},
+                {"rowId":"r1","translatedText":"B"}
+            ]}"#,
+        )
+        .unwrap();
+        let allowed: HashSet<String> = ["r0", "r1", "r2"].iter().map(|s| s.to_string()).collect();
+        let kept = retain_known_unique_rows(rows, &allowed, |row| row.row_id.trim().to_string());
+
+        // r0 kept once (first), ghost dropped, r1 kept, r2 absent (unresolved).
+        assert_eq!(kept.len(), 2);
+        assert_eq!(kept[0].row_id, "r0");
+        assert_eq!(kept[0].translated_text, "A");
+        assert_eq!(kept[1].row_id, "r1");
+    }
+
+    #[test]
+    fn parse_review_batch_response_clears_suggestions_when_reviewed() {
+        let rows = parse_review_batch_response(
+            r#"{"rows":[
+                {"rowId":"r0","suggestedText":"should be dropped","reviewed":true},
+                {"rowId":"r1","suggestedText":"fix this","reviewed":false}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows[0].reviewed);
+        assert_eq!(rows[0].suggested_text, "");
+        assert!(!rows[1].reviewed);
+        assert_eq!(rows[1].suggested_text, "fix this");
+    }
+
+    fn review_batch_row(id: &str) -> AiReviewBatchRowInput {
+        AiReviewBatchRowInput {
+            row_id: id.to_string(),
+            latest_translation: "Bản dịch".to_string(),
+            footnote: String::new(),
+            image_caption: String::new(),
+            source_text: "The source.".to_string(),
+            source_footnote: String::new(),
+            source_image_caption: String::new(),
+            alternate_language_texts: vec![],
+            target_language_history: vec![],
+        }
+    }
+
+    fn review_batch_request(mode: &str, rows: Vec<AiReviewBatchRowInput>) -> AiReviewBatchRequest {
+        AiReviewBatchRequest {
+            provider_id: AiProviderId::OpenAi,
+            model_id: "gpt-5.5".to_string(),
+            review_mode: Some(mode.to_string()),
+            source_language_code: "en".to_string(),
+            target_language_code: "vi".to_string(),
+            language_code: "vi".to_string(),
+            source_language: "English".to_string(),
+            target_language: "Vietnamese".to_string(),
+            glossary_hints: vec![],
+            context_before: vec![],
+            context_after: vec![],
+            rows,
+            installation_id: None,
+        }
+    }
+
+    #[test]
+    fn build_review_batch_prompt_grammar_omits_source_sections() {
+        let prompt = build_review_batch_prompt(&review_batch_request(
+            "grammar",
+            vec![review_batch_row("r0")],
+        ));
+        assert_eq!(prompt.matches("Return only valid JSON:").count(), 2);
+        assert!(prompt.contains("<rows_to_review>"));
+        assert!(prompt.contains("<row id=\"r0\">"));
+        assert!(prompt.contains("<latest_translation>"));
+        // Grammar mode does not compare against the source.
+        assert!(!prompt.contains("<source_text>"));
+        assert!(!prompt.contains("<languages>"));
+    }
+
+    #[test]
+    fn build_review_batch_prompt_meaning_includes_source_and_languages() {
+        let prompt = build_review_batch_prompt(&review_batch_request(
+            "meaning",
+            vec![review_batch_row("r0")],
+        ));
+        assert!(prompt.contains("<languages>"));
+        assert!(prompt.contains("<source_text>\nThe source.\n</source_text>"));
+        assert!(prompt.contains("<latest_translation>"));
+        assert!(prompt.contains("<glossary_info"));
     }
 }

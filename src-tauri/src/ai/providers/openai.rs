@@ -309,6 +309,70 @@ fn openai_text_format(output_format: AiPromptOutputFormat) -> Value {
                 }
             }
         }),
+        AiPromptOutputFormat::TranslationBatchJson => json!({
+            "type": "json_schema",
+            "name": "ai_translation_batch_response",
+            "strict": true,
+            "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["rows"],
+                "properties": {
+                    "rows": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                                "rowId",
+                                "translatedText",
+                                "translatedFootnote",
+                                "translatedImageCaption"
+                            ],
+                            "properties": {
+                                "rowId": { "type": "string" },
+                                "translatedText": { "type": "string" },
+                                "translatedFootnote": { "type": "string" },
+                                "translatedImageCaption": { "type": "string" }
+                            }
+                        }
+                    }
+                }
+            }
+        }),
+        AiPromptOutputFormat::ReviewBatchJson => json!({
+            "type": "json_schema",
+            "name": "ai_review_batch_response",
+            "strict": true,
+            "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["rows"],
+                "properties": {
+                    "rows": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                                "rowId",
+                                "suggestedText",
+                                "suggestedFootnote",
+                                "suggestedImageCaption",
+                                "reviewed"
+                            ],
+                            "properties": {
+                                "rowId": { "type": "string" },
+                                "suggestedText": { "type": "string" },
+                                "suggestedFootnote": { "type": "string" },
+                                "suggestedImageCaption": { "type": "string" },
+                                "reviewed": { "type": "boolean" }
+                            }
+                        }
+                    }
+                }
+            }
+        }),
         AiPromptOutputFormat::GlossaryAlignmentJson => json!({
             "type": "json_schema",
             "name": "glossary_alignment_response",
@@ -816,6 +880,71 @@ mod tests {
                 .pointer("/text/format/schema/properties/mappings/items/properties/translationSourceTerm/anyOf/1/type")
                 .and_then(serde_json::Value::as_str),
             Some("null")
+        );
+    }
+
+    #[test]
+    fn openai_translation_batch_prompt_request_uses_strict_rows_schema() {
+        let request = AiPromptRequest {
+            provider_id: AiProviderId::OpenAi,
+            model_id: "gpt-5.5".to_string(),
+            prompt: "Return batch translation JSON.".to_string(),
+            previous_response_id: None,
+            output_format: AiPromptOutputFormat::TranslationBatchJson,
+        };
+        let payload = serde_json::to_value(build_prompt_request(&request)).unwrap();
+
+        assert_eq!(
+            payload
+                .pointer("/text/format/type")
+                .and_then(serde_json::Value::as_str),
+            Some("json_schema")
+        );
+        assert_eq!(
+            payload
+                .pointer("/text/format/name")
+                .and_then(serde_json::Value::as_str),
+            Some("ai_translation_batch_response")
+        );
+        assert_eq!(
+            payload
+                .pointer("/text/format/schema/properties/rows/items/required")
+                .and_then(serde_json::Value::as_array)
+                .map(|values| values
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .collect::<Vec<_>>()),
+            Some(vec![
+                "rowId",
+                "translatedText",
+                "translatedFootnote",
+                "translatedImageCaption"
+            ])
+        );
+    }
+
+    #[test]
+    fn openai_review_batch_prompt_request_uses_strict_rows_schema() {
+        let request = AiPromptRequest {
+            provider_id: AiProviderId::OpenAi,
+            model_id: "gpt-5.5".to_string(),
+            prompt: "Return batch review JSON.".to_string(),
+            previous_response_id: None,
+            output_format: AiPromptOutputFormat::ReviewBatchJson,
+        };
+        let payload = serde_json::to_value(build_prompt_request(&request)).unwrap();
+
+        assert_eq!(
+            payload
+                .pointer("/text/format/name")
+                .and_then(serde_json::Value::as_str),
+            Some("ai_review_batch_response")
+        );
+        assert_eq!(
+            payload
+                .pointer("/text/format/schema/properties/rows/items/properties/reviewed/type")
+                .and_then(serde_json::Value::as_str),
+            Some("boolean")
         );
     }
 

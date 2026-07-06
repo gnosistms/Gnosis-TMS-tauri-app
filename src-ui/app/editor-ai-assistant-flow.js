@@ -52,29 +52,15 @@ import { extractGlossaryRubyBaseText } from "./glossary-ruby.js";
 import { buildGlossaryTargetVariantGuidance } from "./glossary-shared.js";
 import { saveStoredEditorDerivedGlossaryEntryForChapter } from "./editor-derived-glossary-cache.js";
 import { saveStoredEditorAssistantChapterData } from "./editor-ai-assistant-cache.js";
+import { buildRowSourceContextWindow } from "./editor-ai-context-window.js";
 
 const DEFAULT_ROW_CONTEXT_COUNT = 3;
 const MAX_CONCORDANCE_HITS = 10;
-const ASSISTANT_SOURCE_CONTEXT_PREVIOUS_TOKEN_TARGET = 75;
-const ASSISTANT_SOURCE_CONTEXT_NEXT_TOKEN_TARGET = 25;
 const ASSISTANT_HISTORY_SOURCE_FILE_IMPORT = "file_import";
 const ASSISTANT_HISTORY_SOURCE_AI_MODEL = "ai_model";
 const ASSISTANT_HISTORY_SOURCE_CURRENT_USER = "current_user";
 const ASSISTANT_HISTORY_SOURCE_OTHER_USER = "other_user";
 const ASSISTANT_HISTORY_SOURCE_UNKNOWN = "unknown";
-
-function estimateAssistantContextTokens(text) {
-  const value = String(text ?? "").trim();
-  if (!value) {
-    return 0;
-  }
-
-  const cjkPattern = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/gu;
-  const cjkTokenCount = Math.ceil((value.match(cjkPattern) ?? []).length * 1.1);
-  const nonCjkText = value.replace(cjkPattern, "");
-  const latinLikeTokenCount = Math.ceil(nonCjkText.length / 4);
-  return Math.ceil((cjkTokenCount + latinLikeTokenCount) * 1.15);
-}
 
 function renderAssistantSidebar(render) {
   render?.({ scope: "translate-sidebar" });
@@ -842,56 +828,6 @@ function resolveRowIndex(rows, rowId) {
   return (Array.isArray(rows) ? rows : []).findIndex((row) => row?.rowId === rowId);
 }
 
-export function buildAssistantSourceContextWindow(
-  chapterState,
-  rowId,
-  sourceLanguageCode,
-  targetLanguageCode,
-) {
-  const rows = Array.isArray(chapterState?.rows) ? chapterState.rows : [];
-  const rowIndex = resolveRowIndex(rows, rowId);
-  if (rowIndex < 0) {
-    return [];
-  }
-
-  const previousRows = [];
-  let previousTokenCount = 0;
-  for (
-    let index = rowIndex - 1;
-    index >= 0 && previousTokenCount < ASSISTANT_SOURCE_CONTEXT_PREVIOUS_TOKEN_TARGET;
-    index -= 1
-  ) {
-    const row = rows[index];
-    previousRows.unshift(row);
-    previousTokenCount += estimateAssistantContextTokens(
-      readRowFieldText(row, sourceLanguageCode),
-    );
-  }
-
-  const nextRows = [];
-  let nextTokenCount = 0;
-  for (
-    let index = rowIndex + 1;
-    index < rows.length && nextTokenCount < ASSISTANT_SOURCE_CONTEXT_NEXT_TOKEN_TARGET;
-    index += 1
-  ) {
-    const row = rows[index];
-    nextRows.push(row);
-    nextTokenCount += estimateAssistantContextTokens(
-      readRowFieldText(row, sourceLanguageCode),
-    );
-  }
-
-  return [
-    ...previousRows,
-    rows[rowIndex],
-    ...nextRows,
-  ].map((row) => ({
-    rowId: row.rowId,
-    sourceText: readRowFieldText(row, sourceLanguageCode),
-    targetText: readRowFieldText(row, targetLanguageCode),
-  }));
-}
 
 function buildAssistantSummaryRowWindow(
   chapterState,
@@ -1256,7 +1192,7 @@ function buildAssistantTurnRequestPayload(
         ? options.targetLanguageHistory
         : [],
     },
-    rowWindow: buildAssistantSourceContextWindow(
+    rowWindow: buildRowSourceContextWindow(
       context.chapterState,
       context.rowId,
       context.sourceLanguageCode,

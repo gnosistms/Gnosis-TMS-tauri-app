@@ -1,9 +1,11 @@
 import { buildEditorAiTranslationGlossaryHints } from "./editor-glossary-highlighting.js";
+import {
+  buildBatchSourceContext,
+  buildRowSourceContextWindow,
+} from "./editor-ai-context-window.js";
+import { buildBatchGlossaryHints } from "./editor-ai-batch-request.js";
 import { editorFootnotesPlainText } from "./editor-utils.js";
 import { languageBaseCode } from "./editor-language-utils.js";
-
-const REVIEW_SOURCE_CONTEXT_PREVIOUS_TOKEN_TARGET = 360;
-const REVIEW_SOURCE_CONTEXT_NEXT_TOKEN_TARGET = 220;
 
 export function normalizeEditorAiReviewMode(value) {
   return String(value ?? "").trim() === "meaning" ? "meaning" : "grammar";
@@ -32,10 +34,6 @@ export function readEditorReviewRowImageCaption(row, languageCode) {
   return typeof row?.imageCaptions?.[languageCode] === "string"
     ? row.imageCaptions[languageCode]
     : String(row?.imageCaptions?.[languageCode] ?? "");
-}
-
-function estimateReviewContextTokens(value) {
-  return Math.ceil(String(value ?? "").length / 4);
 }
 
 function normalizeReviewLanguageLabel(language, fallbackCode = "") {
@@ -98,58 +96,6 @@ export function buildEditorAiReviewAlternateLanguageTexts(
       && entry.languageCode !== normalizedTargetLanguageCode
       && entry.text.trim()
     );
-}
-
-export function buildEditorAiReviewSourceContextWindow(
-  chapterState,
-  rowId,
-  sourceLanguageCode,
-  targetLanguageCode,
-) {
-  const rows = Array.isArray(chapterState?.rows) ? chapterState.rows : [];
-  const normalizedRowId = String(rowId ?? "").trim();
-  const rowIndex = rows.findIndex((row) => rowIdentity(row) === normalizedRowId);
-  if (rowIndex < 0) {
-    return [];
-  }
-
-  const previousRows = [];
-  let previousTokenCount = 0;
-  for (
-    let index = rowIndex - 1;
-    index >= 0 && previousTokenCount < REVIEW_SOURCE_CONTEXT_PREVIOUS_TOKEN_TARGET;
-    index -= 1
-  ) {
-    const row = rows[index];
-    previousRows.unshift(row);
-    previousTokenCount += estimateReviewContextTokens(
-      readEditorReviewRowFieldText(row, sourceLanguageCode),
-    );
-  }
-
-  const nextRows = [];
-  let nextTokenCount = 0;
-  for (
-    let index = rowIndex + 1;
-    index < rows.length && nextTokenCount < REVIEW_SOURCE_CONTEXT_NEXT_TOKEN_TARGET;
-    index += 1
-  ) {
-    const row = rows[index];
-    nextRows.push(row);
-    nextTokenCount += estimateReviewContextTokens(
-      readEditorReviewRowFieldText(row, sourceLanguageCode),
-    );
-  }
-
-  return [
-    ...previousRows,
-    rows[rowIndex],
-    ...nextRows,
-  ].map((row) => ({
-    rowId: rowIdentity(row),
-    sourceText: readEditorReviewRowFieldText(row, sourceLanguageCode),
-    targetText: readEditorReviewRowFieldText(row, targetLanguageCode),
-  }));
 }
 
 export function buildEditorAiReviewGlossaryHints(
@@ -224,11 +170,85 @@ export function buildEditorAiReviewRequest({
       ? buildEditorAiReviewAlternateLanguageTexts(chapterState, row, sourceLanguageCode, targetLanguageCode)
       : [],
     rowWindow: normalizedReviewMode === "meaning"
-      ? buildEditorAiReviewSourceContextWindow(chapterState, rowId, sourceLanguageCode, targetLanguageCode)
+      ? buildRowSourceContextWindow(chapterState, rowId, sourceLanguageCode, targetLanguageCode)
       : [],
     targetLanguageHistory: normalizedReviewMode === "meaning" && Array.isArray(targetLanguageHistory)
       ? targetLanguageHistory
       : [],
+  };
+  return Number.isFinite(installationId)
+    ? { ...request, installationId }
+    : request;
+}
+
+export function buildEditorAiReviewBatchRequest({
+  chapterState,
+  rows,
+  sourceLanguageCode,
+  targetLanguageCode,
+  providerId,
+  modelId,
+  reviewMode,
+  targetLanguageHistoryByRowId = new Map(),
+  installationId = null,
+}) {
+  const normalizedReviewMode = normalizeEditorAiReviewMode(reviewMode);
+  const meaning = normalizedReviewMode === "meaning";
+  const rowList = Array.isArray(rows) ? rows : [];
+  const sourceLanguage = editorReviewLanguageByCode(chapterState, sourceLanguageCode);
+  const targetLanguage = editorReviewLanguageByCode(chapterState, targetLanguageCode);
+
+  const rowInputs = rowList.map((row) => {
+    const rowId = rowIdentity(row);
+    return {
+      rowId,
+      latestTranslation: readEditorReviewRowFieldText(row, targetLanguageCode),
+      footnote: readEditorReviewRowFootnote(row, targetLanguageCode),
+      imageCaption: readEditorReviewRowImageCaption(row, targetLanguageCode),
+      sourceText: meaning ? readEditorReviewRowFieldText(row, sourceLanguageCode) : "",
+      sourceFootnote: meaning ? readEditorReviewRowFootnote(row, sourceLanguageCode) : "",
+      sourceImageCaption: meaning ? readEditorReviewRowImageCaption(row, sourceLanguageCode) : "",
+      alternateLanguageTexts: meaning
+        ? buildEditorAiReviewAlternateLanguageTexts(chapterState, row, sourceLanguageCode, targetLanguageCode)
+        : [],
+      targetLanguageHistory: meaning
+        ? (targetLanguageHistoryByRowId.get(rowId) ?? [])
+        : [],
+    };
+  });
+
+  const glossaryHints = meaning
+    ? buildBatchGlossaryHints(
+      rowInputs.map((row) => row.sourceText),
+      languageBaseCode(sourceLanguage),
+      languageBaseCode(targetLanguage),
+      chapterState?.glossary?.matcherModel ?? null,
+    )
+    : [];
+
+  const { contextBefore, contextAfter } = meaning && rowList.length > 0
+    ? buildBatchSourceContext(
+      chapterState,
+      rowIdentity(rowList[0]),
+      rowIdentity(rowList[rowList.length - 1]),
+      sourceLanguageCode,
+      targetLanguageCode,
+    )
+    : { contextBefore: [], contextAfter: [] };
+
+  const request = {
+    providerId,
+    modelId,
+    reviewMode: normalizedReviewMode,
+    sourceLanguageCode,
+    targetLanguageCode,
+    languageCode: languageBaseCode(targetLanguage) || targetLanguageCode,
+    sourceLanguage: normalizeReviewLanguageLabel(sourceLanguage, sourceLanguageCode),
+    targetLanguage: normalizeReviewLanguageLabel(targetLanguage, targetLanguageCode),
+    glossaryHints,
+    contextBefore,
+    contextAfter,
+    rows: rowInputs,
   };
   return Number.isFinite(installationId)
     ? { ...request, installationId }
