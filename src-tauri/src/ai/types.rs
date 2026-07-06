@@ -233,6 +233,139 @@ pub struct AiTranslationResponse {
     pub provider_continuation: Option<AiProviderContinuationMetadata>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiTranslationBatchRowInput {
+    pub row_id: String,
+    #[serde(default)]
+    pub source_text: String,
+    #[serde(default)]
+    pub source_footnote: String,
+    #[serde(default)]
+    pub source_image_caption: String,
+    #[serde(default)]
+    pub target_footnote: String,
+    #[serde(default)]
+    pub target_image_caption: String,
+    #[serde(default)]
+    pub alternate_language_texts: Vec<AiAssistantRowLanguageText>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiTranslationBatchRequest {
+    pub provider_id: AiProviderId,
+    pub model_id: String,
+    pub source_language: String,
+    pub target_language: String,
+    #[serde(default)]
+    pub source_language_code: String,
+    #[serde(default)]
+    pub target_language_code: String,
+    #[serde(default)]
+    pub glossary_hints: Vec<AiTranslationGlossaryHint>,
+    #[serde(default)]
+    pub context_before: Vec<AiAssistantRowWindowEntry>,
+    #[serde(default)]
+    pub context_after: Vec<AiAssistantRowWindowEntry>,
+    #[serde(default)]
+    pub rows: Vec<AiTranslationBatchRowInput>,
+    #[serde(default)]
+    pub installation_id: Option<i64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiTranslationBatchRowResult {
+    pub row_id: String,
+    #[serde(default)]
+    pub translated_text: String,
+    #[serde(default)]
+    pub translated_footnote: String,
+    #[serde(default)]
+    pub translated_image_caption: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiTranslationBatchResponse {
+    pub rows: Vec<AiTranslationBatchRowResult>,
+    #[serde(default)]
+    pub prompt_text: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiReviewBatchRowInput {
+    pub row_id: String,
+    #[serde(default)]
+    pub latest_translation: String,
+    #[serde(default)]
+    pub footnote: String,
+    #[serde(default)]
+    pub image_caption: String,
+    #[serde(default)]
+    pub source_text: String,
+    #[serde(default)]
+    pub source_footnote: String,
+    #[serde(default)]
+    pub source_image_caption: String,
+    #[serde(default)]
+    pub alternate_language_texts: Vec<AiAssistantRowLanguageText>,
+    #[serde(default)]
+    pub target_language_history: Vec<AiAssistantTargetLanguageHistoryEntry>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiReviewBatchRequest {
+    pub provider_id: AiProviderId,
+    pub model_id: String,
+    #[serde(default)]
+    pub review_mode: Option<String>,
+    #[serde(default)]
+    pub source_language_code: String,
+    #[serde(default)]
+    pub target_language_code: String,
+    #[serde(default)]
+    pub language_code: String,
+    #[serde(default)]
+    pub source_language: String,
+    #[serde(default)]
+    pub target_language: String,
+    #[serde(default)]
+    pub glossary_hints: Vec<AiTranslationGlossaryHint>,
+    #[serde(default)]
+    pub context_before: Vec<AiAssistantRowWindowEntry>,
+    #[serde(default)]
+    pub context_after: Vec<AiAssistantRowWindowEntry>,
+    #[serde(default)]
+    pub rows: Vec<AiReviewBatchRowInput>,
+    #[serde(default)]
+    pub installation_id: Option<i64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiReviewBatchRowResult {
+    pub row_id: String,
+    #[serde(default)]
+    pub suggested_text: String,
+    #[serde(default)]
+    pub suggested_footnote: String,
+    #[serde(default)]
+    pub suggested_image_caption: String,
+    pub reviewed: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiReviewBatchResponse {
+    pub rows: Vec<AiReviewBatchRowResult>,
+    #[serde(default)]
+    pub prompt_text: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AiPromptRequest {
     pub provider_id: AiProviderId,
@@ -254,6 +387,8 @@ pub enum AiPromptOutputFormat {
     AssistantTurnJson,
     TranslationSectionsJson,
     ReviewJson,
+    TranslationBatchJson,
+    ReviewBatchJson,
     GlossaryAlignmentJson,
     JsonSchema {
         name: String,

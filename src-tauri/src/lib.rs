@@ -53,12 +53,15 @@ use crate::{
         load_ai_provider_models as load_ai_provider_models_task,
         prepare_ai_translated_glossary as prepare_ai_translated_glossary_task,
         probe_ai_model as probe_ai_model_task, run_ai_assistant_turn as run_ai_assistant_turn_task,
-        run_ai_review as run_ai_review_task, run_ai_translation as run_ai_translation_task,
+        run_ai_review as run_ai_review_task, run_ai_review_batch as run_ai_review_batch_task,
+        run_ai_translation as run_ai_translation_task,
+        run_ai_translation_batch as run_ai_translation_batch_task,
         types::{
             AiAssistantTurnRequest, AiAssistantTurnResponse, AiModelProbeRequest, AiProviderId,
-            AiProviderModel, AiReviewRequest, AiReviewResponse,
-            AiTranslatedGlossaryPreparationRequest, AiTranslatedGlossaryPreparationResponse,
-            AiTranslationRequest, AiTranslationResponse,
+            AiProviderModel, AiReviewBatchRequest, AiReviewBatchResponse, AiReviewRequest,
+            AiReviewResponse, AiTranslatedGlossaryPreparationRequest,
+            AiTranslatedGlossaryPreparationResponse, AiTranslationBatchRequest,
+            AiTranslationBatchResponse, AiTranslationRequest, AiTranslationResponse,
         },
     },
     ai_secret_storage::{
@@ -258,6 +261,26 @@ async fn run_ai_translation(
     tauri::async_runtime::spawn_blocking(move || run_ai_translation_task(&app, request))
         .await
         .map_err(|error| format!("The AI translation worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn run_ai_translation_batch(
+    app: tauri::AppHandle,
+    request: AiTranslationBatchRequest,
+) -> Result<AiTranslationBatchResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || run_ai_translation_batch_task(&app, request))
+        .await
+        .map_err(|error| format!("The AI translation batch worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn run_ai_review_batch(
+    app: tauri::AppHandle,
+    request: AiReviewBatchRequest,
+) -> Result<AiReviewBatchResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || run_ai_review_batch_task(&app, request))
+        .await
+        .map_err(|error| format!("The AI review batch worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -556,6 +579,8 @@ pub fn run() {
             run_ai_review,
             prepare_editor_ai_translated_glossary,
             run_ai_translation,
+            run_ai_translation_batch,
+            run_ai_review_batch,
             run_ai_assistant_turn,
             probe_ai_provider_model,
             begin_github_app_install,
