@@ -295,6 +295,210 @@ test("ensureBatchDerivedGlossaries reports none for rows whose glossary usage is
   assert.deepEqual(results.map((result) => result.status), ["none", "none", "none"]);
 });
 
+function updateRowFieldInState(rowId, languageCode, nextValue) {
+  state.editorChapter = {
+    ...state.editorChapter,
+    rows: state.editorChapter.rows.map((candidate) =>
+      candidate.rowId === rowId
+        ? {
+          ...candidate,
+          fields: { ...candidate.fields, [languageCode]: nextValue },
+        }
+        : candidate,
+    ),
+  };
+}
+
+test("ensureBatchDerivedGlossaries generates missing pivot texts in one batch, persists them, then derives", async () => {
+  resetSessionState();
+  // row-1 and row-2 have no pivot (en) text; row-3 has one already.
+  state.editorChapter = chapter({
+    rows: [
+      { rowId: "row-1", lifecycleState: "active", fields: { es: "Oracion santa", en: "", vi: "" } },
+      { rowId: "row-2", lifecycleState: "active", fields: { es: "Luz clara", en: "", vi: "" } },
+      { rowId: "row-3", lifecycleState: "active", fields: { es: "Paz", en: "peace", vi: "" } },
+    ],
+  });
+  const generationCalls = [];
+  const prepareCalls = [];
+  const persistCalls = [];
+
+  const { aborted, results } = await ensureBatchDerivedGlossaries({
+    chapterState: state.editorChapter,
+    items: items(state.editorChapter),
+    providerId: "openai",
+    modelId: "test-model",
+    generateMissingPivotText: true,
+    persistPivotTextToRow: true,
+    operations: {
+      updateEditorRowFieldValue: updateRowFieldInState,
+      persistEditorRowOnBlur: async (_render, rowId, options) => {
+        persistCalls.push([rowId, options?.commitMetadata?.operation]);
+      },
+      runAiTranslationBatch: async (request) => {
+        generationCalls.push(request);
+        return {
+          rows: request.rows.map((row) => ({
+            rowId: row.rowId,
+            translatedText: `en:${row.sourceText}`,
+          })),
+        };
+      },
+      prepareEditorAiTranslatedGlossaryBatch: async (request) => {
+        prepareCalls.push(request);
+        return { glossarySourceText: request.glossarySourceText, entries: [] };
+      },
+    },
+  });
+
+  assert.equal(aborted, false);
+  // One batched generation call for the two pivot-less rows, es -> en.
+  assert.equal(generationCalls.length, 1);
+  assert.equal(generationCalls[0].sourceLanguageCode, "es");
+  assert.equal(generationCalls[0].targetLanguageCode, "en");
+  assert.deepEqual(
+    generationCalls[0].rows.map((row) => row.sourceText),
+    ["Oracion santa", "Luz clara"],
+  );
+  // Generated pivot texts are written into the rows and persisted.
+  assert.equal(state.editorChapter.rows[0].fields.en, "en:Oracion santa");
+  assert.equal(state.editorChapter.rows[1].fields.en, "en:Luz clara");
+  assert.deepEqual(persistCalls, [["row-1", "ai-translation"], ["row-2", "ai-translation"]]);
+  // One derivation call covers all three rows (row-3's pivot plus the generated ones).
+  assert.equal(prepareCalls.length, 1);
+  assert.equal(
+    prepareCalls[0].glossarySourceText,
+    "peace\n\nen:Oracion santa\n\nen:Luz clara",
+  );
+  assert.deepEqual(results.map((result) => result.status), ["derived", "derived", "derived"]);
+  assert.equal(
+    state.editorChapter.rows.every(
+      (row) => state.editorChapter.derivedGlossariesByRowId?.[row.rowId]?.status === "ready",
+    ),
+    true,
+  );
+});
+
+test("ensureBatchDerivedGlossaries settles rows as unresolved when pivot generation fails", async () => {
+  resetSessionState();
+  state.editorChapter = chapter({
+    rows: [
+      { rowId: "row-1", lifecycleState: "active", fields: { es: "Oracion santa", en: "", vi: "" } },
+      { rowId: "row-2", lifecycleState: "active", fields: { es: "Luz clara", en: "", vi: "" } },
+    ],
+  });
+
+  const { aborted, results } = await ensureBatchDerivedGlossaries({
+    chapterState: state.editorChapter,
+    items: items(state.editorChapter),
+    providerId: "openai",
+    modelId: "test-model",
+    generateMissingPivotText: true,
+    operations: {
+      updateEditorRowFieldValue: updateRowFieldInState,
+      runAiTranslationBatch: async (request) => ({
+        // row-2 comes back empty — it must not join the derivation queue.
+        rows: request.rows.map((row) => ({
+          rowId: row.rowId,
+          translatedText: row.rowId === "row-2" ? "" : `en:${row.sourceText}`,
+        })),
+      }),
+      prepareEditorAiTranslatedGlossaryBatch: async (request) => ({
+        glossarySourceText: request.glossarySourceText,
+        entries: [],
+      }),
+    },
+  });
+
+  assert.equal(aborted, false);
+  assert.deepEqual(
+    results.map((result) => [result.item.rowId, result.status, result.reason ?? null]),
+    [
+      ["row-2", "unresolved", "generation-failed"],
+      ["row-1", "derived", null],
+    ],
+  );
+});
+
+test("ensureBatchDerivedGlossaries keeps missing pivot rows unresolved without generation support", async () => {
+  resetSessionState();
+  state.editorChapter = chapter({
+    rows: [
+      { rowId: "row-1", lifecycleState: "active", fields: { es: "Oracion santa", en: "", vi: "" } },
+    ],
+  });
+
+  const { results } = await ensureBatchDerivedGlossaries({
+    chapterState: state.editorChapter,
+    items: items(state.editorChapter),
+    providerId: "openai",
+    modelId: "test-model",
+    generateMissingPivotText: true,
+    // No updateEditorRowFieldValue operation — generation cannot write rows.
+    operations: {
+      runAiTranslationBatch: async () => {
+        throw new Error("should not be called");
+      },
+    },
+  });
+
+  assert.deepEqual(
+    results.map((result) => [result.status, result.reason]),
+    [["unresolved", "missing-pivot-text"]],
+  );
+});
+
+test("ensureBatchDerivedGlossaries generates pivot text from a distinct generation column", async () => {
+  resetSessionState();
+  // Modal-style derivation: item source is ja, but generation uses the chapter
+  // source column (es).
+  state.editorChapter = chapter({
+    languages: [
+      { code: "es", name: "Spanish", role: "source" },
+      { code: "en", name: "English", role: "target" },
+      { code: "vi", name: "Vietnamese", role: "target" },
+      { code: "ja", name: "Japanese", role: "target" },
+    ],
+    rows: [
+      { rowId: "row-1", lifecycleState: "active", fields: { es: "Oracion", en: "", vi: "Cau nguyen", ja: "祈り" } },
+    ],
+  });
+  const generationCalls = [];
+
+  const { results } = await ensureBatchDerivedGlossaries({
+    chapterState: state.editorChapter,
+    items: [{ rowId: "row-1", sourceLanguageCode: "ja", targetLanguageCode: "vi" }],
+    providerId: "openai",
+    modelId: "test-model",
+    useCurrentGlossarySourceText: true,
+    generateMissingPivotText: true,
+    generationSourceLanguageCode: "es",
+    operations: {
+      updateEditorRowFieldValue: updateRowFieldInState,
+      runAiTranslationBatch: async (request) => {
+        generationCalls.push(request);
+        return {
+          rows: [{ rowId: "row-1", translatedText: "prayer" }],
+        };
+      },
+      prepareEditorAiTranslatedGlossaryBatch: async (request) => ({
+        glossarySourceText: request.glossarySourceText,
+        entries: [{ sourceTerm: "祈り", glossarySourceTerm: "prayer", targetVariants: ["cau nguyen"] }],
+      }),
+    },
+  });
+
+  assert.equal(generationCalls.length, 1);
+  assert.equal(generationCalls[0].sourceLanguageCode, "es");
+  assert.deepEqual(generationCalls[0].rows, [{ rowId: "row-1", sourceText: "Oracion" }]);
+  assert.equal(state.editorChapter.rows[0].fields.en, "prayer");
+  assert.deepEqual(results.map((result) => result.status), ["derived"]);
+  assert.deepEqual(
+    state.editorChapter.derivedGlossariesByRowId["row-1"].entries.map((entry) => entry.sourceTerm),
+    ["祈り"],
+  );
+});
+
 test("chunkPendingDerivations bounds chunks by row count and combined token budget", () => {
   const pendingFor = (sourceText, pivotText) => ({
     context: { sourceText },

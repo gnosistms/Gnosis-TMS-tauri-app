@@ -74,10 +74,8 @@ function buildDerivedGlossaryItemContext(chapterState, item) {
   };
 }
 
-// Splits pending derivations into chunks bounded by row count and a token
-// budget. Both the row source text and its pivot text enter the alignment
-// prompts, so both count against the budget.
-function chunkPendingDerivations(pending, options = {}) {
+// Splits entries into chunks bounded by row count and a token budget.
+function chunkByTokenBudget(entries, options, tokensForEntry) {
   const maxRows = Number.isFinite(options.maxRows) && options.maxRows > 0
     ? options.maxRows
     : AI_BATCH_MAX_ROWS;
@@ -88,10 +86,8 @@ function chunkPendingDerivations(pending, options = {}) {
   const chunks = [];
   let current = [];
   let currentTokens = 0;
-  for (const entry of Array.isArray(pending) ? pending : []) {
-    const tokens =
-      estimateSourceTokens(entry.context.sourceText)
-      + estimateSourceTokens(entry.usage.preparationGlossarySourceText);
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const tokens = tokensForEntry(entry);
     if (
       current.length > 0
       && (current.length >= maxRows || currentTokens + tokens > tokenTarget)
@@ -109,15 +105,145 @@ function chunkPendingDerivations(pending, options = {}) {
   return chunks;
 }
 
+// Both the row source text and its pivot text enter the alignment prompts, so
+// both count against the derivation chunk budget.
+function chunkPendingDerivations(pending, options = {}) {
+  return chunkByTokenBudget(pending, options, (entry) =>
+    estimateSourceTokens(entry.context.sourceText)
+    + estimateSourceTokens(entry.usage.preparationGlossarySourceText),
+  );
+}
+
+// Phase B: batched pivot-text generation. One run_ai_translation_batch call
+// per chunk translates the generation column into the glossary source
+// language; each returned text is written into the row's pivot column (and
+// optionally persisted) before the row is re-resolved into the derivation
+// queue. Rows whose generation fails settle as unresolved.
+async function generatePivotTextBatches({
+  chapterState,
+  needsPivotText,
+  providerId,
+  modelId,
+  isRunActive,
+  useCurrentGlossarySourceText,
+  persistPivotTextToRow,
+  render,
+  settle,
+  chunkOptions,
+  operations,
+}) {
+  const runBatch =
+    typeof operations.runAiTranslationBatch === "function"
+      ? operations.runAiTranslationBatch
+      : (batchRequest) => invoke("run_ai_translation_batch", { request: batchRequest });
+  const installationId = selectedProjectsTeamInstallationId();
+  const pending = [];
+
+  const chunks = chunkByTokenBudget(needsPivotText, chunkOptions, (entry) =>
+    estimateSourceTokens(entry.generationSourceText),
+  );
+  for (const chunk of chunks) {
+    if (!isRunActive()) {
+      return { aborted: true, pending };
+    }
+
+    const first = chunk[0];
+    const generationLanguage = languageByCode(chapterState, first.generationCode);
+    let payload = null;
+    try {
+      payload = await runBatch({
+        providerId,
+        modelId,
+        sourceLanguage:
+          languageSemanticLabel(generationLanguage) || first.generationCode,
+        targetLanguage: first.usage.glossarySourceLanguageLabel,
+        sourceLanguageCode: first.generationCode,
+        targetLanguageCode: first.usage.glossarySourceLanguageCode,
+        rows: chunk.map((entry) => ({
+          rowId: entry.item.rowId,
+          sourceText: entry.generationSourceText,
+        })),
+        ...(installationId === null ? {} : { installationId }),
+      });
+    } catch {
+      if (!isRunActive()) {
+        return { aborted: true, pending };
+      }
+      for (const entry of chunk) {
+        settle({ item: entry.item, status: "unresolved", reason: "generation-failed" });
+      }
+      continue;
+    }
+    if (!isRunActive()) {
+      return { aborted: true, pending };
+    }
+
+    const returnedById = new Map(
+      (Array.isArray(payload?.rows) ? payload.rows : []).map((row) => [row.rowId, row]),
+    );
+    for (const entry of chunk) {
+      const pivotText =
+        typeof returnedById.get(entry.item.rowId)?.translatedText === "string"
+          ? returnedById.get(entry.item.rowId).translatedText.trim()
+          : "";
+      if (!pivotText) {
+        settle({ item: entry.item, status: "unresolved", reason: "generation-failed" });
+        continue;
+      }
+
+      operations.updateEditorRowFieldValue(
+        entry.item.rowId,
+        entry.usage.glossarySourceLanguageCode,
+        pivotText,
+      );
+      if (persistPivotTextToRow && typeof operations.persistEditorRowOnBlur === "function") {
+        await operations.persistEditorRowOnBlur(render, entry.item.rowId, {
+          commitMetadata: {
+            operation: "ai-translation",
+            aiModel: modelId,
+          },
+          waitForDurable: false,
+        });
+        if (!isRunActive()) {
+          return { aborted: true, pending };
+        }
+      }
+
+      // Re-resolve against the freshly written row so the derivation context
+      // (and its staleness keys) reflect what is now in the pivot column.
+      const freshContext = buildDerivedGlossaryItemContext(state.editorChapter, entry.item);
+      const freshUsage = freshContext
+        ? resolveEditorDerivedGlossaryUsage(freshContext, { useCurrentGlossarySourceText })
+        : null;
+      if (
+        freshUsage?.kind !== "derived"
+        || !String(freshUsage.preparationGlossarySourceText ?? "").trim()
+      ) {
+        settle({ item: entry.item, status: "unresolved", reason: "generation-failed" });
+        continue;
+      }
+      pending.push({ item: entry.item, context: freshContext, usage: freshUsage });
+    }
+  }
+
+  return { aborted: false, pending };
+}
+
 // Ensures every item (all sharing one language pair) has a fresh derived
 // glossary entry in chapter state and the persistent cache. Returns
 // { aborted, results } where each result is
 // { item, status: "none"|"cached"|"derived"|"unresolved", reason?,
 //   matcherModel?, glossarySourceText? }.
 // "unresolved" rows are the caller's to fall back on (single-row path);
-// reasons: "no-context", "missing-pivot-text", "derivation-failed",
-// "stale-source". A chunk failure resolves that chunk as unresolved and
-// continues; only an inactive run aborts.
+// reasons: "no-context", "missing-pivot-text", "generation-failed",
+// "derivation-failed", "stale-source". A chunk failure resolves that chunk as
+// unresolved and continues; only an inactive run aborts.
+//
+// With generateMissingPivotText, rows whose pivot column is empty first get a
+// batched pivot translation (generationSourceLanguageCode column — defaults to
+// the item's source column — into the glossary source language); the result is
+// written into the row and, with persistPivotTextToRow, persisted like the
+// single-row path before the row joins the derivation queue.
 export async function ensureBatchDerivedGlossaries({
   chapterState,
   items,
@@ -125,6 +251,10 @@ export async function ensureBatchDerivedGlossaries({
   modelId,
   isRunActive = () => true,
   useCurrentGlossarySourceText = false,
+  generateMissingPivotText = false,
+  persistPivotTextToRow = false,
+  generationSourceLanguageCode = "",
+  render = null,
   onItemSettled = null,
   chunkOptions = {},
   operations = {},
@@ -135,7 +265,12 @@ export async function ensureBatchDerivedGlossaries({
     onItemSettled?.(result);
   };
 
+  const canGeneratePivotText =
+    generateMissingPivotText
+    && typeof operations.updateEditorRowFieldValue === "function";
+
   const pending = [];
+  const needsPivotText = [];
   for (const item of Array.isArray(items) ? items : []) {
     const context = buildDerivedGlossaryItemContext(chapterState, item);
     if (!context) {
@@ -157,10 +292,36 @@ export async function ensureBatchDerivedGlossaries({
       continue;
     }
     if (!String(usage.preparationGlossarySourceText ?? "").trim()) {
-      settle({ item, status: "unresolved", reason: "missing-pivot-text" });
+      const generationCode = generationSourceLanguageCode || item.sourceLanguageCode;
+      const generationSourceText = readRowFieldText(context.row, generationCode);
+      if (!canGeneratePivotText || !generationSourceText.trim()) {
+        settle({ item, status: "unresolved", reason: "missing-pivot-text" });
+        continue;
+      }
+      needsPivotText.push({ item, context, usage, generationCode, generationSourceText });
       continue;
     }
     pending.push({ item, context, usage });
+  }
+
+  if (needsPivotText.length > 0) {
+    const generated = await generatePivotTextBatches({
+      chapterState,
+      needsPivotText,
+      providerId,
+      modelId,
+      isRunActive,
+      useCurrentGlossarySourceText,
+      persistPivotTextToRow,
+      render,
+      settle,
+      chunkOptions,
+      operations,
+    });
+    if (generated.aborted) {
+      return { aborted: true, results };
+    }
+    pending.push(...generated.pending);
   }
 
   if (pending.length === 0) {

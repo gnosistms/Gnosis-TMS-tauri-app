@@ -558,6 +558,103 @@ test("AI Translate All derives the glossary once for a derived-glossary batch", 
   );
 });
 
+test("AI Translate All generates missing pivot texts in batch instead of single-row fallback", async () => {
+  resetSessionState();
+  editorAiTranslateAllTestApi.resetActiveBatchRunId();
+  // Same derived-glossary setup, but the pivot (en) column starts empty, which
+  // previously sent every row through the single-row fallback.
+  const chapterState = batchChapter();
+  state.editorChapter = {
+    ...chapterState,
+    languages: [
+      { code: "es", name: "Spanish", role: "source" },
+      { code: "en", name: "English", role: "target" },
+      { code: "vi", name: "Vietnamese", role: "target" },
+    ],
+    rows: chapterState.rows.map((row) => ({
+      ...row,
+      fields: { ...row.fields, en: "" },
+    })),
+    glossary: {
+      sourceLanguage: { code: "en" },
+      targetLanguage: { code: "vi" },
+      glossaryId: "g1",
+      repoName: "repo",
+      title: "Glossary",
+      matcherModel: {},
+      terms: [
+        {
+          lifecycleState: "active",
+          sourceTerms: ["hola"],
+          targetTerms: ["xin chao"],
+        },
+      ],
+    },
+  };
+
+  const generationCalls = [];
+  const translationCalls = [];
+  const fallbackRows = [];
+
+  await confirmEditorAiTranslateAll(
+    () => {},
+    batchOperations({
+      prepareEditorAiTranslatedGlossaryBatch: async (request) => ({
+        glossarySourceText: request.glossarySourceText,
+        entries: [],
+      }),
+      runAiTranslationBatch: async (request) => {
+        if (request.targetLanguageCode === "en") {
+          generationCalls.push(request);
+          return {
+            rows: request.rows.map((row) => ({
+              rowId: row.rowId,
+              translatedText: `en:${row.sourceText}`,
+            })),
+          };
+        }
+        translationCalls.push(request);
+        return {
+          rows: request.rows.map((row) => ({
+            rowId: row.rowId,
+            translatedText: `vi:${row.sourceText}`,
+          })),
+          promptText: "P",
+        };
+      },
+      runEditorAiTranslateForContext: async (_render, _actionId, context) => {
+        fallbackRows.push(context.rowId);
+        return { ok: true };
+      },
+    }),
+  );
+
+  // Pivot texts were generated in ONE batch call and written into the rows —
+  // no single-row fallback.
+  assert.deepEqual(fallbackRows, []);
+  assert.equal(generationCalls.length, 1);
+  assert.deepEqual(
+    generationCalls[0].rows.map((row) => row.sourceText),
+    ["Hola", "Adios", "Gracias"],
+  );
+  assert.deepEqual(
+    state.editorChapter.rows.map((row) => row.fields.en),
+    ["en:Hola", "en:Adios", "en:Gracias"],
+  );
+  // The es -> vi work still went through one batch translation call.
+  assert.equal(translationCalls.length, 1);
+  assert.deepEqual(
+    state.editorChapter.rows.map((row) => row.fields.vi),
+    ["vi:Hola", "vi:Adios", "vi:Gracias"],
+  );
+  assert.equal(
+    state.editorChapter.rows.every(
+      (row) => state.editorChapter.derivedGlossariesByRowId?.[row.rowId]?.status === "ready",
+    ),
+    true,
+  );
+});
+
 test("AI Translate All skips applying a batch result when the source changed mid-flight", async () => {
   resetSessionState();
   editorAiTranslateAllTestApi.resetActiveBatchRunId();

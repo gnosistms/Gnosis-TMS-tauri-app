@@ -617,12 +617,13 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
   };
 
   // Resolves the batch's derived glossary per row via the shared batch
-  // derivation flow (fresh cached entries reused, the rest derived in combined
-  // calls with entries stored back into chapter state so highlights and
-  // staleness checks work like the single-row path). Mutates entries in place
-  // with { hints, glossarySourceText }; unresolved rows (no pivot text yet,
-  // derivation failure, mid-flight edits) are returned for the single-row
-  // fallback. Returns { fallbackEntries } or "abort".
+  // derivation flow (fresh cached entries reused, missing pivot texts
+  // generated in batch and written into rows like the single-row path, the
+  // rest derived in combined calls with entries stored back into chapter state
+  // so highlights and staleness checks work like the single-row path). Mutates
+  // entries in place with { hints, glossarySourceText }; unresolved rows
+  // (generation/derivation failure, mid-flight edits) are returned for the
+  // single-row fallback. Returns { fallbackEntries } or "abort".
   const resolveBatchDerivedGlossary = async (chapterState, entries, provider) => {
     const entryByItem = new Map(entries.map((entry) => [entry.item, entry]));
     const { aborted, results } = await ensureBatchDerivedGlossaries({
@@ -631,6 +632,9 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
       providerId: provider.providerId,
       modelId: provider.modelId,
       isRunActive,
+      generateMissingPivotText: true,
+      persistPivotTextToRow: true,
+      render,
       operations,
     });
     if (aborted) {
