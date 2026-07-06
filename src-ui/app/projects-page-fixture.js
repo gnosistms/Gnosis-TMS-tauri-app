@@ -62,6 +62,9 @@ export function applyProjectsPageFixture(appState, options = {}) {
     id: teamId,
     name: options.teamName ?? "Fixture Team",
     membershipRole: "owner",
+    // Write guards require a concrete installation; any finite id works
+    // against the browser harness's mocked invoke.
+    installationId: 424242,
     canManageProjects: true,
     canDelete: true,
   };
@@ -72,7 +75,15 @@ export function applyProjectsPageFixture(appState, options = {}) {
   appState.selectedTeamId = teamId;
   appState.projects = projects;
   appState.deletedProjects = [];
-  appState.glossaries = [];
+  appState.glossaries = Array.from(
+    { length: Number.isInteger(options.glossaryCount) ? options.glossaryCount : 0 },
+    (_unused, index) => ({
+      id: `fixture-glossary-${index + 1}`,
+      title: `Fixture Glossary ${index + 1}`,
+      repoName: `fixture-glossary-repo-${index + 1}`,
+      lifecycleState: "active",
+    }),
+  );
   appState.expandedProjects = new Set(expandedProjectIds);
   appState.expandedDeletedFiles = new Set(
     Array.isArray(options.expandedDeletedFileProjectIds) ? options.expandedDeletedFileProjectIds : [],

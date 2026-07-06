@@ -27,6 +27,11 @@ import {
   updateTargetLanguageManagerDrag,
 } from "./events/target-language-drag.js";
 import { registerProjectAddTranslationProgress } from "./project-add-translation-flow.js";
+import {
+  installProjectsRenderHold,
+  isProjectsSelectCommitTarget,
+  withProjectsSelectCommit,
+} from "./projects-render-hold.js";
 
 const SYNC_WITH_SERVER_EVENT = "sync-with-server";
 const ERROR_REPORTING_EVENT = "open-error-reporting";
@@ -71,8 +76,17 @@ export function registerAppEvents(render) {
   registerGlossaryTooltipEvents();
   registerProjectAddTranslationProgress(render);
 
+  installProjectsRenderHold();
   document.addEventListener("input", (event) => handleInputEvent(event, render));
-  document.addEventListener("change", (event) => handleInputEvent(event, render));
+  document.addEventListener("change", (event) => {
+    // A chapter-select commit must render its optimistic update immediately,
+    // so its change handling runs with the projects render hold bypassed.
+    if (isProjectsSelectCommitTarget(event.target)) {
+      withProjectsSelectCommit(() => handleInputEvent(event, render));
+      return;
+    }
+    handleInputEvent(event, render);
+  });
   document.addEventListener("paste", (event) => handlePasteEvent(event, render));
 
   document.addEventListener("mousedown", (event) => {
