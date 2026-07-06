@@ -1,5 +1,9 @@
 import { buildEditorAiTranslationGlossaryHints } from "./editor-glossary-highlighting.js";
-import { buildRowSourceContextWindow } from "./editor-ai-context-window.js";
+import {
+  buildBatchSourceContext,
+  buildRowSourceContextWindow,
+} from "./editor-ai-context-window.js";
+import { buildBatchGlossaryHints } from "./editor-ai-batch-request.js";
 import { editorFootnotesPlainText } from "./editor-utils.js";
 import { languageBaseCode } from "./editor-language-utils.js";
 
@@ -171,6 +175,80 @@ export function buildEditorAiReviewRequest({
     targetLanguageHistory: normalizedReviewMode === "meaning" && Array.isArray(targetLanguageHistory)
       ? targetLanguageHistory
       : [],
+  };
+  return Number.isFinite(installationId)
+    ? { ...request, installationId }
+    : request;
+}
+
+export function buildEditorAiReviewBatchRequest({
+  chapterState,
+  rows,
+  sourceLanguageCode,
+  targetLanguageCode,
+  providerId,
+  modelId,
+  reviewMode,
+  targetLanguageHistoryByRowId = new Map(),
+  installationId = null,
+}) {
+  const normalizedReviewMode = normalizeEditorAiReviewMode(reviewMode);
+  const meaning = normalizedReviewMode === "meaning";
+  const rowList = Array.isArray(rows) ? rows : [];
+  const sourceLanguage = editorReviewLanguageByCode(chapterState, sourceLanguageCode);
+  const targetLanguage = editorReviewLanguageByCode(chapterState, targetLanguageCode);
+
+  const rowInputs = rowList.map((row) => {
+    const rowId = rowIdentity(row);
+    return {
+      rowId,
+      latestTranslation: readEditorReviewRowFieldText(row, targetLanguageCode),
+      footnote: readEditorReviewRowFootnote(row, targetLanguageCode),
+      imageCaption: readEditorReviewRowImageCaption(row, targetLanguageCode),
+      sourceText: meaning ? readEditorReviewRowFieldText(row, sourceLanguageCode) : "",
+      sourceFootnote: meaning ? readEditorReviewRowFootnote(row, sourceLanguageCode) : "",
+      sourceImageCaption: meaning ? readEditorReviewRowImageCaption(row, sourceLanguageCode) : "",
+      alternateLanguageTexts: meaning
+        ? buildEditorAiReviewAlternateLanguageTexts(chapterState, row, sourceLanguageCode, targetLanguageCode)
+        : [],
+      targetLanguageHistory: meaning
+        ? (targetLanguageHistoryByRowId.get(rowId) ?? [])
+        : [],
+    };
+  });
+
+  const glossaryHints = meaning
+    ? buildBatchGlossaryHints(
+      rowInputs.map((row) => row.sourceText),
+      languageBaseCode(sourceLanguage),
+      languageBaseCode(targetLanguage),
+      chapterState?.glossary?.matcherModel ?? null,
+    )
+    : [];
+
+  const { contextBefore, contextAfter } = meaning && rowList.length > 0
+    ? buildBatchSourceContext(
+      chapterState,
+      rowIdentity(rowList[0]),
+      rowIdentity(rowList[rowList.length - 1]),
+      sourceLanguageCode,
+      targetLanguageCode,
+    )
+    : { contextBefore: [], contextAfter: [] };
+
+  const request = {
+    providerId,
+    modelId,
+    reviewMode: normalizedReviewMode,
+    sourceLanguageCode,
+    targetLanguageCode,
+    languageCode: languageBaseCode(targetLanguage) || targetLanguageCode,
+    sourceLanguage: normalizeReviewLanguageLabel(sourceLanguage, sourceLanguageCode),
+    targetLanguage: normalizeReviewLanguageLabel(targetLanguage, targetLanguageCode),
+    glossaryHints,
+    contextBefore,
+    contextAfter,
+    rows: rowInputs,
   };
   return Number.isFinite(installationId)
     ? { ...request, installationId }

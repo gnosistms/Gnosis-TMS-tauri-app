@@ -13,6 +13,7 @@ import {
   hasPendingEditorWrites,
 } from "./editor-persistence-flow.js";
 import {
+  buildEditorAiReviewBatchRequest,
   buildEditorAiReviewRequest,
   editorReviewLanguageByCode,
   normalizeEditorAiReviewMode,
@@ -22,6 +23,11 @@ import {
   selectedEditorReviewSourceLanguageCode,
   selectedEditorReviewTargetLanguageCode,
 } from "./editor-ai-review-request.js";
+import {
+  chunkTranslateAllWork,
+  estimateSourceTokens,
+  mapWithConcurrency,
+} from "./editor-ai-batch-request.js";
 import { loadAssistantTargetLanguageHistory } from "./editor-ai-assistant-flow.js";
 import {
   cloneRowFields,
@@ -416,19 +422,122 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
   });
   render?.();
 
-  try {
-    for (const item of work) {
-      if (
-        activeReviewAllRunId !== runId
-        || state.editorChapter?.aiReviewAllModal?.step !== "reviewing"
-      ) {
-        if (started) {
-          enablePleaseCheckFilterAndShowModal();
-          render?.();
-        }
-        return;
-      }
+  const isReviewActive = () =>
+    activeReviewAllRunId === runId
+    && state.editorChapter?.aiReviewAllModal?.step === "reviewing";
 
+  const loadHistoryForItem = async (item, latestTranslation) =>
+    reviewMode === "meaning"
+      ? loadAssistantTargetLanguageHistory({
+        chapterId: editorChapter.chapterId,
+        rowId: item.rowId,
+        targetLanguageCode,
+        targetText: latestTranslation,
+      })
+      : [];
+
+  // Writes one review result (from a batch row or a single-row call). Returns
+  // "chapter-changed" (caller must stop the run) or "ok".
+  const applyReviewOutcome = async (item, reviewPayload) => {
+    const reviewed = reviewPayload?.reviewed === true;
+    const suggestedText = reviewed ? "" : String(reviewPayload?.suggestedText ?? "");
+    const suggestedFootnote = reviewed ? "" : String(reviewPayload?.suggestedFootnote ?? "");
+    const suggestedImageCaption = reviewed ? "" : String(reviewPayload?.suggestedImageCaption ?? "");
+    const savePayload = await invokeEditorWriteCommand("apply_gtms_editor_ai_review_result", {
+      input: {
+        installationId: team.installationId,
+        projectId: context.project.id,
+        repoName: context.project.name,
+        chapterId: editorChapter.chapterId,
+        rowId: item.rowId,
+        languageCode: targetLanguageCode,
+        suggestedText,
+        suggestedFootnote,
+        suggestedImageCaption,
+        reviewed,
+        pleaseCheck: !reviewed,
+        aiModel: modelId,
+      },
+    }, { render, actionKind: "sharedWrite", rowId: item.rowId });
+    if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
+      return "chapter-changed";
+    }
+    operations.updateEditorChapterRow?.(item.rowId, (currentRow) =>
+      applyReviewResultToRow(currentRow, targetLanguageCode, savePayload),
+    );
+    state.editorChapter = {
+      ...state.editorChapter,
+      chapterBaseCommitSha:
+        typeof savePayload?.chapterBaseCommitSha === "string" && savePayload.chapterBaseCommitSha.trim()
+          ? savePayload.chapterBaseCommitSha.trim()
+          : state.editorChapter.chapterBaseCommitSha,
+    };
+    reconcileDirtyTrackedEditorRows([item.rowId]);
+    if (
+      state.editorChapter.activeRowId === item.rowId
+      && state.editorChapter.activeLanguageCode === targetLanguageCode
+    ) {
+      loadActiveEditorFieldHistory(render);
+    }
+
+    completedCount += 1;
+    applyEditorAiReviewAllModal({
+      step: "reviewing",
+      status: "loading",
+      completedCount,
+      totalCount: work.length,
+      languageProgress: buildLanguageProgress(targetLanguageCode, work.length, completedCount),
+    });
+    render?.({ scope: "translate-visible-rows", rowIds: [item.rowId], reason: "ai-review-all" });
+    render?.({ scope: "translate-ai-review-all-modal" });
+    return "ok";
+  };
+
+  // Reviews one row through the single-row command path (fallback + length-1
+  // batches). Returns "abort" | "chapter-changed" | "ok" | "skip".
+  const reviewSingleItem = async (item) => {
+    if (!isReviewActive()) {
+      return "abort";
+    }
+    const row = findEditorRowById(item.rowId, state.editorChapter);
+    const latestTranslation = readEditorReviewRowFieldText(row, targetLanguageCode);
+    const latestFootnote = readEditorReviewRowFootnote(row, targetLanguageCode);
+    const latestImageCaption = readEditorReviewRowImageCaption(row, targetLanguageCode);
+    if (
+      !row
+      || (!latestTranslation.trim() && !latestFootnote.trim() && !latestImageCaption.trim())
+      || row.fieldStates?.[targetLanguageCode]?.reviewed === true
+    ) {
+      return "skip";
+    }
+
+    started = true;
+    const targetLanguageHistory = await loadHistoryForItem(item, latestTranslation);
+    if (!isReviewActive()) {
+      return "abort";
+    }
+    const reviewPayload = await invoke("run_ai_review", {
+      request: buildEditorAiReviewRequest({
+        chapterState: state.editorChapter,
+        row,
+        providerId,
+        modelId,
+        reviewMode,
+        sourceLanguageCode,
+        targetLanguageCode,
+        targetLanguageHistory,
+        installationId: team.installationId,
+      }),
+    });
+    if (!isReviewActive()) {
+      return "abort";
+    }
+    return applyReviewOutcome(item, reviewPayload);
+  };
+
+  const reviewBatch = async (batch) => {
+    const liveItems = [];
+    for (const item of batch.items) {
       const row = findEditorRowById(item.rowId, state.editorChapter);
       const latestTranslation = readEditorReviewRowFieldText(row, targetLanguageCode);
       const latestFootnote = readEditorReviewRowFootnote(row, targetLanguageCode);
@@ -440,97 +549,114 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
       ) {
         continue;
       }
+      liveItems.push({ item, row });
+    }
+    if (liveItems.length === 0) {
+      return "ok";
+    }
 
-      started = true;
-      const targetLanguageHistory = reviewMode === "meaning"
-        ? await loadAssistantTargetLanguageHistory({
-          chapterId: editorChapter.chapterId,
-          rowId: item.rowId,
-          targetLanguageCode,
-          targetText: latestTranslation,
-        })
-        : [];
-      if (
-        activeReviewAllRunId !== runId
-        || state.editorChapter?.aiReviewAllModal?.step !== "reviewing"
-      ) {
-        enablePleaseCheckFilterAndShowModal();
-        render?.();
-        return;
-      }
-      const reviewPayload = await invoke("run_ai_review", {
-        request: buildEditorAiReviewRequest({
-          chapterState: state.editorChapter,
-          row,
-          providerId,
-          modelId,
-          reviewMode,
-          sourceLanguageCode,
-          targetLanguageCode,
-          targetLanguageHistory,
-          installationId: team.installationId,
-        }),
+    started = true;
+
+    const targetLanguageHistoryByRowId = new Map();
+    if (reviewMode === "meaning") {
+      await mapWithConcurrency(liveItems, 3, async ({ item, row }) => {
+        const history = await loadHistoryForItem(
+          item,
+          readEditorReviewRowFieldText(row, targetLanguageCode),
+        );
+        targetLanguageHistoryByRowId.set(item.rowId, history);
       });
-      if (
-        activeReviewAllRunId !== runId
-        || state.editorChapter?.aiReviewAllModal?.step !== "reviewing"
-      ) {
-        enablePleaseCheckFilterAndShowModal();
-        render?.();
+      if (!isReviewActive()) {
+        return "abort";
+      }
+    }
+
+    const request = buildEditorAiReviewBatchRequest({
+      chapterState: state.editorChapter,
+      rows: liveItems.map((entry) => entry.row),
+      sourceLanguageCode,
+      targetLanguageCode,
+      providerId,
+      modelId,
+      reviewMode,
+      targetLanguageHistoryByRowId,
+      installationId: team.installationId,
+    });
+
+    const runBatch =
+      typeof operations.runAiReviewBatch === "function"
+        ? operations.runAiReviewBatch
+        : (batchRequest) => invoke("run_ai_review_batch", { request: batchRequest });
+
+    let payload;
+    try {
+      payload = await runBatch(request);
+    } catch {
+      if (!isReviewActive()) {
+        return "abort";
+      }
+      for (const { item } of liveItems) {
+        const outcome = await reviewSingleItem(item);
+        if (outcome === "abort" || outcome === "chapter-changed") {
+          return outcome;
+        }
+      }
+      return "ok";
+    }
+    if (!isReviewActive()) {
+      return "abort";
+    }
+
+    const returnedById = new Map(
+      (Array.isArray(payload?.rows) ? payload.rows : []).map((row) => [row.rowId, row]),
+    );
+    for (const { item } of liveItems) {
+      if (!isReviewActive()) {
+        return "abort";
+      }
+      const rowResult = returnedById.get(item.rowId);
+      const outcome = rowResult
+        ? await applyReviewOutcome(item, rowResult)
+        : await reviewSingleItem(item);
+      if (outcome === "abort" || outcome === "chapter-changed") {
+        return outcome;
+      }
+    }
+    return "ok";
+  };
+
+  try {
+    const batches = chunkTranslateAllWork(work, {
+      glossaryKindForItem: () => "direct",
+      sourceTokensForItem: (item) =>
+        estimateSourceTokens(
+          readEditorReviewRowFieldText(
+            findEditorRowById(item.rowId, state.editorChapter),
+            targetLanguageCode,
+          ),
+        ),
+    });
+    for (const batch of batches) {
+      if (!isReviewActive()) {
+        if (started) {
+          enablePleaseCheckFilterAndShowModal();
+          render?.();
+        }
         return;
       }
-
-      const reviewed = reviewPayload?.reviewed === true;
-      const suggestedText = reviewed ? "" : String(reviewPayload?.suggestedText ?? "");
-      const suggestedFootnote = reviewed ? "" : String(reviewPayload?.suggestedFootnote ?? "");
-      const suggestedImageCaption = reviewed ? "" : String(reviewPayload?.suggestedImageCaption ?? "");
-      const savePayload = await invokeEditorWriteCommand("apply_gtms_editor_ai_review_result", {
-        input: {
-          installationId: team.installationId,
-          projectId: context.project.id,
-          repoName: context.project.name,
-          chapterId: editorChapter.chapterId,
-          rowId: item.rowId,
-          languageCode: targetLanguageCode,
-          suggestedText,
-          suggestedFootnote,
-          suggestedImageCaption,
-          reviewed,
-          pleaseCheck: !reviewed,
-          aiModel: modelId,
-        },
-      }, { render, actionKind: "sharedWrite", rowId: item.rowId });
-      if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
+      const outcome = batch.items.length === 1
+        ? await reviewSingleItem(batch.items[0])
+        : await reviewBatch(batch);
+      if (outcome === "chapter-changed") {
         return;
       }
-      operations.updateEditorChapterRow?.(item.rowId, (currentRow) =>
-        applyReviewResultToRow(currentRow, targetLanguageCode, savePayload),
-      );
-      state.editorChapter = {
-        ...state.editorChapter,
-        chapterBaseCommitSha:
-          typeof savePayload?.chapterBaseCommitSha === "string" && savePayload.chapterBaseCommitSha.trim()
-            ? savePayload.chapterBaseCommitSha.trim()
-            : state.editorChapter.chapterBaseCommitSha,
-      };
-      reconcileDirtyTrackedEditorRows([item.rowId]);
-      if (
-        state.editorChapter.activeRowId === item.rowId
-        && state.editorChapter.activeLanguageCode === targetLanguageCode
-      ) {
-        loadActiveEditorFieldHistory(render);
+      if (outcome === "abort") {
+        if (started) {
+          enablePleaseCheckFilterAndShowModal();
+          render?.();
+        }
+        return;
       }
-
-      completedCount += 1;
-      applyEditorAiReviewAllModal({
-        step: "reviewing",
-        status: "loading",
-        completedCount,
-        totalCount: work.length,
-        languageProgress: buildLanguageProgress(targetLanguageCode, work.length, completedCount),
-      });
-      render?.({ scope: "translate-visible-rows", rowIds: [item.rowId], reason: "ai-review-all" });
-      render?.({ scope: "translate-ai-review-all-modal" });
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
