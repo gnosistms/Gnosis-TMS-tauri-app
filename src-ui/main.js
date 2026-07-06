@@ -114,6 +114,10 @@ import {
   initializeProjectsVirtualization,
   setProjectsVirtualizationDisabled,
 } from "./app/projects-virtual-list.js";
+import {
+  deferProjectsRenderWhileSelectEngaged,
+  installProjectsRenderHold,
+} from "./app/projects-render-hold.js";
 import { reconcileProjectsScrollOnRender } from "./app/projects-scroll-store.js";
 import { renderQaListEditorScreen } from "./screens/qa-list-editor.js";
 import { renderQaScreen } from "./screens/qa.js";
@@ -329,6 +333,12 @@ function patchFixtureEditorRowState(rowId, updates = {}) {
 }
 
 function render(options = {}) {
+  // While a projects-page chapter select is engaged, full renders defer so
+  // the open dropdown isn't destroyed mid-selection; the hold flushes on
+  // commit/disengage. See projects-render-hold.js.
+  if (deferProjectsRenderWhileSelectEngaged(state, () => renderWithOptions(options))) {
+    return undefined;
+  }
   return renderWithOptions(options);
 }
 
