@@ -8,6 +8,10 @@ pub(crate) const REPO_METADATA_RELATIVE_PATH: &str = ".gtms/repo.json";
 pub(crate) const REPO_METADATA_SCHEMA_VERSION: u32 = 1;
 pub(crate) const STORAGE_LAYOUT_VERSION_V2: u32 = 2;
 pub(crate) const MIGRATION_0810: &str = "0.8.10";
+// Content-only chapter settings normalization (drops legacy non-object
+// `settings`/`linked_glossaries` shapes and `glossary_1`/`glossary_2` keys).
+// Unlike 0.8.10 it is git-mergeable and runs inline during project repo sync.
+pub(crate) const MIGRATION_0856: &str = "0.8.56";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum RepoKind {

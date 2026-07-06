@@ -1058,6 +1058,9 @@ pub(crate) fn sync_project_repo(
             remote_head_oid,
         )?;
     }
+    if crate::repo_migrations::repo_requires_0856_migration(repo_path) {
+        crate::repo_migrations::migrate_project_repo_to_0856(app, repo_path)?;
+    }
     backup_dirty_project_worktree(repo_path, branch_name)?;
     let local_head_oid = git_output(repo_path, &["rev-parse", "HEAD"], None).ok();
     let local_sync_state = read_local_repo_sync_state(repo_path)?;
