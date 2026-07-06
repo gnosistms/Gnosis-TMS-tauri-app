@@ -1,5 +1,16 @@
 # Repo Migration System Hardening Plan
 
+> **Status (2026-07-05): COMPLETE.** All five phases implemented on
+> `fix/repo-migration-hardening` (one commit per phase). Phase 5.2 (version
+> compare dedup) was absorbed by the Phase 3 registry refactor, which deleted
+> the dead resolver along with its private copies; Phase 5.4 (stale comment)
+> was absorbed by the Phase 1 move of the normalizer into
+> `chapter_editor/shared.rs`. Phase 4.2 deviates from the sketch below:
+> no backup branch is created — the worktree is verified clean (including
+> untracked files) before an in-place layout migration starts, so
+> `reset --hard` + `clean -fd` on failure provably restores the starting
+> state and a branch of HEAD would add nothing but litter.
+
 ## Summary
 
 A code review of the repo versioning/migration system (2026-07-05, covering
