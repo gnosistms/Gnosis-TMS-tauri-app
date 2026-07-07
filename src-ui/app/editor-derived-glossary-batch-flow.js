@@ -16,8 +16,8 @@ import {
   readRowFieldText,
   resolveEditorDerivedGlossaryUsage,
 } from "./editor-derived-glossary-flow.js";
-import { applyEditorDerivedGlossaryEntry } from "./editor-derived-glossary-state.js";
-import { saveStoredEditorDerivedGlossaryEntryForChapter } from "./editor-derived-glossary-cache.js";
+import { applyEditorDerivedGlossaryEntries } from "./editor-derived-glossary-state.js";
+import { saveStoredEditorDerivedGlossaryEntriesForChapter } from "./editor-derived-glossary-cache.js";
 import { findEditorRowById } from "./editor-utils.js";
 import { languageBaseCode, languageSemanticLabel } from "./editor-language-utils.js";
 import { selectedProjectsTeam, selectedProjectsTeamInstallationId } from "./project-context.js";
@@ -372,6 +372,11 @@ export async function ensureBatchDerivedGlossaries({
     const preparedEntries = Array.isArray(payload?.entries) ? payload.entries : [];
     const requestKey = createBatchDerivedRequestKey(chapterState.chapterId);
     const team = selectedProjectsTeam();
+    // Chapter-state apply and cache save happen ONCE per chunk — per-row
+    // writes re-normalize the whole entry map and clone + persist the whole
+    // cross-chapter cache per row, which is quadratic in chapter size and has
+    // frozen the machine on large derivation runs.
+    const applied = [];
     for (const entry of chunk) {
       // The combined derivation ran against the classification-time source
       // text; a mid-flight edit makes the alignment stale for that row.
@@ -400,26 +405,33 @@ export async function ensureBatchDerivedGlossaries({
           entries: rowEntries,
         },
       });
-      state.editorChapter = applyEditorDerivedGlossaryEntry(
+      applied.push({ entry, derivedEntry });
+    }
+
+    if (applied.length > 0) {
+      const entriesByRowId = Object.fromEntries(
+        applied.map(({ entry, derivedEntry }) => [entry.item.rowId, derivedEntry]),
+      );
+      state.editorChapter = applyEditorDerivedGlossaryEntries(
         state.editorChapter,
-        entry.item.rowId,
-        derivedEntry,
+        entriesByRowId,
       );
       if (team && chapterState.projectId) {
-        saveStoredEditorDerivedGlossaryEntryForChapter(
+        saveStoredEditorDerivedGlossaryEntriesForChapter(
           team,
           chapterState.projectId,
           chapterState.chapterId,
-          entry.item.rowId,
-          derivedEntry,
+          entriesByRowId,
         );
       }
-      settle({
-        item: entry.item,
-        status: "derived",
-        matcherModel: derivedEntry.matcherModel ?? null,
-        glossarySourceText: entry.usage.preparationGlossarySourceText,
-      });
+      for (const { entry, derivedEntry } of applied) {
+        settle({
+          item: entry.item,
+          status: "derived",
+          matcherModel: derivedEntry.matcherModel ?? null,
+          glossarySourceText: entry.usage.preparationGlossarySourceText,
+        });
+      }
     }
   }
 

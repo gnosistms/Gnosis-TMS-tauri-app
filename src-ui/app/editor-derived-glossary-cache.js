@@ -142,12 +142,37 @@ export function saveStoredEditorDerivedGlossaryEntryForChapter(
     return;
   }
 
+  saveStoredEditorDerivedGlossaryEntriesForChapter(team, projectId, chapterId, {
+    [rowId]: entry,
+  });
+}
+
+// Batch write: one full-map load and one persisted write regardless of how
+// many entries land. Saving N entries through the singular helper instead
+// clones and persists the whole cross-chapter cache map N times — quadratic
+// churn (JSON clones plus a full-map IPC store write per row) that has frozen
+// the editor on large derivation runs.
+export function saveStoredEditorDerivedGlossaryEntriesForChapter(
+  team,
+  projectId,
+  chapterId,
+  entriesByRowId,
+) {
+  const updates = Object.entries(
+    entriesByRowId && typeof entriesByRowId === "object" ? entriesByRowId : {},
+  ).filter(([rowId]) => typeof rowId === "string" && rowId.trim());
+  if (updates.length === 0) {
+    return;
+  }
+
   const nextEntries = loadStoredEditorDerivedGlossariesForChapter(team, projectId, chapterId);
-  const normalizedEntry = normalizePersistedDerivedGlossaryEntry(entry);
-  if (normalizedEntry) {
-    nextEntries[rowId] = normalizedEntry;
-  } else {
-    delete nextEntries[rowId];
+  for (const [rowId, entry] of updates) {
+    const normalizedEntry = normalizePersistedDerivedGlossaryEntry(entry);
+    if (normalizedEntry) {
+      nextEntries[rowId] = normalizedEntry;
+    } else {
+      delete nextEntries[rowId];
+    }
   }
   saveStoredEditorDerivedGlossariesForChapter(team, projectId, chapterId, nextEntries);
 }

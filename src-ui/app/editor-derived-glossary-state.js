@@ -394,7 +394,29 @@ export function resolveHighlightableEditorDerivedGlossaryEntry(chapterState, row
 }
 
 export function applyEditorDerivedGlossaryEntry(chapterState, rowId, nextEntry) {
-  if (!chapterState?.chapterId || typeof rowId !== "string" || !rowId.trim()) {
+  if (typeof rowId !== "string" || !rowId.trim()) {
+    return chapterState;
+  }
+
+  return applyEditorDerivedGlossaryEntries(chapterState, { [rowId]: nextEntry });
+}
+
+// Batch write: one normalization pass over the existing map regardless of how
+// many entries land. Applying N entries through the singular helper instead
+// re-normalizes the whole map N times — quadratic churn that has frozen the
+// editor on large derivation runs.
+export function applyEditorDerivedGlossaryEntries(chapterState, entriesByRowId) {
+  if (!chapterState?.chapterId || !entriesByRowId || typeof entriesByRowId !== "object") {
+    return chapterState;
+  }
+
+  const normalizedEntries = {};
+  for (const [rowId, entry] of Object.entries(entriesByRowId)) {
+    if (typeof rowId === "string" && rowId.trim()) {
+      normalizedEntries[rowId] = normalizeEditorDerivedGlossaryEntryState(entry);
+    }
+  }
+  if (Object.keys(normalizedEntries).length === 0) {
     return chapterState;
   }
 
@@ -402,7 +424,7 @@ export function applyEditorDerivedGlossaryEntry(chapterState, rowId, nextEntry) 
     ...chapterState,
     derivedGlossariesByRowId: {
       ...normalizeEditorDerivedGlossariesByRowId(chapterState.derivedGlossariesByRowId),
-      [rowId]: normalizeEditorDerivedGlossaryEntryState(nextEntry),
+      ...normalizedEntries,
     },
   };
 }

@@ -36,6 +36,7 @@ const {
 const {
   loadStoredEditorDerivedGlossariesForChapter,
   removeStoredEditorDerivedGlossaryEntryForChapter,
+  saveStoredEditorDerivedGlossaryEntriesForChapter,
   saveStoredEditorDerivedGlossaryEntryForChapter,
 } = await import("./editor-derived-glossary-cache.js");
 
@@ -146,4 +147,45 @@ test("stored editor derived glossaries remove a row entry cleanly", () => {
     loadStoredEditorDerivedGlossariesForChapter(fixtureTeam, "project-1", "chapter-1"),
     {},
   );
+});
+
+test("stored editor derived glossaries save a batch of entries in one write, merging with existing rows", () => {
+  setActiveStorageLogin("tester");
+
+  const readyEntry = (requestKey) => ({
+    status: "ready",
+    error: "",
+    requestKey,
+    translationSourceLanguageCode: "en",
+    glossarySourceLanguageCode: "es",
+    targetLanguageCode: "vi",
+    translationSourceText: "The inner chamber glows.",
+    glossarySourceText: "La camara interior brilla.",
+    glossarySourceTextOrigin: "generated",
+    glossaryRevisionKey: "rev-1",
+    entries: [],
+    matcherModel: null,
+  });
+
+  // Pre-existing row written through the singular path.
+  saveStoredEditorDerivedGlossaryEntryForChapter(
+    fixtureTeam,
+    "project-1",
+    "chapter-1",
+    "row-0",
+    readyEntry("req-0"),
+  );
+
+  saveStoredEditorDerivedGlossaryEntriesForChapter(fixtureTeam, "project-1", "chapter-1", {
+    "row-1": readyEntry("req-1"),
+    "row-2": readyEntry("req-2"),
+    // Non-ready entries clear any stored value for the row instead of storing.
+    "row-0": { ...readyEntry("req-stale"), status: "loading" },
+    "  ": readyEntry("req-blank"),
+  });
+
+  const stored = loadStoredEditorDerivedGlossariesForChapter(fixtureTeam, "project-1", "chapter-1");
+  assert.deepEqual(Object.keys(stored).sort(), ["row-1", "row-2"]);
+  assert.equal(stored["row-1"].requestKey, "req-1");
+  assert.equal(stored["row-2"].requestKey, "req-2");
 });
