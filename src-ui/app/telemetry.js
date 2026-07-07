@@ -36,6 +36,14 @@ function gateOpen() {
   return safe(() => isTelemetrySendAllowed()) === true;
 }
 
+// Invariant: a bare-string rejection reason must NOT outrank a real Error. A non-Error
+// unhandled rejection (e.g. a stale-resource-id string floated from a fire-and-forget
+// promise — see JAVASCRIPT-Y) is downgraded to "error"; only genuine crashes stay
+// "fatal". Do not "restore" fatal here.
+function crashLevel(item) {
+  return item.kind === "unhandledrejection" ? "error" : "fatal";
+}
+
 function emitCrash(item) {
   if (!sentry || !gateOpen()) {
     return false;
@@ -46,7 +54,7 @@ function emitCrash(item) {
         tags: { source: "first-run-crash", crash_kind: item.kind },
       });
     } else {
-      sentry.captureMessage(scrubString(String(item.message ?? "crash")), "fatal");
+      sentry.captureMessage(scrubString(String(item.message ?? "crash")), crashLevel(item));
     }
   });
   return true;
