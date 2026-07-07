@@ -8,6 +8,21 @@ branch). Manual verification pending: a real pivot-glossary chapter through the
 modal (rows without pivot text; cancel mid-run) and Translate All over
 derived-glossary rows missing pivot text.
 
+**2026-07-06 field OOM during verification.** A derived-glossary Translate All
+run ballooned the WebContent renderer from a 190 MB baseline to a repeatable
+~2 GB+ sawtooth (unified-log footprint trace) and exhausted system memory;
+the machine was force-reset. Root cause: per-row derived-entry writes were
+quadratic — each row re-normalized the whole per-row entry map AND JSON-cloned
++ persisted (full-map IPC write) the entire cross-chapter derived-glossary
+cache. Measured against the real modules: ~4.4 GB transient clones for a
+1000-row chapter, ~17 GB for 2000, before doubling over IPC. Fixed in
+`95b4fa09`: plural `applyEditorDerivedGlossaryEntries` /
+`saveStoredEditorDerivedGlossaryEntriesForChapter` helpers; the shared batch
+flow applies and persists once per chunk (~15x less churn). The per-row cost
+predates this branch (the single-row path always paid it once per user action)
+— batching made it hot. Manual re-verification of the same run is required
+before merging.
+
 Two deltas from the plan as written, both discovered during extraction and
 strictly safer: batch-derived entries now also persist to the disk cache (the
 inlined Translate All version skipped the save the single-row path does), and
