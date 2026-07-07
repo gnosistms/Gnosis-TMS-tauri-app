@@ -583,12 +583,19 @@ export async function confirmEditorDeriveGlossaries(render, operations = {}) {
           unresolvedItems.push(result.item);
           return;
         }
-        if (result.status === "derived") {
-          derivedCount += 1;
+        // Re-render on "cached" too, not just "derived" — a row whose entry
+        // was already fresh (e.g. computed moments earlier by a batch
+        // translate run) still deserves a repaint attempt, in case its
+        // highlight was never painted the first time.
+        if (result.status === "derived" || result.status === "cached") {
+          if (result.status === "derived") {
+            derivedCount += 1;
+          }
+          operations.syncEditorGlossaryHighlightRowDom?.(result.item.rowId);
           render?.({
             scope: "translate-visible-rows",
             rowIds: [result.item.rowId],
-            reason: "derive-glossaries-ready",
+            reason: `derive-glossaries-${result.status}`,
           });
         }
         recordSettled(result.item);

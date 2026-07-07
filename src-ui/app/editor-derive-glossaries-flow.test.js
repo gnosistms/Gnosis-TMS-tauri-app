@@ -365,6 +365,42 @@ test("Derive glossaries batches generation and derivation per language pair", as
   assert.equal(state.editorChapter.derivedGlossariesByRowId["row-3"].status, "ready");
 });
 
+test("Derive glossaries explicitly syncs the glossary highlight DOM for each derived row", async () => {
+  seedDeriveRunEnvironment();
+  const syncedRowIds = [];
+  const rowScopedRenders = [];
+
+  await confirmEditorDeriveGlossaries(
+    (options) => {
+      if (options?.scope === "translate-visible-rows") {
+        rowScopedRenders.push(options.rowIds);
+      }
+    },
+    deriveRunOperations({
+      runAiTranslationBatch: async (request) => ({
+        rows: request.rows.map((row) => ({ rowId: row.rowId, translatedText: `en:${row.sourceText}` })),
+      }),
+      prepareEditorAiTranslatedGlossaryBatch: async (request) => ({
+        glossarySourceText: request.glossarySourceText,
+        entries: [],
+      }),
+      syncEditorGlossaryHighlightRowDom: (rowId) => {
+        syncedRowIds.push(rowId);
+      },
+    }),
+  );
+
+  // Every derived row gets an explicit DOM sync call, not just a scoped
+  // render — this is the same mechanism the single-row translate path relies
+  // on, and it must not silently no-op here the way it did before this fix
+  // (operations.syncEditorGlossaryHighlightRowDom was never wired in, so this
+  // call — already present in the code — was always undefined and skipped).
+  assert.equal(syncedRowIds.includes("row-1"), true);
+  assert.equal(syncedRowIds.includes("row-3"), true);
+  assert.equal(rowScopedRenders.flat().includes("row-1"), true);
+  assert.equal(rowScopedRenders.flat().includes("row-3"), true);
+});
+
 test("Derive glossaries falls back to the single-row path when batch derivation fails", async () => {
   seedDeriveRunEnvironment();
   const fallbackItems = [];
