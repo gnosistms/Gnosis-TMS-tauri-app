@@ -132,6 +132,13 @@ function isStaleResourceError(error) {
 async function reloadStoreHandle() {
   const loadStore = getGlobalStoreLoader();
   if (!loadStore) {
+    // The loader vanished between the failed write and this reload — i.e. Tauri is tearing
+    // down (app restart / shutdown). Downgrade to browser mode so subsequent writes stop
+    // targeting a store handle that will never return, and instead fall to the localStorage
+    // branch in writePersistentValue. Those localStorage writes are ephemeral teardown
+    // artifacts (the next boot re-initializes from the store file, not localStorage), which
+    // is acceptable here precisely because the app is shutting down. This is the ONLY place
+    // the flag flips true -> false outside initializePersistentStorage.
     storeLoaderAvailable = false;
     return;
   }
