@@ -1887,6 +1887,99 @@ test("clear translations queues behind dirty row text instead of blocking on the
   assert.equal(state.editorChapter.clearTranslationsModal.isOpen, false);
 });
 
+test("clear translations clears footnotes, image captions, and images for the selected language", async () => {
+  installEditorFixture();
+  state.editorChapter = {
+    ...state.editorChapter,
+    rows: normalizeEditorRows([
+      {
+        rowId: "row-1",
+        textStyle: "paragraph",
+        fields: { es: "hola" },
+        footnotes: { es: [{ marker: 1, text: "nota" }] },
+        imageCaptions: { es: "una foto" },
+        images: { es: { kind: "url", url: "https://example.com/foto.png" } },
+        fieldStates: { es: { reviewed: false, pleaseCheck: false } },
+      },
+      {
+        rowId: "row-2",
+        textStyle: "paragraph",
+        fields: { es: "" },
+        footnotes: { es: [{ marker: 1, text: "nota sin texto" }] },
+        fieldStates: { es: { reviewed: false, pleaseCheck: false } },
+      },
+      {
+        rowId: "row-3",
+        textStyle: "paragraph",
+        fields: { es: "" },
+        images: { es: { kind: "url", url: "https://example.com/solo.png" } },
+        fieldStates: { es: { reviewed: false, pleaseCheck: false } },
+      },
+    ]),
+    clearTranslationsModal: {
+      ...state.editorChapter.clearTranslationsModal,
+      isOpen: true,
+      step: "confirm",
+      selectedLanguageCodes: ["es"],
+      status: "idle",
+      error: "",
+    },
+  };
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "update_gtms_editor_row_fields_batch") {
+      return {
+        rowIds: payload.input?.rows?.map((row) => row.rowId) ?? [],
+        wordCounts: {},
+        chapterBaseCommitSha: "head-clear",
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await confirmEditorClearTranslations(() => {}, {
+    updateEditorChapterRow,
+    applyEditorSelectionsToProjectState,
+  });
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+
+  const batchRows = invokeLog.find(
+    (entry) => entry.command === "update_gtms_editor_row_fields_batch",
+  )?.payload?.input?.rows;
+  assert.deepEqual(batchRows, [
+    {
+      rowId: "row-1",
+      fields: { es: "" },
+      footnotes: { es: "" },
+      imageCaptions: { es: "" },
+      removeImages: ["es"],
+    },
+    {
+      rowId: "row-2",
+      fields: {},
+      footnotes: { es: "" },
+      imageCaptions: {},
+      removeImages: [],
+    },
+    {
+      rowId: "row-3",
+      fields: {},
+      footnotes: {},
+      imageCaptions: {},
+      removeImages: ["es"],
+    },
+  ]);
+  assert.equal(state.editorChapter.rows[0].fields.es, "");
+  assert.deepEqual(state.editorChapter.rows[0].footnotes.es, []);
+  assert.equal(state.editorChapter.rows[0].imageCaptions.es, "");
+  assert.equal(state.editorChapter.rows[0].images.es, undefined);
+  assert.deepEqual(state.editorChapter.rows[1].footnotes.es, []);
+  assert.equal(state.editorChapter.rows[2].images.es, undefined);
+  assert.equal(state.editorChapter.rows[2].persistedImages.es, undefined);
+  assert.equal(state.editorChapter.rows[2].baseImages.es, undefined);
+  assert.equal(state.editorChapter.clearTranslationsModal.isOpen, false);
+});
+
 test("clear translations stops before batch write when queued row save finds a conflict", async () => {
   installEditorFixture();
   state.editorChapter = {

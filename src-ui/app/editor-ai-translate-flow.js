@@ -27,6 +27,7 @@ import {
   resolveEditorDerivedGlossaryUsage,
   resolveLanguageCode,
 } from "./editor-derived-glossary-flow.js";
+import { refreshDerivedGlossariesForChangedGlossarySourceField } from "./editor-derived-glossary-batch-flow.js";
 import { selectedProjectsTeam, selectedProjectsTeamInstallationId } from "./project-context.js";
 import { invoke } from "./runtime.js";
 import { showNoticeBadge } from "./status-feedback.js";
@@ -396,6 +397,32 @@ export async function runEditorAiTranslateForContext(
       syncEditorGlossaryHighlightRowDom(context.rowId);
     }
   };
+  // If the just-translated language is a linked glossary's own source
+  // language (a "pivot" glossary, e.g. an es->vi glossary in an en-source
+  // chapter), any existing derived entry for another chapter language was
+  // derived from the OLD text in this field and is now stale. Re-derive it
+  // (bounded to this one row) so highlights recover without a manual Derive
+  // Glossaries re-run. No-op when there's no linked glossary, the changed
+  // language isn't its source, or the row never had a derived entry. Runs
+  // AFTER the completion badge so the extra AI round-trip never delays the
+  // user-visible finish. Translate All suppresses this for its single-row
+  // items and re-derives them in one combined call at the end of the run
+  // instead — one derivation call per run, not one per row.
+  const refreshGlossarySourceDerivedEntries = async () => {
+    if (options.suppressDerivedGlossaryRefresh === true) {
+      return;
+    }
+    await refreshDerivedGlossariesForChangedGlossarySourceField({
+      chapterState: state.editorChapter,
+      rowIds: [context.rowId],
+      changedLanguageCode: context.targetLanguageCode,
+      providerId,
+      modelId,
+      render,
+      operations,
+      isRunActive: () => state.editorChapter?.chapterId === context.chapterId,
+    });
+  };
   state.editorChapter = applyEditorAiTranslateActionLoading(
     state.editorChapter,
     actionId,
@@ -683,6 +710,7 @@ export async function runEditorAiTranslateForContext(
         if (options.showNotice !== false) {
           showNoticeBadge(`${AI_ACTION_LABELS[actionId]} inserted.`, render);
         }
+        await refreshGlossarySourceDerivedEntries();
         return {
           ok: true,
           translated: true,
@@ -797,6 +825,7 @@ export async function runEditorAiTranslateForContext(
     if (options.showNotice !== false) {
       showNoticeBadge(`${AI_ACTION_LABELS[actionId]} inserted.`, render);
     }
+    await refreshGlossarySourceDerivedEntries();
     return {
       ok: true,
       translated: true,

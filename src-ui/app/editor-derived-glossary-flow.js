@@ -185,12 +185,19 @@ export function resolvePreparedDerivedGlossaryContext(glossaryUsage, payload = {
   };
 }
 
+// The single resolution of "which language is this chapter's linked
+// glossary's source language" — the translate-all pair classifier, the
+// batch-flow change gate, and the usage resolver below must all agree on it.
+export function glossarySourceLanguageCodeForChapter(chapterState) {
+  const glossaryState = chapterState?.glossary ?? null;
+  const glossaryModel = glossaryState?.matcherModel ?? null;
+  return resolveLanguageCode(glossaryState?.sourceLanguage ?? glossaryModel?.sourceLanguage);
+}
+
 export function resolveEditorDerivedGlossaryUsage(context, options = {}) {
   const glossaryState = context.chapterState?.glossary ?? null;
   const glossaryModel = glossaryState?.matcherModel ?? null;
-  const glossarySourceLanguageCode = resolveLanguageCode(
-    glossaryState?.sourceLanguage ?? glossaryModel?.sourceLanguage,
-  );
+  const glossarySourceLanguageCode = glossarySourceLanguageCodeForChapter(context.chapterState);
   const glossaryTargetLanguageCode = resolveLanguageCode(
     glossaryState?.targetLanguage ?? glossaryModel?.targetLanguage,
   );

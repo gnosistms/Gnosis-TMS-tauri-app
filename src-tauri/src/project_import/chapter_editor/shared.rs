@@ -102,6 +102,63 @@ pub(in crate::project_import) fn write_row_files_and_commit(
     Ok(commit_output)
 }
 
+/// `write_row_files_and_commit` plus repo file removals (uploaded row images) in the
+/// same commit. Removals go through the snapshot/rollback helpers so a failed commit
+/// restores the removed files on disk and in the index as well as the written ones.
+pub(in crate::project_import) fn write_row_files_and_commit_with_removals(
+    app: &AppHandle,
+    repo_path: &Path,
+    commit_message: &str,
+    metadata: CommitMetadata<'_>,
+    writes: &[PreparedRowFileWrite],
+    removed_relative_paths: &[String],
+) -> Result<String, String> {
+    if removed_relative_paths.is_empty() {
+        return write_row_files_and_commit(app, repo_path, commit_message, metadata, writes);
+    }
+
+    crate::git_commit::ensure_local_commit_preconditions(app, repo_path)?;
+
+    let mut snapshots = Vec::new();
+    for write in writes {
+        push_repo_file_snapshot(&mut snapshots, repo_path, &write.relative_path)?;
+    }
+    for relative_path in removed_relative_paths {
+        push_repo_file_snapshot(&mut snapshots, repo_path, relative_path)?;
+    }
+
+    with_repo_file_rollback(repo_path, &snapshots, || {
+        for write in writes {
+            write_text_file(&write.path, &write.updated_text)?;
+        }
+        for relative_path in removed_relative_paths {
+            remove_repo_file_from_disk(repo_path, relative_path)?;
+            git_output(
+                repo_path,
+                &["rm", "--cached", "--ignore-unmatch", relative_path],
+            )?;
+        }
+        if !writes.is_empty() {
+            let mut add_args = vec!["add"];
+            add_args.extend(writes.iter().map(|write| write.relative_path.as_str()));
+            git_output(repo_path, &add_args)?;
+        }
+
+        let mut commit_paths = writes
+            .iter()
+            .map(|write| write.relative_path.as_str())
+            .collect::<Vec<_>>();
+        commit_paths.extend(removed_relative_paths.iter().map(String::as_str));
+        git_commit_as_signed_in_user_with_metadata(
+            app,
+            repo_path,
+            commit_message,
+            &commit_paths,
+            metadata,
+        )
+    })
+}
+
 /// Write and commit a single chapter.json change through the shared row-commit
 /// helper so a failed commit gate (expired session, lost write access) cannot strand a
 /// dirty, staged chapter.json that would break the next pull.

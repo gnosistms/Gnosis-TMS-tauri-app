@@ -55,6 +55,7 @@ import {
   buildEditorFieldSelector,
   cloneRowFields,
   cloneRowFootnotes,
+  cloneRowImages,
   findEditorRowById,
   normalizeFieldState,
 } from "./editor-utils.js";
@@ -509,18 +510,34 @@ function clearTranslationsRowsForBatch(chapterState, languageCodes) {
     }
 
     const fields = {};
+    const footnotes = {};
+    const imageCaptions = {};
+    const removeImages = [];
     for (const languageCode of selectedCodes) {
       if (String(row?.fields?.[languageCode] ?? "") !== "") {
         fields[languageCode] = "";
       }
+      if (serializeEditorFootnotesForLegacy(row?.footnotes?.[languageCode]) !== "") {
+        footnotes[languageCode] = "";
+      }
+      if (String(row?.imageCaptions?.[languageCode] ?? "") !== "") {
+        imageCaptions[languageCode] = "";
+      }
+      if (row?.images?.[languageCode]) {
+        removeImages.push(languageCode);
+      }
     }
 
     return Object.keys(fields).length > 0
+      || Object.keys(footnotes).length > 0
+      || Object.keys(imageCaptions).length > 0
+      || removeImages.length > 0
       ? [{
         rowId,
         fields,
-        footnotes: {},
-        imageCaptions: {},
+        footnotes,
+        imageCaptions,
+        removeImages,
       }]
       : [];
   });
@@ -543,10 +560,28 @@ function applyEditorChapterRowsTranslationsCleared(chapterState, languageCodes, 
       const fields = cloneRowFields(row.fields);
       const persistedFields = cloneRowFields(row.persistedFields);
       const baseFields = cloneRowFields(row.baseFields);
+      const footnotes = cloneRowFootnotes(row.footnotes);
+      const persistedFootnotes = cloneRowFootnotes(row.persistedFootnotes);
+      const baseFootnotes = cloneRowFootnotes(row.baseFootnotes);
+      const imageCaptions = cloneRowFields(row.imageCaptions);
+      const persistedImageCaptions = cloneRowFields(row.persistedImageCaptions);
+      const baseImageCaptions = cloneRowFields(row.baseImageCaptions);
+      const images = cloneRowImages(row.images);
+      const persistedImages = cloneRowImages(row.persistedImages);
+      const baseImages = cloneRowImages(row.baseImages);
       for (const languageCode of selectedCodes) {
         fields[languageCode] = "";
         persistedFields[languageCode] = "";
         baseFields[languageCode] = "";
+        footnotes[languageCode] = [];
+        persistedFootnotes[languageCode] = [];
+        baseFootnotes[languageCode] = [];
+        imageCaptions[languageCode] = "";
+        persistedImageCaptions[languageCode] = "";
+        baseImageCaptions[languageCode] = "";
+        delete images[languageCode];
+        delete persistedImages[languageCode];
+        delete baseImages[languageCode];
       }
 
       return {
@@ -554,6 +589,15 @@ function applyEditorChapterRowsTranslationsCleared(chapterState, languageCodes, 
         fields,
         persistedFields,
         baseFields,
+        footnotes,
+        persistedFootnotes,
+        baseFootnotes,
+        imageCaptions,
+        persistedImageCaptions,
+        baseImageCaptions,
+        images,
+        persistedImages,
+        baseImages,
         saveStatus: "idle",
         saveError: "",
         freshness: row.freshness === "conflict" ? "conflict" : "fresh",

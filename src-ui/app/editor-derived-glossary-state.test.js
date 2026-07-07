@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  applyEditorDerivedGlossaryEntries,
+  applyEditorDerivedGlossaryEntry,
   buildEditorDerivedGlossaryContext,
   editorDerivedGlossaryIsStale,
   editorDerivedGlossaryMatchesContext,
@@ -185,4 +187,44 @@ test("resolveHighlightableEditorDerivedGlossaryEntry ignores stale entries after
   };
 
   assert.equal(resolveHighlightableEditorDerivedGlossaryEntry(chapterState, "row-1"), null);
+});
+
+test("applyEditorDerivedGlossaryEntries writes a batch in one pass, matching sequential singular applies", () => {
+  const chapterState = {
+    chapterId: "chapter-1",
+    derivedGlossariesByRowId: {
+      "row-0": readyDerivedEntry({ requestKey: "req-0" }),
+    },
+  };
+  const batch = {
+    "row-1": readyDerivedEntry({ requestKey: "req-1" }),
+    "row-2": readyDerivedEntry({ requestKey: "req-2" }),
+    "  ": readyDerivedEntry({ requestKey: "req-blank" }),
+  };
+
+  const batched = applyEditorDerivedGlossaryEntries(chapterState, batch);
+  let sequential = chapterState;
+  sequential = applyEditorDerivedGlossaryEntry(sequential, "row-1", batch["row-1"]);
+  sequential = applyEditorDerivedGlossaryEntry(sequential, "row-2", batch["row-2"]);
+
+  assert.deepEqual(batched, sequential);
+  assert.deepEqual(
+    Object.keys(batched.derivedGlossariesByRowId).sort(),
+    ["row-0", "row-1", "row-2"],
+  );
+});
+
+test("applyEditorDerivedGlossaryEntries is a no-op for empty input or a missing chapter", () => {
+  const chapterState = {
+    chapterId: "chapter-1",
+    derivedGlossariesByRowId: {},
+  };
+
+  assert.equal(applyEditorDerivedGlossaryEntries(chapterState, {}), chapterState);
+  assert.equal(applyEditorDerivedGlossaryEntries(chapterState, null), chapterState);
+  const noChapter = { chapterId: "" };
+  assert.equal(
+    applyEditorDerivedGlossaryEntries(noChapter, { "row-1": readyDerivedEntry() }),
+    noChapter,
+  );
 });

@@ -6,6 +6,8 @@ import {
   resolveAiActionProviderAndModel,
 } from "./ai-settings-flow.js";
 import { ensureSelectedTeamAiProviderReady } from "./team-ai-flow.js";
+import { groupWorkByLanguagePair } from "./editor-ai-batch-request.js";
+import { ensureBatchDerivedGlossaries } from "./editor-derived-glossary-batch-flow.js";
 import {
   prepareEditorDerivedGlossaryForContext,
   readRowFieldText,
@@ -396,12 +398,31 @@ export async function confirmEditorDeriveGlossaries(render, operations = {}) {
   let derivedCount = 0;
   let currentLanguageProgress = languageProgress;
 
-  for (const item of work) {
-    if (
-      activeDeriveGlossariesRunId !== batchRunId
-      || state.editorChapter?.deriveGlossariesModal?.status !== "loading"
-    ) {
-      return;
+  const isRunActive = () =>
+    activeDeriveGlossariesRunId === batchRunId
+    && state.editorChapter?.deriveGlossariesModal?.status === "loading";
+
+  const recordSettled = (item) => {
+    completedCount += 1;
+    currentLanguageProgress = incrementEditorDeriveGlossariesProgress(
+      currentLanguageProgress,
+      item.sourceLanguageCode,
+    );
+    applyEditorDeriveGlossariesModal({
+      status: "loading",
+      languageProgress: currentLanguageProgress,
+      completedCount,
+      totalCount: work.length,
+    });
+    render?.({ scope: "translate-derive-glossaries-modal" });
+  };
+
+  // Single-row retry for items the batch flow left unresolved (generation or
+  // derivation failure, mid-flight edits). Returns false when the run must
+  // stop (cancellation or an error already shown in the modal).
+  const runSingleRowFallback = async (item) => {
+    if (!isRunActive()) {
+      return false;
     }
 
     const row = findEditorRowById(item.rowId, state.editorChapter);
@@ -411,53 +432,26 @@ export async function confirmEditorDeriveGlossaries(render, operations = {}) {
       || !readRowFieldText(row, config.glossaryTargetLanguageCode).trim()
       || !readRowFieldText(row, item.sourceLanguageCode).trim()
     ) {
-      completedCount += 1;
-      currentLanguageProgress = incrementEditorDeriveGlossariesProgress(
-        currentLanguageProgress,
-        item.sourceLanguageCode,
-      );
-      applyEditorDeriveGlossariesModal({
-        status: "loading",
-        languageProgress: currentLanguageProgress,
-        completedCount,
-        totalCount: work.length,
-      });
-      render?.({ scope: "translate-derive-glossaries-modal" });
-      continue;
+      recordSettled(item);
+      return true;
     }
 
     const context = buildDeriveContext(state.editorChapter, item);
     if (!context) {
-      continue;
+      return true;
     }
     const glossaryUsage = resolveEditorDerivedGlossaryUsage(context, {
       useCurrentGlossarySourceText: true,
     });
-    if (glossaryUsage.kind !== "derived") {
-      completedCount += 1;
-      currentLanguageProgress = incrementEditorDeriveGlossariesProgress(
-        currentLanguageProgress,
-        item.sourceLanguageCode,
-      );
-      continue;
-    }
     if (
-      glossaryUsage.cachedDerivedEntry
-      && glossaryUsage.cachedDerivedEntryIsStale === false
+      glossaryUsage.kind !== "derived"
+      || (
+        glossaryUsage.cachedDerivedEntry
+        && glossaryUsage.cachedDerivedEntryIsStale === false
+      )
     ) {
-      completedCount += 1;
-      currentLanguageProgress = incrementEditorDeriveGlossariesProgress(
-        currentLanguageProgress,
-        item.sourceLanguageCode,
-      );
-      applyEditorDeriveGlossariesModal({
-        status: "loading",
-        languageProgress: currentLanguageProgress,
-        completedCount,
-        totalCount: work.length,
-      });
-      render?.({ scope: "translate-derive-glossaries-modal" });
-      continue;
+      recordSettled(item);
+      return true;
     }
 
     const requestKey = createDeriveGlossaryRequestKey(
@@ -499,9 +493,7 @@ export async function confirmEditorDeriveGlossaries(render, operations = {}) {
             reason: `derive-glossaries-${reason}`,
           });
         },
-        requestStillCurrent: () =>
-          activeDeriveGlossariesRunId === batchRunId
-          && state.editorChapter?.deriveGlossariesModal?.status === "loading",
+        requestStillCurrent: isRunActive,
         sourceStillCurrent: () => {
           const latestRow = findEditorRowById(context.rowId, state.editorChapter);
           return readRowFieldText(latestRow, context.sourceLanguageCode) === context.sourceText;
@@ -509,7 +501,7 @@ export async function confirmEditorDeriveGlossaries(render, operations = {}) {
         operations,
       });
       if (result?.skipped) {
-        return;
+        return false;
       }
       if (result?.ok) {
         derivedCount += 1;
@@ -524,21 +516,101 @@ export async function confirmEditorDeriveGlossaries(render, operations = {}) {
         totalCount: work.length,
       });
       render?.();
+      return false;
+    }
+
+    recordSettled(item);
+    return true;
+  };
+
+  // The work list is row-major (rows outer, derivable languages inner);
+  // regroup into contiguous language-pair runs so each pair gets combined
+  // derivation calls via the shared batch flow.
+  const groups = [];
+  for (const item of groupWorkByLanguagePair(work)) {
+    const currentGroup = groups[groups.length - 1];
+    if (
+      currentGroup
+      && currentGroup[0].sourceLanguageCode === item.sourceLanguageCode
+      && currentGroup[0].targetLanguageCode === item.targetLanguageCode
+    ) {
+      currentGroup.push(item);
+    } else {
+      groups.push([item]);
+    }
+  }
+
+  for (const group of groups) {
+    if (!isRunActive()) {
       return;
     }
 
-    completedCount += 1;
-    currentLanguageProgress = incrementEditorDeriveGlossariesProgress(
-      currentLanguageProgress,
-      item.sourceLanguageCode,
-    );
-    applyEditorDeriveGlossariesModal({
-      status: "loading",
-      languageProgress: currentLanguageProgress,
-      completedCount,
-      totalCount: work.length,
+    // Mirror the single-row path's mid-run re-checks at group granularity:
+    // rows that lost their editor-source/glossary-target/item-source text
+    // since the work list was built settle without a request.
+    const liveItems = [];
+    for (const item of group) {
+      const row = findEditorRowById(item.rowId, state.editorChapter);
+      if (
+        !row
+        || !readRowFieldText(row, config.editorSourceLanguageCode).trim()
+        || !readRowFieldText(row, config.glossaryTargetLanguageCode).trim()
+        || !readRowFieldText(row, item.sourceLanguageCode).trim()
+      ) {
+        recordSettled(item);
+        continue;
+      }
+      liveItems.push(item);
+    }
+    if (liveItems.length === 0) {
+      continue;
+    }
+
+    const unresolvedItems = [];
+    const { aborted } = await ensureBatchDerivedGlossaries({
+      chapterState: state.editorChapter,
+      items: liveItems,
+      providerId,
+      modelId,
+      isRunActive,
+      useCurrentGlossarySourceText: true,
+      generateMissingPivotText: true,
+      persistPivotTextToRow: true,
+      generationSourceLanguageCode: config.editorSourceLanguageCode,
+      render,
+      onItemSettled: (result) => {
+        if (result.status === "unresolved") {
+          unresolvedItems.push(result.item);
+          return;
+        }
+        // Re-render on "cached" too, not just "derived" — a row whose entry
+        // was already fresh (e.g. computed moments earlier by a batch
+        // translate run) still deserves a repaint attempt, in case its
+        // highlight was never painted the first time.
+        if (result.status === "derived" || result.status === "cached") {
+          if (result.status === "derived") {
+            derivedCount += 1;
+          }
+          operations.syncEditorGlossaryHighlightRowDom?.(result.item.rowId);
+          render?.({
+            scope: "translate-visible-rows",
+            rowIds: [result.item.rowId],
+            reason: `derive-glossaries-${result.status}`,
+          });
+        }
+        recordSettled(result.item);
+      },
+      operations,
     });
-    render?.({ scope: "translate-derive-glossaries-modal" });
+    if (aborted || !isRunActive()) {
+      return;
+    }
+
+    for (const item of unresolvedItems) {
+      if (!(await runSingleRowFallback(item))) {
+        return;
+      }
+    }
   }
 
   if (

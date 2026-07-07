@@ -534,6 +534,7 @@ export async function confirmEditorAiTranslateAll(render) {
   await confirmEditorAiTranslateAllFlow(render, {
     updateEditorRowFieldValue,
     persistEditorRowOnBlur,
+    syncEditorGlossaryHighlightRowDom,
   });
 }
 
@@ -569,6 +570,7 @@ export async function confirmEditorDeriveGlossaries(render) {
   await confirmEditorDeriveGlossariesFlow(render, {
     updateEditorRowFieldValue,
     persistEditorRowOnBlur,
+    syncEditorGlossaryHighlightRowDom,
   });
 }
 

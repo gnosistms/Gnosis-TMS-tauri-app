@@ -734,17 +734,20 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
                 fields: row.fields,
                 footnotes: row.footnotes,
                 image_captions: row.image_captions,
+                remove_images: row.remove_images,
             },
         );
     }
 
     let mut changed_row_ids = Vec::new();
     let mut prepared_writes = Vec::new();
+    let mut removed_uploaded_paths = Vec::new();
 
     for (row_id, batch_row) in rows_by_id {
         let fields = batch_row.fields;
         let footnotes = batch_row.footnotes;
         let image_captions = batch_row.image_captions;
+        let remove_images = batch_row.remove_images;
         let row_json_path = validated_row_json_path(&chapter_path, &row_id)?;
         let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
             format!(
@@ -768,6 +771,26 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
         apply_editor_plain_text_updates(&mut row_value, &fields)?;
         apply_editor_footnote_updates(&mut row_value, &footnotes)?;
         apply_editor_image_caption_updates(&mut row_value, &image_captions)?;
+        for language_code in &remove_images {
+            let language_code = language_code.trim();
+            if language_code.is_empty() {
+                continue;
+            }
+            // Only touch fields that actually hold an image so image-free rows do not
+            // churn (apply_editor_field_image_update inserts field defaults).
+            let Some(current_image) = row_language_stored_image(&original_row_file, language_code)
+            else {
+                continue;
+            };
+            if current_image.kind == "upload" {
+                if let Some(path) = current_image.path.clone() {
+                    if !removed_uploaded_paths.contains(&path) {
+                        removed_uploaded_paths.push(path);
+                    }
+                }
+            }
+            apply_editor_field_image_update(&mut row_value, language_code, None)?;
+        }
 
         let updated_row_json = serde_json::to_string_pretty(&row_value).map_err(|error| {
             format!(
@@ -805,7 +828,7 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
     if !changed_row_ids.is_empty() {
         let commit_message = input.commit_message.trim();
         let operation = input.operation.trim();
-        let commit_output = write_row_files_and_commit(
+        let commit_output = write_row_files_and_commit_with_removals(
             app,
             &repo_path,
             if commit_message.is_empty() {
@@ -824,6 +847,7 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
                 ai_model: None,
             },
             &prepared_writes,
+            &removed_uploaded_paths,
         )?;
         let commit_sha = if commit_output.is_empty() {
             None

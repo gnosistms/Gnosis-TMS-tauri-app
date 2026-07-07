@@ -77,8 +77,8 @@ use self::history::{
 };
 use self::images::{
     apply_editor_field_image_update, editor_field_image_from_stored,
-    normalize_editor_field_image_input, row_language_stored_image,
-    row_uploaded_image_relative_paths,
+    normalize_editor_field_image_input, push_repo_file_snapshot, remove_repo_file_from_disk,
+    row_language_stored_image, row_uploaded_image_relative_paths, with_repo_file_rollback,
 };
 pub(super) use self::images::{
     remove_gtms_editor_language_image_sync, save_gtms_editor_language_image_url_sync,
@@ -111,6 +111,7 @@ use self::shared::{
     normalize_editor_text_style_value, refresh_cached_chapter_source_word_count,
     row_fields_object_mut, row_footnote_map, row_image_caption_map, row_object_mut,
     row_plain_text_map, row_text_style, sanitize_chapter_languages, set_editor_field_flags,
+    write_row_files_and_commit_with_removals,
 };
 pub(crate) use self::team_copy::{start_team_chapter_copy, TeamChapterCopyInput};
 // Re-exported for the sibling `chapter_editor_comments` and `chapter_lifecycle` modules,
@@ -301,6 +302,9 @@ pub(crate) struct UpdateEditorRowFieldsBatchRowInput {
     footnotes: BTreeMap<String, String>,
     #[serde(default)]
     image_captions: BTreeMap<String, String>,
+    /// Language codes whose stored image (and any uploaded image file) should be removed.
+    #[serde(default)]
+    remove_images: Vec<String>,
 }
 
 #[derive(Deserialize)]

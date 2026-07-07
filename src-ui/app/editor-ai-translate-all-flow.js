@@ -27,10 +27,14 @@ import {
 import { buildBatchSourceContext } from "./editor-ai-context-window.js";
 import { buildEditorAiTranslationGlossaryHints } from "./editor-glossary-highlighting.js";
 import {
-  buildDerivedGlossaryState,
-  resolveEditorDerivedGlossaryUsage,
+  changedLanguageMatchesGlossarySource,
+  ensureBatchDerivedGlossaries,
+  refreshDerivedGlossariesForChangedGlossarySourceField,
+} from "./editor-derived-glossary-batch-flow.js";
+import {
+  glossarySourceLanguageCodeForChapter,
+  resolveLanguageCode,
 } from "./editor-derived-glossary-flow.js";
-import { applyEditorDerivedGlossaryEntry } from "./editor-derived-glossary-state.js";
 import { openAiMissingKeyModal } from "./ai-settings-flow.js";
 import { selectedProjectsTeamInstallationId } from "./project-context.js";
 import { invoke } from "./runtime.js";
@@ -83,27 +87,6 @@ function normalizeSelectedLanguageCodes(chapterState, languageCodes = []) {
       .map((code) => String(code ?? "").trim())
       .filter((code) => visibleCodes.has(code)),
   )];
-}
-
-function resolveLanguageCode(language) {
-  if (typeof language === "string" && language.trim()) {
-    return language.trim();
-  }
-
-  if (language && typeof language === "object") {
-    const code = typeof language.code === "string" ? language.code.trim() : "";
-    if (code) {
-      return code;
-    }
-  }
-
-  return "";
-}
-
-function glossarySourceLanguageCodeForChapter(chapterState) {
-  const glossaryState = chapterState?.glossary ?? null;
-  const glossaryModel = glossaryState?.matcherModel ?? null;
-  return resolveLanguageCode(glossaryState?.sourceLanguage ?? glossaryModel?.sourceLanguage);
 }
 
 function prioritizeGlossarySourceLanguageCode(chapterState, languageCodes) {
@@ -333,9 +316,7 @@ export function updateEditorAiTranslateAllLanguageSelection(render, languageCode
 function glossaryUsageKindForPair(chapterState, sourceLanguageCode, targetLanguageCode) {
   const glossaryState = chapterState?.glossary ?? null;
   const glossaryModel = glossaryState?.matcherModel ?? null;
-  const glossarySourceLanguageCode = resolveLanguageCode(
-    glossaryState?.sourceLanguage ?? glossaryModel?.sourceLanguage,
-  );
+  const glossarySourceLanguageCode = glossarySourceLanguageCodeForChapter(chapterState);
   const glossaryTargetLanguageCode = resolveLanguageCode(
     glossaryState?.targetLanguage ?? glossaryModel?.targetLanguage,
   );
@@ -402,14 +383,6 @@ function buildTranslateBatchRequest(chapterState, entries, glossaryHints, provid
     rows,
   };
   return installationId === null ? request : { ...request, installationId };
-}
-
-function createBatchDerivedRequestKey(chapterId) {
-  const uniqueSuffix =
-    typeof globalThis.crypto?.randomUUID === "function"
-      ? globalThis.crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  return `${chapterId}:batch-derived:${uniqueSuffix}`;
 }
 
 export async function confirmEditorAiTranslateAll(render, operations = {}) {
@@ -509,6 +482,16 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
     render?.();
   };
 
+  // Rows whose target language matches a linked glossary's own source
+  // language (a "pivot" glossary) may hold a now-stale derived entry for
+  // another chapter language once this row's text changes. Collected across
+  // the whole run — from both the multi-row batch path and the single-row
+  // path (which suppresses its own per-row refresh) — and re-derived ONCE at
+  // the end (see the try/finally around the batch loop below), so a run costs
+  // one combined re-derivation call rather than one per row.
+  const glossarySourceLanguageChangedRowIds = new Set();
+  let glossarySourceLanguageChangedCode = "";
+
   // Returns "abort" (run cancelled/changed) or "run-error" (modal error shown) —
   // both stop the whole run — otherwise "ok"/"skip"/"done" to continue.
   const translateSingleItem = async (item) => {
@@ -545,12 +528,22 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
       BATCH_TRANSLATE_ACTION_ID,
       context,
       operations,
-      { renderMode: "visible-rows", showNotice: false },
+      {
+        renderMode: "visible-rows",
+        showNotice: false,
+        // Deferred: matching rows are collected below and re-derived in one
+        // combined call at the end of the run instead of one AI call per row.
+        suppressDerivedGlossaryRefresh: true,
+      },
     );
     if (!isRunActive()) {
       return "abort";
     }
     if (result?.ok) {
+      if (changedLanguageMatchesGlossarySource(state.editorChapter, item.targetLanguageCode)) {
+        glossarySourceLanguageChangedRowIds.add(item.rowId);
+        glossarySourceLanguageChangedCode = item.targetLanguageCode;
+      }
       recordTranslated(item);
       return "ok";
     }
@@ -606,6 +599,10 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
       return;
     }
     operations.syncEditorGlossaryHighlightRowDom?.(item.rowId);
+    if (changedLanguageMatchesGlossarySource(state.editorChapter, item.targetLanguageCode)) {
+      glossarySourceLanguageChangedRowIds.add(item.rowId);
+      glossarySourceLanguageChangedCode = item.targetLanguageCode;
+    }
     logEditorAssistantTranslation({
       rowId: item.rowId,
       sourceLanguageCode: context.sourceLanguageCode,
@@ -628,119 +625,53 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
     recordTranslated(item);
   };
 
-  // Resolves the batch's derived glossary per row: fresh cached entries are
-  // reused, rows with a pivot text get ONE combined derivation call (entries
-  // stored back into chapter state so highlights and staleness checks work like
-  // the single-row path), and rows with no pivot text yet are returned for the
-  // single-row fallback (which generates one). Mutates entries in place with
-  // { hints, glossarySourceText }. Returns { fallbackEntries } or "abort".
+  // Resolves the batch's derived glossary per row via the shared batch
+  // derivation flow (fresh cached entries reused, missing pivot texts
+  // generated in batch and written into rows like the single-row path, the
+  // rest derived in combined calls with entries stored back into chapter state
+  // so highlights and staleness checks work like the single-row path). Mutates
+  // entries in place with { hints, glossarySourceText }; unresolved rows
+  // (generation/derivation failure, mid-flight edits) are returned for the
+  // single-row fallback. Returns { fallbackEntries } or "abort".
   const resolveBatchDerivedGlossary = async (chapterState, entries, provider) => {
-    const fallbackEntries = [];
-    const needy = [];
+    const entryByItem = new Map(entries.map((entry) => [entry.item, entry]));
+    const { aborted, results } = await ensureBatchDerivedGlossaries({
+      chapterState,
+      items: entries.map((entry) => entry.item),
+      providerId: provider.providerId,
+      modelId: provider.modelId,
+      isRunActive,
+      generateMissingPivotText: true,
+      persistPivotTextToRow: true,
+      render,
+      operations,
+    });
+    if (aborted) {
+      return "abort";
+    }
 
-    for (const entry of entries) {
-      const context = buildEditorAiTranslateContext(chapterState, {
-        ...entry.item,
-        skipRowWindow: true,
-      });
-      if (!context) {
-        fallbackEntries.push(entry);
+    const fallbackEntries = [];
+    for (const result of results) {
+      const entry = entryByItem.get(result.item);
+      if (!entry) {
         continue;
       }
-      const usage = resolveEditorDerivedGlossaryUsage(context);
-      if (usage.kind !== "derived") {
+      if (result.status === "none") {
         entry.hints = [];
         continue;
       }
-      if (usage.cachedDerivedEntry && !usage.cachedDerivedEntryIsStale) {
+      if (result.status === "cached" || result.status === "derived") {
         entry.hints = buildEditorAiTranslationGlossaryHints(
-          context.sourceText,
-          context.sourceLanguageCode,
-          context.targetLanguageCode,
-          usage.cachedDerivedEntry.matcherModel ?? null,
+          entry.sourceText,
+          entry.item.sourceLanguageCode,
+          entry.item.targetLanguageCode,
+          result.matcherModel ?? null,
         );
-        entry.glossarySourceText = usage.cachedDerivedEntry.glossarySourceText ?? "";
+        entry.glossarySourceText = result.glossarySourceText ?? "";
         continue;
       }
-      if (!String(usage.preparationGlossarySourceText ?? "").trim()) {
-        fallbackEntries.push(entry);
-        continue;
-      }
-      needy.push({ entry, context, usage });
+      fallbackEntries.push(entry);
     }
-
-    if (needy.length > 0) {
-      const prepareBatch =
-        typeof operations.prepareEditorAiTranslatedGlossaryBatch === "function"
-          ? operations.prepareEditorAiTranslatedGlossaryBatch
-          : (batchRequest) =>
-            invoke("prepare_editor_ai_translated_glossary_batch", { request: batchRequest });
-      const installationId = selectedProjectsTeamInstallationId();
-      const firstUsage = needy[0].usage;
-      const firstContext = needy[0].context;
-
-      let payload = null;
-      try {
-        payload = await prepareBatch({
-          providerId: provider.providerId,
-          modelId: provider.modelId,
-          translationSourceTexts: needy.map((n) => n.entry.sourceText),
-          translationSourceLanguage: firstContext.sourceLanguageLabel,
-          glossarySourceLanguage: firstUsage.glossarySourceLanguageLabel,
-          targetLanguage: firstContext.targetLanguageLabel,
-          glossarySourceText: needy
-            .map((n) => n.usage.preparationGlossarySourceText.trim())
-            .join("\n\n"),
-          glossaryTerms: firstUsage.glossaryTerms,
-          ...(installationId === null ? {} : { installationId }),
-        });
-      } catch {
-        // Derivation failed — those rows fall back to the single-row path,
-        // which derives each row's glossary on its own.
-        if (!isRunActive()) {
-          return "abort";
-        }
-        fallbackEntries.push(...needy.map((n) => n.entry));
-        return { fallbackEntries };
-      }
-      if (!isRunActive()) {
-        return "abort";
-      }
-
-      const preparedEntries = Array.isArray(payload?.entries) ? payload.entries : [];
-      const requestKey = createBatchDerivedRequestKey(chapterState.chapterId);
-      for (const { entry, context, usage } of needy) {
-        const rowEntries = preparedEntries.filter((prepared) =>
-          typeof prepared?.sourceTerm === "string"
-          && prepared.sourceTerm
-          && entry.sourceText.includes(prepared.sourceTerm),
-        );
-        const derivedEntry = buildDerivedGlossaryState({
-          glossaryState: usage.glossaryState,
-          sourceLanguage: context.sourceLanguage,
-          targetLanguage: context.targetLanguage,
-          requestKey,
-          derivedContext: usage.derivedContext,
-          payload: {
-            glossarySourceText: usage.preparationGlossarySourceText,
-            entries: rowEntries,
-          },
-        });
-        state.editorChapter = applyEditorDerivedGlossaryEntry(
-          state.editorChapter,
-          entry.item.rowId,
-          derivedEntry,
-        );
-        entry.hints = buildEditorAiTranslationGlossaryHints(
-          context.sourceText,
-          context.sourceLanguageCode,
-          context.targetLanguageCode,
-          derivedEntry.matcherModel ?? null,
-        );
-        entry.glossarySourceText = usage.preparationGlossarySourceText;
-      }
-    }
-
     return { fallbackEntries };
   };
 
@@ -896,57 +827,95 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
   });
 
   let provider = null;
-  for (const batch of batches) {
-    if (!isRunActive()) {
-      return;
-    }
-
-    // Single-item or non-applyable batches use the proven single-row path (which
-    // owns its own provider/key/glossary handling). Derived-glossary batches with
-    // more than one row go through translateBatch, which derives the pivot
-    // glossary once for the whole batch.
-    if (batch.items.length === 1 || !canApplyBatchLocally) {
-      for (const item of batch.items) {
-        const outcome = await translateSingleItem(item);
-        if (outcome === "abort" || outcome === "run-error") {
-          return;
-        }
-      }
-      continue;
-    }
-
-    if (!provider) {
-      const ensureReady =
-        typeof operations.ensureEditorAiTranslateProviderReady === "function"
-          ? operations.ensureEditorAiTranslateProviderReady
-          : ensureEditorAiTranslateProviderReady;
-      const ready = await ensureReady(render, BATCH_TRANSLATE_ACTION_ID);
+  try {
+    for (const batch of batches) {
       if (!isRunActive()) {
         return;
       }
-      if (!ready.ok) {
-        if (ready.missingKey) {
-          state.editorChapter = clearEditorAiTranslateAction(
-            state.editorChapter,
-            BATCH_TRANSLATE_ACTION_ID,
-          );
-          state.editorChapter = {
-            ...state.editorChapter,
-            aiTranslateAllModal: createEditorAiTranslateAllModalState(),
-          };
-          render?.();
-          openAiMissingKeyModal(ready.providerId);
+
+      // Single-item or non-applyable batches use the proven single-row path (which
+      // owns its own provider/key/glossary handling). Derived-glossary batches with
+      // more than one row go through translateBatch, which derives the pivot
+      // glossary once for the whole batch.
+      if (batch.items.length === 1 || !canApplyBatchLocally) {
+        for (const item of batch.items) {
+          const outcome = await translateSingleItem(item);
+          if (outcome === "abort" || outcome === "run-error") {
+            return;
+          }
+        }
+        continue;
+      }
+
+      if (!provider) {
+        const ensureReady =
+          typeof operations.ensureEditorAiTranslateProviderReady === "function"
+            ? operations.ensureEditorAiTranslateProviderReady
+            : ensureEditorAiTranslateProviderReady;
+        const ready = await ensureReady(render, BATCH_TRANSLATE_ACTION_ID);
+        if (!isRunActive()) {
           return;
         }
-        failRun(ready.error);
+        if (!ready.ok) {
+          if (ready.missingKey) {
+            state.editorChapter = clearEditorAiTranslateAction(
+              state.editorChapter,
+              BATCH_TRANSLATE_ACTION_ID,
+            );
+            state.editorChapter = {
+              ...state.editorChapter,
+              aiTranslateAllModal: createEditorAiTranslateAllModalState(),
+            };
+            render?.();
+            openAiMissingKeyModal(ready.providerId);
+            return;
+          }
+          failRun(ready.error);
+          return;
+        }
+        provider = { providerId: ready.providerId, modelId: ready.modelId };
+      }
+
+      const outcome = await translateBatch(batch, provider, rowsById);
+      if (outcome === "abort" || outcome === "run-error") {
         return;
       }
-      provider = { providerId: ready.providerId, modelId: ready.modelId };
     }
-
-    const outcome = await translateBatch(batch, provider, rowsById);
-    if (outcome === "abort" || outcome === "run-error") {
-      return;
+  } finally {
+    // Runs regardless of how the loop above exits (completed, aborted,
+    // errored) — any row that already got new text written into the
+    // glossary's own source-language field deserves its stale derived entry
+    // re-derived, even if the rest of the run didn't finish. One combined
+    // call for every such row across the whole run — never one per row.
+    if (glossarySourceLanguageChangedRowIds.size > 0) {
+      // Runs whose items all took the single-row path never resolved a
+      // provider up front — resolve one here (config is already loaded and a
+      // key proven usable by the translations that just succeeded). On the
+      // unlikely !ok, skip silently: read-time staleness checks already keep
+      // the old entries from rendering.
+      let refreshProvider = provider;
+      if (!refreshProvider) {
+        const ensureReady =
+          typeof operations.ensureEditorAiTranslateProviderReady === "function"
+            ? operations.ensureEditorAiTranslateProviderReady
+            : ensureEditorAiTranslateProviderReady;
+        const ready = await ensureReady(render, BATCH_TRANSLATE_ACTION_ID);
+        refreshProvider = ready?.ok
+          ? { providerId: ready.providerId, modelId: ready.modelId }
+          : null;
+      }
+      if (refreshProvider) {
+        await refreshDerivedGlossariesForChangedGlossarySourceField({
+          chapterState: state.editorChapter,
+          rowIds: [...glossarySourceLanguageChangedRowIds],
+          changedLanguageCode: glossarySourceLanguageChangedCode,
+          providerId: refreshProvider.providerId,
+          modelId: refreshProvider.modelId,
+          render,
+          operations,
+          isRunActive,
+        });
+      }
     }
   }
 
