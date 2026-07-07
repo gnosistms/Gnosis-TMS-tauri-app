@@ -105,6 +105,14 @@ until the consent gate opens, so early wiring is safe.
 - **If the reload itself fails**, `store` stays null and subsequent writes are
   memory-only until the next app boot (which re-initializes cleanly). We do not
   loop retrying the reload, to avoid a reload storm during shutdown.
+- **Reconnect assumes `load()` re-allocates a live handle.** `tauri-plugin-store`
+  2.4.2's `load` command adds a fresh entry to the Rust resource table per call,
+  so re-invoking it after a rid goes stale normally yields a new valid rid and the
+  next write reconnects. If instead `load()` were to hand back a still-stale handle
+  (e.g. mid-teardown), the design degrades gracefully: each subsequent write
+  re-catches, re-nulls, and re-reloads, emitting repeated `warning` reports with no
+  persistence — but **never a fatal crash**, since every rejection is caught. The
+  fatal event (JAVASCRIPT-Y) is fixed regardless; reconnect is the secondary benefit.
 
 ## 5. Tests (`persistent-store.test.js`)
 
