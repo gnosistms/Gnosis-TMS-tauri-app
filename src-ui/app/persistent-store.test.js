@@ -151,6 +151,49 @@ test("recovers from a stale store resource id and reports it non-fatally", async
   assert.equal(freshStore.data.get("k2"), "v2");
 });
 
+test("recovers from a stale store resource id on delete and reports it non-fatally", async () => {
+  const staleStore = createFakeTauriStore({
+    // Mirror of the set-path test: the delete write is floated the same way, so a dropped
+    // .catch on store.delete() must be caught by its own regression guard (M1).
+    delete() {
+      return Promise.reject("The resource id 21 is invalid.");
+    },
+  });
+  const freshStore = createFakeTauriStore();
+  let loadCount = 0;
+  const loader = async () => {
+    loadCount += 1;
+    return loadCount === 1 ? staleStore : freshStore;
+  };
+
+  const reports = [];
+  const module = await bootTauriStore(loader);
+  module.setPersistentStoreFailureReporter((command, error, options) => {
+    reports.push({ command, error, options });
+  });
+
+  module.removePersistentValue("k");
+  // memoryState is updated synchronously regardless of the store outcome.
+  assert.equal(module.readPersistentValue("k", "gone"), "gone");
+
+  await tick();
+
+  assert.equal(loadCount, 2, "a stale handle should trigger exactly one reload");
+  assert.equal(reports.length, 1, "the stale delete should be reported once");
+  assert.equal(reports[0].command, "persistent-store.delete");
+  assert.equal(reports[0].options.level, "warning");
+  assert.ok(
+    Array.isArray(reports[0].options.fingerprint) && reports[0].options.fingerprint.length > 0,
+    "the report should carry a stable fingerprint",
+  );
+
+  // The next delete reconnects to the fresh handle.
+  freshStore.data.set("k2", "v2");
+  module.removePersistentValue("k2");
+  await tick();
+  assert.equal(freshStore.data.has("k2"), false);
+});
+
 test("a failing store reload does not produce a new unhandled rejection", async () => {
   const staleStore = createFakeTauriStore({
     set() {
@@ -187,8 +230,16 @@ test("a failing store reload does not produce a new unhandled rejection", async 
       0,
       "a failing reload must not surface as a new unhandled rejection",
     );
-    // Both the stale write and the failed reload route through the reporter, non-fatally.
-    assert.ok(reports.length >= 1);
+    // The scenario emits exactly two reports, in order: the stale write, then the failed
+    // reload. Asserting the exact count (not >= 1) keeps this a real regression guard — a
+    // >= 1 check would still pass if the reload-failure branch silently stopped reporting.
+    assert.equal(
+      reports.length,
+      2,
+      "the stale write and the failed reload should each emit exactly one report",
+    );
+    assert.match(reports[0].command, /persistent-store\.set$/);
+    assert.match(reports[1].command, /persistent-store\.reload$/);
     assert.ok(reports.every((report) => report.options.level === "warning"));
   } finally {
     process.removeListener("unhandledRejection", onRejection);

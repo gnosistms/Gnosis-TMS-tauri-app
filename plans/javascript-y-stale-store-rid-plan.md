@@ -121,8 +121,14 @@ until the consent gate opens, so early wiring is safe.
   once with `level: "warning"` and a stable `fingerprint`, exactly one reload
   occurs, and the next write lands on the fresh handle.
 - **Failing-reload path (regression guard for the self-inflicted bug):** stale
-  `set` **and** a loader that rejects on the second `load()` → assert **zero**
-  `unhandledRejection` events on `process`, and every report is `warning`.
+  `set` **and** a loader that rejects on the second `load()` → assert **exactly two**
+  reports (the stale write, then the failed reload), **zero** `unhandledRejection`
+  events on `process`, and every report is `warning`.
+- **Delete-path recovery:** a fake Tauri store whose `delete` rejects with a bare
+  stale-resource-id string → assert the reporter is called once with `level: "warning"`
+  and a stable `fingerprint`, exactly one reload occurs, and the next delete lands on the
+  fresh handle. Mirrors the `set` recovery test so a dropped `.catch` on `delete` cannot
+  regress silently (both writes are floated identically).
 - Existing browser-mode round-trip tests must continue to pass (localStorage
   fallback unchanged when no loader exists).
 
