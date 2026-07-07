@@ -43,6 +43,7 @@ import { findChapterContextById, selectedProjectsTeam } from "./project-context.
 import { invoke } from "./runtime.js";
 import { createEditorAiReviewAllModalState, state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
+import { reportBackendNonfatalError } from "./telemetry.js";
 import { ensureSelectedTeamAiProviderReady } from "./team-ai-flow.js";
 import { loadActiveEditorFieldHistory } from "./editor-history-flow.js";
 import { invokeEditorWriteCommand } from "./editor-write-permission.js";
@@ -606,7 +607,14 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
     let payload;
     try {
       payload = await runBatch(request);
-    } catch {
+    } catch (error) {
+      console.warn("[gtms ai-review] Batch review call failed; reviewing these rows one at a time.", {
+        rowCount: liveItems.length,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      // The invoke wrapper already reports the raw command failure; this adds a
+      // stable, countable signal that the run degraded to single-row review.
+      reportBackendNonfatalError({ operation: "ai-review-batch", reason: "fallback-single-row" });
       if (!isReviewActive()) {
         return "abort";
       }
@@ -625,6 +633,21 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
     const returnedById = new Map(
       (Array.isArray(payload?.rows) ? payload.rows : []).map((row) => [row.rowId, row]),
     );
+    console.info("[gtms ai-review] Batch review call succeeded.", {
+      requestedRowCount: liveItems.length,
+      returnedRowCount: returnedById.size,
+    });
+    const missingRowIds = liveItems
+      .filter((entry) => !returnedById.has(entry.item.rowId))
+      .map((entry) => entry.item.rowId);
+    if (missingRowIds.length > 0) {
+      // The model failed to echo these rowIds back; they fall through to the
+      // single-row path below. One aggregate report per batch, not per row.
+      console.warn("[gtms ai-review] Batch response is missing rows; reviewing them individually.", {
+        missingRowIds,
+      });
+      reportBackendNonfatalError({ operation: "ai-review-batch", reason: "missing-rows" });
+    }
     for (const entry of liveItems) {
       if (!isReviewActive()) {
         return "abort";
