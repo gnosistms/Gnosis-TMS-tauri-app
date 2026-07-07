@@ -409,6 +409,7 @@ pub(crate) fn reverse_gtms_editor_batch_replace_commit_sync(
             fields: row_plain_text_fields(&restored_row_file),
             footnotes: row_footnote_map(&restored_row_file),
             image_captions: row_image_caption_map(&restored_row_file),
+            remove_images: Vec::new(),
         });
     }
 
