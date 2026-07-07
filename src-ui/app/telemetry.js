@@ -36,10 +36,12 @@ function gateOpen() {
   return safe(() => isTelemetrySendAllowed()) === true;
 }
 
-// Invariant: a bare-string rejection reason must NOT outrank a real Error. A non-Error
-// unhandled rejection (e.g. a stale-resource-id string floated from a fire-and-forget
-// promise — see JAVASCRIPT-Y) is downgraded to "error"; only genuine crashes stay
-// "fatal". Do not "restore" fatal here.
+// Invariant: a non-Error unhandled rejection must NOT outrank a real Error. This applies
+// to ANY non-Error rejection reason — bare string, plain object, or primitive (e.g. a
+// stale-resource-id string floated from a fire-and-forget promise — see JAVASCRIPT-Y) —
+// all are downgraded to "error". Genuine Error-based rejections never reach here: they are
+// caught by the `item.error instanceof Error` branch in emitCrash and sent via
+// captureException. Only non-rejection crashes stay "fatal". Do not "restore" fatal here.
 function crashLevel(item) {
   return item.kind === "unhandledrejection" ? "error" : "fatal";
 }
