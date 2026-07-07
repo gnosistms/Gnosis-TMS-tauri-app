@@ -26,7 +26,15 @@ import {
 } from "./editor-ai-batch-request.js";
 import { buildBatchSourceContext } from "./editor-ai-context-window.js";
 import { buildEditorAiTranslationGlossaryHints } from "./editor-glossary-highlighting.js";
-import { ensureBatchDerivedGlossaries } from "./editor-derived-glossary-batch-flow.js";
+import {
+  changedLanguageMatchesGlossarySource,
+  ensureBatchDerivedGlossaries,
+  refreshDerivedGlossariesForChangedGlossarySourceField,
+} from "./editor-derived-glossary-batch-flow.js";
+import {
+  glossarySourceLanguageCodeForChapter,
+  resolveLanguageCode,
+} from "./editor-derived-glossary-flow.js";
 import { openAiMissingKeyModal } from "./ai-settings-flow.js";
 import { selectedProjectsTeamInstallationId } from "./project-context.js";
 import { invoke } from "./runtime.js";
@@ -79,27 +87,6 @@ function normalizeSelectedLanguageCodes(chapterState, languageCodes = []) {
       .map((code) => String(code ?? "").trim())
       .filter((code) => visibleCodes.has(code)),
   )];
-}
-
-function resolveLanguageCode(language) {
-  if (typeof language === "string" && language.trim()) {
-    return language.trim();
-  }
-
-  if (language && typeof language === "object") {
-    const code = typeof language.code === "string" ? language.code.trim() : "";
-    if (code) {
-      return code;
-    }
-  }
-
-  return "";
-}
-
-function glossarySourceLanguageCodeForChapter(chapterState) {
-  const glossaryState = chapterState?.glossary ?? null;
-  const glossaryModel = glossaryState?.matcherModel ?? null;
-  return resolveLanguageCode(glossaryState?.sourceLanguage ?? glossaryModel?.sourceLanguage);
 }
 
 function prioritizeGlossarySourceLanguageCode(chapterState, languageCodes) {
@@ -329,9 +316,7 @@ export function updateEditorAiTranslateAllLanguageSelection(render, languageCode
 function glossaryUsageKindForPair(chapterState, sourceLanguageCode, targetLanguageCode) {
   const glossaryState = chapterState?.glossary ?? null;
   const glossaryModel = glossaryState?.matcherModel ?? null;
-  const glossarySourceLanguageCode = resolveLanguageCode(
-    glossaryState?.sourceLanguage ?? glossaryModel?.sourceLanguage,
-  );
+  const glossarySourceLanguageCode = glossarySourceLanguageCodeForChapter(chapterState);
   const glossaryTargetLanguageCode = resolveLanguageCode(
     glossaryState?.targetLanguage ?? glossaryModel?.targetLanguage,
   );
@@ -497,6 +482,16 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
     render?.();
   };
 
+  // Rows whose target language matches a linked glossary's own source
+  // language (a "pivot" glossary) may hold a now-stale derived entry for
+  // another chapter language once this row's text changes. Collected across
+  // the whole run — from both the multi-row batch path and the single-row
+  // path (which suppresses its own per-row refresh) — and re-derived ONCE at
+  // the end (see the try/finally around the batch loop below), so a run costs
+  // one combined re-derivation call rather than one per row.
+  const glossarySourceLanguageChangedRowIds = new Set();
+  let glossarySourceLanguageChangedCode = "";
+
   // Returns "abort" (run cancelled/changed) or "run-error" (modal error shown) —
   // both stop the whole run — otherwise "ok"/"skip"/"done" to continue.
   const translateSingleItem = async (item) => {
@@ -533,12 +528,22 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
       BATCH_TRANSLATE_ACTION_ID,
       context,
       operations,
-      { renderMode: "visible-rows", showNotice: false },
+      {
+        renderMode: "visible-rows",
+        showNotice: false,
+        // Deferred: matching rows are collected below and re-derived in one
+        // combined call at the end of the run instead of one AI call per row.
+        suppressDerivedGlossaryRefresh: true,
+      },
     );
     if (!isRunActive()) {
       return "abort";
     }
     if (result?.ok) {
+      if (changedLanguageMatchesGlossarySource(state.editorChapter, item.targetLanguageCode)) {
+        glossarySourceLanguageChangedRowIds.add(item.rowId);
+        glossarySourceLanguageChangedCode = item.targetLanguageCode;
+      }
       recordTranslated(item);
       return "ok";
     }
@@ -594,6 +599,10 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
       return;
     }
     operations.syncEditorGlossaryHighlightRowDom?.(item.rowId);
+    if (changedLanguageMatchesGlossarySource(state.editorChapter, item.targetLanguageCode)) {
+      glossarySourceLanguageChangedRowIds.add(item.rowId);
+      glossarySourceLanguageChangedCode = item.targetLanguageCode;
+    }
     logEditorAssistantTranslation({
       rowId: item.rowId,
       sourceLanguageCode: context.sourceLanguageCode,
@@ -818,57 +827,95 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
   });
 
   let provider = null;
-  for (const batch of batches) {
-    if (!isRunActive()) {
-      return;
-    }
-
-    // Single-item or non-applyable batches use the proven single-row path (which
-    // owns its own provider/key/glossary handling). Derived-glossary batches with
-    // more than one row go through translateBatch, which derives the pivot
-    // glossary once for the whole batch.
-    if (batch.items.length === 1 || !canApplyBatchLocally) {
-      for (const item of batch.items) {
-        const outcome = await translateSingleItem(item);
-        if (outcome === "abort" || outcome === "run-error") {
-          return;
-        }
-      }
-      continue;
-    }
-
-    if (!provider) {
-      const ensureReady =
-        typeof operations.ensureEditorAiTranslateProviderReady === "function"
-          ? operations.ensureEditorAiTranslateProviderReady
-          : ensureEditorAiTranslateProviderReady;
-      const ready = await ensureReady(render, BATCH_TRANSLATE_ACTION_ID);
+  try {
+    for (const batch of batches) {
       if (!isRunActive()) {
         return;
       }
-      if (!ready.ok) {
-        if (ready.missingKey) {
-          state.editorChapter = clearEditorAiTranslateAction(
-            state.editorChapter,
-            BATCH_TRANSLATE_ACTION_ID,
-          );
-          state.editorChapter = {
-            ...state.editorChapter,
-            aiTranslateAllModal: createEditorAiTranslateAllModalState(),
-          };
-          render?.();
-          openAiMissingKeyModal(ready.providerId);
+
+      // Single-item or non-applyable batches use the proven single-row path (which
+      // owns its own provider/key/glossary handling). Derived-glossary batches with
+      // more than one row go through translateBatch, which derives the pivot
+      // glossary once for the whole batch.
+      if (batch.items.length === 1 || !canApplyBatchLocally) {
+        for (const item of batch.items) {
+          const outcome = await translateSingleItem(item);
+          if (outcome === "abort" || outcome === "run-error") {
+            return;
+          }
+        }
+        continue;
+      }
+
+      if (!provider) {
+        const ensureReady =
+          typeof operations.ensureEditorAiTranslateProviderReady === "function"
+            ? operations.ensureEditorAiTranslateProviderReady
+            : ensureEditorAiTranslateProviderReady;
+        const ready = await ensureReady(render, BATCH_TRANSLATE_ACTION_ID);
+        if (!isRunActive()) {
           return;
         }
-        failRun(ready.error);
+        if (!ready.ok) {
+          if (ready.missingKey) {
+            state.editorChapter = clearEditorAiTranslateAction(
+              state.editorChapter,
+              BATCH_TRANSLATE_ACTION_ID,
+            );
+            state.editorChapter = {
+              ...state.editorChapter,
+              aiTranslateAllModal: createEditorAiTranslateAllModalState(),
+            };
+            render?.();
+            openAiMissingKeyModal(ready.providerId);
+            return;
+          }
+          failRun(ready.error);
+          return;
+        }
+        provider = { providerId: ready.providerId, modelId: ready.modelId };
+      }
+
+      const outcome = await translateBatch(batch, provider, rowsById);
+      if (outcome === "abort" || outcome === "run-error") {
         return;
       }
-      provider = { providerId: ready.providerId, modelId: ready.modelId };
     }
-
-    const outcome = await translateBatch(batch, provider, rowsById);
-    if (outcome === "abort" || outcome === "run-error") {
-      return;
+  } finally {
+    // Runs regardless of how the loop above exits (completed, aborted,
+    // errored) — any row that already got new text written into the
+    // glossary's own source-language field deserves its stale derived entry
+    // re-derived, even if the rest of the run didn't finish. One combined
+    // call for every such row across the whole run — never one per row.
+    if (glossarySourceLanguageChangedRowIds.size > 0) {
+      // Runs whose items all took the single-row path never resolved a
+      // provider up front — resolve one here (config is already loaded and a
+      // key proven usable by the translations that just succeeded). On the
+      // unlikely !ok, skip silently: read-time staleness checks already keep
+      // the old entries from rendering.
+      let refreshProvider = provider;
+      if (!refreshProvider) {
+        const ensureReady =
+          typeof operations.ensureEditorAiTranslateProviderReady === "function"
+            ? operations.ensureEditorAiTranslateProviderReady
+            : ensureEditorAiTranslateProviderReady;
+        const ready = await ensureReady(render, BATCH_TRANSLATE_ACTION_ID);
+        refreshProvider = ready?.ok
+          ? { providerId: ready.providerId, modelId: ready.modelId }
+          : null;
+      }
+      if (refreshProvider) {
+        await refreshDerivedGlossariesForChangedGlossarySourceField({
+          chapterState: state.editorChapter,
+          rowIds: [...glossarySourceLanguageChangedRowIds],
+          changedLanguageCode: glossarySourceLanguageChangedCode,
+          providerId: refreshProvider.providerId,
+          modelId: refreshProvider.modelId,
+          render,
+          operations,
+          isRunActive,
+        });
+      }
     }
   }
 

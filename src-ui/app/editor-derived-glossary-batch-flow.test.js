@@ -21,8 +21,10 @@ globalThis.document = {
 };
 
 const {
+  changedLanguageMatchesGlossarySource,
   editorDerivedGlossaryBatchTestApi,
   ensureBatchDerivedGlossaries,
+  refreshDerivedGlossariesForChangedGlossarySourceField,
 } = await import("./editor-derived-glossary-batch-flow.js");
 const {
   buildEditorGlossaryModel,
@@ -519,6 +521,132 @@ test("chunkPendingDerivations bounds chunks by row count and combined token budg
     { tokenTarget: 60 },
   );
   assert.deepEqual(byTokens.map((chunk) => chunk.length), [1, 1]);
+});
+
+function derivedGlossaryPrepareStub(prepareCalls) {
+  return async (request) => {
+    prepareCalls.push(request);
+    return {
+      glossarySourceText: request.glossarySourceText,
+      entries: [
+        { sourceTerm: "Oracion", glossarySourceTerm: "prayer", targetVariants: ["cau nguyen"] },
+      ],
+    };
+  };
+}
+
+test("changedLanguageMatchesGlossarySource matches only the glossary's own source language", () => {
+  const chapterState = chapter();
+  assert.equal(changedLanguageMatchesGlossarySource(chapterState, "en"), true);
+  assert.equal(changedLanguageMatchesGlossarySource(chapterState, "vi"), false);
+  assert.equal(changedLanguageMatchesGlossarySource(chapterState, "es"), false);
+  assert.equal(
+    changedLanguageMatchesGlossarySource({ ...chapterState, glossary: null }, "en"),
+    false,
+  );
+});
+
+test("refreshDerivedGlossariesForChangedGlossarySourceField re-derives a changed pivot using the row's previously cached language pair and syncs highlights", async () => {
+  resetSessionState();
+  state.editorChapter = chapter();
+  const prepareCalls = [];
+  await ensureBatchDerivedGlossaries({
+    chapterState: state.editorChapter,
+    items: items(state.editorChapter).slice(0, 1),
+    providerId: "openai",
+    modelId: "test-model",
+    operations: { prepareEditorAiTranslatedGlossaryBatch: derivedGlossaryPrepareStub(prepareCalls) },
+  });
+  assert.equal(prepareCalls.length, 1);
+
+  // The pivot (en) field changed after the entry was derived — e.g. an AI
+  // translate just rewrote it.
+  state.editorChapter.rows[0].fields.en = "brand new prayer";
+
+  const syncCalls = [];
+  const refreshPrepareCalls = [];
+  const { aborted, results } = await refreshDerivedGlossariesForChangedGlossarySourceField({
+    chapterState: state.editorChapter,
+    rowIds: ["row-1"],
+    changedLanguageCode: "en",
+    providerId: "openai",
+    modelId: "test-model",
+    operations: {
+      prepareEditorAiTranslatedGlossaryBatch: derivedGlossaryPrepareStub(refreshPrepareCalls),
+      syncEditorGlossaryHighlightRowDom: (rowId) => syncCalls.push(rowId),
+    },
+  });
+
+  assert.equal(aborted, false);
+  assert.equal(results.length, 1);
+  assert.equal(results[0].status, "derived");
+  // Re-derives the SAME pair (es -> vi) the row already had cached, not a
+  // newly guessed one, against the NEW pivot text.
+  assert.equal(refreshPrepareCalls.length, 1);
+  assert.equal(refreshPrepareCalls[0].translationSourceLanguage, "Spanish");
+  assert.equal(refreshPrepareCalls[0].targetLanguage, "Vietnamese");
+  assert.equal(refreshPrepareCalls[0].glossarySourceText, "brand new prayer");
+  assert.equal(state.editorChapter.derivedGlossariesByRowId["row-1"].status, "ready");
+  assert.equal(
+    state.editorChapter.derivedGlossariesByRowId["row-1"].glossarySourceText,
+    "brand new prayer",
+  );
+  assert.deepEqual(syncCalls, ["row-1"]);
+});
+
+test("refreshDerivedGlossariesForChangedGlossarySourceField reuses the cached entry without an AI call when the pivot text is unchanged", async () => {
+  resetSessionState();
+  state.editorChapter = chapter();
+  const prepareCalls = [];
+  await ensureBatchDerivedGlossaries({
+    chapterState: state.editorChapter,
+    items: items(state.editorChapter).slice(0, 1),
+    providerId: "openai",
+    modelId: "test-model",
+    operations: { prepareEditorAiTranslatedGlossaryBatch: derivedGlossaryPrepareStub(prepareCalls) },
+  });
+  assert.equal(prepareCalls.length, 1);
+
+  // Pivot field ends up with the same text the entry was derived from (e.g.
+  // cleared then re-translated to an identical result) — the entry is fresh
+  // again and must be reused, not deleted and re-derived.
+  const refreshPrepareCalls = [];
+  const { aborted, results } = await refreshDerivedGlossariesForChangedGlossarySourceField({
+    chapterState: state.editorChapter,
+    rowIds: ["row-1"],
+    changedLanguageCode: "en",
+    providerId: "openai",
+    modelId: "test-model",
+    operations: {
+      prepareEditorAiTranslatedGlossaryBatch: derivedGlossaryPrepareStub(refreshPrepareCalls),
+    },
+  });
+
+  assert.equal(aborted, false);
+  assert.equal(results.length, 1);
+  assert.equal(results[0].status, "cached");
+  assert.equal(refreshPrepareCalls.length, 0);
+  assert.equal(state.editorChapter.derivedGlossariesByRowId["row-1"].status, "ready");
+});
+
+test("refreshDerivedGlossariesForChangedGlossarySourceField is a no-op when the row never had a derived entry", async () => {
+  resetSessionState();
+  state.editorChapter = chapter();
+  const prepareCalls = [];
+
+  const { aborted, results } = await refreshDerivedGlossariesForChangedGlossarySourceField({
+    chapterState: state.editorChapter,
+    rowIds: ["row-1"],
+    changedLanguageCode: "en",
+    providerId: "openai",
+    modelId: "test-model",
+    operations: { prepareEditorAiTranslatedGlossaryBatch: derivedGlossaryPrepareStub(prepareCalls) },
+  });
+
+  assert.equal(aborted, false);
+  assert.deepEqual(results, []);
+  assert.equal(prepareCalls.length, 0);
+  assert.equal(state.editorChapter.derivedGlossariesByRowId?.["row-1"], undefined);
 });
 
 test("buildDerivedGlossaryItemContext resolves the target language by base code", () => {

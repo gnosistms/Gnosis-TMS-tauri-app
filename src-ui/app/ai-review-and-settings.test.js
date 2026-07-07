@@ -205,6 +205,9 @@ const {
   buildEditorDerivedGlossaryModel,
   buildEditorGlossaryModel,
 } = await import("./editor-glossary-highlighting.js");
+const {
+  ensureBatchDerivedGlossaries,
+} = await import("./editor-derived-glossary-batch-flow.js");
 const { normalizeEditorAiReviewMode } = await import("./editor-ai-review-request.js");
 const { resolveVisibleEditorAiReview } = await import("./editor-ai-review-state.js");
 const { resolveVisibleEditorAiTranslateAction } = await import("./editor-ai-translate-state.js");
@@ -1152,6 +1155,144 @@ test("runEditorAiTranslate sends glossary hints for matched source-language term
 
   assert.equal(state.editorChapter.rows[0].fields.vi, "Ban dich");
   assert.equal(latestAssistantDraft(), null);
+});
+
+// Shared setup for the pivot-refresh translate tests: chapter source en,
+// linked es -> vi glossary (so es is a "pivot" language), a seeded ready
+// en -> vi derived entry pivoting through the OLD Spanish text, and the es
+// field cleared so an en -> es translate restores it. Returns the operations
+// object plus the call-recording arrays.
+async function installPivotRefreshTranslateFixture() {
+  installTranslateFixture({
+    languages: [
+      { code: "en", name: "English" },
+      { code: "es", name: "Spanish" },
+      { code: "vi", name: "Vietnamese" },
+    ],
+    selectedSourceLanguageCode: "en",
+    selectedTargetLanguageCode: "es",
+    activeLanguageCode: "es",
+    fields: {
+      en: "Hello",
+      es: "Hola vieja",
+      vi: "Xin chao",
+    },
+  });
+  const glossary = {
+    status: "ready",
+    error: "",
+    glossaryId: "glossary-1",
+    repoName: "glossary-1",
+    title: "Glossary",
+    sourceLanguage: { code: "es", name: "Spanish" },
+    targetLanguage: { code: "vi", name: "Vietnamese" },
+    terms: [{
+      termId: "t1",
+      sourceTerms: ["hola"],
+      targetTerms: ["xin chao"],
+    }],
+    matcherModel: null,
+  };
+  glossary.matcherModel = buildEditorGlossaryModel(glossary);
+  state.editorChapter = { ...state.editorChapter, glossary };
+
+  await ensureBatchDerivedGlossaries({
+    chapterState: state.editorChapter,
+    items: [{ rowId: "row-1", sourceLanguageCode: "en", targetLanguageCode: "vi" }],
+    providerId: "openai",
+    modelId: "test-model",
+    operations: {
+      prepareEditorAiTranslatedGlossaryBatch: async (request) => ({
+        glossarySourceText: request.glossarySourceText,
+        entries: [{ sourceTerm: "Hello", glossarySourceTerm: "hola", targetVariants: ["xin chao"] }],
+      }),
+    },
+  });
+  assert.equal(state.editorChapter.derivedGlossariesByRowId["row-1"].status, "ready");
+  assert.equal(state.editorChapter.derivedGlossariesByRowId["row-1"].glossarySourceText, "Hola vieja");
+
+  state.editorChapter.rows[0].fields.es = "";
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      detailedConfiguration: true,
+      actions: {
+        ...state.aiSettings.actionConfig.actions,
+        translate1: { providerId: "openai", modelId: "gpt-5.4-mini" },
+      },
+    },
+  };
+
+  invokeHandler = async (command) => {
+    if (command === "load_ai_provider_secret") {
+      return "oa-key";
+    }
+    if (command === "run_ai_translation") {
+      return { translatedText: "Hola nueva" };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const refreshPrepareCalls = [];
+  const glossarySyncCalls = [];
+  const operations = {
+    updateEditorRowFieldValue(rowId, languageCode, nextValue) {
+      const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
+      row.fields[languageCode] = nextValue;
+      row.saveStatus = "dirty";
+    },
+    async persistEditorRowOnBlur(_render, rowId) {
+      const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
+      row.persistedFields = { ...row.fields };
+      row.saveStatus = "idle";
+    },
+    syncEditorGlossaryHighlightRowDom(rowId) {
+      glossarySyncCalls.push(rowId);
+    },
+    prepareEditorAiTranslatedGlossaryBatch: async (request) => {
+      refreshPrepareCalls.push(request);
+      return {
+        glossarySourceText: request.glossarySourceText,
+        entries: [{ sourceTerm: "Hello", glossarySourceTerm: "hola", targetVariants: ["xin chao"] }],
+      };
+    },
+  };
+  return { operations, refreshPrepareCalls, glossarySyncCalls };
+}
+
+test("runEditorAiTranslate refreshes a stale derived glossary when it restores the glossary's own source-language field", async () => {
+  const { operations, refreshPrepareCalls, glossarySyncCalls } =
+    await installPivotRefreshTranslateFixture();
+
+  await runEditorAiTranslate(() => {}, "translate1", operations);
+
+  assert.equal(state.editorChapter.rows[0].fields.es, "Hola nueva");
+  // The stale en -> vi entry (built from "Hola vieja") was refreshed against
+  // the NEW Spanish text, not left stale and not silently dropped.
+  assert.equal(refreshPrepareCalls.length, 1);
+  assert.equal(refreshPrepareCalls[0].glossarySourceText, "Hola nueva");
+  assert.equal(state.editorChapter.derivedGlossariesByRowId["row-1"].status, "ready");
+  assert.equal(state.editorChapter.derivedGlossariesByRowId["row-1"].glossarySourceText, "Hola nueva");
+  assert.ok(glossarySyncCalls.includes("row-1"));
+});
+
+test("runEditorAiTranslateForContext honors suppressDerivedGlossaryRefresh for batch callers", async () => {
+  const { operations, refreshPrepareCalls } = await installPivotRefreshTranslateFixture();
+
+  const context = buildEditorAiTranslateContext(state.editorChapter);
+  const result = await runEditorAiTranslateForContext(() => {}, "translate1", context, operations, {
+    applyMode: "draft",
+    autoApplyDraft: true,
+    showNotice: false,
+    suppressDerivedGlossaryRefresh: true,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(state.editorChapter.rows[0].fields.es, "Hola nueva");
+  // The per-row refresh is deferred to the caller (Translate All aggregates
+  // it into one run-level call) — no derivation AI call from this path.
+  assert.equal(refreshPrepareCalls.length, 0);
 });
 
 test("runEditorAiTranslate keeps translated footnotes separate and auto-applies them", async () => {

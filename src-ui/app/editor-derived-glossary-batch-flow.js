@@ -13,10 +13,14 @@ import {
 } from "./editor-ai-batch-request.js";
 import {
   buildDerivedGlossaryState,
+  glossarySourceLanguageCodeForChapter,
   readRowFieldText,
   resolveEditorDerivedGlossaryUsage,
 } from "./editor-derived-glossary-flow.js";
-import { applyEditorDerivedGlossaryEntries } from "./editor-derived-glossary-state.js";
+import {
+  applyEditorDerivedGlossaryEntries,
+  normalizeEditorDerivedGlossariesByRowId,
+} from "./editor-derived-glossary-state.js";
 import { saveStoredEditorDerivedGlossaryEntriesForChapter } from "./editor-derived-glossary-cache.js";
 import { findEditorRowById } from "./editor-utils.js";
 import { languageBaseCode, languageSemanticLabel } from "./editor-language-utils.js";
@@ -436,6 +440,96 @@ export async function ensureBatchDerivedGlossaries({
   }
 
   return { aborted: false, results };
+}
+
+// Mirrors the source/target comparison in resolveEditorDerivedGlossaryUsage:
+// the glossary side resolves through glossarySourceLanguageCodeForChapter, the
+// chapter-language side through languageBaseCode, so duplicate-language
+// columns (es / es-2) still match their shared base code. Exported so callers
+// (e.g. AI Translate All's per-row loop) can cheaply filter which rows are
+// even worth collecting before an eventual refresh call.
+export function changedLanguageMatchesGlossarySource(chapterState, changedLanguageCode) {
+  const glossarySourceLanguageCode = glossarySourceLanguageCodeForChapter(chapterState);
+  if (!glossarySourceLanguageCode) {
+    return false;
+  }
+  const changedLanguage = languageByCode(chapterState, changedLanguageCode);
+  return (
+    languageBaseCode(changedLanguage ?? { code: changedLanguageCode }) === glossarySourceLanguageCode
+  );
+}
+
+// Called right after an AI translate action writes new text into the
+// glossary's own source-language field: re-derives the changed rows' cached
+// derived entries via the shared batch machinery, using each row's PREVIOUSLY
+// cached language pair — so a chapter with more than one derivable language
+// keeps re-deriving whichever pair it already had, never a newly guessed one.
+// Scoped to rows that already have a ready derived entry; rows that never had
+// one are left alone.
+//
+// Deliberately does NOT delete the old entries first. Every content consumer
+// (highlights, AI hints, batch derivation reuse) checks staleness at read time
+// by comparing the entry's stored pivot text against the row's current field,
+// so a stale entry can never render or be used; the successful derivation
+// below simply overwrites it. Deleting first would destroy the free cache hit
+// when the field text reverts to what the entry was derived from, and per-row
+// removals are the same quadratic state/cache churn class the 95b4fa09 OOM
+// fix removed.
+export async function refreshDerivedGlossariesForChangedGlossarySourceField({
+  chapterState,
+  rowIds,
+  changedLanguageCode,
+  providerId,
+  modelId,
+  render = null,
+  operations = {},
+  isRunActive = () => true,
+}) {
+  if (!changedLanguageMatchesGlossarySource(chapterState, changedLanguageCode)) {
+    return { aborted: false, results: [] };
+  }
+
+  // One normalization pass; per-row resolveReadyEditorDerivedGlossaryEntry
+  // calls would re-normalize the whole map per row.
+  const entriesByRowId = normalizeEditorDerivedGlossariesByRowId(
+    chapterState?.derivedGlossariesByRowId,
+  );
+  const items = [];
+  for (const rowId of Array.isArray(rowIds) ? rowIds : []) {
+    const entry = entriesByRowId[rowId];
+    if (
+      entry?.status !== "ready"
+      || !entry.translationSourceLanguageCode
+      || !entry.targetLanguageCode
+    ) {
+      continue;
+    }
+    items.push({
+      rowId,
+      sourceLanguageCode: entry.translationSourceLanguageCode,
+      targetLanguageCode: entry.targetLanguageCode,
+    });
+  }
+  if (items.length === 0) {
+    return { aborted: false, results: [] };
+  }
+
+  return ensureBatchDerivedGlossaries({
+    chapterState: state.editorChapter,
+    items,
+    providerId,
+    modelId,
+    isRunActive,
+    useCurrentGlossarySourceText: true,
+    generateMissingPivotText: false,
+    render,
+    onItemSettled: (result) => {
+      if (result.status === "derived") {
+        operations.syncEditorGlossaryHighlightRowDom?.(result.item.rowId);
+      }
+    },
+    operations,
+  });
 }
 
 export const editorDerivedGlossaryBatchTestApi = {

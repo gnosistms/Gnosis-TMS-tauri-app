@@ -30,6 +30,9 @@ const {
   editorAiTranslateAllTestApi,
 } = await import("./editor-ai-translate-all-flow.js");
 const {
+  ensureBatchDerivedGlossaries,
+} = await import("./editor-derived-glossary-batch-flow.js");
+const {
   createEditorAiTranslateAllModalState,
   createEditorChapterState,
   resetSessionState,
@@ -801,4 +804,238 @@ test("glossaryUsageKindForPair classifies none/direct/derived from the chapter g
     ],
   };
   assert.equal(editorAiTranslateAllTestApi.glossaryUsageKindForPair(derivedChapter, "es", "vi"), "derived");
+});
+
+test("AI Translate All refreshes stale derived glossaries once for the whole run when restoring the glossary's own source language", async () => {
+  resetSessionState();
+  editorAiTranslateAllTestApi.resetActiveBatchRunId();
+  // Chapter source en, this run translates en -> es. A linked es -> vi
+  // glossary makes es a "pivot" language: en -> vi derived entries can exist
+  // pivoting through es, even though translating INTO es (this run) is an
+  // ordinary, non-glossary batch (glossaryKind "none" for the es target).
+  state.editorChapter = {
+    ...createEditorChapterState(),
+    chapterId: "chapter-1",
+    selectedSourceLanguageCode: "en",
+    languages: [
+      { code: "en", name: "English", role: "source" },
+      { code: "es", name: "Spanish", role: "target" },
+      { code: "vi", name: "Vietnamese", role: "target" },
+    ],
+    rows: [
+      { rowId: "row-1", lifecycleState: "active", fields: { en: "Hello one", es: "Hola vieja uno", vi: "Xin chao 1" } },
+      { rowId: "row-2", lifecycleState: "active", fields: { en: "Hello two", es: "Hola vieja dos", vi: "Xin chao 2" } },
+      { rowId: "row-3", lifecycleState: "active", fields: { en: "Hello three", es: "Hola vieja tres", vi: "" } },
+    ],
+    glossary: {
+      sourceLanguage: { code: "es" },
+      targetLanguage: { code: "vi" },
+      glossaryId: "g1",
+      repoName: "repo",
+      title: "Glossary",
+      matcherModel: {},
+      terms: [{ lifecycleState: "active", sourceTerms: ["hola"], targetTerms: ["xin chao"] }],
+    },
+    aiTranslateAllModal: {
+      ...createEditorAiTranslateAllModalState(),
+      isOpen: true,
+      selectedLanguageCodes: ["es"],
+    },
+  };
+
+  // Seed real "ready" en -> vi derived entries (pivoting through the OLD
+  // Spanish text) for row-1 and row-2 only — row-3 never had one.
+  const seedPrepareCalls = [];
+  await ensureBatchDerivedGlossaries({
+    chapterState: state.editorChapter,
+    items: [
+      { rowId: "row-1", sourceLanguageCode: "en", targetLanguageCode: "vi" },
+      { rowId: "row-2", sourceLanguageCode: "en", targetLanguageCode: "vi" },
+    ],
+    providerId: "openai",
+    modelId: "test-model",
+    operations: {
+      prepareEditorAiTranslatedGlossaryBatch: async (request) => {
+        seedPrepareCalls.push(request);
+        return {
+          glossarySourceText: request.glossarySourceText,
+          entries: [{ sourceTerm: "Hello", glossarySourceTerm: "hola", targetVariants: ["xin chao"] }],
+        };
+      },
+    },
+  });
+  assert.equal(seedPrepareCalls.length, 1);
+  assert.equal(state.editorChapter.derivedGlossariesByRowId["row-1"].status, "ready");
+  assert.equal(state.editorChapter.derivedGlossariesByRowId["row-2"].status, "ready");
+  assert.equal(state.editorChapter.derivedGlossariesByRowId["row-3"], undefined);
+
+  // Now clear Spanish across the chapter, as if the user ran Clear
+  // Translations before restoring it via Translate All.
+  for (const row of state.editorChapter.rows) {
+    row.fields.es = "";
+  }
+
+  const refreshPrepareCalls = [];
+  const glossarySyncCalls = [];
+  await confirmEditorAiTranslateAll(
+    () => {},
+    batchOperations({
+      runAiTranslationBatch: async (request) => ({
+        rows: request.rows.map((row) => ({ rowId: row.rowId, translatedText: `es:${row.sourceText}` })),
+        promptText: "P",
+      }),
+      prepareEditorAiTranslatedGlossaryBatch: async (request) => {
+        refreshPrepareCalls.push(request);
+        return {
+          glossarySourceText: request.glossarySourceText,
+          entries: [{ sourceTerm: "Hello", glossarySourceTerm: "hola", targetVariants: ["xin chao"] }],
+        };
+      },
+      syncEditorGlossaryHighlightRowDom: (rowId) => glossarySyncCalls.push(rowId),
+    }),
+  );
+
+  assert.deepEqual(
+    state.editorChapter.rows.map((row) => row.fields.es),
+    ["es:Hello one", "es:Hello two", "es:Hello three"],
+  );
+  // One combined refresh call for both stale rows, not one per row.
+  assert.equal(refreshPrepareCalls.length, 1);
+  assert.deepEqual(refreshPrepareCalls[0].translationSourceTexts.slice().sort(), ["Hello one", "Hello two"]);
+  assert.equal(state.editorChapter.derivedGlossariesByRowId["row-1"].status, "ready");
+  assert.equal(state.editorChapter.derivedGlossariesByRowId["row-1"].glossarySourceText, "es:Hello one");
+  assert.equal(state.editorChapter.derivedGlossariesByRowId["row-2"].glossarySourceText, "es:Hello two");
+  // row-3 never had a derived entry — no spontaneous derivation for it.
+  assert.equal(state.editorChapter.derivedGlossariesByRowId["row-3"], undefined);
+  assert.ok(glossarySyncCalls.includes("row-1"));
+  assert.ok(glossarySyncCalls.includes("row-2"));
+});
+
+// Chapter fixture for pivot-refresh tests: source en, glossary es -> vi, with
+// ready en -> vi derived entries seeded for the requested rows (pivoting
+// through the CURRENT es text).
+async function pivotRefreshChapter({ rowCount, seedRowIds }) {
+  state.editorChapter = {
+    ...createEditorChapterState(),
+    chapterId: "chapter-1",
+    selectedSourceLanguageCode: "en",
+    languages: [
+      { code: "en", name: "English", role: "source" },
+      { code: "es", name: "Spanish", role: "target" },
+      { code: "vi", name: "Vietnamese", role: "target" },
+    ],
+    rows: Array.from({ length: rowCount }, (_, index) => ({
+      rowId: `row-${index + 1}`,
+      lifecycleState: "active",
+      fields: { en: `Hello ${index + 1}`, es: `Hola vieja ${index + 1}`, vi: `Xin chao ${index + 1}` },
+    })),
+    glossary: {
+      sourceLanguage: { code: "es" },
+      targetLanguage: { code: "vi" },
+      glossaryId: "g1",
+      repoName: "repo",
+      title: "Glossary",
+      matcherModel: {},
+      terms: [{ lifecycleState: "active", sourceTerms: ["hola"], targetTerms: ["xin chao"] }],
+    },
+    aiTranslateAllModal: {
+      ...createEditorAiTranslateAllModalState(),
+      isOpen: true,
+      selectedLanguageCodes: ["es"],
+    },
+  };
+  await ensureBatchDerivedGlossaries({
+    chapterState: state.editorChapter,
+    items: seedRowIds.map((rowId) => ({
+      rowId,
+      sourceLanguageCode: "en",
+      targetLanguageCode: "vi",
+    })),
+    providerId: "openai",
+    modelId: "test-model",
+    operations: {
+      prepareEditorAiTranslatedGlossaryBatch: async (request) => ({
+        glossarySourceText: request.glossarySourceText,
+        entries: [{ sourceTerm: "Hello", glossarySourceTerm: "hola", targetVariants: ["xin chao"] }],
+      }),
+    },
+  });
+  for (const row of state.editorChapter.rows) {
+    row.fields.es = "";
+  }
+}
+
+test("AI Translate All aggregates fallback-row pivot refreshes into the single run-level call and suppresses the per-row refresh", async () => {
+  resetSessionState();
+  editorAiTranslateAllTestApi.resetActiveBatchRunId();
+  await pivotRefreshChapter({ rowCount: 3, seedRowIds: ["row-1", "row-2"] });
+
+  const fallbackOptions = [];
+  const refreshPrepareCalls = [];
+  await confirmEditorAiTranslateAll(
+    () => {},
+    batchOperations({
+      // row-2 is missing from the batch response, so it falls back to the
+      // single-row path mid-run.
+      runAiTranslationBatch: async (request) => ({
+        rows: request.rows
+          .filter((row) => row.rowId !== "row-2")
+          .map((row) => ({ rowId: row.rowId, translatedText: `es:${row.sourceText}` })),
+        promptText: "P",
+      }),
+      runEditorAiTranslateForContext: async (_render, _actionId, context, _operations, options) => {
+        fallbackOptions.push(options);
+        const row = state.editorChapter.rows.find((candidate) => candidate.rowId === context.rowId);
+        row.fields[context.targetLanguageCode] = "es:fallback";
+        return { ok: true };
+      },
+      prepareEditorAiTranslatedGlossaryBatch: async (request) => {
+        refreshPrepareCalls.push(request);
+        return {
+          glossarySourceText: request.glossarySourceText,
+          entries: [{ sourceTerm: "Hello", glossarySourceTerm: "hola", targetVariants: ["xin chao"] }],
+        };
+      },
+    }),
+  );
+
+  // The fallback row's own refresh was suppressed...
+  assert.equal(fallbackOptions.length, 1);
+  assert.equal(fallbackOptions[0].suppressDerivedGlossaryRefresh, true);
+  // ...and it joined the batch rows in ONE combined run-level refresh.
+  assert.equal(refreshPrepareCalls.length, 1);
+  assert.deepEqual(refreshPrepareCalls[0].translationSourceTexts.slice().sort(), ["Hello 1", "Hello 2"]);
+  assert.equal(state.editorChapter.derivedGlossariesByRowId["row-1"].glossarySourceText, "es:Hello 1");
+  assert.equal(state.editorChapter.derivedGlossariesByRowId["row-2"].glossarySourceText, "es:fallback");
+});
+
+test("AI Translate All still refreshes pivot rows when the whole run took the single-row path", async () => {
+  resetSessionState();
+  editorAiTranslateAllTestApi.resetActiveBatchRunId();
+  await pivotRefreshChapter({ rowCount: 1, seedRowIds: ["row-1"] });
+
+  const refreshPrepareCalls = [];
+  await confirmEditorAiTranslateAll(
+    () => {},
+    batchOperations({
+      // A one-row chapter produces a singleton batch, which never resolves
+      // the run-level provider up front — the finally-block refresh must
+      // resolve one itself.
+      runEditorAiTranslateForContext: async (_render, _actionId, context) => {
+        const row = state.editorChapter.rows.find((candidate) => candidate.rowId === context.rowId);
+        row.fields[context.targetLanguageCode] = "es:solo";
+        return { ok: true };
+      },
+      prepareEditorAiTranslatedGlossaryBatch: async (request) => {
+        refreshPrepareCalls.push(request);
+        return {
+          glossarySourceText: request.glossarySourceText,
+          entries: [{ sourceTerm: "Hello", glossarySourceTerm: "hola", targetVariants: ["xin chao"] }],
+        };
+      },
+    }),
+  );
+
+  assert.equal(refreshPrepareCalls.length, 1);
+  assert.equal(state.editorChapter.derivedGlossariesByRowId["row-1"].glossarySourceText, "es:solo");
 });
