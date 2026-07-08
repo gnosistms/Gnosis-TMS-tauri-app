@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
 use crate::{
-    broker::{broker_client, broker_get_json_with_session},
+    broker::{broker_client, broker_get_json_with_session, BROKER_AUTH_REQUIRED_PREFIX},
     broker_auth_storage::load_broker_auth_session_internal,
     github::types::GithubAppInstallationInfo,
     storage_paths::installation_data_dir,
@@ -54,15 +54,27 @@ fn installation_access_snapshot(
     }
 }
 
+// Map an access-snapshot error to a user-facing string, but preserve broker
+// AUTH_REQUIRED: errors verbatim. The JS invoke wrapper only triggers a
+// transparent re-auth when the message still carries that prefix, so replacing
+// it with a generic message breaks silent session refresh.
+fn map_access_error(error: String, generic: &str) -> String {
+    if error.starts_with(BROKER_AUTH_REQUIRED_PREFIX) {
+        error
+    } else {
+        generic.to_string()
+    }
+}
+
 // Shared helper: refresh snapshot for an installation, mapping broker errors to
-// UNVERIFIED_ACCESS_ERROR. Used by all ensure_installation_allows_* functions
-// that share that error message.
+// UNVERIFIED_ACCESS_ERROR (except AUTH_REQUIRED:, preserved for re-auth). Used by
+// all ensure_installation_allows_* functions that share that error message.
 fn refreshed_snapshot(
     app: &AppHandle,
     installation_id: i64,
 ) -> Result<InstallationAccessSnapshot, String> {
     refresh_installation_access_snapshot(app, installation_id)
-        .map_err(|_| UNVERIFIED_ACCESS_ERROR.to_string())
+        .map_err(|error| map_access_error(error, UNVERIFIED_ACCESS_ERROR))
 }
 
 // Canonical implementation shared by the three identical content-write gates.
@@ -142,7 +154,7 @@ pub(crate) fn ensure_installation_allows_team_ai_access(
     // Note: team_ai uses UNVERIFIED_TEAM_ACCESS_ERROR (not UNVERIFIED_ACCESS_ERROR),
     // so we do NOT route through refreshed_snapshot() here.
     let snapshot = refresh_installation_access_snapshot(app, installation_id)
-        .map_err(|_| UNVERIFIED_TEAM_ACCESS_ERROR.to_string())?;
+        .map_err(|error| map_access_error(error, UNVERIFIED_TEAM_ACCESS_ERROR))?;
     ensure_snapshot_allows_team_ai_access(&snapshot)
 }
 
@@ -362,9 +374,27 @@ mod tests {
     use super::{
         ensure_snapshot_allows_content_writes, ensure_snapshot_allows_member_management,
         ensure_snapshot_allows_resource_management, ensure_snapshot_allows_team_ai_access,
-        installation_id_from_path, InstallationAccessSnapshot,
+        installation_id_from_path, map_access_error, InstallationAccessSnapshot,
+        UNVERIFIED_ACCESS_ERROR,
     };
+    use crate::broker::BROKER_AUTH_REQUIRED_PREFIX;
     use std::path::Path;
+
+    #[test]
+    fn map_access_error_preserves_broker_auth_required() {
+        // AUTH_REQUIRED: errors must pass through so the JS invoke wrapper can
+        // trigger a transparent re-auth instead of showing the generic message.
+        let auth = format!("{BROKER_AUTH_REQUIRED_PREFIX}Your GitHub session expired.");
+        assert_eq!(
+            map_access_error(auth.clone(), UNVERIFIED_ACCESS_ERROR),
+            auth
+        );
+        // Any other error collapses to the generic user-facing message.
+        assert_eq!(
+            map_access_error("network timeout".to_string(), UNVERIFIED_ACCESS_ERROR),
+            UNVERIFIED_ACCESS_ERROR
+        );
+    }
 
     #[test]
     fn recognizes_viewer_role_aliases() {
