@@ -8,7 +8,7 @@ import {
   parseInlineMarkup,
   splitRubyNodeChildren,
 } from "./parser.js";
-import { serializeNodes } from "./serialize.js";
+import { serializeNodesAsInlineMarkupSource } from "./serialize.js";
 import {
   rawOffsetToVisiblePosition,
   collapsedWordVisibleRange,
@@ -240,7 +240,7 @@ function unwrapWholeElement(parsed, targetNode) {
     const { baseChildren } = splitRubyNodeChildren(targetNode.children);
     return (
       parsed.source.slice(0, targetNode.rawStart)
-      + serializeNodes(baseChildren)
+      + serializeNodesAsInlineMarkupSource(baseChildren)
       + parsed.source.slice(targetNode.closeEnd >= 0 ? targetNode.closeEnd : targetNode.rawEnd)
     );
   }
@@ -347,7 +347,7 @@ function wrapRubySelection(value, selectionStart, selectionEnd, selectionDirecti
 }
 
 function rebuildValueAfterStyleTransform(parsed, nextNodes, selectionVisibleStart, selectionVisibleEnd, selectionDirection = "none") {
-  const nextValue = serializeNodes(nextNodes);
+  const nextValue = serializeNodesAsInlineMarkupSource(nextNodes);
   const nextParsed = parseInlineMarkup(nextValue);
   const nextSelectionStart = visiblePositionToRawOffset(nextParsed, selectionVisibleStart, "start");
   const nextSelectionEnd = visiblePositionToRawOffset(nextParsed, selectionVisibleEnd, "end");

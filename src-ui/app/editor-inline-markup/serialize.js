@@ -363,7 +363,7 @@ function serializeNodes(nodes, highlightRanges = [], markRenderer = null, option
     .join("");
 }
 
-function serializeNodesAsInlineMarkupSource(nodes) {
+export function serializeNodesAsInlineMarkupSource(nodes) {
   return (Array.isArray(nodes) ? nodes : [])
     .map((node) => {
       if (!node) {
