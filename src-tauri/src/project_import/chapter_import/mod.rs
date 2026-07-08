@@ -825,6 +825,22 @@ mod tests {
     }
 
     #[test]
+    fn parse_txt_file_rejects_more_than_the_imported_row_cap() {
+        // One non-blank token per line, one line past the cap. Without the cap this
+        // would allocate a row per line unbounded (import-file DoS).
+        let mut bytes = Vec::new();
+        for _ in 0..20_001 {
+            bytes.extend_from_slice(b"x\n");
+        }
+
+        let error = match parse_txt_file(txt_input(bytes, "en")) {
+            Ok(_) => panic!("TXT import should reject files past the imported-row cap"),
+            Err(error) => error,
+        };
+        assert!(error.contains("too many rows"));
+    }
+
+    #[test]
     fn parse_txt_file_canonicalizes_chinese_script_source_language() {
         let parsed = parse_txt_file(txt_input(b"first line".to_vec(), "zh_hant"))
             .expect("TXT import should parse Chinese Traditional source language");
