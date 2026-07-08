@@ -107,12 +107,17 @@ export function createWriteIntentCoordinator(options = {}) {
             updatedAt: nowIso(),
           };
           intentsByKey.set(key, confirmedIntent);
-          operations.onSuccess?.(confirmedIntent);
-          operations.onStatusChange?.(confirmedIntent);
+          // Clear BEFORE the success callbacks. confirmedIntent is passed to the
+          // callbacks by value, so the maps are not needed afterward — and if an
+          // onSuccess handler synchronously re-requests the same key, deleting
+          // after the callbacks would erase its brand-new intent/operations
+          // entries, silently dropping the follow-up save.
           if (operations.clearOnSuccess === true) {
             intentsByKey.delete(key);
             operationsByKey.delete(key);
           }
+          operations.onSuccess?.(confirmedIntent);
+          operations.onStatusChange?.(confirmedIntent);
         } catch (error) {
           const latest = intentsByKey.get(key);
           if (!latest) {
