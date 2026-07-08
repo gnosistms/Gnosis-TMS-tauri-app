@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "node --test --loader ./src-ui/test/raw-loader.mjs src-ui/app/*.test.js src-ui/screens/*.test.js",
+    "test": "node --test --import ./src-ui/test/register-raw-loader.mjs src-ui/app/*.test.js src-ui/screens/*.test.js",
     "test:browser": "playwright test",
     "audit:unused": "knip --no-progress",
     "icons:sync": "bash src-tauri/icons/sync-all-icons.sh",
