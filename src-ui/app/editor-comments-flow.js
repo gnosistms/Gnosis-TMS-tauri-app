@@ -13,7 +13,7 @@ import {
   applyEditorCommentSeenRevisions,
   applyEditorRowCommentSeen,
   applyEditorSidebarTab,
-  buildEditorCommentsRequestKey,
+  nextEditorCommentsRequestKey,
   currentEditorCommentsForRow,
   currentEditorCommentsRequestMatches,
 } from "./editor-comments-state.js";
@@ -183,8 +183,8 @@ export function loadActiveEditorRowComments(render) {
     return;
   }
 
-  const requestKey = buildEditorCommentsRequestKey(editorChapter.chapterId, editorChapter.activeRowId);
-  state.editorChapter = applyEditorCommentsLoading(editorChapter, editorChapter.activeRowId);
+  const requestKey = nextEditorCommentsRequestKey(editorChapter.chapterId, editorChapter.activeRowId);
+  state.editorChapter = applyEditorCommentsLoading(editorChapter, editorChapter.activeRowId, requestKey);
   renderEditorCommentsSidebar(render);
   void fetchEditorRowComments(render, requestKey);
 }

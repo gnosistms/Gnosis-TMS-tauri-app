@@ -394,6 +394,21 @@ test("removing bold from a selected substring keeps the surrounding text bold", 
   assert.equal(result.value, "<strong>a</strong>b<strong>c</strong>");
 });
 
+test("toggling a style over a same-style element produces canonical single nesting", () => {
+  // Mixed selection: <em>Hello</em> World with italic applied over the whole
+  // visible range must collapse to one <em>, not the double-nested
+  // <em><em>Hello</em></em><em> World</em>.
+  const value = "<em>Hello</em> World";
+  const result = toggleInlineMarkupSelection({
+    value,
+    selectionStart: 0,
+    selectionEnd: value.length,
+    style: "italic",
+  });
+
+  assert.equal(result.value, "<em>Hello World</em>");
+});
+
 test("raw search highlight markup matches visible text instead of tag syntax", () => {
   const highlight = buildInlineMarkupSearchHighlightMarkup("<strong>Alpha</strong> beta", "Alpha");
 
