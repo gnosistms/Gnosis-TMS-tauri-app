@@ -390,17 +390,28 @@ fn backup_dirty_project_worktree(
     let backup_branch = format!("gnosis/local-backup-{timestamp}");
 
     git_output(repo_path, &["checkout", "-b", &backup_branch], None)?;
-    git_output(repo_path, &["add", "-A"], None)?;
-    git_output(
-        repo_path,
-        &[
-            "commit",
-            "-m",
-            "Backup local uncommitted changes before automatic sync",
-        ],
-        None,
-    )?;
-    git_output(repo_path, &["checkout", &original_branch], None)?;
+
+    let backup_result = (|| -> Result<(), String> {
+        git_output(repo_path, &["add", "-A"], None)?;
+        git_output(
+            repo_path,
+            &[
+                "commit",
+                "-m",
+                "Backup local uncommitted changes before automatic sync",
+            ],
+            None,
+        )?;
+        Ok(())
+    })();
+
+    // Always return to the original branch, even when the backup add/commit failed.
+    // Returning early on failure would strand HEAD on the backup branch; a later
+    // reconcile would then read that as the original branch and could push backup
+    // content over remote history. Restore first, then propagate any earlier error.
+    let restore_result = git_output(repo_path, &["checkout", &original_branch], None).map(|_| ());
+    backup_result?;
+    restore_result?;
 
     Ok(Some(backup_branch))
 }
