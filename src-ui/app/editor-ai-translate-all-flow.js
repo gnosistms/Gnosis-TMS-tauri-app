@@ -40,6 +40,7 @@ import { selectedProjectsTeamInstallationId } from "./project-context.js";
 import { invoke } from "./runtime.js";
 import { createEditorAiTranslateAllModalState, state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
+import { reportBackendNonfatalError } from "./telemetry.js";
 
 const BATCH_TRANSLATE_ACTION_ID = AI_TRANSLATE_ACTION_IDS[0] ?? "translate1";
 
@@ -761,7 +762,14 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
     let payload;
     try {
       payload = await runBatch(request);
-    } catch {
+    } catch (error) {
+      console.warn("[gtms ai-translate] Batch translation call failed; translating these rows one at a time.", {
+        rowCount: liveEntries.length,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      // The invoke wrapper already reports the raw command failure; this adds a
+      // stable, countable signal that the run degraded to single-row translation.
+      reportBackendNonfatalError({ operation: "ai-translate-batch", reason: "fallback-single-row" });
       if (!isRunActive()) {
         return "abort";
       }
@@ -775,6 +783,21 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
     const returnedById = new Map(
       (Array.isArray(payload?.rows) ? payload.rows : []).map((row) => [row.rowId, row]),
     );
+    console.info("[gtms ai-translate] Batch translation call succeeded.", {
+      requestedRowCount: liveEntries.length,
+      returnedRowCount: returnedById.size,
+    });
+    const missingRowIds = liveEntries
+      .filter((entry) => !returnedById.has(entry.item.rowId))
+      .map((entry) => entry.item.rowId);
+    if (missingRowIds.length > 0) {
+      // The model failed to echo these rowIds back; they fall through to the
+      // single-row path below. One aggregate report per batch, not per row.
+      console.warn("[gtms ai-translate] Batch response is missing rows; translating them individually.", {
+        missingRowIds,
+      });
+      reportBackendNonfatalError({ operation: "ai-translate-batch", reason: "missing-rows" });
+    }
     for (const entry of liveEntries) {
       if (!isRunActive()) {
         return "abort";

@@ -304,6 +304,33 @@ test("collapsed ruby toggle removes both ruby and rt markup", () => {
   assert.equal(result.selectionEnd, 2);
 });
 
+test("toggling bold over prose preserves special characters in the stored source", () => {
+  const value = `R&D isn't "cheap" <ok>`;
+  const result = toggleInlineMarkupSelection({
+    value,
+    selectionStart: 0,
+    selectionEnd: value.length,
+    style: "bold",
+  });
+
+  // The stored markup source must round-trip raw text — no HTML escaping of
+  // & ' " < > — otherwise a bold toggle silently corrupts saved content.
+  assert.equal(result.value, `<strong>R&D isn't "cheap" <ok></strong>`);
+});
+
+test("removing a ruby annotation preserves special characters in the base text", () => {
+  const value = "<ruby>M&M<rt>reading</rt></ruby>";
+  const result = toggleInlineMarkupSelection({
+    value,
+    selectionStart: value.indexOf("M&M"),
+    selectionEnd: value.indexOf("M&M"),
+    style: "ruby",
+    languageCode: "ja",
+  });
+
+  assert.equal(result.value, "M&M");
+});
+
 test("collapsed ruby toggle removes annotation text when the cursor is inside rt content", () => {
   const value = "<ruby>漢字<rt>よみ</rt></ruby>";
   const result = toggleInlineMarkupSelection({
