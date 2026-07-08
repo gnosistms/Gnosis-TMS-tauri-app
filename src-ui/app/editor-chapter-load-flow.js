@@ -35,6 +35,7 @@ import {
   waitForEditorOperationQueueIdle,
 } from "./editor-operation-queue.js";
 import { resetProjectsPageSync } from "./page-sync.js";
+import { cloneDirtyRowIds } from "./editor-row-persistence-model.js";
 import {
   createEditorChapterFilterState,
   createEditorChapterGlossaryState,
@@ -101,6 +102,38 @@ function hasEditorChapterLoadOperations(operations) {
   );
 }
 
+// During an async chapter reload the user may keep typing (rows stay live and
+// interactive while the payload is in flight). Those edits land on the live
+// state.editorChapter, but the reload rebuilds rows wholesale from the payload
+// and derives dirty tracking from the pre-invoke snapshot — silently dropping
+// both the typed content and its unsaved-change indicator. Preserve the live
+// dirty rows' content and ids for the chapter being reloaded.
+export function mergeInFlightDirtyEditorRows(reloadedRows, liveChapter, chapterId) {
+  const empty = { rows: reloadedRows, dirtyRowIds: new Set() };
+  if (!chapterId || liveChapter?.chapterId !== chapterId) {
+    return empty;
+  }
+  const liveDirtyRowIds = cloneDirtyRowIds(liveChapter.dirtyRowIds);
+  if (liveDirtyRowIds.size === 0) {
+    return empty;
+  }
+  const liveRowsById = new Map(
+    (Array.isArray(liveChapter.rows) ? liveChapter.rows : [])
+      .filter((row) => row?.rowId)
+      .map((row) => [row.rowId, row]),
+  );
+  const rows = reloadedRows.map((row) =>
+    row?.rowId && liveDirtyRowIds.has(row.rowId) && liveRowsById.has(row.rowId)
+      ? liveRowsById.get(row.rowId)
+      : row,
+  );
+  const presentRowIds = new Set(rows.map((row) => row?.rowId).filter(Boolean));
+  const dirtyRowIds = new Set(
+    [...liveDirtyRowIds].filter((rowId) => presentRowIds.has(rowId)),
+  );
+  return { rows, dirtyRowIds };
+}
+
 function applyEditorPayloadToState(
   payload,
   projectId,
@@ -127,6 +160,13 @@ function applyEditorPayloadToState(
   const visibleRows = filterLocalHardDeletedResources(team, "editorRow", normalizedRows, {
     isDeleted: (row) => row?.lifecycleState === "deleted",
   });
+  // Same-chapter reload (manual refresh / "Try again"): keep any edits the user
+  // typed while the payload was in flight. Fresh loads of a different chapter
+  // must not carry a prior chapter's dirty rows, so gate on chapter identity.
+  const isSameChapterReload = previousEditorChapter?.chapterId === payload.chapterId;
+  const { rows: reconciledRows, dirtyRowIds: preservedDirtyRowIds } = isSameChapterReload
+    ? mergeInFlightDirtyEditorRows(visibleRows, state.editorChapter, payload.chapterId)
+    : { rows: visibleRows, dirtyRowIds: new Set() };
   const hasImportedEditorConflicts = visibleRows.some((row) =>
     row?.freshness === "conflict"
     || row?.saveStatus === "conflict"
@@ -161,8 +201,20 @@ function applyEditorPayloadToState(
     deferredStructuralChanges: false,
     backgroundSyncStatus: "idle",
     backgroundSyncError: "",
-    rows: visibleRows,
+    rows: reconciledRows,
   }, previousEditorChapter);
+
+  if (preservedDirtyRowIds.size > 0) {
+    // applyEditorUiState derived dirtyRowIds from the pre-invoke snapshot; union
+    // in the rows that only became dirty while the reload was in flight.
+    state.editorChapter = {
+      ...state.editorChapter,
+      dirtyRowIds: new Set([
+        ...cloneDirtyRowIds(state.editorChapter.dirtyRowIds),
+        ...preservedDirtyRowIds,
+      ]),
+    };
+  }
 
   operations.applyChapterMetadataToState(payload.chapterId, {
     name: payload.fileTitle,
