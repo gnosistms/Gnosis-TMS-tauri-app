@@ -33,10 +33,71 @@ export function formatHistoryTimestamp(value) {
   }).format(date);
 }
 
-function buildHistoryDiffSegments(previousText, currentText) {
-  const diffs = historyDiffEngine.diff_main(String(previousText ?? ""), String(currentText ?? ""), false);
+// diff_match_patch operates on UTF-16 code units, so an edit to an astral
+// character (emoji, flags, rare CJK) diffs the surrogate pair at code-unit
+// granularity — the shared high surrogate is kept EQUAL and only the low
+// surrogates change, leaving lone surrogates that render as U+FFFD. Encode each
+// distinct code point as a single BMP sentinel, diff those, then decode back so
+// every code point is treated as one atomic unit. Returns null (caller falls
+// back to the raw diff) only if the inputs hold more distinct code points than
+// there are BMP sentinels — not reachable for row-sized history text.
+function diffByCodePoint(previousText, currentText) {
+  const codePointToSentinel = new Map();
+  const sentinelToCodePoint = new Map();
+  let nextCode = 0;
+
+  const encode = (text) => {
+    let encoded = "";
+    for (const codePoint of text) {
+      let sentinel = codePointToSentinel.get(codePoint);
+      if (sentinel === undefined) {
+        // Skip the surrogate range so sentinels are themselves lone-surrogate-free.
+        if (nextCode === 0xd800) {
+          nextCode = 0xe000;
+        }
+        if (nextCode > 0xffff) {
+          return null;
+        }
+        sentinel = String.fromCharCode(nextCode);
+        nextCode += 1;
+        codePointToSentinel.set(codePoint, sentinel);
+        sentinelToCodePoint.set(sentinel, codePoint);
+      }
+      encoded += sentinel;
+    }
+    return encoded;
+  };
+
+  const encodedPrevious = encode(previousText);
+  const encodedCurrent = encodedPrevious === null ? null : encode(currentText);
+  if (encodedPrevious === null || encodedCurrent === null) {
+    return null;
+  }
+
+  const diffs = historyDiffEngine.diff_main(encodedPrevious, encodedCurrent, false);
   historyDiffEngine.diff_cleanupSemantic(diffs);
   historyDiffEngine.diff_cleanupSemanticLossless(diffs);
+
+  return diffs.map((diff) => {
+    let decoded = "";
+    for (const sentinel of diff?.[1] ?? "") {
+      decoded += sentinelToCodePoint.get(sentinel) ?? "";
+    }
+    return [diff?.[0], decoded];
+  });
+}
+
+function rawHistoryDiffSegments(previousText, currentText) {
+  const diffs = historyDiffEngine.diff_main(previousText, currentText, false);
+  historyDiffEngine.diff_cleanupSemantic(diffs);
+  historyDiffEngine.diff_cleanupSemanticLossless(diffs);
+  return diffs;
+}
+
+export function buildHistoryDiffSegments(previousText, currentText) {
+  const previous = String(previousText ?? "");
+  const current = String(currentText ?? "");
+  const diffs = diffByCodePoint(previous, current) ?? rawHistoryDiffSegments(previous, current);
 
   return diffs
     .filter((diff) => Boolean(diff?.[1]))

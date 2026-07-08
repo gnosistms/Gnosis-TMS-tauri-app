@@ -123,11 +123,13 @@ function applyStyleSegments(nodes, tag, start, end, underTarget = false) {
         continue;
       }
 
-      const childSegments = applyStyleSegments(node.children, tag, start, end, true);
-      segments.push({
-        styled: underTarget,
-        node: cloneElementWithChildren(node, materializeStyledSegments(childSegments, tag)),
-      });
+      // The node already carries the target style. Emit its children directly
+      // (as styled segments) so they absorb into the surrounding styled group
+      // and get wrapped once, instead of re-wrapping the existing element and
+      // producing redundant double nesting like <em><em>Hello</em></em>.
+      for (const childSegment of applyStyleSegments(node.children, tag, start, end, true)) {
+        segments.push(childSegment);
+      }
       continue;
     }
 

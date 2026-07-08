@@ -16,12 +16,20 @@ export function normalizeEditorCommentsState(comments) {
   };
 }
 
-export function buildEditorCommentsRequestKey(chapterId, rowId) {
+let editorCommentsRequestSequence = 0;
+
+// Each comments fetch gets a unique request key. A deterministic
+// `${chapterId}:${rowId}` key could not distinguish a pre-save fetch still in
+// flight from the post-save state, so a stale response would pass the match
+// guard and overwrite a just-saved (or just-deleted) comment. The per-fetch
+// sequence makes any in-flight fetch identifiable and discardable.
+export function nextEditorCommentsRequestKey(chapterId, rowId) {
   if (!chapterId || !rowId) {
     return null;
   }
 
-  return `${chapterId}:${rowId}`;
+  editorCommentsRequestSequence += 1;
+  return `${chapterId}:${rowId}:${editorCommentsRequestSequence}`;
 }
 
 export function currentEditorCommentsForRow(chapterState, rowId) {
@@ -82,7 +90,7 @@ export function applyEditorCommentsSelection(chapterState, rowId, languageCode) 
   };
 }
 
-export function applyEditorCommentsLoading(chapterState, rowId) {
+export function applyEditorCommentsLoading(chapterState, rowId, requestKey) {
   if (!chapterState?.chapterId || !rowId) {
     return chapterState;
   }
@@ -95,7 +103,7 @@ export function applyEditorCommentsLoading(chapterState, rowId) {
       status: "loading",
       error: "",
       rowId,
-      requestKey: buildEditorCommentsRequestKey(chapterState.chapterId, rowId),
+      requestKey: typeof requestKey === "string" ? requestKey : null,
       deletingCommentId: null,
     },
   };
@@ -181,7 +189,9 @@ export function applyEditorCommentSaveSucceeded(chapterState, rowId, payload) {
     comments: {
       ...createEditorCommentsState(),
       rowId,
-      requestKey: buildEditorCommentsRequestKey(chapterState.chapterId, rowId),
+      // null request key: any pre-save fetch still in flight carries a unique
+      // key, so it can no longer match this state and overwrite the save.
+      requestKey: null,
       status: "ready",
       commentsRevision: Number.parseInt(String(payload?.commentsRevision ?? ""), 10) || 0,
       entries: sortEditorCommentsNewestFirst(payload?.comments),
@@ -231,7 +241,9 @@ export function applyEditorCommentDeleteSucceeded(chapterState, rowId, payload) 
     comments: {
       ...createEditorCommentsState(),
       rowId,
-      requestKey: buildEditorCommentsRequestKey(chapterState.chapterId, rowId),
+      // null request key: see applyEditorCommentSaveSucceeded — invalidates any
+      // stale in-flight fetch so it cannot resurrect the deleted comment.
+      requestKey: null,
       status: "ready",
       commentsRevision: Number.parseInt(String(payload?.commentsRevision ?? ""), 10) || 0,
       entries: sortEditorCommentsNewestFirst(payload?.comments),
