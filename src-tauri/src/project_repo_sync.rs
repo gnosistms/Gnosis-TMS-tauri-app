@@ -497,16 +497,19 @@ pub(crate) fn sync_gtms_project_editor_repo_sync(
     let chapter_path = find_editor_chapter_path_by_id(&repo_path, &input.chapter_id)?;
     let chapter_rows_path = chapter_path.join("rows");
     let chapter_json_path = chapter_path.join("chapter.json");
+    // Normalize to forward slashes: these relatives feed `git diff --name-status`
+    // and `git show <rev>:<path>`, both of which require POSIX separators. On
+    // Windows, `strip_prefix` yields backslashes that break both. (See 345123ff.)
     let chapter_rows_relative_path = chapter_rows_path
         .strip_prefix(&repo_path)
         .map_err(|error| format!("Could not resolve the chapter rows path for git: {error}"))?
         .to_string_lossy()
-        .to_string();
+        .replace('\\', "/");
     let chapter_json_relative_path = chapter_json_path
         .strip_prefix(&repo_path)
         .map_err(|error| format!("Could not resolve the chapter metadata path for git: {error}"))?
         .to_string_lossy()
-        .to_string();
+        .replace('\\', "/");
     let (changed_row_ids, inserted_row_ids, deleted_row_ids) =
         match (old_head_sha.as_deref(), new_head_sha.as_deref()) {
             (Some(old_head), Some(new_head)) if old_head != new_head => {
