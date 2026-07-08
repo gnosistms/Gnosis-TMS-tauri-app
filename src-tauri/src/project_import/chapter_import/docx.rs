@@ -153,7 +153,7 @@ fn read_docx_xml_part(
     part_name: &str,
     required: bool,
 ) -> Result<Option<String>, String> {
-    let mut file = match archive.by_name(part_name) {
+    let file = match archive.by_name(part_name) {
         Ok(file) => file,
         Err(_) if !required => return Ok(None),
         Err(error) => {
@@ -162,11 +162,19 @@ fn read_docx_xml_part(
             ))
         }
     };
-    if file.size() > DOCX_MAX_XML_PART_BYTES {
+    // `file.size()` comes from the zip central-directory metadata and is attacker
+    // controlled (a crafted DOCX can declare 0 while the deflate stream expands
+    // unbounded). Bound the ACTUAL decompressed read instead of trusting it: read at
+    // most one byte past the limit, then reject if the cap was reached.
+    let mut limited = file.take(DOCX_MAX_XML_PART_BYTES + 1);
+    let mut bytes = Vec::new();
+    limited
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("Could not decode '{part_name}' as XML text: {error}"))?;
+    if bytes.len() as u64 > DOCX_MAX_XML_PART_BYTES {
         return Err(format!("The DOCX XML part '{part_name}' is too large."));
     }
-    let mut text = String::new();
-    file.read_to_string(&mut text)
+    let text = String::from_utf8(bytes)
         .map_err(|error| format!("Could not decode '{part_name}' as XML text: {error}"))?;
     Ok(Some(text))
 }
