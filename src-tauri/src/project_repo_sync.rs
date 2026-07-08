@@ -313,17 +313,22 @@ fn reconcile_project_repo_sync_states_sync(
                 current_app_version: None,
                 ..inspected_snapshot
             };
-            save_sync_snapshot(&store, &key, syncing_snapshot.clone());
-            spawn_project_repo_sync_job(
-                app.clone(),
-                store.clone(),
-                key,
-                project.clone(),
-                repo_path,
-                syncing_snapshot.remote_head_oid.clone(),
-                git_transport_token.clone().unwrap_or_default(),
-            );
-            snapshots.push(syncing_snapshot);
+            if try_begin_project_repo_sync(&store, &key, &syncing_snapshot) {
+                spawn_project_repo_sync_job(
+                    app.clone(),
+                    store.clone(),
+                    key,
+                    project.clone(),
+                    repo_path,
+                    syncing_snapshot.remote_head_oid.clone(),
+                    git_transport_token.clone().unwrap_or_default(),
+                );
+                snapshots.push(syncing_snapshot);
+            } else {
+                // An overlapping reconcile already started syncing this project;
+                // report its in-flight snapshot instead of spawning a duplicate.
+                snapshots.push(load_sync_snapshot(&store, &key).unwrap_or(syncing_snapshot));
+            }
             continue;
         }
 
@@ -2008,20 +2013,96 @@ fn save_sync_snapshot(
     }
 }
 
+/// Atomically transition a project to SYNCING. Returns `true` only if this call
+/// won the transition (the caller then owns spawning the sync job). Returns
+/// `false` if the key was already SYNCING, so an overlapping reconcile does not
+/// spawn a second concurrent sync job for the same project. The check and write
+/// happen under a single lock hold, closing the TOCTOU window between the
+/// pre-inspect status read and this write.
+fn try_begin_project_repo_sync(
+    store: &Arc<Mutex<BTreeMap<String, ProjectRepoSyncSnapshot>>>,
+    key: &str,
+    syncing_snapshot: &ProjectRepoSyncSnapshot,
+) -> bool {
+    let Ok(mut entries) = store.lock() else {
+        return false;
+    };
+    let already_syncing = entries
+        .get(key)
+        .map(|snapshot| snapshot.status.as_str() == PROJECT_REPO_SYNC_STATUS_SYNCING)
+        .unwrap_or(false);
+    if already_syncing {
+        return false;
+    }
+    entries.insert(key.to_string(), syncing_snapshot.clone());
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         backup_dirty_project_worktree, chapter_language_list_from_json_text,
         git_status_porcelain_has_unmerged_entries, project_branch_name,
         recover_project_rebase_without_unmerged_files, snapshot_from_project_sync_error,
-        GitTransportAuth, ProjectRepoSyncDescriptor,
-        PROJECT_REPO_SYNC_STATUS_REMOTE_MIGRATED_LOCAL_CHANGES,
+        try_begin_project_repo_sync, GitTransportAuth, ProjectRepoSyncDescriptor,
+        ProjectRepoSyncSnapshot, PROJECT_REPO_SYNC_STATUS_OUT_OF_SYNC,
+        PROJECT_REPO_SYNC_STATUS_REMOTE_MIGRATED_LOCAL_CHANGES, PROJECT_REPO_SYNC_STATUS_SYNCING,
         PROJECT_REPO_SYNC_STATUS_UPDATE_REQUIRED,
     };
     use crate::repo_app_version::{encode_repo_app_update_requirement, RepoAppUpdateRequirement};
     use crate::repo_migrations::REMOTE_MIGRATED_LOCAL_OLD_LAYOUT_CHANGES_MESSAGE;
+    use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
     use std::{env, fs, path::Path, process::Command};
     use uuid::Uuid;
+
+    fn sync_snapshot_with_status(status: &str) -> ProjectRepoSyncSnapshot {
+        ProjectRepoSyncSnapshot {
+            project_id: "p1".to_string(),
+            repo_name: "repo".to_string(),
+            repo_path: "/tmp/repo".to_string(),
+            local_head_oid: None,
+            remote_head_oid: None,
+            status: status.to_string(),
+            message: None,
+            required_app_version: None,
+            current_app_version: None,
+        }
+    }
+
+    #[test]
+    fn try_begin_project_repo_sync_wins_once_then_backs_off() {
+        let store = Arc::new(Mutex::new(BTreeMap::new()));
+        let key = "installation:1:p1";
+        let syncing = sync_snapshot_with_status(PROJECT_REPO_SYNC_STATUS_SYNCING);
+
+        // First reconcile wins the transition and marks the key SYNCING.
+        assert!(try_begin_project_repo_sync(&store, key, &syncing));
+        assert_eq!(
+            store.lock().unwrap().get(key).map(|s| s.status.as_str()),
+            Some(PROJECT_REPO_SYNC_STATUS_SYNCING),
+        );
+
+        // An overlapping reconcile observes SYNCING and must not spawn a duplicate.
+        assert!(!try_begin_project_repo_sync(&store, key, &syncing));
+    }
+
+    #[test]
+    fn try_begin_project_repo_sync_wins_when_prior_status_is_settled() {
+        let store = Arc::new(Mutex::new(BTreeMap::new()));
+        let key = "installation:1:p1";
+        store.lock().unwrap().insert(
+            key.to_string(),
+            sync_snapshot_with_status(PROJECT_REPO_SYNC_STATUS_OUT_OF_SYNC),
+        );
+
+        // A non-SYNCING prior status does not block a fresh sync.
+        assert!(try_begin_project_repo_sync(
+            &store,
+            key,
+            &sync_snapshot_with_status(PROJECT_REPO_SYNC_STATUS_SYNCING),
+        ));
+    }
 
     fn run_git(repo_path: &Path, args: &[&str]) {
         let output = Command::new("git")
