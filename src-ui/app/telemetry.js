@@ -36,6 +36,16 @@ function gateOpen() {
   return safe(() => isTelemetrySendAllowed()) === true;
 }
 
+// Invariant: a non-Error unhandled rejection must NOT outrank a real Error. This applies
+// to ANY non-Error rejection reason — bare string, plain object, or primitive (e.g. a
+// stale-resource-id string floated from a fire-and-forget promise — see JAVASCRIPT-Y) —
+// all are downgraded to "error". Genuine Error-based rejections never reach here: they are
+// caught by the `item.error instanceof Error` branch in emitCrash and sent via
+// captureException. Only non-rejection crashes stay "fatal". Do not "restore" fatal here.
+function crashLevel(item) {
+  return item.kind === "unhandledrejection" ? "error" : "fatal";
+}
+
 function emitCrash(item) {
   if (!sentry || !gateOpen()) {
     return false;
@@ -46,7 +56,7 @@ function emitCrash(item) {
         tags: { source: "first-run-crash", crash_kind: item.kind },
       });
     } else {
-      sentry.captureMessage(scrubString(String(item.message ?? "crash")), "fatal");
+      sentry.captureMessage(scrubString(String(item.message ?? "crash")), crashLevel(item));
     }
   });
   return true;

@@ -13,8 +13,15 @@ import {
 import { loadUserTeams, setGithubAppInstallation } from "./app/team-setup-flow.js";
 import { syncLanguagePickerAlphabetIndexes } from "./app/language-picker-alphabet-index.js";
 import { initializeConnectivity } from "./app/offline-connectivity.js";
-import { initializePersistentStorage } from "./app/persistent-store.js";
-import { initTelemetry, installTelemetryCrashHandlers } from "./app/telemetry.js";
+import {
+  initializePersistentStorage,
+  setPersistentStoreFailureReporter,
+} from "./app/persistent-store.js";
+import {
+  initTelemetry,
+  installTelemetryCrashHandlers,
+  reportCommandFailure,
+} from "./app/telemetry.js";
 import { openTelemetryDisclosureIfNeeded } from "./app/telemetry-disclosure-flow.js";
 import { app, initializeWindowPresentation } from "./app/runtime.js";
 import {
@@ -151,6 +158,13 @@ import {
 // Install crash handlers as early as possible so first-run crashes are captured (and
 // buffered until the consent gate opens). See plans/telemetry-plan.md.
 installTelemetryCrashHandlers();
+
+// Route recoverable persistent-store failures (stale resource id + its recovery) through
+// telemetry as scrubbed, non-fatal reports. Injected here so the leaf store module stays
+// telemetry-free (avoids a persistent-store -> telemetry -> telemetry-consent import
+// cycle). reportCommandFailure no-ops until the consent gate opens, so early wiring is
+// safe.
+setPersistentStoreFailureReporter(reportCommandFailure);
 
 const screenRenderers = {
   start: () => renderStartScreen(state),
