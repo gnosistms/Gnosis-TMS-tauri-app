@@ -30,6 +30,13 @@ const scopeRunDepth = new Map();
 
 const queuesByScope = new Map();
 const operationsById = new Map();
+// Operation types already reported as overdue this session. The overdue signal is
+// operational (a write ran past its threshold), not a defect — a single install with a
+// large or consistently slow repo can emit it on every maintenance pass, flooding one
+// Sentry issue with identical events (see JAVASCRIPT-5, 84 events). Report at most once
+// per operation type per session; the per-operation `overdueReported` guard and the
+// per-operation `overdue` UI state are unchanged.
+const reportedOverdueOperationTypes = new Set();
 const queueListeners = new Set();
 const repoQueueErrors = [];
 const repoInvalidations = [];
@@ -359,10 +366,14 @@ async function runSingleOperation(queue, operation) {
       return;
     }
     operation.overdueReported = true;
-    reportRepoWriteOverdue({
-      operation: "repo_write_overdue",
-      reason: operation.operationType || operation.kind,
-    });
+    const overdueType = operation.operationType || operation.kind || "unknown";
+    if (!reportedOverdueOperationTypes.has(overdueType)) {
+      reportedOverdueOperationTypes.add(overdueType);
+      reportRepoWriteOverdue({
+        operation: "repo_write_overdue",
+        reason: overdueType,
+      });
+    }
     emitQueueChanged();
   }, thresholdFor(operation.operationType));
   logRepoWriteDiagnostic("running", operation, { queuedCount: queue.items.length });
@@ -797,6 +808,7 @@ export function resetRepoWriteQueue() {
   queuesByScope.clear();
   operationsById.clear();
   scopeRunDepth.clear();
+  reportedOverdueOperationTypes.clear();
   repoQueueErrors.splice(0, repoQueueErrors.length);
   repoInvalidations.splice(0, repoInvalidations.length);
   nextRepoWriteOperationId = 1;

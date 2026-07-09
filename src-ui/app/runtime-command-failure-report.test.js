@@ -97,6 +97,22 @@ test("replaces malformed AI assistant payloads with a fixed message", () => {
   assert.equal(report.options, undefined);
 });
 
+test("skips expected user-input / validation failures", () => {
+  for (const message of [
+    "There is no source text to translate yet.",
+    "There is no source text to discuss yet.",
+    "The dropped item '/Users/x/Desktop/folder' is not a file.",
+    "The uploaded file is not a valid supported image.",
+    "The saved OpenAI API key was rejected. Update it in AI Settings and try again.",
+  ]) {
+    assert.equal(
+      resolveCommandFailureReport("some_command", new Error(message)),
+      null,
+      `expected skip for: ${message}`,
+    );
+  }
+});
+
 test("reports ordinary failures unchanged at the default level", () => {
   const error = new Error("manifest.json is missing required field name");
   const report = resolveCommandFailureReport("load_manifest", error);

@@ -172,6 +172,10 @@ export async function initTelemetry() {
 
   if (installId) {
     safe(() => sentry.setTag("install_id", installId));
+    // Identify events by install so Sentry's user count is meaningful (one install =
+    // one "user"); the install id is an opaque per-install UUID, not PII. Without this
+    // every issue reports users=0, which hides how many installs an issue actually hits.
+    safe(() => sentry.setUser({ id: installId }));
   }
 
   initialized = true;

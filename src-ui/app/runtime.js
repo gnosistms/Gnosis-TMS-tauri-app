@@ -157,6 +157,17 @@ export function resolveCommandFailureReport(command, error) {
       options: { level: "warning", tags: { reason: "permission-denied" } },
     };
   }
+  // Expected user-input / validation failures. The UI already surfaces these and they
+  // are corrected by user action, not a code fix — do not report them as defects
+  // (matches the telemetry policy in src-ui/AGENTS.md; see JAVASCRIPT-13/S/T/Q).
+  if (
+    normalizedMessage.includes("no source text to") // nothing to translate/discuss/align yet
+    || normalizedMessage.includes("is not a file") // dropped a folder / non-file
+    || normalizedMessage.includes("not a valid supported image") // unsupported upload
+    || normalizedMessage.includes("api key was rejected") // user's saved key is wrong
+  ) {
+    return null;
+  }
   return { error };
 }
 
