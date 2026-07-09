@@ -364,6 +364,64 @@ test("repo queue clears overdue timers when operations finish before the thresho
   assert.equal(getRepoWriteQueueSnapshot("7:project-1:repo-one").hasActiveWrites, false);
 });
 
+test("repo queue reports an overdue operation type at most once per session", async () => {
+  const releaseA = deferred();
+  const releaseB = deferred();
+  const reports = [];
+  const timers = [];
+  __setRepoWriteOverdueReporter((payload) => {
+    reports.push(payload);
+  });
+  __setRepoWriteOverdueScheduler(
+    (callback, delayMs) => {
+      const timer = { callback, delayMs, cancelled: false };
+      timers.push(timer);
+      return timer;
+    },
+    (timer) => {
+      if (timer) {
+        timer.cancelled = true;
+      }
+    },
+  );
+
+  // Two writes of the same operation type on different scopes, both blocked, both
+  // exceeding their threshold. The overdue signal should fire only once for the type.
+  const writeA = enqueueRepoWrite({
+    scope: "7:project-1:repo-one",
+    kind: "editor:rowText",
+    operationType: "localEditorWrite",
+    run: async () => {
+      await releaseA.promise;
+    },
+  });
+  writeA.catch(() => {});
+  const writeB = enqueueRepoWrite({
+    scope: "7:project-2:repo-two",
+    kind: "editor:rowText",
+    operationType: "localEditorWrite",
+    run: async () => {
+      await releaseB.promise;
+    },
+  });
+  writeB.catch(() => {});
+
+  await delay(0);
+  for (const timer of timers) {
+    timer.callback();
+  }
+  await delay(0);
+
+  assert.deepEqual(reports, [{
+    operation: "repo_write_overdue",
+    reason: "localEditorWrite",
+  }]);
+
+  releaseA.resolve();
+  releaseB.resolve();
+  await Promise.allSettled([writeA, writeB]);
+});
+
 test("re-entrant same-scope enqueue runs inline instead of deadlocking", async () => {
   const order = [];
   const reentrancyReports = [];
