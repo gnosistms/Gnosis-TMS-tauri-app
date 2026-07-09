@@ -359,7 +359,9 @@ async function commitLocalMetadataMutation(team, operation, options = {}) {
         }
       }
       if (syncError) {
-        reportBackendNonfatalError({ operation: "team-metadata.sync", reason: "best_effort_pull_failed" });
+        // Best-effort pull before the local commit; it is retried by the next sync/push
+        // and the push-side report above surfaces genuinely wedged repos. Transient by
+        // design, so log locally but do not report it as a telemetry issue (JAVASCRIPT-X).
         console.warn(`Best-effort team-metadata sync failed before local commit: ${syncError?.message ?? String(syncError)}`);
       }
       return result;
