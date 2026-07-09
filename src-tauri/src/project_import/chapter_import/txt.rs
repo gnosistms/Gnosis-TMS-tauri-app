@@ -6,6 +6,12 @@ use super::{
     ImportTxtInput, ImportedField, ImportedLanguage, ImportedRow, ParsedWorkbook,
 };
 
+// Cap the number of imported rows, matching the DOCX importer's DOCX_MAX_IMPORTED_ROWS.
+// Without this, the only ceiling is the 25 MB raw-byte guard, so a dense text file (one
+// short token per line) could yield millions of rows and exhaust memory / create a
+// matching flood of row files.
+const MAX_TXT_IMPORTED_ROWS: usize = 20_000;
+
 pub(super) fn parse_txt_file(input: ImportTxtInput) -> Result<ParsedWorkbook, String> {
     if input.bytes.is_empty() {
         return Err("The selected file is empty.".to_string());
@@ -21,6 +27,10 @@ pub(super) fn parse_txt_file(input: ImportTxtInput) -> Result<ParsedWorkbook, St
         let plain_text = line.trim().to_string();
         if plain_text.is_empty() {
             continue;
+        }
+
+        if rows.len() >= MAX_TXT_IMPORTED_ROWS {
+            return Err("The selected text file contains too many rows to import.".to_string());
         }
 
         let mut fields = BTreeMap::new();

@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use iota_stronghold::{engine::snapshot::try_set_encrypt_work_factor, Client, ClientError};
 use sha2::{Digest, Sha256};
@@ -10,6 +11,31 @@ use crate::ai::types::AiProviderId;
 
 const AI_SECRET_SNAPSHOT_FILENAME: &str = "ai-provider-secrets-v2.hold";
 const AI_SECRET_CLIENT_ID: &[u8] = b"ai-provider-secrets";
+
+/// Serializes all snapshot-mutating operations.
+///
+/// Each write/clear opens the snapshot, mutates it, and saves the whole file back.
+/// Two of these running concurrently (Tauri runs commands on separate threads) is a
+/// last-writer-wins race: a `save` that opened before a `clear` re-persists the
+/// pre-clear snapshot, leaving a supposedly cleared secret on disk. Holding this lock
+/// across each public write/clear entry point serializes those cycles and also keeps
+/// the multi-step operations (secret + key-version) atomic as a unit.
+fn snapshot_write_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+/// Runs `operation` while holding the snapshot write lock.
+///
+/// Only public (`pub(crate)`) write/clear entry points take this lock. The internal
+/// `*_at_path` helpers stay lock-free so compound operations acquire it exactly once
+/// (a re-entrant acquire on `std::sync::Mutex` would deadlock).
+fn with_snapshot_write_lock<T>(operation: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    let _guard = snapshot_write_lock()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    operation()
+}
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -41,7 +67,9 @@ pub(crate) fn save_ai_provider_secret(
     installation_id: Option<i64>,
 ) -> Result<(), String> {
     let snapshot_path = stronghold_snapshot_path(app)?;
-    save_ai_provider_secret_at_path(&snapshot_path, provider_id, api_key, installation_id)
+    with_snapshot_write_lock(|| {
+        save_ai_provider_secret_at_path(&snapshot_path, provider_id, api_key, installation_id)
+    })
 }
 
 pub(crate) fn clear_ai_provider_secret(
@@ -50,7 +78,9 @@ pub(crate) fn clear_ai_provider_secret(
     installation_id: Option<i64>,
 ) -> Result<(), String> {
     let snapshot_path = stronghold_snapshot_path(app)?;
-    clear_ai_provider_secret_at_path(&snapshot_path, provider_id, installation_id)
+    with_snapshot_write_lock(|| {
+        clear_ai_provider_secret_at_path(&snapshot_path, provider_id, installation_id)
+    })
 }
 
 pub(crate) fn load_team_ai_member_keypair(
@@ -68,12 +98,14 @@ pub(crate) fn save_team_ai_member_keypair(
     private_key_pem: &str,
 ) -> Result<(), String> {
     let snapshot_path = stronghold_snapshot_path(app)?;
-    save_team_ai_member_keypair_at_path(
-        &snapshot_path,
-        installation_id,
-        public_key_pem,
-        private_key_pem,
-    )
+    with_snapshot_write_lock(|| {
+        save_team_ai_member_keypair_at_path(
+            &snapshot_path,
+            installation_id,
+            public_key_pem,
+            private_key_pem,
+        )
+    })
 }
 
 pub(crate) fn load_team_ai_cached_provider_secret(
@@ -93,13 +125,15 @@ pub(crate) fn save_team_ai_cached_provider_secret(
     key_version: i64,
 ) -> Result<(), String> {
     let snapshot_path = stronghold_snapshot_path(app)?;
-    save_team_ai_cached_provider_secret_at_path(
-        &snapshot_path,
-        installation_id,
-        provider_id,
-        api_key,
-        key_version,
-    )
+    with_snapshot_write_lock(|| {
+        save_team_ai_cached_provider_secret_at_path(
+            &snapshot_path,
+            installation_id,
+            provider_id,
+            api_key,
+            key_version,
+        )
+    })
 }
 
 pub(crate) fn clear_team_ai_cached_provider_secret(
@@ -108,7 +142,9 @@ pub(crate) fn clear_team_ai_cached_provider_secret(
     provider_id: AiProviderId,
 ) -> Result<(), String> {
     let snapshot_path = stronghold_snapshot_path(app)?;
-    clear_team_ai_cached_provider_secret_at_path(&snapshot_path, installation_id, provider_id)
+    with_snapshot_write_lock(|| {
+        clear_team_ai_cached_provider_secret_at_path(&snapshot_path, installation_id, provider_id)
+    })
 }
 
 pub(crate) fn stronghold_snapshot_path(app: &AppHandle) -> Result<PathBuf, String> {
