@@ -2258,7 +2258,7 @@ test.describe("editor regressions", () => {
     await expect(page.locator("[data-editor-deleted-group]")).toHaveCount(1);
     await expect(page.locator('[data-editor-row-card][data-row-id="fixture-row-0003"]')).toHaveCount(0);
 
-    await page.locator(".translation-deleted-group .section-separator").click();
+    await page.locator("[data-editor-deleted-group] .section-separator").click();
     await expect(page.locator('[data-editor-row-card][data-row-id="fixture-row-0003"]')).toHaveCount(1);
 
     await restoreFixtureRow(page, "fixture-row-0003");
@@ -2276,7 +2276,7 @@ test.describe("editor regressions", () => {
     await mountEditorFixture(page, { rowCount: 12 });
 
     await softDeleteFixtureRow(page, "fixture-row-0004");
-    await page.locator(".translation-deleted-group .section-separator").click();
+    await page.locator("[data-editor-deleted-group] .section-separator").click();
     await expect(page.locator('[data-editor-row-card][data-row-id="fixture-row-0004"]')).toHaveCount(1);
 
     await softDeleteFixtureRow(page, "fixture-row-0005");
@@ -2299,13 +2299,13 @@ test.describe("editor regressions", () => {
     await page.locator('[data-action="soft-delete-editor-row:fixture-row-0004"]').click();
     await expect(page.locator("[data-editor-deleted-group]")).toHaveCount(1);
 
-    await page.locator(".translation-deleted-group .section-separator").click();
+    await page.locator("[data-editor-deleted-group] .section-separator").click();
     await expect(page.locator('[data-action="restore-editor-row:fixture-row-0004"]')).toBeVisible();
     await page.locator('[data-action="restore-editor-row:fixture-row-0004"]').click();
     await expect(page.locator('[data-editor-row-card][data-row-id="fixture-row-0004"]')).toBeVisible();
 
     await page.locator('[data-action="soft-delete-editor-row:fixture-row-0004"]').click();
-    await page.locator(".translation-deleted-group .section-separator").click();
+    await page.locator("[data-editor-deleted-group] .section-separator").click();
     await page.locator('[data-action="open-editor-row-permanent-delete:fixture-row-0004"]').click();
     await expect(page.locator('[data-action="confirm-editor-row-permanent-delete"]')).toBeVisible();
     await page.locator('[data-action="confirm-editor-row-permanent-delete"]').click();
@@ -3036,7 +3036,7 @@ test.describe("editor regressions", () => {
 
     const rowId = "fixture-row-0030";
     const rowCard = page.locator(`[data-editor-row-card][data-row-id="${rowId}"]`);
-    const deletedGroupToggle = page.locator(".translation-deleted-group .section-separator");
+    const deletedGroupToggle = page.locator("[data-editor-deleted-group] .section-separator");
 
     await setTranslateScrollTop(page, 9000);
     await expect(rowCard).toBeVisible();
