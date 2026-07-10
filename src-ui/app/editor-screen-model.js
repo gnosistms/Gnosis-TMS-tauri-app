@@ -396,6 +396,23 @@ function buildEditorDisplayItems(contentRows, editorChapter, team, editorReplace
     editorReplace?.selectedMatchingRowIds instanceof Array
       ? new Set(editorReplace.selectedMatchingRowIds)
       : new Set();
+  const hasActiveRowBefore = new Map();
+  const hasActiveRowAfter = new Map();
+  let seenActiveRow = false;
+  for (const row of rows) {
+    hasActiveRowBefore.set(row?.rowId, seenActiveRow);
+    if (row?.lifecycleState === "active") {
+      seenActiveRow = true;
+    }
+  }
+  seenActiveRow = false;
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    hasActiveRowAfter.set(rows[index]?.rowId, seenActiveRow);
+    if (rows[index]?.lifecycleState === "active") {
+      seenActiveRow = true;
+    }
+  }
+
   const items = [];
   let deletedRun = [];
 
@@ -416,6 +433,12 @@ function buildEditorDisplayItems(contentRows, editorChapter, team, editorReplace
     });
     if (isOpen) {
       items.push(...deletedRun);
+      items.push({
+        kind: "deleted-group-end",
+        id: `deleted-group-end:${groupId}`,
+        groupId,
+        label: "End deleted rows",
+      });
     }
     deletedRun = [];
   };
@@ -425,6 +448,11 @@ function buildEditorDisplayItems(contentRows, editorChapter, team, editorReplace
       ...row,
       canEdit: canEditRows,
       canInsert: row.lifecycleState === "active" && canEditRows,
+      canMerge: row.lifecycleState === "active" && canEditRows,
+      canMergePrevious:
+        row.lifecycleState === "active" && canEditRows && hasActiveRowBefore.get(row.rowId) === true,
+      canMergeNext:
+        row.lifecycleState === "active" && canEditRows && hasActiveRowAfter.get(row.rowId) === true,
       canSoftDelete: row.lifecycleState === "active" && canEditRows,
       canRestore: row.lifecycleState === "deleted" && sessionCanWrite && getProjectLifecycleWritePolicy({
         team,

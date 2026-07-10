@@ -727,6 +727,10 @@
   gap: 10px;
 }
 
+.translation-row-shell.is-deleted {
+  margin-left: var(--page-gutter);
+}
+
 .translation-row__badges {
   display: inline-flex;
   align-items: center;
@@ -856,6 +860,10 @@
 
 .translation-deleted-group {
   padding: 4px 0;
+}
+
+.translation-deleted-group--end .section-separator__chevron {
+  transform: translateY(calc(var(--collapse-chevron-shift-y, 0) - 0.06em)) rotate(-90deg);
 }
 
 .translation-language-panel {

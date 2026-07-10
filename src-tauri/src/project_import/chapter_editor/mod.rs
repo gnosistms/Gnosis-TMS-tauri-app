@@ -41,6 +41,7 @@ mod git_conflicts;
 mod history;
 mod images;
 mod row_fields;
+mod row_merge;
 mod row_structure;
 mod shared;
 mod team_copy;
@@ -94,6 +95,7 @@ pub(crate) use self::row_fields::{
     update_gtms_editor_row_field_flag_sync, update_gtms_editor_row_fields_batch_sync,
     update_gtms_editor_row_fields_sync, update_gtms_editor_row_text_style_sync,
 };
+pub(crate) use self::row_merge::merge_gtms_editor_rows_sync;
 #[cfg(test)]
 use self::row_structure::create_inserted_editor_row;
 #[cfg(test)]
@@ -444,6 +446,28 @@ pub(crate) struct InsertEditorRowInput {
     project_id: Option<String>,
     chapter_id: String,
     row_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MergeEditorRowsInput {
+    pub(crate) installation_id: i64,
+    repo_name: String,
+    project_id: Option<String>,
+    chapter_id: String,
+    previous_row_id: String,
+    next_row_id: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MergeEditorRowsResponse {
+    row: EditorRow,
+    removed_row: EditorRow,
+    removed_row_id: String,
+    removed_lifecycle_state: String,
+    word_counts: BTreeMap<String, usize>,
+    chapter_base_commit_sha: Option<String>,
 }
 
 #[derive(Deserialize)]

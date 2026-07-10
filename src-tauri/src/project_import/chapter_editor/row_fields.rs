@@ -136,9 +136,9 @@ fn normalize_editor_footnote_merge_value(value: &str) -> String {
         .join("\n\n")
 }
 
-struct ParsedFootnoteEntry {
-    marker: usize,
-    text: String,
+pub(super) struct ParsedFootnoteEntry {
+    pub(super) marker: usize,
+    pub(super) text: String,
 }
 
 struct FootnoteMarkerMatch {
@@ -147,7 +147,7 @@ struct FootnoteMarkerMatch {
     content_start: usize,
 }
 
-fn parse_labeled_footnote_text_for_merge(value: &str) -> Vec<ParsedFootnoteEntry> {
+pub(super) fn parse_labeled_footnote_text_for_merge(value: &str) -> Vec<ParsedFootnoteEntry> {
     let mut markers = Vec::new();
     let mut offset = 0usize;
 

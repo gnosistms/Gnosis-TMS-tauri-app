@@ -2,11 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  adjacentActiveEditorRowIds,
   applyInsertedEditorRowState,
+  applyMergedEditorRowState,
   applyPermanentlyDeletedEditorRowState,
   applyRestoredEditorRowState,
   applySoftDeletedEditorRowState,
   openInsertEditorRowModalState,
+  openMergeEditorRowModalState,
   toggleDeletedEditorRowGroupState,
 } from "./editor-row-structure-state.js";
 import { createEditorChapterState, createEditorHistoryState } from "./state.js";
@@ -95,6 +98,104 @@ test("applyInsertedEditorRowState inserts a normalized row and activates it", ()
   assert.equal(nextState.activeLanguageCode, "es");
   assert.equal(nextState.insertRowModal.isOpen, false);
   assert.deepEqual(nextState.wordCounts, { en: 42 });
+});
+
+test("adjacentActiveEditorRowIds skips deleted rows and handles chapter edges", () => {
+  const rows = [
+    row("row-1"),
+    row("row-2", "deleted"),
+    row("row-3"),
+    row("row-4", "deleted"),
+  ];
+
+  assert.deepEqual(adjacentActiveEditorRowIds(rows, "row-1"), {
+    previousRowId: null,
+    nextRowId: "row-3",
+  });
+  assert.deepEqual(adjacentActiveEditorRowIds(rows, "row-3"), {
+    previousRowId: "row-1",
+    nextRowId: null,
+  });
+  assert.deepEqual(adjacentActiveEditorRowIds(rows, "row-missing"), {
+    previousRowId: null,
+    nextRowId: null,
+  });
+});
+
+test("openMergeEditorRowModalState opens the modal only for an existing row", () => {
+  const chapterState = {
+    ...createEditorChapterState(),
+    chapterId: "chapter-1",
+    rows: [row("row-1")],
+  };
+
+  const opened = openMergeEditorRowModalState(chapterState, "row-1");
+  const unchanged = openMergeEditorRowModalState(chapterState, "row-missing");
+
+  assert.equal(opened.mergeRowModal.isOpen, true);
+  assert.equal(opened.mergeRowModal.rowId, "row-1");
+  assert.equal(unchanged.mergeRowModal.isOpen, false);
+});
+
+test("applyMergedEditorRowState replaces the merged row, soft-deletes the removed row, and anchors to the merged row", () => {
+  const chapterState = {
+    ...createEditorChapterState(),
+    chapterId: "chapter-1",
+    activeRowId: "row-2",
+    activeLanguageCode: "en",
+    rows: [
+      row("row-1", "active", { en: "one" }),
+      {
+        ...row("row-2", "active", { en: "two" }),
+        images: { en: { kind: "url", url: "https://example.com/old.png" } },
+        imageCaptions: { en: "old caption" },
+      },
+      row("row-3", "active", { en: "three" }),
+    ],
+    mergeRowModal: {
+      ...createEditorChapterState().mergeRowModal,
+      isOpen: true,
+      rowId: "row-2",
+    },
+  };
+
+  const result = applyMergedEditorRowState(
+    chapterState,
+    {
+      rowId: "row-1",
+      fields: { en: "one\ntwo" },
+      fieldStates: {},
+    },
+    {
+      rowId: "row-2",
+      lifecycleState: "deleted",
+      fields: { en: "two" },
+      fieldStates: {},
+      images: {},
+      imageCaptions: { en: "" },
+    },
+    { en: 3 },
+    { offsetTop: 100 },
+  );
+
+  assert.deepEqual(
+    result.chapterState.rows.map((entry) => entry.rowId),
+    ["row-1", "row-2", "row-3"],
+  );
+  assert.equal(result.chapterState.rows[0].fields.en, "one\ntwo");
+  assert.equal(result.chapterState.rows[0].persistedFields.en, "one\ntwo");
+  assert.equal(result.chapterState.rows[1].lifecycleState, "deleted");
+  assert.deepEqual(result.chapterState.rows[1].images, {});
+  assert.equal(result.chapterState.rows[1].imageCaptions.en, "");
+  assert.equal(result.chapterState.activeRowId, null);
+  assert.equal(result.chapterState.mergeRowModal.isOpen, false);
+  assert.deepEqual(result.chapterState.wordCounts, { en: 3 });
+  assert.deepEqual(result.anchorSnapshot, {
+    type: "row",
+    rowId: "row-1",
+    languageCode: null,
+    offsetTop: 100,
+  });
 });
 
 test("applySoftDeletedEditorRowState clears the active field and anchors to a closed deleted group", () => {

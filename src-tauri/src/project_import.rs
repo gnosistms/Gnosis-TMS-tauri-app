@@ -26,7 +26,8 @@ use self::{
         export_gtms_chapter_file_sync, initialize_gtms_project_repo_sync,
         insert_gtms_editor_row_sync, list_local_gtms_project_files_sync,
         load_gtms_chapter_editor_data_sync, load_gtms_editor_field_history_sync,
-        load_gtms_editor_row_sync, permanently_delete_gtms_editor_row_sync,
+        load_gtms_editor_row_sync, merge_gtms_editor_rows_sync,
+        permanently_delete_gtms_editor_row_sync,
         preflight_aligned_translation_to_gtms_chapter_sync, purge_local_gtms_project_repo_sync,
         remove_gtms_editor_language_image_sync, restore_gtms_editor_field_from_history_sync,
         reverse_gtms_editor_batch_replace_commit_sync, save_gtms_editor_language_image_url_sync,
@@ -44,12 +45,12 @@ use self::{
         InsertEditorRowInput, InsertEditorRowResponse, ListLocalProjectFilesInput,
         LoadChapterEditorInput, LoadChapterEditorResponse, LoadEditorFieldHistoryInput,
         LoadEditorFieldHistoryResponse, LoadEditorRowInput, LoadEditorRowResponse,
-        LocalProjectFilesResponse, PurgeLocalProjectRepoInput, RemoveEditorLanguageImageInput,
-        RestoreEditorFieldHistoryInput, RestoreEditorFieldHistoryResponse,
-        ReverseEditorBatchReplaceCommitInput, ReverseEditorBatchReplaceCommitResponse,
-        SaveEditorLanguageImageResponse, SaveEditorLanguageImageUrlInput,
-        SaveEditorRowWithConcurrencyResponse, TeamChapterCopyInput,
-        UpdateChapterGlossaryLinksInput, UpdateChapterGlossaryLinksResponse,
+        LocalProjectFilesResponse, MergeEditorRowsInput, MergeEditorRowsResponse,
+        PurgeLocalProjectRepoInput, RemoveEditorLanguageImageInput, RestoreEditorFieldHistoryInput,
+        RestoreEditorFieldHistoryResponse, ReverseEditorBatchReplaceCommitInput,
+        ReverseEditorBatchReplaceCommitResponse, SaveEditorLanguageImageResponse,
+        SaveEditorLanguageImageUrlInput, SaveEditorRowWithConcurrencyResponse,
+        TeamChapterCopyInput, UpdateChapterGlossaryLinksInput, UpdateChapterGlossaryLinksResponse,
         UpdateChapterLanguageSelectionInput, UpdateChapterLanguageSelectionResponse,
         UpdateChapterLanguagesInput, UpdateChapterLanguagesResponse,
         UpdateChapterWorkflowStatusInput, UpdateChapterWorkflowStatusResponse,
@@ -366,6 +367,19 @@ pub(crate) async fn update_gtms_editor_row_fields_batch(
     })
     .await
     .map_err(|error| format!("The row batch update worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn merge_gtms_editor_rows(
+    app: AppHandle,
+    input: MergeEditorRowsInput,
+) -> Result<MergeEditorRowsResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_chapter_writes(&app, input.installation_id)?;
+        merge_gtms_editor_rows_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The row merge worker failed: {error}"))?
 }
 
 #[tauri::command]

@@ -979,6 +979,19 @@ export function renderTranslationContentRow(
     `;
   }
 
+  if (row?.kind === "deleted-group-end") {
+    const rowIndexAttribute = Number.isInteger(rowIndex) ? ` data-row-index="${rowIndex}"` : "";
+    return `
+      <div class="translation-deleted-group translation-deleted-group--end" data-row-id="${escapeHtml(row.id)}"${rowIndexAttribute}>
+        ${sectionSeparator({
+          label: row.label || "End deleted rows",
+          action: `toggle-editor-deleted-row-group:${row.groupId}`,
+          isOpen: false,
+        })}
+      </div>
+    `;
+  }
+
   const orderedSections = orderRowSectionsByCollapsedState(row.sections, collapsedLanguageCodes);
   const glossaryHighlightMap = row?.kind === "row"
     ? buildCachedEditorRowGlossaryHighlights(row, chapterState)
@@ -999,6 +1012,11 @@ export function renderTranslationContentRow(
       <div class="translation-row__actions">
         ${renderEditorRowConflictActions(row)}
         ${row.canInsert ? textAction("Insert", `open-insert-editor-row:${row.id}`) : ""}
+        ${row.canMerge
+          ? textAction("Merge", `open-merge-editor-rows:${row.id}`, {
+            disabled: !(row.canMergePrevious || row.canMergeNext),
+          })
+          : ""}
         ${row.canSoftDelete ? textAction("Delete", `soft-delete-editor-row:${row.id}`) : ""}
       </div>
     `;
@@ -1019,7 +1037,7 @@ export function renderTranslationContentRow(
     : '<div class="translation-row__selection" aria-hidden="true"></div>';
 
   return `
-    <div class="translation-row-shell" data-editor-row-card data-row-id="${escapeHtml(row.id)}"${rowIndexAttribute}>
+    <div class="translation-row-shell${row.lifecycleState === "deleted" ? " is-deleted" : ""}" data-editor-row-card data-row-id="${escapeHtml(row.id)}"${rowIndexAttribute}>
       <div class="translation-row__toolbar">
         ${renderEditorRowLastUpdate(row)}
         ${rowActions}

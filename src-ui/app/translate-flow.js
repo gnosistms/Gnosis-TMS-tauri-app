@@ -135,10 +135,13 @@ import {
 import {
   cancelEditorRowPermanentDeletionModal as cancelEditorRowPermanentDeletionModalFlow,
   cancelInsertEditorRowModal as cancelInsertEditorRowModalFlow,
+  cancelMergeEditorRowModal as cancelMergeEditorRowModalFlow,
   confirmEditorRowPermanentDeletion as confirmEditorRowPermanentDeletionFlow,
   confirmInsertEditorRow as confirmInsertEditorRowFlow,
+  confirmMergeEditorRows as confirmMergeEditorRowsFlow,
   openEditorRowPermanentDeletionModal as openEditorRowPermanentDeletionModalFlow,
   openInsertEditorRowModal as openInsertEditorRowModalFlow,
+  openMergeEditorRowModal as openMergeEditorRowModalFlow,
   restoreEditorRow as restoreEditorRowFlow,
   softDeleteEditorRow as softDeleteEditorRowFlow,
   toggleDeletedEditorRowGroup as toggleDeletedEditorRowGroupFlow,
@@ -430,6 +433,8 @@ function editorRowStructureOperations() {
   return {
     applyStructuralEditorChange,
     applyEditorSelectionsToProjectState,
+    flushDirtyEditorRows: (render, options) =>
+      flushDirtyEditorRows(render, editorPersistenceOperations(), options),
   };
 }
 
@@ -874,6 +879,18 @@ export function openInsertEditorRowModal(rowId) {
 
 export function cancelInsertEditorRowModal() {
   cancelInsertEditorRowModalFlow();
+}
+
+export function openMergeEditorRowModal(rowId) {
+  openMergeEditorRowModalFlow(rowId);
+}
+
+export function cancelMergeEditorRowModal() {
+  cancelMergeEditorRowModalFlow();
+}
+
+export async function confirmMergeEditorRows(render, direction) {
+  await confirmMergeEditorRowsFlow(render, direction, editorRowStructureOperations());
 }
 
 export function openEditorRowPermanentDeletionModal(rowId) {

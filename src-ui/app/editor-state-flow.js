@@ -59,6 +59,7 @@ import {
   createEditorReplaceState,
   createEditorHistoryState,
   createEditorInsertRowModalState,
+  createEditorMergeRowModalState,
   createEditorUnreviewAllModalState,
   createEditorExportModalState,
   createEditorRowPermanentDeletionModalState,
@@ -319,6 +320,11 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
         && hasEditorRow(nextEditorChapter, previousEditorChapter.insertRowModal.rowId)
         ? { ...createEditorInsertRowModalState(), ...previousEditorChapter.insertRowModal }
         : createEditorInsertRowModalState(),
+    mergeRowModal:
+      previousEditorChapter?.mergeRowModal?.isOpen === true
+        && hasEditorRow(nextEditorChapter, previousEditorChapter.mergeRowModal.rowId)
+        ? { ...createEditorMergeRowModalState(), ...previousEditorChapter.mergeRowModal }
+        : createEditorMergeRowModalState(),
     rowPermanentDeletionModal:
       previousEditorChapter?.rowPermanentDeletionModal?.isOpen === true
         && hasEditorRow(nextEditorChapter, previousEditorChapter.rowPermanentDeletionModal.rowId)

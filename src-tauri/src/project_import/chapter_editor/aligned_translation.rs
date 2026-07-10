@@ -1661,7 +1661,7 @@ fn apply_job_to_chapter(
         &format!("row_values={}", row_values.len()),
     );
     if !target_exists {
-        for (_, row_value) in row_values.iter_mut() {
+        for row_value in row_values.values_mut() {
             ensure_language_field(row_value, &job.target_language_code)?;
         }
     }
