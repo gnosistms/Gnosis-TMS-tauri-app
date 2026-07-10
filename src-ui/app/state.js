@@ -458,6 +458,7 @@ export function createEditorChapterState() {
     exportModal: createEditorExportModalState(),
     expandedDeletedRowGroupIds: new Set(),
     insertRowModal: createEditorInsertRowModalState(),
+    mergeRowModal: createEditorMergeRowModalState(),
     rowPermanentDeletionModal: createEditorRowPermanentDeletionModalState(),
     rows: [],
   };
@@ -742,6 +743,12 @@ export function createEditorReplaceState() {
 }
 
 export function createEditorInsertRowModalState() {
+  return createEntityModalState({
+    rowId: null,
+  });
+}
+
+export function createEditorMergeRowModalState() {
   return createEntityModalState({
     rowId: null,
   });

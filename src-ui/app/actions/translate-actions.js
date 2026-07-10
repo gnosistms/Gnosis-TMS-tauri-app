@@ -22,6 +22,7 @@ import {
   cancelEditorReplaceUndoModal,
   cancelEditorRowPermanentDeletionModal,
   cancelInsertEditorRowModal,
+  cancelMergeEditorRowModal,
   closeTargetLanguageManagerPicker,
   confirmEditorUnreviewAll,
   confirmEditorAiTranslateAll,
@@ -31,6 +32,7 @@ import {
   confirmEditorReplaceUndo,
   confirmEditorRowPermanentDeletion,
   confirmInsertEditorRow,
+  confirmMergeEditorRows,
   addTargetLanguageManagerLanguage,
   moveTargetLanguageManagerLanguageToIndex,
   openEditorFootnote,
@@ -62,6 +64,7 @@ import {
   openEditorRowComments,
   openEditorRowPermanentDeletionModal,
   openInsertEditorRowModal,
+  openMergeEditorRowModal,
   openEditorExportOptions,
   selectEditorExportOption,
   submitEditorExport,
@@ -149,6 +152,8 @@ const CURRENT_WRITE_ACTIONS = new Set([
   "submit-target-language-manager",
   "confirm-insert-editor-row-before",
   "confirm-insert-editor-row-after",
+  "confirm-merge-editor-rows-previous",
+  "confirm-merge-editor-rows-next",
   "confirm-editor-replace-undo",
   "confirm-editor-unreview-all",
   "confirm-editor-ai-translate-all",
@@ -170,6 +175,7 @@ const SESSION_WRITE_PREFIXES = [
   "apply-editor-assistant-draft:",
   "copy-editor-conflict-version:",
   "open-insert-editor-row:",
+  "open-merge-editor-rows:",
   "resolve-editor-row-conflict:",
   "open-editor-conflict-resolution:",
 ];
@@ -298,6 +304,12 @@ export function createTranslateActions(render) {
       return true;
     }
 
+    if (action === "cancel-merge-editor-rows") {
+      cancelMergeEditorRowModal();
+      render();
+      return true;
+    }
+
     if (action === "cancel-editor-row-permanent-delete") {
       cancelEditorRowPermanentDeletionModal();
       render();
@@ -347,6 +359,16 @@ export function createTranslateActions(render) {
 
     if (action === "confirm-insert-editor-row-after") {
       await confirmInsertEditorRow(render, "after");
+      return true;
+    }
+
+    if (action === "confirm-merge-editor-rows-previous") {
+      await confirmMergeEditorRows(render, "previous");
+      return true;
+    }
+
+    if (action === "confirm-merge-editor-rows-next") {
+      await confirmMergeEditorRows(render, "next");
       return true;
     }
 
@@ -778,6 +800,13 @@ export function createTranslateActions(render) {
     const insertRowId = actionSuffix(action, "open-insert-editor-row:");
     if (insertRowId !== null) {
       openInsertEditorRowModal(insertRowId);
+      render();
+      return true;
+    }
+
+    const mergeRowId = actionSuffix(action, "open-merge-editor-rows:");
+    if (mergeRowId !== null) {
+      openMergeEditorRowModal(mergeRowId);
       render();
       return true;
     }

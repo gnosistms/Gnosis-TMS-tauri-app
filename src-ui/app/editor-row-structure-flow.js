@@ -1,14 +1,19 @@
 import {
+  adjacentActiveEditorRowIds,
   applyInsertedEditorRowState,
+  applyMergedEditorRowState,
   applyPermanentlyDeletedEditorRowState,
   applyRestoredEditorRowState,
   applySoftDeletedEditorRowState,
   cancelEditorRowPermanentDeletionModalState,
   cancelInsertEditorRowModalState,
+  cancelMergeEditorRowModalState,
   openEditorRowPermanentDeletionModalState,
   openInsertEditorRowModalState,
+  openMergeEditorRowModalState,
   toggleDeletedEditorRowGroupState,
 } from "./editor-row-structure-state.js";
+import { mergeEditorRowContent } from "./editor-row-merge-content.js";
 import {
   createEditorRegressionInsertedRow,
   isEditorRegressionFixtureState,
@@ -53,6 +58,14 @@ export function openInsertEditorRowModal(rowId) {
 
 export function cancelInsertEditorRowModal() {
   state.editorChapter = cancelInsertEditorRowModalState(state.editorChapter);
+}
+
+export function openMergeEditorRowModal(rowId) {
+  state.editorChapter = openMergeEditorRowModalState(state.editorChapter, rowId);
+}
+
+export function cancelMergeEditorRowModal() {
+  state.editorChapter = cancelMergeEditorRowModalState(state.editorChapter);
 }
 
 export function openEditorRowPermanentDeletionModal(rowId) {
@@ -190,6 +203,203 @@ export async function confirmInsertEditorRow(render, position, operations = {}) 
     }
     showNoticeBadge(message || "The row could not be inserted.", render);
   }
+}
+
+export async function confirmMergeEditorRows(render, direction, operations = {}) {
+  if (!hasRowStructureOperations(operations)) {
+    return;
+  }
+
+  const editorChapter = state.editorChapter;
+  const modal = editorChapter?.mergeRowModal;
+  if (!editorChapter?.chapterId || !modal?.isOpen || !modal.rowId) {
+    return;
+  }
+  if (direction !== "previous" && direction !== "next") {
+    return;
+  }
+
+  const { previousRowId, nextRowId } = adjacentActiveEditorRowIds(editorChapter.rows, modal.rowId);
+  const otherRowId = direction === "previous" ? previousRowId : nextRowId;
+  if (!otherRowId) {
+    state.editorChapter = {
+      ...editorChapter,
+      mergeRowModal: {
+        ...modal,
+        error: "There is no row to merge with in that direction.",
+      },
+    };
+    render?.();
+    return;
+  }
+  const mergePreviousRowId = direction === "previous" ? otherRowId : modal.rowId;
+  const mergeNextRowId = direction === "previous" ? modal.rowId : otherRowId;
+
+  if (isEditorRegressionFixtureState(state)) {
+    const rows = Array.isArray(editorChapter.rows) ? editorChapter.rows : [];
+    const previousRow = rows.find((row) => row?.rowId === mergePreviousRowId);
+    const nextRow = rows.find((row) => row?.rowId === mergeNextRowId);
+    if (!previousRow || !nextRow) {
+      return;
+    }
+
+    const merged = mergeEditorRowContent(previousRow, nextRow);
+    const removedImages = { ...nextRow.images };
+    const removedImageCaptions = { ...nextRow.imageCaptions };
+    for (const languageCode of merged.movedImageLanguages) {
+      delete removedImages[languageCode];
+      removedImageCaptions[languageCode] = "";
+    }
+    const result = applyMergedEditorRowState(
+      state.editorChapter,
+      {
+        ...previousRow,
+        fields: merged.fields,
+        footnotes: merged.footnotes,
+        imageCaptions: merged.imageCaptions,
+        images: merged.images,
+      },
+      {
+        ...nextRow,
+        lifecycleState: "deleted",
+        images: removedImages,
+        imageCaptions: removedImageCaptions,
+      },
+      null,
+      captureTranslateAnchorForRow(mergePreviousRowId),
+    );
+    operations.applyStructuralEditorChange(render, () => {
+      state.editorChapter = result.chapterState;
+      operations.applyEditorSelectionsToProjectState(state.editorChapter);
+    }, {
+      anchorSnapshot: result.anchorSnapshot,
+    });
+    return;
+  }
+
+  if (
+    typeof operations.flushDirtyEditorRows === "function"
+    && !(await operations.flushDirtyEditorRows(render, {
+      rowIds: [mergePreviousRowId, mergeNextRowId],
+      waitForDurable: false,
+    }))
+  ) {
+    showNoticeBadge("Finish saving both rows before merging them.", render);
+    return;
+  }
+
+  for (const rowId of [mergePreviousRowId, mergeNextRowId]) {
+    const row = await ensureEditorRowReadyForWrite(render, rowId, { structural: true });
+    if (!row) {
+      showNoticeBadge("Save both rows before merging them.", render);
+      return;
+    }
+  }
+
+  const team = selectedProjectsTeam();
+  const context = findChapterContextById(editorChapter.chapterId);
+  const repoScope = projectRepoScope({ team, project: context?.project ?? null });
+  if (!Number.isFinite(team?.installationId) || !context?.project?.name || !repoScope) {
+    return;
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    mergeRowModal: {
+      ...modal,
+      status: "loading",
+      error: "",
+    },
+  };
+  render?.();
+
+  const currentRows = Array.isArray(state.editorChapter?.rows) ? state.editorChapter.rows : [];
+  const permissionRow = currentRows.find((row) => row?.rowId === modal.rowId) ?? null;
+  const operationValue = {
+    input: {
+      installationId: team.installationId,
+      projectId: context.project.id,
+      repoName: context.project.name,
+      chapterId: editorChapter.chapterId,
+      previousRowId: mergePreviousRowId,
+      nextRowId: mergeNextRowId,
+    },
+    chapterId: editorChapter.chapterId,
+    previousRowId: mergePreviousRowId,
+    nextRowId: mergeNextRowId,
+    permissionContext: createQueuedEditorWritePermissionContext({
+      team,
+      project: context.project,
+      chapter: context.chapter,
+      row: permissionRow,
+      actionKind: "sharedWrite",
+    }),
+  };
+  const requested = requestEditorOperation({
+    repoScope,
+    chapterScope: `${repoScope}:${editorChapter.chapterId}`,
+    rowScope: `${repoScope}:${editorChapter.chapterId}:${mergePreviousRowId}:${mergeNextRowId}`,
+    kind: "mergeRows",
+    value: operationValue,
+    metadata: {
+      projectId: context.project.id,
+      chapterId: editorChapter.chapterId,
+      rowIds: [mergePreviousRowId, mergeNextRowId],
+    },
+    invalidationKeys: [editorChapterInvalidationKey(repoScope, editorChapter.chapterId)],
+  }, {
+    run: async (operation) => {
+      assertQueuedEditorRowsReady({
+        chapterId: operation.value.chapterId,
+        rowIds: [operation.value.previousRowId, operation.value.nextRowId],
+        forbidPendingWrites: true,
+        message: "Save, refresh, or resolve both rows before merging them.",
+      });
+      return invokeQueuedEditorWriteCommand("merge_gtms_editor_rows", {
+        input: { ...operation.value.input },
+      }, operation.value.permissionContext, render);
+    },
+    onSuccess: (payload, operation) => {
+      const value = operation?.value ?? operationValue;
+      if (state.editorChapter?.chapterId !== value.chapterId) {
+        return;
+      }
+      const chapterBaseCommitSha = nextChapterBaseCommitSha(state.editorChapter, payload);
+      const removedRow = payload?.removedRow ?? payload?.removedRowId ?? value.nextRowId;
+      const result = applyMergedEditorRowState(
+        state.editorChapter,
+        payload?.row,
+        removedRow,
+        payload?.wordCounts,
+        captureTranslateAnchorForRow(value.previousRowId),
+      );
+      operations.applyStructuralEditorChange(render, () => {
+        state.editorChapter = { ...result.chapterState, chapterBaseCommitSha };
+        operations.applyEditorSelectionsToProjectState(state.editorChapter);
+      }, {
+        anchorSnapshot: result.anchorSnapshot,
+        reloadHistory: true,
+      });
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      if (state.editorChapter?.chapterId === editorChapter.chapterId) {
+        state.editorChapter = {
+          ...state.editorChapter,
+          mergeRowModal: {
+            ...state.editorChapter.mergeRowModal,
+            status: "idle",
+            error: message,
+          },
+        };
+        render?.();
+      }
+      showNoticeBadge(message || "The rows could not be merged.", render);
+    },
+  });
+  try {
+    await requested.promise;
+  } catch {}
 }
 
 export async function softDeleteEditorRow(render, rowId, triggerAnchorSnapshot = null, operations = {}) {

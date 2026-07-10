@@ -73,6 +73,39 @@ test("buildEditorScreenViewModel exposes showContextAction only when user filter
   }
 });
 
+test("buildEditorScreenViewModel bounds expanded deleted rows with an end marker", () => {
+  const snapshot = snapshotSharedState();
+
+  try {
+    applyEditorRegressionFixture(state, { rowCount: 4 });
+    const [firstRow, secondRow] = state.editorChapter.rows;
+    state.editorChapter = {
+      ...state.editorChapter,
+      rows: state.editorChapter.rows.map((row, index) =>
+        index < 2 ? { ...row, lifecycleState: "deleted" } : row
+      ),
+      expandedDeletedRowGroupIds: new Set([`${firstRow.rowId}:${secondRow.rowId}`]),
+    };
+
+    let viewModel = buildEditorScreenViewModel(state);
+    assert.deepEqual(
+      viewModel.contentRows.slice(0, 4).map((row) => row.kind),
+      ["deleted-group", "row", "row", "deleted-group-end"],
+    );
+    assert.equal(viewModel.contentRows[3].label, "End deleted rows");
+
+    state.editorChapter = {
+      ...state.editorChapter,
+      expandedDeletedRowGroupIds: new Set(),
+    };
+    viewModel = buildEditorScreenViewModel(state);
+    assert.equal(viewModel.contentRows[0].kind, "deleted-group");
+    assert.equal(viewModel.contentRows.some((row) => row.kind === "deleted-group-end"), false);
+  } finally {
+    restoreSharedState(snapshot);
+  }
+});
+
 test("buildEditorScreenViewModel shows translating placeholder in the active target section while ai translation is loading", () => {
   const snapshot = snapshotSharedState();
 

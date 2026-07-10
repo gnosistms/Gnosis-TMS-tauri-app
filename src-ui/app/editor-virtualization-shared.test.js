@@ -10,6 +10,7 @@ import {
 
 test("estimateEditorRowHeight uses a compact fixed height for deleted groups", () => {
   assert.equal(estimateEditorRowHeight({ kind: "deleted-group" }), 44);
+  assert.equal(estimateEditorRowHeight({ kind: "deleted-group-end" }), 44);
 });
 
 test("estimateEditorRowHeight accounts for expanded and collapsed language panels", () => {

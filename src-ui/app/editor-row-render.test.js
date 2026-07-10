@@ -7,6 +7,30 @@ import {
 } from "./editor-image-preview-size.js";
 import { renderTranslationContentRow } from "./editor-row-render.js";
 
+test("renderTranslationContentRow renders the deleted-run end marker as a collapse action", () => {
+  const html = renderTranslationContentRow({
+    kind: "deleted-group-end",
+    id: "deleted-group-end:row-1:row-2",
+    groupId: "row-1:row-2",
+    label: "End deleted rows",
+  });
+
+  assert.match(html, /translation-deleted-group--end/);
+  assert.match(html, /End deleted rows/);
+  assert.match(html, /data-action="toggle-editor-deleted-row-group:row-1:row-2"/);
+});
+
+test("renderTranslationContentRow marks the whole deleted row shell for indentation", () => {
+  const html = renderTranslationContentRow({
+    id: "row-1",
+    kind: "row",
+    lifecycleState: "deleted",
+    sections: [],
+  });
+
+  assert.match(html, /class="translation-row-shell is-deleted"/);
+});
+
 function rowWithSection(section) {
   return {
     kind: "row",

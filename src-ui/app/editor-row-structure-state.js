@@ -14,6 +14,7 @@ import {
   createEditorCommentsState,
   createEditorHistoryState,
   createEditorInsertRowModalState,
+  createEditorMergeRowModalState,
   createEditorRowPermanentDeletionModalState,
 } from "./state.js";
 
@@ -234,6 +235,54 @@ export function cancelInsertEditorRowModalState(chapterState) {
   };
 }
 
+export function adjacentActiveEditorRowIds(rows, rowId) {
+  const items = Array.isArray(rows) ? rows : [];
+  const rowIndex = items.findIndex((row) => row?.rowId === rowId);
+  if (rowIndex < 0) {
+    return { previousRowId: null, nextRowId: null };
+  }
+
+  let previousRowId = null;
+  for (let index = rowIndex - 1; index >= 0; index -= 1) {
+    if (items[index]?.lifecycleState === "active") {
+      previousRowId = items[index].rowId ?? null;
+      break;
+    }
+  }
+
+  let nextRowId = null;
+  for (let index = rowIndex + 1; index < items.length; index += 1) {
+    if (items[index]?.lifecycleState === "active") {
+      nextRowId = items[index].rowId ?? null;
+      break;
+    }
+  }
+
+  return { previousRowId, nextRowId };
+}
+
+export function openMergeEditorRowModalState(chapterState, rowId) {
+  if (!rowId || !hasEditorRow(chapterState, rowId)) {
+    return chapterState;
+  }
+
+  return {
+    ...chapterState,
+    mergeRowModal: {
+      ...createEditorMergeRowModalState(),
+      isOpen: true,
+      rowId,
+    },
+  };
+}
+
+export function cancelMergeEditorRowModalState(chapterState) {
+  return {
+    ...chapterState,
+    mergeRowModal: createEditorMergeRowModalState(),
+  };
+}
+
 export function openEditorRowPermanentDeletionModalState(chapterState, rowId) {
   if (!rowId || !hasEditorRow(chapterState, rowId)) {
     return chapterState;
@@ -278,6 +327,61 @@ export function applyInsertedEditorRowState(
       ?? chapterState.selectedTargetLanguageCode
       ?? chapterState.selectedSourceLanguageCode
       ?? null,
+  };
+}
+
+export function applyMergedEditorRowState(
+  chapterState,
+  mergedRow,
+  removedRow,
+  wordCounts = null,
+  triggerAnchorSnapshot = null,
+) {
+  const removedRowId = typeof removedRow === "string" ? removedRow : removedRow?.rowId;
+  if (!chapterState?.chapterId || !mergedRow?.rowId || !removedRowId) {
+    return {
+      chapterState,
+      anchorSnapshot: null,
+    };
+  }
+
+  const previousRows = Array.isArray(chapterState.rows) ? chapterState.rows : [];
+  const normalizedMergedRow = normalizeEditorRows([mergedRow])[0];
+  const normalizedRemovedRow = typeof removedRow === "object"
+    ? normalizeEditorRows([removedRow])[0]
+    : null;
+  const rowsWithMergedContent = previousRows.map((row) => {
+    if (row?.rowId === normalizedMergedRow.rowId) {
+      return normalizedMergedRow;
+    }
+    if (normalizedRemovedRow && row?.rowId === removedRowId) {
+      return normalizedRemovedRow;
+    }
+    return row;
+  });
+  const rows = rowsWithLifecycleState(rowsWithMergedContent, removedRowId, "deleted");
+  const expandedDeletedRowGroupIds = expandedDeletedRowGroupIdsAfterSoftDelete(
+    rowsWithMergedContent,
+    removedRowId,
+    chapterState.expandedDeletedRowGroupIds,
+    rows,
+  );
+  const offsetTop = resolveAnchorOffsetTop(triggerAnchorSnapshot);
+
+  return {
+    chapterState: {
+      ...withClearedActiveFieldForRow(chapterState, removedRowId),
+      rows,
+      expandedDeletedRowGroupIds,
+      wordCounts: resolveSourceWordCounts(chapterState, wordCounts),
+      mergeRowModal: createEditorMergeRowModalState(),
+    },
+    anchorSnapshot: buildVisibleAnchorSnapshot(
+      rows,
+      normalizedMergedRow.rowId,
+      expandedDeletedRowGroupIds,
+      offsetTop,
+    ),
   };
 }
 

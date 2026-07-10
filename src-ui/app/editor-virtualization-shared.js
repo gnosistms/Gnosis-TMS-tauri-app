@@ -70,7 +70,7 @@ export function estimateEditorRowHeight(
   collapsedLanguageCodes = new Set(),
   fontSizePx = 20,
 ) {
-  if (row?.kind === "deleted-group") {
+  if (row?.kind === "deleted-group" || row?.kind === "deleted-group-end") {
     return 44;
   }
 
