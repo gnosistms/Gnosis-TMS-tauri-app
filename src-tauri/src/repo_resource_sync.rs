@@ -34,9 +34,9 @@ use crate::{
         repo_requires_0810_migration, run_pending_repo_migrations,
     },
     repo_sync_shared::{
-        abort_rebase_after_failed_pull, ensure_repo_local_git_identity,
-        git_error_indicates_missing_remote_ref, git_output, load_git_transport_token,
-        read_current_head_oid, GitTransportAuth,
+        abort_in_progress_git_operations, abort_rebase_after_failed_pull, acquire_repo_sync_lock,
+        ensure_repo_local_git_identity, git_error_indicates_missing_remote_ref, git_output,
+        load_git_transport_token, read_current_head_oid, repo_sync_lock, GitTransportAuth,
     },
     short_path_names::allocate_short_folder_name,
 };
@@ -228,36 +228,7 @@ pub(crate) fn sync_repos(
     input: RepoResourceSyncInput,
     session_token: &str,
 ) -> Result<Vec<RepoSyncSnapshot>, String> {
-    let needs_transport = input.resources.iter().any(|resource| {
-        let repo_path = resolve_or_desired_git_repo_path(
-            domain,
-            app,
-            input.installation_id,
-            resource.resource_id.as_deref(),
-            &resource.repo_name,
-        )
-        .unwrap_or_else(|_| {
-            domain
-                .local_repo_root(app, input.installation_id)
-                .unwrap_or_else(|_| Path::new("").to_path_buf())
-                .join(&resource.repo_name)
-        });
-        matches!(
-            inspect_repo_state(domain, resource, &repo_path)
-                .status
-                .as_str(),
-            REPO_SYNC_STATUS_NOT_CLONED | REPO_SYNC_STATUS_OUT_OF_SYNC
-        )
-    });
-    let git_transport_token = if needs_transport {
-        Some(load_git_transport_token(
-            input.installation_id,
-            session_token,
-        )?)
-    } else {
-        None
-    };
-
+    let mut git_transport_token = None;
     let mut snapshots = Vec::with_capacity(input.resources.len());
     for resource in input.resources {
         let repo_path = resolve_or_desired_git_repo_path(
@@ -267,12 +238,20 @@ pub(crate) fn sync_repos(
             resource.resource_id.as_deref(),
             &resource.repo_name,
         )?;
+        let repo_lock = repo_sync_lock(&repo_path);
+        let _repo_lock_guard = acquire_repo_sync_lock(&repo_lock);
         let inspected = inspect_repo_state(domain, &resource, &repo_path);
 
         if matches!(
             inspected.status.as_str(),
             REPO_SYNC_STATUS_NOT_CLONED | REPO_SYNC_STATUS_OUT_OF_SYNC
         ) {
+            if git_transport_token.is_none() {
+                git_transport_token = Some(load_git_transport_token(
+                    input.installation_id,
+                    session_token,
+                )?);
+            }
             let sync_result = sync_repo(
                 domain,
                 app,
@@ -318,6 +297,8 @@ pub(crate) fn sync_editor_repo(
         input.resource_id.as_deref(),
         &input.repo_name,
     )?;
+    let repo_lock = repo_sync_lock(&repo_path);
+    let _repo_lock_guard = acquire_repo_sync_lock(&repo_lock);
     let old_head_sha = read_current_head_oid(&repo_path);
     if descriptor_is_deleted(&resource) {
         return Ok(EditorRepoSyncResponse {
@@ -328,10 +309,7 @@ pub(crate) fn sync_editor_repo(
             deleted_term_ids: Vec::new(),
         });
     }
-    let git_status = git_output(&repo_path, &["status", "--porcelain"], None)?;
-    if !git_status.trim().is_empty() {
-        return Err("Local repo has uncommitted changes.".to_string());
-    }
+    ensure_editor_repo_clean_if_present(&repo_path)?;
 
     let git_transport_token = load_git_transport_token(input.installation_id, session_token)?;
     let new_head_sha = sync_repo(
@@ -370,6 +348,18 @@ pub(crate) fn sync_editor_repo(
     })
 }
 
+fn ensure_editor_repo_clean_if_present(repo_path: &Path) -> Result<(), String> {
+    if !repo_path.exists() {
+        return Ok(());
+    }
+
+    let git_status = git_output(repo_path, &["status", "--porcelain"], None)?;
+    if !git_status.trim().is_empty() {
+        return Err("Local repo has uncommitted changes.".to_string());
+    }
+    Ok(())
+}
+
 pub(crate) fn discard_old_layout_repos(
     domain: &dyn RepoResourceDomain,
     app: &AppHandle,
@@ -389,6 +379,8 @@ pub(crate) fn discard_old_layout_repos(
             resource.resource_id.as_deref(),
             &resource.repo_name,
         )?;
+        let repo_lock = repo_sync_lock(&repo_path);
+        let _repo_lock_guard = acquire_repo_sync_lock(&repo_lock);
         // Skip only repos that verifiably finished the layout migration —
         // unreadable metadata is one of the states this discard heals.
         if !repo_path.exists()
@@ -402,6 +394,7 @@ pub(crate) fn discard_old_layout_repos(
         domain.ensure_installation_allows_writes(app, input.installation_id)?;
         ensure_origin_remote(domain, &resource, &repo_path)?;
         ensure_repo_local_git_identity(app, &repo_path)?;
+        abort_in_progress_git_operations(&repo_path)?;
 
         let branch_name = resource
             .default_branch_name
@@ -638,10 +631,10 @@ fn repo_matches_identifier(
     repo_path: &Path,
     resource_id: Option<&str>,
     repo_name: Option<&str>,
-) -> bool {
+) -> Result<bool, String> {
     let normalized_resource_id = normalized_optional_identifier(resource_id);
     let normalized_repo_name = normalized_optional_identifier(repo_name);
-    let sync_state = read_local_repo_sync_state(repo_path).ok().flatten();
+    let sync_state = read_local_repo_sync_state(repo_path)?;
 
     if let Some(resource_id) = normalized_resource_id.as_deref() {
         if let Some(state_resource_id) = sync_state
@@ -650,7 +643,7 @@ fn repo_matches_identifier(
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
-            return state_resource_id == resource_id;
+            return Ok(state_resource_id == resource_id);
         }
     }
 
@@ -662,7 +655,7 @@ fn repo_matches_identifier(
             .filter(|value| !value.is_empty())
             == Some(repo_name)
         {
-            return true;
+            return Ok(true);
         }
 
         let folder_name = repo_path
@@ -670,10 +663,10 @@ fn repo_matches_identifier(
             .and_then(|name| name.to_str())
             .map(str::trim)
             .unwrap_or_default();
-        return folder_name == repo_name;
+        return Ok(folder_name == repo_name);
     }
 
-    false
+    Ok(false)
 }
 
 pub(crate) fn find_repo_path(
@@ -703,7 +696,7 @@ pub(crate) fn find_repo_path(
         if git_output(&repo_path, &["rev-parse", "--git-dir"], None).is_err() {
             continue;
         }
-        if repo_matches_identifier(&repo_path, resource_id, repo_name) {
+        if repo_matches_identifier(&repo_path, resource_id, repo_name)? {
             return Ok(Some(repo_path));
         }
     }
@@ -1119,6 +1112,7 @@ mod tests {
             .expect("next function exists");
         let discard_body = &source[discard_start..changes_start];
         let guard = "domain.ensure_installation_allows_writes(app, input.installation_id)?;";
+        let abort_call = "abort_in_progress_git_operations(&repo_path)?;";
         let destructive_call = "discard_local_old_layout_changes_and_adopt_remote";
         let guard_index = discard_body
             .find(guard)
@@ -1126,11 +1120,78 @@ mod tests {
         let destructive_index = discard_body
             .find(destructive_call)
             .expect("old-layout discard still calls destructive adoption");
+        let abort_index = discard_body
+            .find(abort_call)
+            .expect("old-layout discard must abort interrupted git operations");
 
         assert!(
             guard_index < destructive_index,
             "resource write access must be verified before destructive adoption"
         );
+        assert!(
+            abort_index < destructive_index,
+            "interrupted git operations must be aborted before destructive adoption"
+        );
+    }
+
+    #[test]
+    fn mutating_resource_sync_entry_points_acquire_the_shared_repo_lock() {
+        let source = include_str!("repo_resource_sync.rs");
+        for (function_name, next_function_name) in [
+            ("fn sync_repos", "fn sync_editor_repo"),
+            ("fn sync_editor_repo", "fn discard_old_layout_repos"),
+            (
+                "fn discard_old_layout_repos",
+                "fn term_changes_between_commits",
+            ),
+        ] {
+            let function_start = source.find(function_name).expect("sync function exists");
+            let function_end = source[function_start..]
+                .find(next_function_name)
+                .map(|offset| function_start + offset)
+                .expect("next sync function exists");
+            let function_body = &source[function_start..function_end];
+
+            assert!(
+                function_body.contains("repo_sync_lock(&repo_path)")
+                    && function_body.contains("acquire_repo_sync_lock(&repo_lock)"),
+                "{function_name} must serialize mutations with the shared per-repo lock"
+            );
+        }
+    }
+
+    #[test]
+    fn batch_sync_loads_transport_credentials_from_the_locked_decision() {
+        let source = include_str!("repo_resource_sync.rs");
+        let function_start = source.find("fn sync_repos").expect("sync function exists");
+        let function_end = source[function_start..]
+            .find("fn sync_editor_repo")
+            .map(|offset| function_start + offset)
+            .expect("next sync function exists");
+        let function_body = &source[function_start..function_end];
+        let lock_index = function_body
+            .find("acquire_repo_sync_lock(&repo_lock)")
+            .expect("sync acquires repo lock");
+        let inspect_index = function_body
+            .find("let inspected = inspect_repo_state")
+            .expect("sync inspects repo state");
+        let token_index = function_body
+            .find("load_git_transport_token")
+            .expect("sync loads transport token");
+
+        assert!(lock_index < inspect_index && inspect_index < token_index);
+    }
+
+    #[test]
+    fn editor_preflight_allows_a_repo_that_has_not_been_cloned() {
+        let missing_repo = std::env::temp_dir().join(format!(
+            "gnosis-missing-editor-repo-{}",
+            uuid::Uuid::now_v7()
+        ));
+
+        assert!(!missing_repo.exists());
+        super::ensure_editor_repo_clean_if_present(&missing_repo)
+            .expect("a missing checkout must proceed to clone");
     }
 
     #[test]

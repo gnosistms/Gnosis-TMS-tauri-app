@@ -166,11 +166,37 @@ fn run_layout_migration_with_recovery(
 ) -> Result<(), String> {
     ensure_clean_repo(repo_path)?;
     if let Err(error) = migrate() {
-        let _ = git_output(repo_path, &["reset", "--hard", "HEAD"], None);
-        let _ = git_output(repo_path, &["clean", "-fd"], None);
-        return Err(error);
+        let reset_error = git_output(repo_path, &["reset", "--hard", "HEAD"], None).err();
+        let clean_error = git_output(repo_path, &["clean", "-fd"], None).err();
+        return Err(migration_error_with_recovery_failures(
+            error,
+            reset_error,
+            clean_error,
+        ));
     }
     Ok(())
+}
+
+fn migration_error_with_recovery_failures(
+    migration_error: String,
+    reset_error: Option<String>,
+    clean_error: Option<String>,
+) -> String {
+    let mut recovery_failures = Vec::new();
+    if let Some(error) = reset_error {
+        recovery_failures.push(format!("reset failed: {error}"));
+    }
+    if let Some(error) = clean_error {
+        recovery_failures.push(format!("clean failed: {error}"));
+    }
+    if recovery_failures.is_empty() {
+        return migration_error;
+    }
+
+    format!(
+        "{migration_error} Migration recovery also failed ({}). The repository may still contain partial migration changes.",
+        recovery_failures.join("; ")
+    )
 }
 
 fn sync_pending_repo_layout_migration(
@@ -1291,6 +1317,20 @@ mod tests {
             "chapters/short-folder/images/photo.png"
         );
         assert_eq!(value["unknownFutureField"], true);
+    }
+
+    #[test]
+    fn migration_recovery_error_reports_dirty_postcondition() {
+        let error = migration_error_with_recovery_failures(
+            "Migration failed.".to_string(),
+            Some("index is locked".to_string()),
+            Some("working tree cleanup was denied".to_string()),
+        );
+
+        assert!(error.contains("Migration failed."));
+        assert!(error.contains("reset failed: index is locked"));
+        assert!(error.contains("clean failed: working tree cleanup was denied"));
+        assert!(error.contains("may still contain partial migration changes"));
     }
 
     #[test]

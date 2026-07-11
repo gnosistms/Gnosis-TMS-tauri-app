@@ -326,6 +326,16 @@ pub(super) fn parse_tmx_glossary(
     if terms.is_empty() {
         return Err("The TMX file did not contain any importable translation units.".to_string());
     }
+    let mut term_ids = BTreeSet::new();
+    if let Some(duplicate_id) = terms
+        .iter()
+        .map(|term| term.term_id.as_str())
+        .find(|term_id| !term_ids.insert(*term_id))
+    {
+        return Err(format!(
+            "The TMX file contains duplicate translation-unit id '{duplicate_id}'."
+        ));
+    }
 
     let title = title_from_import_file_name(file_name);
     let source_language_name = language_name_for_iso_code(&source_language_code)
@@ -545,4 +555,39 @@ fn language_name_for_iso_code(code: &str) -> Option<String> {
         })
         .get(&code.trim().to_lowercase())
         .cloned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_tmx_glossary;
+
+    fn glossary_tmx(first_id: &str, second_id: &str) -> String {
+        format!(
+            r#"<tmx version="1.4"><header srclang="es"/><body>
+<tu tuid="{first_id}"><tuv xml:lang="es"><seg>uno</seg></tuv><tuv xml:lang="fr"><seg>un</seg></tuv></tu>
+<tu tuid="{second_id}"><tuv xml:lang="es"><seg>dos</seg></tuv><tuv xml:lang="fr"><seg>deux</seg></tuv></tu>
+</body></tmx>"#
+        )
+    }
+
+    #[test]
+    fn blank_tuids_receive_distinct_generated_term_ids() {
+        let xml = glossary_tmx("", "   ");
+        let parsed = parse_tmx_glossary("blank-ids.tmx", xml.as_bytes()).expect("parse TMX");
+
+        assert_eq!(parsed.terms.len(), 2);
+        assert!(!parsed.terms[0].term_id.is_empty());
+        assert!(!parsed.terms[1].term_id.is_empty());
+        assert_ne!(parsed.terms[0].term_id, parsed.terms[1].term_id);
+    }
+
+    #[test]
+    fn duplicate_tuids_are_rejected_before_import() {
+        let xml = glossary_tmx("duplicate-id", "duplicate-id");
+        let error = parse_tmx_glossary("duplicate-ids.tmx", xml.as_bytes())
+            .err()
+            .expect("duplicate ids must fail");
+
+        assert!(error.contains("duplicate translation-unit id 'duplicate-id'"));
+    }
 }

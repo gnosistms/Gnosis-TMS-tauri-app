@@ -21,6 +21,7 @@ use crate::{
         new_v2_repo_layout_metadata, write_repo_layout_metadata, RepoKind,
         REPO_METADATA_RELATIVE_PATH, STORAGE_LAYOUT_VERSION_V2,
     },
+    repo_sync_shared::{acquire_repo_sync_lock, repo_sync_lock},
     storage_paths::local_qa_list_repo_root,
 };
 
@@ -608,6 +609,8 @@ fn initialize_gtms_qa_list_repo_sync(
         input.qa_list_id.as_deref(),
         Some(&repo_name),
     )?;
+    let repo_lock = repo_sync_lock(&repo_path);
+    let _repo_lock_guard = acquire_repo_sync_lock(&repo_lock);
     if repo_path.join(QA_LIST_FILE_NAME).exists() {
         return Err("This QA list repo is already initialized.".to_string());
     }
@@ -695,6 +698,8 @@ fn import_tmx_to_gtms_qa_list_repo_sync(
         input.qa_list_id.as_deref(),
         Some(&repo_name),
     )?;
+    let repo_lock = repo_sync_lock(&repo_path);
+    let _repo_lock_guard = acquire_repo_sync_lock(&repo_lock);
     if repo_path.join(QA_LIST_FILE_NAME).exists() {
         return Err("This QA list repo is already initialized.".to_string());
     }
@@ -894,6 +899,8 @@ fn upsert_gtms_qa_list_term_sync(
         input.qa_list_id.as_deref(),
         Some(&input.repo_name),
     )?;
+    let repo_lock = repo_sync_lock(&repo_path);
+    let _repo_lock_guard = acquire_repo_sync_lock(&repo_lock);
     let qa_list_file = read_qa_list_file(&repo_path)?;
     ensure_gitattributes(&repo_path.join(".gitattributes"))?;
     let previous_head_sha = git_output(&repo_path, &["rev-parse", "HEAD"]).ok();
@@ -1001,6 +1008,8 @@ fn delete_gtms_qa_list_term_sync(
         input.qa_list_id.as_deref(),
         Some(&input.repo_name),
     )?;
+    let repo_lock = repo_sync_lock(&repo_path);
+    let _repo_lock_guard = acquire_repo_sync_lock(&repo_lock);
     let qa_list_file = read_qa_list_file(&repo_path)?;
     let previous_head_sha = git_output(&repo_path, &["rev-parse", "HEAD"]).ok();
     let term_path = repo_path
@@ -1035,9 +1044,7 @@ fn delete_gtms_qa_list_term_sync(
 
 fn build_local_qa_list_summary(repo_path: &Path) -> Result<LocalQaListSummary, String> {
     let qa_list_file = read_qa_list_file(repo_path)?;
-    let repo_name = read_local_repo_sync_state(repo_path)
-        .ok()
-        .flatten()
+    let repo_name = read_local_repo_sync_state(repo_path)?
         .and_then(|state| state.current_repo_name)
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
@@ -1248,7 +1255,8 @@ mod tests {
             &stray_repo_path,
             Some("qa-list-live"),
             Some("current-name"),
-        ));
+        )
+        .expect("match QA list repo"));
 
         fs::remove_dir_all(temp_dir).expect("cleanup");
     }

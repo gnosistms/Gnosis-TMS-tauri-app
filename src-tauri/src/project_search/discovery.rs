@@ -56,7 +56,7 @@ pub(super) fn discover_project_repos(repo_root: &Path) -> Result<Vec<RepoRecord>
             continue;
         }
 
-        let sync_state = read_local_repo_sync_state(&repo_path).ok().flatten();
+        let sync_state = read_local_repo_sync_state(&repo_path)?;
         if sync_state
             .as_ref()
             .and_then(|state| state.kind.as_deref())

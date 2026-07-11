@@ -25,7 +25,9 @@ use crate::{
     local_repo_sync_state::{
         read_local_repo_sync_state, upsert_local_repo_sync_state, LocalRepoSyncStateUpdate,
     },
-    repo_sync_shared::{format_git_spawn_error, git_command},
+    repo_sync_shared::{
+        acquire_repo_sync_lock, format_git_spawn_error, git_command, repo_sync_lock,
+    },
     short_path_names::allocate_short_folder_name,
     util::atomic_replace,
 };
@@ -62,10 +64,10 @@ pub(crate) fn repo_matches_identifier(
     repo_path: &Path,
     resource_id: Option<&str>,
     repo_name: Option<&str>,
-) -> bool {
+) -> Result<bool, String> {
     let normalized_resource_id = normalized_optional_identifier(resource_id);
     let normalized_repo_name = normalized_optional_identifier(repo_name);
-    let sync_state = read_local_repo_sync_state(repo_path).ok().flatten();
+    let sync_state = read_local_repo_sync_state(repo_path)?;
 
     if let Some(resource_id) = normalized_resource_id.as_deref() {
         if sync_state
@@ -75,13 +77,13 @@ pub(crate) fn repo_matches_identifier(
             .filter(|value| !value.is_empty())
             == Some(resource_id)
         {
-            return true;
+            return Ok(true);
         }
 
-        return match domain.read_resource_id(repo_path) {
+        return Ok(match domain.read_resource_id(repo_path) {
             Some(file_resource_id) => file_resource_id.trim() == resource_id,
             None => false,
-        };
+        });
     }
 
     if let Some(repo_name) = normalized_repo_name.as_deref() {
@@ -92,7 +94,7 @@ pub(crate) fn repo_matches_identifier(
             .filter(|value| !value.is_empty())
             == Some(repo_name)
         {
-            return true;
+            return Ok(true);
         }
 
         let folder_name = repo_path
@@ -100,10 +102,10 @@ pub(crate) fn repo_matches_identifier(
             .and_then(|name| name.to_str())
             .map(str::trim)
             .unwrap_or_default();
-        return folder_name == repo_name;
+        return Ok(folder_name == repo_name);
     }
 
-    false
+    Ok(false)
 }
 
 /// Find the local checkout for a resource by id (preferred) or repo name.
@@ -147,7 +149,7 @@ fn find_repo_path_in_root(
         if git_output(&repo_path, &["rev-parse", "--git-dir"]).is_err() {
             continue;
         }
-        if repo_matches_identifier(domain, &repo_path, resource_id, repo_name) {
+        if repo_matches_identifier(domain, &repo_path, resource_id, repo_name)? {
             return Ok(Some(repo_path));
         }
     }
@@ -178,7 +180,7 @@ pub(crate) fn resolve_git_repo_path(
                     domain.display_noun()
                 ));
             }
-            if repo_matches_identifier(domain, &repo_path, resource_id, Some(&repo_name)) {
+            if repo_matches_identifier(domain, &repo_path, resource_id, Some(&repo_name))? {
                 return Ok(repo_path);
             }
         }
@@ -300,6 +302,9 @@ pub(crate) fn write_resource_title(
     repo_path: &Path,
     next_title: &str,
 ) -> Result<(), String> {
+    let repo_lock = repo_sync_lock(repo_path);
+    let _repo_lock_guard = acquire_repo_sync_lock(&repo_lock);
+    let file_name = domain.resource_file_name();
     let mut value = read_resource_value(domain, repo_path)?;
     let object = value
         .as_object_mut()
@@ -310,13 +315,27 @@ pub(crate) fn write_resource_title(
         .unwrap_or_default()
         .trim()
         .to_string();
+    let file_has_changes = resource_file_has_changes(repo_path, file_name)?;
     if current_title == next_title {
-        return Ok(());
+        if !file_has_changes {
+            return Ok(());
+        }
+        if !resource_value_matches_head_with_title(repo_path, file_name, &value, next_title)? {
+            return Err(format!(
+                "The {} file contains other uncommitted changes. Sync or resolve them before renaming.",
+                domain.display_noun()
+            ));
+        }
+    } else {
+        if file_has_changes {
+            return Err(format!(
+                "The {} file contains uncommitted changes. Sync or resolve them before renaming.",
+                domain.display_noun()
+            ));
+        }
+        object.insert("title".to_string(), Value::String(next_title.to_string()));
+        write_json_pretty(&repo_path.join(file_name), &value)?;
     }
-
-    object.insert("title".to_string(), Value::String(next_title.to_string()));
-    let file_name = domain.resource_file_name();
-    write_json_pretty(&repo_path.join(file_name), &value)?;
     git_output(repo_path, &["add", file_name])?;
     git_commit_as_signed_in_user(
         app,
@@ -334,6 +353,9 @@ pub(crate) fn write_resource_lifecycle(
     repo_path: &Path,
     next_state: &str,
 ) -> Result<(), String> {
+    let repo_lock = repo_sync_lock(repo_path);
+    let _repo_lock_guard = acquire_repo_sync_lock(&repo_lock);
+    let file_name = domain.resource_file_name();
     let mut value = read_resource_value(domain, repo_path)?;
     let object = value
         .as_object_mut()
@@ -350,14 +372,31 @@ pub(crate) fn write_resource_lifecycle(
     let current_state = lifecycle_object
         .get("state")
         .and_then(Value::as_str)
-        .unwrap_or("active");
+        .unwrap_or("active")
+        .to_string();
+    let file_has_changes = resource_file_has_changes(repo_path, file_name)?;
     if current_state == next_state {
-        return Ok(());
+        if !file_has_changes {
+            return Ok(());
+        }
+        if !resource_value_matches_head_with_lifecycle(
+            domain, repo_path, file_name, &value, next_state,
+        )? {
+            return Err(format!(
+                "The {} file contains other uncommitted changes. Sync or resolve them before changing its lifecycle.",
+                domain.display_noun()
+            ));
+        }
+    } else {
+        if file_has_changes {
+            return Err(format!(
+                "The {} file contains uncommitted changes. Sync or resolve them before changing its lifecycle.",
+                domain.display_noun()
+            ));
+        }
+        lifecycle_object.insert("state".to_string(), Value::String(next_state.to_string()));
+        write_json_pretty(&repo_path.join(file_name), &value)?;
     }
-
-    lifecycle_object.insert("state".to_string(), Value::String(next_state.to_string()));
-    let file_name = domain.resource_file_name();
-    write_json_pretty(&repo_path.join(file_name), &value)?;
     git_output(repo_path, &["add", file_name])?;
     let commit_message = if next_state == "deleted" {
         format!("Mark {} deleted", domain.display_noun())
@@ -366,6 +405,60 @@ pub(crate) fn write_resource_lifecycle(
     };
     git_commit_as_signed_in_user(app, repo_path, &commit_message, &[file_name])?;
     Ok(())
+}
+
+fn resource_file_has_changes(repo_path: &Path, file_name: &str) -> Result<bool, String> {
+    Ok(
+        !git_output(repo_path, &["status", "--porcelain", "--", file_name])?
+            .trim()
+            .is_empty(),
+    )
+}
+
+fn read_resource_value_at_head(repo_path: &Path, file_name: &str) -> Result<Value, String> {
+    let revision = format!("HEAD:{file_name}");
+    let text = git_output(repo_path, &["show", &revision])?;
+    serde_json::from_str(&text)
+        .map_err(|error| format!("Could not parse {file_name} from HEAD: {error}"))
+}
+
+fn resource_value_matches_head_with_title(
+    repo_path: &Path,
+    file_name: &str,
+    current_value: &Value,
+    next_title: &str,
+) -> Result<bool, String> {
+    let mut expected_value = read_resource_value_at_head(repo_path, file_name)?;
+    expected_value
+        .as_object_mut()
+        .ok_or_else(|| format!("{file_name} in HEAD is not a JSON object."))?
+        .insert("title".to_string(), Value::String(next_title.to_string()));
+    Ok(expected_value == *current_value)
+}
+
+fn resource_value_matches_head_with_lifecycle(
+    domain: &dyn RepoResourceStorageDomain,
+    repo_path: &Path,
+    file_name: &str,
+    current_value: &Value,
+    next_state: &str,
+) -> Result<bool, String> {
+    let mut expected_value = read_resource_value_at_head(repo_path, file_name)?;
+    let expected_object = expected_value
+        .as_object_mut()
+        .ok_or_else(|| format!("{file_name} in HEAD is not a JSON object."))?;
+    let expected_lifecycle = expected_object
+        .entry("lifecycle".to_string())
+        .or_insert_with(|| json!({ "state": "active" }))
+        .as_object_mut()
+        .ok_or_else(|| {
+            format!(
+                "The {} lifecycle in HEAD is not a JSON object.",
+                domain.display_noun()
+            )
+        })?;
+    expected_lifecycle.insert("state".to_string(), Value::String(next_state.to_string()));
+    Ok(expected_value == *current_value)
 }
 
 /// Remove the local checkout for a resource (no-op if it does not exist).
@@ -387,6 +480,8 @@ pub(crate) fn purge_repo(
     else {
         return Ok(());
     };
+    let repo_lock = repo_sync_lock(&repo_path);
+    let _repo_lock_guard = acquire_repo_sync_lock(&repo_lock);
 
     fs::remove_dir_all(&repo_path).map_err(|error| {
         format!(
@@ -420,7 +515,7 @@ fn find_purgeable_repo_path(
         let repo_path = repo_root.join(&repo_name);
         if repo_path.exists()
             && git_output(&repo_path, &["rev-parse", "--git-dir"]).is_ok()
-            && repo_matches_identifier(domain, &repo_path, resource_id, Some(&repo_name))
+            && repo_matches_identifier(domain, &repo_path, resource_id, Some(&repo_name))?
         {
             return Ok(Some(repo_path));
         }
@@ -442,6 +537,8 @@ pub(crate) fn prepare_repo(
 ) -> Result<(), String> {
     let repo_path =
         existing_or_desired_git_repo_path(domain, app, installation_id, resource_id, repo_name)?;
+    let repo_lock = repo_sync_lock(&repo_path);
+    let _repo_lock_guard = acquire_repo_sync_lock(&repo_lock);
     fs::create_dir_all(&repo_path).map_err(|error| {
         format!(
             "Could not create the local {} repo '{}': {error}",
@@ -497,6 +594,8 @@ pub(crate) fn rollback_term_upsert(
 ) -> Result<(), String> {
     let repo_path =
         resolve_initialized_repo_path(domain, app, installation_id, resource_id, repo_name)?;
+    let repo_lock = repo_sync_lock(&repo_path);
+    let _repo_lock_guard = acquire_repo_sync_lock(&repo_lock);
     let previous_head_sha = previous_head_sha.trim();
     if previous_head_sha.is_empty() {
         return Err(format!(
@@ -576,10 +675,12 @@ pub(crate) fn write_text_file(path: &Path, contents: &str) -> Result<(), String>
 #[cfg(test)]
 mod tests {
     use super::{
-        existing_or_desired_git_repo_path_in_root, find_repo_path_in_root, write_text_file,
-        RepoResourceStorageDomain,
+        existing_or_desired_git_repo_path_in_root, find_repo_path_in_root,
+        resource_file_has_changes, resource_value_matches_head_with_lifecycle,
+        resource_value_matches_head_with_title, write_text_file, RepoResourceStorageDomain,
     };
     use crate::local_repo_sync_state::{upsert_local_repo_sync_state, LocalRepoSyncStateUpdate};
+    use serde_json::json;
     use std::{fs, path::Path, path::PathBuf, process::Command};
     use tauri::AppHandle;
     use uuid::Uuid;
@@ -625,6 +726,75 @@ mod tests {
         assert!(!dir.join("resource.json.tmp").exists());
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn resource_file_changes_include_staged_retry_content() {
+        let repo_path =
+            std::env::temp_dir().join(format!("gnosis-resource-status-{}", Uuid::now_v7()));
+        fs::create_dir_all(&repo_path).expect("create repo dir");
+        let run_git = |args: &[&str]| {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(&repo_path)
+                .output()
+                .expect("run git command");
+            assert!(
+                output.status.success(),
+                "git command failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        run_git(&["init", "--initial-branch", "main"]);
+        run_git(&["config", "user.name", "Gnosis Test"]);
+        run_git(&["config", "user.email", "test@gnosis.invalid"]);
+        fs::write(
+            repo_path.join("resource.json"),
+            "{\"title\":\"old\",\"lifecycle\":{\"state\":\"active\"}}\n",
+        )
+        .expect("write initial resource");
+        run_git(&["add", "resource.json"]);
+        run_git(&["commit", "-m", "Initial resource"]);
+
+        let retry_value = json!({
+            "title": "old",
+            "lifecycle": { "state": "deleted" },
+        });
+        fs::write(
+            repo_path.join("resource.json"),
+            serde_json::to_vec(&retry_value).expect("serialize retry content"),
+        )
+        .expect("write retry content");
+        run_git(&["add", "resource.json"]);
+
+        assert!(
+            resource_file_has_changes(&repo_path, "resource.json")
+                .expect("inspect resource status"),
+            "a staged prior attempt must not be treated as a clean no-op"
+        );
+        assert!(
+            !resource_value_matches_head_with_title(
+                &repo_path,
+                "resource.json",
+                &retry_value,
+                "old",
+            )
+            .expect("compare title retry"),
+            "a rename retry must not commit a staged lifecycle change"
+        );
+        assert!(
+            resource_value_matches_head_with_lifecycle(
+                &TestStorageDomain,
+                &repo_path,
+                "resource.json",
+                &retry_value,
+                "deleted",
+            )
+            .expect("compare lifecycle retry"),
+            "the matching lifecycle retry should recognize its own staged change"
+        );
+
+        let _ = fs::remove_dir_all(repo_path);
     }
 
     #[test]

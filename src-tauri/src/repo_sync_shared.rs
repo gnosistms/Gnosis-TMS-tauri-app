@@ -55,6 +55,43 @@ pub(crate) fn acquire_repo_sync_lock(lock: &Arc<Mutex<()>>) -> MutexGuard<'_, ()
     lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+pub(crate) fn repo_has_rebase_in_progress_local(repo_path: &Path) -> bool {
+    repo_has_git_state_path(repo_path, "rebase-apply")
+        || repo_has_git_state_path(repo_path, "rebase-merge")
+}
+
+pub(crate) fn repo_has_git_state_path(repo_path: &Path, git_path: &str) -> bool {
+    git_output(repo_path, &["rev-parse", "--git-path", git_path], None)
+        .ok()
+        .map(|path| resolve_repo_git_path(repo_path, &path).exists())
+        .unwrap_or(false)
+}
+
+fn resolve_repo_git_path(repo_path: &Path, git_path: &str) -> PathBuf {
+    let path = PathBuf::from(git_path);
+    if path.is_absolute() {
+        path
+    } else {
+        repo_path.join(path)
+    }
+}
+
+pub(crate) fn abort_in_progress_git_operations(repo_path: &Path) -> Result<(), String> {
+    if repo_has_rebase_in_progress_local(repo_path) {
+        git_output(repo_path, &["rebase", "--abort"], None)?;
+    }
+    if repo_has_git_state_path(repo_path, "MERGE_HEAD") {
+        git_output(repo_path, &["merge", "--abort"], None)?;
+    }
+    if repo_has_git_state_path(repo_path, "CHERRY_PICK_HEAD") {
+        git_output(repo_path, &["cherry-pick", "--abort"], None)?;
+    }
+    if repo_has_git_state_path(repo_path, "REVERT_HEAD") {
+        git_output(repo_path, &["revert", "--abort"], None)?;
+    }
+    Ok(())
+}
+
 static RESOLVED_GIT_EXECUTABLE: OnceLock<PathBuf> = OnceLock::new();
 static APP_GIT_HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
 static APP_GIT_XDG_CONFIG_HOME: OnceLock<PathBuf> = OnceLock::new();

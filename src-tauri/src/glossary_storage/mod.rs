@@ -21,6 +21,7 @@ use crate::{
         new_v2_repo_layout_metadata, write_repo_layout_metadata, RepoKind,
         REPO_METADATA_RELATIVE_PATH, STORAGE_LAYOUT_VERSION_V2,
     },
+    repo_sync_shared::{acquire_repo_sync_lock, repo_sync_lock},
     storage_paths::local_glossary_repo_root,
 };
 
@@ -338,6 +339,7 @@ pub(crate) struct DeleteGlossaryTermResponse {
     glossary_id: String,
     term_id: String,
     term_count: usize,
+    previous_head_sha: Option<String>,
 }
 
 #[tauri::command]
@@ -518,6 +520,9 @@ fn list_local_gtms_glossaries_sync(
     input: ListLocalGlossariesInput,
 ) -> Result<Vec<LocalGlossarySummary>, String> {
     let repo_root = local_glossary_repo_root(app, input.installation_id)?;
+    if !repo_root.exists() {
+        return Ok(Vec::new());
+    }
     let mut summaries = Vec::new();
 
     for entry in fs::read_dir(&repo_root)
@@ -658,6 +663,8 @@ fn initialize_gtms_glossary_repo_sync(
         input.glossary_id.as_deref(),
         Some(&repo_name),
     )?;
+    let repo_lock = repo_sync_lock(&repo_path);
+    let _repo_lock_guard = acquire_repo_sync_lock(&repo_lock);
     if repo_path.join("glossary.json").exists() {
         return Err("This glossary repo is already initialized.".to_string());
     }
@@ -755,6 +762,8 @@ fn import_tmx_to_gtms_glossary_repo_sync(
         input.glossary_id.as_deref(),
         Some(&repo_name),
     )?;
+    let repo_lock = repo_sync_lock(&repo_path);
+    let _repo_lock_guard = acquire_repo_sync_lock(&repo_lock);
     if repo_path.join("glossary.json").exists() {
         return Err("This glossary repo is already initialized.".to_string());
     }
@@ -957,6 +966,8 @@ fn upsert_gtms_glossary_term_sync(
         input.glossary_id.as_deref(),
         Some(&input.repo_name),
     )?;
+    let repo_lock = repo_sync_lock(&repo_path);
+    let _repo_lock_guard = acquire_repo_sync_lock(&repo_lock);
     let glossary_file = read_glossary_file(&repo_path)?;
     ensure_gitattributes(&repo_path.join(".gitattributes"))?;
     let previous_head_sha = git_output(&repo_path, &["rev-parse", "HEAD"]).ok();
@@ -1121,7 +1132,10 @@ fn delete_gtms_glossary_term_sync(
         input.glossary_id.as_deref(),
         Some(&input.repo_name),
     )?;
+    let repo_lock = repo_sync_lock(&repo_path);
+    let _repo_lock_guard = acquire_repo_sync_lock(&repo_lock);
     let glossary_file = read_glossary_file(&repo_path)?;
+    let previous_head_sha = git_output(&repo_path, &["rev-parse", "HEAD"]).ok();
     let term_path = repo_path
         .join("terms")
         .join(format!("{}.json", input.term_id));
@@ -1148,14 +1162,13 @@ fn delete_gtms_glossary_term_sync(
         glossary_id: glossary_file.glossary_id,
         term_id: input.term_id,
         term_count,
+        previous_head_sha,
     })
 }
 
 fn build_local_glossary_summary(repo_path: &Path) -> Result<LocalGlossarySummary, String> {
     let glossary_file = read_glossary_file(repo_path)?;
-    let repo_name = read_local_repo_sync_state(repo_path)
-        .ok()
-        .flatten()
+    let repo_name = read_local_repo_sync_state(repo_path)?
         .and_then(|state| state.current_repo_name)
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
@@ -1285,6 +1298,22 @@ mod tests {
     use super::*;
 
     const GNOSIS_ES_VI_TMX: &str = include_str!("../../tests/fixtures/gnosis-es-vi.tmx");
+
+    #[test]
+    fn glossary_delete_response_serializes_the_previous_head_sha() {
+        let response = DeleteGlossaryTermResponse {
+            glossary_id: "glossary-1".to_string(),
+            term_id: "term-1".to_string(),
+            term_count: 0,
+            previous_head_sha: Some("head-before-delete".to_string()),
+        };
+
+        let value = serde_json::to_value(response).expect("serialize delete response");
+        assert_eq!(
+            value.get("previousHeadSha").and_then(Value::as_str),
+            Some("head-before-delete")
+        );
+    }
 
     #[test]
     fn parses_real_gnosis_es_vi_tmx_fixture() {
@@ -1526,7 +1555,8 @@ mod tests {
             &stray_repo_path,
             Some("glossary-live"),
             Some("shared-name"),
-        ));
+        )
+        .expect("match glossary repo"));
 
         let _ = fs::remove_dir_all(&repo_root);
     }

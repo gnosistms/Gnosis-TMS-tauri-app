@@ -1,6 +1,8 @@
 use std::{
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -9,10 +11,12 @@ use serde::{Deserialize, Serialize};
 use crate::{
     repo_layout_metadata::normalize_repo_kind,
     repo_sync_shared::{format_git_spawn_error, git_command},
-    util::atomic_replace,
+    util::{atomic_replace, random_token},
 };
 
 const LOCAL_REPO_SYNC_STATE_FILE_NAME: &str = "gnosis-sync-state.json";
+static LOCAL_REPO_SYNC_STATE_LOCKS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> =
+    OnceLock::new();
 
 #[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,6 +59,10 @@ pub(crate) fn upsert_local_repo_sync_state(
     update: LocalRepoSyncStateUpdate,
 ) -> Result<LocalRepoSyncState, String> {
     let state_path = local_repo_sync_state_path(repo_path)?;
+    let state_lock = local_repo_sync_state_lock(&state_path);
+    let _state_lock_guard = state_lock
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut state = if state_path.exists() {
         let bytes = fs::read(&state_path).map_err(|error| {
             format!(
@@ -144,7 +152,7 @@ pub(crate) fn upsert_local_repo_sync_state(
 
     let bytes = serde_json::to_vec_pretty(&state)
         .map_err(|error| format!("Could not serialize local repo sync state: {error}"))?;
-    let tmp_path = state_path.with_extension("json.tmp");
+    let tmp_path = state_path.with_extension(format!("json.{}.tmp", random_token(16)));
     fs::write(&tmp_path, bytes).map_err(|error| {
         format!(
             "Could not write local repo sync state temp file '{}': {error}",
@@ -159,6 +167,14 @@ pub(crate) fn upsert_local_repo_sync_state(
     })?;
 
     Ok(state)
+}
+
+fn local_repo_sync_state_lock(state_path: &Path) -> Arc<Mutex<()>> {
+    let locks = LOCAL_REPO_SYNC_STATE_LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut locks = locks
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    locks.entry(state_path.to_path_buf()).or_default().clone()
 }
 
 pub(crate) fn read_local_repo_sync_state(
@@ -244,4 +260,67 @@ fn current_unix_timestamp() -> Option<u64> {
         .duration_since(UNIX_EPOCH)
         .ok()
         .map(|value| value.as_secs())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, sync::Arc, thread};
+
+    use super::{
+        read_local_repo_sync_state, upsert_local_repo_sync_state, LocalRepoSyncStateUpdate,
+    };
+    use crate::{repo_sync_shared::git_command, util::random_token};
+
+    #[test]
+    fn concurrent_upserts_preserve_both_updates_and_valid_json() {
+        let repo_path =
+            std::env::temp_dir().join(format!("gnosis-local-sync-state-test-{}", random_token(16)));
+        fs::create_dir_all(&repo_path).expect("create test repo directory");
+        let init_status = git_command()
+            .expect("resolve git")
+            .args(["init", "--quiet"])
+            .current_dir(&repo_path)
+            .status()
+            .expect("run git init");
+        assert!(init_status.success());
+
+        let repo_path = Arc::new(repo_path);
+        let first_repo_path = Arc::clone(&repo_path);
+        let first = thread::spawn(move || {
+            upsert_local_repo_sync_state(
+                &first_repo_path,
+                LocalRepoSyncStateUpdate {
+                    resource_id: Some("resource-1".to_string()),
+                    ..Default::default()
+                },
+            )
+        });
+        let second_repo_path = Arc::clone(&repo_path);
+        let second = thread::spawn(move || {
+            upsert_local_repo_sync_state(
+                &second_repo_path,
+                LocalRepoSyncStateUpdate {
+                    current_repo_name: Some("renamed-repo".to_string()),
+                    ..Default::default()
+                },
+            )
+        });
+
+        first
+            .join()
+            .expect("first writer panicked")
+            .expect("first upsert failed");
+        second
+            .join()
+            .expect("second writer panicked")
+            .expect("second upsert failed");
+
+        let state = read_local_repo_sync_state(&repo_path)
+            .expect("read state")
+            .expect("state exists");
+        assert_eq!(state.resource_id.as_deref(), Some("resource-1"));
+        assert_eq!(state.current_repo_name.as_deref(), Some("renamed-repo"));
+
+        fs::remove_dir_all(repo_path.as_ref()).expect("remove test repo");
+    }
 }

@@ -206,7 +206,7 @@ async function reopenGlossaryTermEditorWithLatestRemote(render, termId) {
   return true;
 }
 
-async function rollbackGlossaryTermSave(repoInput, previousHeadSha, failureMessage) {
+export async function rollbackGlossaryTermSave(repoInput, previousHeadSha, failureMessage) {
   if (!previousHeadSha) {
     return failureMessage;
   }

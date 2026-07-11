@@ -21,10 +21,10 @@ fn project_repo_matches_identifier(
     repo_path: &Path,
     project_id: Option<&str>,
     repo_name: Option<&str>,
-) -> bool {
+) -> Result<bool, String> {
     let normalized_project_id = normalized_optional_identifier(project_id);
     let normalized_repo_name = normalized_optional_identifier(repo_name);
-    let sync_state = read_local_repo_sync_state(repo_path).ok().flatten();
+    let sync_state = read_local_repo_sync_state(repo_path)?;
 
     if let Some(project_id) = normalized_project_id.as_deref() {
         if let Some(resource_id) = sync_state
@@ -33,7 +33,7 @@ fn project_repo_matches_identifier(
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
-            return resource_id == project_id;
+            return Ok(resource_id == project_id);
         }
     }
 
@@ -45,7 +45,7 @@ fn project_repo_matches_identifier(
             .filter(|value| !value.is_empty())
             == Some(repo_name)
         {
-            return true;
+            return Ok(true);
         }
 
         let folder_name = repo_path
@@ -53,10 +53,10 @@ fn project_repo_matches_identifier(
             .and_then(|name| name.to_str())
             .map(str::trim)
             .unwrap_or_default();
-        return folder_name == repo_name;
+        return Ok(folder_name == repo_name);
     }
 
-    false
+    Ok(false)
 }
 
 pub(crate) fn find_project_repo_path(
@@ -78,7 +78,7 @@ pub(crate) fn find_project_repo_path(
         if git_output(&repo_path, &["rev-parse", "--git-dir"], None).is_err() {
             continue;
         }
-        if project_repo_matches_identifier(&repo_path, project_id, repo_name) {
+        if project_repo_matches_identifier(&repo_path, project_id, repo_name)? {
             return Ok(Some(repo_path));
         }
     }
@@ -121,7 +121,7 @@ pub(crate) fn resolve_project_git_repo_path(
             if git_output(&repo_path, &["rev-parse", "--git-dir"], None).is_err() {
                 return Err("The local project repo is missing or invalid.".to_string());
             }
-            if project_repo_matches_identifier(&repo_path, project_id, Some(&repo_name)) {
+            if project_repo_matches_identifier(&repo_path, project_id, Some(&repo_name))? {
                 return Ok(repo_path);
             }
         }
@@ -201,8 +201,32 @@ mod tests {
             &stray_repo_path,
             Some("project-live"),
             Some("shared-name"),
-        ));
+        )
+        .expect("match project repo"));
 
+        let _ = fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn project_matcher_rejects_corrupt_sync_state_instead_of_falling_back() {
+        let repo_root =
+            env::temp_dir().join(format!("gnosis-project-corrupt-state-{}", Uuid::now_v7()));
+        let repo_path = repo_root.join("matching-folder-name");
+        init_git_repo(&repo_path);
+        fs::write(
+            repo_path.join(".git").join("gnosis-sync-state.json"),
+            b"{not valid json",
+        )
+        .expect("write corrupt sync state");
+
+        let error = project_repo_matches_identifier(
+            &repo_path,
+            Some("project-id"),
+            Some("matching-folder-name"),
+        )
+        .expect_err("corrupt state must block fallback matching");
+
+        assert!(error.contains("Could not parse local repo sync state"));
         let _ = fs::remove_dir_all(&repo_root);
     }
 }

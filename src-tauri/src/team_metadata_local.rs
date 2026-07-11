@@ -344,15 +344,13 @@ pub(crate) async fn repair_local_repo_binding(
                         .ok_or_else(|| {
                             "The local project repo is not available to repair.".to_string()
                         })?;
+                let sync_state = read_local_repo_sync_state(&local_repo_path)?;
                 maybe_repair_sync_state(
                     &local_repo_path,
                     "project",
                     &record.id,
                     &record.repo_name,
-                    read_local_repo_sync_state(&local_repo_path)
-                        .ok()
-                        .flatten()
-                        .as_ref(),
+                    sync_state.as_ref(),
                 )?;
                 if let Some(full_name) = normalized_optional_text(record.full_name.as_deref()) {
                     ensure_repo_origin_remote(
@@ -391,15 +389,13 @@ pub(crate) async fn repair_local_repo_binding(
                         .ok_or_else(|| {
                             "The local glossary repo is not available to repair.".to_string()
                         })?;
+                let sync_state = read_local_repo_sync_state(&local_repo_path)?;
                 maybe_repair_sync_state(
                     &local_repo_path,
                     "glossary",
                     &record.id,
                     &record.repo_name,
-                    read_local_repo_sync_state(&local_repo_path)
-                        .ok()
-                        .flatten()
-                        .as_ref(),
+                    sync_state.as_ref(),
                 )?;
                 if let Some(full_name) = normalized_optional_text(record.full_name.as_deref()) {
                     ensure_repo_origin_remote(
@@ -438,15 +434,13 @@ pub(crate) async fn repair_local_repo_binding(
                         .ok_or_else(|| {
                             "The local QA list repo is not available to repair.".to_string()
                         })?;
+                let sync_state = read_local_repo_sync_state(&local_repo_path)?;
                 maybe_repair_sync_state(
                     &local_repo_path,
                     "qaList",
                     &record.id,
                     &record.repo_name,
-                    read_local_repo_sync_state(&local_repo_path)
-                        .ok()
-                        .flatten()
-                        .as_ref(),
+                    sync_state.as_ref(),
                 )?;
                 if let Some(full_name) = normalized_optional_text(record.full_name.as_deref()) {
                     ensure_repo_origin_remote(

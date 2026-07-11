@@ -211,6 +211,16 @@ pub(super) fn parse_tmx_qa_list(file_name: &str, bytes: &[u8]) -> Result<ParsedT
     if terms.is_empty() {
         return Err("The TMX file does not contain any QA terms.".to_string());
     }
+    let mut term_ids = BTreeSet::new();
+    if let Some(duplicate_id) = terms
+        .iter()
+        .map(|term| term.term_id.as_str())
+        .find(|term_id| !term_ids.insert(*term_id))
+    {
+        return Err(format!(
+            "The TMX file contains duplicate translation-unit id '{duplicate_id}'."
+        ));
+    }
 
     Ok(ParsedTmxQaList {
         title: title_from_file_name(file_name),
@@ -356,4 +366,39 @@ fn escape_xml_text(value: &str) -> String {
 
 fn escape_xml_attr(value: &str) -> String {
     escape_xml_text(value).replace('"', "&quot;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_tmx_qa_list;
+
+    fn qa_tmx(first_id: &str, second_id: &str) -> String {
+        format!(
+            r#"<tmx version="1.4"><header srclang="en"/><body>
+<tu tuid="{first_id}"><tuv xml:lang="en"><seg>First check</seg></tuv></tu>
+<tu tuid="{second_id}"><tuv xml:lang="en"><seg>Second check</seg></tuv></tu>
+</body></tmx>"#
+        )
+    }
+
+    #[test]
+    fn blank_tuids_receive_distinct_generated_term_ids() {
+        let xml = qa_tmx("", "   ");
+        let parsed = parse_tmx_qa_list("blank-ids.tmx", xml.as_bytes()).expect("parse TMX");
+
+        assert_eq!(parsed.terms.len(), 2);
+        assert!(!parsed.terms[0].term_id.is_empty());
+        assert!(!parsed.terms[1].term_id.is_empty());
+        assert_ne!(parsed.terms[0].term_id, parsed.terms[1].term_id);
+    }
+
+    #[test]
+    fn duplicate_tuids_are_rejected_before_import() {
+        let xml = qa_tmx("duplicate-id", "duplicate-id");
+        let error = parse_tmx_qa_list("duplicate-ids.tmx", xml.as_bytes())
+            .err()
+            .expect("duplicate ids must fail");
+
+        assert!(error.contains("duplicate translation-unit id 'duplicate-id'"));
+    }
 }
