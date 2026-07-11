@@ -263,11 +263,11 @@ fn persist_chapter_source_word_counts_batch(
     entries: &[(PathBuf, usize)],
     commit_message: &str,
 ) -> Result<(), String> {
-    // This runs from read paths (editor load, projects-page listing), so it must not be able
-    // to leave the repo dirty: a failed commit would strand modified/staged chapter.json files
-    // that break a later pull. write_row_files_and_commit checks the commit preconditions
-    // before touching any file and rolls everything back if a later step fails; prepare every
-    // update before writing the first one.
+    // This runs from a read path (editor load), so it must not be able to leave the repo
+    // dirty: a failed commit would strand modified/staged chapter.json files that break a
+    // later pull. write_row_files_and_commit checks the commit preconditions before touching
+    // any file and rolls everything back if a later step fails; prepare every update before
+    // writing the first one.
     let mut writes = Vec::with_capacity(entries.len());
     for (chapter_json_path, source_word_count) in entries {
         let original_text = fs::read_to_string(chapter_json_path)
