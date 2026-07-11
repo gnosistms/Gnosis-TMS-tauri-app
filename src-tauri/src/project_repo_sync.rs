@@ -35,9 +35,10 @@ use crate::{
         repo_requires_0810_migration, run_pending_repo_migrations,
     },
     repo_sync_shared::{
-        abort_rebase_after_failed_pull, acquire_repo_sync_lock, ensure_repo_local_git_identity,
-        git_error_indicates_missing_remote_ref, git_output, load_git_transport_token,
-        read_current_head_oid, repo_sync_lock, GitTransportAuth,
+        abort_in_progress_git_operations, abort_rebase_after_failed_pull, acquire_repo_sync_lock,
+        ensure_repo_local_git_identity, git_error_indicates_missing_remote_ref, git_output,
+        load_git_transport_token, read_current_head_oid, repo_has_git_state_path,
+        repo_has_rebase_in_progress_local, repo_sync_lock, GitTransportAuth,
     },
 };
 
@@ -1323,7 +1324,7 @@ fn recover_project_rebase_without_unmerged_files(
     branch_name: &str,
     git_transport_auth: &GitTransportAuth,
 ) -> Result<Option<String>, String> {
-    abort_in_progress_git_operations(repo_path);
+    abort_in_progress_git_operations(repo_path)?;
     backup_dirty_project_worktree(repo_path, branch_name)?;
 
     git_output(
@@ -1604,7 +1605,7 @@ fn discard_old_layout_gtms_project_repos_sync(
         ensure_repo_allows_writes(app, &repo_path)?;
         ensure_project_origin_remote(&project, &repo_path)?;
         ensure_repo_local_git_identity(app, &repo_path)?;
-        abort_in_progress_git_operations(&repo_path);
+        abort_in_progress_git_operations(&repo_path)?;
 
         let branch_name = project_branch_name(&project);
         git_output(
@@ -1641,7 +1642,7 @@ fn overwrite_project_repo_with_remote(
     ensure_repo_allows_writes(app, repo_path)?;
     ensure_project_origin_remote(project, repo_path)?;
     ensure_repo_local_git_identity(app, repo_path)?;
-    abort_in_progress_git_operations(repo_path);
+    abort_in_progress_git_operations(repo_path)?;
 
     let branch_name = project_branch_name(project);
     let remote_tracking_ref = format!("origin/{branch_name}");
@@ -1720,42 +1721,6 @@ fn git_status_porcelain_has_unmerged_entries(git_status_porcelain: &str) -> bool
             "DD" | "AU" | "UD" | "UA" | "DU" | "AA" | "UU"
         )
     })
-}
-
-fn repo_has_rebase_in_progress_local(repo_path: &Path) -> bool {
-    repo_has_git_state_path(repo_path, "rebase-apply")
-        || repo_has_git_state_path(repo_path, "rebase-merge")
-}
-
-fn repo_has_git_state_path(repo_path: &Path, git_path: &str) -> bool {
-    git_output(repo_path, &["rev-parse", "--git-path", git_path], None)
-        .ok()
-        .map(|path| resolve_repo_git_path(repo_path, &path).exists())
-        .unwrap_or(false)
-}
-
-fn resolve_repo_git_path(repo_path: &Path, git_path: &str) -> PathBuf {
-    let path = PathBuf::from(git_path);
-    if path.is_absolute() {
-        path
-    } else {
-        repo_path.join(path)
-    }
-}
-
-fn abort_in_progress_git_operations(repo_path: &Path) {
-    if repo_has_rebase_in_progress_local(repo_path) {
-        let _ = git_output(repo_path, &["rebase", "--abort"], None);
-    }
-    if repo_has_git_state_path(repo_path, "MERGE_HEAD") {
-        let _ = git_output(repo_path, &["merge", "--abort"], None);
-    }
-    if repo_has_git_state_path(repo_path, "CHERRY_PICK_HEAD") {
-        let _ = git_output(repo_path, &["cherry-pick", "--abort"], None);
-    }
-    if repo_has_git_state_path(repo_path, "REVERT_HEAD") {
-        let _ = git_output(repo_path, &["revert", "--abort"], None);
-    }
 }
 
 fn project_branch_name(project: &ProjectRepoSyncDescriptor) -> String {

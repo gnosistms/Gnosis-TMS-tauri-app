@@ -32,6 +32,7 @@ import {
   removeGlossaryEditorQuery,
 } from "./glossary-editor-query.js";
 import { queryClient } from "./query-client.js";
+import { rollbackGlossaryTermSave } from "./glossary-term-draft.js";
 
 function resolveGlossaryForEditor(glossaryId = state.selectedGlossaryId, preferredGlossary = null) {
   const selected = selectedGlossary();
@@ -380,22 +381,36 @@ export async function deleteGlossaryTerm(render, termId) {
   }
 
   try {
-    await invoke("delete_gtms_glossary_term", {
-      input: {
-        installationId: team.installationId,
-        glossaryId: glossary?.id ?? null,
-        repoName,
-        termId,
-      },
-    });
-    removeGlossaryEditorQuery(team, glossary);
-    const syncIssue = getGlossarySyncIssueMessage(
-      await syncSingleGlossaryForTeam(team, selectedGlossary()),
-    );
-    markGlossaryBackgroundSyncDirty();
-    if (syncIssue?.message) {
-      showNoticeBadge(syncIssue.message, render);
+    const repoInput = {
+      installationId: team.installationId,
+      glossaryId: glossary?.id ?? null,
+      repoName,
+    };
+    let previousHeadSha = null;
+    try {
+      const response = await invoke("delete_gtms_glossary_term", {
+        input: {
+          ...repoInput,
+          termId,
+        },
+      });
+      previousHeadSha = response?.previousHeadSha ?? null;
+      const syncIssue = getGlossarySyncIssueMessage(
+        await syncSingleGlossaryForTeam(team, selectedGlossary()),
+      );
+      if (syncIssue?.message) {
+        throw new Error(syncIssue.message);
+      }
+    } catch (error) {
+      const rollbackMessage = await rollbackGlossaryTermSave(
+        repoInput,
+        previousHeadSha,
+        error?.message ?? String(error),
+      );
+      throw new Error(rollbackMessage);
     }
+    removeGlossaryEditorQuery(team, glossary);
+    markGlossaryBackgroundSyncDirty();
     await loadSelectedGlossaryEditorData(render);
   } catch (error) {
     showNoticeBadge(error?.message ?? String(error), render);

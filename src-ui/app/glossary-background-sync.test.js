@@ -202,6 +202,7 @@ const {
   submitGlossaryTermEditor,
 } = await import("./glossary-term-draft.js");
 const {
+  deleteGlossaryTerm,
   maybeApplyGlossaryEditorSnapshot,
   openGlossaryEditor,
 } = await import("./glossary-editor-flow.js");
@@ -844,6 +845,50 @@ test("saving a glossary term rolls back the local commit when the later GitHub s
   assert.match(state.glossaryTermEditor.error, /rolled back/i);
   assert.deepEqual(state.glossaryTermEditor.sourceTerms, ["edited source"]);
   assert.deepEqual(state.glossaryTermEditor.targetTerms, ["edited target"]);
+});
+
+test("deleting a glossary term rolls back the local commit when sync fails", async () => {
+  installGlossaryEditorFixture({ terms: [glossaryTerm()] });
+
+  invokeHandler = async (command) => {
+    switch (command) {
+      case "delete_gtms_glossary_term":
+        return {
+          glossaryId: "glossary-1",
+          termId: "term-1",
+          termCount: 0,
+          previousHeadSha: "head-before-delete",
+        };
+      case "sync_gtms_glossary_repos":
+        return [
+          {
+            repoName: "glossary-1",
+            status: "syncError",
+            message: "GitHub delete sync failed.",
+          },
+        ];
+      case "rollback_gtms_glossary_term_upsert":
+        return null;
+      default:
+        return null;
+    }
+  };
+
+  await deleteGlossaryTerm(() => {}, "term-1");
+
+  const deleteIndex = invokeLog.findIndex(
+    (entry) => entry.command === "delete_gtms_glossary_term",
+  );
+  const rollbackIndex = invokeLog.findIndex(
+    (entry) => entry.command === "rollback_gtms_glossary_term_upsert",
+  );
+  assert.ok(deleteIndex >= 0);
+  assert.ok(rollbackIndex > deleteIndex);
+  assert.equal(
+    invokeLog[rollbackIndex]?.payload?.input?.previousHeadSha,
+    "head-before-delete",
+  );
+  assert.equal(state.glossaryEditor.terms.some((term) => term.termId === "term-1"), true);
 });
 
 test("saving a glossary term closes the modal and patches the visible row before forced sync finishes", async () => {

@@ -288,7 +288,7 @@ pub(super) fn inspect_project_repo_repairs(
         }
 
         let folder_name = repo_folder_name(&repo_path);
-        let sync_state = read_local_repo_sync_state(&repo_path).ok().flatten();
+        let sync_state = read_local_repo_sync_state(&repo_path)?;
         let matched_record = sync_state
             .as_ref()
             .and_then(|state| state.resource_id.as_deref())
@@ -404,7 +404,7 @@ pub(super) fn inspect_glossary_repo_repairs(
         }
 
         let folder_name = repo_folder_name(&repo_path);
-        let sync_state = read_local_repo_sync_state(&repo_path).ok().flatten();
+        let sync_state = read_local_repo_sync_state(&repo_path)?;
         let embedded_glossary_id = read_glossary_id_from_repo(&repo_path);
         let matched_record = sync_state
             .as_ref()
@@ -530,7 +530,7 @@ pub(super) fn inspect_qa_list_repo_repairs(
         }
 
         let folder_name = repo_folder_name(&repo_path);
-        let sync_state = read_local_repo_sync_state(&repo_path).ok().flatten();
+        let sync_state = read_local_repo_sync_state(&repo_path)?;
         let embedded_qa_list_id = read_qa_list_id_from_repo(&repo_path);
         let matched_record = sync_state
             .as_ref()
@@ -666,7 +666,7 @@ fn scan_repo_folders(
             continue;
         }
 
-        let sync_state = read_local_repo_sync_state(&repo_path).ok().flatten();
+        let sync_state = read_local_repo_sync_state(&repo_path)?;
         folders.push(ScannedRepoFolder {
             folder_name: repo_folder_name(&repo_path).unwrap_or_default(),
             sync_state_resource_id: sync_state
