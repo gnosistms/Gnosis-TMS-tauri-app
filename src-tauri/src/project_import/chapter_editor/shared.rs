@@ -257,42 +257,17 @@ fn persist_chapter_source_word_count(
     )
 }
 
-/// TEMPORARY bulk backfill (see plans/bulk-backfill-source-word-count-plan.md; remove
-/// around 2026-06-23): persist the source word counts the projects-page fallback already
-/// computed from rows, so teams with many files do not have to open every chapter in the
-/// editor to warm the cache. One commit per project. Best-effort like the editor-load
-/// refresh: a viewer without write access is a clean no-op.
-pub(super) fn backfill_chapter_source_word_counts(
-    app: &AppHandle,
-    repo_path: &Path,
-    entries: &[(PathBuf, usize)],
-) {
-    if entries.is_empty() {
-        return;
-    }
-    if let Err(error) = persist_chapter_source_word_counts_batch(
-        app,
-        repo_path,
-        entries,
-        "Backfill cached source word counts",
-    ) {
-        if cfg!(debug_assertions) {
-            eprintln!("[gtms word-count cache] skipped bulk backfill: {error}");
-        }
-    }
-}
-
 fn persist_chapter_source_word_counts_batch(
     app: &AppHandle,
     repo_path: &Path,
     entries: &[(PathBuf, usize)],
     commit_message: &str,
 ) -> Result<(), String> {
-    // This runs from read paths (editor load, projects-page listing), so it must not be able
-    // to leave the repo dirty: a failed commit would strand modified/staged chapter.json files
-    // that break a later pull. write_row_files_and_commit checks the commit preconditions
-    // before touching any file and rolls everything back if a later step fails; prepare every
-    // update before writing the first one.
+    // This runs from a read path (editor load), so it must not be able to leave the repo
+    // dirty: a failed commit would strand modified/staged chapter.json files that break a
+    // later pull. write_row_files_and_commit checks the commit preconditions before touching
+    // any file and rolls everything back if a later step fails; prepare every update before
+    // writing the first one.
     let mut writes = Vec::with_capacity(entries.len());
     for (chapter_json_path, source_word_count) in entries {
         let original_text = fs::read_to_string(chapter_json_path)
@@ -336,22 +311,12 @@ fn persist_chapter_source_word_counts_batch(
     Ok(())
 }
 
-/// TEMP alias for the bulk-backfill side channel — removed together with the backfill
-/// (see plans/bulk-backfill-source-word-count-plan.md).
-type ChapterSummariesWithBackfill = (Vec<ProjectChapterSummary>, Vec<(PathBuf, usize)>);
-
-/// Returns the chapter summaries plus, TEMPORARILY (see
-/// plans/bulk-backfill-source-word-count-plan.md; remove around 2026-06-23), the
-/// `(chapter.json path, source count)` pairs for chapters that had no cached
-/// `source_word_count` — the caller persists them so the row-read fallback runs once
-/// per chapter instead of on every refresh.
 pub(super) fn load_project_chapter_summaries(
     repo_path: &Path,
-) -> Result<ChapterSummariesWithBackfill, String> {
-    let mut source_word_count_backfill = Vec::new();
+) -> Result<Vec<ProjectChapterSummary>, String> {
     let chapters_root = repo_path.join("chapters");
     if !chapters_root.exists() {
-        return Ok((Vec::new(), source_word_count_backfill));
+        return Ok(Vec::new());
     }
 
     let entries = fs::read_dir(&chapters_root).map_err(|error| {
@@ -393,16 +358,7 @@ pub(super) fn load_project_chapter_summaries(
             },
             None => {
                 let rows = load_editor_rows(&path.join("rows"))?;
-                let computed = build_word_counts_from_stored_rows(&rows, &languages);
-                source_word_count_backfill.push((
-                    chapter_json_path.clone(),
-                    selected_source_language_code
-                        .as_deref()
-                        .and_then(|code| computed.get(code))
-                        .copied()
-                        .unwrap_or(0),
-                ));
-                computed
+                build_word_counts_from_stored_rows(&rows, &languages)
             }
         };
         let selected_target_language_code = preferred_target_language_code(
@@ -438,7 +394,7 @@ pub(super) fn load_project_chapter_summaries(
         });
     }
 
-    Ok((chapters, source_word_count_backfill))
+    Ok(chapters)
 }
 
 pub(super) fn ensure_editor_field_object_defaults(

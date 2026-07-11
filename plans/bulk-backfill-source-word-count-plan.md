@@ -1,7 +1,12 @@
 # Bulk backfill of cached source word counts (TEMPORARY)
 
-**Status:** active. **Added:** 2026-06-09. **Remove after:** ~2026-06-23 (one to two weeks
-after release), once existing teams have refreshed their projects pages at least once.
+**Status:** completed — temporary backfill removed 2026-07-11. **Added:** 2026-06-09.
+**Remove after:** ~2026-06-23 (one to two weeks after release), once existing teams have
+refreshed their projects pages at least once. The permanent pieces (read-side cache +
+fallback, editor-load refresh, batched persist helper, merge-resolver rule) remain.
+Known behavior after removal: the merge resolver strips the cached count on chapter.json
+conflicts and only an editor open re-warms it, so heavily concurrent teams keep a small
+cold set — if projects-page refresh ever gets slow in the field, look there first.
 
 ## Problem
 
