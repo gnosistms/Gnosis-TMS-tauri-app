@@ -14,6 +14,6 @@ batched persist helper, and merge-resolver rule for `source_word_count` are unch
 - [x] Bump version to 0.8.63 (package.json, package-lock.json, Cargo.toml, Cargo.lock,
       tauri.conf.json).
 - [x] Commit "Release 0.8.63" to main.
-- [ ] Tag `v0.8.63` and push to trigger `release-tauri.yml`.
-- [ ] Confirm the release build and updater artifacts publish successfully on every
+- [x] Tag `v0.8.63` and push to trigger `release-tauri.yml`.
+- [x] Confirm the release build and updater artifacts publish successfully on every
       platform (Windows + macOS arm64/x64) before considering the release complete.
