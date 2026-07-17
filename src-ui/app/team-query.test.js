@@ -336,3 +336,204 @@ test("applyTeamAccessFromListing ignores unknown installations and empty payload
   assert.equal(applyTeamAccessFromListing(42, null), false);
   assert.equal(applyTeamAccessFromListing(42, undefined), false);
 });
+
+test("a stored team missing from the listing is kept as unconfirmed, not pruned", async () => {
+  installFixture();
+  saveStoredTeamRecords([
+    team(),
+    team({
+      id: "github-app-installation-77",
+      name: "Team Two",
+      githubOrg: "team-two",
+      ownerLogin: "team-two",
+      installationId: 77,
+      membershipRole: "owner",
+    }),
+  ]);
+  invokeHandler = async () => [installation()];
+
+  const snapshot = await queryClient.fetchQuery(createTeamsQueryOptions({ authLogin: "owner" }));
+
+  assert.equal(snapshot.items.length, 2);
+  const confirmed = snapshot.items.find((item) => item.installationId === 42);
+  assert.equal(confirmed.syncState, "active");
+  const missing = snapshot.items.find((item) => item.installationId === 77);
+  assert.equal(missing.syncState, "unconfirmed");
+  assert.match(missing.statusLabel, /verify/i);
+  // Cached capabilities survive the unverified listing.
+  assert.equal(missing.canDelete, true);
+  assert.equal(missing.canManageProjects, true);
+
+  const stored = readPersistentValue("gnosis-tms-team-records:owner", []);
+  assert.equal(stored.length, 2);
+  assert.equal(stored.find((item) => item.installationId === 77).syncState, "unconfirmed");
+});
+
+test("an unconfirmed team returns to active when the listing confirms it again", async () => {
+  installFixture();
+  saveStoredTeamRecords([
+    team({ syncState: "unconfirmed", statusLabel: "Couldn't verify team access just now" }),
+  ]);
+  invokeHandler = async () => [installation()];
+
+  const snapshot = await queryClient.fetchQuery(createTeamsQueryOptions({ authLogin: "owner" }));
+
+  assert.equal(snapshot.items.length, 1);
+  assert.equal(snapshot.items[0].syncState, "active");
+  assert.equal(snapshot.items[0].statusLabel, "");
+  assert.equal(readPersistentValue("gnosis-tms-team-records:owner", [])[0].syncState, "active");
+});
+
+test("a degraded listing entry keeps the cached record's capabilities", async () => {
+  installFixture();
+  saveStoredTeamRecords([team({ membershipRole: "owner" })]);
+  invokeHandler = async () => [
+    installation({
+      accountName: null,
+      description: null,
+      membershipState: "unknown",
+      membershipRole: null,
+      canDelete: false,
+      canManageMembers: false,
+      canManageProjects: false,
+      canLeave: false,
+      accessDetailsError: "GitHub API 503: upstream error",
+    }),
+  ];
+
+  const snapshot = await queryClient.fetchQuery(createTeamsQueryOptions({ authLogin: "owner" }));
+
+  assert.equal(snapshot.items.length, 1);
+  const degraded = snapshot.items[0];
+  assert.equal(degraded.syncState, "unconfirmed");
+  // The degraded broker entry must not overwrite verified capabilities.
+  assert.equal(degraded.name, "Team One");
+  assert.equal(degraded.membershipRole, "owner");
+  assert.equal(degraded.canDelete, true);
+  assert.equal(degraded.canManageProjects, true);
+});
+
+test("a degraded entry with no cached record appears as an unconfirmed team", async () => {
+  installFixture();
+  invokeHandler = async () => [
+    installation({
+      accountName: null,
+      membershipRole: null,
+      canDelete: false,
+      canManageMembers: false,
+      canManageProjects: false,
+      accessDetailsError: "GitHub API 503: upstream error",
+    }),
+  ];
+
+  const snapshot = await queryClient.fetchQuery(createTeamsQueryOptions({ authLogin: "owner" }));
+
+  assert.equal(snapshot.items.length, 1);
+  assert.equal(snapshot.items[0].syncState, "unconfirmed");
+  assert.equal(snapshot.items[0].githubOrg, "team-one");
+  assert.equal(snapshot.items[0].canDelete, false);
+});
+
+test("a team absent from successful listings for over a week is dropped", async () => {
+  installFixture();
+  const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
+  saveStoredTeamRecords([
+    team({
+      syncState: "unconfirmed",
+      statusLabel: "Couldn't verify team access just now",
+      unconfirmedSince: eightDaysAgo,
+    }),
+  ]);
+  invokeHandler = async () => [];
+
+  const snapshot = await queryClient.fetchQuery(createTeamsQueryOptions({ authLogin: "owner" }));
+
+  assert.equal(snapshot.items.length, 0);
+  assert.equal(readPersistentValue("gnosis-tms-team-records:owner", []).length, 0);
+});
+
+test("a missing team's absence clock starts at the first missed listing, not lastSeenAt", async () => {
+  installFixture();
+  // The user was away for weeks: lastSeenAt is old, but the team was never
+  // missing from a listing before. Two quick brownout fetches must NOT prune it.
+  const fifteenDaysAgo = new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString();
+  saveStoredTeamRecords([team({ lastSeenAt: fifteenDaysAgo })]);
+  invokeHandler = async () => [];
+
+  await queryClient.fetchQuery(createTeamsQueryOptions({ authLogin: "owner" }));
+  queryClient.clear();
+  const snapshot = await queryClient.fetchQuery(createTeamsQueryOptions({ authLogin: "owner" }));
+
+  assert.equal(snapshot.items.length, 1);
+  assert.equal(snapshot.items[0].syncState, "unconfirmed");
+  const stored = readPersistentValue("gnosis-tms-team-records:owner", []);
+  assert.ok(stored[0].unconfirmedSince, "absence clock is stamped");
+});
+
+test("a degraded-but-present team never expires and resets the absence clock", async () => {
+  installFixture();
+  const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
+  saveStoredTeamRecords([
+    team({
+      membershipRole: "owner",
+      syncState: "unconfirmed",
+      statusLabel: "Couldn't verify team access just now",
+      unconfirmedSince: eightDaysAgo,
+    }),
+  ]);
+  invokeHandler = async () => [
+    installation({
+      accountName: null,
+      membershipRole: null,
+      canDelete: false,
+      canManageMembers: false,
+      canManageProjects: false,
+      accessDetailsError: "GitHub API 503: upstream error",
+    }),
+  ];
+
+  const snapshot = await queryClient.fetchQuery(createTeamsQueryOptions({ authLogin: "owner" }));
+
+  // Presence in the listing is affirmative: the team survives despite the
+  // stale absence clock, keeps its cached capabilities, and the clock resets.
+  assert.equal(snapshot.items.length, 1);
+  assert.equal(snapshot.items[0].syncState, "unconfirmed");
+  assert.equal(snapshot.items[0].canDelete, true);
+  assert.equal(readPersistentValue("gnosis-tms-team-records:owner", [])[0].unconfirmedSince, null);
+});
+
+test("a healthy listing clears the absence clock", async () => {
+  installFixture();
+  saveStoredTeamRecords([
+    team({
+      syncState: "unconfirmed",
+      unconfirmedSince: new Date().toISOString(),
+    }),
+  ]);
+  invokeHandler = async () => [installation()];
+
+  const snapshot = await queryClient.fetchQuery(createTeamsQueryOptions({ authLogin: "owner" }));
+
+  assert.equal(snapshot.items[0].syncState, "active");
+  assert.equal(readPersistentValue("gnosis-tms-team-records:owner", [])[0].unconfirmedSince, null);
+});
+
+test("a soft-deleted team missing for over a week is dropped too", async () => {
+  installFixture();
+  const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
+  saveStoredTeamRecords([
+    team({
+      isDeleted: true,
+      deletedAt: eightDaysAgo,
+      syncState: "deleted",
+      unconfirmedSince: eightDaysAgo,
+    }),
+  ]);
+  invokeHandler = async () => [];
+
+  const snapshot = await queryClient.fetchQuery(createTeamsQueryOptions({ authLogin: "owner" }));
+
+  assert.equal(snapshot.items.length, 0);
+  assert.equal(snapshot.deletedItems.length, 0);
+  assert.equal(readPersistentValue("gnosis-tms-team-records:owner", []).length, 0);
+});

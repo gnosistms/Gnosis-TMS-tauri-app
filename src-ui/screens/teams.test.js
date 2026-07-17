@@ -70,6 +70,19 @@ test.afterEach(() => {
   resetSessionState();
 });
 
+test("teams screen shows a status note on unconfirmed teams", () => {
+  installFixture([
+    team({
+      syncState: "unconfirmed",
+      statusLabel: "Couldn't verify team access just now",
+    }),
+  ]);
+
+  const html = renderTeamsScreen(state);
+
+  assert.match(html, /verify team access/);
+});
+
 test("teams screen keeps row navigation enabled during background refresh", () => {
   installFixture();
   state.teamsPage.isRefreshing = true;

@@ -87,7 +87,70 @@ export function buildTeamRecordFromInstallation(installation) {
     syncState: deleted ? "deleted" : "active",
     statusLabel: deleted ? "Removed from active teams" : "",
     lastSeenAt: new Date().toISOString(),
+    unconfirmedSince: null,
   });
+}
+
+export const UNCONFIRMED_TEAM_STATUS_LABEL = "Couldn't verify team access just now";
+const UNLISTED_TEAM_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+// A team may only be removed from the stored records by an affirmative signal:
+// the user deletes or leaves it, or it stays MISSING from successful listings
+// for over a week (a real uninstall is absent from every healthy response; a
+// GitHub brownout is not). A team merely absent from — or degraded in — one
+// listing keeps its cached record and capabilities; treating those as
+// uninstalls erased teams (the 2026-07-14 incident).
+//
+// unconfirmedSince is the absence clock: stamped when a team first goes
+// missing from a listing, cleared whenever a listing contains the team
+// (healthy or degraded — presence proves the installation exists).
+
+// A team PRESENT in the listing but with a degraded entry (the broker could
+// not verify it against GitHub): keep the cached record and capabilities,
+// show it as unconfirmed, and reset the absence clock. Never expires.
+export function markStoredTeamUnconfirmed(storedTeam) {
+  if (!storedTeam) {
+    return null;
+  }
+  if (storedTeam.isDeleted === true) {
+    return { ...storedTeam, unconfirmedSince: null };
+  }
+  return {
+    ...storedTeam,
+    syncState: "unconfirmed",
+    statusLabel: UNCONFIRMED_TEAM_STATUS_LABEL,
+    unconfirmedSince: null,
+  };
+}
+
+// A team MISSING from a successful listing: keep it as unconfirmed and start
+// (or continue) the absence clock; drop it once it has been absent for over a
+// week of successful listings. Soft-deleted records keep their deleted
+// presentation but age out on the same clock — a genuinely uninstalled
+// team's deleted record should not sit in the list forever.
+export function retainUnlistedStoredTeam(storedTeam, { now = new Date() } = {}) {
+  if (!storedTeam) {
+    return null;
+  }
+  const unconfirmedSinceMs = Date.parse(storedTeam.unconfirmedSince ?? "");
+  if (
+    Number.isFinite(unconfirmedSinceMs)
+    && now.getTime() - unconfirmedSinceMs > UNLISTED_TEAM_RETENTION_MS
+  ) {
+    return null;
+  }
+  const unconfirmedSince = Number.isFinite(unconfirmedSinceMs)
+    ? storedTeam.unconfirmedSince
+    : now.toISOString();
+  if (storedTeam.isDeleted === true) {
+    return { ...storedTeam, unconfirmedSince };
+  }
+  return {
+    ...storedTeam,
+    syncState: "unconfirmed",
+    statusLabel: UNCONFIRMED_TEAM_STATUS_LABEL,
+    unconfirmedSince,
+  };
 }
 
 export function reconcileStoredTeam(storedTeam, installation) {
@@ -106,6 +169,7 @@ export function reconcileStoredTeam(storedTeam, installation) {
     deletedAt: deleted ? storedTeam.deletedAt ?? new Date().toISOString() : null,
     syncState: deleted ? "deleted" : "active",
     statusLabel: deleted ? "Removed from active teams" : "",
+    unconfirmedSince: null,
   });
 }
 
@@ -132,13 +196,7 @@ export function normalizeTeamSnapshot(snapshot) {
         continue;
       }
 
-      items.push({
-        ...activeTeam,
-        isDeleted: false,
-        deletedAt: null,
-        syncState: "active",
-        statusLabel: "",
-      });
+      items.push(normalizeActiveTeamForSnapshot(activeTeam));
       continue;
     }
 
@@ -153,17 +211,22 @@ export function normalizeTeamSnapshot(snapshot) {
     }
 
     if (activeTeam) {
-      items.push({
-        ...activeTeam,
-        isDeleted: false,
-        deletedAt: null,
-        syncState: "active",
-        statusLabel: "",
-      });
+      items.push(normalizeActiveTeamForSnapshot(activeTeam));
     }
   }
 
   return { items, deletedItems };
+}
+
+// Unconfirmed teams are active-but-unverified; snapshot normalization must not
+// promote them back to a clean "active" presentation.
+function normalizeActiveTeamForSnapshot(activeTeam) {
+  return {
+    ...activeTeam,
+    isDeleted: false,
+    deletedAt: null,
+    ...(activeTeam.syncState === "unconfirmed" ? {} : { syncState: "active", statusLabel: "" }),
+  };
 }
 
 export function applyTeamPendingMutation(snapshot, mutation) {

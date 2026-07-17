@@ -135,6 +135,10 @@ function normalizeTeamRecord(team) {
       typeof team.lastSeenAt === "string" && team.lastSeenAt.trim()
         ? team.lastSeenAt
         : null,
+    unconfirmedSince:
+      typeof team.unconfirmedSince === "string" && team.unconfirmedSince.trim()
+        ? team.unconfirmedSince
+        : null,
   };
 }
 

@@ -10,8 +10,10 @@ import {
   applyTeamPendingMutation,
   applyTeamSnapshotToState,
   buildTeamRecordFromInstallation,
+  markStoredTeamUnconfirmed,
   reconcileStoredTeam,
   resolveNextSelectedTeamId,
+  retainUnlistedStoredTeam,
 } from "./team-flow/shared.js";
 import { applyPendingMutations } from "./optimistic-collection.js";
 import {
@@ -148,29 +150,51 @@ export function createTeamsQueryOptions(options = {}) {
   return {
     queryKey: teamKeys.currentUser(authLogin),
     queryFn: async () => {
-      const existingTeamRecords = [
-        ...splitStoredTeamRecords().activeTeams,
-        ...splitStoredTeamRecords().deletedTeams,
-      ];
       const installations = await invoke("list_accessible_github_app_installations", {
         sessionToken: requireBrokerSession(),
       });
       const installationList = (Array.isArray(installations) ? installations : [])
         .filter(isOrganizationInstallation);
+      // Read the stored records AFTER the broker call: a team the user deleted
+      // or left while the fetch was in flight must not be resurrected by the
+      // retention pass below.
+      const { activeTeams, deletedTeams } = splitStoredTeamRecords();
       const storedTeamsByInstallationId = new Map(
-        existingTeamRecords
+        [...activeTeams, ...deletedTeams]
           .filter((team) => Number.isFinite(team.installationId))
           .map((team) => [team.installationId, team]),
       );
       const reconciledTeams = installationList
         .map((installation) => {
           const storedTeam = storedTeamsByInstallationId.get(installation.installationId);
+          if (installation.accessDetailsError) {
+            // The broker couldn't verify this installation against GitHub
+            // (transient failure). The degraded entry carries placeholder
+            // capabilities, so keep the cached record and mark it unconfirmed.
+            return markStoredTeamUnconfirmed(
+              storedTeam ?? buildTeamRecordFromInstallation(installation),
+            );
+          }
           return storedTeam
             ? reconcileStoredTeam(storedTeam, installation)
             : buildTeamRecordFromInstallation(installation);
         })
         .filter(Boolean);
-      const nextStoredTeams = replaceStoredTeamRecords(reconciledTeams);
+      // A stored team missing from the response is NOT treated as removed —
+      // GitHub brownouts produce shortened listings. It is kept as unconfirmed
+      // until an affirmative removal (user delete/leave) or a week of absence
+      // from successful listings expires it (retainUnlistedStoredTeam).
+      const respondedInstallationIds = new Set(
+        installationList.map((installation) => installation.installationId),
+      );
+      const retainedMissingTeams = [...storedTeamsByInstallationId.entries()]
+        .filter(([installationId]) => !respondedInstallationIds.has(installationId))
+        .map(([, team]) => retainUnlistedStoredTeam(team))
+        .filter(Boolean);
+      const nextStoredTeams = replaceStoredTeamRecords([
+        ...reconciledTeams,
+        ...retainedMissingTeams,
+      ]);
       const nextStoredSnapshot = splitStoredTeamRecords(nextStoredTeams);
       const snapshot = createTeamsQuerySnapshot({
         ...applyLocalTeamHardDeleteState({

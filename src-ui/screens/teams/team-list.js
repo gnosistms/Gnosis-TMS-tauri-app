@@ -1,4 +1,5 @@
 import { errorButton, escapeHtml, sectionSeparator, textAction, tooltipAttributes } from "../../lib/ui.js";
+import { UNCONFIRMED_TEAM_STATUS_LABEL } from "../../app/team-flow/shared.js";
 
 function renderAccessLabel(team) {
   if (team.canDelete) {
@@ -59,6 +60,10 @@ function renderTeamCard(team, options = {}) {
               : "Updating..."
       }`
     : renderAccessLabel(team);
+  const unconfirmedNote =
+    team.syncState === "unconfirmed"
+      ? ` · ${team.statusLabel || UNCONFIRMED_TEAM_STATUS_LABEL}`
+      : "";
   const actions = options.actions ?? [
     textAction("Projects", `open-team:${team.id}`),
     textAction("QA", `open-team-qa:${team.id}`),
@@ -81,7 +86,7 @@ function renderTeamCard(team, options = {}) {
             <h2 class="list-row__title">
               <span class="list-row__title-button">${escapeHtml(team.name)}</span>
             </h2>
-            <p class="list-row__meta">@${escapeHtml(team.githubOrg)} · ${escapeHtml(accessLabel)}</p>
+            <p class="list-row__meta">@${escapeHtml(team.githubOrg)} · ${escapeHtml(accessLabel)}${escapeHtml(unconfirmedNote)}</p>
           </div>
           <div class="list-row__actions">
             ${actions.join("")}
