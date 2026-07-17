@@ -38,6 +38,11 @@ pub(crate) struct GithubAppInstallationInfo {
     pub(crate) permissions: Option<BTreeMap<String, String>>,
     pub(crate) app_approval_url: Option<String>,
     pub(crate) app_request_url: Option<String>,
+    // Set by the broker when it could not verify this installation against
+    // GitHub (transient failure). Such an entry proves the installation exists,
+    // but its capability fields are placeholders — do not cache or trust them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) access_details_error: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]

@@ -37,6 +37,13 @@ pub(crate) fn cache_installation_access(
     app: &AppHandle,
     installation: &GithubAppInstallationInfo,
 ) -> Result<(), String> {
+    // A degraded listing entry (broker couldn't verify the installation against
+    // GitHub) carries placeholder capabilities. Caching it would poison the
+    // write-gate snapshot for its freshness window and block writes that a real
+    // verification would allow — keep the previous verified snapshot instead.
+    if installation.access_details_error.is_some() {
+        return Ok(());
+    }
     let snapshot = installation_access_snapshot(installation);
     write_installation_access_snapshot(app, &snapshot)
 }
