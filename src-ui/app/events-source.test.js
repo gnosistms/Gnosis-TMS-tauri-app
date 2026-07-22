@@ -42,15 +42,14 @@ test("events route native project import drops to the visible project import dro
   assert.match(source, /void handleDroppedGlossaryImportPath\(render, droppedPath\)/);
 });
 
-test("events open export modal selects on the first pointer interaction", async () => {
+test("events register the shared custom listbox controls", async () => {
   const source = await readFile(new URL("./events.js", import.meta.url), "utf8");
+  const listboxSource = await readFile(new URL("./events/listbox-control.js", import.meta.url), "utf8");
 
-  assert.match(source, /EXPORT_MODAL_SELECT_SELECTOR/);
-  assert.match(source, /function openExportModalSelectOnFirstPointer\(event\)/);
-  assert.match(source, /event\.target\.closest\(EXPORT_MODAL_SELECT_SELECTOR\)/);
-  assert.match(source, /showPicker\.call\(select\)/);
-  assert.match(source, /event\.preventDefault\(\)/);
-  assert.match(source, /if \(openExportModalSelectOnFirstPointer\(event\)\) \{/);
+  assert.match(source, /registerListboxControlEvents\(\)/);
+  assert.match(listboxSource, /nativeSelect\.dispatchEvent\(new Event\("change", \{ bubbles: true \}\)\)/);
+  assert.match(listboxSource, /\["ArrowDown", "ArrowUp", "Enter", " "\]/);
+  assert.match(listboxSource, /event\.key === "Escape"/);
 });
 
 test("events route paste events through the add translation paste fallback", async () => {

@@ -7,15 +7,31 @@ const source = readFileSync(new URL("./modals.css", import.meta.url), "utf8");
 test("export errors wrap inside the modal detail column", () => {
   assert.match(
     source,
-    /\.editor-export-modal \{\s*display: grid;\s*grid-template-columns: minmax\(200px, 260px\) minmax\(0, 1fr\);/s,
+    /\.editor-export-modal \{\s*display: grid;\s*grid-template-columns: 250px minmax\(0, 1fr\);/s,
   );
   assert.match(
     source,
-    /\.editor-export-modal__detail \{[^}]*min-width: 0;\s*\}/s,
+    /\.editor-export-modal__detail \{[^}]*min-width: 0;/s,
   );
   assert.match(
     source,
     /\.editor-export-modal__detail \.modal__error \{\s*overflow-x: hidden;\s*white-space: normal;\s*overflow-wrap: anywhere;\s*\}/s,
+  );
+});
+
+test("export modal controls reuse shared surface and selection tokens", () => {
+  assert.match(source, /\.modal-card--editor-export \{\s*width: min\(760px, 100%\);\s*\}/s);
+  assert.match(
+    source,
+    /\.editor-export-modal__option\.is-selected \{\s*background: var\(--control-selected-surface\);/s,
+  );
+  assert.match(
+    source,
+    /\.listbox-control__popover \{[^}]*border: 1px solid var\(--surface-border\);[^}]*border-radius: var\(--radius-control\);[^}]*background: var\(--surface-strong\);[^}]*box-shadow: var\(--surface-shadow\);/s,
+  );
+  assert.match(
+    source,
+    /\.editor-export-modal__wordpress-mode\.is-selected \{\s*border-color: var\(--accent\);\s*background: var\(--control-selected-surface\);/s,
   );
 });
 

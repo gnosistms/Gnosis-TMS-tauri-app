@@ -6,6 +6,7 @@ import { listen } from "./runtime.js";
 import { syncGlossaryTermInlineStyleButtons } from "./glossary-term-inline-markup-flow.js";
 import { syncQaTermInlineStyleButtons } from "./qa-term-inline-markup-flow.js";
 import { registerKeyboardShortcutEvents } from "./events/keyboard-shortcuts.js";
+import { registerListboxControlEvents } from "./events/listbox-control.js";
 import { registerNativeDropEvents } from "./events/native-drops.js";
 import { reportBackendNonfatalError } from "./telemetry.js";
 import {
@@ -37,42 +38,12 @@ const SYNC_WITH_SERVER_EVENT = "sync-with-server";
 const ERROR_REPORTING_EVENT = "open-error-reporting";
 const CHECK_FOR_UPDATES_EVENT = "check-for-updates";
 const BACKEND_NONFATAL_TELEMETRY_EVENT = "backend-nonfatal-telemetry";
-const EXPORT_MODAL_SELECT_SELECTOR =
-  "[data-editor-export-language-select], [data-editor-export-paper-size-select], [data-team-copy-team-select], [data-team-copy-project-select]";
-
-function openExportModalSelectOnFirstPointer(event) {
-  if (!(event instanceof PointerEvent) || event.button !== 0) {
-    return false;
-  }
-
-  const select =
-    event.target instanceof Element
-      ? event.target.closest(EXPORT_MODAL_SELECT_SELECTOR)
-      : null;
-  if (!(select instanceof HTMLSelectElement) || select.disabled) {
-    return false;
-  }
-
-  const showPicker = select.showPicker;
-  if (typeof showPicker !== "function") {
-    return false;
-  }
-
-  try {
-    select.focus({ preventScroll: true });
-    showPicker.call(select);
-    event.preventDefault();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export function registerAppEvents(render) {
   const dispatchAction = createActionDispatcher(render);
 
   registerNativeDropEvents(render);
   registerKeyboardShortcutEvents(dispatchAction);
+  registerListboxControlEvents();
   registerGlossaryTooltipEvents();
   registerProjectAddTranslationProgress(render);
 
@@ -165,10 +136,6 @@ export function registerAppEvents(render) {
 
   document.addEventListener("pointerdown", (event) => {
     if (!(event instanceof PointerEvent) || event.button !== 0) {
-      return;
-    }
-
-    if (openExportModalSelectOnFirstPointer(event)) {
       return;
     }
 

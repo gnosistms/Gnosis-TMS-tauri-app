@@ -6,7 +6,9 @@ globalThis.window = globalThis.window ?? {};
 const { setActiveStorageLogin, clearActiveStorageLogin } = await import("./team-storage.js");
 const {
   loadStoredEditorExportDefault,
+  loadStoredEditorExportPaperSize,
   saveStoredEditorExportDefault,
+  saveStoredEditorExportPaperSize,
 } = await import("./editor-export-defaults.js");
 
 test.afterEach(() => {
@@ -63,4 +65,14 @@ test("export defaults drop invalid wordpress entries and blank options", () => {
 
   saveStoredEditorExportDefault("", { optionId: "file:html" });
   assert.equal(loadStoredEditorExportDefault(""), null);
+});
+
+test("PDF paper size preference round-trips per login and can be cleared", () => {
+  saveStoredEditorExportPaperSize("a5", "Tester");
+
+  assert.equal(loadStoredEditorExportPaperSize("tester"), "a5");
+  assert.equal(loadStoredEditorExportPaperSize("other"), null);
+
+  saveStoredEditorExportPaperSize(null, "tester");
+  assert.equal(loadStoredEditorExportPaperSize("tester"), null);
 });

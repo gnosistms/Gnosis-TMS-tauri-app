@@ -25,8 +25,14 @@ import {
 } from "./editor-export-team-copy-flow.js";
 import {
   loadStoredEditorExportDefault,
+  loadStoredEditorExportPaperSize,
   saveStoredEditorExportDefault,
+  saveStoredEditorExportPaperSize,
 } from "./editor-export-defaults.js";
+import {
+  DEFAULT_PDF_PAPER_SIZE,
+  isSupportedPdfPaperSize,
+} from "./editor-export-options.js";
 import {
   copyVellumTextEditorContentToClipboard,
   prepareVellumImageResources,
@@ -72,16 +78,7 @@ const BASE_EDITOR_EXPORT_CATEGORIES = [
   },
 ];
 
-export const PDF_PAPER_SIZES = [
-  { value: "us-letter", label: "US Letter (8.5 × 11 in)" },
-  { value: "us-legal", label: "US Legal (8.5 × 14 in)" },
-  { value: "us-executive", label: "US Executive (7.25 × 10.5 in)" },
-  { value: "us-tabloid", label: "US Tabloid (11 × 17 in)" },
-  { value: "a3", label: "A3 (297 × 420 mm)" },
-  { value: "a4", label: "A4 (210 × 297 mm)" },
-  { value: "a5", label: "A5 (148 × 210 mm)" },
-  { value: "iso-b5", label: "B5 / ISO (176 × 250 mm)" },
-];
+export { PDF_PAPER_SIZES } from "./editor-export-options.js";
 
 export function editorExportCategories() {
   const mac = isMacPlatform();
@@ -239,6 +236,10 @@ function openExportOptionsForChapter(render, chapterId, languageCode) {
   const stored = loadStoredEditorExportDefault(chapterId);
   const storedOption = stored ? findEditorExportOption(stored.optionId) : null;
   const previousOption = findEditorExportOption(previous.selectedOptionId);
+  const storedPdfPaperSize = loadStoredEditorExportPaperSize();
+  const pdfPaperSize = isSupportedPdfPaperSize(storedPdfPaperSize)
+    ? storedPdfPaperSize
+    : createEditorExportModalState().pdfPaperSize;
   const selectedOptionId = storedOption?.available
     ? storedOption.id
     : previousOption?.available
@@ -251,6 +252,7 @@ function openExportOptionsForChapter(render, chapterId, languageCode) {
 
   updateEditorExportModal({
     ...createEditorExportModalState(),
+    pdfPaperSize,
     expandedCategoryIds,
     selectedOptionId,
     chapterId,
@@ -317,11 +319,12 @@ export function selectEditorExportPaperSize(render, paperSize) {
   const modal = currentExportModal();
   const normalized = String(paperSize ?? "").trim();
   if (!modal?.isOpen || exportModalIsBusy(modal)
-    || !PDF_PAPER_SIZES.some((entry) => entry.value === normalized)) {
+    || !isSupportedPdfPaperSize(normalized)) {
     return;
   }
 
   updateEditorExportModal({ pdfPaperSize: normalized, error: "" });
+  saveStoredEditorExportPaperSize(normalized);
   render();
 }
 
@@ -618,7 +621,7 @@ async function submitEditorFileExport(render, option, operations) {
       format: option.format,
       outputPath,
       ...(option.format === "pdf"
-        ? { paperSize: currentExportModal()?.pdfPaperSize || "us-letter" }
+        ? { paperSize: currentExportModal()?.pdfPaperSize || DEFAULT_PDF_PAPER_SIZE }
         : {}),
       footnoteLinksAsPlainText:
         option.printLinkFallback === true

@@ -22,6 +22,8 @@
   --surface-rgb-strong: 255, 248, 237;
   --surface-border: rgba(164, 112, 41, 0.16);
   --surface-shadow: 0 9px 20px rgba(131, 82, 22, 0.07);
+  --control-hover-surface: rgba(255, 244, 227, 0.84);
+  --control-selected-surface: rgba(236, 152, 39, 0.12);
   --panel-surface:
     linear-gradient(180deg, rgba(255, 250, 244, 0.68) 0%, rgba(255, 246, 232, 0.27) 100%),
     rgba(255, 251, 246, 0.36);

@@ -8,6 +8,7 @@ import {
 // Local-only memory of the last successful export per chapter (option id,
 // plus the exact WordPress post for link:wordpress). Not synced to the team.
 const EDITOR_EXPORT_DEFAULTS_STORAGE_KEY = "gnosis-tms-editor-export-defaults";
+const EDITOR_EXPORT_PDF_PAPER_SIZE_STORAGE_KEY = "gnosis-tms-editor-export-pdf-paper-size";
 
 function normalizeStorageLogin(login) {
   return typeof login === "string" && login.trim() ? login.trim().toLowerCase() : null;
@@ -16,6 +17,11 @@ function normalizeStorageLogin(login) {
 function scopedEditorExportDefaultsKey(login = getActiveStorageLogin()) {
   const normalizedLogin = normalizeStorageLogin(login);
   return normalizedLogin ? `${EDITOR_EXPORT_DEFAULTS_STORAGE_KEY}:${normalizedLogin}` : null;
+}
+
+function scopedEditorExportPdfPaperSizeKey(login = getActiveStorageLogin()) {
+  const normalizedLogin = normalizeStorageLogin(login);
+  return normalizedLogin ? `${EDITOR_EXPORT_PDF_PAPER_SIZE_STORAGE_KEY}:${normalizedLogin}` : null;
 }
 
 function isPlainObject(value) {
@@ -105,4 +111,29 @@ export function saveStoredEditorExportDefault(
 
   defaults[chapterId] = normalized;
   writePersistentValue(key, defaults);
+}
+
+export function loadStoredEditorExportPaperSize(login = getActiveStorageLogin()) {
+  const key = scopedEditorExportPdfPaperSizeKey(login);
+  if (!key) {
+    return null;
+  }
+  const stored = readPersistentValue(key, null);
+  return typeof stored === "string" && stored.trim() ? stored.trim() : null;
+}
+
+export function saveStoredEditorExportPaperSize(
+  paperSize,
+  login = getActiveStorageLogin(),
+) {
+  const key = scopedEditorExportPdfPaperSizeKey(login);
+  if (!key) {
+    return;
+  }
+  const normalized = typeof paperSize === "string" ? paperSize.trim() : "";
+  if (!normalized) {
+    removePersistentValue(key);
+    return;
+  }
+  writePersistentValue(key, normalized);
 }

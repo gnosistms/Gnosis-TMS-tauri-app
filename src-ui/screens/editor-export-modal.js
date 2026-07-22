@@ -1,15 +1,20 @@
 import {
   escapeHtml,
+  iconAction,
   loadingPrimaryButton,
   renderCollapseChevron,
+  renderListboxControl,
   secondaryButton,
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
 import {
   editorExportCategories,
   findEditorExportOption,
-  PDF_PAPER_SIZES,
 } from "../app/editor-export-flow.js";
+import {
+  DEFAULT_PDF_PAPER_SIZE,
+  PDF_PAPER_SIZES,
+} from "../app/editor-export-options.js";
 import { selectedWordPressPost } from "../app/editor-export-wordpress-flow.js";
 import {
   eligibleTeamCopyTargets,
@@ -74,7 +79,7 @@ function pdfFontDisclosure(modal) {
   }
   const missingBytes = Number(modal.pdfFontMissingBytes) || 0;
   if (missingBytes === 0) {
-    return supportingText("PDF fonts are installed. No download is required.");
+    return "";
   }
   const size = `${(missingBytes / 1_048_576).toFixed(1)} MB (${Math.round(missingBytes).toLocaleString("en-US")} bytes)`;
   const families = Array.isArray(modal.pdfFontFamilies) && modal.pdfFontFamilies.length > 0
@@ -192,7 +197,6 @@ function wordpressDetail(wordpress, isExporting) {
           data-wordpress-title-input
         />
       </label>
-      ${supportingText("A new draft post will be created. Publish it from WordPress when you are ready.")}
     `
     : "";
   const overwriteSection = wordpress.mode === "overwrite"
@@ -221,13 +225,19 @@ function wordpressDetail(wordpress, isExporting) {
         <button type="button" class="editor-export-modal__wordpress-disconnect" data-action="disconnect-wordpress">Disconnect</button>
       </p>
       <div class="editor-export-modal__wordpress-modes">
-        <label class="editor-export-modal__wordpress-mode">
+        <label class="editor-export-modal__wordpress-mode${wordpress.mode === "create" ? " is-selected" : ""}">
           <input type="radio" name="wordpress-export-mode" value="create" data-wordpress-mode-input ${wordpress.mode === "create" ? "checked" : ""} />
-          <span>Create a new draft post</span>
+          <span class="editor-export-modal__wordpress-mode-copy">
+            <span class="editor-export-modal__wordpress-mode-title">Create a new draft post</span>
+            <span class="editor-export-modal__wordpress-mode-description">Start a new draft that you can review and publish in WordPress.com.</span>
+          </span>
         </label>
-        <label class="editor-export-modal__wordpress-mode">
+        <label class="editor-export-modal__wordpress-mode${wordpress.mode === "overwrite" ? " is-selected" : ""}">
           <input type="radio" name="wordpress-export-mode" value="overwrite" data-wordpress-mode-input ${wordpress.mode === "overwrite" ? "checked" : ""} />
-          <span>Overwrite an existing post</span>
+          <span class="editor-export-modal__wordpress-mode-copy">
+            <span class="editor-export-modal__wordpress-mode-title">Overwrite an existing post</span>
+            <span class="editor-export-modal__wordpress-mode-description">Replace the content of a post you previously exported.</span>
+          </span>
         </label>
       </div>
       ${createSection}
@@ -245,19 +255,19 @@ function wordpressDetail(wordpress, isExporting) {
   };
 }
 
-function renderExportSelect({ label, selectAttribute, placeholder, options, value, disabled = false }) {
+function renderExportSelect({ id, label, selectAttributes, placeholder, options, value, disabled = false }) {
   return `
-    <label class="field editor-export-modal__field">
-      <span class="field__label">${escapeHtml(label)}</span>
-      <select class="field__input" ${selectAttribute} ${disabled ? "disabled" : ""}>
-        <option value="" ${value ? "" : "selected"}>${escapeHtml(placeholder)}</option>
-        ${options
-          .map((option) => `
-            <option value="${escapeHtml(option.value)}" ${option.value === value ? "selected" : ""}>${escapeHtml(option.label)}</option>
-          `)
-          .join("")}
-      </select>
-    </label>
+    <div class="field editor-export-modal__field">
+      ${renderListboxControl({
+        id,
+        label,
+        value,
+        placeholder,
+        disabled,
+        selectAttributes,
+        options,
+      })}
+    </div>
   `;
 }
 
@@ -295,8 +305,9 @@ function fileExportLanguageSection(option, modal, appState) {
     return "";
   }
   return renderExportSelect({
+    id: "editor-export-language",
     label: "Export language",
-    selectAttribute: "data-editor-export-language-select",
+    selectAttributes: { "data-editor-export-language-select": true },
     placeholder: "Select",
     options: languages.map((language) => ({
       value: language.code,
@@ -308,11 +319,12 @@ function fileExportLanguageSection(option, modal, appState) {
 
 function pdfPaperSizeSection(modal, isExporting) {
   return renderExportSelect({
+    id: "editor-export-paper-size",
     label: "Paper size",
-    selectAttribute: "data-editor-export-paper-size-select",
+    selectAttributes: { "data-editor-export-paper-size-select": true },
     placeholder: "Select",
     options: PDF_PAPER_SIZES,
-    value: String(modal.pdfPaperSize || "us-letter"),
+    value: String(modal.pdfPaperSize || DEFAULT_PDF_PAPER_SIZE),
     disabled: isExporting,
   });
 }
@@ -331,8 +343,9 @@ function teamCopyProjectSection(teamCopy) {
     return supportingText("That team has no projects yet. Create one there first.");
   }
   return renderExportSelect({
+    id: "editor-export-team-project",
     label: "Project",
-    selectAttribute: "data-team-copy-project-select",
+    selectAttributes: { "data-team-copy-project-select": true },
     placeholder: "Select",
     options: teamCopy.projects.map((project) => ({
       value: project.id,
@@ -368,8 +381,9 @@ function teamCopyDetail(teamCopy, isExporting, appState) {
     bodyMarkup: `
       ${supportingText("Copy this chapter, including every language and its images, into a project on any team where you can add files — including this one.")}
       ${renderExportSelect({
+        id: "editor-export-team",
         label: "Team",
-        selectAttribute: "data-team-copy-team-select",
+        selectAttributes: { "data-team-copy-team-select": true },
         placeholder: "Select",
         options: targets.map((team) => ({
           value: team.id,
@@ -490,9 +504,12 @@ function exportDetail(option, isExporting, modal, appState) {
     const pdfProgress = option.format === "pdf" ? renderPdfExportProgress(modal, isExporting) : "";
     const pdfDisclosure = option.format === "pdf" ? pdfFontDisclosure(modal) : "";
     const pdfReady = option.format !== "pdf" || modal.pdfFontStatus === "ready" || isExporting;
+    const article = ["html", "xlsx", "rtf"].includes(option.format) ? "an" : "a";
     return {
       bodyMarkup: `
-        ${supportingText(`Click Save to export a ${option.label} file.`)}
+        ${supportingText(option.format === "md"
+          ? "Save this chapter as a Markdown (.md) file."
+          : `Save this chapter as ${article} ${option.label} file.`)}
         ${pdfDisclosure}
         ${fileExportLanguageSection(option, modal, appState)}
         ${option.format === "pdf" ? pdfPaperSizeSection(modal, isExporting) : ""}
@@ -538,13 +555,23 @@ export function renderEditorExportModal(state) {
   const errorMarkup = modal.error
     ? `<p class="modal__error" role="alert">${escapeHtml(formatErrorForDisplay(modal.error))}</p>`
     : "";
+  const closeIcon = `
+    <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+      <path d="m6 6 12 12M18 6 6 18" />
+    </svg>
+  `;
 
   return `
     <div class="modal-backdrop">
       <section class="card modal-card modal-card--editor-export">
-        <div class="card__body modal-card__body">
-          <p class="card__eyebrow">Export</p>
-          <h2 class="modal__title">Export options</h2>
+        <div class="card__body modal-card__body modal-card__body--editor-export">
+          <header class="editor-export-modal__header">
+            <h2 class="modal__title">Export chapter</h2>
+            ${iconAction("Close export options", "close-editor-export-options", closeIcon, {
+              disabled: isCancelling || (isExporting && !canCancelPdf),
+              className: "editor-export-modal__close",
+            })}
+          </header>
           <div class="editor-export-modal">
             <nav class="editor-export-modal__nav" aria-label="Export options">
               ${editorExportCategories().map((category) => renderExportCategory(category, modal)).join("")}
