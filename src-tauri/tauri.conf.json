@@ -47,6 +47,7 @@
     "resources": {
       "resources/windows/git/": "git/windows/",
       "resources/macos/": "git/macos/",
+      "resources/fonts/": "fonts/",
       "resources/THIRD-PARTY-NOTICES.md": "THIRD-PARTY-NOTICES.md"
     },
     "macOS": {

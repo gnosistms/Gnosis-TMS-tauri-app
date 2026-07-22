@@ -5,7 +5,8 @@
 // Sections:
 //   1. Rust crates — `cargo about generate` (src-tauri/about.toml + about.hbs)
 //   2. npm packages — license-checker over production dependencies
-//   3. Bundled/downloaded runtimes — Typst and the Noto Serif font family
+//   3. Bundled/downloaded runtimes — Typst, EB Garamond, the modified Cormorant Garamond,
+//      Shippori Mincho, and Noto print fonts
 //   4. Vendored libraries — src-ui/lib/vendor/diff-match-patch.js (Apache-2.0)
 //
 // Runs as part of the Tauri beforeBuildCommand (build-frontend-for-tauri.mjs)
@@ -113,6 +114,39 @@ function generatePdfRuntimeSection() {
     join(rootDir, "src-ui", "assets", "fonts-variable", "noto-serif", "LICENSE"),
     "utf8",
   ).trimEnd();
+  const oflLicenseStart = oflText.indexOf(
+    "-----------------------------------------------------------",
+  );
+  if (oflLicenseStart < 0) {
+    throw new Error("Could not locate the SIL OFL text used by the PDF fonts.");
+  }
+  const ebGaramondOflText = [
+    "Copyright 2017 The EB Garamond Project Authors (https://github.com/octaviopardo/EBGaramond12)",
+    "",
+    "This Font Software is licensed under the SIL Open Font License, Version 1.1.",
+    "This license is copied below, and is also available with a FAQ at:",
+    "https://openfontlicense.org",
+    "",
+    oflText.slice(oflLicenseStart),
+  ].join("\n");
+  const cormorantGaramondOflText = [
+    "Copyright 2015 the Cormorant Project Authors (github.com/CatharsisFonts/Cormorant)",
+    "",
+    "This Font Software is licensed under the SIL Open Font License, Version 1.1.",
+    "This license is copied below, and is also available with a FAQ at:",
+    "https://scripts.sil.org/OFL",
+    "",
+    oflText.slice(oflLicenseStart),
+  ].join("\n");
+  const shipporiOflText = [
+    "Copyright 2021 The Shippori Mincho Project Authors (https://github.com/fontdasu/ShipporiMincho)",
+    "",
+    "This Font Software is licensed under the SIL Open Font License, Version 1.1.",
+    "This license is copied below, and is also available with a FAQ at:",
+    "http://scripts.sil.org/OFL",
+    "",
+    oflText.slice(oflLicenseStart),
+  ].join("\n");
   return [
     "## PDF export runtime and fonts",
     "",
@@ -126,7 +160,7 @@ function generatePdfRuntimeSection() {
     apacheText,
     "```",
     "",
-    "### Noto Serif font family",
+    "### Noto Serif and Noto Naskh font families",
     "",
     "https://github.com/google/fonts",
     "",
@@ -134,6 +168,46 @@ function generatePdfRuntimeSection() {
     "",
     "```",
     oflText,
+    "```",
+    "",
+    "### Shippori Mincho",
+    "",
+    "https://github.com/fontdasu/ShipporiMincho",
+    "",
+    "Downloaded on demand for Japanese PDF export under the SIL Open Font License, Version 1.1:",
+    "",
+    "```",
+    shipporiOflText,
+    "```",
+    "",
+    "### EB Garamond",
+    "",
+    "https://github.com/octaviopardo/EBGaramond12",
+    "",
+    "Downloaded on demand for PDF export under the SIL Open Font License, Version 1.1:",
+    "",
+    "```",
+    ebGaramondOflText,
+    "```",
+    "",
+    "### Cormorant Garamond (modified)",
+    "",
+    "https://github.com/CatharsisFonts/Cormorant",
+    "",
+    "Bundled with the app for Latin-script PDF headings, as a modified version named",
+    '"Cormorant Garamond Gnosis". Cormorant draws each Vietnamese accent twice — a',
+    "compact form used when marks stack and a taller form used when one stands alone —",
+    "so the two disagree within a single word. The modification replaces the taller",
+    "circumflex, grave and acute with the compact forms the font already contains, and",
+    "corrects the position of the tone mark above an uppercase circumflex. No outline",
+    "is newly drawn. The change is reproducible from the upstream file with",
+    "scripts/patch-cormorant-vietnamese-accents.py.",
+    "",
+    "Used under the SIL Open Font License, Version 1.1, under which this derivative",
+    "also remains:",
+    "",
+    "```",
+    cormorantGaramondOflText,
     "```",
     "",
   ].join("\n");
