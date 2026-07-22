@@ -74,6 +74,14 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      # Tauri validates configured sidecar paths even for lint/test builds. Linux
+      # is not a release target, so provide a zero-byte placeholder instead of
+      # downloading and caching a Typst binary that can never be bundled.
+      - name: Prepare Linux sidecar placeholder
+        run: |
+          mkdir -p src-tauri/binaries
+          touch src-tauri/binaries/typst-x86_64-unknown-linux-gnu
+
       - name: Check formatting
         run: npm run format:rust:check
 
