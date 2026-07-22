@@ -41,6 +41,9 @@
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
+    "externalBin": [
+      "binaries/typst"
+    ],
     "resources": {
       "resources/windows/git/": "git/windows/",
       "resources/macos/": "git/macos/",

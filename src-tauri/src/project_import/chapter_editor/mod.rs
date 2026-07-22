@@ -40,6 +40,7 @@ mod chapter_selection;
 mod git_conflicts;
 mod history;
 mod images;
+mod pdf_export;
 mod row_fields;
 mod row_merge;
 mod row_structure;
@@ -84,6 +85,10 @@ use self::images::{
 pub(super) use self::images::{
     remove_gtms_editor_language_image_sync, save_gtms_editor_language_image_url_sync,
     upload_gtms_editor_language_image_sync,
+};
+pub(crate) use self::pdf_export::{
+    cancel_gtms_chapter_pdf_export, inspect_gtms_chapter_pdf_fonts, start_gtms_chapter_pdf_export,
+    PdfChapterExportInput, PdfFontInspection, PdfFontInspectionInput,
 };
 use self::row_fields::apply_editor_text_style_update;
 #[cfg(test)]

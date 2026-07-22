@@ -49,7 +49,10 @@ const {
   closeEditorExportOptions,
   editorExportCategories,
   findEditorExportOption,
+  handleChapterPdfExportProgress,
   openEditorExportOptions,
+  refreshPdfFontInspection,
+  selectEditorExportPaperSize,
   selectEditorExportOption,
   submitEditorExport,
   toggleEditorExportCategory,
@@ -503,6 +506,188 @@ test("submitEditorExport forwards the footnote-link-as-plain-text option for DOC
   assert.equal(invokeCalls.length, 1);
   assert.equal(invokeCalls[0].payload.input.format, "docx");
   assert.equal(invokeCalls[0].payload.input.footnoteLinksAsPlainText, true);
+});
+
+test("PDF export starts a background job and closes only after its completion event", async () => {
+  installEditorExportFixture();
+  openExportModal("file:pdf");
+  const invokeCalls = [];
+  let renders = 0;
+  selectEditorExportPaperSize(() => { renders += 1; }, "a4");
+
+  await submitEditorExport(() => { renders += 1; }, {
+    saveDialog: async (options) => {
+      assert.deepEqual(options.filters, [{ name: "PDF document", extensions: ["pdf"] }]);
+      return "/tmp/chapter-one.pdf";
+    },
+    invoke: async (command, payload) => {
+      invokeCalls.push({ command, payload });
+      if (command === "inspect_gtms_chapter_pdf_fonts") {
+        return {
+          supported: true,
+          requiredBytes: 4_335_688,
+          missingBytes: 4_335_688,
+          installed: false,
+          fontFamilies: ["Noto Serif"],
+        };
+      }
+      return payload.input.jobId;
+    },
+    waitForRepoQueue: async () => {},
+  });
+
+  assert.equal(invokeCalls[0].command, "inspect_gtms_chapter_pdf_fonts");
+  assert.equal(invokeCalls[1].command, "start_gtms_chapter_pdf_export");
+  assert.equal(invokeCalls[1].payload.input.format, "pdf");
+  assert.equal(invokeCalls[1].payload.input.paperSize, "a4");
+  assert.ok(invokeCalls[1].payload.input.jobId);
+  assert.equal(state.editorChapter.exportModal.isOpen, true);
+  assert.equal(state.editorChapter.exportModal.status, "exporting");
+
+  handleChapterPdfExportProgress({
+    jobId: invokeCalls[1].payload.input.jobId,
+    status: "complete",
+    message: "PDF export complete.",
+  }, () => { renders += 1; });
+
+  assert.equal(state.editorChapter.exportModal.isOpen, false);
+  assert.equal(state.editorChapter.exportModal.status, "idle");
+  assert.ok(renders >= 2);
+});
+
+test("PDF paper-size selection rejects values outside the export catalog", () => {
+  installEditorExportFixture();
+  openExportModal("file:pdf");
+
+  selectEditorExportPaperSize(() => {}, "a5");
+  assert.equal(state.editorChapter.exportModal.pdfPaperSize, "a5");
+
+  selectEditorExportPaperSize(() => {}, "arbitrary-typst-source");
+  assert.equal(state.editorChapter.exportModal.pdfPaperSize, "a5");
+  assert.equal(createEditorExportModalState().pdfPaperSize, "us-letter");
+});
+
+test("PDF font inspection records the exact missing download before export", async () => {
+  installEditorExportFixture();
+  openExportModal("file:pdf");
+
+  await refreshPdfFontInspection(() => {}, {
+    invoke: async () => ({
+      supported: true,
+      requiredBytes: 17_910_040,
+      missingBytes: 13_574_352,
+      installed: false,
+      fontFamilies: ["Noto Serif", "Noto Serif JP"],
+    }),
+  });
+
+  assert.equal(state.editorChapter.exportModal.pdfFontStatus, "ready");
+  assert.equal(state.editorChapter.exportModal.pdfFontMissingBytes, 13_574_352);
+  assert.deepEqual(state.editorChapter.exportModal.pdfFontFamilies, ["Noto Serif", "Noto Serif JP"]);
+});
+
+test("Cancel remains available for a running PDF job and requests backend cancellation", async () => {
+  installEditorExportFixture();
+  openExportModal("file:pdf");
+  state.editorChapter.exportModal.status = "exporting";
+  state.editorChapter.exportModal.pdfJobId = "pdf-job-1";
+  const calls = [];
+
+  closeEditorExportOptions(() => {}, {
+    invoke: async (command, payload) => calls.push({ command, payload }),
+  });
+  await Promise.resolve();
+
+  assert.equal(state.editorChapter.exportModal.status, "cancelling");
+  assert.deepEqual(calls, [{
+    command: "cancel_gtms_chapter_pdf_export",
+    payload: { jobId: "pdf-job-1" },
+  }]);
+
+  handleChapterPdfExportProgress({
+    jobId: "pdf-job-1",
+    status: "cancelled",
+    message: "PDF export cancelled.",
+  }, () => {});
+  assert.equal(state.editorChapter.exportModal.isOpen, false);
+});
+
+test("cancelling while the repo queue is pending prevents the PDF job from starting", async () => {
+  installEditorExportFixture();
+  openExportModal("file:pdf");
+  let releaseQueue;
+  const queue = new Promise((resolve) => { releaseQueue = resolve; });
+  const calls = [];
+
+  const submission = submitEditorExport(() => {}, {
+    saveDialog: async () => "/tmp/chapter-one.pdf",
+    invoke: async (command) => {
+      calls.push(command);
+      if (command === "inspect_gtms_chapter_pdf_fonts") {
+        return {
+          supported: true,
+          requiredBytes: 4_335_688,
+          missingBytes: 0,
+          installed: true,
+          fontFamilies: ["Noto Serif"],
+        };
+      }
+      return null;
+    },
+    waitForRepoQueue: async () => queue,
+  });
+  for (let attempt = 0; attempt < 10 && !state.editorChapter.exportModal.pdfStartPending; attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  assert.equal(state.editorChapter.exportModal.pdfStartPending, true);
+  closeEditorExportOptions(() => {});
+  assert.equal(state.editorChapter.exportModal.isOpen, false);
+
+  releaseQueue();
+  await submission;
+  assert.deepEqual(calls, ["inspect_gtms_chapter_pdf_fonts"]);
+});
+
+test("PDF export progress ignores events from another job", () => {
+  installEditorExportFixture();
+  openExportModal("file:pdf");
+  state.editorChapter.exportModal.status = "exporting";
+  state.editorChapter.exportModal.pdfJobId = "current-job";
+
+  handleChapterPdfExportProgress({
+    jobId: "other-job",
+    status: "error",
+    message: "wrong error",
+  }, () => {});
+
+  assert.equal(state.editorChapter.exportModal.status, "exporting");
+  assert.equal(state.editorChapter.exportModal.error, "");
+});
+
+test("PDF export progress records determinate image preparation progress", () => {
+  installEditorExportFixture();
+  openExportModal("file:pdf");
+  state.editorChapter.exportModal.status = "exporting";
+  state.editorChapter.exportModal.pdfJobId = "current-job";
+
+  handleChapterPdfExportProgress({
+    jobId: "current-job",
+    status: "exporting",
+    stage: "images",
+    message: "Preparing images (2 of 5)…",
+    progressCurrent: 2,
+    progressTotal: 5,
+    progressUnit: "items",
+    progressIndeterminate: false,
+  }, () => {});
+
+  const modal = state.editorChapter.exportModal;
+  assert.equal(modal.pdfStage, "Preparing images (2 of 5)…");
+  assert.equal(modal.pdfProgressCurrent, 2);
+  assert.equal(modal.pdfProgressTotal, 5);
+  assert.equal(modal.pdfProgressUnit, "items");
+  assert.equal(modal.pdfProgressIndeterminate, false);
 });
 
 test("submitEditorExport keeps the modal open with an error when the command fails", async () => {

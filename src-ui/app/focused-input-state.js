@@ -21,6 +21,7 @@ const SUPPORTED_FOCUSED_INPUT_SELECTORS = [
   "[data-glossary-term-notes-input]",
   "[data-glossary-term-footnote-input]",
   "[data-editor-export-language-select]",
+  "[data-editor-export-paper-size-select]",
   "[data-team-copy-team-select]",
   "[data-team-copy-project-select]",
   "[data-team-copy-title-input]",

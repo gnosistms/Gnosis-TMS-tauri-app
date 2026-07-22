@@ -1,3 +1,4 @@
+use super::row_fields::parse_labeled_footnote_text_for_merge;
 use super::*;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use reqwest::blocking::Client as BlockingClient;
@@ -16,27 +17,32 @@ const MAX_EXPORT_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ExportChapterFileInput {
-    installation_id: i64,
-    repo_name: String,
-    project_id: Option<String>,
     #[serde(default)]
-    project_full_name: Option<String>,
-    chapter_id: String,
-    language_code: String,
-    format: String,
-    output_path: String,
+    pub(super) job_id: String,
+    pub(super) installation_id: i64,
+    pub(super) repo_name: String,
+    pub(super) project_id: Option<String>,
+    #[serde(default)]
+    pub(super) project_full_name: Option<String>,
+    pub(super) chapter_id: String,
+    pub(super) language_code: String,
+    pub(super) format: String,
+    pub(super) output_path: String,
+    // PDF-only Typst paper identifier. Other export formats ignore this field.
+    #[serde(default)]
+    pub(super) paper_size: String,
     // Print-oriented option: append each footnote link's destination as plain text
     // "(url)" after the link, since a clickable hyperlink is useless on paper.
     #[serde(default)]
-    footnote_links_as_plain_text: bool,
+    pub(super) footnote_links_as_plain_text: bool,
     // Print-oriented option: drop custom-HTML rows from formats that can't carry
     // raw HTML (DOCX/RTF/TXT/MD/XLSX). HTML export always passes them through.
     #[serde(default)]
-    omit_custom_html: bool,
+    pub(super) omit_custom_html: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum ExportImage {
+pub(super) enum ExportImage {
     Url(String),
     Upload {
         repo_relative_path: String,
@@ -46,32 +52,43 @@ enum ExportImage {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum ExportBlock {
-    Text { text_style: String, text: String },
+pub(super) enum ExportBlock {
+    Text {
+        text_style: String,
+        text: String,
+    },
     Separator,
-    Image { image: ExportImage, caption: String },
-    Footnote { number: usize, text: String },
+    Image {
+        image: ExportImage,
+        caption: String,
+    },
+    Footnote {
+        number: usize,
+        marker: usize,
+        anchor_block: Option<usize>,
+        text: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct ExportDocument {
-    title: String,
-    language_code: String,
-    blocks: Vec<ExportBlock>,
+pub(super) struct ExportDocument {
+    pub(super) title: String,
+    pub(super) language_code: String,
+    pub(super) blocks: Vec<ExportBlock>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct InlineStyleState {
-    bold: bool,
-    italic: bool,
-    underline: bool,
-    link: Option<String>,
+pub(super) struct InlineStyleState {
+    pub(super) bold: bool,
+    pub(super) italic: bool,
+    pub(super) underline: bool,
+    pub(super) link: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct InlineSegment {
-    text: String,
-    style: InlineStyleState,
+pub(super) struct InlineSegment {
+    pub(super) text: String,
+    pub(super) style: InlineStyleState,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -180,7 +197,7 @@ pub(crate) fn export_gtms_chapter_file_sync(
     }
 }
 
-fn build_export_document(
+pub(super) fn build_export_document(
     repo_path: &Path,
     chapter_file: &StoredChapterFile,
     rows: &[StoredRowFile],
@@ -197,6 +214,10 @@ fn build_export_document(
         }
 
         let field = row.fields.get(language_code);
+        let row_footnotes = field
+            .map(|value| export_footnote_entries(&value.footnote))
+            .unwrap_or_default();
+        let row_block_start = blocks.len();
         let style = row_text_style(row);
         if let Some(text) = field
             .map(|value| value.plain_text.trim())
@@ -225,14 +246,20 @@ fn build_export_document(
             });
         }
 
-        if let Some(footnote) = field
-            .map(|value| normalize_editor_footnote_value(&value.footnote))
-            .filter(|text| !text.trim().is_empty())
-        {
+        for footnote in row_footnotes {
             footnote_count += 1;
+            let anchor_block = (row_block_start..blocks.len()).find(|index| {
+                matches!(
+                    &blocks[*index],
+                    ExportBlock::Text { text, .. }
+                        if contains_unescaped_footnote_marker(text, footnote.marker)
+                )
+            });
             blocks.push(ExportBlock::Footnote {
                 number: footnote_count,
-                text: footnote,
+                marker: footnote.marker,
+                anchor_block,
+                text: footnote.text,
             });
         }
     }
@@ -257,6 +284,46 @@ fn build_export_document(
         language_code: export_language_code,
         blocks,
     })
+}
+
+fn export_footnote_entries(value: &str) -> Vec<super::row_fields::ParsedFootnoteEntry> {
+    let normalized = normalize_editor_footnote_value(value);
+    if normalized.trim().is_empty() {
+        return Vec::new();
+    }
+    let parsed = parse_labeled_footnote_text_for_merge(&normalized);
+    if parsed.is_empty() {
+        vec![super::row_fields::ParsedFootnoteEntry {
+            marker: 1,
+            text: normalized.trim().to_string(),
+        }]
+    } else {
+        parsed
+    }
+}
+
+fn contains_unescaped_footnote_marker(text: &str, marker: usize) -> bool {
+    inline_segments(text)
+        .iter()
+        .any(|segment| plain_text_contains_unescaped_footnote_marker(&segment.text, marker))
+}
+
+fn plain_text_contains_unescaped_footnote_marker(text: &str, marker: usize) -> bool {
+    let needle = format!("[{marker}]");
+    let mut cursor = 0usize;
+    while let Some(relative) = text[cursor..].find(&needle) {
+        let index = cursor + relative;
+        let slash_count = text[..index]
+            .chars()
+            .rev()
+            .take_while(|ch| *ch == '\\')
+            .count();
+        if slash_count % 2 == 0 {
+            return true;
+        }
+        cursor = index + needle.len();
+    }
+    false
 }
 
 fn push_text_blocks_with_separators(blocks: &mut Vec<ExportBlock>, text_style: String, text: &str) {
@@ -308,30 +375,49 @@ fn custom_html_to_plain_text(html: &str) -> String {
 // For print/electronic-incompatible formats (DOCX/RTF/TXT/MD) custom-HTML blocks
 // are dropped when omitting, otherwise flattened to plain paragraphs. HTML export
 // keeps the original document and renders the raw HTML verbatim.
-fn apply_print_custom_html_policy(document: &ExportDocument, omit: bool) -> ExportDocument {
-    let blocks = document
-        .blocks
-        .iter()
-        .filter_map(|block| match block {
+pub(super) fn apply_print_custom_html_policy(
+    document: &ExportDocument,
+    omit: bool,
+) -> ExportDocument {
+    let mut blocks = Vec::with_capacity(document.blocks.len());
+    let mut remapped_indices = BTreeMap::new();
+    for (old_index, block) in document.blocks.iter().enumerate() {
+        let next_block = match block {
             ExportBlock::Text { text_style, text }
                 if normalize_editor_text_style_value(Some(text_style)) == "custom_html" =>
             {
                 if omit {
-                    return None;
-                }
-                let plain = custom_html_to_plain_text(text);
-                if plain.is_empty() {
                     None
                 } else {
-                    Some(ExportBlock::Text {
-                        text_style: "paragraph".to_string(),
-                        text: plain,
-                    })
+                    let plain = custom_html_to_plain_text(text);
+                    if plain.is_empty() {
+                        None
+                    } else {
+                        Some(ExportBlock::Text {
+                            text_style: "paragraph".to_string(),
+                            text: plain,
+                        })
+                    }
                 }
             }
+            ExportBlock::Footnote {
+                number,
+                marker,
+                anchor_block,
+                text,
+            } => Some(ExportBlock::Footnote {
+                number: *number,
+                marker: *marker,
+                anchor_block: anchor_block.and_then(|index| remapped_indices.get(&index).copied()),
+                text: text.clone(),
+            }),
             other => Some(other.clone()),
-        })
-        .collect();
+        };
+        if let Some(next_block) = next_block {
+            remapped_indices.insert(old_index, blocks.len());
+            blocks.push(next_block);
+        }
+    }
     ExportDocument {
         title: document.title.clone(),
         language_code: document.language_code.clone(),
@@ -685,7 +771,7 @@ fn render_html_document(document: &ExportDocument) -> Result<String, String> {
             ExportBlock::Separator => {
                 let _ = writeln!(body, "<hr>");
             }
-            ExportBlock::Footnote { number, text } => {
+            ExportBlock::Footnote { number, text, .. } => {
                 let _ = writeln!(
                     body,
                     "<p class=\"footnote\"><em>[{}] {}</em></p>",
@@ -858,7 +944,7 @@ fn render_txt_document(document: &ExportDocument) -> String {
             ExportBlock::Separator => {
                 parts.push("---".to_string());
             }
-            ExportBlock::Footnote { number, text } => {
+            ExportBlock::Footnote { number, text, .. } => {
                 let text = txt_inline_text(text).trim().to_string();
                 if !text.is_empty() {
                     parts.push(format!("[{number}] {text}"));
@@ -930,7 +1016,7 @@ fn render_md_document(document: &ExportDocument) -> String {
                     fragments.push(format!("*{}*", caption.trim()));
                 }
             }
-            ExportBlock::Footnote { number, text } => {
+            ExportBlock::Footnote { number, text, .. } => {
                 let inline = md_single_line(&md_inline_text(text));
                 if inline.trim().is_empty() {
                     continue;
@@ -1040,7 +1126,7 @@ fn escape_md_text(value: &str) -> String {
     output
 }
 
-fn inline_segments(value: &str) -> Vec<InlineSegment> {
+pub(super) fn inline_segments(value: &str) -> Vec<InlineSegment> {
     let mut output = Vec::new();
     let mut style = InlineStyleState::default();
     let mut cursor = 0usize;
@@ -1140,7 +1226,7 @@ fn render_docx_document(
             ExportBlock::Separator => {
                 body.push_str(&docx_separator_paragraph_xml());
             }
-            ExportBlock::Footnote { number, text } => {
+            ExportBlock::Footnote { number, text, .. } => {
                 let text = print_footnote_text(text, footnote_links_as_plain_text);
                 body.push_str(&docx_text_paragraph_xml(
                     None,
@@ -1446,7 +1532,7 @@ fn download_docx_image(url: &str) -> Option<DocxImage> {
     })
 }
 
-fn download_public_image_bytes(url: &str) -> Option<Vec<u8>> {
+pub(super) fn download_public_image_bytes(url: &str) -> Option<Vec<u8>> {
     // Image URLs are row content that can arrive over git from other team members, so an
     // export must not let one of them point this fetch at the exporting machine's own
     // network. Reject non-public hosts, refuse redirects (a public URL could otherwise 302
@@ -1693,7 +1779,7 @@ fn render_rtf_document(document: &ExportDocument, footnote_links_as_plain_text: 
             ExportBlock::Separator => {
                 body.push_str(&rtf_separator_paragraph());
             }
-            ExportBlock::Footnote { number, text } => {
+            ExportBlock::Footnote { number, text, .. } => {
                 let text = print_footnote_text(text, footnote_links_as_plain_text);
                 body.push_str(&rtf_text_paragraph(
                     None,
@@ -2198,6 +2284,8 @@ mod tests {
             },
             ExportBlock::Footnote {
                 number: 1,
+                marker: 1,
+                anchor_block: None,
                 text: "Note".to_string(),
             },
         ]));
@@ -2223,6 +2311,8 @@ mod tests {
             },
             ExportBlock::Footnote {
                 number: 1,
+                marker: 1,
+                anchor_block: None,
                 text: "<u>Note</u>".to_string(),
             },
         ]))
@@ -2372,6 +2462,8 @@ mod tests {
             },
             ExportBlock::Footnote {
                 number: 1,
+                marker: 1,
+                anchor_block: None,
                 text: "<a href=\"https://example.com/note\">note</a>".to_string(),
             },
         ]));
@@ -2415,6 +2507,8 @@ mod tests {
     fn docx_footnote_links_render_as_plain_text_when_option_enabled() {
         let blocks = vec![ExportBlock::Footnote {
             number: 1,
+            marker: 1,
+            anchor_block: None,
             text: "see <a href=\"https://example.com/page\">the page</a>".to_string(),
         }];
         let bytes = render_docx_document(&document(blocks.clone()), true).expect("docx renders");
@@ -2445,6 +2539,8 @@ mod tests {
     fn rtf_footnote_links_render_as_plain_text_when_option_enabled() {
         let blocks = vec![ExportBlock::Footnote {
             number: 1,
+            marker: 1,
+            anchor_block: None,
             text: "see <a href=\"https://example.com/page\">the page</a>".to_string(),
         }];
         let output = render_rtf_document(&document(blocks.clone()), true);
@@ -2743,6 +2839,8 @@ mod tests {
             document.blocks[2],
             ExportBlock::Footnote {
                 number: 1,
+                marker: 1,
+                anchor_block: None,
                 text: "Note".to_string(),
             }
         );
@@ -2777,6 +2875,36 @@ mod tests {
         assert!(!docx_text.contains("Deleted"));
         assert!(!docx_text.contains("Deleted note"));
         assert!(!docx_text.contains("Deleted caption"));
+    }
+
+    #[test]
+    fn block_builder_binds_numbered_notes_to_mid_paragraph_markers() {
+        let mut active = row("row-1", "a", "Before [2] after.", "paragraph");
+        active.fields.get_mut("en").expect("field exists").footnote =
+            "[2] A note in the middle".to_string();
+        let chapter = StoredChapterFile {
+            chapter_id: "chapter-1".to_string(),
+            title: "Chapter".to_string(),
+            lifecycle: active_lifecycle_state(),
+            source_files: Vec::new(),
+            languages: vec![export_language("en", "target", None)],
+            settings: None,
+            source_word_count: None,
+        };
+
+        let document =
+            build_export_document(Path::new("/repo"), &chapter, &[active], "en", None, "")
+                .expect("document should build");
+
+        assert_eq!(
+            document.blocks[1],
+            ExportBlock::Footnote {
+                number: 1,
+                marker: 2,
+                anchor_block: Some(0),
+                text: "A note in the middle".to_string(),
+            }
+        );
     }
 
     #[test]
@@ -2926,6 +3054,8 @@ mod tests {
             },
             ExportBlock::Footnote {
                 number: 1,
+                marker: 1,
+                anchor_block: None,
                 text: "Note".to_string(),
             },
             ExportBlock::Text {
@@ -2991,6 +3121,8 @@ mod tests {
                 },
                 ExportBlock::Footnote {
                     number: 1,
+                    marker: 1,
+                    anchor_block: None,
                     text: "Note".to_string(),
                 },
             ]),

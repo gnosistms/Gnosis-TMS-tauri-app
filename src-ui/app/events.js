@@ -38,7 +38,7 @@ const ERROR_REPORTING_EVENT = "open-error-reporting";
 const CHECK_FOR_UPDATES_EVENT = "check-for-updates";
 const BACKEND_NONFATAL_TELEMETRY_EVENT = "backend-nonfatal-telemetry";
 const EXPORT_MODAL_SELECT_SELECTOR =
-  "[data-editor-export-language-select], [data-team-copy-team-select], [data-team-copy-project-select]";
+  "[data-editor-export-language-select], [data-editor-export-paper-size-select], [data-team-copy-team-select], [data-team-copy-project-select]";
 
 function openExportModalSelectOnFirstPointer(event) {
   if (!(event instanceof PointerEvent) || event.button !== 0) {
