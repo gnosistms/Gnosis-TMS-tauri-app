@@ -11,7 +11,7 @@ use std::sync::{
     Arc, Mutex, OnceLock,
 };
 use std::time::Duration;
-use tauri::{Emitter, Manager};
+use tauri::{path::BaseDirectory, Emitter, Manager};
 use tauri_plugin_shell::{process::CommandEvent, ShellExt};
 use uuid::Uuid;
 
@@ -22,7 +22,8 @@ use super::chapter_export::{
 };
 
 const PDF_EXPORT_EVENT: &str = "chapter-pdf-export-progress";
-const FONT_REVISION: &str = "google-fonts-684b69db51d59a3137ec0152fa3a3afc6f1b3814";
+const FONT_REVISION: &str =
+    "google-fonts-684b69db51d59a3137ec0152fa3a3afc6f1b3814-cormorant-gnosis-1";
 const MAX_FONT_BYTES: u64 = 30 * 1024 * 1024;
 const TYPST_COMPILE_TIMEOUT: Duration = Duration::from_secs(120);
 const CANCELLED: &str = "__GNOSIS_PDF_EXPORT_CANCELLED__";
@@ -123,7 +124,16 @@ struct FontAsset {
     language: &'static str,
     size: u64,
     sha256: &'static str,
-    url: &'static str,
+    source: FontSource,
+}
+
+#[derive(Clone, Copy)]
+enum FontSource {
+    /// Fetched from a pinned upstream URL on first use.
+    Download(&'static str),
+    /// Shipped inside the app bundle, at this path under the resource directory.
+    /// Used for fonts we patch ourselves, which no upstream URL can serve.
+    Bundled(&'static str),
 }
 
 fn pdf_jobs() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
@@ -151,28 +161,48 @@ impl Drop for PdfJobRegistration {
 
 const FONT_ASSETS: &[FontAsset] = &[
     FontAsset {
-        file_name: "NotoSerif.ttf",
-        family: "Noto Serif",
+        file_name: "EBGaramond-Roman.ttf",
+        family: "EB Garamond",
         language: "base",
-        size: 1_887_192,
-        sha256: "4d8e6761424656867019081a1a01336f3cb086982682698714054fc33f782713",
-        url: "https://raw.githubusercontent.com/google/fonts/684b69db51d59a3137ec0152fa3a3afc6f1b3814/ofl/notoserif/NotoSerif%5Bwdth,wght%5D.ttf",
+        size: 851_176,
+        sha256: "ef9512f92f6d579e5dc75af59a5a4b1b8b47d2eda89e00b954d44520e5369027",
+        source: FontSource::Download("https://raw.githubusercontent.com/google/fonts/f8c1d3d6cc75e30d77130bdcbfbff27e3b6233fe/ofl/ebgaramond/EBGaramond%5Bwght%5D.ttf"),
     },
     FontAsset {
-        file_name: "NotoSerif-Italic.ttf",
-        family: "Noto Serif",
+        file_name: "EBGaramond-Italic.ttf",
+        family: "EB Garamond",
         language: "base",
-        size: 2_448_496,
-        sha256: "e87acbc6c0efd0d9a20d6a8cbbda2b266c14be3a3a6f5af8ec9d7b2460570ad1",
-        url: "https://raw.githubusercontent.com/google/fonts/684b69db51d59a3137ec0152fa3a3afc6f1b3814/ofl/notoserif/NotoSerif-Italic%5Bwdth,wght%5D.ttf",
+        size: 754_468,
+        sha256: "bba2c4499c93c9612b90b9825d32b07da52fce2fe57562a1eb6b833553f93c4e",
+        source: FontSource::Download("https://raw.githubusercontent.com/google/fonts/f8c1d3d6cc75e30d77130bdcbfbff27e3b6233fe/ofl/ebgaramond/EBGaramond-Italic%5Bwght%5D.ttf"),
+    },
+    // Cormorant Garamond with its Vietnamese accents corrected. Upstream draws each
+    // accent twice — compact when marks stack, tall when one stands alone — so â and
+    // ầ disagree inside a single word. See scripts/patch-cormorant-vietnamese-accents.py
+    // and plans/cormorant-circumflex-fix-plan.md.
+    FontAsset {
+        file_name: "CormorantGaramondGnosis-Roman.ttf",
+        family: "Cormorant Garamond Gnosis",
+        language: "latin-heading",
+        size: 1_196_284,
+        sha256: "07f3855368a61aca94724813796d3928bf8051e6d06f52b92d93297a4533c14a",
+        source: FontSource::Bundled("fonts/CormorantGaramondGnosis-Roman.ttf"),
     },
     FontAsset {
-        file_name: "NotoSerifJP.ttf",
-        family: "Noto Serif JP",
+        file_name: "ShipporiMincho-Regular.ttf",
+        family: "Shippori Mincho",
         language: "ja",
-        size: 13_574_352,
-        sha256: "2fd527ba12b6a44ec30d796d633360da0aeba6c5d4af1304ce12bb4dc15a7dfc",
-        url: "https://raw.githubusercontent.com/google/fonts/684b69db51d59a3137ec0152fa3a3afc6f1b3814/ofl/notoserifjp/NotoSerifJP%5Bwght%5D.ttf",
+        size: 8_677_284,
+        sha256: "769b5269f0f9bc6534b352c0e6bd856a566e03ff788f107191c2d835863570b2",
+        source: FontSource::Download("https://raw.githubusercontent.com/google/fonts/d0b2d1307ad5d6b579d627a6e5abd25952484b96/ofl/shipporimincho/ShipporiMincho-Regular.ttf"),
+    },
+    FontAsset {
+        file_name: "ShipporiMincho-Bold.ttf",
+        family: "Shippori Mincho",
+        language: "ja",
+        size: 8_563_788,
+        sha256: "63bc4eddc74793f671c3ab827c5175e773ffbe569d0bf50ee65375ea9e3bc286",
+        source: FontSource::Download("https://raw.githubusercontent.com/google/fonts/d0b2d1307ad5d6b579d627a6e5abd25952484b96/ofl/shipporimincho/ShipporiMincho-Bold.ttf"),
     },
     FontAsset {
         file_name: "NotoSerifSC.ttf",
@@ -180,7 +210,7 @@ const FONT_ASSETS: &[FontAsset] = &[
         language: "zh-hans",
         size: 25_125_512,
         sha256: "050080d9255a86808f2945bffac582b31ef32bc36411ce29563b4961670c66f9",
-        url: "https://raw.githubusercontent.com/google/fonts/684b69db51d59a3137ec0152fa3a3afc6f1b3814/ofl/notoserifsc/NotoSerifSC%5Bwght%5D.ttf",
+        source: FontSource::Download("https://raw.githubusercontent.com/google/fonts/684b69db51d59a3137ec0152fa3a3afc6f1b3814/ofl/notoserifsc/NotoSerifSC%5Bwght%5D.ttf"),
     },
     FontAsset {
         file_name: "NotoSerifTC.ttf",
@@ -188,7 +218,7 @@ const FONT_ASSETS: &[FontAsset] = &[
         language: "zh-hant",
         size: 16_851_596,
         sha256: "0077e18f57c6908f4a000969880940bdb0dad057c0e8d98b49dc364c3d1b09c6",
-        url: "https://raw.githubusercontent.com/google/fonts/684b69db51d59a3137ec0152fa3a3afc6f1b3814/ofl/notoseriftc/NotoSerifTC%5Bwght%5D.ttf",
+        source: FontSource::Download("https://raw.githubusercontent.com/google/fonts/684b69db51d59a3137ec0152fa3a3afc6f1b3814/ofl/notoseriftc/NotoSerifTC%5Bwght%5D.ttf"),
     },
     FontAsset {
         file_name: "NotoSerifKR.ttf",
@@ -196,7 +226,7 @@ const FONT_ASSETS: &[FontAsset] = &[
         language: "ko",
         size: 23_795_420,
         sha256: "11f8d5de6f1b79195efba3828aaa2ec95c1178f5ae976fb23c8d53250a9938f3",
-        url: "https://raw.githubusercontent.com/google/fonts/684b69db51d59a3137ec0152fa3a3afc6f1b3814/ofl/notoserifkr/NotoSerifKR%5Bwght%5D.ttf",
+        source: FontSource::Download("https://raw.githubusercontent.com/google/fonts/684b69db51d59a3137ec0152fa3a3afc6f1b3814/ofl/notoserifkr/NotoSerifKR%5Bwght%5D.ttf"),
     },
     FontAsset {
         file_name: "NotoNaskhArabic.ttf",
@@ -204,7 +234,7 @@ const FONT_ASSETS: &[FontAsset] = &[
         language: "arabic",
         size: 307_592,
         sha256: "67b5a525a661b607971fbd3f96a81b89d3a768e74534fca84f18ac97e6fab72f",
-        url: "https://raw.githubusercontent.com/google/fonts/684b69db51d59a3137ec0152fa3a3afc6f1b3814/ofl/notonaskharabic/NotoNaskhArabic%5Bwght%5D.ttf",
+        source: FontSource::Download("https://raw.githubusercontent.com/google/fonts/684b69db51d59a3137ec0152fa3a3afc6f1b3814/ofl/notonaskharabic/NotoNaskhArabic%5Bwght%5D.ttf"),
     },
 ];
 
@@ -598,7 +628,11 @@ fn required_fonts(language_code: &str) -> Vec<FontAsset> {
     FONT_ASSETS
         .iter()
         .copied()
-        .filter(|asset| asset.language == "base" || Some(asset.language) == language)
+        .filter(|asset| {
+            asset.language == "base"
+                || Some(asset.language) == language
+                || (asset.language == "latin-heading" && language.is_none())
+        })
         .collect()
 }
 
@@ -630,15 +664,30 @@ fn ensure_fonts(
             completed += asset.size;
             continue;
         }
-        emit_progress(
-            app,
-            job_id,
-            "running",
-            "downloading-fonts",
-            &format!("Downloading {} for PDF export…", asset.family),
-            PdfProgressValue::determinate(completed, total, "bytes"),
-        );
-        download_font(app, job_id, &font_dir, asset, completed, total, cancelled)?;
+        match asset.source {
+            FontSource::Bundled(resource) => {
+                emit_progress(
+                    app,
+                    job_id,
+                    "running",
+                    "downloading-fonts",
+                    &format!("Preparing {} for PDF export…", asset.family),
+                    PdfProgressValue::determinate(completed, total, "bytes"),
+                );
+                install_bundled_font(app, &font_dir, asset, resource)?;
+            }
+            FontSource::Download(_) => {
+                emit_progress(
+                    app,
+                    job_id,
+                    "running",
+                    "downloading-fonts",
+                    &format!("Downloading {} for PDF export…", asset.family),
+                    PdfProgressValue::determinate(completed, total, "bytes"),
+                );
+                download_font(app, job_id, &font_dir, asset, completed, total, cancelled)?;
+            }
+        }
         completed += asset.size;
     }
     emit_progress(
@@ -650,6 +699,32 @@ fn ensure_fonts(
         PdfProgressValue::determinate(completed, total, "bytes"),
     );
     Ok(font_dir)
+}
+
+/// Copy a font that ships inside the app bundle into the PDF font cache. Typst is
+/// given a single directory to read, so bundled fonts have to land beside the
+/// downloaded ones rather than being referenced in place.
+fn install_bundled_font(
+    app: &AppHandle,
+    font_dir: &Path,
+    asset: FontAsset,
+    resource: &str,
+) -> Result<(), String> {
+    let source = app
+        .path()
+        .resolve(resource, BaseDirectory::Resource)
+        .map_err(|error| format!("Could not locate the bundled PDF font: {error}"))?;
+    let temp_path = font_dir.join(format!(".{}.{}.bundled", asset.file_name, Uuid::now_v7()));
+    fs::copy(&source, &temp_path)
+        .map_err(|error| format!("Could not install the bundled PDF font: {error}"))?;
+    if temp_path.metadata().map(|meta| meta.len()).ok() != Some(asset.size)
+        || hash_file(&temp_path).as_deref() != Some(asset.sha256)
+    {
+        let _ = fs::remove_file(&temp_path);
+        return Err("The bundled PDF font failed its integrity check.".to_string());
+    }
+    atomic_replace(&temp_path, &font_dir.join(asset.file_name))
+        .map_err(|error| format!("Could not install the bundled PDF font: {error}"))
 }
 
 fn valid_cached_font(path: &Path, asset: FontAsset) -> bool {
@@ -680,13 +755,16 @@ fn download_font(
     total: u64,
     cancelled: &AtomicBool,
 ) -> Result<(), String> {
+    let FontSource::Download(url) = asset.source else {
+        return Err("This PDF font ships with the app and is not downloaded.".to_string());
+    };
     let client = BlockingClient::builder()
         .timeout(Duration::from_secs(90))
         .redirect(reqwest::redirect::Policy::limited(3))
         .build()
         .map_err(|error| format!("Could not initialize the PDF font download: {error}"))?;
     let mut response = client
-        .get(asset.url)
+        .get(url)
         .header("User-Agent", "gnosis-tms-pdf-export")
         .send()
         .map_err(|_| {
@@ -862,10 +940,7 @@ fn prepare_typst_workspace(
                 if caption.trim().is_empty() {
                     source.push_str(&format!("#align(center)[#{body}]\n\n"));
                 } else {
-                    source.push_str(&format!(
-                        "#figure({body}, caption: [{}])\n\n",
-                        render_typst_image_caption(caption)
-                    ));
+                    source.push_str(&format!("{}\n\n", render_typst_figure(&body, caption)));
                 }
             }
         }
@@ -1092,27 +1167,39 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
         .language_code
         .to_ascii_lowercase()
         .replace('_', "-");
-    let (families, direction) = if code.starts_with("ja") {
-        (vec!["Noto Serif JP", "Noto Serif"], "ltr")
+    let (families, direction, heading_family) = if code.starts_with("ja") {
+        (vec!["Shippori Mincho", "EB Garamond"], "ltr", None)
     } else if code.starts_with("ko") {
-        (vec!["Noto Serif KR", "Noto Serif"], "ltr")
+        (vec!["Noto Serif KR", "EB Garamond"], "ltr", None)
     } else if code.starts_with("zh-hant") || code.starts_with("zh-tw") || code.starts_with("zh-hk")
     {
-        (vec!["Noto Serif TC", "Noto Serif"], "ltr")
+        (vec!["Noto Serif TC", "EB Garamond"], "ltr", None)
     } else if code.starts_with("zh") {
-        (vec!["Noto Serif SC", "Noto Serif"], "ltr")
+        (vec!["Noto Serif SC", "EB Garamond"], "ltr", None)
     } else if code.starts_with("ar") || code.starts_with("fa") {
-        (vec!["Noto Naskh Arabic", "Noto Serif"], "rtl")
+        (vec!["Noto Naskh Arabic", "EB Garamond"], "rtl", None)
     } else {
-        (vec!["Noto Serif"], "ltr")
+        (
+            vec!["EB Garamond"],
+            "ltr",
+            Some("Cormorant Garamond Gnosis"),
+        )
     };
     let family_list = families
         .iter()
         .map(|family| typst_string(family))
         .collect::<Vec<_>>()
         .join(", ");
+    let heading_rule = heading_family
+        .map(|family| {
+            format!(
+                "#show heading: set text(font: {}, weight: 600)\n",
+                typst_string(family)
+            )
+        })
+        .unwrap_or_default();
     format!(
-        "#set page(paper: \"{paper_size}\", margin: (x: 0.85in, y: 0.8in), numbering: \"1\")\n#set text(font: ({family_list}), size: 11pt, lang: {}, dir: {direction})\n#set par(justify: true, leading: 0.65em)\n#show link: set text(fill: rgb(\"245c8a\"))\n\n",
+        "#set page(paper: \"{paper_size}\", margin: (x: 0.85in, y: 0.8in), numbering: \"1\")\n#set text(font: ({family_list}), size: 11pt, lang: {}, dir: {direction})\n#set par(justify: true, leading: 0.65em)\n{heading_rule}#show link: set text(fill: rgb(\"245c8a\"))\n\n",
         typst_string(&document.language_code)
     )
 }
@@ -1129,6 +1216,13 @@ fn render_typst_image_caption(caption: &str) -> String {
     format!(
         "#text(style: \"italic\")[{}]",
         render_inline_typst(caption, false)
+    )
+}
+
+fn render_typst_figure(body: &str, caption: &str) -> String {
+    format!(
+        "#figure({body}, caption: [{}], numbering: none)",
+        render_typst_image_caption(caption)
     )
 }
 
@@ -1380,14 +1474,57 @@ mod tests {
     fn language_font_selection_uses_the_matching_serif_family() {
         assert!(required_fonts("ja-JP")
             .iter()
-            .any(|font| font.family == "Noto Serif JP"));
+            .any(|font| font.family == "Shippori Mincho"));
+        assert_eq!(
+            required_fonts("ja-JP")
+                .iter()
+                .filter(|font| font.family == "Shippori Mincho")
+                .count(),
+            2
+        );
         assert!(required_fonts("zh-TW")
             .iter()
             .any(|font| font.family == "Noto Serif TC"));
         assert!(required_fonts("ar")
             .iter()
             .any(|font| font.family == "Noto Naskh Arabic"));
-        assert_eq!(required_fonts("es").len(), 2);
+        let latin_fonts = required_fonts("vi");
+        assert_eq!(latin_fonts.len(), 3);
+        assert_eq!(
+            latin_fonts
+                .iter()
+                .filter(|font| font.family == "EB Garamond")
+                .count(),
+            2
+        );
+        assert!(latin_fonts
+            .iter()
+            .any(|font| font.family == "Cormorant Garamond Gnosis"));
+        assert!(!required_fonts("ja")
+            .iter()
+            .any(|font| font.family == "Cormorant Garamond Gnosis"));
+    }
+
+    #[test]
+    fn typst_font_selection_uses_eb_garamond_for_latin_text() {
+        let vietnamese = ExportDocument {
+            title: "Vietnamese".to_string(),
+            language_code: "vi".to_string(),
+            blocks: Vec::new(),
+        };
+        let japanese = ExportDocument {
+            title: "Japanese".to_string(),
+            language_code: "ja".to_string(),
+            blocks: Vec::new(),
+        };
+        let vietnamese_preamble = typst_preamble(&vietnamese, "a4");
+        assert!(vietnamese_preamble.contains("font: (\"EB Garamond\")"));
+        assert!(vietnamese_preamble
+            .contains("#show heading: set text(font: \"Cormorant Garamond Gnosis\", weight: 600)"));
+        assert!(!vietnamese_preamble.contains("Noto Serif"));
+        let japanese_preamble = typst_preamble(&japanese, "a4");
+        assert!(japanese_preamble.contains("\"Shippori Mincho\", \"EB Garamond\""));
+        assert!(!japanese_preamble.contains("Cormorant Garamond"));
     }
 
     #[test]
@@ -1450,6 +1587,17 @@ mod tests {
     }
 
     #[test]
+    fn captioned_images_are_not_numbered() {
+        let figure = render_typst_figure(
+            "image(\"images/example.png\", width: 90%)",
+            "An italic caption",
+        );
+        assert!(figure.starts_with("#figure(image("));
+        assert!(figure.contains("caption: [#text(style: \"italic\")"));
+        assert!(figure.ends_with("numbering: none)"));
+    }
+
+    #[test]
     fn remote_image_failures_identify_the_caption_host_and_reason() {
         let resolved = resolve_pdf_image(
             &ExportImage::Url("http://127.0.0.1/private.png".to_string()),
@@ -1503,16 +1651,16 @@ mod tests {
         )
         .expect("write smoke image");
         let document = ExportDocument {
-            title: "PDF smoke test".to_string(),
-            language_code: "en".to_string(),
+            title: "Kiểm tra PDF tiếng Việt".to_string(),
+            language_code: "vi".to_string(),
             blocks: vec![
                 ExportBlock::Text {
                     text_style: "heading_1".to_string(),
-                    text: "A <b>safe</b> heading".to_string(),
+                    text: "Một <b>tiêu đề tiếng Việt</b>".to_string(),
                 },
                 ExportBlock::Text {
                     text_style: "paragraph".to_string(),
-                    text: "Text with <a href=\"https://example.com\">a link</a> and a mid-paragraph [1] reference."
+                    text: "Những dấu tiếng Việt <i>ấ ề ỗ ở ữ</i>, một <a href=\"https://example.com\">liên kết</a> và chú thích giữa đoạn [1]."
                         .to_string(),
                 },
                 ExportBlock::Text {
@@ -1527,7 +1675,7 @@ mod tests {
                     number: 1,
                     marker: 1,
                     anchor_block: Some(1),
-                    text: "A footnote".to_string(),
+                    text: "Một chú thích tiếng Việt".to_string(),
                 },
                 ExportBlock::Image {
                     image: ExportImage::Upload {

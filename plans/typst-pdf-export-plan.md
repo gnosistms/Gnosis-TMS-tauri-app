@@ -56,55 +56,65 @@ application updates.
 
 ## Font Family Requirement
 
-PDF output uses the same serif family choices already defined in
-`src-ui/styles/base.css`; this is a fixed product requirement, not a suggested initial
-font theme:
+PDF output uses EB Garamond for Latin-script body typography, Cormorant Garamond
+Semibold for Latin-script headings, Shippori Mincho for Japanese, and the app's
+existing Noto families for the remaining CJK and Arabic scripts:
 
 | Gnosis serif CSS family | PDF TTF counterpart | Language/script |
 |---|---|---|
-| `Noto Serif Variable` | Noto Serif | Latin, Vietnamese, Cyrillic, Greek and Latin fallback |
-| `Noto Serif JP Variable` | Noto Serif JP | Japanese |
+| PDF-only | EB Garamond | Latin, Vietnamese, Cyrillic, Greek and Latin fallback |
+| PDF-only | Cormorant Garamond Semibold | Latin-script chapter and section headings |
+| `Noto Serif JP Variable` | Shippori Mincho Regular + Bold | Japanese |
 | `Noto Serif SC Variable` | Noto Serif SC | Simplified Chinese |
 | `Noto Serif TC Variable` | Noto Serif TC | Traditional Chinese |
 | `Noto Serif KR Variable` | Noto Serif KR | Korean |
 | `Noto Naskh Arabic Variable` | Noto Naskh Arabic | Arabic and Persian |
 
-The first release does not add a PDF font picker or substitute a different print
-typeface. Body text, headings, captions, and footnotes inherit the applicable Gnosis
-serif family, weight, and italic behavior. Latin runs inside CJK or Arabic/Persian
-documents use Noto Serif as the fallback, matching the intent of the existing CSS
-font stacks.
+The first release does not add a PDF font picker. Body text, captions, and footnotes
+inherit the applicable body family, weight, and italic behavior. EB Garamond was
+chosen after a Vietnamese visual comparison with Literata, Alegreya, and Source Serif
+4 because its classical proportions best fit literary books while its diacritics,
+weights, and true italics remain complete and coherent. A second comparison selected
+Cormorant Garamond Semibold 600 for Latin-script headings because its higher stroke
+contrast gives headings a lighter, more elegant hierarchy. CJK and Arabic-script
+headings continue to use their regional body families.
 
-The packaged files are full variable TTF counterparts from the same upstream Noto
-families. They are not byte-identical to the app's WOFF2 files because the existing UI
-assets are browser-specific Unicode-range subsets that Typst cannot load directly.
+The Chinese, Korean, and Arabic files are full variable TTF counterparts from the
+upstream Noto families. Shippori Mincho is supplied as static Regular and Bold TTF
+faces, EB Garamond as Roman and Italic variable TTF files, and Cormorant Garamond as
+a Roman variable TTF file. These files are not byte-identical to the app's WOFF2
+assets because the existing UI assets are browser-specific Unicode-range subsets that
+Typst cannot load directly.
 
 ## Font Pack Catalog
 
-Use variable TTF files so regular and bold weights come from one file. Latin also
-needs the italic variable face because Gnosis supports inline italics. Sizes below are
-the upstream raw file sizes observed in `google/fonts` on 2026-07-21; the generated
-manifest is authoritative.
+Use variable TTF files for the remaining Noto script families. Shippori Mincho needs
+Regular and Bold for body copy, headings, and strong text; Japanese italic text uses
+the upright face because the family has no italic. EB Garamond uses Roman and Italic
+variable TTF files so every required weight and both styles are available. Cormorant
+Garamond uses one Roman variable TTF because headings use the 600 upright instance.
+Sizes below are upstream raw file sizes; the code manifest is authoritative.
 
 | Pack id | Contents | Raw bytes (approximately) | Used by |
 |---|---|---:|---|
-| `noto-serif-core-v1` | Noto Serif Roman + Italic variable TTF | 4.34 MB | Latin, Vietnamese, Cyrillic, Greek; dependency of other packs |
+| `eb-garamond-core-v1` | EB Garamond Roman + Italic variable TTF | 1.61 MB | Latin, Vietnamese, Cyrillic, Greek; dependency of other packs |
+| `cormorant-garamond-heading-v1` | Cormorant Garamond Roman variable TTF | 1.20 MB | Latin-script headings |
 | `noto-naskh-arabic-v1` | Noto Naskh Arabic variable TTF | 0.31 MB | Arabic and Persian |
-| `noto-serif-jp-v1` | Noto Serif JP variable TTF | 13.57 MB | Japanese |
+| `shippori-mincho-jp-v1` | Shippori Mincho Regular + Bold TTF | 17.24 MB | Japanese |
 | `noto-serif-sc-v1` | Noto Serif SC variable TTF | 25.13 MB | Simplified Chinese |
 | `noto-serif-tc-v1` | Noto Serif TC variable TTF | 16.85 MB | Traditional Chinese |
 | `noto-serif-kr-v1` | Noto Serif KR variable TTF | 23.80 MB | Korean |
 
-Script packs depend on `noto-serif-core-v1` so Latin text embedded in a CJK or
-Arabic/Persian chapter has consistent typography. Expected first-use totals are about
-4.3 MB for Latin/Vietnamese, 4.6 MB for Arabic/Persian, 17.9 MB for Japanese, 29.5 MB
-for Simplified Chinese, 21.2 MB for Traditional Chinese, and 28.1 MB for Korean before
-HTTP/archive overhead.
+Script packs depend on `eb-garamond-core-v1` so Latin fallback text remains available.
+Latin documents additionally use `cormorant-garamond-heading-v1`. Expected first-use
+totals are about 2.80 MB for Latin/Vietnamese, 1.91 MB for
+Arabic/Persian, 18.85 MB for Japanese, 26.73 MB for Simplified Chinese, 18.46 MB for
+Traditional Chinese, and 25.40 MB for Korean before HTTP overhead.
 
 The existing `src-ui/assets/fonts-variable/**` WOFF2 files remain the UI font source.
 They are browser-specific Unicode-range subsets and Typst does not discover them as
 fonts; do not attempt to decompress and merge hundreds of partial faces at runtime.
-The full TTF downloads must stay on the same reviewed Noto family/version line as the
+The full Noto TTF downloads must stay on the same reviewed family/version line as the
 corresponding Gnosis UI fonts unless a deliberate typography upgrade changes both.
 
 ## Architecture
@@ -364,7 +374,7 @@ waited for `waitForRepoWriteQueueIdle`.
 - When PDF is selected, inspect readiness for the selected export language.
 - Installed state: `Click Save to export a PDF document.`
 - Missing pack state: disclose pack name and exact size, for example
-  `Japanese print fonts (17.9 MB) will be downloaded once and kept for future exports.`
+  `Japanese print fonts (18.8 MB) will be downloaded once and kept for future exports.`
 - The submit label becomes `Download and save` when required and `Save` when installed.
 - The normal native save dialog chooses the destination. Starting the worker closes no
   UI; the modal shows determinate download progress when byte totals are known and
