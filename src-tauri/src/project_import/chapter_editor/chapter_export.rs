@@ -2,6 +2,7 @@ use super::row_fields::parse_labeled_footnote_text_for_merge;
 use super::*;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use reqwest::blocking::Client as BlockingClient;
+use std::fmt;
 use std::io::{Cursor, Read, Write};
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::time::Duration;
@@ -13,6 +14,64 @@ const UNSUPPORTED_FUNCTION_MESSAGE: &str =
 // Cap embedded-image downloads so a hostile or accidental URL cannot buffer an unbounded
 // body into memory during export.
 const MAX_EXPORT_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
+const EXPORT_IMAGE_USER_AGENT: &str = concat!(
+    "Gnosis-TMS/",
+    env!("CARGO_PKG_VERSION"),
+    " (+https://github.com/gnosistms/Gnosis-TMS-tauri-app)"
+);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum PublicImageDownloadError {
+    InvalidUrl,
+    UnsupportedScheme,
+    MissingHost,
+    DnsLookupFailed,
+    UnsafeHost,
+    ClientSetupFailed,
+    TimedOut,
+    ConnectionFailed,
+    RequestFailed,
+    HttpStatus(u16),
+    ResponseReadFailed,
+    TooLarge,
+}
+
+impl PublicImageDownloadError {
+    fn is_retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::TimedOut
+                | Self::ConnectionFailed
+                | Self::RequestFailed
+                | Self::ResponseReadFailed
+                | Self::HttpStatus(408 | 429 | 500..=599)
+        )
+    }
+}
+
+impl fmt::Display for PublicImageDownloadError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let message = match self {
+            Self::InvalidUrl => "the image URL is invalid",
+            Self::UnsupportedScheme => "only HTTP and HTTPS image URLs are supported",
+            Self::MissingHost => "the image URL has no hostname",
+            Self::DnsLookupFailed => "the image hostname could not be resolved",
+            Self::UnsafeHost => {
+                "the image hostname does not resolve exclusively to public addresses"
+            }
+            Self::ClientSetupFailed => "the secure image download client could not be created",
+            Self::TimedOut => "the image download timed out",
+            Self::ConnectionFailed => "the image server could not be reached",
+            Self::RequestFailed => "the image request failed",
+            Self::HttpStatus(status) => {
+                return write!(formatter, "the image server returned HTTP {status}")
+            }
+            Self::ResponseReadFailed => "the image download was interrupted",
+            Self::TooLarge => "the image is larger than 25 MB",
+        };
+        formatter.write_str(message)
+    }
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1533,6 +1592,27 @@ fn download_docx_image(url: &str) -> Option<DocxImage> {
 }
 
 pub(super) fn download_public_image_bytes(url: &str) -> Option<Vec<u8>> {
+    download_public_image_bytes_detailed(url).ok()
+}
+
+pub(super) fn download_public_image_bytes_detailed(
+    url: &str,
+) -> Result<Vec<u8>, PublicImageDownloadError> {
+    let mut last_error = None;
+    for attempt in 0..2 {
+        match download_public_image_bytes_once(url) {
+            Ok(data) => return Ok(data),
+            Err(error) if attempt == 0 && error.is_retryable() => {
+                last_error = Some(error);
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err(last_error.unwrap_or(PublicImageDownloadError::RequestFailed))
+}
+
+fn download_public_image_bytes_once(url: &str) -> Result<Vec<u8>, PublicImageDownloadError> {
     // Image URLs are row content that can arrive over git from other team members, so an
     // export must not let one of them point this fetch at the exporting machine's own
     // network. Reject non-public hosts, refuse redirects (a public URL could otherwise 302
@@ -1540,24 +1620,39 @@ pub(super) fn download_public_image_bytes(url: &str) -> Option<Vec<u8>> {
     let request = validated_export_image_request(url)?;
     let mut builder = BlockingClient::builder()
         .timeout(Duration::from_secs(8))
+        .user_agent(EXPORT_IMAGE_USER_AGENT)
         .redirect(reqwest::redirect::Policy::none());
     if let Some((host, addresses)) = request.pinned_addresses.as_ref() {
         // Pin the host to the exact addresses we validated so reqwest's own DNS lookup at
         // connect time cannot rebind the name to a private address (TOCTOU).
         builder = builder.resolve_to_addrs(host, addresses);
     }
-    let client = builder.build().ok()?;
-    let response = client.get(url).send().ok()?;
+    let client = builder
+        .build()
+        .map_err(|_| PublicImageDownloadError::ClientSetupFailed)?;
+    let response = client.get(url).send().map_err(|error| {
+        if error.is_timeout() {
+            PublicImageDownloadError::TimedOut
+        } else if error.is_connect() {
+            PublicImageDownloadError::ConnectionFailed
+        } else {
+            PublicImageDownloadError::RequestFailed
+        }
+    })?;
     if !response.status().is_success() {
-        return None;
+        return Err(PublicImageDownloadError::HttpStatus(
+            response.status().as_u16(),
+        ));
     }
     let mut limited = response.take(MAX_EXPORT_IMAGE_BYTES + 1);
     let mut data = Vec::new();
-    limited.read_to_end(&mut data).ok()?;
+    limited
+        .read_to_end(&mut data)
+        .map_err(|_| PublicImageDownloadError::ResponseReadFailed)?;
     if data.len() as u64 > MAX_EXPORT_IMAGE_BYTES {
-        return None;
+        return Err(PublicImageDownloadError::TooLarge);
     }
-    Some(data)
+    Ok(data)
 }
 
 /// Fetches a remote image (with the same public-host validation, redirect
@@ -1622,36 +1717,44 @@ struct ValidatedExportImageRequest {
 /// Validate that an export image URL targets a public host. For domain hosts the DNS
 /// result is resolved once, every address is checked, and the addresses are returned so
 /// the caller can pin them — closing the rebinding window between this check and the
-/// fetch. Returns `None` if the URL is unsupported or resolves to any non-public address.
-fn validated_export_image_request(url: &str) -> Option<ValidatedExportImageRequest> {
-    let parsed = url::Url::parse(url).ok()?;
+/// fetch. Returns a specific failure when the URL cannot be fetched safely.
+fn validated_export_image_request(
+    url: &str,
+) -> Result<ValidatedExportImageRequest, PublicImageDownloadError> {
+    let parsed = url::Url::parse(url).map_err(|_| PublicImageDownloadError::InvalidUrl)?;
     if !matches!(parsed.scheme(), "http" | "https") {
-        return None;
+        return Err(PublicImageDownloadError::UnsupportedScheme);
     }
     let port = parsed.port_or_known_default().unwrap_or(0);
-    match parsed.host()? {
+    match parsed.host().ok_or(PublicImageDownloadError::MissingHost)? {
         // Literal IP hosts are classified directly (no DNS, nothing to pin).
-        url::Host::Ipv4(addr) => {
-            is_public_ip(IpAddr::V4(addr)).then_some(ValidatedExportImageRequest {
+        url::Host::Ipv4(addr) => is_public_ip(IpAddr::V4(addr))
+            .then_some(ValidatedExportImageRequest {
                 pinned_addresses: None,
             })
-        }
-        url::Host::Ipv6(addr) => {
-            is_public_ip(IpAddr::V6(addr)).then_some(ValidatedExportImageRequest {
+            .ok_or(PublicImageDownloadError::UnsafeHost),
+        url::Host::Ipv6(addr) => is_public_ip(IpAddr::V6(addr))
+            .then_some(ValidatedExportImageRequest {
                 pinned_addresses: None,
             })
-        }
+            .ok_or(PublicImageDownloadError::UnsafeHost),
         // Resolve the domain and reject if any address it maps to is non-public, so a
         // hostname that points at a private/loopback/link-local/ULA address is refused.
         url::Host::Domain(host) => {
             if host.eq_ignore_ascii_case("localhost") {
-                return None;
+                return Err(PublicImageDownloadError::UnsafeHost);
             }
-            let addresses = (host, port).to_socket_addrs().ok()?.collect::<Vec<_>>();
-            if addresses.is_empty() || addresses.iter().any(|address| !is_public_ip(address.ip())) {
-                return None;
+            let addresses = (host, port)
+                .to_socket_addrs()
+                .map_err(|_| PublicImageDownloadError::DnsLookupFailed)?
+                .collect::<Vec<_>>();
+            if addresses.is_empty() {
+                return Err(PublicImageDownloadError::DnsLookupFailed);
             }
-            Some(ValidatedExportImageRequest {
+            if addresses.iter().any(|address| !is_public_ip(address.ip())) {
+                return Err(PublicImageDownloadError::UnsafeHost);
+            }
+            Ok(ValidatedExportImageRequest {
                 pinned_addresses: Some((host.to_string(), addresses)),
             })
         }
@@ -1660,7 +1763,7 @@ fn validated_export_image_request(url: &str) -> Option<ValidatedExportImageReque
 
 #[cfg(test)]
 fn is_public_export_image_url(url: &str) -> bool {
-    validated_export_image_request(url).is_some()
+    validated_export_image_request(url).is_ok()
 }
 
 fn is_public_ip(ip: IpAddr) -> bool {
@@ -2247,7 +2350,38 @@ mod tests {
             .expect("public literal ip should validate");
         assert!(request.pinned_addresses.is_none());
         // A literal private IP is rejected outright.
-        assert!(validated_export_image_request("http://10.0.0.5/image.png").is_none());
+        assert!(validated_export_image_request("http://10.0.0.5/image.png").is_err());
+    }
+
+    #[test]
+    fn image_download_failures_are_specific_and_only_transient_failures_retry() {
+        assert!(matches!(
+            validated_export_image_request("file:///etc/passwd"),
+            Err(PublicImageDownloadError::UnsupportedScheme)
+        ));
+        assert!(matches!(
+            validated_export_image_request("http://127.0.0.1/image.png"),
+            Err(PublicImageDownloadError::UnsafeHost)
+        ));
+        assert!(PublicImageDownloadError::TimedOut.is_retryable());
+        assert!(PublicImageDownloadError::HttpStatus(429).is_retryable());
+        assert!(PublicImageDownloadError::HttpStatus(503).is_retryable());
+        assert!(!PublicImageDownloadError::HttpStatus(404).is_retryable());
+        assert!(!PublicImageDownloadError::UnsafeHost.is_retryable());
+        assert_eq!(
+            PublicImageDownloadError::TooLarge.to_string(),
+            "the image is larger than 25 MB"
+        );
+    }
+
+    #[test]
+    fn public_image_download_smoke_when_url_is_configured() {
+        let Ok(url) = std::env::var("GNOSIS_IMAGE_DOWNLOAD_SMOKE_URL") else {
+            return;
+        };
+        let data = download_public_image_bytes_detailed(&url)
+            .unwrap_or_else(|error| panic!("{url}: {error}"));
+        assert!(!data.is_empty(), "{url} returned an empty response");
     }
 
     #[test]

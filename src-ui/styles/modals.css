@@ -192,7 +192,7 @@
 
 .editor-export-modal {
   display: grid;
-  grid-template-columns: minmax(200px, 260px) 1fr;
+  grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
   gap: 20px;
   min-height: 280px;
 }
@@ -264,6 +264,13 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
+  min-width: 0;
+}
+
+.editor-export-modal__detail .modal__error {
+  overflow-x: hidden;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .editor-export-modal__detail-heading {
