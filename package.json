@@ -15,14 +15,14 @@
     "tauri:dev": "npm run typst:prepare && tauri dev",
     "tauri:build": "npm run typst:prepare && tauri build",
     "prepare": "husky",
-    "lint:rust:strict": "npm run typst:prepare && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
+    "lint:rust:strict": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
     "format:rust:check": "cargo fmt --manifest-path src-tauri/Cargo.toml --all --check",
     "check:licenses:rust": "cargo deny --manifest-path src-tauri/Cargo.toml check licenses",
     "check:licenses:npm": "license-checker --production --excludePrivatePackages --onlyAllow \"MIT;Apache-2.0;Apache-2.0 WITH LLVM-exception;ISC;BSD-2-Clause;BSD-3-Clause;Zlib;Unicode-3.0;CC0-1.0;CDLA-Permissive-2.0;BSL-1.0;Unlicense;MIT-0;0BSD;MPL-2.0\"",
     "licenses:notices": "node scripts/generate-third-party-notices.mjs",
     "lint:js": "eslint \"src-ui/app/**/*.js\" \"src-ui/screens/**/*.js\"",
     "lint:js:fix": "eslint \"src-ui/app/**/*.js\" \"src-ui/screens/**/*.js\" --fix",
-    "test:rust": "npm run typst:prepare && cargo test --manifest-path src-tauri/Cargo.toml"
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
