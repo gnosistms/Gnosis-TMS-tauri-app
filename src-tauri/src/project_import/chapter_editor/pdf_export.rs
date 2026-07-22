@@ -163,7 +163,7 @@ const FONT_ASSETS: &[FontAsset] = &[
     FontAsset {
         file_name: "EBGaramond-Roman.ttf",
         family: "EB Garamond",
-        language: "non-latin",
+        language: "base",
         size: 851_176,
         sha256: "ef9512f92f6d579e5dc75af59a5a4b1b8b47d2eda89e00b954d44520e5369027",
         source: FontSource::Download("https://raw.githubusercontent.com/google/fonts/f8c1d3d6cc75e30d77130bdcbfbff27e3b6233fe/ofl/ebgaramond/EBGaramond%5Bwght%5D.ttf"),
@@ -171,7 +171,7 @@ const FONT_ASSETS: &[FontAsset] = &[
     FontAsset {
         file_name: "EBGaramond-Italic.ttf",
         family: "EB Garamond",
-        language: "non-latin",
+        language: "base",
         size: 754_468,
         sha256: "bba2c4499c93c9612b90b9825d32b07da52fce2fe57562a1eb6b833553f93c4e",
         source: FontSource::Download("https://raw.githubusercontent.com/google/fonts/f8c1d3d6cc75e30d77130bdcbfbff27e3b6233fe/ofl/ebgaramond/EBGaramond-Italic%5Bwght%5D.ttf"),
@@ -211,6 +211,29 @@ const FONT_ASSETS: &[FontAsset] = &[
         size: 8_563_788,
         sha256: "63bc4eddc74793f671c3ab827c5175e773ffbe569d0bf50ee65375ea9e3bc286",
         source: FontSource::Download("https://raw.githubusercontent.com/google/fonts/d0b2d1307ad5d6b579d627a6e5abd25952484b96/ofl/shipporimincho/ShipporiMincho-Bold.ttf"),
+    },
+    // Hebrew scripture is quoted inside otherwise Latin-script chapters, so this is
+    // pulled in by the content scan rather than by the chapter's language. Chosen over
+    // Frank Ruhl Libre and David Libre for its complete niqqud and cantillation marks
+    // (55/55, against 21 and 23) — quotations are usually pointed.
+    FontAsset {
+        file_name: "NotoSerifHebrew.ttf",
+        family: "Noto Serif Hebrew",
+        language: "hebrew",
+        size: 183_600,
+        sha256: "93caef921360788dc3b0e32136bb26f16bc57717ec482d48fc7fd43820617165",
+        source: FontSource::Download("https://raw.githubusercontent.com/google/fonts/684b69db51d59a3137ec0152fa3a3afc6f1b3814/ofl/notoserifhebrew/NotoSerifHebrew%5Bwdth,wght%5D.ttf"),
+    },
+    // Sanskrit in Devanagari. Romanised (IAST) Sanskrit needs nothing extra — Cormorant
+    // already covers all of ā ī ū ṛ ṝ ḷ ṃ ḥ ś ṣ ṭ ḍ ṇ — so this is fetched only for
+    // documents that quote the script itself.
+    FontAsset {
+        file_name: "NotoSerifDevanagari.ttf",
+        family: "Noto Serif Devanagari",
+        language: "devanagari",
+        size: 757_692,
+        sha256: "1191e07bfeb062d80e252eb85b0eafdfbda1e350707a2a60628668e8f677dbbb",
+        source: FontSource::Download("https://raw.githubusercontent.com/google/fonts/684b69db51d59a3137ec0152fa3a3afc6f1b3814/ofl/notoserifdevanagari/NotoSerifDevanagari%5Bwdth,wght%5D.ttf"),
     },
     FontAsset {
         file_name: "NotoSerifSC.ttf",
@@ -283,7 +306,7 @@ pub(crate) fn inspect_gtms_chapter_pdf_fonts(
         });
     }
 
-    let assets = required_fonts(&document.language_code);
+    let assets = required_fonts_for_document(&document);
     let font_dir = pdf_font_dir(app)?;
     let required_bytes = assets.iter().map(|asset| asset.size).sum();
     let missing_bytes = assets
@@ -454,8 +477,9 @@ async fn run_pdf_export(
     let font_app = app.clone();
     let font_job_id = job_id.to_string();
     let font_cancelled = cancelled.clone();
+    let font_assets = required_fonts_for_document(&document);
     let font_dir = tauri::async_runtime::spawn_blocking(move || {
-        ensure_fonts(&font_app, &font_job_id, &language_code, &font_cancelled)
+        ensure_fonts(&font_app, &font_job_id, font_assets, &font_cancelled)
     })
     .await
     .map_err(|error| format!("The PDF font worker failed: {error}"))??;
@@ -615,7 +639,58 @@ fn resolve_project_full_name_for_pdf(repo_path: &Path, supplied: Option<&str>) -
         .map(|value| value.trim_matches('/').to_string())
 }
 
-fn required_fonts(language_code: &str) -> Vec<FontAsset> {
+/// Every character the PDF will have to render, title and captions included.
+fn document_characters(document: &ExportDocument) -> BTreeSet<char> {
+    let mut characters = BTreeSet::new();
+    characters.extend(document.title.chars());
+    for block in &document.blocks {
+        match block {
+            ExportBlock::Text { text, .. } | ExportBlock::Footnote { text, .. } => {
+                for segment in inline_segments(text) {
+                    characters.extend(segment.text.chars());
+                }
+            }
+            ExportBlock::Image { caption, .. } => {
+                for segment in inline_segments(caption) {
+                    characters.extend(segment.text.chars());
+                }
+            }
+            ExportBlock::Separator => {}
+        }
+    }
+    characters
+}
+
+/// Scripts a chapter uses that its declared language would not have asked for — Hebrew
+/// scripture or Chinese names quoted inside a Vietnamese chapter, say. Without this the
+/// export is refused outright, because Typst reports nothing: it exits successfully and
+/// renders tofu boxes instead. Scripts with no font here keep failing the preflight,
+/// which is the honest outcome.
+fn document_scripts(document: &ExportDocument) -> BTreeSet<&'static str> {
+    let mut scripts = BTreeSet::new();
+    for character in document_characters(document) {
+        let code = character as u32;
+        let script = match code {
+            0x0590..=0x05FF | 0xFB1D..=0xFB4F => Some("hebrew"),
+            // Devanagari, its extended block, and the Vedic marks Sanskrit uses.
+            0x0900..=0x097F | 0xA8E0..=0xA8FF | 0x1CD0..=0x1CFF => Some("devanagari"),
+            // Han, including the Extension A and compatibility blocks. Noto Serif SC
+            // covers traditional and simplified alike, so one font serves both.
+            0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF => Some("zh-hans"),
+            _ => None,
+        };
+        if let Some(script) = script {
+            scripts.insert(script);
+        }
+    }
+    scripts
+}
+
+fn required_fonts_for_document(document: &ExportDocument) -> Vec<FontAsset> {
+    required_fonts(&document.language_code, &document_scripts(document))
+}
+
+fn required_fonts(language_code: &str, extra_scripts: &BTreeSet<&'static str>) -> Vec<FontAsset> {
     let normalized = language_code.trim().to_ascii_lowercase().replace('_', "-");
     let language = if normalized.starts_with("ja") {
         Some("ja")
@@ -636,13 +711,12 @@ fn required_fonts(language_code: &str) -> Vec<FontAsset> {
     FONT_ASSETS
         .iter()
         .copied()
-        // Latin-script exports set everything in Cormorant, so they no longer need
-        // EB Garamond; it stays only as the Latin fallback inside the CJK and Arabic
-        // families, whose own fonts cover no Latin.
+        // EB Garamond ships with every language: it is the Latin fallback inside the
+        // CJK and Arabic families, and the Greek fallback behind Cormorant for Latin.
         .filter(|asset| match asset.language {
+            "base" => true,
             "latin" => language.is_none(),
-            "non-latin" => language.is_some(),
-            script => Some(script) == language,
+            script => Some(script) == language || extra_scripts.contains(script),
         })
         .collect()
 }
@@ -659,13 +733,12 @@ fn pdf_font_dir(app: &AppHandle) -> Result<PathBuf, String> {
 fn ensure_fonts(
     app: &AppHandle,
     job_id: &str,
-    language_code: &str,
+    assets: Vec<FontAsset>,
     cancelled: &AtomicBool,
 ) -> Result<PathBuf, String> {
     let font_dir = pdf_font_dir(app)?;
     fs::create_dir_all(&font_dir)
         .map_err(|error| format!("Could not create the PDF font cache: {error}"))?;
-    let assets = required_fonts(language_code);
     let total = assets.iter().map(|asset| asset.size).sum();
     let mut completed = 0u64;
     for asset in assets {
@@ -942,7 +1015,7 @@ fn prepare_typst_workspace(
                     .ok_or_else(|| "An image could not be prepared for the PDF.".to_string())?;
                 let body = match prepared {
                     PreparedTypstImage::File(relative) => {
-                        format!("image({}, width: 90%)", typst_string(relative))
+                        format!("gnosis-image({})", typst_string(relative))
                     }
                     PreparedTypstImage::Placeholder(message) => {
                         render_typst_image_placeholder(message)
@@ -1223,8 +1296,13 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
             0.65,
         )
     } else {
+        // EB Garamond trails Cormorant purely for coverage, never for appearance:
+        // Cormorant has almost no Greek (4 of 73 basic, none polytonic) where EB
+        // Garamond has nearly all of it, and Greek quotations are common in these
+        // documents. Typst falls through per character, so Latin still renders in
+        // Cormorant throughout.
         (
-            vec!["Cormorant Garamond Gnosis"],
+            vec!["Cormorant Garamond Gnosis", "EB Garamond"],
             "ltr",
             Some("Cormorant Garamond Gnosis"),
             12.5,
@@ -1236,6 +1314,14 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
         .map(|family| typst_string(family))
         .collect::<Vec<_>>()
         .join(", ");
+    // Cormorant carries four stray Greek glyphs, mu among them, so per-character
+    // fallback would set γάμος as γά-μ-ος across two typefaces. Keeping whole Greek
+    // runs in one family avoids the split. Only needed where Cormorant leads.
+    let greek_family = if families.first() == Some(&"Cormorant Garamond Gnosis") {
+        typst_string("EB Garamond")
+    } else {
+        String::new()
+    };
     let heading_rule = heading_family
         .map(|family| {
             format!(
@@ -1244,11 +1330,34 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
             )
         })
         .unwrap_or_default();
+    let greek_rule = if greek_family.is_empty() {
+        String::new()
+    } else {
+        format!("{GREEK_RUN_RULE_PREFIX}{greek_family})\n")
+    };
     format!(
-        "#set page(paper: \"{paper_size}\", margin: (x: 0.85in, y: 0.8in), numbering: \"1\")\n#set text(font: ({family_list}), size: {size_pt}pt, lang: {}, dir: {direction})\n#set par(justify: true, leading: {leading_em}em)\n{heading_rule}#show link: set text(fill: rgb(\"245c8a\"))\n\n",
+        "#set page(paper: \"{paper_size}\", margin: (x: 0.85in, y: 0.8in), numbering: \"1\")\n#set text(font: ({family_list}), size: {size_pt}pt, lang: {}, dir: {direction})\n#set par(justify: true, leading: {leading_em}em)\n{heading_rule}{greek_rule}#show link: set text(fill: rgb(\"245c8a\"))\n{GNOSIS_IMAGE_RULE}\n",
         typst_string(&document.language_code)
     )
 }
+
+/// Greek and polytonic Greek blocks, held to one family so a word is never split
+/// across typefaces. Completed with the family name and a closing parenthesis.
+const GREEK_RUN_RULE_PREFIX: &str =
+    "#show regex(\"[\\u{0370}-\\u{03FF}\\u{1F00}-\\u{1FFF}]+\"): set text(font: ";
+
+/// Scales an image to 90% of the text width, but never taller than 82% of the text
+/// region, so the figure's caption still has somewhere to go. The cap is a maximum,
+/// not a fixed height — a plain `height:` would reserve the full 82% for small images
+/// too, stranding them on pages of their own. Without the cap a tall portrait image
+/// fills the region on its own
+/// and Typst pushes the caption past the bottom margin, printing it over the page
+/// number rather than shrinking the figure.
+///
+/// The measurement uses absolute lengths taken from `layout`: `measure` has no
+/// container to resolve a relative width against, so `width: 90%` there reports the
+/// wrong height and the cap never applies.
+const GNOSIS_IMAGE_RULE: &str = "#let gnosis-image(path) = layout(region => {\n  let width = region.width * 0.9\n  let limit = region.height * 0.82\n  let natural = measure(image(path, width: width))\n  if natural.height > limit { align(center, image(path, height: limit)) } else { image(path, width: width) }\n})\n";
 
 fn render_inline_typst(text: &str, show_link_urls: bool) -> String {
     inline_segments(text)
@@ -1374,31 +1483,14 @@ fn render_styled_typst_text(text: &str, style: &InlineStyleState, show_link_urls
 }
 
 fn validate_document_glyphs(document: &ExportDocument, font_dir: &Path) -> Result<(), String> {
-    let font_data = required_fonts(&document.language_code)
+    let font_data = required_fonts_for_document(document)
         .into_iter()
         .map(|asset| {
             fs::read(font_dir.join(asset.file_name))
                 .map_err(|_| "A required PDF font is missing. Try the export again.".to_string())
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let mut characters = BTreeSet::new();
-    characters.extend(document.title.chars());
-    for block in &document.blocks {
-        match block {
-            ExportBlock::Text { text, .. } | ExportBlock::Footnote { text, .. } => {
-                for segment in inline_segments(text) {
-                    characters.extend(segment.text.chars());
-                }
-            }
-            ExportBlock::Image { caption, .. } => {
-                for segment in inline_segments(caption) {
-                    characters.extend(segment.text.chars());
-                }
-            }
-            ExportBlock::Separator => {}
-        }
-    }
-    let missing = characters
+    let missing = document_characters(document)
         .into_iter()
         .filter(|ch| !ch.is_control() && !ch.is_whitespace())
         .filter(|ch| {
@@ -1518,40 +1610,114 @@ mod tests {
 
     #[test]
     fn language_font_selection_uses_the_matching_serif_family() {
-        assert!(required_fonts("ja-JP")
+        assert!(required_fonts("ja-JP", &BTreeSet::new())
             .iter()
             .any(|font| font.family == "Shippori Mincho"));
         assert_eq!(
-            required_fonts("ja-JP")
+            required_fonts("ja-JP", &BTreeSet::new())
                 .iter()
                 .filter(|font| font.family == "Shippori Mincho")
                 .count(),
             2
         );
-        assert!(required_fonts("zh-TW")
+        assert!(required_fonts("zh-TW", &BTreeSet::new())
             .iter()
             .any(|font| font.family == "Noto Serif TC"));
-        assert!(required_fonts("ar")
+        assert!(required_fonts("ar", &BTreeSet::new())
             .iter()
             .any(|font| font.family == "Noto Naskh Arabic"));
-        let latin_fonts = required_fonts("vi");
-        // Roman and italic both ship, so italic body text stays in the same family,
-        // and nothing else is fetched — EB Garamond is unused for Latin now.
-        assert_eq!(latin_fonts.len(), 2);
-        assert!(latin_fonts
-            .iter()
-            .all(|font| font.family == "Cormorant Garamond Gnosis"));
-        // Non-Latin scripts still need it as their Latin fallback.
+        let latin_fonts = required_fonts("vi", &BTreeSet::new());
+        assert_eq!(latin_fonts.len(), 4);
+        // Roman and italic both ship, so italic body text stays in the same family.
         assert_eq!(
-            required_fonts("ja")
+            latin_fonts
+                .iter()
+                .filter(|font| font.family == "Cormorant Garamond Gnosis")
+                .count(),
+            2
+        );
+        // EB Garamond ships alongside it as the Greek fallback — Cormorant has almost
+        // no Greek, and dropping it here broke Greek quotations in 0.8.68.
+        assert_eq!(
+            latin_fonts
                 .iter()
                 .filter(|font| font.family == "EB Garamond")
                 .count(),
             2
         );
-        assert!(!required_fonts("ja")
+        // Non-Latin scripts need it too, as their Latin fallback.
+        assert_eq!(
+            required_fonts("ja", &BTreeSet::new())
+                .iter()
+                .filter(|font| font.family == "EB Garamond")
+                .count(),
+            2
+        );
+        assert!(!required_fonts("ja", &BTreeSet::new())
             .iter()
             .any(|font| font.family == "Cormorant Garamond Gnosis"));
+    }
+
+    #[test]
+    fn quoted_scripts_pull_in_their_own_fonts() {
+        let plain = ExportDocument {
+            title: "Tâm vũ trụ".to_string(),
+            language_code: "vi".to_string(),
+            blocks: vec![ExportBlock::Text {
+                text_style: "paragraph".to_string(),
+                text: "Tiếng Việt, chữ Hy Lạp ἀρχή, và IAST oṃ bhūr vareṇyaṃ.".to_string(),
+            }],
+        };
+        // Greek rides along with EB Garamond, and romanised Sanskrit is plain Latin
+        // that Cormorant already covers, so nothing extra is fetched. The 25 MB CJK
+        // font in particular must never be downloaded for a chapter with no Han.
+        assert!(document_scripts(&plain).is_empty());
+        let fonts = required_fonts_for_document(&plain);
+        assert!(!fonts.iter().any(|font| font.family.starts_with("Noto")));
+
+        let quoting = ExportDocument {
+            title: "Ông 伏羲".to_string(),
+            language_code: "vi".to_string(),
+            blocks: vec![ExportBlock::Text {
+                text_style: "paragraph".to_string(),
+                text: "Danh xưng אֱלֹהִים và ॐ भूर्भुवः svaḥ.".to_string(),
+            }],
+        };
+        let scripts = document_scripts(&quoting);
+        // Han in the title counts too — the title is rendered like any other text.
+        assert!(scripts.contains("zh-hans"));
+        assert!(scripts.contains("hebrew"));
+        assert!(scripts.contains("devanagari"));
+        let fonts = required_fonts_for_document(&quoting);
+        assert!(fonts.iter().any(|font| font.family == "Noto Serif SC"));
+        assert!(fonts.iter().any(|font| font.family == "Noto Serif Hebrew"));
+        assert!(fonts
+            .iter()
+            .any(|font| font.family == "Noto Serif Devanagari"));
+        // Latin still leads, so body text keeps rendering in Cormorant.
+        assert!(fonts
+            .iter()
+            .any(|font| font.family == "Cormorant Garamond Gnosis"));
+        // Traditional characters are covered by SC, so TC is never pulled in as well.
+        assert!(!fonts.iter().any(|font| font.family == "Noto Serif TC"));
+    }
+
+    #[test]
+    fn images_are_capped_so_captions_stay_off_the_page_number() {
+        let document = ExportDocument {
+            title: "Images".to_string(),
+            language_code: "vi".to_string(),
+            blocks: Vec::new(),
+        };
+        let preamble = typst_preamble(&document, "a4");
+        // The helper must be defined before any figure can call it.
+        assert!(preamble.contains("#let gnosis-image(path) = layout("));
+        // A maximum, not a fixed height: small images must not reserve the full cap.
+        assert!(preamble.contains("if natural.height > limit"));
+        // measure() needs an absolute width or it reports the wrong height and the
+        // cap silently never applies.
+        assert!(preamble.contains("measure(image(path, width: width))"));
+        assert!(!preamble.contains("measure(image(path, width: 90%))"));
     }
 
     #[test]
@@ -1567,10 +1733,13 @@ mod tests {
             blocks: Vec::new(),
         };
         let vietnamese_preamble = typst_preamble(&vietnamese, "a4");
-        assert!(vietnamese_preamble.contains("font: (\"Cormorant Garamond Gnosis\")"));
+        // Cormorant leads so Latin renders in it; EB Garamond trails to cover Greek,
+        // which Cormorant almost entirely lacks.
+        assert!(
+            vietnamese_preamble.contains("font: (\"Cormorant Garamond Gnosis\", \"EB Garamond\")")
+        );
         assert!(vietnamese_preamble
             .contains("#show heading: set text(font: \"Cormorant Garamond Gnosis\", weight: 600)"));
-        assert!(!vietnamese_preamble.contains("EB Garamond"));
         assert!(!vietnamese_preamble.contains("Noto Serif"));
         // Cormorant sets smaller than EB Garamond, so the Latin branch compensates.
         assert!(vietnamese_preamble.contains("size: 12.5pt"));
@@ -1717,6 +1886,18 @@ mod tests {
                     text_style: "paragraph".to_string(),
                     text: "Những dấu tiếng Việt <i>ấ ề ỗ ở ữ</i>, một <a href=\"https://example.com\">liên kết</a> và chú thích giữa đoạn [1]."
                         .to_string(),
+                },
+                ExportBlock::Text {
+                    text_style: "paragraph".to_string(),
+                    // Greek falls back to EB Garamond; γάμος carries the mu that
+                    // Cormorant does have, which is what split the word before.
+                    text: "Chữ Hy Lạp: Ἡ ἀρχὴ καὶ γάμος, ρίζα, ἔργα.".to_string(),
+                },
+                ExportBlock::Text {
+                    text_style: "paragraph".to_string(),
+                    // Han and pointed Hebrew quoted inside a Vietnamese chapter: both
+                    // are pulled in by the content scan, not the declared language.
+                    text: "Ông 伏羲, danh xưng אֱלֹהִים, và ॐ भूर्भुवः स्वः.".to_string(),
                 },
                 ExportBlock::Text {
                     text_style: "centered".to_string(),
