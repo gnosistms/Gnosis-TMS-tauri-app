@@ -47,7 +47,8 @@ test("editor export modal renders nothing while closed", () => {
 test("editor export modal lists categories and expands only opened ones", () => {
   const html = renderEditorExportModal(exportState());
 
-  assert.match(html, /Export options/);
+  assert.match(html, /Export chapter/);
+  assert.doesNotMatch(html, /Choose where this chapter should go/);
   assert.match(html, /Save to file/);
   assert.match(html, /Copy and paste/);
   assert.match(html, /Link and transfer/);
@@ -76,7 +77,7 @@ test("editor export modal lists Vellum only on macOS", () => {
 test("editor export modal shows the save pane for available file formats", () => {
   const html = renderEditorExportModal(exportState());
 
-  assert.match(html, /Click Save to export a HTML file\./);
+  assert.match(html, /Save this chapter as an HTML file\./);
   assert.match(html, /data-action="submit-editor-export"/);
   assert.match(html, /data-action="close-editor-export-options"/);
   assert.match(html, /aria-pressed="true"[^>]*>HTML</);
@@ -152,11 +153,14 @@ test("PDF pane reports cached fonts without offering another download", () => {
     pdfFontMissingBytes: 0,
   }));
 
-  assert.match(html, /PDF fonts are installed\. No download is required\./);
+  assert.doesNotMatch(html, /PDF fonts are installed\. No download is required\./);
   assert.match(html, /data-editor-export-paper-size-select/);
-  assert.match(html, /<option value="us-letter" selected>US Letter \(8\.5 × 11 in\)<\/option>/);
+  assert.match(html, /data-listbox-trigger/);
+  assert.match(html, /aria-haspopup="listbox"/);
+  assert.match(html, /listbox-control__chevron/);
+  assert.match(html, /<option value="a4" selected>A4 \(210 × 297 mm\)<\/option>/);
   assert.match(html, /<option value="us-legal" >US Legal/);
-  assert.match(html, /<option value="a4" >A4 \(210 × 297 mm\)<\/option>/);
+  assert.match(html, /<option value="a3" >A3 \(297 × 420 mm\)<\/option>/);
   assert.match(html, /<option value="iso-b5" >B5 \/ ISO/);
   assert.match(html, /data-action="submit-editor-export"/);
 });
@@ -173,6 +177,16 @@ test("PDF pane reflects the selected paper size", () => {
   assert.doesNotMatch(html, /<option value="us-letter" selected>/);
 });
 
+test("PDF pane falls back to A4 when no paper-size preference is present", () => {
+  const html = renderEditorExportModal(exportState({
+    selectedOptionId: "file:pdf",
+    pdfPaperSize: "",
+    pdfFontStatus: "ready",
+  }));
+
+  assert.match(html, /<option value="a4" selected>A4 \(210 × 297 mm\)<\/option>/);
+});
+
 test("editor export modal shows the copy pane for clipboard options", () => {
   const html = renderEditorExportModal(exportState({
     expandedCategoryIds: ["copy"],
@@ -184,14 +198,14 @@ test("editor export modal shows the copy pane for clipboard options", () => {
 });
 
 test("editor export modal shows the save pane for the Phase 2 file formats", () => {
-  for (const { selectedOptionId, label } of [
-    { selectedOptionId: "file:xlsx", label: "XLSX" },
-    { selectedOptionId: "file:rtf", label: "RTF" },
-    { selectedOptionId: "file:md", label: "Markdown" },
+  for (const { selectedOptionId, description } of [
+    { selectedOptionId: "file:xlsx", description: "Save this chapter as an XLSX file." },
+    { selectedOptionId: "file:rtf", description: "Save this chapter as an RTF file." },
+    { selectedOptionId: "file:md", description: "Save this chapter as a Markdown (.md) file." },
   ]) {
     const html = renderEditorExportModal(exportState({ selectedOptionId }));
 
-    assert.match(html, new RegExp(`Click Save to export a ${label} file\\.`));
+    assert.match(html, new RegExp(description.replace(/[().]/g, "\\$&")));
     assert.match(html, /data-action="submit-editor-export"/);
   }
 });
@@ -326,10 +340,12 @@ test("editor export modal shows the WordPress create pane with a title field", (
 
   assert.match(html, /Connected to <strong>https:\/\/example\.wordpress\.com<\/strong>/);
   assert.match(html, /data-action="disconnect-wordpress"/);
-  assert.match(html, /data-wordpress-mode-input checked[^>]*\/>\s*<span>Create a new draft post<\/span>/);
+  assert.match(html, /editor-export-modal__wordpress-mode is-selected/);
+  assert.match(html, /data-wordpress-mode-input checked/);
+  assert.match(html, /editor-export-modal__wordpress-mode-title">Create a new draft post/);
   assert.match(html, /data-wordpress-title-input/);
   assert.match(html, /value="Chapter One"/);
-  assert.match(html, /A new draft post will be created\./);
+  assert.match(html, /Start a new draft that you can review and publish in WordPress\.com\./);
   assert.match(html, /Export draft/);
   assert.match(html, /data-action="submit-editor-export"/);
 });
@@ -355,6 +371,7 @@ test("editor export modal shows the WordPress overwrite pane with search and war
   assert.match(html, /Hello World/);
   assert.doesNotMatch(html, /This cannot be undone\./);
   assert.match(html, /Overwrite post/);
+  assert.match(html, /editor-export-modal__wordpress-mode is-selected[\s\S]*value="overwrite"/);
 });
 
 test("editor export modal requires choosing a post before the overwrite warning", () => {

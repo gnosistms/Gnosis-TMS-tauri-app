@@ -17,6 +17,7 @@ import { loadStoredAiActionPreferences } from "./ai-action-preferences.js";
 import { loadStoredEditorFontSizePx } from "./editor-preferences.js";
 import { createResourcePageState } from "./resource-page-controller.js";
 import { createSyncState } from "./sync-state.js";
+import { DEFAULT_PDF_PAPER_SIZE } from "./editor-export-options.js";
 
 export const DEFAULT_EDITOR_FONT_SIZE_PX = 20;
 export const EDITOR_FONT_SIZE_OPTIONS = [16, 18, 20, 22, 24, 26, 28];
@@ -791,7 +792,7 @@ export function createEditorExportModalState() {
     // raw HTML (DOCX/RTF/TXT/MD/XLSX/plain text/Vellum). On by default — custom HTML
     // is usually intended for electronic export only.
     omitCustomHtml: true,
-    pdfPaperSize: "us-letter",
+    pdfPaperSize: DEFAULT_PDF_PAPER_SIZE,
     pdfJobId: "",
     pdfStartPending: false,
     pdfStage: "",

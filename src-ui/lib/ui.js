@@ -567,3 +567,76 @@ export function renderSelectPillControl({
     </label>
   `;
 }
+
+export function renderListboxControl({
+  id,
+  label = "",
+  value = "",
+  placeholder = "Select",
+  disabled = false,
+  className = "",
+  selectAttributes = {},
+  options = [],
+}) {
+  const normalizedOptions = [
+    { value: "", label: placeholder },
+    ...options.map((option) => ({
+      value: String(option?.value ?? ""),
+      label: String(option?.label ?? ""),
+    })),
+  ];
+  const selectedOption = normalizedOptions.find((option) => option.value === String(value))
+    ?? normalizedOptions[0];
+  const controlId = String(id || "listbox-control");
+  const triggerId = `${controlId}-trigger`;
+  const listId = `${controlId}-list`;
+  const classes = ["listbox-control", className].filter(Boolean).join(" ");
+  const nativeAttributes = serializeAttributes({
+    ...selectAttributes,
+    disabled,
+    "aria-hidden": "true",
+    tabindex: "-1",
+  });
+
+  return `
+    <div class="${escapeHtml(classes)}" data-listbox-control>
+      ${label ? `<label class="field__label" id="${escapeHtml(controlId)}-label">${escapeHtml(label)}</label>` : ""}
+      <button
+        type="button"
+        class="field__input listbox-control__trigger"
+        id="${escapeHtml(triggerId)}"
+        aria-haspopup="listbox"
+        aria-controls="${escapeHtml(listId)}"
+        aria-expanded="false"
+        ${label ? `aria-labelledby="${escapeHtml(controlId)}-label ${escapeHtml(triggerId)}"` : ""}
+        data-listbox-trigger
+        ${disabled ? "disabled" : ""}
+      >
+        <span data-listbox-value>${escapeHtml(selectedOption.label)}</span>
+        ${renderChevronIcon("down", "listbox-control__chevron")}
+      </button>
+      <div class="listbox-control__popover" hidden>
+        <div class="listbox-control__options" id="${escapeHtml(listId)}" role="listbox" aria-labelledby="${escapeHtml(triggerId)}">
+          ${normalizedOptions.map((option) => {
+            const selected = option.value === selectedOption.value;
+            return `
+              <button
+                type="button"
+                class="listbox-control__option${selected ? " is-selected" : ""}"
+                role="option"
+                aria-selected="${selected ? "true" : "false"}"
+                data-listbox-option
+                data-value="${escapeHtml(option.value)}"
+              >${escapeHtml(option.label)}</button>
+            `;
+          }).join("")}
+        </div>
+      </div>
+      <select class="listbox-control__native"${nativeAttributes}>
+        ${normalizedOptions.map((option) => `
+          <option value="${escapeHtml(option.value)}" ${option.value === selectedOption.value ? "selected" : ""}>${escapeHtml(option.label)}</option>
+        `).join("")}
+      </select>
+    </div>
+  `;
+}

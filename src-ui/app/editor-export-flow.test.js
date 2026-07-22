@@ -45,6 +45,8 @@ const {
 } = await import("./state.js");
 const { EDITOR_MODE_PREVIEW } = await import("./editor-preview.js");
 const { updateEditorPreviewLanguage } = await import("./editor-preview-flow.js");
+const { clearActiveStorageLogin, setActiveStorageLogin } = await import("./team-storage.js");
+const { saveStoredEditorExportPaperSize } = await import("./editor-export-defaults.js");
 const {
   closeEditorExportOptions,
   editorExportCategories,
@@ -139,6 +141,8 @@ function openExportModal(optionId) {
 }
 
 test.afterEach(() => {
+  saveStoredEditorExportPaperSize(null, "paper-size-tester");
+  clearActiveStorageLogin();
   resetSessionState();
   globalThis.ClipboardItem = originalClipboardItem;
   Object.defineProperty(globalThis, "navigator", {
@@ -183,6 +187,7 @@ test("openEditorExportOptions opens the modal with the default selection", () =>
   assert.equal(renderCount, 1);
   assert.equal(state.editorChapter.exportModal.isOpen, true);
   assert.equal(state.editorChapter.exportModal.selectedOptionId, "file:html");
+  assert.equal(state.editorChapter.exportModal.pdfPaperSize, "a4");
   assert.deepEqual(state.editorChapter.exportModal.expandedCategoryIds, ["file"]);
 });
 
@@ -564,7 +569,31 @@ test("PDF paper-size selection rejects values outside the export catalog", () =>
 
   selectEditorExportPaperSize(() => {}, "arbitrary-typst-source");
   assert.equal(state.editorChapter.exportModal.pdfPaperSize, "a5");
-  assert.equal(createEditorExportModalState().pdfPaperSize, "us-letter");
+  assert.equal(createEditorExportModalState().pdfPaperSize, "a4");
+});
+
+test("PDF paper-size selection is remembered across fresh export modal sessions", () => {
+  installEditorExportFixture();
+  setActiveStorageLogin("paper-size-tester");
+  openExportModal("file:pdf");
+
+  assert.equal(state.editorChapter.exportModal.pdfPaperSize, "a4");
+  selectEditorExportPaperSize(() => {}, "us-legal");
+  assert.equal(state.editorChapter.exportModal.pdfPaperSize, "us-legal");
+
+  installEditorExportFixture();
+  setActiveStorageLogin("paper-size-tester");
+  openExportModal("file:pdf");
+  assert.equal(state.editorChapter.exportModal.pdfPaperSize, "us-legal");
+});
+
+test("an invalid stored PDF paper size falls back to A4", () => {
+  saveStoredEditorExportPaperSize("not-a-paper-size", "paper-size-tester");
+  installEditorExportFixture();
+  setActiveStorageLogin("paper-size-tester");
+
+  openExportModal("file:pdf");
+  assert.equal(state.editorChapter.exportModal.pdfPaperSize, "a4");
 });
 
 test("PDF font inspection records the exact missing download before export", async () => {
