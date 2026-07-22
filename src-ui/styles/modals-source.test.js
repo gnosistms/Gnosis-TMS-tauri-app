@@ -4,6 +4,21 @@ import { readFileSync } from "node:fs";
 
 const source = readFileSync(new URL("./modals.css", import.meta.url), "utf8");
 
+test("export errors wrap inside the modal detail column", () => {
+  assert.match(
+    source,
+    /\.editor-export-modal \{\s*display: grid;\s*grid-template-columns: minmax\(200px, 260px\) minmax\(0, 1fr\);/s,
+  );
+  assert.match(
+    source,
+    /\.editor-export-modal__detail \{[^}]*min-width: 0;\s*\}/s,
+  );
+  assert.match(
+    source,
+    /\.editor-export-modal__detail \.modal__error \{\s*overflow-x: hidden;\s*white-space: normal;\s*overflow-wrap: anywhere;\s*\}/s,
+  );
+});
+
 test("chapter language manager rows reserve top paint room for first-row tooltips", () => {
   assert.match(
     source,

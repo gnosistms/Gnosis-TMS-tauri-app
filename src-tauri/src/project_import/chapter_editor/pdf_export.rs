@@ -16,7 +16,7 @@ use tauri_plugin_shell::{process::CommandEvent, ShellExt};
 use uuid::Uuid;
 
 use super::chapter_export::{
-    apply_print_custom_html_policy, build_export_document, download_public_image_bytes,
+    apply_print_custom_html_policy, build_export_document, download_public_image_bytes_detailed,
     inline_segments, ExportBlock, ExportChapterFileInput, ExportDocument, ExportImage,
     InlineStyleState,
 };
@@ -27,6 +27,17 @@ const MAX_FONT_BYTES: u64 = 30 * 1024 * 1024;
 const TYPST_COMPILE_TIMEOUT: Duration = Duration::from_secs(120);
 const CANCELLED: &str = "__GNOSIS_PDF_EXPORT_CANCELLED__";
 const MAX_TYPST_DIAGNOSTIC_BYTES: usize = 128 * 1024;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum PreparedTypstImage {
+    File(String),
+    Placeholder(String),
+}
+
+enum ResolvedPdfImage {
+    Bytes(Vec<u8>),
+    Placeholder(String),
+}
 
 pub(crate) type PdfChapterExportInput = ExportChapterFileInput;
 
@@ -837,18 +848,22 @@ fn prepare_typst_workspace(
             }
             ExportBlock::Footnote { .. } => {}
             ExportBlock::Image { image, caption } => {
-                let relative = image_paths
+                let prepared = image_paths
                     .get(&export_image_key(image))
                     .ok_or_else(|| "An image could not be prepared for the PDF.".to_string())?;
+                let body = match prepared {
+                    PreparedTypstImage::File(relative) => {
+                        format!("image({}, width: 90%)", typst_string(relative))
+                    }
+                    PreparedTypstImage::Placeholder(message) => {
+                        render_typst_image_placeholder(message)
+                    }
+                };
                 if caption.trim().is_empty() {
-                    source.push_str(&format!(
-                        "#align(center)[#image({}, width: 90%)]\n\n",
-                        typst_string(relative)
-                    ));
+                    source.push_str(&format!("#align(center)[#{body}]\n\n"));
                 } else {
                     source.push_str(&format!(
-                        "#figure(image({}, width: 90%), caption: [{}])\n\n",
-                        typst_string(relative),
+                        "#figure({body}, caption: [{}])\n\n",
                         render_typst_image_caption(caption)
                     ));
                 }
@@ -892,14 +907,14 @@ fn prepare_typst_images(
     workspace: &Path,
     document: &ExportDocument,
     cancelled: &AtomicBool,
-) -> Result<HashMap<String, String>, String> {
+) -> Result<HashMap<String, PreparedTypstImage>, String> {
     let mut unique = Vec::new();
     let mut seen = HashSet::new();
     for block in &document.blocks {
-        if let ExportBlock::Image { image, .. } = block {
+        if let ExportBlock::Image { image, caption } = block {
             let key = export_image_key(image);
             if seen.insert(key.clone()) {
-                unique.push((key, image.clone()));
+                unique.push((key, image.clone(), caption.clone()));
             }
         }
     }
@@ -929,7 +944,10 @@ fn prepare_typst_images(
         );
     }
     let queue = Arc::new(Mutex::new(VecDeque::from(unique.clone())));
-    let results = Arc::new(Mutex::new(HashMap::<String, Result<Vec<u8>, String>>::new()));
+    let results = Arc::new(Mutex::new(HashMap::<
+        String,
+        Result<ResolvedPdfImage, String>,
+    >::new()));
     let completed = Arc::new(std::sync::atomic::AtomicU64::new(0));
     std::thread::scope(|scope| {
         for _ in 0..unique.len().min(4) {
@@ -943,10 +961,10 @@ fn prepare_typst_images(
                     return;
                 }
                 let next = queue.lock().ok().and_then(|mut queue| queue.pop_front());
-                let Some((key, image)) = next else {
+                let Some((key, image, caption)) = next else {
                     return;
                 };
-                let result = resolve_pdf_image(&image);
+                let result = resolve_pdf_image(&image, &caption);
                 if let Ok(mut results) = results.lock() {
                     results.insert(key, result);
                 } else {
@@ -971,20 +989,29 @@ fn prepare_typst_images(
     let mut results = results
         .lock()
         .map_err(|_| "The PDF image worker results are unavailable.".to_string())?;
-    let mut paths = HashMap::new();
-    for (index, (key, _)) in unique.into_iter().enumerate() {
-        let bytes = results
+    let mut prepared_images = HashMap::new();
+    for (index, (key, _, _)) in unique.into_iter().enumerate() {
+        let resolved = results
             .remove(&key)
             .ok_or_else(|| "An image could not be prepared for the PDF.".to_string())??;
-        let extension = typst_image_extension(&bytes).ok_or_else(|| {
-            "An image uses a format that Typst cannot include in the PDF.".to_string()
-        })?;
-        let relative = format!("images/image-{index}.{extension}");
-        fs::write(workspace.join(&relative), bytes)
-            .map_err(|error| format!("Could not prepare an image for PDF export: {error}"))?;
-        paths.insert(key, relative);
+        match resolved {
+            ResolvedPdfImage::Bytes(bytes) => {
+                let extension = typst_image_extension(&bytes).ok_or_else(|| {
+                    "An uploaded image uses a format that Typst cannot include in the PDF."
+                        .to_string()
+                })?;
+                let relative = format!("images/image-{index}.{extension}");
+                fs::write(workspace.join(&relative), bytes).map_err(|error| {
+                    format!("Could not prepare an image for PDF export: {error}")
+                })?;
+                prepared_images.insert(key, PreparedTypstImage::File(relative));
+            }
+            ResolvedPdfImage::Placeholder(message) => {
+                prepared_images.insert(key, PreparedTypstImage::Placeholder(message));
+            }
+        }
     }
-    Ok(paths)
+    Ok(prepared_images)
 }
 
 fn export_image_key(image: &ExportImage) -> String {
@@ -996,15 +1023,53 @@ fn export_image_key(image: &ExportImage) -> String {
     }
 }
 
-fn resolve_pdf_image(image: &ExportImage) -> Result<Vec<u8>, String> {
+fn resolve_pdf_image(image: &ExportImage, caption: &str) -> Result<ResolvedPdfImage, String> {
     match image {
-        ExportImage::Url(url) => download_public_image_bytes(url).ok_or_else(|| {
-            "An image could not be downloaded safely for the PDF. Check the image URL and try again.".to_string()
-        }),
-        ExportImage::Upload { absolute_path, .. } => fs::read(absolute_path).map_err(|_| {
-            "An uploaded image is missing from the local project. Sync the project and try again."
-                .to_string()
-        }),
+        ExportImage::Url(url) => match download_public_image_bytes_detailed(url) {
+            Ok(bytes) if typst_image_extension(&bytes).is_some() => {
+                Ok(ResolvedPdfImage::Bytes(bytes))
+            }
+            Ok(_) => Ok(ResolvedPdfImage::Placeholder(remote_image_failure_message(
+                url,
+                caption,
+                "the response is not a supported PNG, JPEG, GIF, WebP, or SVG image",
+            ))),
+            Err(error) => Ok(ResolvedPdfImage::Placeholder(remote_image_failure_message(
+                url,
+                caption,
+                &error.to_string(),
+            ))),
+        },
+        ExportImage::Upload { absolute_path, .. } => fs::read(absolute_path)
+            .map(ResolvedPdfImage::Bytes)
+            .map_err(|_| {
+                "An uploaded image is missing from the local project. Sync the project and try again."
+                    .to_string()
+            }),
+    }
+}
+
+fn remote_image_failure_message(url: &str, caption: &str, reason: &str) -> String {
+    let host = url::Url::parse(url)
+        .ok()
+        .and_then(|parsed| parsed.host_str().map(str::to_string))
+        .unwrap_or_else(|| "unknown host".to_string());
+    let caption = truncate_image_label(caption.trim(), 90);
+    let identity = if caption.is_empty() {
+        format!("Image from {host}")
+    } else {
+        format!("Image “{caption}” from {host}")
+    };
+    format!("{identity} could not be included: {reason}.")
+}
+
+fn truncate_image_label(value: &str, max_chars: usize) -> String {
+    let mut characters = value.chars();
+    let prefix = characters.by_ref().take(max_chars).collect::<String>();
+    if characters.next().is_some() {
+        format!("{prefix}…")
+    } else {
+        prefix
     }
 }
 
@@ -1064,6 +1129,13 @@ fn render_typst_image_caption(caption: &str) -> String {
     format!(
         "#text(style: \"italic\")[{}]",
         render_inline_typst(caption, false)
+    )
+}
+
+fn render_typst_image_placeholder(message: &str) -> String {
+    format!(
+        "block(width: 90%, inset: 12pt, stroke: 0.7pt + rgb(\"999999\"), fill: rgb(\"f7f7f7\"), radius: 4pt)[#align(center)[#text(style: \"italic\", fill: rgb(\"666666\"))[#text({})]]]",
+        typst_string(message)
     )
 }
 
@@ -1378,6 +1450,37 @@ mod tests {
     }
 
     #[test]
+    fn remote_image_failures_identify_the_caption_host_and_reason() {
+        let resolved = resolve_pdf_image(
+            &ExportImage::Url("http://127.0.0.1/private.png".to_string()),
+            "A diagnostic caption",
+        )
+        .expect("remote failures should become placeholders");
+        let ResolvedPdfImage::Placeholder(message) = resolved else {
+            panic!("expected a placeholder");
+        };
+        assert!(message.contains("A diagnostic caption"));
+        assert!(message.contains("127.0.0.1"));
+        assert!(message.contains("does not resolve exclusively to public addresses"));
+        let typst = render_typst_image_placeholder(&message);
+        assert!(typst.starts_with("block(width: 90%"));
+        assert!(typst.contains("Image “A diagnostic caption”"));
+    }
+
+    #[test]
+    fn long_remote_image_captions_are_bounded_in_diagnostics() {
+        let message = remote_image_failure_message(
+            "https://images.example.com/example.png",
+            &"x".repeat(120),
+            "the image download timed out",
+        );
+        assert!(message.contains(&format!("{}…", "x".repeat(90))));
+        assert!(!message.contains(&"x".repeat(91)));
+        assert!(message.contains("images.example.com"));
+        assert!(message.contains("timed out"));
+    }
+
+    #[test]
     fn detects_typst_image_formats() {
         assert_eq!(typst_image_extension(b"\x89PNG\r\n\x1a\nrest"), Some("png"));
         assert_eq!(typst_image_extension(b"RIFF0000WEBPrest"), Some("webp"));
@@ -1433,6 +1536,10 @@ mod tests {
                         absolute_path: smoke_image,
                     },
                     caption: "An <b>italic caption</b>".to_string(),
+                },
+                ExportBlock::Image {
+                    image: ExportImage::Url("http://127.0.0.1/unavailable.png".to_string()),
+                    caption: "Unavailable remote image".to_string(),
                 },
             ],
         };
