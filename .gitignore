@@ -19,6 +19,7 @@ test-results
 # Local secret backups
 Backup Github App Secrets/
 .gnosis-tms/secrets/
+*recovery-codes*.txt
 .broker
 .env
 .env.*

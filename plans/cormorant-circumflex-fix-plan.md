@@ -93,9 +93,25 @@ match at every weight rather than at one.
 Hook and tilde stacked on an uppercase circumflex (`Ẩ Ẫ Ể Ễ Ổ Ỗ`) stay untouched by
 request, alongside `Ậ Ệ Ộ`.
 
-Italic is out of scope: `FONT_ASSETS` never downloads a Cormorant italic, so emphasis
-inside a heading is already synthesised from the Roman and inherits the fixed
-accents.
+## Italic
+
+Italic was originally out of scope, on the grounds that `FONT_ASSETS` never shipped a
+Cormorant italic and emphasis inside a heading was synthesised from the Roman. That
+reasoning lapsed when Cormorant became the Latin **body** font, where real italics are
+used constantly.
+
+Upstream `CormorantGaramond-Italic[wght].ttf` carries the identical defect — standalone
+`â` tops at 731 against 619 for the stacked `ầ`. The same patch script runs on it
+unchanged, and the same verification passes:
+
+- 22 target glyphs at all five named weights, every standalone accent measuring
+  identical to its stacked donor — 0 mismatches.
+- 22 hook-bearing and 24 tilde-bearing glyphs byte-identical to upstream.
+- `Ầ Ấ Ề Ế Ồ Ố` repositioned, all six.
+- Italic angle preserved at -10°.
+
+Bundled as `CormorantGaramondGnosis-Italic.ttf` (716,268 bytes), same `language: "latin"`
+scope as the Roman.
 
 ## Why the font must be bundled
 

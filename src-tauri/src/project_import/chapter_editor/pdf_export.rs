@@ -23,7 +23,7 @@ use super::chapter_export::{
 
 const PDF_EXPORT_EVENT: &str = "chapter-pdf-export-progress";
 const FONT_REVISION: &str =
-    "google-fonts-684b69db51d59a3137ec0152fa3a3afc6f1b3814-cormorant-gnosis-1";
+    "google-fonts-684b69db51d59a3137ec0152fa3a3afc6f1b3814-cormorant-gnosis-2";
 const MAX_FONT_BYTES: u64 = 30 * 1024 * 1024;
 const TYPST_COMPILE_TIMEOUT: Duration = Duration::from_secs(120);
 const CANCELLED: &str = "__GNOSIS_PDF_EXPORT_CANCELLED__";
@@ -163,7 +163,7 @@ const FONT_ASSETS: &[FontAsset] = &[
     FontAsset {
         file_name: "EBGaramond-Roman.ttf",
         family: "EB Garamond",
-        language: "base",
+        language: "non-latin",
         size: 851_176,
         sha256: "ef9512f92f6d579e5dc75af59a5a4b1b8b47d2eda89e00b954d44520e5369027",
         source: FontSource::Download("https://raw.githubusercontent.com/google/fonts/f8c1d3d6cc75e30d77130bdcbfbff27e3b6233fe/ofl/ebgaramond/EBGaramond%5Bwght%5D.ttf"),
@@ -171,7 +171,7 @@ const FONT_ASSETS: &[FontAsset] = &[
     FontAsset {
         file_name: "EBGaramond-Italic.ttf",
         family: "EB Garamond",
-        language: "base",
+        language: "non-latin",
         size: 754_468,
         sha256: "bba2c4499c93c9612b90b9825d32b07da52fce2fe57562a1eb6b833553f93c4e",
         source: FontSource::Download("https://raw.githubusercontent.com/google/fonts/f8c1d3d6cc75e30d77130bdcbfbff27e3b6233fe/ofl/ebgaramond/EBGaramond-Italic%5Bwght%5D.ttf"),
@@ -183,10 +183,18 @@ const FONT_ASSETS: &[FontAsset] = &[
     FontAsset {
         file_name: "CormorantGaramondGnosis-Roman.ttf",
         family: "Cormorant Garamond Gnosis",
-        language: "latin-heading",
+        language: "latin",
         size: 1_196_284,
         sha256: "07f3855368a61aca94724813796d3928bf8051e6d06f52b92d93297a4533c14a",
         source: FontSource::Bundled("fonts/CormorantGaramondGnosis-Roman.ttf"),
+    },
+    FontAsset {
+        file_name: "CormorantGaramondGnosis-Italic.ttf",
+        family: "Cormorant Garamond Gnosis",
+        language: "latin",
+        size: 716_268,
+        sha256: "ac6be363e64ff4dedf6ee476c002f9535eb3f7b3ae571c7c23265b602fe0b073",
+        source: FontSource::Bundled("fonts/CormorantGaramondGnosis-Italic.ttf"),
     },
     FontAsset {
         file_name: "ShipporiMincho-Regular.ttf",
@@ -628,10 +636,13 @@ fn required_fonts(language_code: &str) -> Vec<FontAsset> {
     FONT_ASSETS
         .iter()
         .copied()
-        .filter(|asset| {
-            asset.language == "base"
-                || Some(asset.language) == language
-                || (asset.language == "latin-heading" && language.is_none())
+        // Latin-script exports set everything in Cormorant, so they no longer need
+        // EB Garamond; it stays only as the Latin fallback inside the CJK and Arabic
+        // families, whose own fonts cover no Latin.
+        .filter(|asset| match asset.language {
+            "latin" => language.is_none(),
+            "non-latin" => language.is_some(),
+            script => Some(script) == language,
         })
         .collect()
 }
@@ -1167,22 +1178,57 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
         .language_code
         .to_ascii_lowercase()
         .replace('_', "-");
-    let (families, direction, heading_family) = if code.starts_with("ja") {
-        (vec!["Shippori Mincho", "EB Garamond"], "ltr", None)
+    // Cormorant sets much smaller than EB Garamond at the same point size — its
+    // x-height is far shorter — so the Latin branch raises the size and leading to
+    // land on the same apparent size as the other scripts.
+    let (families, direction, heading_family, size_pt, leading_em) = if code.starts_with("ja") {
+        (
+            vec!["Shippori Mincho", "EB Garamond"],
+            "ltr",
+            None,
+            11.0,
+            0.65,
+        )
     } else if code.starts_with("ko") {
-        (vec!["Noto Serif KR", "EB Garamond"], "ltr", None)
+        (
+            vec!["Noto Serif KR", "EB Garamond"],
+            "ltr",
+            None,
+            11.0,
+            0.65,
+        )
     } else if code.starts_with("zh-hant") || code.starts_with("zh-tw") || code.starts_with("zh-hk")
     {
-        (vec!["Noto Serif TC", "EB Garamond"], "ltr", None)
+        (
+            vec!["Noto Serif TC", "EB Garamond"],
+            "ltr",
+            None,
+            11.0,
+            0.65,
+        )
     } else if code.starts_with("zh") {
-        (vec!["Noto Serif SC", "EB Garamond"], "ltr", None)
+        (
+            vec!["Noto Serif SC", "EB Garamond"],
+            "ltr",
+            None,
+            11.0,
+            0.65,
+        )
     } else if code.starts_with("ar") || code.starts_with("fa") {
-        (vec!["Noto Naskh Arabic", "EB Garamond"], "rtl", None)
+        (
+            vec!["Noto Naskh Arabic", "EB Garamond"],
+            "rtl",
+            None,
+            11.0,
+            0.65,
+        )
     } else {
         (
-            vec!["EB Garamond"],
+            vec!["Cormorant Garamond Gnosis"],
             "ltr",
             Some("Cormorant Garamond Gnosis"),
+            12.5,
+            0.75,
         )
     };
     let family_list = families
@@ -1199,7 +1245,7 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
         })
         .unwrap_or_default();
     format!(
-        "#set page(paper: \"{paper_size}\", margin: (x: 0.85in, y: 0.8in), numbering: \"1\")\n#set text(font: ({family_list}), size: 11pt, lang: {}, dir: {direction})\n#set par(justify: true, leading: 0.65em)\n{heading_rule}#show link: set text(fill: rgb(\"245c8a\"))\n\n",
+        "#set page(paper: \"{paper_size}\", margin: (x: 0.85in, y: 0.8in), numbering: \"1\")\n#set text(font: ({family_list}), size: {size_pt}pt, lang: {}, dir: {direction})\n#set par(justify: true, leading: {leading_em}em)\n{heading_rule}#show link: set text(fill: rgb(\"245c8a\"))\n\n",
         typst_string(&document.language_code)
     )
 }
@@ -1489,24 +1535,27 @@ mod tests {
             .iter()
             .any(|font| font.family == "Noto Naskh Arabic"));
         let latin_fonts = required_fonts("vi");
-        assert_eq!(latin_fonts.len(), 3);
+        // Roman and italic both ship, so italic body text stays in the same family,
+        // and nothing else is fetched — EB Garamond is unused for Latin now.
+        assert_eq!(latin_fonts.len(), 2);
+        assert!(latin_fonts
+            .iter()
+            .all(|font| font.family == "Cormorant Garamond Gnosis"));
+        // Non-Latin scripts still need it as their Latin fallback.
         assert_eq!(
-            latin_fonts
+            required_fonts("ja")
                 .iter()
                 .filter(|font| font.family == "EB Garamond")
                 .count(),
             2
         );
-        assert!(latin_fonts
-            .iter()
-            .any(|font| font.family == "Cormorant Garamond Gnosis"));
         assert!(!required_fonts("ja")
             .iter()
             .any(|font| font.family == "Cormorant Garamond Gnosis"));
     }
 
     #[test]
-    fn typst_font_selection_uses_eb_garamond_for_latin_text() {
+    fn typst_font_selection_uses_cormorant_for_latin_text() {
         let vietnamese = ExportDocument {
             title: "Vietnamese".to_string(),
             language_code: "vi".to_string(),
@@ -1518,12 +1567,18 @@ mod tests {
             blocks: Vec::new(),
         };
         let vietnamese_preamble = typst_preamble(&vietnamese, "a4");
-        assert!(vietnamese_preamble.contains("font: (\"EB Garamond\")"));
+        assert!(vietnamese_preamble.contains("font: (\"Cormorant Garamond Gnosis\")"));
         assert!(vietnamese_preamble
             .contains("#show heading: set text(font: \"Cormorant Garamond Gnosis\", weight: 600)"));
+        assert!(!vietnamese_preamble.contains("EB Garamond"));
         assert!(!vietnamese_preamble.contains("Noto Serif"));
+        // Cormorant sets smaller than EB Garamond, so the Latin branch compensates.
+        assert!(vietnamese_preamble.contains("size: 12.5pt"));
+        assert!(vietnamese_preamble.contains("leading: 0.75em"));
         let japanese_preamble = typst_preamble(&japanese, "a4");
         assert!(japanese_preamble.contains("\"Shippori Mincho\", \"EB Garamond\""));
+        assert!(japanese_preamble.contains("size: 11pt"));
+        assert!(japanese_preamble.contains("leading: 0.65em"));
         assert!(!japanese_preamble.contains("Cormorant Garamond"));
     }
 
