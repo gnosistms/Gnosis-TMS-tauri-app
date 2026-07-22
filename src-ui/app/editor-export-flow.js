@@ -1,5 +1,5 @@
 import { formatErrorForDisplay } from "./error-display.js";
-import { invoke, isMacPlatform } from "./runtime.js";
+import { invoke, isMacPlatform, listen } from "./runtime.js";
 import { findChapterContext, selectedProjectsTeam } from "./project-context.js";
 import {
   applyCustomHtmlPlainTextPolicy,
@@ -44,6 +44,7 @@ const BASE_EDITOR_EXPORT_CATEGORIES = [
     label: "Save to file",
     options: [
       { id: "file:html", label: "HTML", kind: "file", format: "html", available: true },
+      { id: "file:pdf", label: "PDF", kind: "file", format: "pdf", available: true, printLinkFallback: true, omitCustomHtmlOption: true },
       { id: "file:xlsx", label: "XLSX", kind: "file", format: "xlsx", available: true, omitCustomHtmlOption: true },
       { id: "file:docx", label: "DOCX", kind: "file", format: "docx", available: true, printLinkFallback: true, omitCustomHtmlOption: true },
       { id: "file:txt", label: "TXT", kind: "file", format: "txt", available: true, omitCustomHtmlOption: true },
@@ -71,6 +72,17 @@ const BASE_EDITOR_EXPORT_CATEGORIES = [
   },
 ];
 
+export const PDF_PAPER_SIZES = [
+  { value: "us-letter", label: "US Letter (8.5 × 11 in)" },
+  { value: "us-legal", label: "US Legal (8.5 × 14 in)" },
+  { value: "us-executive", label: "US Executive (7.25 × 10.5 in)" },
+  { value: "us-tabloid", label: "US Tabloid (11 × 17 in)" },
+  { value: "a3", label: "A3 (297 × 420 mm)" },
+  { value: "a4", label: "A4 (210 × 297 mm)" },
+  { value: "a5", label: "A5 (148 × 210 mm)" },
+  { value: "iso-b5", label: "B5 / ISO (176 × 250 mm)" },
+];
+
 export function editorExportCategories() {
   const mac = isMacPlatform();
   return BASE_EDITOR_EXPORT_CATEGORIES.map((category) => ({
@@ -92,6 +104,10 @@ export function findEditorExportOption(optionId) {
 
 function currentExportModal() {
   return state.editorChapter?.exportModal ?? null;
+}
+
+function exportModalIsBusy(modal) {
+  return modal?.status === "exporting" || modal?.status === "cancelling";
 }
 
 function updateEditorExportModal(patch) {
@@ -135,6 +151,87 @@ function currentExportLanguageCode() {
   return String(currentExportModal()?.languageCode ?? "").trim();
 }
 
+function pdfFontInspectionKey(chapterId, languageCode) {
+  return `${String(chapterId ?? "")}:${String(languageCode ?? "")}`;
+}
+
+function pdfFontInspectionInput() {
+  const modal = currentExportModal();
+  const team = selectedProjectsTeam();
+  const context = findChapterContext(modal?.chapterId);
+  const languageCode = currentExportLanguageCode();
+  if (!Number.isFinite(team?.installationId) || !context?.project || !context?.chapter || !languageCode) {
+    return null;
+  }
+  return {
+    key: pdfFontInspectionKey(context.chapter.id, languageCode),
+    input: {
+      installationId: team.installationId,
+      repoName: context.project.name,
+      projectId: context.project.id ?? null,
+      projectFullName: context.project.fullName ?? "",
+      chapterId: context.chapter.id,
+      languageCode,
+    },
+  };
+}
+
+export async function refreshPdfFontInspection(render, operations = {}) {
+  const modal = currentExportModal();
+  if (!modal?.isOpen || modal.selectedOptionId !== "file:pdf" || exportModalIsBusy(modal)) {
+    return null;
+  }
+  const request = pdfFontInspectionInput();
+  const invokeCommand = operations.invoke ?? invoke;
+  if (!request || typeof invokeCommand !== "function") {
+    return null;
+  }
+  updateEditorExportModal({
+    pdfFontStatus: "loading",
+    pdfFontInspectionKey: request.key,
+    pdfFontRequiredBytes: 0,
+    pdfFontMissingBytes: 0,
+    pdfFontFamilies: [],
+    pdfFontMessage: "",
+    error: "",
+  });
+  render();
+  try {
+    const inspection = await invokeCommand("inspect_gtms_chapter_pdf_fonts", {
+      input: request.input,
+    });
+    if (!inspection || typeof inspection !== "object") {
+      updateEditorExportModal({ pdfFontStatus: "idle" });
+      render();
+      return null;
+    }
+    const current = currentExportModal();
+    if (!current?.isOpen || current.selectedOptionId !== "file:pdf"
+      || current.pdfFontInspectionKey !== request.key) {
+      return inspection;
+    }
+    updateEditorExportModal({
+      pdfFontStatus: inspection.supported === false ? "unsupported" : "ready",
+      pdfFontRequiredBytes: Number(inspection.requiredBytes) || 0,
+      pdfFontMissingBytes: Number(inspection.missingBytes) || 0,
+      pdfFontFamilies: Array.isArray(inspection.fontFamilies) ? inspection.fontFamilies : [],
+      pdfFontMessage: String(inspection.message ?? ""),
+      error: "",
+    });
+    render();
+    return inspection;
+  } catch (error) {
+    if (currentExportModal()?.pdfFontInspectionKey === request.key) {
+      updateEditorExportModal({
+        pdfFontStatus: "error",
+        error: formatErrorForDisplay(error),
+      });
+      render();
+    }
+    return null;
+  }
+}
+
 function openExportOptionsForChapter(render, chapterId, languageCode) {
   const previous = currentExportModal() ?? createEditorExportModalState();
   // The last successful export for this chapter wins over the in-session
@@ -170,6 +267,9 @@ function openExportOptionsForChapter(render, chapterId, languageCode) {
     ensureTeamCopyPaneReady(render);
   }
   render();
+  if (selectedOptionId === "file:pdf") {
+    void refreshPdfFontInspection(render);
+  }
 }
 
 export function openEditorExportOptions(render) {
@@ -194,7 +294,7 @@ export function openChapterExportOptions(render, chapterId) {
 
 export function selectEditorExportLanguage(render, languageCode) {
   const modal = currentExportModal();
-  if (!modal?.isOpen || modal.status === "exporting") {
+  if (!modal?.isOpen || exportModalIsBusy(modal)) {
     return;
   }
 
@@ -204,13 +304,62 @@ export function selectEditorExportLanguage(render, languageCode) {
   updateEditorExportModal({
     languageCode: languages.some((language) => language?.code === normalized) ? normalized : "",
     error: "",
+    pdfFontStatus: "idle",
+    pdfFontInspectionKey: "",
   });
+  render();
+  if (currentExportModal()?.selectedOptionId === "file:pdf") {
+    void refreshPdfFontInspection(render);
+  }
+}
+
+export function selectEditorExportPaperSize(render, paperSize) {
+  const modal = currentExportModal();
+  const normalized = String(paperSize ?? "").trim();
+  if (!modal?.isOpen || exportModalIsBusy(modal)
+    || !PDF_PAPER_SIZES.some((entry) => entry.value === normalized)) {
+    return;
+  }
+
+  updateEditorExportModal({ pdfPaperSize: normalized, error: "" });
   render();
 }
 
-export function closeEditorExportOptions(render) {
+export function closeEditorExportOptions(render, operations = {}) {
   const modal = currentExportModal();
-  if (!modal?.isOpen || modal.status === "exporting") {
+  if (!modal?.isOpen || modal.status === "cancelling") {
+    return;
+  }
+
+  if (modal.status === "exporting") {
+    if (!modal.pdfJobId) {
+      return;
+    }
+    if (modal.pdfStartPending) {
+      updateEditorExportModal({
+        isOpen: false,
+        status: "idle",
+        pdfJobId: "",
+        pdfStartPending: false,
+        pdfStage: "",
+      });
+      render();
+      return;
+    }
+    const invokeCommand = operations.invoke ?? invoke;
+    updateEditorExportModal({
+      status: "cancelling",
+      pdfStage: "Cancelling PDF export…",
+      pdfProgressCurrent: 0,
+      pdfProgressTotal: 0,
+      pdfProgressUnit: "",
+      pdfProgressIndeterminate: true,
+    });
+    render();
+    if (typeof invokeCommand === "function") {
+      void invokeCommand("cancel_gtms_chapter_pdf_export", { jobId: modal.pdfJobId })
+        .catch((error) => failEditorExport(render, error));
+    }
     return;
   }
 
@@ -221,7 +370,7 @@ export function closeEditorExportOptions(render) {
 export function toggleEditorExportCategory(render, categoryId) {
   const modal = currentExportModal();
   const category = editorExportCategories().find((entry) => entry.id === categoryId);
-  if (!modal?.isOpen || !category) {
+  if (!modal?.isOpen || exportModalIsBusy(modal) || !category) {
     return;
   }
 
@@ -247,7 +396,7 @@ export function toggleEditorExportCategory(render, categoryId) {
 
 export function selectEditorExportOption(render, optionId) {
   const modal = currentExportModal();
-  if (!modal?.isOpen || modal.status === "exporting" || !findEditorExportOption(optionId)) {
+  if (!modal?.isOpen || exportModalIsBusy(modal) || !findEditorExportOption(optionId)) {
     return;
   }
 
@@ -259,11 +408,14 @@ export function selectEditorExportOption(render, optionId) {
     ensureTeamCopyPaneReady(render);
   }
   render();
+  if (optionId === "file:pdf") {
+    void refreshPdfFontInspection(render);
+  }
 }
 
 export function toggleEditorExportFootnoteLinks(render, checked) {
   const modal = currentExportModal();
-  if (!modal?.isOpen || modal.status === "exporting") {
+  if (!modal?.isOpen || exportModalIsBusy(modal)) {
     return;
   }
 
@@ -273,7 +425,7 @@ export function toggleEditorExportFootnoteLinks(render, checked) {
 
 export function toggleEditorExportOmitCustomHtml(render, checked) {
   const modal = currentExportModal();
-  if (!modal?.isOpen || modal.status === "exporting") {
+  if (!modal?.isOpen || exportModalIsBusy(modal)) {
     return;
   }
 
@@ -292,6 +444,9 @@ function sanitizeExportFileName(value) {
 }
 
 function exportFileFilter(format) {
+  if (format === "pdf") {
+    return { name: "PDF document", extensions: ["pdf"] };
+  }
   if (format === "docx") {
     return { name: "DOCX document", extensions: ["docx"] };
   }
@@ -351,8 +506,22 @@ export async function writeClipboardFormats(formats) {
 }
 
 function failEditorExport(render, error) {
-  updateEditorExportModal({ status: "idle", error: formatErrorForDisplay(error) });
+  updateEditorExportModal({
+    status: "idle",
+    error: formatErrorForDisplay(error),
+    pdfJobId: "",
+    pdfStartPending: false,
+    pdfStage: "",
+    pdfProgressIndeterminate: false,
+  });
   render();
+}
+
+function createPdfExportJobId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `pdf-export-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
 }
 
 async function submitEditorFileExport(render, option, operations) {
@@ -370,6 +539,25 @@ async function submitEditorFileExport(render, option, operations) {
   if (!languageCode) {
     failEditorExport(render, "Choose the export language first.");
     return;
+  }
+
+  if (option.format === "pdf") {
+    const expectedKey = pdfFontInspectionKey(context.chapter.id, languageCode);
+    if (currentExportModal()?.pdfFontStatus !== "ready"
+      || currentExportModal()?.pdfFontInspectionKey !== expectedKey) {
+      await refreshPdfFontInspection(render, { invoke: invokeCommand });
+    }
+    const inspectedModal = currentExportModal();
+    if (inspectedModal?.pdfFontStatus === "unsupported") {
+      failEditorExport(render, inspectedModal.pdfFontMessage || "PDF export does not support this language yet.");
+      return;
+    }
+    if (inspectedModal?.pdfFontStatus !== "ready") {
+      if (!inspectedModal?.error) {
+        failEditorExport(render, "Could not verify the PDF fonts. Try again.");
+      }
+      return;
+    }
   }
 
   const fileBase = sanitizeExportFileName(
@@ -392,27 +580,64 @@ async function submitEditorFileExport(render, option, operations) {
     return;
   }
 
-  updateEditorExportModal({ status: "exporting", error: "" });
+  const pdfJobId = option.format === "pdf" ? createPdfExportJobId() : "";
+  updateEditorExportModal({
+    status: "exporting",
+    error: "",
+    pdfJobId,
+    pdfStartPending: option.format === "pdf",
+    pdfStage: option.format === "pdf" ? "Preparing the chapter…" : "",
+    pdfDownloadedBytes: 0,
+    pdfTotalBytes: 0,
+    pdfProgressCurrent: 0,
+    pdfProgressTotal: 0,
+    pdfProgressUnit: "",
+    pdfProgressIndeterminate: option.format === "pdf",
+    pdfOutputFileName: defaultFileName,
+  });
   render();
 
   try {
     await waitForRepoQueue(projectRepoScope({ team, project: context.project }));
+    if (option.format === "pdf") {
+      const latestModal = currentExportModal();
+      if (!latestModal?.isOpen || latestModal.status !== "exporting"
+        || latestModal.pdfJobId !== pdfJobId) {
+        return;
+      }
+      updateEditorExportModal({ pdfStartPending: false });
+    }
+    const input = {
+      ...(pdfJobId ? { jobId: pdfJobId } : {}),
+      installationId: team.installationId,
+      repoName: context.project.name,
+      projectId: context.project.id ?? null,
+      projectFullName: context.project.fullName ?? "",
+      chapterId: context.chapter.id,
+      languageCode,
+      format: option.format,
+      outputPath,
+      ...(option.format === "pdf"
+        ? { paperSize: currentExportModal()?.pdfPaperSize || "us-letter" }
+        : {}),
+      footnoteLinksAsPlainText:
+        option.printLinkFallback === true
+        && currentExportModal()?.footnoteLinksAsPlainText === true,
+      omitCustomHtml:
+        option.omitCustomHtmlOption === true
+        && currentExportModal()?.omitCustomHtml === true,
+    };
+    if (option.format === "pdf") {
+      await invokeCommand("start_gtms_chapter_pdf_export", { input });
+      if (currentExportModal()?.status === "cancelling"
+        && currentExportModal()?.pdfJobId === pdfJobId) {
+        await invokeCommand("cancel_gtms_chapter_pdf_export", { jobId: pdfJobId });
+      }
+      return;
+    }
     await invokeCommand("export_gtms_chapter_file", {
       input: {
-        installationId: team.installationId,
-        repoName: context.project.name,
-        projectId: context.project.id ?? null,
-        projectFullName: context.project.fullName ?? "",
-        chapterId: context.chapter.id,
-        languageCode,
-        format: option.format,
-        outputPath,
-        footnoteLinksAsPlainText:
-          option.printLinkFallback === true
-          && currentExportModal()?.footnoteLinksAsPlainText === true,
-        omitCustomHtml:
-          option.omitCustomHtmlOption === true
-          && currentExportModal()?.omitCustomHtml === true,
+        ...input,
       },
     });
     updateEditorExportModal({ isOpen: false, status: "idle", error: "" });
@@ -424,6 +649,64 @@ async function submitEditorFileExport(render, option, operations) {
   } catch (error) {
     failEditorExport(render, error);
   }
+}
+
+export function handleChapterPdfExportProgress(payload, render) {
+  const modal = currentExportModal();
+  if (!modal?.isOpen || !modal.pdfJobId || payload?.jobId !== modal.pdfJobId) {
+    return;
+  }
+  if (payload.status === "complete") {
+    const chapterId = modal.chapterId;
+    const fileName = modal.pdfOutputFileName || "PDF";
+    updateEditorExportModal({
+      isOpen: false,
+      status: "idle",
+      error: "",
+      pdfJobId: "",
+      pdfStartPending: false,
+      pdfStage: "",
+    });
+    saveStoredEditorExportDefault(chapterId, { optionId: "file:pdf" });
+    render();
+    showNoticeBadge(`Exported ${fileName}.`, render, 2200);
+    return;
+  }
+  if (payload.status === "error") {
+    failEditorExport(render, payload.message || "The PDF export failed.");
+    return;
+  }
+  if (payload.status === "cancelled") {
+    updateEditorExportModal({
+      isOpen: false,
+      status: "idle",
+      error: "",
+      pdfJobId: "",
+      pdfStartPending: false,
+      pdfStage: "",
+    });
+    render();
+    return;
+  }
+  updateEditorExportModal({
+    pdfStage: String(payload.message ?? "Exporting PDF…"),
+    pdfDownloadedBytes: Number(payload.downloadedBytes) || 0,
+    pdfTotalBytes: Number(payload.totalBytes) || 0,
+    pdfProgressCurrent: Number(payload.progressCurrent ?? payload.downloadedBytes) || 0,
+    pdfProgressTotal: Number(payload.progressTotal ?? payload.totalBytes) || 0,
+    pdfProgressUnit: String(payload.progressUnit ?? (payload.totalBytes ? "bytes" : "")),
+    pdfProgressIndeterminate: payload.progressIndeterminate === true,
+  });
+  render();
+}
+
+export async function registerChapterPdfExportListeners(render) {
+  if (!listen) {
+    return;
+  }
+  await listen("chapter-pdf-export-progress", (event) => {
+    handleChapterPdfExportProgress(event.payload, render);
+  });
 }
 
 async function submitEditorCopyExport(render, option, operations) {
@@ -499,7 +782,7 @@ async function submitEditorCopyExport(render, option, operations) {
 
 export async function submitEditorExport(render, operations = {}) {
   const modal = currentExportModal();
-  if (!modal?.isOpen || modal.status === "exporting") {
+  if (!modal?.isOpen || exportModalIsBusy(modal)) {
     return;
   }
 

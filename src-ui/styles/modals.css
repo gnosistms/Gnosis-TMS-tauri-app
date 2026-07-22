@@ -272,6 +272,52 @@
   font-weight: 700;
 }
 
+.editor-export-modal__pdf-progress {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--modal-progress-track-border, rgba(166, 108, 45, 0.22));
+  border-radius: var(--radius-ui);
+  background: var(--modal-progress-track-bg, rgba(255, 247, 233, 0.48));
+}
+
+.editor-export-modal__pdf-progress-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.editor-export-modal__pdf-progress-track {
+  position: relative;
+  height: 8px;
+  overflow: hidden;
+  border: 1px solid var(--modal-progress-track-border, rgba(166, 108, 45, 0.22));
+  border-radius: 999px;
+  background: var(--modal-progress-track-bg, rgba(255, 247, 233, 0.82));
+}
+
+.editor-export-modal__pdf-progress-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--modal-progress-fill, linear-gradient(90deg, rgba(198, 113, 0, 0.82), rgba(240, 142, 0, 0.92)));
+  transition: width 160ms ease;
+}
+
+.editor-export-modal__pdf-progress-track.is-indeterminate .editor-export-modal__pdf-progress-fill {
+  width: 40%;
+  animation: add-translation-progress-indeterminate 1.1s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .editor-export-modal__pdf-progress-track.is-indeterminate .editor-export-modal__pdf-progress-fill {
+    animation: none;
+  }
+}
+
 .editor-export-modal__detail .modal__actions {
   margin-top: auto;
 }

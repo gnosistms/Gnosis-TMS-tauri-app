@@ -25,6 +25,7 @@ import {
 import { updateProjectSearchQuery } from "./project-search-flow.js";
 import {
   selectEditorExportLanguage,
+  selectEditorExportPaperSize,
   toggleEditorExportFootnoteLinks,
   toggleEditorExportOmitCustomHtml,
 } from "./editor-export-flow.js";
@@ -871,6 +872,20 @@ function handleEditorExportLanguageInput(event, render) {
   return true;
 }
 
+function handleEditorExportPaperSizeInput(event, render) {
+  if (event.type !== "change") {
+    return false;
+  }
+
+  const input = event.target.closest("[data-editor-export-paper-size-select]");
+  if (!(input instanceof HTMLSelectElement)) {
+    return false;
+  }
+
+  selectEditorExportPaperSize(render, input.value);
+  return true;
+}
+
 function syncProjectAddTranslationPasteControls(input) {
   const root = input.closest?.(".modal-backdrop") ?? globalThis.document;
   const continueButton = root?.querySelector?.('[data-action="submit-project-add-translation-paste"]');
@@ -1137,6 +1152,7 @@ const inputHandlers = [
   handleChapterStatusSelectInput,
   handleChapterGlossarySelectInput,
   handleEditorExportLanguageInput,
+  handleEditorExportPaperSizeInput,
   handleProjectImportLinkInput,
   handleProjectImportPastedTextInput,
   handleProjectAddTranslationInput,

@@ -17,12 +17,15 @@ jobs:
         include:
           - platform: macos-latest
             args: --target aarch64-apple-darwin
+            typstTarget: aarch64-apple-darwin
             uploadSentrySourcemaps: "1"
           - platform: macos-latest
             args: --target x86_64-apple-darwin
+            typstTarget: x86_64-apple-darwin
             uploadSentrySourcemaps: "0"
           - platform: windows-latest
             args: ""
+            typstTarget: x86_64-pc-windows-msvc
             uploadSentrySourcemaps: "0"
     runs-on: ${{ matrix.platform }}
     env:
@@ -157,6 +160,9 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm install
+
+      - name: Bundle pinned Typst runtime
+        run: node scripts/prepare-typst-sidecar.mjs ${{ matrix.typstTarget }}
 
       - name: Bundle Windows Git runtime
         if: matrix.platform == 'windows-latest'

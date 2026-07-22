@@ -791,6 +791,23 @@ export function createEditorExportModalState() {
     // raw HTML (DOCX/RTF/TXT/MD/XLSX/plain text/Vellum). On by default — custom HTML
     // is usually intended for electronic export only.
     omitCustomHtml: true,
+    pdfPaperSize: "us-letter",
+    pdfJobId: "",
+    pdfStartPending: false,
+    pdfStage: "",
+    pdfDownloadedBytes: 0,
+    pdfTotalBytes: 0,
+    pdfProgressCurrent: 0,
+    pdfProgressTotal: 0,
+    pdfProgressUnit: "",
+    pdfProgressIndeterminate: false,
+    pdfOutputFileName: "",
+    pdfFontStatus: "idle",
+    pdfFontInspectionKey: "",
+    pdfFontRequiredBytes: 0,
+    pdfFontMissingBytes: 0,
+    pdfFontFamilies: [],
+    pdfFontMessage: "",
     wordpress: createEditorExportWordPressState(),
     teamCopy: createEditorExportTeamCopyState(),
   });

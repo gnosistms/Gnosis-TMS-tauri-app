@@ -22,15 +22,18 @@ pub(crate) use self::chapter_editor::{
 use self::{
     chapter_editor::{
         apply_aligned_translation_to_gtms_chapter_sync, apply_gtms_editor_ai_review_result_sync,
+        cancel_gtms_chapter_pdf_export as cancel_gtms_chapter_pdf_export_task,
         clear_gtms_editor_imported_conflict_sync, clear_gtms_editor_reviewed_markers_sync,
         export_gtms_chapter_file_sync, initialize_gtms_project_repo_sync,
-        insert_gtms_editor_row_sync, list_local_gtms_project_files_sync,
-        load_gtms_chapter_editor_data_sync, load_gtms_editor_field_history_sync,
-        load_gtms_editor_row_sync, merge_gtms_editor_rows_sync,
-        permanently_delete_gtms_editor_row_sync,
+        insert_gtms_editor_row_sync,
+        inspect_gtms_chapter_pdf_fonts as inspect_gtms_chapter_pdf_fonts_sync,
+        list_local_gtms_project_files_sync, load_gtms_chapter_editor_data_sync,
+        load_gtms_editor_field_history_sync, load_gtms_editor_row_sync,
+        merge_gtms_editor_rows_sync, permanently_delete_gtms_editor_row_sync,
         preflight_aligned_translation_to_gtms_chapter_sync, purge_local_gtms_project_repo_sync,
         remove_gtms_editor_language_image_sync, restore_gtms_editor_field_from_history_sync,
         reverse_gtms_editor_batch_replace_commit_sync, save_gtms_editor_language_image_url_sync,
+        start_gtms_chapter_pdf_export as start_gtms_chapter_pdf_export_task,
         start_team_chapter_copy, update_gtms_chapter_glossary_links_sync,
         update_gtms_chapter_language_selection_sync, update_gtms_chapter_languages_sync,
         update_gtms_chapter_workflow_status_sync, update_gtms_editor_row_field_flag_sync,
@@ -46,6 +49,7 @@ use self::{
         LoadChapterEditorInput, LoadChapterEditorResponse, LoadEditorFieldHistoryInput,
         LoadEditorFieldHistoryResponse, LoadEditorRowInput, LoadEditorRowResponse,
         LocalProjectFilesResponse, MergeEditorRowsInput, MergeEditorRowsResponse,
+        PdfChapterExportInput, PdfFontInspection, PdfFontInspectionInput,
         PurgeLocalProjectRepoInput, RemoveEditorLanguageImageInput, RestoreEditorFieldHistoryInput,
         RestoreEditorFieldHistoryResponse, ReverseEditorBatchReplaceCommitInput,
         ReverseEditorBatchReplaceCommitResponse, SaveEditorLanguageImageResponse,
@@ -198,6 +202,31 @@ pub(crate) async fn export_gtms_chapter_file(
     tauri::async_runtime::spawn_blocking(move || export_gtms_chapter_file_sync(&app, input))
         .await
         .map_err(|error| format!("The chapter export worker failed: {error}"))?
+}
+
+/// Returns immediately with a job id. PDF preparation, one-time font download,
+/// and Typst compilation report through `chapter-pdf-export-progress` events.
+#[tauri::command]
+pub(crate) async fn start_gtms_chapter_pdf_export(
+    app: AppHandle,
+    input: PdfChapterExportInput,
+) -> Result<String, String> {
+    start_gtms_chapter_pdf_export_task(app, input)
+}
+
+#[tauri::command]
+pub(crate) async fn inspect_gtms_chapter_pdf_fonts(
+    app: AppHandle,
+    input: PdfFontInspectionInput,
+) -> Result<PdfFontInspection, String> {
+    tauri::async_runtime::spawn_blocking(move || inspect_gtms_chapter_pdf_fonts_sync(&app, input))
+        .await
+        .map_err(|error| format!("The PDF font inspection worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn cancel_gtms_chapter_pdf_export(job_id: String) -> Result<bool, String> {
+    cancel_gtms_chapter_pdf_export_task(&job_id)
 }
 
 /// Returns immediately after validation; the copy runs in a background task

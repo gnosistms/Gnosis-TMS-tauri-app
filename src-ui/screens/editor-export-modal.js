@@ -8,6 +8,7 @@ import { formatErrorForDisplay } from "../app/error-display.js";
 import {
   editorExportCategories,
   findEditorExportOption,
+  PDF_PAPER_SIZES,
 } from "../app/editor-export-flow.js";
 import { selectedWordPressPost } from "../app/editor-export-wordpress-flow.js";
 import {
@@ -59,6 +60,63 @@ function renderExportCategory(category, modal) {
 
 function supportingText(text) {
   return `<p class="modal__supporting">${escapeHtml(text)}</p>`;
+}
+
+function pdfFontDisclosure(modal) {
+  if (modal.pdfFontStatus === "loading" || modal.pdfFontStatus === "idle") {
+    return supportingText("Checking the required PDF fonts…");
+  }
+  if (modal.pdfFontStatus === "unsupported") {
+    return `<p class="modal__error" role="alert">${escapeHtml(modal.pdfFontMessage || "PDF export does not support this language yet.")}</p>`;
+  }
+  if (modal.pdfFontStatus !== "ready") {
+    return "";
+  }
+  const missingBytes = Number(modal.pdfFontMissingBytes) || 0;
+  if (missingBytes === 0) {
+    return supportingText("PDF fonts are installed. No download is required.");
+  }
+  const size = `${(missingBytes / 1_048_576).toFixed(1)} MB (${Math.round(missingBytes).toLocaleString("en-US")} bytes)`;
+  const families = Array.isArray(modal.pdfFontFamilies) && modal.pdfFontFamilies.length > 0
+    ? `${modal.pdfFontFamilies.join(" and ")} print fonts`
+    : "PDF print fonts";
+  return supportingText(`${families} (${size}) will be downloaded once and kept between app updates.`);
+}
+
+function renderPdfExportProgress(modal, isExporting) {
+  if (!isExporting || !modal.pdfStage) {
+    return "";
+  }
+  const current = Math.max(0, Number(modal.pdfProgressCurrent) || 0);
+  const total = Math.max(0, Number(modal.pdfProgressTotal) || 0);
+  const unit = String(modal.pdfProgressUnit ?? "");
+  const indeterminate = modal.pdfProgressIndeterminate === true;
+  const percentage = total > 0 ? Math.min(100, Math.round((current / total) * 100)) : 0;
+  let valueLabel = "";
+  if (!indeterminate && total > 0 && unit === "bytes") {
+    valueLabel = `${(current / 1_048_576).toFixed(1)} of ${(total / 1_048_576).toFixed(1)} MB`;
+  } else if (!indeterminate && total > 0 && unit === "items") {
+    valueLabel = `${current} of ${total} images`;
+  }
+  const progressAttributes = indeterminate
+    ? `aria-label="${escapeHtml(modal.pdfStage)}"`
+    : `aria-label="${escapeHtml(modal.pdfStage)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percentage}"`;
+  const bar = indeterminate || total > 0
+    ? `
+      <div class="editor-export-modal__pdf-progress-track${indeterminate ? " is-indeterminate" : ""}" role="progressbar" ${progressAttributes}>
+        <span class="editor-export-modal__pdf-progress-fill" style="${indeterminate ? "" : `width: ${percentage}%`}"></span>
+      </div>
+    `
+    : "";
+  return `
+    <div class="editor-export-modal__pdf-progress" aria-live="polite">
+      <div class="editor-export-modal__pdf-progress-header">
+        <span>${escapeHtml(modal.pdfStage)}</span>
+        ${valueLabel ? `<span>${escapeHtml(valueLabel)}</span>` : ""}
+      </div>
+      ${bar}
+    </div>
+  `;
 }
 
 function renderWordPressPostResult(post, selectedPostId) {
@@ -187,11 +245,11 @@ function wordpressDetail(wordpress, isExporting) {
   };
 }
 
-function renderExportSelect({ label, selectAttribute, placeholder, options, value }) {
+function renderExportSelect({ label, selectAttribute, placeholder, options, value, disabled = false }) {
   return `
     <label class="field editor-export-modal__field">
       <span class="field__label">${escapeHtml(label)}</span>
-      <select class="field__input" ${selectAttribute}>
+      <select class="field__input" ${selectAttribute} ${disabled ? "disabled" : ""}>
         <option value="" ${value ? "" : "selected"}>${escapeHtml(placeholder)}</option>
         ${options
           .map((option) => `
@@ -245,6 +303,17 @@ function fileExportLanguageSection(option, modal, appState) {
       label: `${language.name || language.code} (${language.code})`,
     })),
     value: String(modal.languageCode ?? ""),
+  });
+}
+
+function pdfPaperSizeSection(modal, isExporting) {
+  return renderExportSelect({
+    label: "Paper size",
+    selectAttribute: "data-editor-export-paper-size-select",
+    placeholder: "Select",
+    options: PDF_PAPER_SIZES,
+    value: String(modal.pdfPaperSize || "us-letter"),
+    disabled: isExporting,
   });
 }
 
@@ -418,19 +487,25 @@ function exportDetail(option, isExporting, modal, appState) {
   }
 
   if (option.kind === "file") {
+    const pdfProgress = option.format === "pdf" ? renderPdfExportProgress(modal, isExporting) : "";
+    const pdfDisclosure = option.format === "pdf" ? pdfFontDisclosure(modal) : "";
+    const pdfReady = option.format !== "pdf" || modal.pdfFontStatus === "ready" || isExporting;
     return {
       bodyMarkup: `
         ${supportingText(`Click Save to export a ${option.label} file.`)}
+        ${pdfDisclosure}
         ${fileExportLanguageSection(option, modal, appState)}
+        ${option.format === "pdf" ? pdfPaperSizeSection(modal, isExporting) : ""}
         ${footnoteLinkFallbackSection(option, modal)}
         ${omitCustomHtmlSection(option, modal)}
+        ${pdfProgress}
       `,
-      submitButton: loadingPrimaryButton({
+      submitButton: pdfReady ? loadingPrimaryButton({
         label: "Save",
         loadingLabel: "Saving...",
         action: "submit-editor-export",
         isLoading: isExporting,
-      }),
+      }) : "",
     };
   }
 
@@ -455,8 +530,10 @@ export function renderEditorExportModal(state) {
     return "";
   }
 
-  const isExporting = modal.status === "exporting";
+  const isExporting = modal.status === "exporting" || modal.status === "cancelling";
+  const isCancelling = modal.status === "cancelling";
   const option = findEditorExportOption(modal.selectedOptionId);
+  const canCancelPdf = isExporting && Boolean(modal.pdfJobId);
   const detail = exportDetail(option, isExporting, modal, state);
   const errorMarkup = modal.error
     ? `<p class="modal__error" role="alert">${escapeHtml(formatErrorForDisplay(modal.error))}</p>`
@@ -477,7 +554,9 @@ export function renderEditorExportModal(state) {
               ${detail.bodyMarkup}
               ${errorMarkup}
               <div class="modal__actions">
-                ${secondaryButton("Cancel", "close-editor-export-options", { disabled: isExporting })}
+                ${secondaryButton(isCancelling ? "Cancelling…" : canCancelPdf ? "Cancel export" : "Cancel", "close-editor-export-options", {
+                  disabled: isCancelling || (isExporting && !canCancelPdf),
+                })}
                 ${detail.submitButton}
               </div>
             </div>

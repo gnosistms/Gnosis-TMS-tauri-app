@@ -82,6 +82,97 @@ test("editor export modal shows the save pane for available file formats", () =>
   assert.match(html, /aria-pressed="true"[^>]*>HTML</);
 });
 
+test("PDF pane explains the persistent serif fonts and shows job progress", () => {
+  const html = renderEditorExportModal(exportState({
+    selectedOptionId: "file:pdf",
+    status: "exporting",
+    pdfJobId: "pdf-job-1",
+    pdfStage: "Downloading Noto Serif for PDF export…",
+    pdfProgressCurrent: 2_000_000,
+    pdfProgressTotal: 4_335_688,
+    pdfProgressUnit: "bytes",
+    pdfProgressIndeterminate: false,
+    pdfFontStatus: "ready",
+    pdfFontMissingBytes: 4_335_688,
+    pdfFontFamilies: ["Noto Serif"],
+  }));
+
+  assert.match(html, /Noto Serif print fonts/);
+  assert.match(html, /4\.1 MB \(4,335,688 bytes\)/);
+  assert.match(html, /kept between app updates/);
+  assert.match(html, /Downloading Noto Serif for PDF export/);
+  assert.match(html, /data-editor-export-paper-size-select disabled/);
+  assert.match(html, /1\.9 of 4\.1 MB/);
+  assert.match(html, /role="progressbar"[^>]*aria-valuenow="46"/);
+  assert.match(html, /data-action="close-editor-export-options"[^>]*>\s*Cancel export\s*</);
+  assert.doesNotMatch(html, /data-action="close-editor-export-options" disabled/);
+  assert.match(html, /Show links in footnotes as plain text/);
+  assert.match(html, /Omit custom HTML/);
+});
+
+test("PDF pane shows indeterminate typesetting progress with cancellation enabled", () => {
+  const html = renderEditorExportModal(exportState({
+    selectedOptionId: "file:pdf",
+    status: "exporting",
+    pdfJobId: "pdf-job-2",
+    pdfStage: "Typesetting the PDF…",
+    pdfProgressIndeterminate: true,
+    pdfFontStatus: "ready",
+    pdfFontMissingBytes: 0,
+  }));
+
+  assert.match(html, /Typesetting the PDF/);
+  assert.match(html, /editor-export-modal__pdf-progress-track is-indeterminate/);
+  assert.match(html, /role="progressbar"/);
+  assert.doesNotMatch(html, /aria-valuenow=/);
+  assert.match(html, /data-action="close-editor-export-options"[^>]*>\s*Cancel export\s*</);
+  assert.doesNotMatch(html, /data-action="close-editor-export-options" disabled/);
+});
+
+test("PDF cancellation is enabled while the export waits for the repository queue", () => {
+  const html = renderEditorExportModal(exportState({
+    selectedOptionId: "file:pdf",
+    status: "exporting",
+    pdfJobId: "pdf-job-queued",
+    pdfStartPending: true,
+    pdfStage: "Preparing the chapter…",
+    pdfProgressIndeterminate: true,
+    pdfFontStatus: "ready",
+    pdfFontMissingBytes: 0,
+  }));
+
+  assert.match(html, /Cancel export/);
+  assert.doesNotMatch(html, /data-action="close-editor-export-options" disabled/);
+});
+
+test("PDF pane reports cached fonts without offering another download", () => {
+  const html = renderEditorExportModal(exportState({
+    selectedOptionId: "file:pdf",
+    pdfFontStatus: "ready",
+    pdfFontMissingBytes: 0,
+  }));
+
+  assert.match(html, /PDF fonts are installed\. No download is required\./);
+  assert.match(html, /data-editor-export-paper-size-select/);
+  assert.match(html, /<option value="us-letter" selected>US Letter \(8\.5 × 11 in\)<\/option>/);
+  assert.match(html, /<option value="us-legal" >US Legal/);
+  assert.match(html, /<option value="a4" >A4 \(210 × 297 mm\)<\/option>/);
+  assert.match(html, /<option value="iso-b5" >B5 \/ ISO/);
+  assert.match(html, /data-action="submit-editor-export"/);
+});
+
+test("PDF pane reflects the selected paper size", () => {
+  const html = renderEditorExportModal(exportState({
+    selectedOptionId: "file:pdf",
+    pdfPaperSize: "a4",
+    pdfFontStatus: "ready",
+    pdfFontMissingBytes: 0,
+  }));
+
+  assert.match(html, /<option value="a4" selected>A4 \(210 × 297 mm\)<\/option>/);
+  assert.doesNotMatch(html, /<option value="us-letter" selected>/);
+});
+
 test("editor export modal shows the copy pane for clipboard options", () => {
   const html = renderEditorExportModal(exportState({
     expandedCategoryIds: ["copy"],

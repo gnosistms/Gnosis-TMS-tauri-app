@@ -4,6 +4,8 @@ node_modules
 # Build output
 dist
 src-tauri/target
+src-tauri/binaries/typst-*
+src-tauri/binaries/.typst-sidecar-*
 src-tauri/gen
 playwright-report
 test-results

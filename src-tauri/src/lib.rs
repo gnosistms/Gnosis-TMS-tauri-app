@@ -107,24 +107,26 @@ use crate::{
     },
     project_import::{
         apply_aligned_translation_to_gtms_chapter, apply_gtms_editor_ai_review_result,
-        cancel_project_import_batch, clear_deleted_gtms_chapters,
+        cancel_gtms_chapter_pdf_export, cancel_project_import_batch, clear_deleted_gtms_chapters,
         clear_gtms_editor_imported_conflict, clear_gtms_editor_reviewed_markers,
         copy_gtms_chapter_to_team, delete_gtms_editor_row_comment, export_gtms_chapter_file,
         import_docx_to_gtms, import_html_to_gtms, import_project_files_to_gtms, import_txt_to_gtms,
         import_xlsx_to_gtms, initialize_gtms_project_repo, insert_gtms_editor_row_after,
-        insert_gtms_editor_row_before, list_local_gtms_project_files,
-        load_gtms_chapter_editor_data, load_gtms_editor_field_history, load_gtms_editor_row,
-        load_gtms_editor_row_comments, merge_gtms_editor_rows, permanently_delete_gtms_chapter,
+        insert_gtms_editor_row_before, inspect_gtms_chapter_pdf_fonts,
+        list_local_gtms_project_files, load_gtms_chapter_editor_data,
+        load_gtms_editor_field_history, load_gtms_editor_row, load_gtms_editor_row_comments,
+        merge_gtms_editor_rows, permanently_delete_gtms_chapter,
         permanently_delete_gtms_editor_row, preflight_aligned_translation_to_gtms_chapter,
         purge_local_gtms_project_repo, remove_gtms_editor_language_image, rename_gtms_chapter,
         resolve_project_import_link, restore_gtms_chapter, restore_gtms_editor_field_from_history,
         restore_gtms_editor_row, reverse_gtms_editor_batch_replace_commit,
         save_gtms_editor_language_image_url, save_gtms_editor_row_comment,
-        soft_delete_gtms_chapter, soft_delete_gtms_editor_row, update_gtms_chapter_glossary_links,
-        update_gtms_chapter_language_selection, update_gtms_chapter_languages,
-        update_gtms_chapter_workflow_status, update_gtms_editor_row_field_flag,
-        update_gtms_editor_row_fields, update_gtms_editor_row_fields_batch,
-        update_gtms_editor_row_text_style, upload_gtms_editor_language_image,
+        soft_delete_gtms_chapter, soft_delete_gtms_editor_row, start_gtms_chapter_pdf_export,
+        update_gtms_chapter_glossary_links, update_gtms_chapter_language_selection,
+        update_gtms_chapter_languages, update_gtms_chapter_workflow_status,
+        update_gtms_editor_row_field_flag, update_gtms_editor_row_fields,
+        update_gtms_editor_row_fields_batch, update_gtms_editor_row_text_style,
+        upload_gtms_editor_language_image,
     },
     project_repo_sync::{
         discard_old_layout_gtms_project_repos, list_project_repo_sync_states,
@@ -536,6 +538,7 @@ pub fn run() {
         .plugin(store::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_shell::init())
         .plugin(
             tauri_plugin_updater::Builder::new()
                 .pubkey(include_str!("../updater-public-key.txt").trim())
@@ -641,6 +644,9 @@ pub fn run() {
             cancel_project_import_batch,
             resolve_project_import_link,
             export_gtms_chapter_file,
+            inspect_gtms_chapter_pdf_fonts,
+            start_gtms_chapter_pdf_export,
+            cancel_gtms_chapter_pdf_export,
             copy_gtms_chapter_to_team,
             preflight_aligned_translation_to_gtms_chapter,
             apply_aligned_translation_to_gtms_chapter,

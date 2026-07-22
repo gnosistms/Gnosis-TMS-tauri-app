@@ -5,7 +5,8 @@
 // Sections:
 //   1. Rust crates — `cargo about generate` (src-tauri/about.toml + about.hbs)
 //   2. npm packages — license-checker over production dependencies
-//   3. Vendored libraries — src-ui/lib/vendor/diff-match-patch.js (Apache-2.0)
+//   3. Bundled/downloaded runtimes — Typst and the Noto Serif font family
+//   4. Vendored libraries — src-ui/lib/vendor/diff-match-patch.js (Apache-2.0)
 //
 // Runs as part of the Tauri beforeBuildCommand (build-frontend-for-tauri.mjs)
 // so `npm run tauri:build` always ships a fresh file. Requires cargo-about:
@@ -103,6 +104,41 @@ function generateVendoredSection() {
   ].join("\n");
 }
 
+function generatePdfRuntimeSection() {
+  const apacheText = readFileSync(
+    join(rootDir, "scripts", "licenses", "apache-2.0.txt"),
+    "utf8",
+  ).trimEnd();
+  const oflText = readFileSync(
+    join(rootDir, "src-ui", "assets", "fonts-variable", "noto-serif", "LICENSE"),
+    "utf8",
+  ).trimEnd();
+  return [
+    "## PDF export runtime and fonts",
+    "",
+    "### Typst 0.15.1",
+    "",
+    "https://github.com/typst/typst",
+    "",
+    "Bundled as the PDF compiler under the Apache License, Version 2.0:",
+    "",
+    "```",
+    apacheText,
+    "```",
+    "",
+    "### Noto Serif font family",
+    "",
+    "https://github.com/google/fonts",
+    "",
+    "Downloaded on demand for PDF export under the SIL Open Font License, Version 1.1:",
+    "",
+    "```",
+    oflText,
+    "```",
+    "",
+  ].join("\n");
+}
+
 const pkg = JSON.parse(readFileSync(join(rootDir, "package.json"), "utf8"));
 
 const header = [
@@ -121,7 +157,14 @@ const npmPackages = await collectNpmPackages();
 mkdirSync(join(srcTauriDir, "resources"), { recursive: true });
 writeFileSync(
   outputPath,
-  [header, cratesSection.trimEnd(), "", generateNpmSection(npmPackages), generateVendoredSection()].join("\n"),
+  [
+    header,
+    cratesSection.trimEnd(),
+    "",
+    generateNpmSection(npmPackages),
+    generatePdfRuntimeSection(),
+    generateVendoredSection(),
+  ].join("\n"),
 );
 
 console.log(
