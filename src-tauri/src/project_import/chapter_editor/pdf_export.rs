@@ -975,7 +975,7 @@ fn prepare_typst_workspace(
     let title = leading_title.as_deref().unwrap_or(document.title.as_str());
     let mut source = typst_preamble(document, paper_size);
     source.push_str(&format!(
-        "#align(center)[#text(size: 22pt, weight: \"bold\")[#text({})]]\n#v(1.2em)\n",
+        "#gnosis-title({})\n#v(1.2em)\n",
         typst_string(title)
     ));
     for (block_index, block) in document.blocks.iter().enumerate() {
@@ -1342,8 +1342,20 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
     } else {
         format!("{GREEK_RUN_RULE_PREFIX}{greek_family})\n")
     };
+    // The chapter title is emitted as plain styled text, not a Typst heading, so the
+    // `#show heading` rule above never reaches it. This helper gives the title the
+    // same heading typeface; the global Greek-run rule still applies inside it.
+    let title_rule = match heading_family {
+        Some(family) => format!(
+            "#let gnosis-title(t) = align(center)[#text(font: {}, size: 22pt, weight: \"bold\")[#t]]\n",
+            typst_string(family)
+        ),
+        None => String::from(
+            "#let gnosis-title(t) = align(center)[#text(size: 22pt, weight: \"bold\")[#t]]\n",
+        ),
+    };
     format!(
-        "#set page(paper: \"{paper_size}\", margin: (x: 0.85in, y: 0.8in), numbering: \"1\")\n#set text(font: ({family_list}), size: {size_pt}pt, lang: {}, dir: {direction})\n#set par(justify: true, leading: {leading_em}em)\n{heading_rule}{greek_rule}#show link: set text(fill: rgb(\"245c8a\"))\n{GNOSIS_IMAGE_RULE}\n",
+        "#set page(paper: \"{paper_size}\", margin: (x: 0.85in, y: 0.8in), numbering: \"1\")\n#set text(font: ({family_list}), size: {size_pt}pt, lang: {}, dir: {direction})\n#set par(justify: true, leading: {leading_em}em)\n{heading_rule}{greek_rule}{title_rule}#show link: set text(fill: rgb(\"245c8a\"))\n{GNOSIS_IMAGE_RULE}\n",
         typst_string(&document.language_code)
     )
 }
@@ -1864,11 +1876,20 @@ mod tests {
         // Greek quotations in 0.8.68 when it was dropped.
         assert!(vietnamese_preamble.contains(GREEK_RUN_RULE_PREFIX));
         assert!(vietnamese_preamble.contains("set text(font: \"EB Garamond\")"));
+        // The chapter title is not a Typst heading, so it takes the heading typeface
+        // through its own helper — otherwise it silently renders in the body font.
+        assert!(vietnamese_preamble.contains(
+            "#let gnosis-title(t) = align(center)[#text(font: \"Cormorant Garamond Gnosis\", size: 22pt, weight: \"bold\")[#t]]"
+        ));
         let japanese_preamble = typst_preamble(&japanese, "a4");
         assert!(japanese_preamble.contains("\"Shippori Mincho\", \"EB Garamond\""));
         assert!(japanese_preamble.contains("size: 11pt"));
         assert!(japanese_preamble.contains("leading: 0.65em"));
         assert!(!japanese_preamble.contains("Cormorant Garamond"));
+        // Non-Latin scripts keep the body typeface for the title.
+        assert!(japanese_preamble.contains(
+            "#let gnosis-title(t) = align(center)[#text(size: 22pt, weight: \"bold\")[#t]]"
+        ));
     }
 
     #[test]
