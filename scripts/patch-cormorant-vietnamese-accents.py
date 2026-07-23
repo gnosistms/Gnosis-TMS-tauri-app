@@ -145,7 +145,11 @@ def patch(src, dst, family):
 
 STACKS = [("Ầ", "ầ", "A", "a"), ("Ấ", "ấ", "A", "a"),
           ("Ề", "ề", "E", "e"), ("Ế", "ế", "E", "e"),
-          ("Ồ", "ồ", "O", "o"), ("Ố", "ố", "O", "o")]
+          ("Ồ", "ồ", "O", "o"), ("Ố", "ố", "O", "o"),
+          # Consistency audit finding H: the uppercase hook sat ~15u closer to the
+          # circumflex than the lowercase one (ẩ/ể/ổ). Grave and acute already get
+          # this treatment above; extend it to the hook for the same reason.
+          ("Ẩ", "ẩ", "A", "a"), ("Ể", "ể", "E", "e"), ("Ổ", "ổ", "O", "o")]
 
 
 def stack_offset(font, ch, base):
