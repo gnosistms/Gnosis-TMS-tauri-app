@@ -359,15 +359,22 @@ export async function saveEditorConflictResolution(render, operations = {}) {
   }
 
   if (syncPayload === null) {
-    state.editorChapter = {
-      ...state.editorChapter,
-      conflictResolutionModal: {
-        ...state.editorChapter.conflictResolutionModal,
-        status: "idle",
-        error: "The conflict was saved locally, but the sync to GitHub did not complete. Try Save and finalize again.",
-      },
-    };
+    // The resolution is already committed locally (the save above succeeded, or we
+    // would have returned earlier). A null sync result here is not data loss: it covers
+    // being offline, navigating away, a queued/slow remoteSync that ran past its overdue
+    // window, or a transient push failure. In every case the background sync carries the
+    // saved resolution to GitHub on its next pass, and the separate background-sync
+    // status indicator surfaces any real push error. So dismiss the modal with a soft
+    // "still syncing" notice instead of a blocking "did not complete — try again" error,
+    // which alarmed users and invited a needless re-finalize of an already-saved row.
+    if (editorChapterHasUnresolvedConflicts(state.editorChapter)) {
+      lockConflictFilter();
+    } else {
+      resetConflictFilterIfClear();
+    }
+    closeConflictResolutionModalState();
     render?.();
+    showNoticeBadge("Resolution saved. Syncing to GitHub in the background.", render, 2400);
     return;
   }
 
