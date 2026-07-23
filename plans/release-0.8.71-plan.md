@@ -34,5 +34,5 @@ complete release, then delete the broken one.
 - [x] Confirm the release build and updater artifacts publish successfully on
       every platform (Windows + macOS arm64/x64) — watch each job, not just the
       run status.
-- [ ] After 0.8.71 is fully published, delete the v0.8.70 release and tag
-      (requires explicit confirmation).
+- [x] After 0.8.71 was fully published, deleted the v0.8.70 release and tag
+      (confirmed 2026-07-23).
