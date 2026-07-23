@@ -76,7 +76,24 @@ fn resolve_repo_git_path(repo_path: &Path, git_path: &str) -> PathBuf {
     }
 }
 
+/// Remove a leftover `.git/index.lock` if one is present. Git never expires this file
+/// by mtime, so one left behind by a killed git subprocess wedges every later write until
+/// the app restarts. Safe to call only from recovery paths (not during a live git op):
+/// the app's own writes are serialized by `repo_sync_lock`, so any lock seen here belongs
+/// to a dead process. Best-effort — a failed removal is not fatal to the caller.
+fn remove_stale_index_lock(repo_path: &Path) {
+    if let Ok(index_lock_path) =
+        git_output(repo_path, &["rev-parse", "--git-path", "index.lock"], None)
+    {
+        let index_lock_path = resolve_repo_git_path(repo_path, index_lock_path.trim());
+        if index_lock_path.exists() {
+            let _ = std::fs::remove_file(&index_lock_path);
+        }
+    }
+}
+
 pub(crate) fn abort_in_progress_git_operations(repo_path: &Path) -> Result<(), String> {
+    remove_stale_index_lock(repo_path);
     if repo_has_rebase_in_progress_local(repo_path) {
         git_output(repo_path, &["rebase", "--abort"], None)?;
     }

@@ -596,6 +596,10 @@ pub(super) fn upsert_local_record(
 ) -> Result<LocalTeamMetadataMutationResult, String> {
     let contents = serde_json::to_string_pretty(record_value)
         .map_err(|error| format!("Could not encode the local team-metadata record: {error}"))?;
+    // Serialize the `git add`/commit below against a concurrent metadata pull on the same
+    // repo so they don't race `.git/index.lock`.
+    let repo_lock = crate::repo_sync_shared::repo_sync_lock(repo_path);
+    let _repo_lock_guard = crate::repo_sync_shared::acquire_repo_sync_lock(&repo_lock);
     // Atomic write (sibling .tmp + rename) so a crash mid-write can't leave a torn
     // record file; the helper creates the parent folder.
     crate::repo_resource_storage::write_text_file(record_path, &format!("{contents}\n"))?;
@@ -674,6 +678,11 @@ pub(super) fn delete_local_record(
             commit_created: false,
         });
     }
+
+    // Serialize the `git add`/commit below against a concurrent metadata pull on the same
+    // repo so they don't race `.git/index.lock`.
+    let repo_lock = crate::repo_sync_shared::repo_sync_lock(repo_path);
+    let _repo_lock_guard = crate::repo_sync_shared::acquire_repo_sync_lock(&repo_lock);
 
     fs::remove_file(record_path).map_err(|error| {
         format!(

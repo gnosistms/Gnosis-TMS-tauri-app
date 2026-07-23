@@ -241,6 +241,11 @@ pub(super) fn pull_local_metadata_repo(
     installation_id: i64,
     session_token: &str,
 ) -> Result<(), String> {
+    // Serialize the `git pull --ff-only` (and its rebase/cleanup retries) against
+    // concurrent metadata mutations on the same repo so they don't race `.git/index.lock`.
+    let repo_lock = crate::repo_sync_shared::repo_sync_lock(repo_path);
+    let _repo_lock_guard = crate::repo_sync_shared::acquire_repo_sync_lock(&repo_lock);
+
     let git_transport_token = load_git_transport_token(installation_id, session_token)?;
     let git_transport_auth = GitTransportAuth::from_token(&git_transport_token)?;
     let branch_name = current_branch_name(repo_path);

@@ -47,6 +47,12 @@ pub(in crate::project_import) fn write_row_files_and_commit(
     metadata: CommitMetadata<'_>,
     writes: &[PreparedRowFileWrite],
 ) -> Result<String, String> {
+    // Serialize the index-mutating `git add`/commit below against the background
+    // reconcile and editor-driven syncs, which hold this same per-repo lock. Without
+    // it a content save racing a sync collides on `.git/index.lock`.
+    let repo_lock = crate::repo_sync_shared::repo_sync_lock(repo_path);
+    let _repo_lock_guard = crate::repo_sync_shared::acquire_repo_sync_lock(&repo_lock);
+
     crate::git_commit::ensure_local_commit_preconditions(app, repo_path)?;
 
     let mut written_count = 0usize;
@@ -114,8 +120,14 @@ pub(in crate::project_import) fn write_row_files_and_commit_with_removals(
     removed_relative_paths: &[String],
 ) -> Result<String, String> {
     if removed_relative_paths.is_empty() {
+        // Delegates before acquiring the lock; the delegate takes it itself.
         return write_row_files_and_commit(app, repo_path, commit_message, metadata, writes);
     }
+
+    // Same serialization as `write_row_files_and_commit` — the removals path stages and
+    // commits directly here, so it must hold the per-repo lock too.
+    let repo_lock = crate::repo_sync_shared::repo_sync_lock(repo_path);
+    let _repo_lock_guard = crate::repo_sync_shared::acquire_repo_sync_lock(&repo_lock);
 
     crate::git_commit::ensure_local_commit_preconditions(app, repo_path)?;
 

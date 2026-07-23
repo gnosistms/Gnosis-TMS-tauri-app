@@ -147,6 +147,17 @@ async function reloadStoreHandle() {
   // snapshot: memoryState is already authoritative and re-reading could clobber writes
   // made during the reload window.
   store = await loadStore(STORE_FILENAME);
+
+  // Re-persist memoryState through the fresh handle. The write that hit the stale rid
+  // (and any writes made while the handle was null) only landed in memoryState; without
+  // this flush they never reach the store file and are silently lost on the next boot,
+  // which re-initializes from that file. Safe because memoryState is authoritative. A
+  // set() that itself rejects (e.g. the fresh handle also went stale) propagates to
+  // ensureStoreReloaded's catch, which reports it non-fatally and leaves the handle for
+  // a later write to re-trigger recovery.
+  for (const [key, value] of Object.entries(memoryState)) {
+    await store.set(key, value);
+  }
 }
 
 function ensureStoreReloaded() {
