@@ -7,7 +7,12 @@ const OVERDUE_THRESHOLDS_MS = {
   localEditorWrite: 15_000,
   localMetadataWrite: 15_000,
   remoteSync: 120_000,
-  repoMaintenance: 120_000,
+  // repoMaintenance is the catch-all bucket for every long-running non-sync operation
+  // (full clone, reconcile, large-repo search reindex). Those legitimately take minutes
+  // on a big repo, so a 120s threshold reported "overdue" for merely-large work far more
+  // often than for genuinely stuck work. Raised so the signal fires only when something
+  // is actually wedged.
+  repoMaintenance: 600_000,
 };
 const DEFAULT_OVERDUE_THRESHOLD_MS = 60_000;
 
