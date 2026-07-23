@@ -17,8 +17,8 @@ use uuid::Uuid;
 
 use super::chapter_export::{
     apply_print_custom_html_policy, build_export_document, download_public_image_bytes_detailed,
-    inline_segments, ExportBlock, ExportChapterFileInput, ExportDocument, ExportImage,
-    InlineStyleState,
+    inline_segments, inline_visible_text, ExportBlock, ExportChapterFileInput, ExportDocument,
+    ExportImage, InlineStyleState,
 };
 
 const PDF_EXPORT_EVENT: &str = "chapter-pdf-export-progress";
@@ -971,13 +971,20 @@ fn prepare_typst_workspace(
             anchored_numbers.insert(*number);
         }
     }
+    let leading_title = leading_heading_title(document);
+    let title = leading_title.as_deref().unwrap_or(document.title.as_str());
     let mut source = typst_preamble(document, paper_size);
     source.push_str(&format!(
         "#align(center)[#text(size: 22pt, weight: \"bold\")[#text({})]]\n#v(1.2em)\n",
-        typst_string(&document.title)
+        typst_string(title)
     ));
     for (block_index, block) in document.blocks.iter().enumerate() {
         check_cancelled(cancelled)?;
+        // A leading H1 promoted to the chapter title is not also printed as a
+        // body heading — it has become the title above.
+        if leading_title.is_some() && block_index == 0 {
+            continue;
+        }
         match block {
             ExportBlock::Text { text_style, text } => {
                 let inline = render_inline_typst_with_footnotes(
@@ -1346,18 +1353,19 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
 const GREEK_RUN_RULE_PREFIX: &str =
     "#show regex(\"[\\u{0370}-\\u{03FF}\\u{1F00}-\\u{1FFF}]+\"): set text(font: ";
 
-/// Scales an image to 90% of the text width, but never taller than 82% of the text
+/// Scales an image to the full text width, but never taller than 82% of the text
 /// region, so the figure's caption still has somewhere to go. The cap is a maximum,
 /// not a fixed height — a plain `height:` would reserve the full 82% for small images
 /// too, stranding them on pages of their own. Without the cap a tall portrait image
 /// fills the region on its own
 /// and Typst pushes the caption past the bottom margin, printing it over the page
-/// number rather than shrinking the figure.
+/// number rather than shrinking the figure. A tall image hits the height cap before
+/// its width reaches the margins, so it is centred at the capped height.
 ///
 /// The measurement uses absolute lengths taken from `layout`: `measure` has no
-/// container to resolve a relative width against, so `width: 90%` there reports the
+/// container to resolve a relative width against, so `width: 100%` there reports the
 /// wrong height and the cap never applies.
-const GNOSIS_IMAGE_RULE: &str = "#let gnosis-image(path) = layout(region => {\n  let width = region.width * 0.9\n  let limit = region.height * 0.82\n  let natural = measure(image(path, width: width))\n  if natural.height > limit { align(center, image(path, height: limit)) } else { image(path, width: width) }\n})\n";
+const GNOSIS_IMAGE_RULE: &str = "#let gnosis-image(path) = layout(region => {\n  let width = region.width\n  let limit = region.height * 0.82\n  let natural = measure(image(path, width: width))\n  if natural.height > limit { align(center, image(path, height: limit)) } else { image(path, width: width) }\n})\n";
 
 fn render_inline_typst(text: &str, show_link_urls: bool) -> String {
     inline_segments(text)
@@ -1367,9 +1375,41 @@ fn render_inline_typst(text: &str, show_link_urls: bool) -> String {
         .join("")
 }
 
+/// When the first block is an H1, that heading becomes the chapter title (the same
+/// rule the WordPress and other exports follow). A heading that anchors a footnote is
+/// not eligible — promoting it to the title would strip the block and orphan the note.
+fn leading_heading_title(document: &ExportDocument) -> Option<String> {
+    let ExportBlock::Text { text_style, text } = document.blocks.first()? else {
+        return None;
+    };
+    if normalize_editor_text_style_value(Some(text_style)) != "heading1" {
+        return None;
+    }
+    let anchors_footnote = document.blocks.iter().any(|block| {
+        matches!(
+            block,
+            ExportBlock::Footnote {
+                anchor_block: Some(0),
+                ..
+            }
+        )
+    });
+    if anchors_footnote {
+        return None;
+    }
+    let title = inline_visible_text(text).trim().to_string();
+    if title.is_empty() {
+        None
+    } else {
+        Some(title)
+    }
+}
+
 fn render_typst_image_caption(caption: &str) -> String {
+    // 0.85em matches Typst's default footnote text size, so captions read at the
+    // same slightly-smaller scale as the footnotes at the foot of the page.
     format!(
-        "#text(style: \"italic\")[{}]",
+        "#text(size: 0.85em, style: \"italic\")[{}]",
         render_inline_typst(caption, false)
     )
 }
@@ -1426,6 +1466,22 @@ fn render_inline_typst_with_footnotes(
             &segment.style,
             false,
         ));
+    }
+    // Footnotes anchored to this block whose markers never appeared inline are
+    // row-level footnotes: attach their references to the end of the block, matching
+    // the editor preview's append-remaining rule. This keeps a footnote stuck to the
+    // end of its own paragraph instead of floating onto the next one.
+    let mut appended = footnotes
+        .iter()
+        .filter(|(marker, _)| !used.contains(marker))
+        .collect::<Vec<_>>();
+    appended.sort_by_key(|(marker, _)| *marker);
+    for (marker, note) in appended {
+        rendered.push_str(&format!(
+            "#footnote[{}]",
+            render_inline_typst(note, footnote_links_as_plain_text)
+        ));
+        used.insert(*marker);
     }
     rendered
 }
@@ -1702,6 +1758,59 @@ mod tests {
         assert!(!fonts.iter().any(|font| font.family == "Noto Serif TC"));
     }
 
+    fn text_block(style: &str, text: &str) -> ExportBlock {
+        ExportBlock::Text {
+            text_style: style.to_string(),
+            text: text.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_leading_h1_becomes_the_chapter_title() {
+        let document = ExportDocument {
+            title: "File Title".to_string(),
+            language_code: "en".to_string(),
+            blocks: vec![
+                text_block("heading1", "The <b>Real</b> Title"),
+                text_block("paragraph", "Body."),
+            ],
+        };
+        // Inline markup is stripped to visible text, matching the WordPress rule.
+        assert_eq!(
+            leading_heading_title(&document).as_deref(),
+            Some("The Real Title")
+        );
+    }
+
+    #[test]
+    fn a_non_heading_first_line_leaves_the_file_title_in_place() {
+        let document = ExportDocument {
+            title: "File Title".to_string(),
+            language_code: "en".to_string(),
+            blocks: vec![text_block("paragraph", "Just a paragraph.")],
+        };
+        assert_eq!(leading_heading_title(&document), None);
+    }
+
+    #[test]
+    fn a_leading_h1_that_anchors_a_footnote_is_not_promoted() {
+        let document = ExportDocument {
+            title: "File Title".to_string(),
+            language_code: "en".to_string(),
+            blocks: vec![
+                text_block("heading1", "Title with note[^1]"),
+                ExportBlock::Footnote {
+                    number: 1,
+                    marker: 1,
+                    anchor_block: Some(0),
+                    text: "A note.".to_string(),
+                },
+            ],
+        };
+        // Promoting it would strip the heading and orphan the footnote.
+        assert_eq!(leading_heading_title(&document), None);
+    }
+
     #[test]
     fn images_are_capped_so_captions_stay_off_the_page_number() {
         let document = ExportDocument {
@@ -1776,8 +1885,28 @@ mod tests {
             &[(1, "Note".to_string())],
             false,
         );
-        assert!(!rendered.contains("#footnote"));
+        // The escaped marker stays literal — no footnote is placed at its position —
+        // and the unmatched inline marker is left untouched.
+        assert!(rendered.contains("[1]"));
         assert!(rendered.contains("[3]"));
+        // The note itself is not dropped: with no usable inline marker it appends to
+        // the end of the block.
+        assert!(rendered.trim_end().ends_with("#footnote[#text(\"Note\")]"));
+    }
+
+    #[test]
+    fn row_level_footnotes_append_to_the_end_of_their_paragraph() {
+        // A footnote whose marker never appears inline (a row-level footnote) attaches
+        // to the end of the paragraph rather than floating onto the next one.
+        let rendered = render_inline_typst_with_footnotes(
+            "The Tarot of the Bohemians.",
+            &[(1, "Astral Light note".to_string())],
+            false,
+        );
+        assert_eq!(
+            rendered,
+            "#text(\"The Tarot of the Bohemians.\")#footnote[#text(\"Astral Light note\")]"
+        );
     }
 
     #[test]
@@ -1806,7 +1935,7 @@ mod tests {
     #[test]
     fn image_captions_are_wrapped_in_italic_text() {
         let caption = render_typst_image_caption("A <b>bold</b> caption");
-        assert!(caption.starts_with("#text(style: \"italic\")["));
+        assert!(caption.starts_with("#text(size: 0.85em, style: \"italic\")["));
         assert!(caption.contains("#strong["));
     }
 
@@ -1817,7 +1946,7 @@ mod tests {
             "An italic caption",
         );
         assert!(figure.starts_with("#figure(image("));
-        assert!(figure.contains("caption: [#text(style: \"italic\")"));
+        assert!(figure.contains("caption: [#text(size: 0.85em, style: \"italic\")"));
         assert!(figure.ends_with("numbering: none)"));
     }
 
