@@ -185,7 +185,7 @@ const FONT_ASSETS: &[FontAsset] = &[
         family: "Cormorant Garamond Gnosis",
         language: "latin",
         size: 1_196_284,
-        sha256: "07f3855368a61aca94724813796d3928bf8051e6d06f52b92d93297a4533c14a",
+        sha256: "e2e361f2ac62f380cfed516c849a3b8361656cb873daac4a889fee08da8be2af",
         source: FontSource::Bundled("fonts/CormorantGaramondGnosis-Roman.ttf"),
     },
     FontAsset {
@@ -193,7 +193,7 @@ const FONT_ASSETS: &[FontAsset] = &[
         family: "Cormorant Garamond Gnosis",
         language: "latin",
         size: 716_268,
-        sha256: "ac6be363e64ff4dedf6ee476c002f9535eb3f7b3ae571c7c23265b602fe0b073",
+        sha256: "272df0b7134851b43ba7ec27f91e987025c5d82fef2309a5bdb8bb4875cc0a9a",
         source: FontSource::Bundled("fonts/CormorantGaramondGnosis-Italic.ttf"),
     },
     FontAsset {
@@ -1258,9 +1258,6 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
         .language_code
         .to_ascii_lowercase()
         .replace('_', "-");
-    // Cormorant sets much smaller than EB Garamond at the same point size — its
-    // x-height is far shorter — so the Latin branch raises the size and leading to
-    // land on the same apparent size as the other scripts.
     let (families, direction, heading_family, size_pt, leading_em) = if code.starts_with("ja") {
         (
             vec!["Shippori Mincho", "EB Garamond"],
@@ -1303,17 +1300,19 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
             0.65,
         )
     } else {
-        // EB Garamond trails Cormorant purely for coverage, never for appearance:
-        // Cormorant has almost no Greek (4 of 73 basic, none polytonic) where EB
-        // Garamond has nearly all of it, and Greek quotations are common in these
-        // documents. Typst falls through per character, so Latin still renders in
-        // Cormorant throughout.
+        // EB Garamond is the body typeface; Cormorant Garamond is reserved for
+        // headings (below) and trails here purely as a glyph-coverage fallback — a
+        // handful of IAST Sanskrit diacritics and any Vietnamese edge case this
+        // Cormorant build corrects — never for appearance. With EB Garamond leading,
+        // this branch uses the same 11pt/0.65em baseline as every other script: the
+        // larger size the old Cormorant-led body needed to compensate for Cormorant's
+        // shorter x-height is no longer necessary.
         (
-            vec!["Cormorant Garamond Gnosis", "EB Garamond"],
+            vec!["EB Garamond", "Cormorant Garamond Gnosis"],
             "ltr",
             Some("Cormorant Garamond Gnosis"),
-            12.5,
-            0.75,
+            11.0,
+            0.65,
         )
     };
     let family_list = families
@@ -1321,10 +1320,11 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
         .map(|family| typst_string(family))
         .collect::<Vec<_>>()
         .join(", ");
-    // Cormorant carries four stray Greek glyphs, mu among them, so per-character
-    // fallback would set γάμος as γά-μ-ος across two typefaces. Keeping whole Greek
-    // runs in one family avoids the split. Only needed where Cormorant leads.
-    let greek_family = if families.first() == Some(&"Cormorant Garamond Gnosis") {
+    // Cormorant carries four stray Greek glyphs, mu among them, and the heading show
+    // rule below sets headings to Cormorant alone with no fallback family — so without
+    // this, Greek inside a heading would split mid-word (or fail to render at all).
+    // Force Greek runs to EB Garamond wherever Cormorant is the heading typeface.
+    let greek_family = if heading_family == Some("Cormorant Garamond Gnosis") {
         typst_string("EB Garamond")
     } else {
         String::new()
@@ -1692,8 +1692,9 @@ mod tests {
                 .count(),
             2
         );
-        // EB Garamond ships alongside it as the Greek fallback — Cormorant has almost
-        // no Greek, and dropping it here broke Greek quotations in 0.8.68.
+        // EB Garamond ships alongside it: it is the Latin body typeface, and also the
+        // Greek fallback for Cormorant-only headings — Cormorant has almost no Greek,
+        // and dropping it here broke Greek quotations in 0.8.68.
         assert_eq!(
             latin_fonts
                 .iter()
@@ -1725,8 +1726,9 @@ mod tests {
             }],
         };
         // Greek rides along with EB Garamond, and romanised Sanskrit is plain Latin
-        // that Cormorant already covers, so nothing extra is fetched. The 25 MB CJK
-        // font in particular must never be downloaded for a chapter with no Han.
+        // that the body/heading fonts already cover, so nothing extra is fetched.
+        // The 25 MB CJK font in particular must never be downloaded for a chapter
+        // with no Han.
         assert!(document_scripts(&plain).is_empty());
         let fonts = required_fonts_for_document(&plain);
         assert!(!fonts.iter().any(|font| font.family.starts_with("Noto")));
@@ -1750,7 +1752,9 @@ mod tests {
         assert!(fonts
             .iter()
             .any(|font| font.family == "Noto Serif Devanagari"));
-        // Latin still leads, so body text keeps rendering in Cormorant.
+        // Cormorant is still pulled in for Latin-language documents — it's the
+        // heading typeface (and body-text coverage fallback) even though EB
+        // Garamond leads the body.
         assert!(fonts
             .iter()
             .any(|font| font.family == "Cormorant Garamond Gnosis"));
@@ -1830,7 +1834,7 @@ mod tests {
     }
 
     #[test]
-    fn typst_font_selection_uses_cormorant_for_latin_text() {
+    fn typst_font_selection_uses_eb_garamond_for_latin_body_and_cormorant_for_headings() {
         let vietnamese = ExportDocument {
             title: "Vietnamese".to_string(),
             language_code: "vi".to_string(),
@@ -1842,17 +1846,24 @@ mod tests {
             blocks: Vec::new(),
         };
         let vietnamese_preamble = typst_preamble(&vietnamese, "a4");
-        // Cormorant leads so Latin renders in it; EB Garamond trails to cover Greek,
-        // which Cormorant almost entirely lacks.
+        // EB Garamond leads body text; Cormorant trails purely as a glyph-coverage
+        // fallback, never for appearance.
         assert!(
-            vietnamese_preamble.contains("font: (\"Cormorant Garamond Gnosis\", \"EB Garamond\")")
+            vietnamese_preamble.contains("font: (\"EB Garamond\", \"Cormorant Garamond Gnosis\")")
         );
+        // Headings render in Cormorant Garamond exclusively.
         assert!(vietnamese_preamble
             .contains("#show heading: set text(font: \"Cormorant Garamond Gnosis\", weight: 600)"));
         assert!(!vietnamese_preamble.contains("Noto Serif"));
-        // Cormorant sets smaller than EB Garamond, so the Latin branch compensates.
-        assert!(vietnamese_preamble.contains("size: 12.5pt"));
-        assert!(vietnamese_preamble.contains("leading: 0.75em"));
+        // Same 11pt/0.65em baseline as every other script — EB Garamond, not
+        // Cormorant, sets the body text now, so no x-height compensation is needed.
+        assert!(vietnamese_preamble.contains("size: 11pt"));
+        assert!(vietnamese_preamble.contains("leading: 0.65em"));
+        // Greek is still forced to EB Garamond, protecting the Cormorant-only
+        // heading show rule (Cormorant has almost no Greek) — this is what broke
+        // Greek quotations in 0.8.68 when it was dropped.
+        assert!(vietnamese_preamble.contains(GREEK_RUN_RULE_PREFIX));
+        assert!(vietnamese_preamble.contains("set text(font: \"EB Garamond\")"));
         let japanese_preamble = typst_preamble(&japanese, "a4");
         assert!(japanese_preamble.contains("\"Shippori Mincho\", \"EB Garamond\""));
         assert!(japanese_preamble.contains("size: 11pt"));
