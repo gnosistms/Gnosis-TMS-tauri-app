@@ -65,6 +65,7 @@ import {
   normalizeEditorRowFootnotesForSave,
   serializeEditorFootnotesForLegacy,
 } from "./editor-footnotes.js";
+import { smartenInlineMarkupQuotes } from "./editor-inline-markup/smart-quotes.js";
 import {
   assertQueuedEditorRowsReady,
   invokeQueuedEditorWriteCommand,
@@ -307,34 +308,54 @@ function rebaseRowTextInputForRun(operationValue) {
   return input;
 }
 
-function normalizeEditorRowFootnotesBeforePersist(row) {
+function normalizeEditorRowForPersist(row) {
   if (!row || typeof row !== "object") {
     return row;
   }
 
   const fields = cloneRowFields(row.fields);
   const footnotes = cloneRowFootnotes(row.footnotes);
+  const imageCaptions = cloneRowFields(row.imageCaptions);
   let changed = false;
-  for (const languageCode of new Set([...Object.keys(fields), ...Object.keys(footnotes)])) {
+  const languageCodes = new Set([
+    ...Object.keys(fields),
+    ...Object.keys(footnotes),
+    ...Object.keys(imageCaptions),
+  ]);
+  for (const languageCode of languageCodes) {
     const normalized = normalizeEditorRowFootnotesForSave(fields[languageCode] ?? "", footnotes[languageCode]);
-    if (normalized.text !== (fields[languageCode] ?? "")) {
-      fields[languageCode] = normalized.text;
+    // Convert straight quotes to typographic quotes as the last text transform, so
+    // footnote-marker handling above sees the user's literal text first. The same
+    // transform runs on captions and footnote bodies — all three are inline-markup
+    // prose the reader sees.
+    const nextText = smartenInlineMarkupQuotes(normalized.text, { language: languageCode });
+    if (nextText !== (fields[languageCode] ?? "")) {
+      fields[languageCode] = nextText;
       changed = true;
     }
+    const nextCaption = smartenInlineMarkupQuotes(imageCaptions[languageCode] ?? "", { language: languageCode });
+    if (nextCaption !== (imageCaptions[languageCode] ?? "")) {
+      imageCaptions[languageCode] = nextCaption;
+      changed = true;
+    }
+    const smartenedFootnotes = normalized.footnotes.map((entry) => {
+      const smartText = smartenInlineMarkupQuotes(entry.text ?? "", { language: languageCode });
+      return smartText === entry.text ? entry : { ...entry, text: smartText };
+    });
     if (!rowTextContentEqual(
       {},
       { [languageCode]: footnotes[languageCode] ?? [] },
       {},
       {},
-      { [languageCode]: normalized.footnotes },
+      { [languageCode]: smartenedFootnotes },
       {},
     )) {
-      footnotes[languageCode] = normalized.footnotes;
+      footnotes[languageCode] = smartenedFootnotes;
       changed = true;
     }
   }
 
-  return changed ? { ...row, fields, footnotes } : row;
+  return changed ? { ...row, fields, footnotes, imageCaptions } : row;
 }
 
 function lockConflictFilter() {
@@ -900,7 +921,7 @@ export function collapseEmptyEditorFootnote(render, rowId, languageCode, options
 
   const row = findEditorRowById(rowId, state.editorChapter);
   const footnotes = cloneRowFootnotes(row?.footnotes);
-  const normalizedRow = normalizeEditorRowFootnotesBeforePersist(row);
+  const normalizedRow = normalizeEditorRowForPersist(row);
   const currentEntries = footnotes[languageCode] ?? [];
   const activeEntry = Number.isInteger(activeMarker)
     ? currentEntries.find((entry) => entry.marker === activeMarker) ?? null
@@ -1881,7 +1902,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
     return true;
   }
 
-  const normalizedRow = normalizeEditorRowFootnotesBeforePersist(row);
+  const normalizedRow = normalizeEditorRowForPersist(row);
   if (normalizedRow !== row) {
     row = updateEditorChapterRow(rowId, () => normalizedRow) ?? normalizedRow;
     renderEditorRowScoped(render, rowId, "footnote-normalized");
