@@ -351,7 +351,7 @@ test("preview appends footnote refs with no matching marker without changing tex
 
   const html = serializeEditorPreviewHtml(blocks);
 
-  assert.match(html, /Alpha body \[100\] <sup data-fn="[0-9a-f-]{36}" class="fn">/);
+  assert.match(html, /Alpha body \[100\]<sup data-fn="[0-9a-f-]{36}" class="fn">/);
   assert.match(html, /<\/sup> <sup data-fn="[0-9a-f-]{36}" class="fn"><a id="[0-9a-f-]{36}-link" href="#[0-9a-f-]{36}">2<\/a><\/sup>/);
 });
 
@@ -449,7 +449,7 @@ test("serializeEditorPreviewHtml uses semantic tags and repo-relative uploaded i
   assert.match(html, /<!-- wp:quote -->/);
   assert.match(
     html,
-    /<blockquote class="wp-block-quote"><!-- wp:paragraph -->\n<p>Quoted line <sup data-fn="[0-9a-f-]{36}" class="fn">/,
+    /<blockquote class="wp-block-quote"><!-- wp:paragraph -->\n<p>Quoted line<sup data-fn="[0-9a-f-]{36}" class="fn">/,
   );
   assert.match(html, /<!-- wp:footnotes \/-->/);
   assert.doesNotMatch(html, /<ol class="wp-block-footnotes">/);
