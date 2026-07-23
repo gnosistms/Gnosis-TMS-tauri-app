@@ -520,8 +520,9 @@ function renderTextWithWordPressFootnoteRefs(block, footnoteState, options = {})
   const html = options.serialize
     ? renderSanitizedInlineMarkupWithRanges(renderText, ranges).replaceAll("\n", "<br>")
     : renderSanitizedInlineMarkupWithRanges(renderText, ranges).replaceAll("\n", "<br>");
-  const separator = html && appendedRefs.length > 0 && !/\s$/.test(visibleText) ? " " : "";
-  return `${html}${separator}${appendedRefs.join(" ")}`;
+  // Auto-generated markers stick to the preceding text with no space, so an
+  // appended reference follows the text directly in the preview and all exports.
+  return `${html}${appendedRefs.join(" ")}`;
 }
 
 function renderPreviewSeparatorBlock(block) {

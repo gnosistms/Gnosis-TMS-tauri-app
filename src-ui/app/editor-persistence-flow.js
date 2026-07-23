@@ -765,9 +765,10 @@ export function openEditorFootnote(render, rowId, languageCode, options = {}) {
 
   const marker = nextEditorFootnoteMarker(currentText, row?.footnotes?.[languageCode]);
   const markerText = `[${marker}]`;
-  const separator = insertIndex >= currentText.length && currentText && !/\s$/.test(currentText) ? " " : "";
+  // Auto-generated footnote markers stick to the preceding text with no space, so
+  // the marker follows the sentence directly in the HTML preview and all exports.
   const nextText =
-    `${currentText.slice(0, insertIndex)}${separator}${markerText}${currentText.slice(selectionEnd)}`;
+    `${currentText.slice(0, insertIndex)}${markerText}${currentText.slice(selectionEnd)}`;
 
   const { updateEditorChapterRow } = options;
   if (typeof updateEditorChapterRow === "function") {
