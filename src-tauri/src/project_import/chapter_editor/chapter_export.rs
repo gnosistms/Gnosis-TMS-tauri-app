@@ -307,13 +307,20 @@ pub(super) fn build_export_document(
 
         for footnote in row_footnotes {
             footnote_count += 1;
-            let anchor_block = (row_block_start..blocks.len()).find(|index| {
-                matches!(
-                    &blocks[*index],
-                    ExportBlock::Text { text, .. }
-                        if contains_unescaped_footnote_marker(text, footnote.marker)
-                )
-            });
+            let anchor_block = (row_block_start..blocks.len())
+                .find(|index| {
+                    matches!(
+                        &blocks[*index],
+                        ExportBlock::Text { text, .. }
+                            if contains_unescaped_footnote_marker(text, footnote.marker)
+                    )
+                })
+                // No inline marker in the row's text: anchor the reference to the end
+                // of the row's last text block, matching the editor preview's
+                // append-remaining rule. Without this, a row-level footnote (one whose
+                // marker never appears inline) has no anchor and later floats onto the
+                // following paragraph in the PDF export.
+                .or_else(|| last_visible_text_block_index(&blocks, row_block_start));
             blocks.push(ExportBlock::Footnote {
                 number: footnote_count,
                 marker: footnote.marker,
@@ -342,6 +349,18 @@ pub(super) fn build_export_document(
         title: chapter_file.title.clone(),
         language_code: export_language_code,
         blocks,
+    })
+}
+
+/// The last non-empty text block at or after `start`, mirroring the editor preview's
+/// `footnoteAppendPartIndex` (which appends unanchored footnotes to the last visible
+/// text part of the row). Returns `None` when the row has no rendered text.
+fn last_visible_text_block_index(blocks: &[ExportBlock], start: usize) -> Option<usize> {
+    (start..blocks.len()).rev().find(|index| {
+        matches!(
+            &blocks[*index],
+            ExportBlock::Text { text, .. } if !text.trim().is_empty()
+        )
     })
 }
 
@@ -680,7 +699,7 @@ fn allowed_inline_tag(source: &str) -> Option<(&'static str, &'static str)> {
         .copied()
 }
 
-fn inline_visible_text(value: &str) -> String {
+pub(super) fn inline_visible_text(value: &str) -> String {
     let mut output = String::new();
     let mut cursor = 0usize;
     while cursor < value.len() {
@@ -2974,7 +2993,9 @@ mod tests {
             ExportBlock::Footnote {
                 number: 1,
                 marker: 1,
-                anchor_block: None,
+                // The unmarked note anchors to the row's text block (0), not the image
+                // (1), so the PDF export attaches it to the end of that paragraph.
+                anchor_block: Some(0),
                 text: "Note".to_string(),
             }
         );
@@ -3039,6 +3060,37 @@ mod tests {
                 text: "A note in the middle".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn block_builder_anchors_row_level_footnotes_to_the_last_text_block() {
+        // A footnote whose marker never appears inline (an unlabeled `[]` row footnote)
+        // must anchor to the row's text block so the PDF export attaches it to the end
+        // of that paragraph instead of floating it onto the next one.
+        let mut active = row("row-1", "a", "The Tarot of the Bohemians.", "paragraph");
+        active.fields.get_mut("en").expect("field exists").footnote =
+            "[] Astral Light is Lumière Astrale.".to_string();
+        let chapter = StoredChapterFile {
+            chapter_id: "chapter-1".to_string(),
+            title: "Chapter".to_string(),
+            lifecycle: active_lifecycle_state(),
+            source_files: Vec::new(),
+            languages: vec![export_language("en", "target", None)],
+            settings: None,
+            source_word_count: None,
+        };
+
+        let document =
+            build_export_document(Path::new("/repo"), &chapter, &[active], "en", None, "")
+                .expect("document should build");
+
+        assert!(matches!(
+            document.blocks[1],
+            ExportBlock::Footnote {
+                anchor_block: Some(0),
+                ..
+            }
+        ));
     }
 
     #[test]

@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use reqwest::blocking::Client;
+use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter};
 use url::Url;
 
@@ -735,14 +736,27 @@ fn upload_repo_image(
 
     let bytes = std::fs::read(&absolute_path)
         .map_err(|error| format!("Could not read the uploaded image '{source}': {error}"))?;
-    let file_name = absolute_path
+    let original_name = absolute_path
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("image")
         .to_string();
-    let mime_type = image_mime_type(&file_name, &bytes)
+    let mime_type = image_mime_type(&original_name, &bytes)
         .ok_or_else(|| format!("Could not determine the image type for '{source}'."))?;
 
+    // Content-address the media file: identical bytes always get the same slug, so a
+    // copy already in the WordPress media library from an earlier export is reused
+    // instead of uploaded again. Without this, every export added a fresh duplicate.
+    let slug = content_addressed_media_slug(&bytes);
+    if let Some(existing) = find_uploaded_media_by_slug(site, client, &slug)? {
+        wordpress_debug_log(&format!(
+            "reusing existing media for {source}: slug={slug} -> {}",
+            existing.source_url
+        ));
+        return Ok(existing);
+    }
+
+    let file_name = format!("{slug}.{}", media_file_extension(mime_type));
     let response = site.upload_media(client, &file_name, mime_type, bytes)?;
     let source_url = response
         .get("source_url")
@@ -759,6 +773,78 @@ fn upload_repo_image(
         natural_height: response
             .pointer("/media_details/height")
             .and_then(|value| value.as_u64()),
+    })
+}
+
+/// A stable, slug-safe name derived from the image bytes. WordPress turns an uploaded
+/// file's name into the attachment slug, so a deterministic name lets a later export
+/// find the same attachment. 128 bits of SHA-256 make collisions between distinct
+/// images effectively impossible.
+fn content_addressed_media_slug(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let digest = hasher.finalize();
+    let hex: String = digest
+        .iter()
+        .take(16)
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    format!("gnosis-tms-{hex}")
+}
+
+fn media_file_extension(mime_type: &str) -> &'static str {
+    match mime_type {
+        "image/jpeg" => "jpg",
+        "image/png" => "png",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        _ => "img",
+    }
+}
+
+fn media_search_path(slug: &str) -> String {
+    format!(
+        "media?slug={}&per_page=1&_fields=slug,source_url,media_details",
+        url::form_urlencoded::byte_serialize(slug.as_bytes()).collect::<String>()
+    )
+}
+
+/// Looks up a media item previously uploaded under `slug` and returns its public URL
+/// and dimensions so the export can reuse it. `None` means no such copy exists yet.
+fn find_uploaded_media_by_slug(
+    site: &WordPressSite,
+    client: &Client,
+    slug: &str,
+) -> Result<Option<UploadedWordPressImage>, String> {
+    let response = site.get_json(client, &media_search_path(slug))?;
+    Ok(media_from_search_result(&response, slug))
+}
+
+/// Picks the media item whose slug matches `slug` exactly out of a media search
+/// response, mapping it to the reusable image. Defensive against the endpoint
+/// returning near-matches: only an exact slug with a non-empty URL counts.
+fn media_from_search_result(
+    response: &serde_json::Value,
+    slug: &str,
+) -> Option<UploadedWordPressImage> {
+    response.as_array()?.iter().find_map(|item| {
+        if item.get("slug").and_then(|value| value.as_str()) != Some(slug) {
+            return None;
+        }
+        let source_url = item
+            .get("source_url")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())?;
+        Some(UploadedWordPressImage {
+            source_url: source_url.to_string(),
+            natural_width: item
+                .pointer("/media_details/width")
+                .and_then(|value| value.as_u64()),
+            natural_height: item
+                .pointer("/media_details/height")
+                .and_then(|value| value.as_u64()),
+        })
     })
 }
 
@@ -1173,6 +1259,75 @@ mod tests {
             "[{\"content\":\"First <em>note</em>\",\"id\":\"11111111-1111-7111-8111-111111111111\"}]",
         );
         assert_eq!(footnotes_meta_json(&[]).unwrap(), "[]");
+    }
+
+    #[test]
+    fn content_addressed_slug_is_stable_per_content_and_slug_safe() {
+        let png = b"\x89PNG\r\n\x1a\nfake-body";
+        let slug = content_addressed_media_slug(png);
+        // Deterministic: identical bytes always produce the same slug (so a later
+        // export finds the same media item instead of uploading a duplicate).
+        assert_eq!(slug, content_addressed_media_slug(png));
+        // Different bytes produce a different slug.
+        assert_ne!(slug, content_addressed_media_slug(b"other bytes"));
+        // Slug-safe: only lowercase hex and hyphens, so WordPress keeps it verbatim.
+        assert!(slug.starts_with("gnosis-tms-"));
+        assert!(slug
+            .trim_start_matches("gnosis-tms-")
+            .chars()
+            .all(|character| character.is_ascii_hexdigit() && !character.is_ascii_uppercase()));
+    }
+
+    #[test]
+    fn media_file_extension_maps_supported_mime_types() {
+        assert_eq!(media_file_extension("image/jpeg"), "jpg");
+        assert_eq!(media_file_extension("image/png"), "png");
+        assert_eq!(media_file_extension("image/gif"), "gif");
+        assert_eq!(media_file_extension("image/webp"), "webp");
+    }
+
+    #[test]
+    fn media_search_path_filters_by_slug() {
+        let path = media_search_path("gnosis-tms-abc123");
+        assert!(path.starts_with("media?slug=gnosis-tms-abc123"));
+        assert!(path.contains("_fields=slug,source_url,media_details"));
+        assert!(path.contains("per_page=1"));
+    }
+
+    #[test]
+    fn media_from_search_result_reuses_the_exact_slug_match() {
+        let response = serde_json::json!([
+            {
+                "slug": "gnosis-tms-abc123",
+                "source_url": "https://files.example/gnosis-tms-abc123.png",
+                "media_details": { "width": 1500, "height": 3000 }
+            }
+        ]);
+        let reused = media_from_search_result(&response, "gnosis-tms-abc123")
+            .expect("an exact slug match is reused");
+        assert_eq!(
+            reused.source_url,
+            "https://files.example/gnosis-tms-abc123.png"
+        );
+        assert_eq!(reused.natural_width, Some(1500));
+        assert_eq!(reused.natural_height, Some(3000));
+    }
+
+    #[test]
+    fn media_from_search_result_ignores_non_matching_or_empty_results() {
+        // A different slug (e.g. a "-1" collision suffix from an older duplicate) is
+        // not reused — that would point at the wrong image.
+        let mismatch = serde_json::json!([
+            { "slug": "gnosis-tms-abc123-1", "source_url": "https://files.example/other.png" }
+        ]);
+        assert!(media_from_search_result(&mismatch, "gnosis-tms-abc123").is_none());
+
+        // No results, or a match without a usable URL, means "upload it".
+        assert!(media_from_search_result(&serde_json::json!([]), "gnosis-tms-abc123").is_none());
+        let blank_url = serde_json::json!([
+            { "slug": "gnosis-tms-abc123", "source_url": "  " }
+        ]);
+        assert!(media_from_search_result(&blank_url, "gnosis-tms-abc123").is_none());
     }
 
     #[test]
