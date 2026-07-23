@@ -28,10 +28,10 @@ complete release, then delete the broken one.
 - [x] Commit fonts + script (67fbfc3e) and title fix (6bbae7dd); push to main.
 - [x] Bump version to 0.8.71 (package.json, package-lock.json, Cargo.toml,
       Cargo.lock, tauri.conf.json).
-- [ ] Pre-tag verification: npm test, npm run audit:unused, cargo fmt check,
+- [x] Pre-tag verification: npm test, npm run audit:unused, cargo fmt check,
       npm run test:rust.
-- [ ] Commit "Release 0.8.71", tag `v0.8.71`, push main + tag.
-- [ ] Confirm the release build and updater artifacts publish successfully on
+- [x] Commit "Release 0.8.71", tag `v0.8.71`, push main + tag.
+- [x] Confirm the release build and updater artifacts publish successfully on
       every platform (Windows + macOS arm64/x64) — watch each job, not just the
       run status.
 - [ ] After 0.8.71 is fully published, delete the v0.8.70 release and tag
