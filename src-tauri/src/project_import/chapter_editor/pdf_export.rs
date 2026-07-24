@@ -181,10 +181,57 @@ const FONT_ASSETS: &[FontAsset] = &[
         sha256: "bba2c4499c93c9612b90b9825d32b07da52fce2fe57562a1eb6b833553f93c4e",
         source: FontSource::Download("https://raw.githubusercontent.com/google/fonts/f8c1d3d6cc75e30d77130bdcbfbff27e3b6233fe/ofl/ebgaramond/EBGaramond-Italic%5Bwght%5D.ttf"),
     },
+    // Latin body and heading typeface. Covers Vietnamese natively; Greek and the
+    // rare IAST ṝ fall through to EB Garamond.
+    FontAsset {
+        file_name: "CrimsonPro-Roman.ttf",
+        family: "Crimson Pro",
+        language: "latin",
+        size: 246_324,
+        sha256: "16aa9fb7300a93637da51fac03a071b2ff08b6bbf65f99c794c25f040b58af6a",
+        source: FontSource::Download("https://raw.githubusercontent.com/google/fonts/684b69db51d59a3137ec0152fa3a3afc6f1b3814/ofl/crimsonpro/CrimsonPro%5Bwght%5D.ttf"),
+    },
+    FontAsset {
+        file_name: "CrimsonPro-Italic.ttf",
+        family: "Crimson Pro",
+        language: "latin",
+        size: 253_176,
+        sha256: "a74dc11dcf2fbb1452064e42395a40a907ca630b49cff86012223785e52b2559",
+        source: FontSource::Download("https://raw.githubusercontent.com/google/fonts/684b69db51d59a3137ec0152fa3a3afc6f1b3814/ofl/crimsonpro/CrimsonPro-Italic%5Bwght%5D.ttf"),
+    },
+    // The Kindred-style display faces: Alegreya carries chapter titles and body
+    // headings, Great Vibes the drop cap that opens a chapter. Latin-script
+    // exports only — CJK and Arabic keep their own heading faces. Both cover
+    // Vietnamese natively.
+    FontAsset {
+        file_name: "Alegreya-Roman.ttf",
+        family: "Alegreya",
+        language: "latin",
+        size: 425_288,
+        sha256: "ba5564634b93a8f8ba57b48cd4f1ae7417d2b4656fbac779028679b00de3cf12",
+        source: FontSource::Download("https://raw.githubusercontent.com/google/fonts/684b69db51d59a3137ec0152fa3a3afc6f1b3814/ofl/alegreya/Alegreya%5Bwght%5D.ttf"),
+    },
+    FontAsset {
+        file_name: "Alegreya-Italic.ttf",
+        family: "Alegreya",
+        language: "latin",
+        size: 425_852,
+        sha256: "fa915eec76227935dc5fb678953c94b71287c360928013cfdb441dfe52f5a391",
+        source: FontSource::Download("https://raw.githubusercontent.com/google/fonts/684b69db51d59a3137ec0152fa3a3afc6f1b3814/ofl/alegreya/Alegreya-Italic%5Bwght%5D.ttf"),
+    },
+    FontAsset {
+        file_name: "GreatVibes-Regular.ttf",
+        family: "Great Vibes",
+        language: "latin",
+        size: 457_588,
+        sha256: "8d509802186f1b51572531ecf313e8098f9a5bfdfaca93f0c9b34467f9982d15",
+        source: FontSource::Download("https://raw.githubusercontent.com/google/fonts/684b69db51d59a3137ec0152fa3a3afc6f1b3814/ofl/greatvibes/GreatVibes-Regular.ttf"),
+    },
     // Cormorant Garamond with its Vietnamese accents corrected. Upstream draws each
     // accent twice — compact when marks stack, tall when one stands alone — so â and
     // ầ disagree inside a single word. See scripts/patch-cormorant-vietnamese-accents.py
-    // and plans/cormorant-circumflex-fix-plan.md.
+    // and plans/cormorant-circumflex-fix-plan.md. No longer the heading typeface —
+    // it trails the Latin body list purely as a glyph-coverage fallback.
     FontAsset {
         file_name: "CormorantGaramondGnosis-Roman.ttf",
         family: "Cormorant Garamond Gnosis",
@@ -541,6 +588,8 @@ async fn run_pdf_export(
             "--font-path".into(),
             font_dir.as_os_str().to_owned(),
             "--ignore-system-fonts".into(),
+            "--package-path".into(),
+            workspace.join("packages").into_os_string(),
             source_path.as_os_str().to_owned(),
             rendered_path.as_os_str().to_owned(),
         ])
@@ -717,7 +766,7 @@ fn required_fonts(language_code: &str, extra_scripts: &BTreeSet<&'static str>) -
         .iter()
         .copied()
         // EB Garamond ships with every language: it is the Latin fallback inside the
-        // CJK and Arabic families, and the Greek fallback behind Cormorant for Latin.
+        // CJK and Arabic families, and the Greek fallback behind Crimson Pro for Latin.
         .filter(|asset| match asset.language {
             "base" => true,
             "latin" => language.is_none(),
@@ -978,12 +1027,21 @@ fn prepare_typst_workspace(
     }
     let leading_title = leading_heading_title(document);
     let title = leading_title.as_deref().unwrap_or(document.title.as_str());
+    // The ornament under the chapter title; referenced by the gnosis-title rule.
+    fs::write(workspace.join("flourish.svg"), CHAPTER_FLOURISH_SVG)
+        .map_err(|error| format!("Could not prepare the title ornament for the PDF: {error}"))?;
+    write_droplet_package(workspace)?;
     let mut source = typst_preamble(document, paper_size);
     // No spacer after the title: it is a top float now, and its `clearance`
     // provides the gap to whatever the page starts with.
     source.push_str(&format!("#gnosis-title({})\n", typst_string(title)));
     let (emission_order, trailing_start) =
         typst_block_emission_order(&document.blocks, &image_paths);
+    let dropcap_index = if latin_body(&document.language_code) {
+        dropcap_block_index(&document.blocks, &emission_order, leading_title.is_some())
+    } else {
+        None
+    };
     for block_index in emission_order {
         let block = &document.blocks[block_index];
         check_cancelled(cancelled)?;
@@ -1010,6 +1068,9 @@ fn prepare_typst_workspace(
                     }
                     "centered" => source.push_str(&format!("#align(center)[{inline}]\n\n")),
                     "indented" => source.push_str(&format!("#pad(left: 2em)[{inline}]\n\n")),
+                    _ if Some(block_index) == dropcap_index => {
+                        source.push_str(&format!("#gnosis-dropcap[{inline}]\n\n"))
+                    }
                     _ => source.push_str(&format!("{inline}\n\n")),
                 }
             }
@@ -1097,6 +1158,44 @@ fn typst_block_emission_order(
     let mut order: Vec<usize> = (0..blocks.len()).collect();
     order[trailing_start..].sort_by(|a, b| estimate(a).total_cmp(&estimate(b)));
     (order, trailing_start)
+}
+
+/// The single block that opens with a drop cap: the first paragraph the reader
+/// sees (after a leading H1 was promoted to the title), provided it is a plain
+/// paragraph that starts with a letter. Chapters that open with a heading,
+/// quote, or separator get no drop cap — matching the book-design convention
+/// the style imitates. Blocks that put nothing in the reading flow at that
+/// position are looked past: footnotes (rendered at the page foot), blank rows,
+/// and images (floated away or standing as figures — the opening sentence is
+/// still the first paragraph).
+fn dropcap_block_index(
+    blocks: &[ExportBlock],
+    emission_order: &[usize],
+    title_promoted: bool,
+) -> Option<usize> {
+    for &index in emission_order {
+        if title_promoted && index == 0 {
+            continue;
+        }
+        match &blocks[index] {
+            ExportBlock::Footnote { .. } | ExportBlock::Image { .. } => continue,
+            ExportBlock::Text { text_style, text } => {
+                let first = inline_visible_text(text)
+                    .chars()
+                    .find(|character| !character.is_whitespace());
+                // Blank rows emit nothing visible — look past them, the way a
+                // reader would.
+                let Some(first) = first else { continue };
+                let plain = !matches!(
+                    normalize_editor_text_style_value(Some(text_style)).as_str(),
+                    "heading1" | "heading2" | "quote" | "blockquote" | "centered" | "indented"
+                );
+                return (plain && first.is_alphabetic()).then_some(index);
+            }
+            _ => return None,
+        }
+    }
+    None
 }
 
 fn prepare_pdf_workspace(
@@ -1189,7 +1288,12 @@ fn prepare_typst_images(
                 let Some((key, image, caption)) = next else {
                     return;
                 };
-                let result = resolve_pdf_image(&image, &caption);
+                let result = resolve_pdf_image(&image, &caption).map(|resolved| match resolved {
+                    ResolvedPdfImage::Bytes(bytes) => {
+                        ResolvedPdfImage::Bytes(optimize_pdf_image_bytes(bytes))
+                    }
+                    placeholder => placeholder,
+                });
                 if let Ok(mut results) = results.lock() {
                     results.insert(key, result);
                 } else {
@@ -1244,6 +1348,111 @@ fn prepare_typst_images(
         }
     }
     Ok(prepared_images)
+}
+
+/// Print-resolution pixel caps: 300 DPI over the letter text area
+/// (8.5in − 2×0.85in margins wide, 11in − 2×0.8in margins tall). Images larger
+/// than the page can use are downscaled to fit these bounds before Typst sees
+/// them; smaller images are never upscaled.
+const PDF_IMAGE_MAX_WIDTH: u32 = 2040;
+const PDF_IMAGE_MAX_HEIGHT: u32 = 2820;
+const PDF_IMAGE_JPEG_QUALITY: u8 = 95;
+
+/// Recompresses raster images to keep the PDF small. PDF has no WebP support,
+/// so Typst decodes WebP to raw pixels and embeds them losslessly deflated —
+/// a few lossy WebPs balloon a chapter to tens of megabytes. JPEG is the one
+/// format Typst passes through in its original compressed form, so WebP is
+/// flattened onto a white background (alpha discarded by design — book pages
+/// are white) and re-encoded as JPEG. PNG keeps its format so line art stays
+/// crisp, and JPEG keeps its bytes untouched; both are only downscaled when
+/// they exceed print resolution. Any decode or encode failure returns the
+/// original bytes — worst case is a large PDF, never a failed export.
+fn optimize_pdf_image_bytes(bytes: Vec<u8>) -> Vec<u8> {
+    use image::imageops::FilterType;
+
+    let oversized =
+        |width: u32, height: u32| width > PDF_IMAGE_MAX_WIDTH || height > PDF_IMAGE_MAX_HEIGHT;
+    let encode_jpeg = |image: &image::RgbImage| -> Option<Vec<u8>> {
+        let mut out = Vec::new();
+        image
+            .write_with_encoder(image::codecs::jpeg::JpegEncoder::new_with_quality(
+                std::io::Cursor::new(&mut out),
+                PDF_IMAGE_JPEG_QUALITY,
+            ))
+            .ok()?;
+        Some(out)
+    };
+    let flatten_onto_white = |decoded: image::DynamicImage| -> image::RgbImage {
+        let rgba = decoded.into_rgba8();
+        let mut flat = image::RgbImage::new(rgba.width(), rgba.height());
+        for (source, target) in rgba.pixels().zip(flat.pixels_mut()) {
+            let alpha = u32::from(source[3]);
+            for channel in 0..3 {
+                target[channel] =
+                    ((u32::from(source[channel]) * alpha + 255 * (255 - alpha)) / 255) as u8;
+            }
+        }
+        flat
+    };
+
+    match typst_image_extension(&bytes) {
+        Some("webp") => {
+            let Ok(mut decoded) = image::load_from_memory(&bytes) else {
+                return bytes;
+            };
+            if oversized(decoded.width(), decoded.height()) {
+                decoded = decoded.resize(
+                    PDF_IMAGE_MAX_WIDTH,
+                    PDF_IMAGE_MAX_HEIGHT,
+                    FilterType::Lanczos3,
+                );
+            }
+            encode_jpeg(&flatten_onto_white(decoded)).unwrap_or(bytes)
+        }
+        Some("png") => {
+            let Ok(decoded) = image::load_from_memory(&bytes) else {
+                return bytes;
+            };
+            if !oversized(decoded.width(), decoded.height()) {
+                return bytes;
+            }
+            let resized = decoded.resize(
+                PDF_IMAGE_MAX_WIDTH,
+                PDF_IMAGE_MAX_HEIGHT,
+                FilterType::Lanczos3,
+            );
+            let mut out = Vec::new();
+            match resized.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png) {
+                Ok(()) => out,
+                Err(_) => bytes,
+            }
+        }
+        Some("jpg") => {
+            let Some((width, height)) = jpeg_dimensions(&bytes) else {
+                return bytes;
+            };
+            if !oversized(width, height) {
+                return bytes;
+            }
+            // Re-encoding drops EXIF metadata, including the orientation tag —
+            // a camera photo stored rotated would come out sideways. Those pass
+            // through at full size instead.
+            let head = &bytes[..bytes.len().min(65536)];
+            if head.windows(6).any(|window| window == b"Exif\x00\x00") {
+                return bytes;
+            }
+            let Ok(decoded) = image::load_from_memory(&bytes) else {
+                return bytes;
+            };
+            let resized = decoded.resize(
+                PDF_IMAGE_MAX_WIDTH,
+                PDF_IMAGE_MAX_HEIGHT,
+                FilterType::Lanczos3,
+            );
+            encode_jpeg(&resized.into_rgb8()).unwrap_or(bytes)
+        }
+        _ => bytes,
+    }
 }
 
 fn export_image_key(image: &ExportImage) -> String {
@@ -1319,64 +1528,77 @@ fn normalize_pdf_paper_size(value: &str) -> Result<&'static str, String> {
     }
 }
 
+/// The calligraphic flourish rendered under every chapter title. A single-path
+/// vector (evenodd fill) so Typst embeds it as scalable line art, not a raster.
+const CHAPTER_FLOURISH_SVG: &str = include_str!("chapter_flourish.svg");
+
+/// The `droplet` Typst package (MIT), vendored so the drop-cap import resolves
+/// from the workspace's `--package-path` without touching the network. The
+/// version here must match the `#import "@preview/droplet:…"` in the preamble.
+const DROPLET_VERSION: &str = "0.3.1";
+const DROPLET_PACKAGE_FILES: &[(&str, &str)] = &[
+    ("typst.toml", include_str!("droplet/typst.toml")),
+    ("LICENSE", include_str!("droplet/LICENSE")),
+    ("src/lib.typ", include_str!("droplet/src/lib.typ")),
+    ("src/droplet.typ", include_str!("droplet/src/droplet.typ")),
+    ("src/extract.typ", include_str!("droplet/src/extract.typ")),
+    ("src/split.typ", include_str!("droplet/src/split.typ")),
+    ("src/util.typ", include_str!("droplet/src/util.typ")),
+];
+
+/// Writes the vendored droplet package into the workspace's local package root.
+/// Written for every export — the path is cheap, and the compile command always
+/// passes `--package-path`, so the layout must exist regardless of language.
+fn write_droplet_package(workspace: &Path) -> Result<(), String> {
+    let root = workspace
+        .join("packages")
+        .join("preview")
+        .join("droplet")
+        .join(DROPLET_VERSION);
+    fs::create_dir_all(root.join("src"))
+        .map_err(|error| format!("Could not prepare the PDF drop-cap package: {error}"))?;
+    for (name, contents) in DROPLET_PACKAGE_FILES {
+        fs::write(root.join(name), contents)
+            .map_err(|error| format!("Could not prepare the PDF drop-cap package: {error}"))?;
+    }
+    Ok(())
+}
+
+/// Latin-script exports get the Kindred-style extras — Alegreya titles and
+/// headings, a Great Vibes drop cap. The same prefixes the font selection uses.
+fn latin_body(language_code: &str) -> bool {
+    let code = language_code.to_ascii_lowercase().replace('_', "-");
+    !(code.starts_with("ja")
+        || code.starts_with("ko")
+        || code.starts_with("zh")
+        || code.starts_with("ar")
+        || code.starts_with("fa"))
+}
+
 fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
     let code = document
         .language_code
         .to_ascii_lowercase()
         .replace('_', "-");
-    let (families, direction, heading_family, size_pt, leading_em) = if code.starts_with("ja") {
-        (
-            vec!["Shippori Mincho", "EB Garamond"],
-            "ltr",
-            None,
-            11.0,
-            0.65,
-        )
+    let (families, direction, size_pt, leading_em) = if code.starts_with("ja") {
+        (vec!["Shippori Mincho", "EB Garamond"], "ltr", 11.0, 0.65)
     } else if code.starts_with("ko") {
-        (
-            vec!["Noto Serif KR", "EB Garamond"],
-            "ltr",
-            None,
-            11.0,
-            0.65,
-        )
+        (vec!["Noto Serif KR", "EB Garamond"], "ltr", 11.0, 0.65)
     } else if code.starts_with("zh-hant") || code.starts_with("zh-tw") || code.starts_with("zh-hk")
     {
-        (
-            vec!["Noto Serif TC", "EB Garamond"],
-            "ltr",
-            None,
-            11.0,
-            0.65,
-        )
+        (vec!["Noto Serif TC", "EB Garamond"], "ltr", 11.0, 0.65)
     } else if code.starts_with("zh") {
-        (
-            vec!["Noto Serif SC", "EB Garamond"],
-            "ltr",
-            None,
-            11.0,
-            0.65,
-        )
+        (vec!["Noto Serif SC", "EB Garamond"], "ltr", 11.0, 0.65)
     } else if code.starts_with("ar") || code.starts_with("fa") {
-        (
-            vec!["Noto Naskh Arabic", "EB Garamond"],
-            "rtl",
-            None,
-            11.0,
-            0.65,
-        )
+        (vec!["Noto Naskh Arabic", "EB Garamond"], "rtl", 11.0, 0.65)
     } else {
-        // EB Garamond is the body typeface; Cormorant Garamond is reserved for
-        // headings (below) and trails here purely as a glyph-coverage fallback — a
-        // handful of IAST Sanskrit diacritics and any Vietnamese edge case this
-        // Cormorant build corrects — never for appearance. With EB Garamond leading,
-        // this branch uses the same 11pt/0.65em baseline as every other script: the
-        // larger size the old Cormorant-led body needed to compensate for Cormorant's
-        // shorter x-height is no longer necessary.
+        // Crimson Pro is the body and heading typeface. It covers Vietnamese
+        // natively; EB Garamond trails for Greek and the odd IAST diacritic
+        // (ṝ), and the patched Cormorant build stays as a last-resort
+        // glyph-coverage fallback — never for appearance.
         (
-            vec!["EB Garamond", "Cormorant Garamond Gnosis"],
+            vec!["Crimson Pro", "EB Garamond", "Cormorant Garamond Gnosis"],
             "ltr",
-            Some("Cormorant Garamond Gnosis"),
             11.0,
             0.65,
         )
@@ -1386,48 +1608,66 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
         .map(|family| typst_string(family))
         .collect::<Vec<_>>()
         .join(", ");
-    // Cormorant carries four stray Greek glyphs, mu among them, and the heading show
-    // rule below sets headings to Cormorant alone with no fallback family — so without
-    // this, Greek inside a heading would split mid-word (or fail to render at all).
-    // Force Greek runs to EB Garamond wherever Cormorant is the heading typeface.
-    let greek_family = if heading_family == Some("Cormorant Garamond Gnosis") {
-        typst_string("EB Garamond")
+    let latin = latin_body(&document.language_code);
+    // Crimson Pro carries five stray Greek glyphs (Δ Σ Ω μ π), so per-glyph fallback
+    // would split a Greek word across typefaces mid-run. Force whole Greek runs to
+    // EB Garamond wherever Crimson Pro leads the body.
+    let greek_rule = if latin {
+        format!("{GREEK_RUN_RULE_PREFIX}{})\n", typst_string("EB Garamond"))
     } else {
         String::new()
     };
-    let heading_rule = heading_family
-        .map(|family| {
-            format!(
-                "#show heading: set text(font: {}, weight: 600)\n",
-                typst_string(family)
-            )
-        })
-        .unwrap_or_default();
-    let greek_rule = if greek_family.is_empty() {
-        String::new()
+    // Kindred style: Alegreya leads titles and body headings on Latin-script
+    // exports, with the body's own fallbacks behind it. Other scripts keep
+    // their body families for headings.
+    let heading_families = if latin {
+        vec!["Alegreya", "EB Garamond", "Cormorant Garamond Gnosis"]
     } else {
-        format!("{GREEK_RUN_RULE_PREFIX}{greek_family})\n")
+        families.clone()
     };
-    // The chapter title is emitted as plain styled text, not a Typst heading, so the
-    // `#show heading` rule above never reaches it. This helper gives the title the
-    // same heading typeface; the global Greek-run rule still applies inside it.
-    //
-    // The title is itself a top float: Typst assigns float slots in source order and
-    // has no other way to keep a later `placement: auto` image from being hoisted
-    // above content that precedes it on the page. As the first float, the title
-    // always holds the top of page one and image floats stack below it. The
-    // full-width block keeps the centring that `place` would otherwise collapse.
-    let title_rule = match heading_family {
-        Some(family) => format!(
-            "#let gnosis-title(t) = place(top, float: true, clearance: 1.2em, block(width: 100%, align(center)[#text(font: {}, size: 22pt, weight: \"bold\")[#t]]))\n",
-            typst_string(family)
-        ),
-        None => String::from(
-            "#let gnosis-title(t) = place(top, float: true, clearance: 1.2em, block(width: 100%, align(center)[#text(size: 22pt, weight: \"bold\")[#t]]))\n",
-        ),
+    let heading_family_list = heading_families
+        .iter()
+        .map(|family| typst_string(family))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let heading_rule = if latin {
+        format!("#show heading: set text(font: ({heading_family_list}))\n")
+    } else {
+        String::new()
     };
+    // Kindred style: the opening letter of a chapter drops across two lines in
+    // Great Vibes. The body families trail the letter's font list so a glyph
+    // Great Vibes lacks falls back to the body serif instead of tofu. The
+    // droplet package resolves from the vendored copy in the workspace.
+    let dropcap_rule = if latin {
+        let letter_families = std::iter::once("Great Vibes")
+            .chain(families.iter().copied())
+            .map(typst_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "#import \"@preview/droplet:{DROPLET_VERSION}\": dropcap\n#let gnosis-dropcap(body) = dropcap(height: 3, gap: 0.35em, font: ({letter_families}), body)\n"
+        )
+    } else {
+        String::new()
+    };
+    // The chapter title is emitted as plain styled text, not a Typst heading. The
+    // title is a top float: Typst assigns float slots in source order and has no
+    // other way to keep a later `placement: auto` image from being hoisted above
+    // content that precedes it on the page. As the first float, the title always
+    // holds the top of page one and image floats stack below it. The full-width
+    // block keeps the centring that `place` would otherwise collapse. A small
+    // calligraphic flourish (written into the workspace by
+    // `prepare_typst_workspace`) sits under the title text, spaced as in the
+    // Vellum Kindred reference: one line's distance below the title (the weak
+    // spacer replaces the default paragraph spacing instead of adding to it),
+    // then a wider clearance before the body begins. Kindred style: the title
+    // renders in the heading family, all caps with a little letterspacing.
+    let title_rule = format!(
+        "#let gnosis-title(t) = place(top, float: true, clearance: 4.6em, block(width: 100%, align(center)[#text(font: ({heading_family_list}), size: 14.5pt, tracking: 0.12em)[#upper(t)]#v(1.2em, weak: true)#image(\"flourish.svg\", width: 0.66in)]))\n"
+    );
     format!(
-        "#set page(paper: \"{paper_size}\", margin: (x: 0.85in, y: 0.8in), numbering: \"1\")\n#set text(font: ({family_list}), size: {size_pt}pt, lang: {}, dir: {direction})\n#set par(justify: true, leading: {leading_em}em)\n{heading_rule}{greek_rule}{title_rule}#show link: set text(fill: rgb(\"245c8a\"))\n{GNOSIS_IMAGE_RULE}\n",
+        "#set page(paper: \"{paper_size}\", margin: (x: 0.85in, y: 0.8in), numbering: \"1\")\n#set text(font: ({family_list}), size: {size_pt}pt, lang: {}, dir: {direction})\n#set par(justify: true, leading: {leading_em}em)\n{greek_rule}{heading_rule}{dropcap_rule}{title_rule}#show link: set text(fill: rgb(\"245c8a\"))\n{GNOSIS_IMAGE_RULE}\n",
         typst_string(&document.language_code)
     )
 }
@@ -1900,8 +2140,31 @@ mod tests {
             .iter()
             .any(|font| font.family == "Noto Naskh Arabic"));
         let latin_fonts = required_fonts("vi", &BTreeSet::new());
-        assert_eq!(latin_fonts.len(), 4);
+        assert_eq!(latin_fonts.len(), 9);
+        // The Kindred display faces ship with every Latin-script export.
+        assert_eq!(
+            latin_fonts
+                .iter()
+                .filter(|font| font.family == "Alegreya")
+                .count(),
+            2
+        );
+        assert_eq!(
+            latin_fonts
+                .iter()
+                .filter(|font| font.family == "Great Vibes")
+                .count(),
+            1
+        );
         // Roman and italic both ship, so italic body text stays in the same family.
+        assert_eq!(
+            latin_fonts
+                .iter()
+                .filter(|font| font.family == "Crimson Pro")
+                .count(),
+            2
+        );
+        // The patched Cormorant build stays as a last-resort glyph-coverage fallback.
         assert_eq!(
             latin_fonts
                 .iter()
@@ -1909,9 +2172,8 @@ mod tests {
                 .count(),
             2
         );
-        // EB Garamond ships alongside it: it is the Latin body typeface, and also the
-        // Greek fallback for Cormorant-only headings — Cormorant has almost no Greek,
-        // and dropping it here broke Greek quotations in 0.8.68.
+        // EB Garamond ships alongside it: the Greek fallback behind Crimson Pro —
+        // dropping the Greek fallback broke Greek quotations in 0.8.68.
         assert_eq!(
             latin_fonts
                 .iter()
@@ -1927,6 +2189,9 @@ mod tests {
                 .count(),
             2
         );
+        assert!(!required_fonts("ja", &BTreeSet::new())
+            .iter()
+            .any(|font| font.family == "Crimson Pro"));
         assert!(!required_fonts("ja", &BTreeSet::new())
             .iter()
             .any(|font| font.family == "Cormorant Garamond Gnosis"));
@@ -1969,9 +2234,8 @@ mod tests {
         assert!(fonts
             .iter()
             .any(|font| font.family == "Noto Serif Devanagari"));
-        // Cormorant is still pulled in for Latin-language documents — it's the
-        // heading typeface (and body-text coverage fallback) even though EB
-        // Garamond leads the body.
+        // Cormorant is still pulled in for Latin-language documents as a
+        // glyph-coverage fallback, even though Crimson Pro leads the body.
         assert!(fonts
             .iter()
             .any(|font| font.family == "Cormorant Garamond Gnosis"));
@@ -2055,7 +2319,7 @@ mod tests {
     }
 
     #[test]
-    fn typst_font_selection_uses_eb_garamond_for_latin_body_and_cormorant_for_headings() {
+    fn typst_font_selection_uses_crimson_pro_for_latin_body_and_headings() {
         let vietnamese = ExportDocument {
             title: "Vietnamese".to_string(),
             language_code: "vi".to_string(),
@@ -2067,40 +2331,113 @@ mod tests {
             blocks: Vec::new(),
         };
         let vietnamese_preamble = typst_preamble(&vietnamese, "a4");
-        // EB Garamond leads body text; Cormorant trails purely as a glyph-coverage
-        // fallback, never for appearance.
-        assert!(
-            vietnamese_preamble.contains("font: (\"EB Garamond\", \"Cormorant Garamond Gnosis\")")
-        );
-        // Headings render in Cormorant Garamond exclusively.
+        // Crimson Pro leads body text; EB Garamond and Cormorant trail purely as
+        // glyph-coverage fallbacks, never for appearance.
         assert!(vietnamese_preamble
-            .contains("#show heading: set text(font: \"Cormorant Garamond Gnosis\", weight: 600)"));
+            .contains("font: (\"Crimson Pro\", \"EB Garamond\", \"Cormorant Garamond Gnosis\")"));
+        // Kindred style: Alegreya leads body headings on Latin-script exports,
+        // with the body fallbacks behind it.
+        assert!(vietnamese_preamble.contains(
+            "#show heading: set text(font: (\"Alegreya\", \"EB Garamond\", \"Cormorant Garamond Gnosis\"))"
+        ));
         assert!(!vietnamese_preamble.contains("Noto Serif"));
-        // Same 11pt/0.65em baseline as every other script — EB Garamond, not
-        // Cormorant, sets the body text now, so no x-height compensation is needed.
         assert!(vietnamese_preamble.contains("size: 11pt"));
         assert!(vietnamese_preamble.contains("leading: 0.65em"));
-        // Greek is still forced to EB Garamond, protecting the Cormorant-only
-        // heading show rule (Cormorant has almost no Greek) — this is what broke
-        // Greek quotations in 0.8.68 when it was dropped.
+        // Greek runs are forced to EB Garamond: Crimson Pro carries five stray
+        // Greek glyphs (Δ Σ Ω μ π), so per-glyph fallback would split a Greek word
+        // across typefaces — dropping this rule broke Greek quotations in 0.8.68.
         assert!(vietnamese_preamble.contains(GREEK_RUN_RULE_PREFIX));
         assert!(vietnamese_preamble.contains("set text(font: \"EB Garamond\")"));
-        // The chapter title is not a Typst heading, so it takes the heading typeface
-        // through its own helper — otherwise it silently renders in the body font.
-        // It is emitted as the first top float so a `placement: auto` image can
-        // never be hoisted above it on page one.
+        // Kindred style: the chapter opens with a Great Vibes drop cap; the body
+        // families trail the letter's font list so an uncovered glyph falls back
+        // to the body serif instead of tofu.
         assert!(vietnamese_preamble.contains(
-            "#let gnosis-title(t) = place(top, float: true, clearance: 1.2em, block(width: 100%, align(center)[#text(font: \"Cormorant Garamond Gnosis\", size: 22pt, weight: \"bold\")[#t]]))"
+            "#let gnosis-dropcap(body) = dropcap(height: 3, gap: 0.35em, font: (\"Great Vibes\", \"Crimson Pro\", \"EB Garamond\", \"Cormorant Garamond Gnosis\"), body)"
+        ));
+        assert!(vietnamese_preamble.contains("#import \"@preview/droplet:0.3.1\": dropcap"));
+        // The chapter title is emitted as the first top float so a
+        // `placement: auto` image can never be hoisted above it on page one.
+        // Kindred style: Alegreya, all caps, tracked, with the flourish one line
+        // below and a wider clearance before the body text.
+        assert!(vietnamese_preamble.contains(
+            "#let gnosis-title(t) = place(top, float: true, clearance: 4.6em, block(width: 100%, align(center)[#text(font: (\"Alegreya\", \"EB Garamond\", \"Cormorant Garamond Gnosis\"), size: 14.5pt, tracking: 0.12em)[#upper(t)]#v(1.2em, weak: true)#image(\"flourish.svg\", width: 0.66in)]))"
         ));
         let japanese_preamble = typst_preamble(&japanese, "a4");
         assert!(japanese_preamble.contains("\"Shippori Mincho\", \"EB Garamond\""));
         assert!(japanese_preamble.contains("size: 11pt"));
         assert!(japanese_preamble.contains("leading: 0.65em"));
+        assert!(!japanese_preamble.contains("Crimson Pro"));
         assert!(!japanese_preamble.contains("Cormorant Garamond"));
-        // Non-Latin scripts keep the body typeface for the title.
+        // Non-Latin exports keep their own heading faces and get no drop cap —
+        // Alegreya and Great Vibes have no coverage there.
+        assert!(!japanese_preamble.contains("#show heading"));
+        assert!(!japanese_preamble.contains("Alegreya"));
+        assert!(!japanese_preamble.contains("dropcap"));
+        // Non-Latin body faces carry their own Greek coverage, so no Greek run rule.
+        assert!(!japanese_preamble.contains(GREEK_RUN_RULE_PREFIX));
         assert!(japanese_preamble.contains(
-            "#let gnosis-title(t) = place(top, float: true, clearance: 1.2em, block(width: 100%, align(center)[#text(size: 22pt, weight: \"bold\")[#t]]))"
+            "#let gnosis-title(t) = place(top, float: true, clearance: 4.6em, block(width: 100%, align(center)[#text(font: (\"Shippori Mincho\", \"EB Garamond\"), size: 14.5pt, tracking: 0.12em)[#upper(t)]#v(1.2em, weak: true)#image(\"flourish.svg\", width: 0.66in)]))"
         ));
+    }
+
+    #[test]
+    fn dropcap_targets_only_a_leading_plain_paragraph() {
+        let paragraph = |text: &str| ExportBlock::Text {
+            text_style: "paragraph".to_string(),
+            text: text.to_string(),
+        };
+        // Plain opening paragraph gets the drop cap.
+        let blocks = vec![paragraph("Đức Cha là trí tuệ.")];
+        assert_eq!(dropcap_block_index(&blocks, &[0], false), Some(0));
+        // A promoted leading H1 is skipped; the paragraph after it is chosen.
+        let blocks = vec![
+            ExportBlock::Text {
+                text_style: "heading1".to_string(),
+                text: "Title".to_string(),
+            },
+            paragraph("It was a dark and stormy night."),
+        ];
+        assert_eq!(dropcap_block_index(&blocks, &[0, 1], true), Some(1));
+        // Anchored footnote records emit nothing at their position — looked past.
+        let blocks = vec![
+            ExportBlock::Footnote {
+                number: 1,
+                marker: 1,
+                anchor_block: Some(1),
+                text: "Note".to_string(),
+            },
+            paragraph("Opening line."),
+        ];
+        assert_eq!(dropcap_block_index(&blocks, &[0, 1], false), Some(1));
+        // A chapter that opens with a heading, quote, or image gets no drop cap.
+        let blocks = vec![
+            ExportBlock::Text {
+                text_style: "heading2".to_string(),
+                text: "Subhead".to_string(),
+            },
+            paragraph("Body."),
+        ];
+        assert_eq!(dropcap_block_index(&blocks, &[0, 1], false), None);
+        // An opening paragraph that starts with a digit keeps its plain form.
+        let blocks = vec![paragraph("1975 was the year it began.")];
+        assert_eq!(dropcap_block_index(&blocks, &[0], false), None);
+        // Blank leading rows emit nothing — the drop cap lands on the first
+        // paragraph a reader actually sees.
+        let blocks = vec![
+            paragraph(""),
+            paragraph("   "),
+            paragraph("Đức Cha là trí tuệ."),
+        ];
+        assert_eq!(dropcap_block_index(&blocks, &[0, 1, 2], false), Some(2));
+        // A leading image floats away from the opening text — looked past.
+        let blocks = vec![
+            ExportBlock::Image {
+                image: ExportImage::Url("https://example.com/cover.png".to_string()),
+                caption: String::new(),
+            },
+            paragraph("Đức Cha là trí tuệ."),
+        ];
+        assert_eq!(dropcap_block_index(&blocks, &[0, 1], false), Some(1));
     }
 
     #[test]
@@ -2310,6 +2647,97 @@ mod tests {
         assert!(message.contains("timed out"));
     }
 
+    fn webp_fixture(width: u32, height: u32, pixel: [u8; 4]) -> Vec<u8> {
+        let rgba = image::RgbaImage::from_pixel(width, height, image::Rgba(pixel));
+        let mut out = Vec::new();
+        image::DynamicImage::ImageRgba8(rgba)
+            .write_with_encoder(image::codecs::webp::WebPEncoder::new_lossless(
+                std::io::Cursor::new(&mut out),
+            ))
+            .expect("encode webp fixture");
+        out
+    }
+
+    fn png_fixture(width: u32, height: u32) -> Vec<u8> {
+        let rgb = image::RgbImage::from_pixel(width, height, image::Rgb([10, 200, 30]));
+        let mut out = Vec::new();
+        image::DynamicImage::ImageRgb8(rgb)
+            .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+            .expect("encode png fixture");
+        out
+    }
+
+    fn jpeg_fixture(width: u32, height: u32) -> Vec<u8> {
+        let rgb = image::RgbImage::from_pixel(width, height, image::Rgb([80, 90, 100]));
+        let mut out = Vec::new();
+        rgb.write_with_encoder(image::codecs::jpeg::JpegEncoder::new_with_quality(
+            std::io::Cursor::new(&mut out),
+            90,
+        ))
+        .expect("encode jpeg fixture");
+        out
+    }
+
+    #[test]
+    fn webp_images_flatten_onto_white_and_become_jpeg() {
+        // Fully transparent webp: the flattened JPEG must come out white.
+        let optimized = optimize_pdf_image_bytes(webp_fixture(8, 8, [200, 0, 0, 0]));
+        assert_eq!(typst_image_extension(&optimized), Some("jpg"));
+        let decoded = image::load_from_memory(&optimized)
+            .expect("decode")
+            .into_rgb8();
+        let pixel = decoded.get_pixel(4, 4);
+        assert!(
+            pixel[0] > 245 && pixel[1] > 245 && pixel[2] > 245,
+            "{pixel:?}"
+        );
+        // Opaque webp keeps its colour.
+        let optimized = optimize_pdf_image_bytes(webp_fixture(8, 8, [200, 0, 0, 255]));
+        let decoded = image::load_from_memory(&optimized)
+            .expect("decode")
+            .into_rgb8();
+        let pixel = decoded.get_pixel(4, 4);
+        assert!(
+            pixel[0] > 180 && pixel[1] < 40 && pixel[2] < 40,
+            "{pixel:?}"
+        );
+    }
+
+    #[test]
+    fn oversized_rasters_downscale_to_print_resolution() {
+        // Oversized webp comes back as a print-resolution JPEG.
+        let optimized = optimize_pdf_image_bytes(webp_fixture(2400, 60, [0, 0, 200, 255]));
+        assert_eq!(typst_image_extension(&optimized), Some("jpg"));
+        let (width, _) = jpeg_dimensions(&optimized).expect("jpeg dimensions");
+        assert_eq!(width, PDF_IMAGE_MAX_WIDTH);
+        // Oversized png downscales but stays png, so line art keeps its format.
+        let optimized = optimize_pdf_image_bytes(png_fixture(2400, 60));
+        assert_eq!(typst_image_extension(&optimized), Some("png"));
+        let aspect = typst_image_aspect(&optimized).expect("png aspect");
+        assert!((aspect - 60.0 / 2400.0).abs() < 0.01);
+        // Oversized jpeg without EXIF is re-encoded at print resolution.
+        let optimized = optimize_pdf_image_bytes(jpeg_fixture(2400, 60));
+        let (width, _) = jpeg_dimensions(&optimized).expect("jpeg dimensions");
+        assert_eq!(width, PDF_IMAGE_MAX_WIDTH);
+    }
+
+    #[test]
+    fn print_sized_images_and_exif_jpegs_pass_through_untouched() {
+        let png = png_fixture(300, 200);
+        assert_eq!(optimize_pdf_image_bytes(png.clone()), png);
+        let jpeg = jpeg_fixture(300, 200);
+        assert_eq!(optimize_pdf_image_bytes(jpeg.clone()), jpeg);
+        let svg =
+            br##"<svg xmlns="http://www.w3.org/2000/svg" width="9000" height="9000"/>"##.to_vec();
+        assert_eq!(optimize_pdf_image_bytes(svg.clone()), svg);
+        // An oversized jpeg carrying EXIF keeps its bytes: re-encoding would
+        // drop the orientation tag and turn rotated camera photos sideways.
+        let mut exif = jpeg_fixture(2400, 60);
+        let app1 = [0xff, 0xe1, 0x00, 0x08, b'E', b'x', b'i', b'f', 0x00, 0x00];
+        exif.splice(2..2, app1.iter().copied());
+        assert_eq!(optimize_pdf_image_bytes(exif.clone()), exif);
+    }
+
     #[test]
     fn detects_typst_image_formats() {
         assert_eq!(typst_image_extension(b"\x89PNG\r\n\x1a\nrest"), Some("png"));
@@ -2414,6 +2842,8 @@ mod tests {
                 "--font-path",
                 Path::new(&font_dir).to_str().expect("font path"),
                 "--ignore-system-fonts",
+                "--package-path",
+                workspace.join("packages").to_str().expect("package path"),
                 workspace.join("chapter.typ").to_str().expect("source path"),
                 workspace.join("chapter.pdf").to_str().expect("output path"),
             ])
