@@ -137,7 +137,7 @@ function renderModelSelectOptions(actionConfig, providerId, selectedModelId) {
     return '<option value="" selected>No models available</option>';
   }
 
-  return modelsState.options
+  const listedOptionsMarkup = modelsState.options
     .map((option) => `
       <option
         value="${escapeHtml(option.id)}"
@@ -145,6 +145,22 @@ function renderModelSelectOptions(actionConfig, providerId, selectedModelId) {
       >${escapeHtml(option.label)}</option>
     `)
     .join("");
+
+  // A saved selection is never upgraded automatically, so it can name a model
+  // that is no longer in the recommended list — keep it visible and selected.
+  const selectionIsListed =
+    !selectedModelId
+    || modelsState.options.some((option) => option.id === selectedModelId);
+  if (selectionIsListed) {
+    return listedOptionsMarkup;
+  }
+
+  return `${listedOptionsMarkup}
+      <option
+        value="${escapeHtml(selectedModelId)}"
+        selected
+      >${escapeHtml(selectedModelId)}</option>
+    `;
 }
 
 function renderActionSelectorFields(actionConfig, scopeId, title, controlsBusy = false) {

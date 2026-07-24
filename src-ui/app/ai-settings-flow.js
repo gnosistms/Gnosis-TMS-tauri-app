@@ -6,6 +6,7 @@ import {
   coerceAiActionPreferencesToSavedProviders,
   createAiProviderModelsState,
   extractAiActionPreferences,
+  isDefaultAiModelIdForProvider,
   isGeminiProModelId,
   normalizeStoredAiActionPreferences,
   pickPreferredAiModelId,
@@ -482,13 +483,30 @@ function coerceActionConfigToSavedProviders(actionConfig, savedProviderIds) {
 }
 
 function syncAiActionModelSelectionsForProvider(actionConfig, providerId, options) {
-  const syncSelection = (selection) =>
-    selection.providerId === providerId
-      ? {
-          ...selection,
-          modelId: pickPreferredAiModelId(providerId, options, selection.modelId),
-        }
-      : selection;
+  const syncSelection = (selection) => {
+    if (selection.providerId !== providerId) {
+      return selection;
+    }
+    if (providerId === "openai" && selection.modelId) {
+      if (options.some((option) => option?.id === selection.modelId)) {
+        return selection;
+      }
+      // A chosen model that fell out of the recommended list stays selected —
+      // model selections never upgrade automatically. Only the never-configured
+      // default sentinel repicks from the current list.
+      if (!isDefaultAiModelIdForProvider(providerId, selection.modelId)) {
+        return selection;
+      }
+      return {
+        ...selection,
+        modelId: pickPreferredAiModelId(providerId, options),
+      };
+    }
+    return {
+      ...selection,
+      modelId: pickPreferredAiModelId(providerId, options, selection.modelId),
+    };
+  };
 
   return {
     ...actionConfig,

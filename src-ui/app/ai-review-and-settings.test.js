@@ -163,6 +163,7 @@ const {
   loadAiSettingsPage,
   explainAiModelProbeError,
   loadAiProviderSecret,
+  refreshAiSavedProviders,
   saveAiProviderSecret,
   selectAiProvider,
   updateAiSettingsAboutModalDontShowAgain,
@@ -3691,6 +3692,60 @@ test("AI key load and save flows populate and persist aiSettings state", async (
   assert.equal(state.aiSettings.successMessage, "");
 });
 
+function installOpenAiGpt56ModelListHandler() {
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_ai_provider_secret") {
+      return payload.providerId === "openai" ? "sk-openai" : null;
+    }
+    if (command === "list_ai_provider_models") {
+      return [
+        { id: "gpt-5.6-sol", label: "gpt-5.6-sol" },
+        { id: "gpt-5.6-terra", label: "gpt-5.6-terra" },
+        { id: "gpt-5.6-luna", label: "gpt-5.6-luna" },
+        { id: "gpt-5.5", label: "gpt-5.5" },
+        { id: "gpt-5.5-mini", label: "gpt-5.5-mini" },
+        { id: "gpt-5.5-nano", label: "gpt-5.5-nano" },
+      ];
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+}
+
+test("model list refresh keeps a chosen OpenAI model that is no longer listed", async () => {
+  resetSessionState();
+  state.screen = "aiKey";
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      unified: { providerId: "openai", modelId: "gpt-5.4-mini" },
+    },
+  };
+  installOpenAiGpt56ModelListHandler();
+
+  await refreshAiSavedProviders(() => {});
+
+  assert.deepEqual(state.aiSettings.actionConfig.unified, {
+    providerId: "openai",
+    modelId: "gpt-5.4-mini",
+  });
+});
+
+test("model list refresh repicks the never-configured default to the newest flagship", async () => {
+  resetSessionState();
+  state.screen = "aiKey";
+  assert.equal(state.aiSettings.actionConfig.unified.modelId, "gpt-5.4");
+  installOpenAiGpt56ModelListHandler();
+
+  await refreshAiSavedProviders(() => {});
+
+  assert.deepEqual(state.aiSettings.actionConfig.unified, {
+    providerId: "openai",
+    modelId: "gpt-5.6-sol",
+  });
+});
+
 test("AI key provider selection loads and saves keys independently by provider", async () => {
   resetSessionState();
   state.screen = "aiKey";
@@ -5039,6 +5094,36 @@ test("pickPreferredAiModelId prefers general OpenAI models and maps old pro sele
   assert.equal(
     pickPreferredAiModelId("openai", options),
     "gpt-5.5",
+  );
+});
+
+test("pickPreferredAiModelId treats sol, terra, and luna as OpenAI families", () => {
+  const options = [
+    { id: "gpt-5.6-sol", label: "gpt-5.6-sol" },
+    { id: "gpt-5.6-terra", label: "gpt-5.6-terra" },
+    { id: "gpt-5.6-luna", label: "gpt-5.6-luna" },
+    { id: "gpt-5.5", label: "gpt-5.5" },
+    { id: "gpt-5.5-mini", label: "gpt-5.5-mini" },
+  ];
+
+  assert.equal(
+    pickPreferredAiModelId("openai", options),
+    "gpt-5.6-sol",
+  );
+  assert.equal(
+    pickPreferredAiModelId("openai", options, "gpt-5.6-terra"),
+    "gpt-5.6-terra",
+  );
+  assert.equal(
+    pickPreferredAiModelId("openai", options, "gpt-5.4-mini"),
+    "gpt-5.5-mini",
+  );
+  assert.equal(
+    pickPreferredAiModelId(
+      "openai",
+      [...options, { id: "gpt-5.6", label: "gpt-5.6" }],
+    ),
+    "gpt-5.6",
   );
 });
 

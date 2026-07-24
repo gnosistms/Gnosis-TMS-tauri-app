@@ -25,16 +25,13 @@ function isPlainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function parseOpenAiModelVersion(modelId, kind) {
+function parseAnyOpenAiModelVersion(modelId) {
   const normalizedModelId =
     typeof modelId === "string" && modelId.trim() ? modelId.trim() : "";
-  const match = normalizedModelId.match(/^gpt-(\d+)(?:\.(\d+))?(?:-(pro|mini|nano))?$/);
+  const match = normalizedModelId.match(
+    /^gpt-(\d+)(?:\.(\d+))?(?:-(pro|mini|nano|sol|terra|luna))?$/,
+  );
   if (!match) {
-    return null;
-  }
-
-  const family = match[3] ?? "general";
-  if (family !== kind) {
     return null;
   }
 
@@ -44,7 +41,12 @@ function parseOpenAiModelVersion(modelId, kind) {
     return null;
   }
 
-  return { major, minor, family };
+  return { major, minor, family: match[3] ?? "general" };
+}
+
+function parseOpenAiModelVersion(modelId, kind) {
+  const parsedVersion = parseAnyOpenAiModelVersion(modelId);
+  return parsedVersion && parsedVersion.family === kind ? parsedVersion : null;
 }
 
 function parseGeminiModelVersion(modelId) {
@@ -129,34 +131,36 @@ function compareParsedGeminiVersions(left, right) {
   return left.previewMonth - right.previewMonth;
 }
 
-function pickLatestOpenAiModelIdByKind(options, kind) {
+function pickLatestOpenAiModelIdByKinds(options, kinds) {
   let bestOptionId = "";
   let bestVersion = null;
+  let bestKindIndex = -1;
 
   for (const option of Array.isArray(options) ? options : []) {
     const optionId = typeof option?.id === "string" ? option.id.trim() : "";
-    const parsedVersion = parseOpenAiModelVersion(optionId, kind);
-    if (!parsedVersion) {
+    const parsedVersion = parseAnyOpenAiModelVersion(optionId);
+    const kindIndex = parsedVersion ? kinds.indexOf(parsedVersion.family) : -1;
+    if (kindIndex === -1) {
       continue;
     }
-    if (compareParsedModelVersions(parsedVersion, bestVersion) > 0) {
+    const comparison = compareParsedModelVersions(parsedVersion, bestVersion);
+    if (comparison > 0 || (comparison === 0 && kindIndex < bestKindIndex)) {
       bestVersion = parsedVersion;
       bestOptionId = optionId;
+      bestKindIndex = kindIndex;
     }
   }
 
   return bestOptionId;
 }
 
+function pickLatestOpenAiModelIdByKind(options, kind) {
+  return pickLatestOpenAiModelIdByKinds(options, [kind]);
+}
+
 function resolveOpenAiFallbackKind(modelId) {
-  const normalizedModelId =
-    typeof modelId === "string" && modelId.trim() ? modelId.trim() : "";
-  return (
-    parseOpenAiModelVersion(normalizedModelId, "general")?.family
-    ?? parseOpenAiModelVersion(normalizedModelId, "mini")?.family
-    ?? parseOpenAiModelVersion(normalizedModelId, "nano")?.family
-    ?? (parseOpenAiModelVersion(normalizedModelId, "pro") ? "general" : "")
-  );
+  const family = parseAnyOpenAiModelVersion(modelId)?.family ?? "";
+  return family === "pro" ? "general" : family;
 }
 
 function pickLatestGeminiModelIdByFamily(options, family) {
@@ -192,6 +196,15 @@ function pickFirstGeminiNonProModelId(options) {
     }
   }
   return "";
+}
+
+export function isDefaultAiModelIdForProvider(providerId, modelId) {
+  const normalizedProviderId = normalizeAiProviderId(providerId);
+  const normalizedModelId = typeof modelId === "string" ? modelId.trim() : "";
+  return (
+    Boolean(normalizedModelId)
+    && normalizedModelId === (DEFAULT_MODEL_ID_BY_PROVIDER[normalizedProviderId] ?? "")
+  );
 }
 
 export function createAiActionSelection(providerId = DEFAULT_PROVIDER_ID, modelId = "") {
@@ -388,13 +401,26 @@ export function pickPreferredAiModelId(providerId, options = [], fallbackModelId
   }
 
   if (normalizedProviderId === "openai") {
-    const latestGeneralModelId = pickLatestOpenAiModelIdByKind(normalizedOptions, "general");
-    if (latestGeneralModelId) {
-      return latestGeneralModelId;
+    const latestFlagshipModelId = pickLatestOpenAiModelIdByKinds(normalizedOptions, [
+      "general",
+      "sol",
+    ]);
+    if (latestFlagshipModelId) {
+      return latestFlagshipModelId;
     }
-    const latestMiniModelId = pickLatestOpenAiModelIdByKind(normalizedOptions, "mini");
-    if (latestMiniModelId) {
-      return latestMiniModelId;
+    const latestMidTierModelId = pickLatestOpenAiModelIdByKinds(normalizedOptions, [
+      "mini",
+      "terra",
+    ]);
+    if (latestMidTierModelId) {
+      return latestMidTierModelId;
+    }
+    const latestSmallTierModelId = pickLatestOpenAiModelIdByKinds(normalizedOptions, [
+      "nano",
+      "luna",
+    ]);
+    if (latestSmallTierModelId) {
+      return latestSmallTierModelId;
     }
   }
   if (normalizedProviderId === "gemini") {
