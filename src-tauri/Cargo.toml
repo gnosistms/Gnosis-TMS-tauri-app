@@ -38,6 +38,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 zeroize = "1"
 regex = "1"
 flate2 = "1"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 tar = "0.4"
 zip = { version = "=2.4.2", default-features = false, features = ["deflate-flate2"] }
 readabilityrs = "0.1.3"
