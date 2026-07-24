@@ -3329,6 +3329,46 @@ test.describe("editor regressions", () => {
     }
   });
 
+  test("patching the focused row keeps the textarea node and its native undo stack", async ({ page }) => {
+    const targetRowId = "fixture-row-0005";
+    await mountEditorFixture(page, { rowCount: 12 });
+
+    const field = await activateMainEditorField(page, targetRowId, "vi");
+    const originalText = await field.inputValue();
+    await field.evaluate((element) => {
+      element.focus();
+      element.setSelectionRange(element.value.length, element.value.length);
+      window.__focusedFieldBeforePatch = element;
+    });
+    await page.keyboard.type(" edited");
+    await expect(field).toHaveValue(`${originalText} edited`);
+
+    const patchResult = await patchFixtureRow(page, targetRowId, {
+      freshness: "stale",
+    });
+    expect(patchResult?.patchedVisible).toBe(true);
+    expect(patchResult?.patchedRowIds).toEqual([targetRowId]);
+    await expect(
+      page.locator(`[data-editor-row-card][data-row-id="${targetRowId}"]`),
+    ).toContainText("Needs refresh");
+
+    const preservation = await field.evaluate((element) => ({
+      sameNode: element === window.__focusedFieldBeforePatch,
+      focused: document.activeElement === element,
+    }));
+    expect(preservation.sameNode).toBe(true);
+    expect(preservation.focused).toBe(true);
+
+    // Typing may span several native undo groups; undoing them all must land
+    // back on the original text. A recreated textarea has nothing to undo.
+    await field.evaluate(() => {
+      for (let step = 0; step < 8; step += 1) {
+        document.execCommand("undo");
+      }
+    });
+    await expect(field).toHaveValue(originalText);
+  });
+
   test("patching a visible row does not leave blank gaps in the viewport", async ({ page }) => {
     const targetRowId = "fixture-row-0030";
     const expandedPatchText = Array.from(
