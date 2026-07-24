@@ -90,6 +90,19 @@ function teamInstallationId(team) {
 }
 
 function resourceIdentifier(resource, kind) {
+  // A chapter's (or row's) `name` is a user-facing title, not a unique
+  // identifier — two files can legitimately share a title (re-importing the
+  // same source file). Falling back to it would let an active same-titled
+  // twin match the tombstone and resurrect the hidden resource, so these
+  // kinds identify by id only.
+  if (kind === "chapter" || kind === "editorRow") {
+    const resourceId =
+      [resource?.id, resource?.rowId, resource?.chapterId]
+        .map(normalizeText)
+        .find(Boolean) ?? "";
+    return { resourceId, repoName: "", fullName: "" };
+  }
+
   const idFields = kind === "team"
     ? [resource?.id, resource?.githubOrg]
     : [resource?.id, resource?.rowId, resource?.chapterId, resource?.projectId, resource?.glossaryId, resource?.qaListId];
