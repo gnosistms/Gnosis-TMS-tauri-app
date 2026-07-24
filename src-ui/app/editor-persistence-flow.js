@@ -1797,6 +1797,223 @@ export async function persistEditorRowOnBlur(render, rowId, operations = {}, opt
   return persistEditorRow(render, rowId, operations, options);
 }
 
+// Saves a group of programmatically edited rows (AI Translate All batch
+// responses) as one queued operation and one git commit, instead of one commit
+// per row. Only the given languages' text is sent per row. The batch input is
+// rebuilt from current state at run time (parity with the per-row rebase), so
+// a save that waited in the queue commits the text the user currently sees,
+// and rows that entered a conflict state are left to conflict resolution.
+export async function persistEditorRowsBatch(render, items, operations = {}, options = {}) {
+  const {
+    updateEditorChapterRow,
+    applyEditorSelectionsToProjectState,
+  } = operations;
+  const editorChapter = state.editorChapter;
+  const normalizedItems = (Array.isArray(items) ? items : []).filter(
+    (item) => item?.rowId && item?.languageCode,
+  );
+  if (
+    normalizedItems.length === 0
+    || !editorChapter?.chapterId
+    || typeof updateEditorChapterRow !== "function"
+    || typeof applyEditorSelectionsToProjectState !== "function"
+  ) {
+    return false;
+  }
+
+  const team = selectedProjectsTeam();
+  const context = findChapterContextById(editorChapter.chapterId);
+  const repoScope = projectRepoScope({ team, project: context?.project ?? null });
+  if (!Number.isFinite(team?.installationId) || !context?.project?.name || !repoScope) {
+    return false;
+  }
+
+  try {
+    assertCurrentEditorWritePermission({ actionKind: "sharedWrite" });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!handleEditorPermissionDenied(error, render)) {
+      showNoticeBadge(message || "The rows could not be saved.", render);
+    }
+    return false;
+  }
+
+  const commitMetadata = normalizePendingEditorCommitMetadata(options?.commitMetadata);
+  const operationValue = {
+    chapterId: editorChapter.chapterId,
+    items: normalizedItems.map((item) => ({
+      rowId: item.rowId,
+      languageCode: item.languageCode,
+    })),
+    commitMessage: typeof options?.commitMessage === "string" ? options.commitMessage.trim() : "",
+    operation: commitMetadata?.operation ?? "",
+    aiModel: commitMetadata?.aiModel ?? "",
+    inputBase: {
+      installationId: team.installationId,
+      projectId: context.project.id,
+      repoName: context.project.name,
+      chapterId: editorChapter.chapterId,
+    },
+    permissionContext: {
+      team: cloneQueueContextValue(team),
+      project: cloneQueueContextValue(context.project),
+      chapter: cloneQueueContextValue(context.chapter),
+      actionKind: "sharedWrite",
+    },
+  };
+
+  const collectRowsToSave = (value) => {
+    const languageCodesByRowId = new Map();
+    for (const item of value.items) {
+      const languageCodes = languageCodesByRowId.get(item.rowId) ?? new Set();
+      languageCodes.add(item.languageCode);
+      languageCodesByRowId.set(item.rowId, languageCodes);
+    }
+
+    const rowsToSave = [];
+    for (const [rowId, languageCodes] of languageCodesByRowId) {
+      const row = findEditorRowById(rowId, state.editorChapter);
+      if (!row || row.saveStatus === "conflict" || row.freshness === "conflict") {
+        continue;
+      }
+      const input = { rowId, fields: {}, footnotes: {}, imageCaptions: {} };
+      // The snapshot keeps state-format values (footnote entries are structured
+      // in state but legacy-serialized on the wire) so the persisted-state
+      // bookkeeping in onSuccess compares like with like.
+      const snapshot = { fields: {}, footnotes: {}, imageCaptions: {} };
+      const legacyFootnotes = serializeFootnoteMapForLegacy(row.footnotes);
+      for (const languageCode of languageCodes) {
+        if (typeof row.fields?.[languageCode] === "string") {
+          input.fields[languageCode] = row.fields[languageCode];
+          snapshot.fields[languageCode] = row.fields[languageCode];
+        }
+        if (typeof legacyFootnotes?.[languageCode] === "string") {
+          input.footnotes[languageCode] = legacyFootnotes[languageCode];
+          snapshot.footnotes[languageCode] = row.footnotes[languageCode];
+        }
+        if (typeof row.imageCaptions?.[languageCode] === "string") {
+          input.imageCaptions[languageCode] = row.imageCaptions[languageCode];
+          snapshot.imageCaptions[languageCode] = row.imageCaptions[languageCode];
+        }
+      }
+      if (
+        Object.keys(input.fields).length === 0
+        && Object.keys(input.footnotes).length === 0
+        && Object.keys(input.imageCaptions).length === 0
+      ) {
+        continue;
+      }
+      rowsToSave.push({
+        rowId,
+        input,
+        snapshot: {
+          fields: cloneRowFields(snapshot.fields),
+          footnotes: cloneRowFootnotes(snapshot.footnotes),
+          imageCaptions: cloneRowFields(snapshot.imageCaptions),
+        },
+      });
+    }
+    return rowsToSave;
+  };
+
+  const requested = requestEditorOperation({
+    repoScope,
+    chapterScope: `${repoScope}:${editorChapter.chapterId}`,
+    kind: "rowTextBatch",
+    value: operationValue,
+    metadata: {
+      projectId: context.project.id,
+      chapterId: editorChapter.chapterId,
+      rowIds: [...new Set(operationValue.items.map((item) => item.rowId))],
+    },
+    invalidationKeys: [editorChapterInvalidationKey(repoScope, editorChapter.chapterId)],
+  }, {
+    run: async (operation) => {
+      const value = operation.value;
+      const savedRows = collectRowsToSave(value);
+      if (savedRows.length === 0) {
+        return { payload: null, savedRows };
+      }
+      const payload = await invokeQueuedEditorWriteCommand("update_gtms_editor_row_fields_batch", {
+        input: {
+          ...value.inputBase,
+          rows: savedRows.map((saved) => saved.input),
+          commitMessage: value.commitMessage,
+          operation: value.operation,
+          aiModel: value.aiModel,
+        },
+      }, value.permissionContext, render);
+      return { payload, savedRows };
+    },
+    onSuccess: ({ payload, savedRows } = {}, operation) => {
+      const value = operation?.value ?? operationValue;
+      if (state.editorChapter?.chapterId !== value.chapterId || !Array.isArray(savedRows)) {
+        return;
+      }
+
+      for (const saved of savedRows) {
+        updateEditorChapterRow(saved.rowId, (row) => {
+          if (!row) {
+            return row;
+          }
+          const nextRow = {
+            ...row,
+            persistedFields: { ...cloneRowFields(row.persistedFields), ...saved.snapshot.fields },
+            persistedFootnotes: {
+              ...cloneRowFootnotes(row.persistedFootnotes),
+              ...saved.snapshot.footnotes,
+            },
+            persistedImageCaptions: {
+              ...cloneRowFields(row.persistedImageCaptions),
+              ...saved.snapshot.imageCaptions,
+            },
+          };
+          // A row edited again while the batch save was in flight keeps its
+          // dirty status and re-persists through the normal per-row path.
+          if (!rowHasPersistedChanges(nextRow) && nextRow.saveStatus !== "saving") {
+            nextRow.saveStatus = "idle";
+            nextRow.saveError = "";
+          }
+          return nextRow;
+        });
+      }
+
+      state.editorChapter = {
+        ...state.editorChapter,
+        wordCounts:
+          payload?.wordCounts && typeof payload.wordCounts === "object"
+            ? payload.wordCounts
+            : state.editorChapter.wordCounts,
+        chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
+      };
+      const savedRowIds = savedRows.map((saved) => saved.rowId);
+      reconcileDirtyTrackedEditorRows(savedRowIds);
+      applyEditorSelectionsToProjectState(state.editorChapter);
+      render?.({ scope: "translate-sidebar" });
+      if (savedRowIds.includes(state.editorChapter.activeRowId)) {
+        loadActiveEditorFieldHistory(render);
+      }
+    },
+    onError: (error, operation) => {
+      const value = operation?.value ?? operationValue;
+      const message = error instanceof Error ? error.message : String(error);
+      if (state.editorChapter?.chapterId === value.chapterId) {
+        const rowIds = [...new Set(value.items.map((item) => item.rowId))];
+        for (const rowId of rowIds) {
+          updateEditorChapterRow(rowId, (currentRow) =>
+            currentRow ? applyEditorRowPersistFailed(currentRow, message) : currentRow);
+        }
+        reconcileDirtyTrackedEditorRows(rowIds);
+        render?.({ scope: "translate-sidebar" });
+      }
+      showNoticeBadge(message || "The translated rows could not be saved.", render);
+    },
+  });
+
+  requested.promise.catch(() => {});
+  return true;
+}
+
 export async function resolveEditorRowConflict(render, rowId, resolution, operations = {}) {
   const { updateEditorChapterRow } = operations;
   if (!rowId || typeof updateEditorChapterRow !== "function") {

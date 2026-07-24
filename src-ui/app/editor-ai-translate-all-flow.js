@@ -558,7 +558,9 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
   // entry carries the row snapshot the batch request was built from. The guard
   // compares the CURRENT row against those sent values — a mid-flight edit or
   // background-sync merge makes the batch result stale for that row.
-  const applyBatchRowResult = async (entry, rowResult, provider, promptText, batchHints) => {
+  // pendingBatchSaveItems collects applied rows for one grouped save (one git
+  // commit per batch response); when null, each row persists individually.
+  const applyBatchRowResult = async (entry, rowResult, provider, promptText, batchHints, pendingBatchSaveItems = null) => {
     const { item } = entry;
     const currentRow = findEditorRowById(item.rowId, state.editorChapter);
     if (
@@ -592,10 +594,14 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
       rowIds: [item.rowId],
       reason: "ai-translate-all-batch",
     });
-    await operations.persistEditorRowOnBlur?.(render, item.rowId, {
-      commitMetadata: { operation: "ai-translation", aiModel: provider.modelId },
-      waitForDurable: false,
-    });
+    if (pendingBatchSaveItems) {
+      pendingBatchSaveItems.push({ rowId: item.rowId, languageCode: item.targetLanguageCode });
+    } else {
+      await operations.persistEditorRowOnBlur?.(render, item.rowId, {
+        commitMetadata: { operation: "ai-translation", aiModel: provider.modelId },
+        waitForDurable: false,
+      });
+    }
     if (!isRunActive() || state.editorChapter?.chapterId !== context.chapterId) {
       return;
     }
@@ -780,6 +786,23 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
     }
 
     const promptText = typeof payload?.promptText === "string" ? payload.promptText : "";
+    // One grouped save (one git commit) per batch response instead of one
+    // commit per row: hundreds of per-row commits starve interactive saves in
+    // the write queue. Falls back to per-row saves when the batch persist
+    // operation is not wired.
+    const pendingBatchSaveItems =
+      typeof operations.persistEditorRowsBatch === "function" ? [] : null;
+    const flushBatchSave = async () => {
+      if (!pendingBatchSaveItems || pendingBatchSaveItems.length === 0) {
+        return;
+      }
+      const items = pendingBatchSaveItems.splice(0);
+      const targetLabel = languageSemanticLabel(targetLanguage) || targetLanguageCode;
+      await operations.persistEditorRowsBatch(render, items, {
+        commitMessage: `AI translate ${items.length} row${items.length === 1 ? "" : "s"} to ${targetLabel}`,
+        commitMetadata: { operation: "ai-translation", aiModel: provider.modelId },
+      });
+    };
     const returnedById = new Map(
       (Array.isArray(payload?.rows) ? payload.rows : []).map((row) => [row.rowId, row]),
     );
@@ -798,21 +821,27 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
       });
       reportBackendNonfatalError({ operation: "ai-translate-batch", reason: "missing-rows" });
     }
-    for (const entry of liveEntries) {
-      if (!isRunActive()) {
-        return "abort";
-      }
-      const rowResult = returnedById.get(entry.item.rowId);
-      if (!rowResult) {
-        const outcome = await translateSingleItem(entry.item);
-        if (outcome === "abort" || outcome === "run-error") {
-          return outcome;
+    try {
+      for (const entry of liveEntries) {
+        if (!isRunActive()) {
+          return "abort";
         }
-        continue;
+        const rowResult = returnedById.get(entry.item.rowId);
+        if (!rowResult) {
+          const outcome = await translateSingleItem(entry.item);
+          if (outcome === "abort" || outcome === "run-error") {
+            return outcome;
+          }
+          continue;
+        }
+        await applyBatchRowResult(entry, rowResult, provider, promptText, batchHints, pendingBatchSaveItems);
       }
-      await applyBatchRowResult(entry, rowResult, provider, promptText, batchHints);
+      return "ok";
+    } finally {
+      // Runs on abort/error exits too: rows already applied to visible state
+      // must still reach a commit.
+      await flushBatchSave();
     }
-    return "ok";
   };
 
   const canApplyBatchLocally =

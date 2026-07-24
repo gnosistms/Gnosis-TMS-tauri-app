@@ -423,6 +423,88 @@ test("AI Translate All batches consecutive same-pair rows into one request", asy
   assert.equal(state.statusBadges.left.text, "AI translated 3 fields.");
 });
 
+test("AI Translate All saves each batch response as one grouped save, not per row", async () => {
+  resetSessionState();
+  editorAiTranslateAllTestApi.resetActiveBatchRunId();
+  state.editorChapter = batchChapter();
+  const perRowPersistCalls = [];
+  const batchSaveCalls = [];
+
+  await confirmEditorAiTranslateAll(
+    () => {},
+    batchOperations({
+      persistEditorRowOnBlur: async (_render, rowId) => {
+        perRowPersistCalls.push(rowId);
+      },
+      persistEditorRowsBatch: async (_render, items, options) => {
+        batchSaveCalls.push({ items, options });
+        return true;
+      },
+      runAiTranslationBatch: async (request) => ({
+        rows: request.rows.map((row) => ({
+          rowId: row.rowId,
+          translatedText: `vi:${row.sourceText}`,
+          translatedFootnote: "",
+          translatedImageCaption: "",
+        })),
+        promptText: "P",
+      }),
+    }),
+  );
+
+  assert.deepEqual(perRowPersistCalls, []);
+  assert.equal(batchSaveCalls.length, 1);
+  assert.deepEqual(batchSaveCalls[0].items, [
+    { rowId: "row-a", languageCode: "vi" },
+    { rowId: "row-b", languageCode: "vi" },
+    { rowId: "row-c", languageCode: "vi" },
+  ]);
+  assert.equal(batchSaveCalls[0].options.commitMessage, "AI translate 3 rows to Vietnamese");
+  assert.deepEqual(batchSaveCalls[0].options.commitMetadata, {
+    operation: "ai-translation",
+    aiModel: "gpt-5.5",
+  });
+  assert.equal(state.statusBadges.left.text, "AI translated 3 fields.");
+});
+
+test("AI Translate All grouped save covers only batch-applied rows when some fall back", async () => {
+  resetSessionState();
+  editorAiTranslateAllTestApi.resetActiveBatchRunId();
+  state.editorChapter = batchChapter();
+  const batchSaveCalls = [];
+  const fallbackRows = [];
+
+  await confirmEditorAiTranslateAll(
+    () => {},
+    batchOperations({
+      persistEditorRowsBatch: async (_render, items, options) => {
+        batchSaveCalls.push({ items, options });
+        return true;
+      },
+      runAiTranslationBatch: async (request) => ({
+        rows: request.rows
+          .filter((row) => row.rowId !== "row-b")
+          .map((row) => ({ rowId: row.rowId, translatedText: `vi:${row.sourceText}` })),
+        promptText: "P",
+      }),
+      runEditorAiTranslateForContext: async (_render, _actionId, context) => {
+        fallbackRows.push(context.rowId);
+        const row = state.editorChapter.rows.find((candidate) => candidate.rowId === context.rowId);
+        row.fields[context.targetLanguageCode] = "vi:fallback";
+        return { ok: true };
+      },
+    }),
+  );
+
+  assert.deepEqual(fallbackRows, ["row-b"]);
+  assert.equal(batchSaveCalls.length, 1);
+  assert.deepEqual(batchSaveCalls[0].items, [
+    { rowId: "row-a", languageCode: "vi" },
+    { rowId: "row-c", languageCode: "vi" },
+  ]);
+  assert.equal(batchSaveCalls[0].options.commitMessage, "AI translate 2 rows to Vietnamese");
+});
+
 test("AI Translate All falls back to single-row for rows missing from the batch response", async () => {
   resetSessionState();
   editorAiTranslateAllTestApi.resetActiveBatchRunId();
