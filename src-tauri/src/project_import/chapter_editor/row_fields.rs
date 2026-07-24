@@ -905,7 +905,7 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
                 },
                 migration: None,
                 status_note: None,
-                ai_model: None,
+                ai_model: Some(input.ai_model.trim()).filter(|value| !value.is_empty()),
             },
             &prepared_writes,
             &removed_uploaded_paths,
@@ -915,6 +915,9 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
         } else {
             Some(git_output(&repo_path, &["rev-parse", "--short", "HEAD"])?)
         };
+        for row_id in &changed_row_ids {
+            let _ = clear_imported_editor_conflict_entry(&repo_path, &input.chapter_id, row_id);
+        }
 
         return Ok(UpdateEditorRowFieldsBatchResponse {
             row_ids: changed_row_ids,

@@ -115,6 +115,7 @@ import {
   openEditorImageCaption as openEditorImageCaptionFlow,
   openEditorUnreviewAllModal as openEditorUnreviewAllModalFlow,
   persistEditorRowOnBlur as persistEditorRowOnBlurFlow,
+  persistEditorRowsBatch as persistEditorRowsBatchFlow,
   reviewEditorClearTranslations as reviewEditorClearTranslationsFlow,
   resolveEditorRowConflict as resolveEditorRowConflictFlow,
   scheduleDirtyEditorRowScan as scheduleDirtyEditorRowScanFlow,
@@ -547,6 +548,7 @@ export async function confirmEditorAiTranslateAll(render) {
   await confirmEditorAiTranslateAllFlow(render, {
     updateEditorRowFieldValue,
     persistEditorRowOnBlur,
+    persistEditorRowsBatch,
     syncEditorGlossaryHighlightRowDom,
   });
 }
@@ -1162,6 +1164,10 @@ export function toggleEditorLanguageCollapsed(languageCode) {
 
 export async function persistEditorRowOnBlur(render, rowId, options = {}) {
   await persistEditorRowOnBlurFlow(render, rowId, editorPersistenceOperations(), options);
+}
+
+export async function persistEditorRowsBatch(render, items, options = {}) {
+  return persistEditorRowsBatchFlow(render, items, editorPersistenceOperations(), options);
 }
 
 export function applyEditorTimingFieldBlur(render, input) {

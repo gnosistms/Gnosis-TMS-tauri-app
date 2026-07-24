@@ -339,6 +339,8 @@ pub(crate) struct UpdateEditorRowFieldsBatchInput {
     rows: Vec<UpdateEditorRowFieldsBatchRowInput>,
     commit_message: String,
     operation: String,
+    #[serde(default)]
+    ai_model: String,
 }
 
 #[derive(Deserialize)]
