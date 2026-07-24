@@ -107,7 +107,8 @@ use crate::{
     },
     project_import::{
         apply_aligned_translation_to_gtms_chapter, apply_gtms_editor_ai_review_result,
-        cancel_gtms_chapter_pdf_export, cancel_project_import_batch, clear_deleted_gtms_chapters,
+        apply_gtms_editor_ai_review_results_batch, cancel_gtms_chapter_pdf_export,
+        cancel_project_import_batch, clear_deleted_gtms_chapters,
         clear_gtms_editor_imported_conflict, clear_gtms_editor_reviewed_markers,
         copy_gtms_chapter_to_team, delete_gtms_editor_row_comment, export_gtms_chapter_file,
         import_docx_to_gtms, import_html_to_gtms, import_project_files_to_gtms, import_srt_to_gtms,
@@ -686,6 +687,7 @@ pub fn run() {
             remove_gtms_editor_language_image,
             clear_gtms_editor_reviewed_markers,
             apply_gtms_editor_ai_review_result,
+            apply_gtms_editor_ai_review_results_batch,
             update_gtms_editor_row_fields,
             update_gtms_editor_row_fields_batch,
             list_local_gtms_glossaries,

@@ -22,6 +22,7 @@ pub(crate) use self::chapter_editor::{
 use self::{
     chapter_editor::{
         apply_aligned_translation_to_gtms_chapter_sync, apply_gtms_editor_ai_review_result_sync,
+        apply_gtms_editor_ai_review_results_batch_sync,
         cancel_gtms_chapter_pdf_export as cancel_gtms_chapter_pdf_export_task,
         clear_gtms_editor_imported_conflict_sync, clear_gtms_editor_reviewed_markers_sync,
         export_gtms_chapter_file_sync, initialize_gtms_project_repo_sync,
@@ -42,7 +43,8 @@ use self::{
         upload_gtms_editor_language_image_sync, AlignedTranslationApplyInput,
         AlignedTranslationApplyResponse, AlignedTranslationPreflightInput,
         AlignedTranslationPreflightResponse, ApplyEditorAiReviewResultInput,
-        ApplyEditorAiReviewResultResponse, ClearEditorReviewedMarkersInput,
+        ApplyEditorAiReviewResultResponse, ApplyEditorAiReviewResultsBatchInput,
+        ApplyEditorAiReviewResultsBatchResponse, ClearEditorReviewedMarkersInput,
         ClearEditorReviewedMarkersResponse, ClearImportedEditorConflictInput,
         ExportChapterFileInput, ExportChapterFileResponse, InitializeProjectRepoInput,
         InitializeProjectRepoResponse, InsertEditorRowInput, InsertEditorRowResponse,
@@ -539,6 +541,19 @@ pub(crate) async fn apply_gtms_editor_ai_review_result(
     })
     .await
     .map_err(|error| format!("The AI review result worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn apply_gtms_editor_ai_review_results_batch(
+    app: AppHandle,
+    input: ApplyEditorAiReviewResultsBatchInput,
+) -> Result<ApplyEditorAiReviewResultsBatchResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_chapter_writes(&app, input.installation_id)?;
+        apply_gtms_editor_ai_review_results_batch_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The AI review batch result worker failed: {error}"))?
 }
 
 #[tauri::command]

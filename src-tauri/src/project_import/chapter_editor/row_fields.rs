@@ -1156,6 +1156,216 @@ pub(crate) fn apply_gtms_editor_ai_review_result_sync(
     })
 }
 
+// Applies every review result from one AI batch response in a single git
+// commit. Per-row semantics match apply_gtms_editor_ai_review_result_sync;
+// committing per batch instead of per row keeps long AI Review All runs from
+// starving interactive saves behind hundreds of sequential commits.
+pub(crate) fn apply_gtms_editor_ai_review_results_batch_sync(
+    app: &AppHandle,
+    input: ApplyEditorAiReviewResultsBatchInput,
+) -> Result<ApplyEditorAiReviewResultsBatchResponse, String> {
+    let repo_path = resolve_project_git_repo_path(
+        app,
+        input.installation_id,
+        input.project_id.as_deref(),
+        Some(&input.repo_name),
+    )?;
+    ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
+    ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
+
+    let chapter_path =
+        find_chapter_path_by_id(app, &repo_path.join("chapters"), &input.chapter_id)?;
+    let chapter_file: StoredChapterFile =
+        read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
+    let languages = sanitize_chapter_languages(&chapter_file.languages);
+    let mut word_counts = load_word_counts(&chapter_path.join("rows"), &languages)?;
+
+    let mut rows_by_id = BTreeMap::new();
+    for row in input.rows {
+        let row_id = row.row_id.trim().to_string();
+        if row_id.is_empty() {
+            continue;
+        }
+        rows_by_id.insert(row_id, row);
+    }
+
+    struct PendingRowResult {
+        row_id: String,
+        relative_path: String,
+        row_file: StoredRowFile,
+        reviewed: bool,
+        please_check: bool,
+    }
+
+    let mut changed_row_ids = Vec::new();
+    let mut prepared_writes = Vec::new();
+    let mut pending_results = Vec::new();
+
+    for (row_id, review_row) in rows_by_id {
+        let row_json_path = validated_row_json_path(&chapter_path, &row_id)?;
+        let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
+        let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
+            format!(
+                "Could not read row file '{}': {error}",
+                row_json_path.display()
+            )
+        })?;
+        let original_row_file: StoredRowFile =
+            serde_json::from_str(&original_row_text).map_err(|error| {
+                format!(
+                    "Could not parse row file '{}': {error}",
+                    row_json_path.display()
+                )
+            })?;
+        let mut row_value: Value = serde_json::from_str(&original_row_text).map_err(|error| {
+            format!(
+                "Could not parse row file '{}': {error}",
+                row_json_path.display()
+            )
+        })?;
+
+        if !review_row.suggested_text.trim().is_empty() {
+            let mut fields = BTreeMap::new();
+            fields.insert(
+                input.language_code.clone(),
+                review_row.suggested_text.clone(),
+            );
+            apply_editor_plain_text_updates(&mut row_value, &fields)?;
+        }
+        if !review_row.suggested_footnote.trim().is_empty() {
+            let mut footnotes = BTreeMap::new();
+            footnotes.insert(
+                input.language_code.clone(),
+                review_row.suggested_footnote.clone(),
+            );
+            apply_editor_footnote_updates(&mut row_value, &footnotes)?;
+        }
+        if !review_row.suggested_image_caption.trim().is_empty() {
+            let mut image_captions = BTreeMap::new();
+            image_captions.insert(
+                input.language_code.clone(),
+                review_row.suggested_image_caption.clone(),
+            );
+            apply_editor_image_caption_updates(&mut row_value, &image_captions)?;
+        }
+        let (_, _, reviewed_changed) = apply_editor_field_flag_update(
+            &mut row_value,
+            &input.language_code,
+            "reviewed",
+            review_row.reviewed,
+        )?;
+        let (reviewed, please_check, please_check_changed) = apply_editor_field_flag_update(
+            &mut row_value,
+            &input.language_code,
+            "please-check",
+            review_row.please_check,
+        )?;
+
+        let updated_row_json = serde_json::to_string_pretty(&row_value).map_err(|error| {
+            format!(
+                "Could not serialize row file '{}': {error}",
+                row_json_path.display()
+            )
+        })?;
+        let updated_row_text = format!("{updated_row_json}\n");
+        let changed =
+            updated_row_text != original_row_text || reviewed_changed || please_check_changed;
+
+        let row_file = if changed {
+            let updated_row_file: StoredRowFile =
+                serde_json::from_str(&updated_row_text).map_err(|error| {
+                    format!(
+                        "Could not parse updated row file '{}': {error}",
+                        row_json_path.display()
+                    )
+                })?;
+            word_counts = apply_word_count_delta(
+                &word_counts,
+                &original_row_file,
+                &updated_row_file,
+                &languages,
+            );
+            prepared_writes.push(PreparedRowFileWrite {
+                relative_path: relative_row_json.clone(),
+                path: row_json_path,
+                original_text: Some(original_row_text),
+                updated_text: updated_row_text,
+            });
+            changed_row_ids.push(row_id.clone());
+            updated_row_file
+        } else {
+            original_row_file
+        };
+        pending_results.push(PendingRowResult {
+            row_id,
+            relative_path: relative_row_json,
+            row_file,
+            reviewed,
+            please_check,
+        });
+    }
+
+    if !changed_row_ids.is_empty() {
+        let ai_model = input.ai_model.trim();
+        write_row_files_and_commit(
+            app,
+            &repo_path,
+            &format!(
+                "AI review {} row{} {}",
+                changed_row_ids.len(),
+                if changed_row_ids.len() == 1 { "" } else { "s" },
+                input.language_code
+            ),
+            CommitMetadata {
+                operation: Some("ai-review"),
+                migration: None,
+                status_note: None,
+                ai_model: if ai_model.is_empty() {
+                    None
+                } else {
+                    Some(ai_model)
+                },
+            },
+            &prepared_writes,
+        )?;
+        for row_id in &changed_row_ids {
+            let _ = clear_imported_editor_conflict_entry(&repo_path, &input.chapter_id, row_id);
+        }
+    }
+
+    let mut rows = Vec::new();
+    for pending in pending_results {
+        let text = row_plain_text_map(&pending.row_file)
+            .get(&input.language_code)
+            .cloned()
+            .unwrap_or_default();
+        let footnote = row_footnote_map(&pending.row_file)
+            .get(&input.language_code)
+            .cloned()
+            .unwrap_or_default();
+        let image_caption = row_image_caption_map(&pending.row_file)
+            .get(&input.language_code)
+            .cloned()
+            .unwrap_or_default();
+        rows.push(ApplyEditorAiReviewResultsBatchRowResult {
+            row_id: pending.row_id,
+            text,
+            footnote,
+            image_caption,
+            reviewed: pending.reviewed,
+            please_check: pending.please_check,
+            last_update: load_latest_row_version_metadata(&repo_path, &pending.relative_path)?,
+        });
+    }
+
+    Ok(ApplyEditorAiReviewResultsBatchResponse {
+        language_code: input.language_code,
+        rows,
+        word_counts,
+        chapter_base_commit_sha: current_repo_head_sha(&repo_path),
+    })
+}
+
 pub(crate) fn update_gtms_editor_row_text_style_sync(
     app: &AppHandle,
     input: UpdateEditorRowTextStyleInput,
