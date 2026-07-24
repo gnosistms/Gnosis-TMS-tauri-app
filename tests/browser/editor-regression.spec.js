@@ -4864,8 +4864,9 @@ test.describe("editor regressions", () => {
 
     await expect(footnoteField).toHaveValue("foot <em>note</em>");
     await expect(italicButton).toHaveAttribute("aria-pressed", "true");
-    // Opening a footnote appends its inline marker token to the main field.
-    await expect(await readEditorFieldValue(page, rowId, languageCode)).toBe("alpha 0001 target text [1]");
+    // Opening a footnote appends its inline marker token to the main field,
+    // attached directly to the preceding text with no separator space.
+    await expect(await readEditorFieldValue(page, rowId, languageCode)).toBe("alpha 0001 target text[1]");
   });
 
   test("inline formatting buttons apply to the active image caption textarea instead of the main field", async ({ page }) => {
