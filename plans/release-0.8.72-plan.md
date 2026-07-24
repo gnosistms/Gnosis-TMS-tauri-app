@@ -29,14 +29,20 @@ Date: 2026-07-24
 ## Steps
 
 - [x] Content PRs #185, #186, #187, #189, #190 merged (main at 082e6fe1).
-- [ ] #191 merged after its CI passes.
-- [ ] Confirm main CI (Quality Check + Browser Tests) is green on the merge
-      commit before tagging — watch each job, not just the run status.
+- [x] #191 merged after its CI passes (main at 03a1ee42). The initial Ubuntu
+      browser-test failure did not reproduce locally (5/5 passes on the merged
+      tree) and cleared on the fresh run after main was merged into the branch.
+- [x] Confirm main CI (Quality Check + Browser Tests) green on the merge commit
+      before tagging.
 - [x] Bump version to 0.8.72 (package.json, package-lock.json, Cargo.toml,
-      Cargo.lock, tauri.conf.json) — staged in the working tree, uncommitted.
-- [ ] Pre-tag verification: npm test, npm run audit:unused, cargo fmt check,
-      npm run test:rust.
-- [ ] Commit "Release 0.8.72", tag `v0.8.72`, push main + tag.
-- [ ] Confirm the release build and updater artifacts publish successfully on
-      every platform (Windows + macOS arm64/x64) — watch each job, not just the
-      run status.
+      Cargo.lock, tauri.conf.json).
+- [x] Pre-tag verification: npm test (1719 pass), npm run audit:unused (clean),
+      cargo fmt check (clean), npm run test:rust (439 pass).
+- [x] Commit "Release 0.8.72", tag `v0.8.72`, push main + tag. The release
+      commit was first cut on 082e6fe1 (before #191); rebased onto origin/main
+      so 0.8.72 includes #191. Final commit 6b69a65d, tag v0.8.72.
+- [x] Confirm the release build and updater artifacts publish successfully on
+      every platform. Release run 30066794135 succeeded for macOS x86_64, macOS
+      aarch64, and Windows x86_64. GitHub Release "Gnosis TMS v0.8.72" published
+      (not draft) with all installers, updater bundles + signatures, and
+      latest.json referencing version 0.8.72 across all platforms.
