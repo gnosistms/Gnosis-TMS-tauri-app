@@ -24,8 +24,12 @@ Date: 2026-07-24
       Cargo.lock, tauri.conf.json).
 - [x] Pre-tag verification: npm test (1746 pass), npm run audit:unused
       (clean), cargo fmt check, npm run test:rust (469 pass).
-- [ ] Commit "Release 0.8.74", tag `v0.8.74`, push main + tag.
-- [ ] Confirm the release build and updater artifacts publish successfully on
+- [x] Commit "Release 0.8.74" (19163d8e), tag `v0.8.74`, push main + tag.
+- [x] Confirm the release build and updater artifacts publish successfully on
       every platform (macOS x86_64, macOS aarch64, Windows x86_64), and the
       GitHub Release is published with installers, updater bundles +
-      signatures, and latest.json referencing 0.8.74.
+      signatures, and latest.json referencing 0.8.74. Verified 2026-07-24:
+      run 30131499372 succeeded, release published (not draft) with DMG/zip
+      for both macOS targets, exe + msi + sigs for Windows, .sig for every
+      updater bundle, and latest.json at version 0.8.74 covering all 7
+      platform keys.
