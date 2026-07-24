@@ -974,10 +974,9 @@ fn prepare_typst_workspace(
     let leading_title = leading_heading_title(document);
     let title = leading_title.as_deref().unwrap_or(document.title.as_str());
     let mut source = typst_preamble(document, paper_size);
-    source.push_str(&format!(
-        "#gnosis-title({})\n#v(1.2em)\n",
-        typst_string(title)
-    ));
+    // No spacer after the title: it is a top float now, and its `clearance`
+    // provides the gap to whatever the page starts with.
+    source.push_str(&format!("#gnosis-title({})\n", typst_string(title)));
     for (block_index, block) in document.blocks.iter().enumerate() {
         check_cancelled(cancelled)?;
         // A leading H1 promoted to the chapter title is not also printed as a
@@ -1022,14 +1021,25 @@ fn prepare_typst_workspace(
                     .ok_or_else(|| "An image could not be prepared for the PDF.".to_string())?;
                 let body = match prepared {
                     PreparedTypstImage::File(relative) => {
-                        format!("gnosis-image({})", typst_string(relative))
+                        if caption.trim().is_empty() {
+                            format!("gnosis-image({})", typst_string(relative))
+                        } else {
+                            // The caption goes to gnosis-image as well as to the
+                            // figure: the helper only measures it, so the image
+                            // shrinks by exactly the height the caption will take.
+                            format!(
+                                "gnosis-image({}, caption: [{}])",
+                                typst_string(relative),
+                                render_typst_image_caption(caption)
+                            )
+                        }
                     }
                     PreparedTypstImage::Placeholder(message) => {
                         render_typst_image_placeholder(message)
                     }
                 };
                 if caption.trim().is_empty() {
-                    source.push_str(&format!("#align(center)[#{body}]\n\n"));
+                    source.push_str(&format!("#figure({body}, placement: auto)\n\n"));
                 } else {
                     source.push_str(&format!("{}\n\n", render_typst_figure(&body, caption)));
                 }
@@ -1345,13 +1355,19 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
     // The chapter title is emitted as plain styled text, not a Typst heading, so the
     // `#show heading` rule above never reaches it. This helper gives the title the
     // same heading typeface; the global Greek-run rule still applies inside it.
+    //
+    // The title is itself a top float: Typst assigns float slots in source order and
+    // has no other way to keep a later `placement: auto` image from being hoisted
+    // above content that precedes it on the page. As the first float, the title
+    // always holds the top of page one and image floats stack below it. The
+    // full-width block keeps the centring that `place` would otherwise collapse.
     let title_rule = match heading_family {
         Some(family) => format!(
-            "#let gnosis-title(t) = align(center)[#text(font: {}, size: 22pt, weight: \"bold\")[#t]]\n",
+            "#let gnosis-title(t) = place(top, float: true, clearance: 1.2em, block(width: 100%, align(center)[#text(font: {}, size: 22pt, weight: \"bold\")[#t]]))\n",
             typst_string(family)
         ),
         None => String::from(
-            "#let gnosis-title(t) = align(center)[#text(size: 22pt, weight: \"bold\")[#t]]\n",
+            "#let gnosis-title(t) = place(top, float: true, clearance: 1.2em, block(width: 100%, align(center)[#text(size: 22pt, weight: \"bold\")[#t]]))\n",
         ),
     };
     format!(
@@ -1365,19 +1381,22 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
 const GREEK_RUN_RULE_PREFIX: &str =
     "#show regex(\"[\\u{0370}-\\u{03FF}\\u{1F00}-\\u{1FFF}]+\"): set text(font: ";
 
-/// Scales an image to the full text width, but never taller than 82% of the text
-/// region, so the figure's caption still has somewhere to go. The cap is a maximum,
-/// not a fixed height — a plain `height:` would reserve the full 82% for small images
-/// too, stranding them on pages of their own. Without the cap a tall portrait image
-/// fills the region on its own
-/// and Typst pushes the caption past the bottom margin, printing it over the page
-/// number rather than shrinking the figure. A tall image hits the height cap before
-/// its width reaches the margins, so it is centred at the capped height.
+/// Scales an image to the full text width, but never taller than the space its own
+/// caption leaves on the page. The caption content is passed in purely so it can be
+/// measured: the cap is the region height minus the measured caption height, the
+/// figure's body-to-caption gap (Typst's 0.65em default), and 1.5em of float
+/// clearance headroom. A fixed fraction cannot do this — it overflows when a caption
+/// runs long (Typst then prints the caption over the page number rather than
+/// shrinking the figure) and wastes the reserve when the caption is short or absent.
+/// The cap is a maximum, not a fixed height — a plain `height:` would reserve the
+/// space for small images too, stranding them on pages of their own. A tall image
+/// hits the cap before its width reaches the margins, so it is centred at the capped
+/// height.
 ///
 /// The measurement uses absolute lengths taken from `layout`: `measure` has no
 /// container to resolve a relative width against, so `width: 100%` there reports the
 /// wrong height and the cap never applies.
-const GNOSIS_IMAGE_RULE: &str = "#let gnosis-image(path) = layout(region => {\n  let width = region.width\n  let limit = region.height * 0.82\n  let natural = measure(image(path, width: width))\n  if natural.height > limit { align(center, image(path, height: limit)) } else { image(path, width: width) }\n})\n";
+const GNOSIS_IMAGE_RULE: &str = "#let gnosis-image(path, caption: none) = layout(region => {\n  let width = region.width\n  let reserved = if caption == none { 0pt } else {\n    measure(block(width: width, caption)).height + (0.65em).to-absolute()\n  }\n  let limit = region.height - reserved - (1.5em).to-absolute()\n  let natural = measure(image(path, width: width))\n  if natural.height > limit { align(center, image(path, height: limit)) } else { image(path, width: width) }\n})\n";
 
 fn render_inline_typst(text: &str, show_link_urls: bool) -> String {
     inline_segments(text)
@@ -1426,9 +1445,14 @@ fn render_typst_image_caption(caption: &str) -> String {
     )
 }
 
+/// `placement: auto` makes the figure a float: when the image does not fit in the
+/// space left on the current page, the following text flows into that space and the
+/// image moves to the top or bottom of a nearby page, instead of leaving the rest
+/// of the page empty. The trade-off is that an image can land a page away from the
+/// paragraph it followed in the editor.
 fn render_typst_figure(body: &str, caption: &str) -> String {
     format!(
-        "#figure({body}, caption: [{}], numbering: none)",
+        "#figure({body}, caption: [{}], numbering: none, placement: auto)",
         render_typst_image_caption(caption)
     )
 }
@@ -1828,7 +1852,7 @@ mod tests {
     }
 
     #[test]
-    fn images_are_capped_so_captions_stay_off_the_page_number() {
+    fn images_are_capped_by_their_measured_caption_height() {
         let document = ExportDocument {
             title: "Images".to_string(),
             language_code: "vi".to_string(),
@@ -1836,7 +1860,11 @@ mod tests {
         };
         let preamble = typst_preamble(&document, "a4");
         // The helper must be defined before any figure can call it.
-        assert!(preamble.contains("#let gnosis-image(path) = layout("));
+        assert!(preamble.contains("#let gnosis-image(path, caption: none) = layout("));
+        // The cap comes from measuring the actual caption, not a fixed fraction —
+        // a long caption must shrink the image, a missing one must free the space.
+        assert!(preamble.contains("measure(block(width: width, caption)).height"));
+        assert!(!preamble.contains("region.height * 0.82"));
         // A maximum, not a fixed height: small images must not reserve the full cap.
         assert!(preamble.contains("if natural.height > limit"));
         // measure() needs an absolute width or it reports the wrong height and the
@@ -1878,8 +1906,10 @@ mod tests {
         assert!(vietnamese_preamble.contains("set text(font: \"EB Garamond\")"));
         // The chapter title is not a Typst heading, so it takes the heading typeface
         // through its own helper — otherwise it silently renders in the body font.
+        // It is emitted as the first top float so a `placement: auto` image can
+        // never be hoisted above it on page one.
         assert!(vietnamese_preamble.contains(
-            "#let gnosis-title(t) = align(center)[#text(font: \"Cormorant Garamond Gnosis\", size: 22pt, weight: \"bold\")[#t]]"
+            "#let gnosis-title(t) = place(top, float: true, clearance: 1.2em, block(width: 100%, align(center)[#text(font: \"Cormorant Garamond Gnosis\", size: 22pt, weight: \"bold\")[#t]]))"
         ));
         let japanese_preamble = typst_preamble(&japanese, "a4");
         assert!(japanese_preamble.contains("\"Shippori Mincho\", \"EB Garamond\""));
@@ -1888,7 +1918,7 @@ mod tests {
         assert!(!japanese_preamble.contains("Cormorant Garamond"));
         // Non-Latin scripts keep the body typeface for the title.
         assert!(japanese_preamble.contains(
-            "#let gnosis-title(t) = align(center)[#text(size: 22pt, weight: \"bold\")[#t]]"
+            "#let gnosis-title(t) = place(top, float: true, clearance: 1.2em, block(width: 100%, align(center)[#text(size: 22pt, weight: \"bold\")[#t]]))"
         ));
     }
 
@@ -1979,7 +2009,10 @@ mod tests {
         );
         assert!(figure.starts_with("#figure(image("));
         assert!(figure.contains("caption: [#text(size: 0.85em, style: \"italic\")"));
-        assert!(figure.ends_with("numbering: none)"));
+        assert!(figure.contains("numbering: none"));
+        // Floats fill the gap an oversized image would otherwise leave at the
+        // bottom of a page.
+        assert!(figure.ends_with("placement: auto)"));
     }
 
     #[test]
@@ -2030,9 +2063,11 @@ mod tests {
         };
         let workspace = pdf_workspace().expect("smoke workspace");
         let smoke_image = workspace.join("source.svg");
+        // Tall enough that full text width would overflow the page, so the compile
+        // exercises the caption-measuring height cap, not just the natural-size path.
         fs::write(
             &smoke_image,
-            r##"<svg xmlns="http://www.w3.org/2000/svg" width="80" height="40"><rect width="80" height="40" fill="#c87900"/></svg>"##,
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="80" height="400"><rect width="80" height="400" fill="#c87900"/></svg>"##,
         )
         .expect("write smoke image");
         let document = ExportDocument {
@@ -2078,13 +2113,22 @@ mod tests {
                     image: ExportImage::Upload {
                         repo_relative_path: "smoke.svg".to_string(),
                         raw_url: None,
-                        absolute_path: smoke_image,
+                        absolute_path: smoke_image.clone(),
                     },
-                    caption: "An <b>italic caption</b>".to_string(),
+                    caption: "An <b>italic caption</b> long enough to wrap across several lines on an A4 page, so the export must measure it and shrink the tall image by exactly the height these words occupy instead of overflowing past the bottom margin.".to_string(),
                 },
                 ExportBlock::Image {
                     image: ExportImage::Url("http://127.0.0.1/unavailable.png".to_string()),
                     caption: "Unavailable remote image".to_string(),
+                },
+                // Uncaptioned images take the caption-less floating-figure path.
+                ExportBlock::Image {
+                    image: ExportImage::Upload {
+                        repo_relative_path: "smoke.svg".to_string(),
+                        raw_url: None,
+                        absolute_path: smoke_image,
+                    },
+                    caption: String::new(),
                 },
             ],
         };
