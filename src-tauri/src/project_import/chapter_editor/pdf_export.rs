@@ -29,9 +29,14 @@ const TYPST_COMPILE_TIMEOUT: Duration = Duration::from_secs(120);
 const CANCELLED: &str = "__GNOSIS_PDF_EXPORT_CANCELLED__";
 const MAX_TYPST_DIAGNOSTIC_BYTES: usize = 128 * 1024;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 enum PreparedTypstImage {
-    File(String),
+    File {
+        path: String,
+        /// Height-to-width ratio from the image header; `None` when the format
+        /// keeps its dimensions where a cheap scan cannot reach them.
+        aspect: Option<f64>,
+    },
     Placeholder(String),
 }
 
@@ -974,11 +979,13 @@ fn prepare_typst_workspace(
     let leading_title = leading_heading_title(document);
     let title = leading_title.as_deref().unwrap_or(document.title.as_str());
     let mut source = typst_preamble(document, paper_size);
-    source.push_str(&format!(
-        "#gnosis-title({})\n#v(1.2em)\n",
-        typst_string(title)
-    ));
-    for (block_index, block) in document.blocks.iter().enumerate() {
+    // No spacer after the title: it is a top float now, and its `clearance`
+    // provides the gap to whatever the page starts with.
+    source.push_str(&format!("#gnosis-title({})\n", typst_string(title)));
+    let (emission_order, trailing_start) =
+        typst_block_emission_order(&document.blocks, &image_paths);
+    for block_index in emission_order {
+        let block = &document.blocks[block_index];
         check_cancelled(cancelled)?;
         // A leading H1 promoted to the chapter title is not also printed as a
         // body heading — it has become the title above.
@@ -1021,23 +1028,75 @@ fn prepare_typst_workspace(
                     .get(&export_image_key(image))
                     .ok_or_else(|| "An image could not be prepared for the PDF.".to_string())?;
                 let body = match prepared {
-                    PreparedTypstImage::File(relative) => {
-                        format!("gnosis-image({})", typst_string(relative))
+                    PreparedTypstImage::File { path, .. } => {
+                        if caption.trim().is_empty() {
+                            format!("gnosis-image({})", typst_string(path))
+                        } else {
+                            // The caption goes to gnosis-image as well as to the
+                            // figure: the helper only measures it, so the image
+                            // shrinks by exactly the height the caption will take.
+                            format!(
+                                "gnosis-image({}, caption: [{}])",
+                                typst_string(path),
+                                render_typst_image_caption(caption)
+                            )
+                        }
                     }
                     PreparedTypstImage::Placeholder(message) => {
                         render_typst_image_placeholder(message)
                     }
                 };
+                // Floating exists so following text can flow around the image.
+                // A trailing image has no following text, so it stays in flow:
+                // it lands directly under the chapter's final lines when it
+                // fits there, and at the top of the next page when it does not
+                // — never above text and never at the foot of an empty page.
+                let floating = block_index < trailing_start;
                 if caption.trim().is_empty() {
-                    source.push_str(&format!("#align(center)[#{body}]\n\n"));
+                    let placement = if floating { ", placement: auto" } else { "" };
+                    source.push_str(&format!("#figure({body}{placement})\n\n"));
                 } else {
-                    source.push_str(&format!("{}\n\n", render_typst_figure(&body, caption)));
+                    source.push_str(&format!(
+                        "{}\n\n",
+                        render_typst_figure(&body, caption, floating)
+                    ));
                 }
             }
         }
     }
     fs::write(workspace.join("chapter.typ"), source)
         .map_err(|error| format!("Could not write the temporary Typst document: {error}"))
+}
+
+/// Emission order for blocks. Everything up to the trailing image run keeps
+/// document order. The trailing run — consecutive image blocks with nothing
+/// after them — is reordered shortest-rendering-first, so the shortest image
+/// takes whatever space is left under the chapter's final lines and the taller
+/// ones follow on the pages after it. Rendered height at full text width is
+/// proportional to the height-to-width ratio, so that ratio is the sort key;
+/// placeholders render as short notice boxes and sort ahead of real images.
+/// The sort is stable: equal ratios keep their document order.
+fn typst_block_emission_order(
+    blocks: &[ExportBlock],
+    image_paths: &HashMap<String, PreparedTypstImage>,
+) -> (Vec<usize>, usize) {
+    let mut trailing_start = blocks.len();
+    while trailing_start > 0 && matches!(blocks[trailing_start - 1], ExportBlock::Image { .. }) {
+        trailing_start -= 1;
+    }
+    let estimate = |index: &usize| -> f64 {
+        let ExportBlock::Image { image, .. } = &blocks[*index] else {
+            return 1.0;
+        };
+        match image_paths.get(&export_image_key(image)) {
+            Some(PreparedTypstImage::File { aspect, .. }) => aspect.unwrap_or(1.0),
+            Some(PreparedTypstImage::Placeholder(_)) => 0.2,
+            None => 1.0,
+        }
+    };
+    let mut order: Vec<usize> = (0..blocks.len()).collect();
+    order[trailing_start..].sort_by(|a, b| estimate(a).total_cmp(&estimate(b)));
+    (order, trailing_start)
 }
 
 fn prepare_pdf_workspace(
@@ -1167,10 +1226,17 @@ fn prepare_typst_images(
                         .to_string()
                 })?;
                 let relative = format!("images/image-{index}.{extension}");
+                let aspect = typst_image_aspect(&bytes);
                 fs::write(workspace.join(&relative), bytes).map_err(|error| {
                     format!("Could not prepare an image for PDF export: {error}")
                 })?;
-                prepared_images.insert(key, PreparedTypstImage::File(relative));
+                prepared_images.insert(
+                    key,
+                    PreparedTypstImage::File {
+                        path: relative,
+                        aspect,
+                    },
+                );
             }
             ResolvedPdfImage::Placeholder(message) => {
                 prepared_images.insert(key, PreparedTypstImage::Placeholder(message));
@@ -1345,13 +1411,19 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
     // The chapter title is emitted as plain styled text, not a Typst heading, so the
     // `#show heading` rule above never reaches it. This helper gives the title the
     // same heading typeface; the global Greek-run rule still applies inside it.
+    //
+    // The title is itself a top float: Typst assigns float slots in source order and
+    // has no other way to keep a later `placement: auto` image from being hoisted
+    // above content that precedes it on the page. As the first float, the title
+    // always holds the top of page one and image floats stack below it. The
+    // full-width block keeps the centring that `place` would otherwise collapse.
     let title_rule = match heading_family {
         Some(family) => format!(
-            "#let gnosis-title(t) = align(center)[#text(font: {}, size: 22pt, weight: \"bold\")[#t]]\n",
+            "#let gnosis-title(t) = place(top, float: true, clearance: 1.2em, block(width: 100%, align(center)[#text(font: {}, size: 22pt, weight: \"bold\")[#t]]))\n",
             typst_string(family)
         ),
         None => String::from(
-            "#let gnosis-title(t) = align(center)[#text(size: 22pt, weight: \"bold\")[#t]]\n",
+            "#let gnosis-title(t) = place(top, float: true, clearance: 1.2em, block(width: 100%, align(center)[#text(size: 22pt, weight: \"bold\")[#t]]))\n",
         ),
     };
     format!(
@@ -1365,19 +1437,22 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
 const GREEK_RUN_RULE_PREFIX: &str =
     "#show regex(\"[\\u{0370}-\\u{03FF}\\u{1F00}-\\u{1FFF}]+\"): set text(font: ";
 
-/// Scales an image to the full text width, but never taller than 82% of the text
-/// region, so the figure's caption still has somewhere to go. The cap is a maximum,
-/// not a fixed height — a plain `height:` would reserve the full 82% for small images
-/// too, stranding them on pages of their own. Without the cap a tall portrait image
-/// fills the region on its own
-/// and Typst pushes the caption past the bottom margin, printing it over the page
-/// number rather than shrinking the figure. A tall image hits the height cap before
-/// its width reaches the margins, so it is centred at the capped height.
+/// Scales an image to the full text width, but never taller than the space its own
+/// caption leaves on the page. The caption content is passed in purely so it can be
+/// measured: the cap is the region height minus the measured caption height, the
+/// figure's body-to-caption gap (Typst's 0.65em default), and 1.5em of float
+/// clearance headroom. A fixed fraction cannot do this — it overflows when a caption
+/// runs long (Typst then prints the caption over the page number rather than
+/// shrinking the figure) and wastes the reserve when the caption is short or absent.
+/// The cap is a maximum, not a fixed height — a plain `height:` would reserve the
+/// space for small images too, stranding them on pages of their own. A tall image
+/// hits the cap before its width reaches the margins, so it is centred at the capped
+/// height.
 ///
 /// The measurement uses absolute lengths taken from `layout`: `measure` has no
 /// container to resolve a relative width against, so `width: 100%` there reports the
 /// wrong height and the cap never applies.
-const GNOSIS_IMAGE_RULE: &str = "#let gnosis-image(path) = layout(region => {\n  let width = region.width\n  let limit = region.height * 0.82\n  let natural = measure(image(path, width: width))\n  if natural.height > limit { align(center, image(path, height: limit)) } else { image(path, width: width) }\n})\n";
+const GNOSIS_IMAGE_RULE: &str = "#let gnosis-image(path, caption: none) = layout(region => {\n  let width = region.width\n  let reserved = if caption == none { 0pt } else {\n    measure(block(width: width, caption)).height + (0.65em).to-absolute()\n  }\n  let limit = region.height - reserved - (1.5em).to-absolute()\n  let natural = measure(image(path, width: width))\n  if natural.height > limit { align(center, image(path, height: limit)) } else { image(path, width: width) }\n})\n";
 
 fn render_inline_typst(text: &str, show_link_urls: bool) -> String {
     inline_segments(text)
@@ -1426,9 +1501,17 @@ fn render_typst_image_caption(caption: &str) -> String {
     )
 }
 
-fn render_typst_figure(body: &str, caption: &str) -> String {
+/// With `floating`, `placement: auto` makes the figure a float: when the image does
+/// not fit in the space left on the current page, the following text flows into that
+/// space and the image moves to the top or bottom of a nearby page, instead of
+/// leaving the rest of the page empty. The trade-off is that an image can land a
+/// page away from the paragraph it followed in the editor. Trailing images at the
+/// end of a chapter are emitted non-floating instead — see
+/// `typst_block_emission_order`.
+fn render_typst_figure(body: &str, caption: &str, floating: bool) -> String {
+    let placement = if floating { ", placement: auto" } else { "" };
     format!(
-        "#figure({body}, caption: [{}], numbering: none)",
+        "#figure({body}, caption: [{}], numbering: none{placement})",
         render_typst_image_caption(caption)
     )
 }
@@ -1608,6 +1691,128 @@ fn typst_image_extension(data: &[u8]) -> Option<&'static str> {
         Some("svg")
     } else {
         None
+    }
+}
+
+/// Height-to-width ratio read from the image header. Used only to sort a
+/// trailing image run shortest-rendering-first, so a rough value is fine and
+/// `None` (unknown) is acceptable — the caller falls back to a neutral ratio.
+fn typst_image_aspect(data: &[u8]) -> Option<f64> {
+    fn ratio(width: u32, height: u32) -> Option<f64> {
+        if width == 0 {
+            None
+        } else {
+            Some(height as f64 / width as f64)
+        }
+    }
+    if data.starts_with(b"\x89PNG\r\n\x1a\n") && data.len() >= 24 {
+        let width = u32::from_be_bytes(data[16..20].try_into().ok()?);
+        let height = u32::from_be_bytes(data[20..24].try_into().ok()?);
+        return ratio(width, height);
+    }
+    if data.starts_with(b"\xff\xd8\xff") {
+        let (width, height) = jpeg_dimensions(data)?;
+        return ratio(width, height);
+    }
+    if (data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a")) && data.len() >= 10 {
+        let width = u16::from_le_bytes([data[6], data[7]]) as u32;
+        let height = u16::from_le_bytes([data[8], data[9]]) as u32;
+        return ratio(width, height);
+    }
+    if data.len() >= 30 && data.starts_with(b"RIFF") && &data[8..12] == b"WEBP" {
+        let (width, height) = webp_dimensions(data)?;
+        return ratio(width, height);
+    }
+    let head = String::from_utf8_lossy(&data[..data.len().min(2048)]);
+    if head.contains("<svg") {
+        return svg_aspect(&head);
+    }
+    None
+}
+
+fn jpeg_dimensions(data: &[u8]) -> Option<(u32, u32)> {
+    let mut index = 2usize;
+    while index + 4 <= data.len() {
+        if data[index] != 0xff {
+            return None;
+        }
+        let marker = data[index + 1];
+        // Standalone markers carry no length payload.
+        if (0xd0..=0xd9).contains(&marker) || marker == 0x01 {
+            index += 2;
+            continue;
+        }
+        // Start-of-frame markers hold the dimensions (height first).
+        if matches!(marker, 0xc0..=0xc3 | 0xc5..=0xc7 | 0xc9..=0xcb | 0xcd..=0xcf) {
+            if index + 9 > data.len() {
+                return None;
+            }
+            let height = u16::from_be_bytes([data[index + 5], data[index + 6]]) as u32;
+            let width = u16::from_be_bytes([data[index + 7], data[index + 8]]) as u32;
+            return Some((width, height));
+        }
+        let length = u16::from_be_bytes([data[index + 2], data[index + 3]]) as usize;
+        if length < 2 {
+            return None;
+        }
+        index += 2 + length;
+    }
+    None
+}
+
+fn webp_dimensions(data: &[u8]) -> Option<(u32, u32)> {
+    match &data[12..16] {
+        b"VP8X" if data.len() >= 30 => {
+            let width = 1 + u32::from_le_bytes([data[24], data[25], data[26], 0]);
+            let height = 1 + u32::from_le_bytes([data[27], data[28], data[29], 0]);
+            Some((width, height))
+        }
+        b"VP8 " if data.len() >= 30 => {
+            let width = (u16::from_le_bytes([data[26], data[27]]) & 0x3fff) as u32;
+            let height = (u16::from_le_bytes([data[28], data[29]]) & 0x3fff) as u32;
+            Some((width, height))
+        }
+        b"VP8L" if data.len() >= 25 && data[20] == 0x2f => {
+            let bits = &data[21..25];
+            let width = 1 + (((bits[1] as u32 & 0x3f) << 8) | bits[0] as u32);
+            let height = 1
+                + (((bits[3] as u32 & 0x0f) << 10)
+                    | ((bits[2] as u32) << 2)
+                    | (bits[1] as u32 >> 6));
+            Some((width, height))
+        }
+        _ => None,
+    }
+}
+
+fn svg_aspect(head: &str) -> Option<f64> {
+    let tag_start = head.find("<svg")?;
+    let tag_end = head[tag_start..].find('>')? + tag_start;
+    // Normalise quote style so one attribute scan handles both.
+    let tag = head[tag_start..tag_end].replace('\'', "\"");
+    let attribute = |name: &str| -> Option<f64> {
+        let at = tag.find(&format!("{name}=\""))? + name.len() + 2;
+        let value = &tag[at..at + tag[at..].find('"')?];
+        let numeric: String = value
+            .chars()
+            .take_while(|c| c.is_ascii_digit() || *c == '.')
+            .collect();
+        numeric.parse::<f64>().ok()
+    };
+    if let (Some(width), Some(height)) = (attribute("width"), attribute("height")) {
+        if width > 0.0 {
+            return Some(height / width);
+        }
+    }
+    let at = tag.find("viewBox=\"")? + 9;
+    let value = &tag[at..at + tag[at..].find('"')?];
+    let parts: Vec<f64> = value
+        .split_whitespace()
+        .filter_map(|part| part.parse::<f64>().ok())
+        .collect();
+    match parts.as_slice() {
+        [_, _, width, height] if *width > 0.0 => Some(height / width),
+        _ => None,
     }
 }
 
@@ -1828,7 +2033,7 @@ mod tests {
     }
 
     #[test]
-    fn images_are_capped_so_captions_stay_off_the_page_number() {
+    fn images_are_capped_by_their_measured_caption_height() {
         let document = ExportDocument {
             title: "Images".to_string(),
             language_code: "vi".to_string(),
@@ -1836,7 +2041,11 @@ mod tests {
         };
         let preamble = typst_preamble(&document, "a4");
         // The helper must be defined before any figure can call it.
-        assert!(preamble.contains("#let gnosis-image(path) = layout("));
+        assert!(preamble.contains("#let gnosis-image(path, caption: none) = layout("));
+        // The cap comes from measuring the actual caption, not a fixed fraction —
+        // a long caption must shrink the image, a missing one must free the space.
+        assert!(preamble.contains("measure(block(width: width, caption)).height"));
+        assert!(!preamble.contains("region.height * 0.82"));
         // A maximum, not a fixed height: small images must not reserve the full cap.
         assert!(preamble.contains("if natural.height > limit"));
         // measure() needs an absolute width or it reports the wrong height and the
@@ -1878,8 +2087,10 @@ mod tests {
         assert!(vietnamese_preamble.contains("set text(font: \"EB Garamond\")"));
         // The chapter title is not a Typst heading, so it takes the heading typeface
         // through its own helper — otherwise it silently renders in the body font.
+        // It is emitted as the first top float so a `placement: auto` image can
+        // never be hoisted above it on page one.
         assert!(vietnamese_preamble.contains(
-            "#let gnosis-title(t) = align(center)[#text(font: \"Cormorant Garamond Gnosis\", size: 22pt, weight: \"bold\")[#t]]"
+            "#let gnosis-title(t) = place(top, float: true, clearance: 1.2em, block(width: 100%, align(center)[#text(font: \"Cormorant Garamond Gnosis\", size: 22pt, weight: \"bold\")[#t]]))"
         ));
         let japanese_preamble = typst_preamble(&japanese, "a4");
         assert!(japanese_preamble.contains("\"Shippori Mincho\", \"EB Garamond\""));
@@ -1888,7 +2099,7 @@ mod tests {
         assert!(!japanese_preamble.contains("Cormorant Garamond"));
         // Non-Latin scripts keep the body typeface for the title.
         assert!(japanese_preamble.contains(
-            "#let gnosis-title(t) = align(center)[#text(size: 22pt, weight: \"bold\")[#t]]"
+            "#let gnosis-title(t) = place(top, float: true, clearance: 1.2em, block(width: 100%, align(center)[#text(size: 22pt, weight: \"bold\")[#t]]))"
         ));
     }
 
@@ -1976,10 +2187,96 @@ mod tests {
         let figure = render_typst_figure(
             "image(\"images/example.png\", width: 90%)",
             "An italic caption",
+            true,
         );
         assert!(figure.starts_with("#figure(image("));
         assert!(figure.contains("caption: [#text(size: 0.85em, style: \"italic\")"));
-        assert!(figure.ends_with("numbering: none)"));
+        assert!(figure.contains("numbering: none"));
+        // Floats fill the gap an oversized image would otherwise leave at the
+        // bottom of a page.
+        assert!(figure.ends_with("placement: auto)"));
+        // Trailing images stay in flow: no following text exists to fill a
+        // float's gap, and in-flow placement keeps them after the final lines.
+        let trailing = render_typst_figure(
+            "image(\"images/example.png\", width: 90%)",
+            "An italic caption",
+            false,
+        );
+        assert!(!trailing.contains("placement"));
+    }
+
+    #[test]
+    fn trailing_images_are_sorted_shortest_first() {
+        let image = |name: &str| ExportImage::Upload {
+            repo_relative_path: format!("{name}.png"),
+            raw_url: None,
+            absolute_path: PathBuf::from(format!("/tmp/{name}.png")),
+        };
+        let block = |name: &str| ExportBlock::Image {
+            image: image(name),
+            caption: String::new(),
+        };
+        let blocks = vec![
+            ExportBlock::Text {
+                text_style: "paragraph".to_string(),
+                text: "Body".to_string(),
+            },
+            block("tall"),
+            ExportBlock::Text {
+                text_style: "paragraph".to_string(),
+                text: "More body".to_string(),
+            },
+            block("wide"),
+            block("failed"),
+            block("square"),
+        ];
+        let mut prepared = HashMap::new();
+        let file = |name: &str, aspect: f64| {
+            (
+                export_image_key(&image(name)),
+                PreparedTypstImage::File {
+                    path: format!("images/{name}.png"),
+                    aspect: Some(aspect),
+                },
+            )
+        };
+        prepared.extend([file("tall", 1.6), file("wide", 0.4), file("square", 1.0)]);
+        prepared.insert(
+            export_image_key(&image("failed")),
+            PreparedTypstImage::Placeholder("failed".to_string()),
+        );
+        let (order, trailing_start) = typst_block_emission_order(&blocks, &prepared);
+        // The mid-chapter image at index 1 is not part of the trailing run.
+        assert_eq!(trailing_start, 3);
+        // Placeholder (short notice box) first, then wide, then square.
+        assert_eq!(order, vec![0, 1, 2, 4, 3, 5]);
+    }
+
+    #[test]
+    fn image_aspect_is_read_from_common_format_headers() {
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        png.extend([0, 0, 0, 13]);
+        png.extend(b"IHDR");
+        png.extend(200u32.to_be_bytes());
+        png.extend(100u32.to_be_bytes());
+        assert_eq!(typst_image_aspect(&png), Some(0.5));
+
+        let mut gif = b"GIF89a".to_vec();
+        gif.extend(100u16.to_le_bytes());
+        gif.extend(300u16.to_le_bytes());
+        assert_eq!(typst_image_aspect(&gif), Some(3.0));
+
+        // JPEG: APP0 segment, then a baseline SOF0 with height 256, width 512.
+        let mut jpg = b"\xff\xd8\xff\xe0\x00\x04\x00\x00".to_vec();
+        jpg.extend(b"\xff\xc0\x00\x11\x08\x01\x00\x02\x00");
+        assert_eq!(typst_image_aspect(&jpg), Some(0.5));
+
+        let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="80" height="40">"#;
+        assert_eq!(typst_image_aspect(svg), Some(0.5));
+        let svg_viewbox = br#"<svg xmlns='x' viewBox='0 0 600 900'>"#;
+        assert_eq!(typst_image_aspect(svg_viewbox), Some(1.5));
+
+        assert_eq!(typst_image_aspect(b"not an image"), None);
     }
 
     #[test]
@@ -2030,9 +2327,11 @@ mod tests {
         };
         let workspace = pdf_workspace().expect("smoke workspace");
         let smoke_image = workspace.join("source.svg");
+        // Tall enough that full text width would overflow the page, so the compile
+        // exercises the caption-measuring height cap, not just the natural-size path.
         fs::write(
             &smoke_image,
-            r##"<svg xmlns="http://www.w3.org/2000/svg" width="80" height="40"><rect width="80" height="40" fill="#c87900"/></svg>"##,
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="80" height="400"><rect width="80" height="400" fill="#c87900"/></svg>"##,
         )
         .expect("write smoke image");
         let document = ExportDocument {
@@ -2078,13 +2377,22 @@ mod tests {
                     image: ExportImage::Upload {
                         repo_relative_path: "smoke.svg".to_string(),
                         raw_url: None,
-                        absolute_path: smoke_image,
+                        absolute_path: smoke_image.clone(),
                     },
-                    caption: "An <b>italic caption</b>".to_string(),
+                    caption: "An <b>italic caption</b> long enough to wrap across several lines on an A4 page, so the export must measure it and shrink the tall image by exactly the height these words occupy instead of overflowing past the bottom margin.".to_string(),
                 },
                 ExportBlock::Image {
                     image: ExportImage::Url("http://127.0.0.1/unavailable.png".to_string()),
                     caption: "Unavailable remote image".to_string(),
+                },
+                // Uncaptioned images take the caption-less floating-figure path.
+                ExportBlock::Image {
+                    image: ExportImage::Upload {
+                        repo_relative_path: "smoke.svg".to_string(),
+                        raw_url: None,
+                        absolute_path: smoke_image,
+                    },
+                    caption: String::new(),
                 },
             ],
         };

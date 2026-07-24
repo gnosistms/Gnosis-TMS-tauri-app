@@ -2,11 +2,83 @@ import {
   renderGlossaryRubyHtml,
   renderGlossaryRubyTermListHtml,
 } from "../glossary-ruby.js";
+import { canManageGlossaries } from "../glossary-shared.js";
+
+// Double-click detection runs on pointerdown: the display-field pointerdown
+// handler calls preventDefault, which suppresses the derived mousedown events, so
+// mousedown never fires for marks inside display fields. The first click on a
+// glossary mark also flips its row into edit mode synchronously — the mark is
+// detached (its rectangle collapses to zero) before document-level bubble handlers
+// run, and the second pointerdown lands on the textarea. The first click therefore
+// records the term id and the click coordinates, and the second click matches when
+// it lands within a small slop distance of the first (event.detail is not a
+// reliable click counter on pointerdown across webviews).
+const GLOSSARY_MARK_DOUBLE_CLICK_WINDOW_MS = 500;
+const GLOSSARY_MARK_DOUBLE_CLICK_SLOP_PX = 8;
 
 let activeGlossaryTooltipMark = null;
 let activeGlossaryTooltipPointer = null;
 let glossaryTooltipPlacementFrameId = 0;
 let glossaryTooltipElement = null;
+let pendingGlossaryMarkDoubleClick = null;
+
+function glossaryMarkTermId(mark) {
+  const termId = typeof mark?.dataset?.editorGlossaryTermId === "string"
+    ? mark.dataset.editorGlossaryTermId.trim()
+    : "";
+  return termId || null;
+}
+
+function pointWithinGlossaryMarkClickSlop(previousClick, clientX, clientY) {
+  return (
+    Math.abs(clientX - previousClick.clientX) <= GLOSSARY_MARK_DOUBLE_CLICK_SLOP_PX
+    && Math.abs(clientY - previousClick.clientY) <= GLOSSARY_MARK_DOUBLE_CLICK_SLOP_PX
+  );
+}
+
+export function handleGlossaryMarkDoubleClick(event, dispatchAction) {
+  if (event.button !== 0) {
+    return false;
+  }
+
+  const mark = event.target instanceof Element
+    ? event.target.closest("[data-editor-glossary-mark]")
+    : null;
+  const markTermId = glossaryMarkTermId(mark);
+  const previousClick = pendingGlossaryMarkDoubleClick;
+  pendingGlossaryMarkDoubleClick = null;
+
+  const now = Date.now();
+  const previousClickMatches = Boolean(
+    previousClick
+    && now - previousClick.time <= GLOSSARY_MARK_DOUBLE_CLICK_WINDOW_MS
+    && pointWithinGlossaryMarkClickSlop(previousClick, event.clientX, event.clientY),
+  );
+
+  if (markTermId) {
+    pendingGlossaryMarkDoubleClick = {
+      termId: markTermId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      time: now,
+    };
+  }
+
+  if (event.detail < 2 && !previousClickMatches) {
+    return false;
+  }
+
+  const jumpTermId = markTermId ?? (previousClickMatches ? previousClick.termId : null);
+  if (!jumpTermId || !canManageGlossaries()) {
+    return false;
+  }
+
+  event.preventDefault();
+  pendingGlossaryMarkDoubleClick = null;
+  deactivateGlossaryTooltipMark();
+  void dispatchAction(`open-editor-glossary-term:${jumpTermId}`, event);
+  return true;
+}
 
 function glossaryMarkOffsetFromDomPoint(mark, node, offset) {
   if (!(mark instanceof HTMLElement) || !(node instanceof Node)) {
@@ -226,7 +298,7 @@ function glossaryTooltipPayload(mark) {
   }
 }
 
-function renderStructuredGlossaryTooltipBody(body, payload) {
+function renderStructuredGlossaryTooltipBody(body, payload, { showEditHint = false } = {}) {
   body.replaceChildren();
   body.classList.add("editor-glossary-info-card");
 
@@ -318,6 +390,13 @@ function renderStructuredGlossaryTooltipBody(body, payload) {
       body.append(comments);
     }
   }
+
+  if (showEditHint) {
+    const hint = document.createElement("p");
+    hint.className = "editor-glossary-info-card__hint";
+    hint.textContent = "Double click to edit";
+    body.append(hint);
+  }
 }
 
 function setActiveGlossaryTooltipPointer(clientX, clientY) {
@@ -376,7 +455,10 @@ function updateGlossaryTooltipPlacement(mark) {
 
   if (tooltipPayload?.kind === "source" || tooltipPayload?.kind === "target") {
     tooltip.classList.add("editor-glossary-tooltip--structured");
-    renderStructuredGlossaryTooltipBody(body, tooltipPayload);
+    // Checked at render time (not baked into the cached highlight HTML) so
+    // capability changes apply without invalidating the highlight cache.
+    const showEditHint = Boolean(glossaryMarkTermId(mark)) && canManageGlossaries();
+    renderStructuredGlossaryTooltipBody(body, tooltipPayload, { showEditHint });
   } else {
     tooltip.classList.remove("editor-glossary-tooltip--structured");
     body.classList.remove("editor-glossary-info-card");

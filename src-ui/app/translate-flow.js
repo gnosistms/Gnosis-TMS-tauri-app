@@ -334,6 +334,13 @@ export async function setActiveEditorField(render, rowId, languageCode, options 
     return;
   }
 
+  // A slow activation must not write editor state after the user left the
+  // translate screen mid-activation (e.g. the glossary term double-click jump
+  // navigating away between the two clicks).
+  if (state.screen !== "translate") {
+    return;
+  }
+
   // A slow row load must not resurrect editing controls after the user moved
   // on: if focus landed on a different text control while we waited (search
   // box, another row), this activation is superseded.

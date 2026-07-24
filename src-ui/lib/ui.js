@@ -279,7 +279,7 @@ const sectionNavConfig = {
     { label: "Logout", target: "start" },
   ],
   aiKey: [
-    { label: "Teams", target: "teams" },
+    { label: "Teams", target: "teams", isBack: true },
     { label: "Projects", target: "projects" },
     { label: "Glossaries", target: "glossaries" },
     { label: "QA", target: "qa" },
@@ -287,7 +287,7 @@ const sectionNavConfig = {
     { label: "Logout", target: "start" },
   ],
   qa: [
-    { label: "Teams", target: "teams" },
+    { label: "Teams", target: "teams", isBack: true },
     { label: "Projects", target: "projects" },
     { label: "Members", target: "users" },
     { label: "Glossaries", target: "glossaries" },
