@@ -19,8 +19,13 @@ function renderGuideStep() {
 
 const RETURN_FROM_ORG_CREATION_MESSAGE =
   'After clicking "Next" on the GitHub create organization page, leave your browser and come back here.';
-const INSTALL_FLOW_MESSAGE =
-  "Click below to go to GitHub and install Gnosis TMS in your new organization. This will give Gnosis TMS permission to store data in your GitHub account.<br><br>When you finish, GitHub will send you back here automatically.";
+const SELECT_ALL_REPOSITORIES_MESSAGE =
+  "When GitHub asks which repositories to install for, choose <strong>All repositories</strong>.";
+const INSTALL_FLOW_MESSAGE = [
+  "Click below to go to GitHub and install Gnosis TMS in your new organization. This will give Gnosis TMS permission to store data in your GitHub account.",
+  SELECT_ALL_REPOSITORIES_MESSAGE,
+  "When you finish, GitHub will send you back here automatically.",
+].join("<br><br>");
 const FINISH_INSTALL_MESSAGE =
   "You have successfully installed Gnosis TMS into your GitHub organization. Click below to finish setup.";
 
@@ -71,10 +76,13 @@ function getStepConfig(setup) {
     return {
       eyebrow: "STEP 2 OF 4",
       heading: "Return To Gnosis TMS",
-      supporting: RETURN_FROM_ORG_CREATION_MESSAGE,
-      afterBodyClass: "",
-      afterBodySupporting: "",
-      body: "",
+      // The user is now on the GitHub org-creation page actually doing these
+      // steps, so keep them visible here — this is when they need them most.
+      // The "come back here" prompt moves below the list, next to Continue.
+      supporting: "Complete these steps on the GitHub page you just opened:",
+      afterBodyClass: "modal__supporting--please-check",
+      afterBodySupporting: RETURN_FROM_ORG_CREATION_MESSAGE,
+      body: renderGuideStep(),
       actionButton: primaryButton("Continue", "continue-team-setup-after-org-creation"),
     };
   }
@@ -83,6 +91,9 @@ function getStepConfig(setup) {
     return {
       eyebrow: "STEP 3 OF 4",
       heading: "Install Gnosis TMS Into Your GitHub Organization",
+      // The "choose All repositories" line sits in the middle of the install
+      // message so the user reads it before leaving for GitHub, and it stays
+      // visible on the waiting step while they are on the GitHub install page.
       supporting: INSTALL_FLOW_MESSAGE,
       afterBodyClass: "",
       afterBodySupporting: "",
