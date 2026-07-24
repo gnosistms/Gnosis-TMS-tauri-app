@@ -20,6 +20,7 @@ import {
 import { loadStoredEditorPreviewLanguageCode } from "./editor-preferences.js";
 import { normalizeEditorReplaceState } from "./editor-replace.js";
 import { normalizeEditorRowTextStyle } from "./editor-row-text-style.js";
+import { cloneRowTimings } from "./editor-timing.js";
 import {
   normalizeEditorWriteLockState,
   normalizeEditorWritePermissionSnapshot,
@@ -478,6 +479,8 @@ export function normalizeEditorRow(row) {
   const imageCaptions = cloneRowFields(row?.imageCaptions);
   const images = cloneRowImages(row?.images);
   const fieldStates = cloneRowFieldStates(row?.fieldStates);
+  const timings = cloneRowTimings(row?.timings);
+  const srtTimingClone = cloneRowTimings({ srt: row?.srtTiming });
   const textStyle = normalizeEditorRowTextStyle(row?.textStyle);
   const persistedTextStyle = normalizeEditorRowTextStyle(row?.persistedTextStyle ?? textStyle);
   return {
@@ -500,14 +503,18 @@ export function normalizeEditorRow(row) {
     footnotes,
     imageCaptions,
     images,
+    timings,
+    srtTiming: srtTimingClone.srt ?? null,
     baseFields: cloneRowFields(fields),
     baseFootnotes: cloneRowFootnotes(footnotes),
     baseImageCaptions: cloneRowFields(imageCaptions),
     baseImages: cloneRowImages(images),
+    baseTimings: cloneRowTimings(timings),
     persistedFields: cloneRowFields(fields),
     persistedFootnotes: cloneRowFootnotes(footnotes),
     persistedImageCaptions: cloneRowFields(imageCaptions),
     persistedImages: cloneRowImages(images),
+    persistedTimings: cloneRowTimings(timings),
     fieldStates,
     persistedFieldStates: cloneRowFieldStates(fieldStates),
     freshness: importedConflict ? "conflict" : "fresh",

@@ -2631,3 +2631,52 @@
   justify-self: end;
   margin: -2px 2px 0 0;
 }
+
+/* Subtitle timing inputs (SRT-sourced chapters): start/end above each
+   language's text field. Error outlines mark exactly the input at fault. */
+.translation-language-panel__timing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0 0;
+}
+
+.translation-timing__input {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 11ch;
+  padding: 2px 6px;
+  border: 1px solid rgba(164, 112, 41, 0.24);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: center;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    color 140ms ease;
+}
+
+.translation-timing__input:focus {
+  outline: none;
+  border-color: var(--link);
+  color: var(--ink, inherit);
+}
+
+.translation-timing__input:disabled {
+  opacity: 0.7;
+}
+
+.translation-timing__input--error {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 1px var(--danger);
+}
+
+.translation-timing__separator {
+  color: var(--muted);
+  font-size: 12px;
+  user-select: none;
+}

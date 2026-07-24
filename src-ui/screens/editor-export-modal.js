@@ -504,7 +504,7 @@ function exportDetail(option, isExporting, modal, appState) {
     const pdfProgress = option.format === "pdf" ? renderPdfExportProgress(modal, isExporting) : "";
     const pdfDisclosure = option.format === "pdf" ? pdfFontDisclosure(modal) : "";
     const pdfReady = option.format !== "pdf" || modal.pdfFontStatus === "ready" || isExporting;
-    const article = ["html", "xlsx", "rtf"].includes(option.format) ? "an" : "a";
+    const article = ["html", "xlsx", "rtf", "srt"].includes(option.format) ? "an" : "a";
     return {
       bodyMarkup: `
         ${supportingText(option.format === "md"

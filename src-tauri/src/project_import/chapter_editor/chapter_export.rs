@@ -1,5 +1,6 @@
 use super::row_fields::parse_labeled_footnote_text_for_merge;
 use super::*;
+use crate::project_import::chapter_import::format_srt_timestamp;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use reqwest::blocking::Client as BlockingClient;
 use std::fmt;
@@ -7,9 +8,6 @@ use std::io::{Cursor, Read, Write};
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::time::Duration;
 use zip::{write::SimpleFileOptions, ZipWriter};
-
-const UNSUPPORTED_FUNCTION_MESSAGE: &str =
-    "Contact the developers if you need this feature and ask them to implement it.";
 
 // Cap embedded-image downloads so a hostile or accidental URL cannot buffer an unbounded
 // body into memory during export.
@@ -71,6 +69,14 @@ impl fmt::Display for PublicImageDownloadError {
         };
         formatter.write_str(message)
     }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ExportChapterFileResponse {
+    // Only set for SRT exports: rows that had no timing anywhere and were left out.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    skipped_rows_without_timing: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -167,14 +173,11 @@ enum DocxImageRender {
 pub(crate) fn export_gtms_chapter_file_sync(
     app: &AppHandle,
     input: ExportChapterFileInput,
-) -> Result<(), String> {
+) -> Result<ExportChapterFileResponse, String> {
     let format = input.format.trim().to_lowercase();
-    if format == "srt" {
-        return Err(UNSUPPORTED_FUNCTION_MESSAGE.to_string());
-    }
     if !matches!(
         format.as_str(),
-        "docx" | "txt" | "html" | "xlsx" | "rtf" | "md"
+        "docx" | "txt" | "html" | "xlsx" | "rtf" | "md" | "srt"
     ) {
         return Err("Unsupported export format.".to_string());
     }
@@ -202,6 +205,14 @@ pub(crate) fn export_gtms_chapter_file_sync(
     {
         return Err("The selected export language is not available in this file.".to_string());
     }
+    // SRT export is provenance-gated: only chapters imported from an SRT file carry
+    // the timing data an SRT file needs. The UI hides the option; this is the backstop.
+    if format == "srt" && !chapter_has_srt_source(&chapter_file) {
+        return Err(
+            "SRT export is only available for files imported from an SRT subtitle file."
+                .to_string(),
+        );
+    }
 
     let rows = load_editor_rows(&chapter_path.join("rows"))?;
     let head_sha = current_repo_head_sha(&repo_path);
@@ -225,7 +236,14 @@ pub(crate) fn export_gtms_chapter_file_sync(
     // the print policy applied (custom-HTML rows dropped or flattened to text).
     let print_document = apply_print_custom_html_policy(&document, input.omit_custom_html);
 
-    match format.as_str() {
+    let mut skipped_rows_without_timing = None;
+    let write_result = match format.as_str() {
+        "srt" => {
+            let (content, skipped) = render_srt_document(&rows, &input.language_code);
+            skipped_rows_without_timing = Some(skipped);
+            fs::write(&output_path, content)
+                .map_err(|error| format!("Could not write '{}': {error}", output_path.display()))
+        }
         "html" => fs::write(&output_path, render_html_document(&document)?)
             .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
         "txt" => fs::write(&output_path, render_txt_document(&print_document))
@@ -253,7 +271,57 @@ pub(crate) fn export_gtms_chapter_file_sync(
         "md" => fs::write(&output_path, render_md_document(&print_document))
             .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
         _ => Err("Unsupported export format.".to_string()),
+    };
+    write_result?;
+
+    Ok(ExportChapterFileResponse {
+        skipped_rows_without_timing,
+    })
+}
+
+/// Render an SRT document for one language. Timing comes from the language's
+/// per-field override, falling back to the row's imported `format_metadata.srt`
+/// base timing. Rows are renumbered sequentially; rows with no timing at all
+/// (unexpected — see auto-timing on insert) are skipped and counted.
+/// Empty-text rows are emitted with empty text so the timing structure survives
+/// partially translated chapters.
+fn render_srt_document(rows: &[StoredRowFile], language_code: &str) -> (String, usize) {
+    let mut output = String::new();
+    let mut sequence = 0usize;
+    let mut skipped = 0usize;
+
+    for row in rows {
+        if row.lifecycle.state == "deleted" {
+            continue;
+        }
+
+        let field = row.fields.get(language_code);
+        let timing = field
+            .and_then(|value| value.timing)
+            .or(row.format_metadata.srt);
+        let Some(timing) = timing else {
+            skipped += 1;
+            continue;
+        };
+
+        sequence += 1;
+        output.push_str(&sequence.to_string());
+        output.push('\n');
+        output.push_str(&format_srt_timestamp(timing.start_ms));
+        output.push_str(" --> ");
+        output.push_str(&format_srt_timestamp(timing.end_ms));
+        output.push('\n');
+        let text = field
+            .map(|value| value.plain_text.trim())
+            .unwrap_or_default();
+        if !text.is_empty() {
+            output.push_str(text);
+            output.push('\n');
+        }
+        output.push('\n');
     }
+
+    (output, skipped)
 }
 
 pub(super) fn build_export_document(
@@ -2262,6 +2330,7 @@ mod tests {
                 image_caption: String::new(),
                 image: None,
                 editor_flags: StoredFieldEditorFlags::default(),
+                timing: None,
             },
         );
         StoredRowFile {
@@ -2282,7 +2351,78 @@ mod tests {
             editor_comments: Vec::new(),
             text_style: Some(style.to_string()),
             fields,
+            format_metadata: StoredRowFormatMetadata::default(),
         }
+    }
+
+    fn srt_row(
+        row_id: &str,
+        order_key: &str,
+        text: &str,
+        base_timing: Option<(u64, u64)>,
+        override_timing: Option<(u64, u64)>,
+    ) -> StoredRowFile {
+        let mut stored_row = row(row_id, order_key, text, "normal");
+        stored_row.format_metadata.srt =
+            base_timing.map(|(start_ms, end_ms)| StoredSrtTiming { start_ms, end_ms });
+        if let Some(field) = stored_row.fields.get_mut(&language()) {
+            field.timing =
+                override_timing.map(|(start_ms, end_ms)| StoredSrtTiming { start_ms, end_ms });
+        }
+        stored_row
+    }
+
+    #[test]
+    fn render_srt_document_renumbers_and_formats_cues() {
+        let rows = vec![
+            srt_row("row-1", "1", "First line.", Some((1000, 2500)), None),
+            srt_row("row-2", "2", "Second line.", Some((3000, 4000)), None),
+        ];
+
+        let (content, skipped) = render_srt_document(&rows, &language());
+
+        assert_eq!(skipped, 0);
+        assert_eq!(
+            content,
+            "1\n00:00:01,000 --> 00:00:02,500\nFirst line.\n\n2\n00:00:03,000 --> 00:00:04,000\nSecond line.\n\n"
+        );
+    }
+
+    #[test]
+    fn render_srt_document_prefers_language_timing_over_base_timing() {
+        let rows = vec![srt_row(
+            "row-1",
+            "1",
+            "Adjusted.",
+            Some((1000, 2000)),
+            Some((1500, 2600)),
+        )];
+
+        let (content, _) = render_srt_document(&rows, &language());
+
+        assert!(content.contains("00:00:01,500 --> 00:00:02,600"));
+    }
+
+    #[test]
+    fn render_srt_document_keeps_empty_rows_and_skips_untimed_and_deleted_rows() {
+        let mut deleted = srt_row("row-3", "3", "Deleted.", Some((9000, 9900)), None);
+        deleted.lifecycle = StoredLifecycleState {
+            state: "deleted".to_string(),
+        };
+        let rows = vec![
+            srt_row("row-1", "1", "", Some((1000, 2000)), None),
+            srt_row("row-2", "2", "No timing anywhere.", None, None),
+            deleted,
+            srt_row("row-4", "4", "Last.", Some((5000, 6000)), None),
+        ];
+
+        let (content, skipped) = render_srt_document(&rows, &language());
+
+        assert_eq!(skipped, 1);
+        assert_eq!(
+            content,
+            "1\n00:00:01,000 --> 00:00:02,000\n\n2\n00:00:05,000 --> 00:00:06,000\nLast.\n\n"
+        );
     }
 
     fn document(blocks: Vec<ExportBlock>) -> ExportDocument {
@@ -3153,6 +3293,7 @@ mod tests {
             image_caption: String::new(),
             image: None,
             editor_flags: StoredFieldEditorFlags::default(),
+            timing: None,
         }
     }
 

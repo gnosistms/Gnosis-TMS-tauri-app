@@ -409,6 +409,7 @@ pub(crate) fn reverse_gtms_editor_batch_replace_commit_sync(
             fields: row_plain_text_fields(&restored_row_file),
             footnotes: row_footnote_map(&restored_row_file),
             image_captions: row_image_caption_map(&restored_row_file),
+            timings: BTreeMap::new(),
             remove_images: Vec::new(),
         });
     }
@@ -1049,6 +1050,7 @@ mod tests {
                 reviewed,
                 please_check,
             },
+            timing: None,
         }
     }
 
@@ -1354,6 +1356,7 @@ mod tests {
                         image_caption: String::new(),
                         image: None,
                         editor_flags: StoredFieldEditorFlags::default(),
+                        timing: None,
                     },
                     text_style: DEFAULT_EDITOR_TEXT_STYLE.to_string(),
                 }),
@@ -1364,6 +1367,7 @@ mod tests {
                         image_caption: String::new(),
                         image: None,
                         editor_flags: StoredFieldEditorFlags::default(),
+                        timing: None,
                     },
                     text_style: DEFAULT_EDITOR_TEXT_STYLE.to_string(),
                 }),

@@ -613,6 +613,7 @@ mod tests {
                 image_caption: String::new(),
                 image: None,
                 editor_flags: StoredFieldEditorFlags::default(),
+                timing: None,
             },
         );
         StoredRowFile {
@@ -633,6 +634,7 @@ mod tests {
             editor_comments: Vec::new(),
             text_style: Some("heading1".to_string()),
             fields,
+            format_metadata: StoredRowFormatMetadata::default(),
         }
     }
 

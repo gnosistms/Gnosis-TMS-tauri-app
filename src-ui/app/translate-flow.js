@@ -123,6 +123,7 @@ import {
   updateEditorRowFieldValueForContentKind as updateEditorRowFieldValueFlow,
   updateEditorRowTextStyle as updateEditorRowTextStyleFlow,
 } from "./editor-persistence-flow.js";
+import { applyEditorTimingFieldBlur as applyEditorTimingFieldBlurFlow } from "./editor-timing-flow.js";
 import { reconcileDirtyTrackedEditorRows } from "./editor-dirty-row-state.js";
 import {
   cancelEditorReplaceUndoModal as cancelEditorReplaceUndoModalFlow,
@@ -1161,6 +1162,13 @@ export function toggleEditorLanguageCollapsed(languageCode) {
 
 export async function persistEditorRowOnBlur(render, rowId, options = {}) {
   await persistEditorRowOnBlurFlow(render, rowId, editorPersistenceOperations(), options);
+}
+
+export function applyEditorTimingFieldBlur(render, input) {
+  applyEditorTimingFieldBlurFlow(render, input, {
+    updateEditorChapterRow,
+    persistEditorRowOnBlur,
+  });
 }
 
 export async function resolveEditorRowConflict(render, rowId, resolution) {

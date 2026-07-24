@@ -22,7 +22,7 @@ test("project import modal renders the requested drop target copy", () => {
   assert.match(html, /data-project-import-dropzone/);
   assert.match(html, /Drop files here or click to open the file selector\./);
   assert.match(html, /Select files/);
-  assert.match(html, /Supported formats: \.xlsx, \.txt, \.docx, \.html, or \.htm\./);
+  assert.match(html, /Supported formats: \.xlsx, \.txt, \.srt, \.docx, \.html, or \.htm\./);
 });
 
 test("project import modal renders paste link input state", () => {

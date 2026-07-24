@@ -9,6 +9,7 @@ async function installMockTauri(page) {
     const rowFieldsByChapterId = new Map();
     const rowFootnotesByChapterId = new Map();
     const rowImageCaptionsByChapterId = new Map();
+    const rowTimingsByChapterId = new Map();
     const rowTextStylesByChapterId = new Map();
     const fieldStatesByChapterId = new Map();
     const rowCommentsByChapterId = new Map();
@@ -97,6 +98,10 @@ async function installMockTauri(page) {
         chapterId,
         new Map(rows.map((row) => [row.rowId, clone(row.imageCaptions ?? {})])),
       );
+      rowTimingsByChapterId.set(
+        chapterId,
+        new Map(rows.map((row) => [row.rowId, clone(row.timings ?? {})])),
+      );
       rowTextStylesByChapterId.set(
         chapterId,
         new Map(rows.map((row) => [row.rowId, String(row.textStyle ?? "paragraph")])),
@@ -180,6 +185,8 @@ async function installMockTauri(page) {
         imageCaptions: clone(imageCaptions),
         images: clone(fixtureRow.images ?? {}),
         fieldStates: clone(fieldStates),
+        timings: clone(rowTimingsByChapterId.get(chapterId)?.get(rowId) ?? {}),
+        srtTiming: clone(fixtureRow.srtTiming ?? null),
       };
     }
 
@@ -304,10 +311,16 @@ async function installMockTauri(page) {
         }
         const nextFootnotes = clone(input.footnotes ?? storedFootnotes);
         const nextImageCaptions = clone(input.imageCaptions ?? storedImageCaptions);
+        const storedTimings = rowTimingsByChapterId.get(input.chapterId)?.get(input.rowId) ?? {};
+        const nextTimings = {
+          ...clone(storedTimings),
+          ...clone(input.timings ?? {}),
+        };
 
         rowFieldsByChapterId.get(input.chapterId).set(input.rowId, nextFields);
         rowFootnotesByChapterId.get(input.chapterId).set(input.rowId, nextFootnotes);
         rowImageCaptionsByChapterId.get(input.chapterId).set(input.rowId, nextImageCaptions);
+        rowTimingsByChapterId.get(input.chapterId)?.set(input.rowId, nextTimings);
         pushHistoryEntriesWithCommit(input.chapterId, input.rowId, nextFields, nextFootnotes, storedFieldStates, {
           operationType: input.operation ?? "editor-update",
           message: "Update row",
@@ -623,6 +636,7 @@ async function installMockTauri(page) {
           wordCounts: {},
           selectedSourceLanguageCode: fixture.sourceCode,
           selectedTargetLanguageCode: fixture.targetCode,
+          sourceFormats: clone(fixture.sourceFormats ?? []),
           rows,
         };
       }
@@ -5744,5 +5758,112 @@ test.describe("editor regressions", () => {
         return after ? Math.abs(after.targetTop - before.targetTop) : Number.POSITIVE_INFINITY;
       }).toBeLessThan(STABLE_SCROLL_TOLERANCE_PX);
     });
+  });
+});
+
+test.describe("subtitle timing", () => {
+  const SRT_FIXTURE = {
+    rowCount: 4,
+    srt: true,
+    // Row 2 starts before row 1 ends (overlap pair); row 4 is shorter than
+    // the 250 ms minimum. Row 3 keeps its clean generated timing.
+    srtTimingByRowId: {
+      "fixture-row-0001": { startMs: 0, endMs: 3500 },
+      "fixture-row-0002": { startMs: 3000, endMs: 6000 },
+      "fixture-row-0004": { startMs: 12000, endMs: 12100 },
+    },
+  };
+
+  function timingInput(page, rowId, languageCode, kind) {
+    return page.locator(
+      `[data-editor-timing-field][data-row-id="${rowId}"][data-language-code="${languageCode}"][data-timing-kind="${kind}"]`,
+    );
+  }
+
+  test("timing inputs render above each language with imported errors marked on the inputs at fault", async ({ page }) => {
+    await mountEditorFixture(page, SRT_FIXTURE, { mockTauri: true });
+
+    // Both languages inherit the imported timing.
+    await expect(timingInput(page, "fixture-row-0001", "es", "start")).toHaveValue("00:00:00,000");
+    await expect(timingInput(page, "fixture-row-0001", "vi", "start")).toHaveValue("00:00:00,000");
+    await expect(timingInput(page, "fixture-row-0002", "es", "start")).toHaveValue("00:00:03,000");
+
+    // Overlap pair: row 1's end and row 2's start are marked, in every language.
+    await expect(timingInput(page, "fixture-row-0001", "es", "end")).toHaveClass(/translation-timing__input--error/);
+    await expect(timingInput(page, "fixture-row-0002", "es", "start")).toHaveClass(/translation-timing__input--error/);
+    await expect(timingInput(page, "fixture-row-0001", "es", "start")).not.toHaveClass(/translation-timing__input--error/);
+    await expect(timingInput(page, "fixture-row-0002", "es", "end")).not.toHaveClass(/translation-timing__input--error/);
+
+    // Too-short row: both inputs are marked.
+    await expect(timingInput(page, "fixture-row-0004", "es", "start")).toHaveClass(/translation-timing__input--error/);
+    await expect(timingInput(page, "fixture-row-0004", "es", "end")).toHaveClass(/translation-timing__input--error/);
+
+    // Clean row: no marks.
+    await expect(timingInput(page, "fixture-row-0003", "es", "start")).not.toHaveClass(/translation-timing__input--error/);
+    await expect(timingInput(page, "fixture-row-0003", "es", "end")).not.toHaveClass(/translation-timing__input--error/);
+  });
+
+  test("non-subtitle chapters render no timing inputs and no timing filter option", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 3 }, { mockTauri: true });
+
+    await expect(page.locator("[data-editor-timing-field]")).toHaveCount(0);
+    await expect(
+      page.locator('[data-editor-filter-select] option[value="has-timing-error"]'),
+    ).toHaveCount(0);
+  });
+
+  test("the timing-error filter shows only rows with timing problems", async ({ page }) => {
+    await mountEditorFixture(page, SRT_FIXTURE, { mockTauri: true });
+
+    await page.locator("[data-editor-filter-select]").selectOption("has-timing-error");
+
+    await expect(page.locator('[data-editor-row-card][data-row-id="fixture-row-0001"]')).toBeVisible();
+    await expect(page.locator('[data-editor-row-card][data-row-id="fixture-row-0002"]')).toBeVisible();
+    await expect(page.locator('[data-editor-row-card][data-row-id="fixture-row-0004"]')).toBeVisible();
+    await expect(page.locator('[data-editor-row-card][data-row-id="fixture-row-0003"]')).toHaveCount(0);
+  });
+
+  test("an invalid timestamp blocks persistence and keeps the typed text", async ({ page }) => {
+    await mountEditorFixture(page, SRT_FIXTURE, { mockTauri: true });
+
+    const startInput = timingInput(page, "fixture-row-0003", "es", "start");
+    await startInput.fill("not a time");
+    await startInput.blur();
+
+    await expect(startInput).toHaveAttribute("data-timing-format-error", "true");
+    await expect(startInput).toHaveClass(/translation-timing__input--error/);
+    await expect(startInput).toHaveValue("not a time");
+
+    const mockState = await readMockTauriState(page);
+    const timingSaves = (mockState?.invocations ?? []).filter(
+      (entry) =>
+        entry.command === "update_gtms_editor_row_fields"
+        && Object.keys(entry.payload?.input?.timings ?? {}).length > 0,
+    );
+    expect(timingSaves).toHaveLength(0);
+  });
+
+  test("a valid edit persists the override and refreshes neighbor overlap marks", async ({ page }) => {
+    await mountEditorFixture(page, SRT_FIXTURE, { mockTauri: true });
+
+    // Resolve the overlap by moving row 2's start after row 1's end.
+    const startInput = timingInput(page, "fixture-row-0002", "es", "start");
+    await startInput.fill("00:00:03,600");
+    await startInput.blur();
+
+    await expect(timingInput(page, "fixture-row-0002", "es", "start")).toHaveValue("00:00:03,600");
+    await expect(timingInput(page, "fixture-row-0002", "es", "start")).not.toHaveClass(/translation-timing__input--error/);
+    // The previous row's end mark clears without touching that row.
+    await expect(timingInput(page, "fixture-row-0001", "es", "end")).not.toHaveClass(/translation-timing__input--error/);
+
+    await expect.poll(async () => {
+      const mockState = await readMockTauriState(page);
+      return (mockState?.invocations ?? []).filter(
+        (entry) =>
+          entry.command === "update_gtms_editor_row_fields"
+          && entry.payload?.input?.rowId === "fixture-row-0002"
+          && entry.payload?.input?.timings?.es?.startMs === 3600,
+      ).length;
+    }).toBeGreaterThan(0);
   });
 });

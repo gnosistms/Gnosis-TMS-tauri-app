@@ -11,6 +11,7 @@ import {
 } from "./editor-utils.js";
 import { applyEditorFootnoteText } from "./editor-footnotes.js";
 import { normalizeEditorRow } from "./editor-state-flow.js";
+import { cloneRowTimings, rowTimingsEqual } from "./editor-timing.js";
 
 function normalizeConflictRemoteVersion(remoteVersion) {
   if (!remoteVersion || typeof remoteVersion !== "object") {
@@ -402,7 +403,9 @@ export function applyEditorRowPersistSucceeded(row, payloadRow, persistedSnapsho
   const snapshotFootnotes = cloneRowFootnotes(persistedSnapshot?.footnotes ?? row.footnotes);
   const snapshotImageCaptions = cloneRowFields(persistedSnapshot?.imageCaptions ?? row.imageCaptions);
   const snapshotImages = cloneRowImages(persistedSnapshot?.images ?? row.images);
-  const rowChangedDuringSave = !rowTextContentEqual(
+  const snapshotTimings = cloneRowTimings(persistedSnapshot?.timings ?? row.timings);
+  const timingsChangedDuringSave = !rowTimingsEqual(row.timings, snapshotTimings);
+  const rowChangedDuringSave = timingsChangedDuringSave || !rowTextContentEqual(
     row.fields,
     row.footnotes,
     row.imageCaptions,
@@ -427,7 +430,15 @@ export function applyEditorRowPersistSucceeded(row, payloadRow, persistedSnapsho
       remoteRow: normalizedRow,
     });
     if (mergeResult.status === "merged") {
-      return preservePendingRowWrites(buildMergedRowState(normalizedRow, mergeResult), row);
+      const mergedRow = buildMergedRowState(normalizedRow, mergeResult);
+      // Timing edited while the save was in flight: keep the newer local
+      // override (it re-persists via the dirty check) instead of the saved one.
+      return preservePendingRowWrites(
+        timingsChangedDuringSave
+          ? { ...mergedRow, timings: cloneRowTimings(row.timings) }
+          : mergedRow,
+        row,
+      );
     }
   }
 
@@ -461,6 +472,7 @@ export function applyEditorRowPersistSucceeded(row, payloadRow, persistedSnapsho
     fields: cloneRowFields(row.fields),
     footnotes: cloneRowFootnotes(row.footnotes),
     imageCaptions: cloneRowFields(row.imageCaptions),
+    timings: cloneRowTimings(row.timings),
     saveStatus: "dirty",
     freshness: "dirty",
     conflictState: null,

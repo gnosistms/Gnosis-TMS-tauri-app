@@ -55,6 +55,7 @@ pub(crate) use self::aligned_translation::{
 };
 pub(crate) use self::chapter_export::{
     export_gtms_chapter_file_sync, fetch_public_image_dimensions, ExportChapterFileInput,
+    ExportChapterFileResponse,
 };
 use self::chapter_selection::{
     linked_chapter_glossary, preferred_source_language_code, preferred_target_language_code,
@@ -110,11 +111,11 @@ pub(crate) use self::row_structure::{
     update_gtms_editor_row_lifecycle_sync,
 };
 use self::shared::{
-    apply_word_count_delta, build_word_counts_from_stored_rows, clear_editor_html_preview_cache,
-    current_repo_head_sha, editor_row_from_stored_row_file,
-    editor_row_from_stored_row_file_with_update, ensure_editor_field_object_defaults,
-    load_editor_rows, load_project_chapter_summaries, load_word_counts,
-    normalize_editor_footnote_value, normalize_editor_image_caption_value,
+    apply_word_count_delta, build_word_counts_from_stored_rows, chapter_has_srt_source,
+    chapter_source_formats, clear_editor_html_preview_cache, current_repo_head_sha,
+    editor_row_from_stored_row_file, editor_row_from_stored_row_file_with_update,
+    ensure_editor_field_object_defaults, load_editor_rows, load_project_chapter_summaries,
+    load_word_counts, normalize_editor_footnote_value, normalize_editor_image_caption_value,
     normalize_editor_text_style_value, refresh_cached_chapter_source_word_count,
     row_fields_object_mut, row_footnote_map, row_image_caption_map, row_object_mut,
     row_plain_text_map, row_text_style, sanitize_chapter_languages, set_editor_field_flags,
@@ -286,6 +287,9 @@ pub(crate) struct UpdateEditorRowFieldsInput {
     // left untouched. Each value is `null` to clear the image.
     #[serde(default)]
     images: BTreeMap<String, Option<EditorFieldImageInput>>,
+    // Per-language subtitle timing overrides. Only languages present are updated.
+    #[serde(default)]
+    timings: BTreeMap<String, EditorFieldTimingInput>,
     #[serde(default)]
     base_fields: BTreeMap<String, String>,
     #[serde(default)]
@@ -295,9 +299,18 @@ pub(crate) struct UpdateEditorRowFieldsInput {
     #[serde(default)]
     base_images: BTreeMap<String, Option<EditorFieldImageInput>>,
     #[serde(default)]
+    base_timings: BTreeMap<String, EditorFieldTimingInput>,
+    #[serde(default)]
     operation: String,
     #[serde(default)]
     ai_model: String,
+}
+
+#[derive(Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EditorFieldTimingInput {
+    start_ms: u64,
+    end_ms: u64,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -309,6 +322,8 @@ pub(crate) struct UpdateEditorRowFieldsBatchRowInput {
     footnotes: BTreeMap<String, String>,
     #[serde(default)]
     image_captions: BTreeMap<String, String>,
+    #[serde(default)]
+    timings: BTreeMap<String, EditorFieldTimingInput>,
     /// Language codes whose stored image (and any uploaded image file) should be removed.
     #[serde(default)]
     remove_images: Vec<String>,
@@ -689,6 +704,8 @@ pub(crate) struct LoadChapterEditorResponse {
     selected_source_language_code: Option<String>,
     selected_target_language_code: Option<String>,
     chapter_base_commit_sha: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    source_formats: Vec<String>,
     rows: Vec<EditorRow>,
 }
 
@@ -714,8 +731,28 @@ struct EditorRow {
     image_captions: BTreeMap<String, String>,
     images: BTreeMap<String, EditorFieldImage>,
     field_states: BTreeMap<String, EditorFieldState>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    timings: BTreeMap<String, EditorFieldTiming>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    srt_timing: Option<EditorFieldTiming>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     imported_conflict: Option<EditorRowImportedConflict>,
+}
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EditorFieldTiming {
+    start_ms: u64,
+    end_ms: u64,
+}
+
+impl From<StoredSrtTiming> for EditorFieldTiming {
+    fn from(timing: StoredSrtTiming) -> Self {
+        Self {
+            start_ms: timing.start_ms,
+            end_ms: timing.end_ms,
+        }
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -771,6 +808,8 @@ pub(super) struct ProjectChapterSummary {
     workflow_status: String,
     linked_glossary: Option<ProjectChapterGlossaryLink>,
     has_imported_editor_conflicts: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    source_formats: Vec<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -855,6 +894,8 @@ fn active_row_lifecycle_state() -> StoredLifecycleState {
 struct StoredSourceFile {
     #[serde(default)]
     path_hint: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    format: String,
     file_metadata: StoredSourceFileMetadata,
 }
 
@@ -930,6 +971,31 @@ struct StoredRowFile {
     #[serde(default)]
     text_style: Option<String>,
     fields: BTreeMap<String, StoredFieldValue>,
+    #[serde(default, skip_serializing_if = "StoredRowFormatMetadata::is_empty")]
+    format_metadata: StoredRowFormatMetadata,
+}
+
+// Narrow read model: only the SRT block is decoded. Other formats' metadata is
+// preserved on disk because row writes patch the original JSON (serde_json::Value),
+// never re-serialize this struct to a file.
+#[derive(Clone, Default, Deserialize, Serialize)]
+struct StoredRowFormatMetadata {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    srt: Option<StoredSrtTiming>,
+}
+
+impl StoredRowFormatMetadata {
+    fn is_empty(&self) -> bool {
+        self.srt.is_none()
+    }
+}
+
+// Millisecond subtitle timing, stored snake_case in row files (matches the import
+// writer's format_metadata.srt block).
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+struct StoredSrtTiming {
+    start_ms: u64,
+    end_ms: u64,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -965,6 +1031,10 @@ struct StoredFieldValue {
     image: Option<StoredFieldImage>,
     #[serde(default)]
     editor_flags: StoredFieldEditorFlags,
+    // Per-language subtitle timing override; absent fields inherit the row's
+    // format_metadata.srt base timing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    timing: Option<StoredSrtTiming>,
 }
 
 #[derive(Clone, Deserialize, Default, Serialize)]
@@ -1046,6 +1116,7 @@ pub(super) fn load_gtms_chapter_editor_data_sync(
         current_source_word_count,
     );
 
+    let source_formats = chapter_source_formats(&chapter_file);
     Ok(LoadChapterEditorResponse {
         chapter_id: chapter_file.chapter_id,
         file_title: chapter_file.title,
@@ -1054,6 +1125,7 @@ pub(super) fn load_gtms_chapter_editor_data_sync(
         selected_source_language_code,
         selected_target_language_code,
         chapter_base_commit_sha: git_output(&repo_path, &["rev-parse", "--verify", "HEAD"]).ok(),
+        source_formats,
         rows: git_conflicts::overlay_imported_editor_conflict_rows(
             &repo_path,
             &input.chapter_id,
@@ -1649,7 +1721,7 @@ mod tests {
             settings: None,
             source_word_count: None,
         };
-        let row_value = create_inserted_row_file("row-1", "0001", &chapter, &[]);
+        let row_value = create_inserted_row_file("row-1", "0001", &chapter, &[], None);
 
         assert_eq!(row_value["editor_comments_revision"], json!(0));
         assert_eq!(row_value["editor_comments"], json!([]));

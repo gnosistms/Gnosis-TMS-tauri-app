@@ -41,8 +41,24 @@ pub(crate) fn insert_gtms_editor_row_sync(
         previous.map(|row| row.structure.order_key.as_str()),
         next.map(|row| row.structure.order_key.as_str()),
     )?;
+    // SRT chapters give every row base timing so the chapter stays exportable as
+    // SRT. Fitted to the neighbor gap; an impossible fit is created anyway and
+    // surfaces in the editor as a timing error.
+    let srt_timing = if chapter_has_srt_source(&chapter_file) {
+        let source_language_code = languages
+            .iter()
+            .find(|language| language.role == "source")
+            .map(|language| language.code.as_str());
+        Some(inserted_row_srt_timing(
+            previous.and_then(|row| row_effective_srt_timing(row, source_language_code)),
+            next.and_then(|row| row_effective_srt_timing(row, source_language_code)),
+        ))
+    } else {
+        None
+    };
     let row_id = uuid::Uuid::now_v7().to_string();
-    let row_file = create_inserted_row_file(&row_id, &order_key, &chapter_file, &languages);
+    let row_file =
+        create_inserted_row_file(&row_id, &order_key, &chapter_file, &languages, srt_timing);
     let row_json_path = chapter_path.join("rows").join(format!("{row_id}.json"));
     let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
     let row_file_json = serde_json::to_string_pretty(&row_file).map_err(|error| {
@@ -345,11 +361,45 @@ fn parse_order_key_hex(value: &str) -> Result<u128, String> {
     u128::from_str_radix(normalized, 16).map_err(|_| "The row order key is invalid.".to_string())
 }
 
+/// Effective timing of a row on the chapter timeline: the source language's
+/// override when present, else the row's imported/created base timing.
+fn row_effective_srt_timing(
+    row: &StoredRowFile,
+    source_language_code: Option<&str>,
+) -> Option<StoredSrtTiming> {
+    source_language_code
+        .and_then(|code| row.fields.get(code))
+        .and_then(|field| field.timing)
+        .or(row.format_metadata.srt)
+}
+
+const INSERTED_ROW_MIN_DURATION_MS: u64 = 250;
+const INSERTED_LAST_ROW_DURATION_MS: u64 = 10_000;
+
+/// Fit a new row's timing into the gap between its neighbors: start just after
+/// the previous row ends (0 at the top), end just before the next row starts
+/// (10 s duration when appending at the bottom). A too-tight gap keeps the
+/// fitted end and shows as a too-short error; no gap at all falls back to a
+/// minimum-duration cue that overlaps the next row and shows as an overlap.
+fn inserted_row_srt_timing(
+    previous: Option<StoredSrtTiming>,
+    next: Option<StoredSrtTiming>,
+) -> StoredSrtTiming {
+    let start_ms = previous.map(|timing| timing.end_ms + 1).unwrap_or(0);
+    let end_ms = match next {
+        Some(next) if next.start_ms > start_ms + 1 => next.start_ms - 1,
+        Some(_) => start_ms + INSERTED_ROW_MIN_DURATION_MS,
+        None => start_ms + INSERTED_LAST_ROW_DURATION_MS,
+    };
+    StoredSrtTiming { start_ms, end_ms }
+}
+
 pub(crate) fn create_inserted_row_file(
     row_id: &str,
     order_key: &str,
     chapter_file: &StoredChapterFile,
     languages: &[ChapterLanguage],
+    srt_timing: Option<StoredSrtTiming>,
 ) -> Value {
     let fields = languages
         .iter()
@@ -421,7 +471,15 @@ pub(crate) fn create_inserted_row_file(
       "editor_comments": [],
       "text_style": DEFAULT_EDITOR_TEXT_STYLE,
       "fields": fields,
-      "format_metadata": {},
+      "format_metadata": match srt_timing {
+        Some(timing) => json!({
+          "srt": {
+            "start_ms": timing.start_ms,
+            "end_ms": timing.end_ms,
+          }
+        }),
+        None => json!({}),
+      },
     })
 }
 
@@ -472,6 +530,7 @@ pub(super) fn create_inserted_editor_row(
                     source_word_count: None,
                 },
                 languages,
+                None,
             ))
             .map_err(|error| format!("Could not build the inserted row token: {error}"))?,
         )?,
@@ -490,6 +549,8 @@ pub(super) fn create_inserted_editor_row(
         image_captions,
         images: BTreeMap::new(),
         field_states,
+        timings: BTreeMap::new(),
+        srt_timing: None,
         imported_conflict: None,
         last_update: None,
     })
@@ -499,4 +560,49 @@ pub(super) fn empty_deleted_row_stub(row: &StoredRowFile) -> StoredRowFile {
     let mut stub = row.clone();
     stub.fields.clear();
     stub
+}
+
+#[cfg(test)]
+mod srt_timing_tests {
+    use super::*;
+
+    fn timing(start_ms: u64, end_ms: u64) -> StoredSrtTiming {
+        StoredSrtTiming { start_ms, end_ms }
+    }
+
+    #[test]
+    fn first_row_starts_at_zero_and_ends_before_the_next_row() {
+        let inserted = inserted_row_srt_timing(None, Some(timing(2000, 3000)));
+        assert_eq!(inserted, timing(0, 1999));
+    }
+
+    #[test]
+    fn middle_row_fills_the_gap_between_neighbors() {
+        let inserted = inserted_row_srt_timing(Some(timing(1000, 2000)), Some(timing(5000, 6000)));
+        assert_eq!(inserted, timing(2001, 4999));
+    }
+
+    #[test]
+    fn appended_last_row_lasts_ten_seconds() {
+        let inserted = inserted_row_srt_timing(Some(timing(1000, 2000)), None);
+        assert_eq!(inserted, timing(2001, 12_001));
+    }
+
+    #[test]
+    fn empty_chapter_row_starts_at_zero_for_ten_seconds() {
+        let inserted = inserted_row_srt_timing(None, None);
+        assert_eq!(inserted, timing(0, 10_000));
+    }
+
+    #[test]
+    fn tight_gap_keeps_the_fitted_end_so_the_too_short_error_shows() {
+        let inserted = inserted_row_srt_timing(Some(timing(1000, 2000)), Some(timing(2100, 3000)));
+        assert_eq!(inserted, timing(2001, 2099));
+    }
+
+    #[test]
+    fn no_gap_falls_back_to_a_minimum_duration_overlapping_cue() {
+        let inserted = inserted_row_srt_timing(Some(timing(1000, 2000)), Some(timing(1500, 3000)));
+        assert_eq!(inserted, timing(2001, 2251));
+    }
 }

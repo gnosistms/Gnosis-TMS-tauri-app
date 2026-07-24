@@ -64,6 +64,32 @@ function captureFocusedEditorField(root, patchedRowIds) {
   }
 
   const activeElement = root.ownerDocument?.activeElement;
+  // Timing inputs cannot ride the textarea morph (they are plain inputs with no
+  // undo stack to protect), but focus, in-progress text, and caret must survive
+  // a row patch — e.g. tabbing from the start input while its persist patches
+  // the row and its neighbors.
+  if (
+    typeof HTMLInputElement !== "undefined"
+    && activeElement instanceof HTMLInputElement
+    && activeElement.matches("[data-editor-timing-field]")
+  ) {
+    const activeRowId = activeElement.dataset.rowId ?? "";
+    if (!patchedRowIds.has(activeRowId)) {
+      return null;
+    }
+    return {
+      kind: "timing",
+      element: activeElement,
+      rowId: activeRowId,
+      languageCode: activeElement.dataset.languageCode ?? "",
+      timingKind: activeElement.dataset.timingKind ?? "",
+      value: activeElement.value,
+      selectionStart: activeElement.selectionStart,
+      selectionEnd: activeElement.selectionEnd,
+      selectionDirection: activeElement.selectionDirection ?? "none",
+    };
+  }
+
   if (
     typeof HTMLTextAreaElement === "undefined"
     || !(activeElement instanceof HTMLTextAreaElement)
@@ -100,6 +126,33 @@ function captureFocusedEditorField(root, patchedRowIds) {
 function restoreFocusedEditorField(root, snapshot) {
   if (!isMountedEditorElement(root) || !snapshot?.rowId || !snapshot.languageCode) {
     return false;
+  }
+
+  if (snapshot.kind === "timing") {
+    if (typeof CSS === "undefined" || typeof CSS.escape !== "function") {
+      return false;
+    }
+    const nextField = root.querySelector(
+      `[data-editor-timing-field][data-row-id="${CSS.escape(snapshot.rowId)}"]`
+      + `[data-language-code="${CSS.escape(snapshot.languageCode)}"]`
+      + `[data-timing-kind="${CSS.escape(snapshot.timingKind ?? "")}"]`,
+    );
+    if (typeof HTMLInputElement === "undefined" || !(nextField instanceof HTMLInputElement)) {
+      return false;
+    }
+    // The user's in-progress text wins over the freshly rendered model value.
+    if (typeof snapshot.value === "string" && nextField.value !== snapshot.value) {
+      nextField.value = snapshot.value;
+    }
+    nextField.focus({ preventScroll: true });
+    if (typeof snapshot.selectionStart === "number" && typeof snapshot.selectionEnd === "number") {
+      nextField.setSelectionRange(
+        snapshot.selectionStart,
+        snapshot.selectionEnd,
+        snapshot.selectionDirection,
+      );
+    }
+    return true;
   }
 
   const selector = buildEditorFieldSelector(

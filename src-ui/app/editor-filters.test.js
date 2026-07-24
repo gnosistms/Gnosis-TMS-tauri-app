@@ -11,8 +11,10 @@ import {
   EDITOR_ROW_FILTER_MODE_PLEASE_CHECK,
   EDITOR_ROW_FILTER_MODE_REVIEWED,
   EDITOR_ROW_FILTER_MODE_TARGET_EMPTY,
+  EDITOR_ROW_FILTER_MODE_HAS_TIMING_ERROR,
   buildEditorFilterResult,
   editorChapterFiltersAreActive,
+  editorRowFilterOptionsForChapter,
   findEditorSearchMatches,
 } from "./editor-filters.js";
 
@@ -410,4 +412,49 @@ test("search match ranges are case-insensitive and non-overlapping", () => {
     { start: 0, end: 9 },
     { start: 10, end: 19 },
   ]);
+});
+
+test("the timing-error filter shows only rows whose sections carry timing errors", () => {
+  const timedRow = (rowId, timingErrors) => ({
+    ...row(rowId, { es: "texto" }),
+    sections: [{
+      code: "es",
+      name: "es",
+      text: "texto",
+      searchText: "texto",
+      footnote: "",
+      searchFootnote: "",
+      imageCaption: "",
+      searchImageCaption: "",
+      image: null,
+      hasVisibleFootnote: false,
+      hasVisibleImageCaption: false,
+      reviewed: false,
+      pleaseCheck: false,
+      timingStartError: timingErrors?.startError === true,
+      timingEndError: timingErrors?.endError === true,
+    }],
+  });
+
+  const result = buildEditorFilterResult({
+    rows: [
+      timedRow("row-1", { endError: true }),
+      timedRow("row-2", null),
+      timedRow("row-3", { startError: true }),
+    ],
+    languages: [language("es")],
+    collapsedLanguageCodes: new Set(),
+    targetLanguageCode: "es",
+    filters: { rowFilterMode: EDITOR_ROW_FILTER_MODE_HAS_TIMING_ERROR },
+  });
+
+  assert.deepEqual(result.filteredRows.map((item) => item.id), ["row-1", "row-3"]);
+});
+
+test("the timing-error filter option is only offered for subtitle chapters", () => {
+  const withTiming = editorRowFilterOptionsForChapter({ timingErrorFilterAvailable: true });
+  const withoutTiming = editorRowFilterOptionsForChapter({ timingErrorFilterAvailable: false });
+  assert.ok(withTiming.some((option) => option.value === EDITOR_ROW_FILTER_MODE_HAS_TIMING_ERROR));
+  assert.ok(!withoutTiming.some((option) => option.value === EDITOR_ROW_FILTER_MODE_HAS_TIMING_ERROR));
+  assert.equal(withTiming.length, withoutTiming.length + 1);
 });

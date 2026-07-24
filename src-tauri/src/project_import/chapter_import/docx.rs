@@ -84,6 +84,7 @@ pub(super) fn parse_docx_file(input: ImportDocxInput) -> Result<ParsedWorkbook, 
             text_style: parsed_row.text_style,
             docx_metadata: Some(parsed_row.metadata),
             html_metadata: None,
+            srt_metadata: None,
         });
     }
 
@@ -104,6 +105,7 @@ pub(super) fn parse_docx_file(input: ImportDocxInput) -> Result<ParsedWorkbook, 
         }],
         rows,
         import_summary: Some(parsed_document.summary),
+        srt_import_summary: None,
     })
 }
 

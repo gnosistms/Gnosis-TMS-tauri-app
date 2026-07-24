@@ -180,6 +180,7 @@ function applyEditorPayloadToState(
     chapterId: payload.chapterId,
     chapterBaseCommitSha: payload.chapterBaseCommitSha ?? null,
     fileTitle: payload.fileTitle,
+    sourceFormats: Array.isArray(payload.sourceFormats) ? payload.sourceFormats : [],
     languages: Array.isArray(payload.languages) ? payload.languages : [],
     wordCounts:
       payload.wordCounts && typeof payload.wordCounts === "object"

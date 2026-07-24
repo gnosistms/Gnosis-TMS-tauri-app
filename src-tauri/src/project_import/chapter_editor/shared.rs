@@ -387,6 +387,7 @@ pub(super) fn load_project_chapter_summaries(
         );
         let has_imported_editor_conflicts =
             conflicted_chapter_ids.contains(&chapter_file.chapter_id);
+        let source_formats = chapter_source_formats(&chapter_file);
 
         chapters.push(ProjectChapterSummary {
             id: chapter_file.chapter_id,
@@ -403,6 +404,7 @@ pub(super) fn load_project_chapter_summaries(
             workflow_status,
             linked_glossary,
             has_imported_editor_conflicts,
+            source_formats,
         });
     }
 
@@ -530,6 +532,24 @@ pub(super) fn set_editor_field_flags(
     }
 }
 
+pub(super) fn chapter_source_formats(chapter_file: &StoredChapterFile) -> Vec<String> {
+    let mut formats = Vec::new();
+    for source_file in &chapter_file.source_files {
+        let format = source_file.format.trim().to_ascii_lowercase();
+        if !format.is_empty() && !formats.contains(&format) {
+            formats.push(format);
+        }
+    }
+    formats
+}
+
+pub(super) fn chapter_has_srt_source(chapter_file: &StoredChapterFile) -> bool {
+    chapter_file
+        .source_files
+        .iter()
+        .any(|source_file| source_file.format.trim().eq_ignore_ascii_case("srt"))
+}
+
 pub(super) fn sanitize_chapter_languages(languages: &[ChapterLanguage]) -> Vec<ChapterLanguage> {
     let mut seen = BTreeMap::<String, ()>::new();
     let mut sanitized = Vec::new();
@@ -643,6 +663,8 @@ pub(super) fn editor_row_from_stored_row_file(
     let image_captions = row_image_caption_map(&row);
     let images = row_image_map(repo_path, &row);
     let text_style = row_text_style(&row);
+    let timings = row_timing_map(&row);
+    let srt_timing = row.format_metadata.srt.map(EditorFieldTiming::from);
 
     Ok(EditorRow {
         row_id: row.row_id,
@@ -668,6 +690,8 @@ pub(super) fn editor_row_from_stored_row_file(
         footnotes,
         image_captions,
         images,
+        timings,
+        srt_timing,
         field_states: row
             .fields
             .into_iter()
@@ -741,6 +765,13 @@ pub(super) fn row_image_caption_map(row: &StoredRowFile) -> BTreeMap<String, Str
                 normalize_editor_image_caption_value(&value.image_caption),
             )
         })
+        .collect()
+}
+
+fn row_timing_map(row: &StoredRowFile) -> BTreeMap<String, EditorFieldTiming> {
+    row.fields
+        .iter()
+        .filter_map(|(code, value)| value.timing.map(|timing| (code.clone(), timing.into())))
         .collect()
 }
 

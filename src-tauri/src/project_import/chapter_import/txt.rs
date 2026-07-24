@@ -53,6 +53,7 @@ pub(super) fn parse_txt_file(input: ImportTxtInput) -> Result<ParsedWorkbook, St
             text_style: None,
             docx_metadata: None,
             html_metadata: None,
+            srt_metadata: None,
         });
     }
 
@@ -77,6 +78,7 @@ pub(super) fn parse_txt_file(input: ImportTxtInput) -> Result<ParsedWorkbook, St
         }],
         rows,
         import_summary: None,
+        srt_import_summary: None,
     })
 }
 

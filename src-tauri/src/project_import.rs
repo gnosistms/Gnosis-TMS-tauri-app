@@ -44,12 +44,12 @@ use self::{
         AlignedTranslationPreflightResponse, ApplyEditorAiReviewResultInput,
         ApplyEditorAiReviewResultResponse, ClearEditorReviewedMarkersInput,
         ClearEditorReviewedMarkersResponse, ClearImportedEditorConflictInput,
-        ExportChapterFileInput, InitializeProjectRepoInput, InitializeProjectRepoResponse,
-        InsertEditorRowInput, InsertEditorRowResponse, ListLocalProjectFilesInput,
-        LoadChapterEditorInput, LoadChapterEditorResponse, LoadEditorFieldHistoryInput,
-        LoadEditorFieldHistoryResponse, LoadEditorRowInput, LoadEditorRowResponse,
-        LocalProjectFilesResponse, MergeEditorRowsInput, MergeEditorRowsResponse,
-        PdfChapterExportInput, PdfFontInspection, PdfFontInspectionInput,
+        ExportChapterFileInput, ExportChapterFileResponse, InitializeProjectRepoInput,
+        InitializeProjectRepoResponse, InsertEditorRowInput, InsertEditorRowResponse,
+        ListLocalProjectFilesInput, LoadChapterEditorInput, LoadChapterEditorResponse,
+        LoadEditorFieldHistoryInput, LoadEditorFieldHistoryResponse, LoadEditorRowInput,
+        LoadEditorRowResponse, LocalProjectFilesResponse, MergeEditorRowsInput,
+        MergeEditorRowsResponse, PdfChapterExportInput, PdfFontInspection, PdfFontInspectionInput,
         PurgeLocalProjectRepoInput, RemoveEditorLanguageImageInput, RestoreEditorFieldHistoryInput,
         RestoreEditorFieldHistoryResponse, ReverseEditorBatchReplaceCommitInput,
         ReverseEditorBatchReplaceCommitResponse, SaveEditorLanguageImageResponse,
@@ -72,9 +72,9 @@ use self::{
     },
     chapter_import::{
         import_docx_to_gtms_sync, import_html_to_gtms_sync, import_project_files_to_gtms_sync,
-        import_txt_to_gtms_sync, import_xlsx_to_gtms_sync, ImportDocxInput, ImportHtmlInput,
-        ImportProjectFilesInput, ImportProjectFilesResponse, ImportTxtInput, ImportXlsxInput,
-        ImportXlsxResponse,
+        import_srt_to_gtms_sync, import_txt_to_gtms_sync, import_xlsx_to_gtms_sync,
+        ImportDocxInput, ImportHtmlInput, ImportProjectFilesInput, ImportProjectFilesResponse,
+        ImportSrtInput, ImportTxtInput, ImportXlsxInput, ImportXlsxResponse,
     },
     chapter_lifecycle::{
         clear_deleted_gtms_chapters_sync, permanently_delete_gtms_chapter_sync,
@@ -125,6 +125,19 @@ pub(crate) async fn import_txt_to_gtms(
     })
     .await
     .map_err(|error| format!("The TXT import worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn import_srt_to_gtms(
+    app: AppHandle,
+    input: ImportSrtInput,
+) -> Result<ImportXlsxResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_project_management(&app, input.installation_id)?;
+        import_srt_to_gtms_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The SRT import worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -198,7 +211,7 @@ pub(crate) async fn resolve_project_import_link(
 pub(crate) async fn export_gtms_chapter_file(
     app: AppHandle,
     input: ExportChapterFileInput,
-) -> Result<(), String> {
+) -> Result<ExportChapterFileResponse, String> {
     tauri::async_runtime::spawn_blocking(move || export_gtms_chapter_file_sync(&app, input))
         .await
         .map_err(|error| format!("The chapter export worker failed: {error}"))?

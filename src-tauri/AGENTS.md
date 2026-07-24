@@ -30,7 +30,7 @@ src-tauri/src/
 ├── project_repo_sync.rs       # Project repo sync (push/pull/status)
 ├── glossary_repo_sync.rs      # Glossary repo sync
 ├── qa_list_repo_sync.rs       # QA list repo sync
-├── project_import/            # DOCX, HTML, paste import pipeline
+├── project_import/            # XLSX, TXT, SRT, DOCX, HTML, paste import pipeline
 ├── project_search/            # SQLite search index (trigram-based; indexer, query, schema)
 ├── team_metadata_local/       # Local metadata repo management
 ├── ai/                        # AI provider integration

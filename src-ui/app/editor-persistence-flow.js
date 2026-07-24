@@ -66,6 +66,7 @@ import {
   serializeEditorFootnotesForLegacy,
 } from "./editor-footnotes.js";
 import { smartenInlineMarkupQuotes } from "./editor-inline-markup/smart-quotes.js";
+import { cloneRowTimings } from "./editor-timing.js";
 import {
   assertQueuedEditorRowsReady,
   invokeQueuedEditorWriteCommand,
@@ -305,6 +306,7 @@ function rebaseRowTextInputForRun(operationValue) {
   input.baseFields = cloneRowFields(currentRow.persistedFields ?? currentRow.baseFields);
   input.baseFootnotes = serializeFootnoteMapForLegacy(currentRow.persistedFootnotes ?? currentRow.baseFootnotes);
   input.baseImageCaptions = cloneRowFields(currentRow.persistedImageCaptions ?? currentRow.baseImageCaptions);
+  input.baseTimings = cloneRowTimings(currentRow.persistedTimings ?? currentRow.baseTimings);
   return input;
 }
 
@@ -1958,6 +1960,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
     options?.baseImageCaptionsOverride && typeof options.baseImageCaptionsOverride === "object"
       ? cloneRowFields(options.baseImageCaptionsOverride)
       : cloneRowFields(row.baseImageCaptions);
+  const timingsToPersist = cloneRowTimings(row.timings);
   const input = {
     installationId: team.installationId,
     projectId: context.project.id,
@@ -1967,9 +1970,11 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
     fields: fieldsToPersist,
     footnotes: footnotesToPersist,
     imageCaptions: imageCaptionsToPersist,
+    timings: timingsToPersist,
     baseFields,
     baseFootnotes,
     baseImageCaptions,
+    baseTimings: cloneRowTimings(row.baseTimings),
     ...(commitMetadata?.operation ? { operation: commitMetadata.operation } : {}),
     ...(commitMetadata?.aiModel ? { aiModel: commitMetadata.aiModel } : {}),
   };
@@ -1985,6 +1990,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
     fields: fieldsToPersist,
     footnotes: footnotesToPersist,
     imageCaptions: imageCaptionsToPersist,
+    timings: timingsToPersist,
     images: cloneQueueContextValue(row.images ?? {}),
     permissionContext: {
       team: cloneQueueContextValue(team),
@@ -2084,6 +2090,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
             footnotes: value.footnotes,
             imageCaptions: value.imageCaptions,
             images: value.images,
+            timings: value.timings,
           }),
         );
         reconcileDirtyTrackedEditorRows([value.rowId]);
@@ -2123,6 +2130,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
         footnotes: value.footnotes,
         imageCaptions: value.imageCaptions,
         images: value.images,
+        timings: value.timings,
       }),
     );
 
