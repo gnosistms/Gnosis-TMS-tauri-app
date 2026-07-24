@@ -394,6 +394,7 @@ export function createEditorChapterState() {
     chapterId: null,
     chapterBaseCommitSha: null,
     fileTitle: "",
+    sourceFormats: [],
     languages: [],
     wordCounts: {},
     selectedSourceLanguageCode: null,

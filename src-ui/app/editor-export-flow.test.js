@@ -165,6 +165,38 @@ test("the export catalog covers the three categories with stable option ids", ()
   assert.equal(findEditorExportOption("file:unknown"), null);
 });
 
+test("the SRT export option only appears for chapters imported from an SRT file", () => {
+  installNavigator({ platform: "MacIntel" });
+  installEditorExportFixture();
+  openEditorExportOptions(() => {});
+
+  // The fixture chapter was not imported from SRT.
+  assert.equal(findEditorExportOption("file:srt"), null);
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    sourceFormats: ["srt"],
+  };
+  const srtOption = findEditorExportOption("file:srt");
+  assert.ok(srtOption);
+  assert.equal(srtOption.format, "srt");
+
+  // The projects-page chapter summary gates the option when the chapter is
+  // not the one open in the editor.
+  state.editorChapter = {
+    ...state.editorChapter,
+    chapterId: "other-chapter",
+    sourceFormats: [],
+  };
+  assert.equal(findEditorExportOption("file:srt"), null);
+  state.projects[0].chapters[0].sourceFormats = ["srt"];
+  state.editorChapter.exportModal = {
+    ...state.editorChapter.exportModal,
+    chapterId: "chapter-1",
+  };
+  assert.ok(findEditorExportOption("file:srt"));
+});
+
 test("the Vellum export option is hidden outside macOS", () => {
   installNavigator({ platform: "Win32" });
 

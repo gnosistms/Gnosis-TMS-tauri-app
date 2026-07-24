@@ -13,6 +13,7 @@ import {
   selectedEditorPreviewLanguageCode,
 } from "../app/editor-preview.js";
 import { buildEditorScreenViewModel } from "../app/editor-screen-model.js";
+import { chapterHasSrtSourceFormat } from "../app/editor-timing.js";
 import { renderTranslationContentRows } from "../app/editor-row-render.js";
 import { convertLocalFileSrc } from "../app/runtime.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
@@ -280,6 +281,7 @@ export function renderTranslateHeaderDetail(state) {
     clearTranslationsAvailable: languages.length > 0,
     writeActionsAvailable,
     offlineMode,
+    timingErrorFilterAvailable: chapterHasSrtSourceFormat(editorChapter?.sourceFormats),
   });
 }
 

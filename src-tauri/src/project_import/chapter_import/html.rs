@@ -127,6 +127,7 @@ pub(super) fn parse_html_file(input: ImportHtmlInput) -> Result<ParsedWorkbook, 
                 original_tag: block.original_tag,
                 image_url,
             }),
+            srt_metadata: None,
         });
     }
 
@@ -147,6 +148,7 @@ pub(super) fn parse_html_file(input: ImportHtmlInput) -> Result<ParsedWorkbook, 
         }],
         rows,
         import_summary: None,
+        srt_import_summary: None,
     })
 }
 

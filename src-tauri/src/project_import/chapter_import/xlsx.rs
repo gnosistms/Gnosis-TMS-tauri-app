@@ -130,6 +130,7 @@ pub(super) fn parse_xlsx_workbook(input: ImportXlsxInput) -> Result<ParsedWorkbo
             text_style: None,
             docx_metadata: None,
             html_metadata: None,
+            srt_metadata: None,
         });
     }
 
@@ -152,6 +153,7 @@ pub(super) fn parse_xlsx_workbook(input: ImportXlsxInput) -> Result<ParsedWorkbo
         languages,
         rows,
         import_summary: None,
+        srt_import_summary: None,
     })
 }
 

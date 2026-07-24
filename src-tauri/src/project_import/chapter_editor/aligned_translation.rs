@@ -1710,6 +1710,7 @@ fn apply_job_to_chapter(
             &target.order_key,
             &context.chapter_file,
             &languages,
+            None,
         );
         set_row_plain_text(
             &mut row_value,
@@ -2904,10 +2905,12 @@ mod tests {
                             image_caption: String::new(),
                             image: None,
                             editor_flags: StoredFieldEditorFlags::default(),
+                            timing: None,
                         },
                     )
                 })
                 .collect(),
+            format_metadata: StoredRowFormatMetadata::default(),
         }
     }
 

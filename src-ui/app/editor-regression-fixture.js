@@ -177,6 +177,15 @@ function buildFixtureGlossary(languages, options = {}) {
 function createFixtureRow(index, languages, options = {}) {
   const label = padFixtureIndex(index);
   const rowId = `fixture-row-${label}`;
+  // SRT fixture chapters: sequential non-overlapping 3.5 s cues by default;
+  // srtTimingByRowId overrides individual rows to stage timing errors.
+  const srtTiming =
+    options?.srt === true
+      ? (options?.srtTimingByRowId && typeof options.srtTimingByRowId === "object"
+        && options.srtTimingByRowId[rowId]
+        ? structuredClone(options.srtTimingByRowId[rowId])
+        : { startMs: (index - 1) * 4000, endMs: (index - 1) * 4000 + 3500 })
+      : null;
   const customFields =
     options?.fieldsByRowId && typeof options.fieldsByRowId === "object"
       ? options.fieldsByRowId[rowId] ?? null
@@ -234,6 +243,10 @@ function createFixtureRow(index, languages, options = {}) {
     imageCaptions,
     persistedImageCaptions: { ...imageCaptions },
     images,
+    srtTiming,
+    timings: {},
+    baseTimings: {},
+    persistedTimings: {},
     fieldStates,
     persistedFieldStates: structuredClone(fieldStates),
     saveStatus: "idle",
@@ -333,6 +346,7 @@ export function applyEditorRegressionFixture(appState, options = {}) {
     ? options.fileTitle.trim()
     : "Editor Regression Fixture";
   const rows = Array.from({ length: rowCount }, (_, index) => createFixtureRow(index + 1, languages, options));
+  const sourceFormats = options?.srt === true ? ["srt"] : [];
   const fixtureGlossary = buildFixtureGlossary(languages, options);
   const chapter = {
     id: chapterId,
@@ -344,6 +358,7 @@ export function applyEditorRegressionFixture(appState, options = {}) {
     selectedSourceLanguageCode: sourceCode,
     selectedTargetLanguageCode: targetCode,
     linkedGlossary: fixtureGlossary.linkedGlossary,
+    sourceFormats,
   };
   const project = {
     id: projectId,
@@ -370,6 +385,7 @@ export function applyEditorRegressionFixture(appState, options = {}) {
     projectId,
     chapterId,
     fileTitle,
+    sourceFormats,
     languages,
     wordCounts: { [sourceCode]: rowCount * 3 },
     selectedSourceLanguageCode: sourceCode,
@@ -469,6 +485,7 @@ export function applyEditorRegressionFixture(appState, options = {}) {
     sourceCode,
     targetCode,
     languages,
+    sourceFormats,
     rows,
   });
 

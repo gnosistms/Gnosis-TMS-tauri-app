@@ -12,6 +12,7 @@ export const EDITOR_ROW_FILTER_MODE_HAS_FOOTNOTE = "has-footnote";
 export const EDITOR_ROW_FILTER_MODE_HAS_COMMENTS = "has-comments";
 export const EDITOR_ROW_FILTER_MODE_HAS_UNREAD_COMMENTS = "has-unread-comments";
 export const EDITOR_ROW_FILTER_MODE_HAS_CONFLICT = "has-conflict";
+export const EDITOR_ROW_FILTER_MODE_HAS_TIMING_ERROR = "has-timing-error";
 
 export const EDITOR_ROW_FILTER_OPTIONS = [
   { value: EDITOR_ROW_FILTER_MODE_SHOW_ALL, label: "Show all" },
@@ -24,7 +25,18 @@ export const EDITOR_ROW_FILTER_OPTIONS = [
   { value: EDITOR_ROW_FILTER_MODE_HAS_COMMENTS, label: "Has comments" },
   { value: EDITOR_ROW_FILTER_MODE_HAS_UNREAD_COMMENTS, label: "Has unread comments" },
   { value: EDITOR_ROW_FILTER_MODE_HAS_CONFLICT, label: "Has conflict" },
+  // Subtitle chapters only — hidden from the dropdown elsewhere.
+  { value: EDITOR_ROW_FILTER_MODE_HAS_TIMING_ERROR, label: "Has timing error" },
 ];
+
+// Dropdown options for one chapter: the timing-error filter only exists for
+// chapters imported from a subtitle file.
+export function editorRowFilterOptionsForChapter({ timingErrorFilterAvailable = false } = {}) {
+  return EDITOR_ROW_FILTER_OPTIONS.filter(
+    (option) =>
+      option.value !== EDITOR_ROW_FILTER_MODE_HAS_TIMING_ERROR || timingErrorFilterAvailable,
+  );
+}
 
 const EDITOR_ROW_FILTER_OPTION_VALUES = new Set(
   EDITOR_ROW_FILTER_OPTIONS.map((option) => option.value),
@@ -194,6 +206,12 @@ function rowMatchesFilterMode(row, rowFilterMode, targetLanguageCode, seenRevisi
       return editorRowHasUnreadComments(row, seenRevisions);
     case EDITOR_ROW_FILTER_MODE_HAS_CONFLICT:
       return rowHasUnresolvedTextConflict(row, targetLanguageCode);
+    case EDITOR_ROW_FILTER_MODE_HAS_TIMING_ERROR:
+      // Any language with a timing error matches; the marks themselves are
+      // computed by the screen model into the row's sections.
+      return (Array.isArray(row?.sections) ? row.sections : []).some(
+        (section) => section?.timingStartError === true || section?.timingEndError === true,
+      );
     default:
       return true;
   }

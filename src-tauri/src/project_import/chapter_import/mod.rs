@@ -14,12 +14,15 @@ use crate::constants::ensure_within_import_size_limit;
 mod docx;
 mod html;
 pub(crate) mod languages;
+mod srt;
 mod txt;
 mod write_gtms;
 mod xlsx;
 
 use docx::{parse_docx_file, DocxImportSummary, DocxRowMetadata};
 use html::{parse_html_file, HtmlRowMetadata};
+pub(super) use srt::format_srt_timestamp;
+use srt::{parse_srt_file, SrtImportSummary, SrtRowMetadata};
 #[cfg(test)]
 use std::io::Cursor;
 #[cfg(test)]
@@ -49,6 +52,17 @@ pub(crate) struct ImportXlsxInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ImportTxtInput {
+    pub(crate) installation_id: i64,
+    repo_name: String,
+    project_id: Option<String>,
+    file_name: String,
+    bytes: Vec<u8>,
+    source_language_code: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ImportSrtInput {
     pub(crate) installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
@@ -128,6 +142,8 @@ pub(crate) struct ImportXlsxResponse {
     source_file_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     import_summary: Option<DocxImportSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    srt_import_summary: Option<SrtImportSummary>,
 }
 
 #[derive(Serialize)]
@@ -170,6 +186,7 @@ struct ParsedWorkbook {
     languages: Vec<ImportedLanguage>,
     rows: Vec<ImportedRow>,
     import_summary: Option<DocxImportSummary>,
+    srt_import_summary: Option<SrtImportSummary>,
 }
 
 #[derive(Clone)]
@@ -191,6 +208,7 @@ struct ImportedRow {
     text_style: Option<String>,
     docx_metadata: Option<DocxRowMetadata>,
     html_metadata: Option<HtmlRowMetadata>,
+    srt_metadata: Option<SrtRowMetadata>,
 }
 
 #[derive(Clone, Default)]
@@ -415,6 +433,15 @@ pub(super) fn import_txt_to_gtms_sync(
     import_parsed_workbook_to_gtms_sync(app, parsed)
 }
 
+pub(super) fn import_srt_to_gtms_sync(
+    app: &AppHandle,
+    input: ImportSrtInput,
+) -> Result<ImportXlsxResponse, String> {
+    ensure_within_import_size_limit(input.bytes.len() as u64, &input.file_name)?;
+    let parsed = parse_srt_file(input)?;
+    import_parsed_workbook_to_gtms_sync(app, parsed)
+}
+
 pub(super) fn import_docx_to_gtms_sync(
     app: &AppHandle,
     input: ImportDocxInput,
@@ -597,6 +624,14 @@ fn parse_project_import_file(
             bytes,
         }),
         "txt" => parse_txt_file(ImportTxtInput {
+            installation_id,
+            repo_name: repo_name.to_string(),
+            project_id: project_id.clone(),
+            file_name: file_name.clone(),
+            bytes,
+            source_language_code: required_source_language_code(&file)?,
+        }),
+        "srt" => parse_srt_file(ImportSrtInput {
             installation_id,
             repo_name: repo_name.to_string(),
             project_id: project_id.clone(),
@@ -907,8 +942,10 @@ mod tests {
                 text_style: None,
                 docx_metadata: None,
                 html_metadata: None,
+                srt_metadata: None,
             }],
             import_summary: None,
+            srt_import_summary: None,
         };
 
         let row = build_row_file(&parsed, &parsed.rows[0], 0, parsed.rows.len(), "row-1")
@@ -972,8 +1009,10 @@ mod tests {
                     original_tag: "figure".to_string(),
                     image_url: Some("https://example.com/images/plate.jpg".to_string()),
                 }),
+                srt_metadata: None,
             }],
             import_summary: None,
+            srt_import_summary: None,
         };
 
         let row = build_row_file(&parsed, &parsed.rows[0], 0, parsed.rows.len(), "row-1")

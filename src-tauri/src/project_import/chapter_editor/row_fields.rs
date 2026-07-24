@@ -18,6 +18,55 @@ fn merge_editor_footnote_maps(
     merge_editor_string_maps_by(base, local, remote, normalize_editor_footnote_merge_value)
 }
 
+// Subtitle timings ride the string-map merge by encoding each timing as
+// "start_ms:end_ms" (absent override = absent key), so timing edits get the
+// exact same 3-way semantics as field text.
+fn encode_editor_timing_map(
+    timings: &BTreeMap<String, EditorFieldTimingInput>,
+) -> BTreeMap<String, String> {
+    timings
+        .iter()
+        .map(|(code, timing)| {
+            (
+                code.clone(),
+                format!("{}:{}", timing.start_ms, timing.end_ms),
+            )
+        })
+        .collect()
+}
+
+fn decode_editor_timing_map(
+    encoded: &BTreeMap<String, String>,
+) -> BTreeMap<String, EditorFieldTimingInput> {
+    encoded
+        .iter()
+        .filter_map(|(code, value)| {
+            let (start, end) = value.split_once(':')?;
+            Some((
+                code.clone(),
+                EditorFieldTimingInput {
+                    start_ms: start.parse().ok()?,
+                    end_ms: end.parse().ok()?,
+                },
+            ))
+        })
+        .collect()
+}
+
+fn row_timing_string_map(row: &StoredRowFile) -> BTreeMap<String, String> {
+    row.fields
+        .iter()
+        .filter_map(|(code, value)| {
+            value.timing.map(|timing| {
+                (
+                    code.clone(),
+                    format!("{}:{}", timing.start_ms, timing.end_ms),
+                )
+            })
+        })
+        .collect()
+}
+
 fn merge_editor_string_maps_by<F>(
     base: &BTreeMap<String, String>,
     local: &BTreeMap<String, String>,
@@ -338,6 +387,7 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
     let current_fields = row_plain_text_map(&original_row_file);
     let current_footnotes = row_footnote_map(&original_row_file);
     let current_image_captions = row_image_caption_map(&original_row_file);
+    let current_timings = row_timing_string_map(&original_row_file);
     let merged_fields =
         merge_editor_string_maps(&input.base_fields, &input.fields, &current_fields);
     let merged_footnotes =
@@ -349,10 +399,16 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
     );
     let merged_images =
         merge_editor_image_maps(&input.base_images, &input.images, &original_row_file);
+    let merged_timings = merge_editor_string_maps(
+        &encode_editor_timing_map(&input.base_timings),
+        &encode_editor_timing_map(&input.timings),
+        &current_timings,
+    );
     if merged_fields.is_none()
         || merged_footnotes.is_none()
         || merged_image_captions.is_none()
         || merged_images.is_none()
+        || merged_timings.is_none()
     {
         if cfg!(debug_assertions) {
             eprintln!("[gtms row-save] conflict row='{}'", input.row_id);
@@ -410,6 +466,7 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
     let merged_footnotes = merged_footnotes.unwrap_or_default();
     let merged_image_captions = merged_image_captions.unwrap_or_default();
     let merged_images = merged_images.unwrap_or_default();
+    let merged_timings = decode_editor_timing_map(&merged_timings.unwrap_or_default());
 
     let mut row_value: Value = serde_json::from_str(&original_row_text).map_err(|error| {
         format!(
@@ -420,6 +477,7 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
     apply_editor_plain_text_updates(&mut row_value, &merged_fields)?;
     apply_editor_footnote_updates(&mut row_value, &merged_footnotes)?;
     apply_editor_image_caption_updates(&mut row_value, &merged_image_captions)?;
+    apply_editor_timing_updates(&mut row_value, &merged_timings)?;
     for (language_code, image) in merged_images {
         apply_editor_field_image_update(&mut row_value, &language_code, image)?;
     }
@@ -734,6 +792,7 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
                 fields: row.fields,
                 footnotes: row.footnotes,
                 image_captions: row.image_captions,
+                timings: row.timings,
                 remove_images: row.remove_images,
             },
         );
@@ -747,6 +806,7 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
         let fields = batch_row.fields;
         let footnotes = batch_row.footnotes;
         let image_captions = batch_row.image_captions;
+        let timings = batch_row.timings;
         let remove_images = batch_row.remove_images;
         let row_json_path = validated_row_json_path(&chapter_path, &row_id)?;
         let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
@@ -771,6 +831,7 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
         apply_editor_plain_text_updates(&mut row_value, &fields)?;
         apply_editor_footnote_updates(&mut row_value, &footnotes)?;
         apply_editor_image_caption_updates(&mut row_value, &image_captions)?;
+        apply_editor_timing_updates(&mut row_value, &timings)?;
         for language_code in &remove_images {
             let language_code = language_code.trim();
             if language_code.is_empty() {
@@ -1290,6 +1351,31 @@ pub(super) fn apply_editor_footnote_updates(
         field_object.insert(
             "footnote".to_string(),
             Value::String(normalize_editor_footnote_value(footnote)),
+        );
+    }
+
+    Ok(())
+}
+
+pub(super) fn apply_editor_timing_updates(
+    row_value: &mut Value,
+    timings: &BTreeMap<String, EditorFieldTimingInput>,
+) -> Result<(), String> {
+    let fields_object = row_fields_object_mut(row_value)?;
+    for (code, timing) in timings {
+        let field_value = fields_object
+            .entry(code.clone())
+            .or_insert_with(|| json!({}));
+        let field_object = field_value
+            .as_object_mut()
+            .ok_or_else(|| format!("The row field '{code}' is not a JSON object."))?;
+        ensure_editor_field_object_defaults(field_object)?;
+        field_object.insert(
+            "timing".to_string(),
+            json!({
+              "start_ms": timing.start_ms,
+              "end_ms": timing.end_ms,
+            }),
         );
     }
 

@@ -1,5 +1,6 @@
 import { rowImagesEqual } from "./editor-images.js";
 import { normalizeEditorFootnotes } from "./editor-footnotes.js";
+import { rowTimingsEqual } from "./editor-timing.js";
 
 function normalizeFieldState(fieldState) {
   return {
@@ -81,15 +82,18 @@ export function rowFieldStatesEqual(left, right) {
 }
 
 export function rowHasFieldChanges(row) {
-  return !rowTextContentEqual(
-    row?.fields,
-    row?.footnotes,
-    row?.imageCaptions,
-    row?.persistedFields,
-    row?.persistedFootnotes,
-    row?.persistedImageCaptions,
-    row?.images,
-    row?.persistedImages,
+  return (
+    !rowTextContentEqual(
+      row?.fields,
+      row?.footnotes,
+      row?.imageCaptions,
+      row?.persistedFields,
+      row?.persistedFootnotes,
+      row?.persistedImageCaptions,
+      row?.images,
+      row?.persistedImages,
+    )
+    || !rowTimingsEqual(row?.timings, row?.persistedTimings)
   );
 }
 

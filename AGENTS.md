@@ -34,7 +34,7 @@ for the architectural philosophy that governs strategic and design decisions.
 - `src-tauri/src/lib.rs` — Tauri command definitions and `invoke_handler` registration
 - `src-tauri/src/store.rs` — local key-value persistent store (`tauri-plugin-store`)
 - `src-tauri/src/github/` — GitHub API client
-- `src-tauri/src/project_import/` — DOCX/HTML/paste import pipeline
+- `src-tauri/src/project_import/` — XLSX/TXT/SRT/DOCX/HTML/paste import pipeline
 - `src-tauri/src/project_search/` — trigram-based SQLite search indexer
 - `src-tauri/src/ai/` — AI provider integration
 - `src-tauri/src/broker*.rs` — broker service auth and communication

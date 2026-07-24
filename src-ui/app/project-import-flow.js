@@ -41,14 +41,14 @@ import { canManageProjects } from "./resource-capabilities.js";
 import { normalizeSupportedLanguageCode } from "../lib/language-options.js";
 
 export const PROJECT_IMPORT_ACCEPT =
-  ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.txt,text/plain,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.html,.htm,text/html";
+  ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.txt,text/plain,.srt,application/x-subrip,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.html,.htm,text/html";
 
-const SUPPORTED_PROJECT_IMPORT_FORMATS_LABEL = "XLSX, TXT, DOCX, and HTML";
+const SUPPORTED_PROJECT_IMPORT_FORMATS_LABEL = "XLSX, TXT, SRT, DOCX, and HTML";
 const PROJECT_IMPORT_BATCH_PROGRESS_EVENT = "project-import-batch-progress";
 const PROJECT_IMPORT_DIALOG_FILTERS = [
   {
     name: "Supported project files",
-    extensions: ["xlsx", "txt", "docx", "html", "htm"],
+    extensions: ["xlsx", "txt", "srt", "docx", "html", "htm"],
   },
 ];
 
@@ -60,6 +60,9 @@ export function detectImportFileType(fileName) {
   if (normalized.endsWith(".txt")) {
     return "txt";
   }
+  if (normalized.endsWith(".srt")) {
+    return "srt";
+  }
   if (normalized.endsWith(".docx")) {
     return "docx";
   }
@@ -70,7 +73,9 @@ export function detectImportFileType(fileName) {
 }
 
 function importFileTypeNeedsSourceLanguage(fileType) {
-  return fileType === "txt" || fileType === "docx" || fileType === "html";
+  return (
+    fileType === "txt" || fileType === "srt" || fileType === "docx" || fileType === "html"
+  );
 }
 
 function readableImportFileLike(value) {
@@ -255,6 +260,22 @@ function normalizeProjectImportInputMode(value) {
 }
 
 function importSummaryNoticeSuffix(result) {
+  return `${docxImportSummaryNoticeSuffix(result)}${srtImportSummaryNoticeSuffix(result)}`;
+}
+
+// Rolling-caption SRT files (YouTube auto-captions) are collapsed at import;
+// tell the user their cue count was intentionally reduced.
+function srtImportSummaryNoticeSuffix(result) {
+  const summary = result?.srtImportSummary;
+  const originalCueCount = Number(summary?.originalCueCount ?? 0);
+  const importedRowCount = Number(summary?.importedRowCount ?? 0);
+  if (originalCueCount <= 0 || importedRowCount <= 0) {
+    return "";
+  }
+  return ` Merged rolling captions: ${originalCueCount} cues became ${importedRowCount} rows.`;
+}
+
+function docxImportSummaryNoticeSuffix(result) {
   const summary = result?.importSummary;
   if (!summary || typeof summary !== "object") {
     return "";
@@ -885,6 +906,19 @@ async function importProjectFileResult(selectedTeam, targetProject, selectedFile
 
   if (fileType === "txt") {
     return invoke("import_txt_to_gtms", {
+      input: {
+        installationId: selectedTeam.installationId,
+        projectId: targetProject.id,
+        repoName: targetProject.name,
+        fileName: sourceFileName,
+        bytes,
+        sourceLanguageCode: options.confirmedSourceLanguageCode,
+      },
+    });
+  }
+
+  if (fileType === "srt") {
+    return invoke("import_srt_to_gtms", {
       input: {
         installationId: selectedTeam.installationId,
         projectId: targetProject.id,

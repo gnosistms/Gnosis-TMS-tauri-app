@@ -26,6 +26,11 @@ import {
   editorLanguageFootnoteText,
 } from "./editor-utils.js";
 import { languageBaseCode } from "./editor-language-utils.js";
+import {
+  chapterHasSrtSourceFormat,
+  computeChapterTimingErrors,
+  effectiveRowTiming,
+} from "./editor-timing.js";
 
 let cachedEditorRowsRef = null;
 let cachedEditorLanguagesRef = null;
@@ -153,6 +158,14 @@ function buildLiveTranslationRows(editorChapter, languages) {
     return cachedLiveTranslationRows;
   }
 
+  // Timing errors are derived whenever rows are drawn (never stored), so
+  // errors already present in the imported file show immediately and an edit
+  // to one row refreshes the overlap marks on its neighbors.
+  const showTiming = chapterHasSrtSourceFormat(editorChapter?.sourceFormats);
+  const timingErrorsByRowId = showTiming
+    ? computeChapterTimingErrors(editorRows, languageOptions.map((language) => language.code))
+    : new Map();
+
   const liveRows = editorRows.map((row) => {
     const hasConflict = rowHasUnresolvedEditorConflict(row);
     const conflictLanguageCodes = hasConflict
@@ -265,6 +278,12 @@ function buildLiveTranslationRows(editorChapter, languages) {
           isActive:
             editorChapter?.activeRowId === row.rowId
             && editorChapter?.activeLanguageCode === language.code,
+          showTiming,
+          timing: showTiming ? effectiveRowTiming(row, language.code) : null,
+          timingStartError:
+            timingErrorsByRowId.get(row.rowId)?.[language.code]?.startError === true,
+          timingEndError:
+            timingErrorsByRowId.get(row.rowId)?.[language.code]?.endError === true,
           reviewed: row.fieldStates?.[language.code]?.reviewed === true,
           pleaseCheck: row.fieldStates?.[language.code]?.pleaseCheck === true,
           hasConflict: conflictLanguageCodes.has(language.code),

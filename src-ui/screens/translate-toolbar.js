@@ -7,7 +7,7 @@ import {
 } from "../lib/ui.js";
 import {
   EDITOR_ROW_FILTER_MODE_SHOW_ALL,
-  EDITOR_ROW_FILTER_OPTIONS,
+  editorRowFilterOptionsForChapter,
   labelForEditorRowFilterMode,
 } from "../app/editor-filters.js";
 import { EDITOR_MODE_PREVIEW, normalizeEditorPreviewSearchState } from "../app/editor-preview.js";
@@ -139,7 +139,7 @@ function renderFontSizeSelect(fontSizePx) {
   });
 }
 
-function renderFilterSelect(editorFilters) {
+function renderFilterSelect(editorFilters, timingErrorFilterAvailable = false) {
   const selectedMode = editorFilters?.filters?.rowFilterMode ?? EDITOR_ROW_FILTER_MODE_SHOW_ALL;
   const isConflictLocked = editorFilters?.isConflictLocked === true;
   return renderSelectPillControl({
@@ -154,7 +154,7 @@ function renderFilterSelect(editorFilters) {
       "data-editor-filter-select": true,
       "aria-label": "Editor filter",
     },
-    options: EDITOR_ROW_FILTER_OPTIONS.map((option) => ({
+    options: editorRowFilterOptionsForChapter({ timingErrorFilterAvailable }).map((option) => ({
       value: option.value,
       label: option.label,
       selected: option.value === selectedMode,
@@ -398,6 +398,7 @@ export function renderTranslateToolbar({
   clearTranslationsAvailable = false,
   writeActionsAvailable = true,
   offlineMode = false,
+  timingErrorFilterAvailable = false,
 }) {
   const offlineAiTooltip = offlineMode
     ? "AI actions are unavailable offline."
@@ -409,7 +410,7 @@ export function renderTranslateToolbar({
           ${renderLanguageSelect("Source", "editor-source-language-select", sourceCode, languages, sourceLanguageExtraOptions)}
           ${renderLanguageSelect("Target", "editor-target-language-select", targetCode, languages, targetLanguageExtraOptions)}
           ${renderFontSizeSelect(editorFontSizePx)}
-          ${renderFilterSelect(editorFilters)}
+          ${renderFilterSelect(editorFilters, timingErrorFilterAvailable)}
           <div class="toolbar-search">
             ${renderEditorSearchField(editorFilters)}
             ${renderEditorReplaceControls({

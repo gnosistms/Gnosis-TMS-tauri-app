@@ -54,6 +54,7 @@ const BASE_EDITOR_EXPORT_CATEGORIES = [
       { id: "file:xlsx", label: "XLSX", kind: "file", format: "xlsx", available: true, omitCustomHtmlOption: true },
       { id: "file:docx", label: "DOCX", kind: "file", format: "docx", available: true, printLinkFallback: true, omitCustomHtmlOption: true },
       { id: "file:txt", label: "TXT", kind: "file", format: "txt", available: true, omitCustomHtmlOption: true },
+      { id: "file:srt", label: "SRT", kind: "file", format: "srt", available: true, requiresSourceFormat: "srt" },
       { id: "file:rtf", label: "RTF", kind: "file", format: "rtf", available: true, printLinkFallback: true, omitCustomHtmlOption: true },
       { id: "file:md", label: "Markdown", kind: "file", format: "md", available: true, omitCustomHtmlOption: true },
     ],
@@ -80,12 +81,37 @@ const BASE_EDITOR_EXPORT_CATEGORIES = [
 
 export { PDF_PAPER_SIZES } from "./editor-export-options.js";
 
+// Source formats of the chapter the export modal is showing. The open editor's
+// chapter payload wins; otherwise the projects-page chapter summary supplies it.
+function exportChapterSourceFormats() {
+  const chapterId = currentExportModal()?.chapterId;
+  if (!chapterId) {
+    return [];
+  }
+  if (
+    state.editorChapter?.chapterId === chapterId
+    && Array.isArray(state.editorChapter?.sourceFormats)
+  ) {
+    return state.editorChapter.sourceFormats;
+  }
+  const chapter = findChapterContext(chapterId)?.chapter;
+  return Array.isArray(chapter?.sourceFormats) ? chapter.sourceFormats : [];
+}
+
 export function editorExportCategories() {
   const mac = isMacPlatform();
+  const sourceFormats = exportChapterSourceFormats();
   return BASE_EDITOR_EXPORT_CATEGORIES.map((category) => ({
     ...category,
     options: category.options
-      .filter((option) => option.platform !== "mac" || mac),
+      .filter((option) => option.platform !== "mac" || mac)
+      // Provenance-gated options (SRT) are hidden entirely for chapters that
+      // were not imported from that format.
+      .filter(
+        (option) =>
+          !option.requiresSourceFormat
+          || sourceFormats.includes(option.requiresSourceFormat),
+      ),
   }));
 }
 
@@ -465,6 +491,9 @@ function exportFileFilter(format) {
   if (format === "md") {
     return { name: "Markdown document", extensions: ["md"] };
   }
+  if (format === "srt") {
+    return { name: "SRT subtitles", extensions: ["srt"] };
+  }
   return { name: "Plain text", extensions: ["txt"] };
 }
 
@@ -638,7 +667,7 @@ async function submitEditorFileExport(render, option, operations) {
       }
       return;
     }
-    await invokeCommand("export_gtms_chapter_file", {
+    const exportResult = await invokeCommand("export_gtms_chapter_file", {
       input: {
         ...input,
       },
@@ -648,7 +677,14 @@ async function submitEditorFileExport(render, option, operations) {
     // Full render to remove the modal; showNoticeBadge only repaints the
     // badge surface.
     render();
-    showNoticeBadge(`Exported ${defaultFileName}.`, render, 2200);
+    const skippedRowsWithoutTiming = Number(exportResult?.skippedRowsWithoutTiming) || 0;
+    showNoticeBadge(
+      skippedRowsWithoutTiming > 0
+        ? `Exported ${defaultFileName}. ${skippedRowsWithoutTiming} row${skippedRowsWithoutTiming === 1 ? "" : "s"} without timing ${skippedRowsWithoutTiming === 1 ? "was" : "were"} left out.`
+        : `Exported ${defaultFileName}.`,
+      render,
+      skippedRowsWithoutTiming > 0 ? 4200 : 2200,
+    );
   } catch (error) {
     failEditorExport(render, error);
   }

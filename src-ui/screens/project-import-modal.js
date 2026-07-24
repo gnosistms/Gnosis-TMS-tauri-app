@@ -156,7 +156,7 @@ function renderProjectImportUploadPanel(isImporting) {
       ${isImporting ? '<span class="button__spinner" aria-hidden="true"></span>' : ""}
       <span>Drop files here or click to open the file selector.</span>
     </button>
-    <p class="project-import-modal__hint">Supported formats: .xlsx, .txt, .docx, .html, or .htm. For .xlsx files, the first row must contain supported language codes such as es, en, vi, zh-Hans, or zh-Hant.</p>
+    <p class="project-import-modal__hint">Supported formats: .xlsx, .txt, .srt, .docx, .html, or .htm. For .xlsx files, the first row must contain supported language codes such as es, en, vi, zh-Hans, or zh-Hant.</p>
   `;
 }
 

@@ -6,6 +6,7 @@ import { onCurrentWebviewDragDrop, openExternalUrl } from "./runtime.js";
 import { noteUserScrollIntent } from "./editor-scroll-session.js";
 import { state } from "./state.js";
 import {
+  applyEditorTimingFieldBlur,
   collapseEditorMainField,
   collapseEditorImageCaption,
   collapseEmptyEditorFootnote,
@@ -508,6 +509,19 @@ export function registerTranslateEditorDomEvents(app, render) {
   });
 
   app.addEventListener("focusout", (event) => {
+    const timingInput = closestEventTarget(event.target, "[data-editor-timing-field]");
+    if (timingInput instanceof HTMLInputElement) {
+      // Deferred like the other blur handlers so focus has settled; validation
+      // and persistence live in editor-timing-flow.js.
+      requestAnimationFrame(() => {
+        if (document.activeElement === timingInput) {
+          return;
+        }
+        applyEditorTimingFieldBlur(render, timingInput);
+      });
+      return;
+    }
+
     const target = closestEventTarget(
       event.target,
       "[data-editor-row-field], [data-editor-image-url-input], [data-editor-image-upload-dropzone]",
@@ -589,6 +603,15 @@ export function registerTranslateEditorDomEvents(app, render) {
       || event.repeat
       || event.isComposing
     ) {
+      return;
+    }
+
+    const timingField = closestEventTarget(event.target, "[data-editor-timing-field]");
+    if (timingField instanceof HTMLInputElement) {
+      if (event.key === "Enter" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        event.preventDefault();
+        timingField.blur();
+      }
       return;
     }
 

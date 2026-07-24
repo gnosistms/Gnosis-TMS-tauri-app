@@ -20,6 +20,7 @@ import {
   normalizeEditorRowTextStyle,
 } from "./editor-row-text-style.js";
 import { sanitizeCustomHtmlForDisplay } from "./editor-custom-html.js";
+import { formatTimingMs as formatEditorTimingMs } from "./editor-timing.js";
 import {
   renderSanitizedInlineMarkupHtml,
   renderSanitizedInlineMarkupWithEditorHighlightState,
@@ -959,6 +960,47 @@ function orderRowSectionsByCollapsedState(sections, collapsedLanguageCodes = new
   return [...expandedSections, ...collapsedSections];
 }
 
+// Subtitle timing inputs shown above each language's text field on SRT
+// chapters. Red error outlines come from the section's derived timing errors
+// (too short / overlap) so both rows of an overlapping pair are marked, on
+// exactly the start or end input at fault.
+function renderEditorTimingFields(row, language) {
+  if (language?.showTiming !== true) {
+    return "";
+  }
+
+  const timing = language.timing;
+  const timingInput = (kind, valueMs, hasError) => `
+    <input
+      type="text"
+      class="translation-timing__input${hasError ? " translation-timing__input--error" : ""}"
+      data-editor-timing-field
+      data-row-id="${escapeHtml(row.id)}"
+      data-language-code="${escapeHtml(language.code)}"
+      data-timing-kind="${kind}"
+      value="${Number.isFinite(valueMs) ? escapeHtml(formatEditorTimingMs(valueMs)) : ""}"
+      placeholder="00:00:00,000"
+      spellcheck="false"
+      autocomplete="off"
+      aria-label="${kind === "start" ? "Start time" : "End time"}"
+      ${language.canEdit === true ? "" : "disabled"}
+      ${hasError ? tooltipAttributes(kind === "start" ? "This row starts before the previous row ends, or is shorter than 0.25 seconds." : "This row ends after the next row starts, or is shorter than 0.25 seconds.") : ""}
+    />`;
+
+  return `
+    <div
+      class="translation-language-panel__timing"
+      data-editor-timing
+      data-row-id="${escapeHtml(row.id)}"
+      data-language-code="${escapeHtml(language.code)}"
+    >
+      ${timingInput("start", timing ? timing.startMs : Number.NaN, language.timingStartError === true)}
+      <span class="translation-timing__separator" aria-hidden="true">&#8594;</span>
+      ${timingInput("end", timing ? timing.endMs : Number.NaN, language.timingEndError === true)}
+    </div>
+  `;
+}
+
 export function renderTranslationContentRow(
   row,
   collapsedLanguageCodes = new Set(),
@@ -1078,6 +1120,7 @@ export function renderTranslationContentRow(
                         ${renderLanguageMarkerButton("please-check", row.id, language)}
                       </div>
                     </div>
+                    ${isCollapsed ? "" : renderEditorTimingFields(row, language)}
                     ${
                       isCollapsed
                         ? ""

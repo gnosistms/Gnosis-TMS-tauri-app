@@ -229,6 +229,7 @@ pub(super) fn write_parsed_workbook_chapter(
                     .collect(),
                 source_file_name: parsed.source_file_name,
                 import_summary: parsed.import_summary,
+                srt_import_summary: parsed.srt_import_summary,
             },
             relative_chapter_path,
             absolute_chapter_path: chapter_path.clone(),
@@ -520,6 +521,22 @@ pub(super) fn build_row_file(
               "source_line_number": imported_row.source_row_number,
             }),
         );
+    } else if parsed.source_format == "srt" {
+        if let Some(metadata) = imported_row.srt_metadata.as_ref() {
+            let mut srt_metadata = json!({
+              "start_ms": metadata.start_ms,
+              "end_ms": metadata.end_ms,
+            });
+            if let Some(sequence_number) = metadata.sequence_number {
+                if let Some(object) = srt_metadata.as_object_mut() {
+                    object.insert(
+                        "sequence_number".to_string(),
+                        Value::Number(sequence_number.into()),
+                    );
+                }
+            }
+            format_metadata.insert("srt".to_string(), srt_metadata);
+        }
     } else if parsed.source_format == "docx" {
         if let Some(metadata) = imported_row.docx_metadata.as_ref() {
             format_metadata.insert(
@@ -817,6 +834,7 @@ mod tests {
                 language_codes: Vec::new(),
                 source_file_name: "article.html".to_string(),
                 import_summary: None,
+                srt_import_summary: None,
             },
             relative_chapter_path: relative_chapter_path.to_string(),
             absolute_chapter_path,

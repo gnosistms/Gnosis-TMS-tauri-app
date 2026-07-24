@@ -150,9 +150,11 @@ function installBatchImportInvokeHandler({ failFileNames = new Set() } = {}) {
   return calls;
 }
 
-test("detectImportFileType supports XLSX, TXT, DOCX, and HTML", () => {
+test("detectImportFileType supports XLSX, TXT, SRT, DOCX, and HTML", () => {
   assert.equal(detectImportFileType("chapter.xlsx"), "xlsx");
   assert.equal(detectImportFileType("chapter.TXT"), "txt");
+  assert.equal(detectImportFileType("episode.srt"), "srt");
+  assert.equal(detectImportFileType("episode.SRT"), "srt");
   assert.equal(detectImportFileType("chapter.docx"), "docx");
   assert.equal(detectImportFileType("chapter.html"), "html");
   assert.equal(detectImportFileType("chapter.htm"), "html");
@@ -410,7 +412,7 @@ test("unsupported project import error includes HTML", async () => {
   });
 
   assert.equal(state.projectImport.status, "error");
-  assert.match(state.projectImport.error, /XLSX, TXT, DOCX, and HTML/);
+  assert.match(state.projectImport.error, /XLSX, TXT, SRT, DOCX, and HTML/);
 });
 
 test("project import source language selection updates pending TXT state", () => {
