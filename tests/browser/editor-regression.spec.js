@@ -668,6 +668,13 @@ async function installMockTauri(page) {
   });
 }
 
+// Cold Vite dev-server boots transform the whole editor module graph on demand,
+// which on a slow CI runner (Windows especially) can take far longer than
+// Playwright's 30s action default. The navigation and the wait for the debug
+// harness each get their own generous budget so runner-slowness reads as "still
+// booting" rather than a hard failure; both stay under the per-test timeout.
+const EDITOR_FIXTURE_BOOTSTRAP_TIMEOUT_MS = 45_000;
+
 async function mountEditorFixture(page, options = {}, setup = {}) {
   if (setup.mockTauri === true) {
     await installMockTauri(page);
@@ -681,8 +688,12 @@ async function mountEditorFixture(page, options = {}, setup = {}) {
     }
   });
 
-  await page.goto(setup.path ?? "/");
-  await page.waitForFunction(() => typeof window.__gnosisDebug?.mountEditorFixture === "function");
+  await page.goto(setup.path ?? "/", { timeout: EDITOR_FIXTURE_BOOTSTRAP_TIMEOUT_MS });
+  await page.waitForFunction(
+    () => typeof window.__gnosisDebug?.mountEditorFixture === "function",
+    undefined,
+    { timeout: EDITOR_FIXTURE_BOOTSTRAP_TIMEOUT_MS },
+  );
   await page.evaluate(async (fixtureOptions) => {
     await window.__gnosisDebug.waitForBootstrap();
     await window.__gnosisDebug.mountEditorFixture(fixtureOptions);
@@ -2123,6 +2134,17 @@ test.describe("editor regressions", () => {
       '[data-editor-image-upload-dropzone][data-row-id="fixture-row-0080"][data-language-code="vi"]',
     );
     await expect(uploadDropzone).toBeVisible();
+
+    // The bottom-pin scroll compensation runs after waitForNextPaint() (a double
+    // rAF), so the dropzone becoming visible does not mean the pin has fired. On
+    // a slow runner the measurement can land in between — the focused row has
+    // grown but the viewport has not yet been pulled back to the bottom. Poll
+    // until the pin settles, then assert the tight tolerance so a genuinely
+    // broken pin (e.g. a row-patch regression) still fails instead of being
+    // masked by a looser bound.
+    await expect
+      .poll(async () => (await readTranslateScrollMetrics(page)).bottomGap)
+      .toBeLessThanOrEqual(beforeMetrics.bottomGap + 4);
 
     const afterMetrics = await readTranslateScrollMetrics(page);
     expect(afterMetrics.bottomGap).toBeLessThanOrEqual(beforeMetrics.bottomGap + 4);
