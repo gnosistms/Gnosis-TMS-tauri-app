@@ -97,9 +97,10 @@ use self::row_fields::{
     apply_editor_field_flag_update, apply_editor_footnote_updates, apply_editor_plain_text_updates,
 };
 pub(crate) use self::row_fields::{
-    apply_gtms_editor_ai_review_result_sync, clear_gtms_editor_reviewed_markers_sync,
-    update_gtms_editor_row_field_flag_sync, update_gtms_editor_row_fields_batch_sync,
-    update_gtms_editor_row_fields_sync, update_gtms_editor_row_text_style_sync,
+    apply_gtms_editor_ai_review_result_sync, apply_gtms_editor_ai_review_results_batch_sync,
+    clear_gtms_editor_reviewed_markers_sync, update_gtms_editor_row_field_flag_sync,
+    update_gtms_editor_row_fields_batch_sync, update_gtms_editor_row_fields_sync,
+    update_gtms_editor_row_text_style_sync,
 };
 pub(crate) use self::row_merge::merge_gtms_editor_rows_sync;
 #[cfg(test)]
@@ -379,6 +380,33 @@ pub(crate) struct ApplyEditorAiReviewResultInput {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct ApplyEditorAiReviewResultsBatchRowInput {
+    row_id: String,
+    #[serde(default)]
+    suggested_text: String,
+    #[serde(default)]
+    suggested_footnote: String,
+    #[serde(default)]
+    suggested_image_caption: String,
+    reviewed: bool,
+    please_check: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ApplyEditorAiReviewResultsBatchInput {
+    pub(crate) installation_id: i64,
+    repo_name: String,
+    project_id: Option<String>,
+    chapter_id: String,
+    language_code: String,
+    rows: Vec<ApplyEditorAiReviewResultsBatchRowInput>,
+    #[serde(default)]
+    ai_model: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct UpdateEditorRowTextStyleInput {
     pub(crate) installation_id: i64,
     repo_name: String,
@@ -533,6 +561,27 @@ pub(crate) struct ApplyEditorAiReviewResultResponse {
     reviewed: bool,
     please_check: bool,
     last_update: Option<EditorRowVersionMetadata>,
+    chapter_base_commit_sha: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ApplyEditorAiReviewResultsBatchRowResult {
+    row_id: String,
+    text: String,
+    footnote: String,
+    image_caption: String,
+    reviewed: bool,
+    please_check: bool,
+    last_update: Option<EditorRowVersionMetadata>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ApplyEditorAiReviewResultsBatchResponse {
+    language_code: String,
+    rows: Vec<ApplyEditorAiReviewResultsBatchRowResult>,
+    word_counts: BTreeMap<String, usize>,
     chapter_base_commit_sha: Option<String>,
 }
 

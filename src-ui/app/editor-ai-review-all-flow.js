@@ -374,7 +374,11 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
   let providerId = "";
   let modelId = "";
   try {
-    ({ providerId, modelId } = await ensureAiReviewAllProviderReady(render));
+    const ensureProviderReady =
+      typeof operations.ensureAiReviewAllProviderReady === "function"
+        ? operations.ensureAiReviewAllProviderReady
+        : ensureAiReviewAllProviderReady;
+    ({ providerId, modelId } = await ensureProviderReady(render));
   } catch (error) {
     if (!isActiveAiReviewAllRun(runId, editorChapter.chapterId)) {
       return;
@@ -490,6 +494,91 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
       languageProgress: buildLanguageProgress(targetLanguageCode, work.length, completedCount),
     });
     render?.({ scope: "translate-visible-rows", rowIds: [item.rowId], reason: "ai-review-all" });
+    render?.({ scope: "translate-ai-review-all-modal" });
+    return "ok";
+  };
+
+  // Writes all valid results from one batch response through one Tauri command
+  // and one git commit. One commit per row starves interactive saves in the
+  // write path on long runs (same failure mode AI Translate All had before its
+  // grouped save). Returns "chapter-changed" or "ok".
+  const applyReviewOutcomesBatch = async (entries) => {
+    if (entries.length === 0) {
+      return "ok";
+    }
+    const rows = entries.map(({ item, reviewPayload }) => {
+      const reviewed = reviewPayload?.reviewed === true;
+      return {
+        rowId: item.rowId,
+        suggestedText: reviewed ? "" : String(reviewPayload?.suggestedText ?? ""),
+        suggestedFootnote: reviewed ? "" : String(reviewPayload?.suggestedFootnote ?? ""),
+        suggestedImageCaption: reviewed ? "" : String(reviewPayload?.suggestedImageCaption ?? ""),
+        reviewed,
+        pleaseCheck: !reviewed,
+      };
+    });
+    const applyBatch =
+      typeof operations.applyAiReviewResultsBatch === "function"
+        ? operations.applyAiReviewResultsBatch
+        : (input) =>
+          invokeEditorWriteCommand("apply_gtms_editor_ai_review_results_batch", { input }, {
+            render,
+            actionKind: "sharedWrite",
+          });
+    const savePayload = await applyBatch({
+      installationId: team.installationId,
+      projectId: context.project.id,
+      repoName: context.project.name,
+      chapterId: editorChapter.chapterId,
+      languageCode: targetLanguageCode,
+      rows,
+      aiModel: modelId,
+    });
+    if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
+      return "chapter-changed";
+    }
+    const resultsByRowId = new Map(
+      (Array.isArray(savePayload?.rows) ? savePayload.rows : []).map((row) => [row.rowId, row]),
+    );
+    const appliedRowIds = [];
+    for (const { item } of entries) {
+      const rowPayload = resultsByRowId.get(item.rowId);
+      if (!rowPayload) {
+        continue;
+      }
+      operations.updateEditorChapterRow?.(item.rowId, (currentRow) =>
+        applyReviewResultToRow(currentRow, targetLanguageCode, rowPayload),
+      );
+      appliedRowIds.push(item.rowId);
+    }
+    state.editorChapter = {
+      ...state.editorChapter,
+      wordCounts:
+        savePayload?.wordCounts && typeof savePayload.wordCounts === "object"
+          ? savePayload.wordCounts
+          : state.editorChapter.wordCounts,
+      chapterBaseCommitSha:
+        typeof savePayload?.chapterBaseCommitSha === "string" && savePayload.chapterBaseCommitSha.trim()
+          ? savePayload.chapterBaseCommitSha.trim()
+          : state.editorChapter.chapterBaseCommitSha,
+    };
+    reconcileDirtyTrackedEditorRows(appliedRowIds);
+    if (
+      appliedRowIds.includes(state.editorChapter.activeRowId)
+      && state.editorChapter.activeLanguageCode === targetLanguageCode
+    ) {
+      loadActiveEditorFieldHistory(render);
+    }
+
+    completedCount += appliedRowIds.length;
+    applyEditorAiReviewAllModal({
+      step: "reviewing",
+      status: "loading",
+      completedCount,
+      totalCount: work.length,
+      languageProgress: buildLanguageProgress(targetLanguageCode, work.length, completedCount),
+    });
+    render?.({ scope: "translate-visible-rows", rowIds: appliedRowIds, reason: "ai-review-all" });
     render?.({ scope: "translate-ai-review-all-modal" });
     return "ok";
   };
@@ -648,14 +737,12 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
       });
       reportBackendNonfatalError({ operation: "ai-review-batch", reason: "missing-rows" });
     }
+    const batchApplyEntries = [];
+    const fallbackEntries = [];
     for (const entry of liveItems) {
-      if (!isReviewActive()) {
-        return "abort";
-      }
       const { item } = entry;
-      // Re-validate against the CURRENT row: the batch call plus earlier
-      // per-row apply writes leave a long window in which the user or
-      // background sync may have changed this row.
+      // Re-validate against the CURRENT row: the batch call leaves a long
+      // window in which the user or background sync may have changed this row.
       const currentRow = findEditorRowById(item.rowId, state.editorChapter);
       const currentTranslation = readEditorReviewRowFieldText(currentRow, targetLanguageCode);
       const currentFootnote = readEditorReviewRowFootnote(currentRow, targetLanguageCode);
@@ -675,9 +762,21 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
         || currentImageCaption !== entry.latestImageCaption;
       // A changed row gets re-reviewed against its current text through the
       // single-row path instead of receiving a verdict for text it no longer has.
-      const outcome = rowResult && !textChangedMidFlight
-        ? await applyReviewOutcome(item, rowResult)
-        : await reviewSingleItem(item, preloadedHistoryForEntry(entry));
+      if (rowResult && !textChangedMidFlight) {
+        batchApplyEntries.push({ item, reviewPayload: rowResult });
+      } else {
+        fallbackEntries.push(entry);
+      }
+    }
+    const batchOutcome = await applyReviewOutcomesBatch(batchApplyEntries);
+    if (batchOutcome !== "ok") {
+      return batchOutcome;
+    }
+    for (const entry of fallbackEntries) {
+      if (!isReviewActive()) {
+        return "abort";
+      }
+      const outcome = await reviewSingleItem(entry.item, preloadedHistoryForEntry(entry));
       if (outcome === "abort" || outcome === "chapter-changed") {
         return outcome;
       }
