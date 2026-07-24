@@ -84,6 +84,7 @@ function parseGlossaryHighlightRanges(highlightHtml) {
         start,
         end,
         classValue: readMarkupAttributeValue(attributes, "class"),
+        termIdValue: readMarkupAttributeValue(attributes, "data-editor-glossary-term-id"),
         tooltipValue: readMarkupAttributeValue(attributes, "data-editor-glossary-tooltip"),
         tooltipPayloadValue: readMarkupAttributeValue(
           attributes,
@@ -104,6 +105,9 @@ function renderGlossaryMark(segmentHtml, range) {
     `class="${classValue}" data-editor-glossary-mark`
     + ` data-text-start="${range?.start ?? 0}"`
     + ` data-text-end="${range?.end ?? 0}"`;
+  if (range?.termIdValue) {
+    attributes += ` data-editor-glossary-term-id="${range.termIdValue}"`;
+  }
   if (range?.tooltipValue) {
     attributes += ` data-editor-glossary-tooltip="${range.tooltipValue}"`;
   }

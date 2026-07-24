@@ -1,13 +1,16 @@
 import { state } from "../state.js";
 import {
   clearScopedSyncBadge,
+  showNoticeBadge,
   showScopedSyncBadge,
 } from "../status-feedback.js";
 import {
   loadTeamGlossaries,
   openGlossaryEditor,
+  openGlossaryTermEditor,
   primeGlossariesLoadingState,
 } from "../glossary-flow.js";
+import { findGlossaryTermById } from "../glossary-term-sync.js";
 import {
   loadTeamQaLists,
   openEditorQaList,
@@ -22,7 +25,7 @@ import {
 import { loadTeamUsers, primeUsersForTeam } from "../team-members-flow.js";
 import { actionSuffix } from "../action-helpers.js";
 import { waitForNextPaint } from "../runtime.js";
-import { openTranslateChapter } from "../translate-flow.js";
+import { collapseEditorMainField, openTranslateChapter } from "../translate-flow.js";
 import { resolveSelectedChapterGlossary } from "../project-context.js";
 import { refreshCurrentUserTeamAccess } from "../team-query.js";
 
@@ -124,6 +127,45 @@ export function createNavigationActions(render) {
         navigationSource: "editor",
         preferredGlossary: glossary,
       });
+      return true;
+    }
+
+    const openEditorGlossaryTermId = actionSuffix(action, "open-editor-glossary-term:");
+    if (openEditorGlossaryTermId !== null) {
+      const glossary = resolveSelectedChapterGlossary();
+      if (!glossary?.repoName) {
+        return true;
+      }
+
+      // The first click of the double-click opened this field's editor. Close it
+      // before leaving, or the field comes back from the glossary still in
+      // open-editor mode — which suppresses its glossary underlines.
+      const mainField = state.editorChapter?.mainFieldEditor;
+      if (mainField?.rowId && mainField?.languageCode) {
+        collapseEditorMainField(render, mainField.rowId, mainField.languageCode);
+      }
+
+      const glossaryId = glossary.id ?? glossary.glossaryId;
+      void (async () => {
+        await openGlossaryEditor(render, glossaryId, {
+          navigationSource: "editor",
+          preferredGlossary: glossary,
+        });
+        if (
+          state.screen !== "glossaryEditor"
+          || state.glossaryEditor?.glossaryId !== glossaryId
+          || state.glossaryEditor?.status !== "ready"
+        ) {
+          return;
+        }
+
+        if (!findGlossaryTermById(openEditorGlossaryTermId, state.glossaryEditor)) {
+          showNoticeBadge("This term is no longer in the glossary.", render);
+          return;
+        }
+
+        await openGlossaryTermEditor(render, openEditorGlossaryTermId);
+      })();
       return true;
     }
 
