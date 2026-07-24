@@ -16,6 +16,7 @@ const MIN_RECOMMENDED_OPENAI_MODEL_VERSION: OpenAiModelVersion = OpenAiModelVers
     major: 5,
     minor: Some(4),
 };
+const RECOMMENDED_OPENAI_MODEL_VERSION_COUNT: usize = 2;
 
 #[derive(Debug, Serialize)]
 struct OpenAiResponsesRequest<'a> {
@@ -92,18 +93,31 @@ struct OpenAiModelVersion {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum OpenAiModelFamily {
     General,
+    Sol,
+    Terra,
+    Luna,
     Mini,
     Nano,
 }
 
 impl OpenAiModelFamily {
-    fn recommended_ordered() -> [Self; 3] {
-        [Self::General, Self::Mini, Self::Nano]
+    fn recommended_ordered() -> [Self; 6] {
+        [
+            Self::General,
+            Self::Sol,
+            Self::Terra,
+            Self::Luna,
+            Self::Mini,
+            Self::Nano,
+        ]
     }
 
     fn suffix(self) -> Option<&'static str> {
         match self {
             Self::General => None,
+            Self::Sol => Some("-sol"),
+            Self::Terra => Some("-terra"),
+            Self::Luna => Some("-luna"),
             Self::Mini => Some("-mini"),
             Self::Nano => Some("-nano"),
         }
@@ -112,8 +126,11 @@ impl OpenAiModelFamily {
     fn picker_rank(self) -> u8 {
         match self {
             Self::General => 0,
-            Self::Mini => 1,
-            Self::Nano => 2,
+            Self::Sol => 1,
+            Self::Terra => 2,
+            Self::Luna => 3,
+            Self::Mini => 4,
+            Self::Nano => 5,
         }
     }
 }
@@ -512,6 +529,14 @@ fn shortlist_recommended_models(models: &[AiProviderModel]) -> Vec<AiProviderMod
             .then_with(|| left.1.picker_rank().cmp(&right.1.picker_rank()))
             .then_with(|| left.2.label.cmp(&right.2.label))
     });
+
+    let mut recent_versions = recommended_models
+        .iter()
+        .map(|(version, _family, _model)| *version)
+        .collect::<Vec<_>>();
+    recent_versions.dedup();
+    recent_versions.truncate(RECOMMENDED_OPENAI_MODEL_VERSION_COUNT);
+    recommended_models.retain(|(version, _family, _model)| recent_versions.contains(version));
 
     recommended_models
         .into_iter()
@@ -949,7 +974,7 @@ mod tests {
     }
 
     #[test]
-    fn shortlist_recommended_models_keeps_all_picker_models_from_gpt_5_4_upward() {
+    fn shortlist_recommended_models_keeps_recent_general_mini_nano_families() {
         let models = vec![
             AiProviderModel {
                 id: "gpt-5".to_string(),
@@ -1025,7 +1050,7 @@ mod tests {
     }
 
     #[test]
-    fn shortlist_recommended_models_keeps_newer_major_family_alongside_5_x_models() {
+    fn shortlist_recommended_models_keeps_only_two_most_recent_versions() {
         let models = vec![
             AiProviderModel {
                 id: "gpt-5.4".to_string(),
@@ -1084,10 +1109,90 @@ mod tests {
                 "gpt-5.5",
                 "gpt-5.5-mini",
                 "gpt-5.5-nano",
-                "gpt-5.4",
-                "gpt-5.4-mini",
             ]
         );
+    }
+
+    #[test]
+    fn shortlist_recommended_models_recognizes_sol_terra_luna_families() {
+        let models = vec![
+            AiProviderModel {
+                id: "gpt-5.4".to_string(),
+                label: "gpt-5.4".to_string(),
+            },
+            AiProviderModel {
+                id: "gpt-5.4-mini".to_string(),
+                label: "gpt-5.4-mini".to_string(),
+            },
+            AiProviderModel {
+                id: "gpt-5.5".to_string(),
+                label: "gpt-5.5".to_string(),
+            },
+            AiProviderModel {
+                id: "gpt-5.5-mini".to_string(),
+                label: "gpt-5.5-mini".to_string(),
+            },
+            AiProviderModel {
+                id: "gpt-5.5-nano".to_string(),
+                label: "gpt-5.5-nano".to_string(),
+            },
+            AiProviderModel {
+                id: "gpt-5.6-luna".to_string(),
+                label: "gpt-5.6-luna".to_string(),
+            },
+            AiProviderModel {
+                id: "gpt-5.6-sol".to_string(),
+                label: "gpt-5.6-sol".to_string(),
+            },
+            AiProviderModel {
+                id: "gpt-5.6-terra".to_string(),
+                label: "gpt-5.6-terra".to_string(),
+            },
+            AiProviderModel {
+                id: "gpt-5.6-sol-2026-07-09".to_string(),
+                label: "gpt-5.6-sol-2026-07-09".to_string(),
+            },
+        ];
+
+        let recommended = shortlist_recommended_models(&models);
+        let ids = recommended
+            .into_iter()
+            .map(|model| model.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            ids,
+            vec![
+                "gpt-5.6-sol",
+                "gpt-5.6-terra",
+                "gpt-5.6-luna",
+                "gpt-5.5",
+                "gpt-5.5-mini",
+                "gpt-5.5-nano",
+            ]
+        );
+    }
+
+    #[test]
+    fn shortlist_recommended_models_orders_version_alias_before_sol() {
+        let models = vec![
+            AiProviderModel {
+                id: "gpt-5.6-sol".to_string(),
+                label: "gpt-5.6-sol".to_string(),
+            },
+            AiProviderModel {
+                id: "gpt-5.6".to_string(),
+                label: "gpt-5.6".to_string(),
+            },
+        ];
+
+        let recommended = shortlist_recommended_models(&models);
+        let ids = recommended
+            .into_iter()
+            .map(|model| model.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, vec!["gpt-5.6", "gpt-5.6-sol"]);
     }
 
     #[test]
