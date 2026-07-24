@@ -9,6 +9,13 @@
       "autoPort": false
     },
     {
+      "name": "gnosis-tms-frontend-alt",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--", "--port", "4181", "--strictPort"],
+      "port": 4181,
+      "autoPort": false
+    },
+    {
       "name": "symplr-viewer",
       "runtimeExecutable": "python3",
       "runtimeArgs": [

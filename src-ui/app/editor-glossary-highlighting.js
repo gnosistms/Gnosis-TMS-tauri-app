@@ -371,6 +371,11 @@ function buildLanguageGlossaryMatcher(entries, matchLanguage) {
       const existingCandidate = termMap.get(key);
       if (existingCandidate) {
         appendOrderedUniqueTerms(
+          existingCandidate.termIdsOrdered,
+          existingCandidate.termIds,
+          entry.termIds,
+        );
+        appendOrderedUniqueTerms(
           existingCandidate.sourceTermsOrdered,
           existingCandidate.sourceTerms,
           entry.sourceTerms,
@@ -416,6 +421,9 @@ function buildLanguageGlossaryMatcher(entries, matchLanguage) {
       }
 
       const firstToken = tokens[0];
+      const termIdsOrdered = [];
+      const termIds = new Set();
+      appendOrderedUniqueTerms(termIdsOrdered, termIds, entry.termIds);
       const sourceTermsOrdered = [];
       const sourceTerms = new Set();
       appendOrderedUniqueTerms(sourceTermsOrdered, sourceTerms, entry.sourceTerms);
@@ -441,6 +449,8 @@ function buildLanguageGlossaryMatcher(entries, matchLanguage) {
       );
       const candidate = {
         tokens,
+        termIds,
+        termIdsOrdered,
         sourceTerms,
         sourceTermsOrdered,
         targetTerms,
@@ -533,6 +543,7 @@ export function buildEditorGlossaryModel(glossary) {
     );
     const details = glossaryDetailFields(term);
     return {
+      termIds: typeof term?.termId === "string" && term.termId.trim() ? [term.termId] : [],
       sourceTerms: sanitizeGlossaryVariantList(term?.sourceTerms),
       targetTerms: targetVariantInfo.targetTerms,
       targetVariants: targetVariantInfo.targetVariants,
@@ -551,6 +562,7 @@ export function buildEditorGlossaryModel(glossary) {
     );
     const details = glossaryDetailFields(term);
     return {
+      termIds: typeof term?.termId === "string" && term.termId.trim() ? [term.termId] : [],
       sourceTerms: sanitizeGlossaryVariantList(term?.sourceTerms),
       targetTerms: targetVariantInfo.targetTerms,
       targetVariants: targetVariantInfo.targetVariants,
@@ -916,6 +928,12 @@ function buildHighlightMarkup(text, matcher, glossaryModel, resolveMatchState = 
         segment,
         glossaryModel,
       );
+      // The first contributing term id is the term whose information leads on the
+      // hover card, so it is the one a double-click jump opens.
+      const [termId] = orderedCandidateValues(currentMatch.candidate, "termIdsOrdered", "termIds");
+      const termIdAttribute = termId
+        ? ` data-editor-glossary-term-id="${escapeHtmlAttribute(termId)}"`
+        : "";
       const tooltipAttribute = tooltipText
         ? ` data-editor-glossary-tooltip="${escapeHtmlAttribute(tooltipText)}"`
         : "";
@@ -923,7 +941,7 @@ function buildHighlightMarkup(text, matcher, glossaryModel, resolveMatchState = 
         ? ` data-editor-glossary-tooltip-payload="${escapeHtmlAttribute(JSON.stringify(tooltipPayload))}"`
         : "";
       htmlParts.push(
-        `<mark class="${matchClasses.join(" ")}" data-editor-glossary-mark data-text-start="${matchStart}" data-text-end="${matchEnd}"${tooltipAttribute}${tooltipPayloadAttribute}>${escapeHtml(segment)}</mark>`,
+        `<mark class="${matchClasses.join(" ")}" data-editor-glossary-mark data-text-start="${matchStart}" data-text-end="${matchEnd}"${termIdAttribute}${tooltipAttribute}${tooltipPayloadAttribute}>${escapeHtml(segment)}</mark>`,
       );
       characterOffset = baseMatchEnd;
       tokenIndex = currentMatch.endTokenIndex + 1;
@@ -1026,6 +1044,7 @@ function buildRowTargetMatcher(sections, glossaryModel, targetTexts) {
         .filter((variant) => matchingTargetTerms.includes(variant.text));
 
       return {
+        termIds: orderedCandidateValues(candidate, "termIdsOrdered", "termIds"),
         sourceTerms: entry.sourceTerm
           ? [entry.sourceTerm]
           : orderedCandidateValues(candidate, "sourceTermsOrdered", "sourceTerms"),

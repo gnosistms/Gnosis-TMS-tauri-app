@@ -12,6 +12,7 @@ import { reportBackendNonfatalError } from "./telemetry.js";
 import {
   deactivateGlossaryTooltipMark,
   focusEditorFieldFromGlossaryMark,
+  handleGlossaryMarkDoubleClick,
   handleGlossaryTooltipPointerMove,
   registerGlossaryTooltipEvents,
 } from "./events/glossary-tooltip.js";
@@ -146,6 +147,10 @@ export function registerAppEvents(render) {
 
     if (event.target instanceof Element && event.target.closest("[data-editor-search-case-toggle]")) {
       event.preventDefault();
+      return;
+    }
+
+    if (handleGlossaryMarkDoubleClick(event, dispatchAction)) {
       return;
     }
 

@@ -712,3 +712,86 @@ test("translation glossary hints append omission guidance when the empty variant
     noTranslation: { position: "later" },
   }]);
 });
+
+test("editor glossary marks carry the matched term id on source and target highlights", () => {
+  const model = buildEditorGlossaryModel(glossaryPayload({
+    terms: [
+      {
+        termId: "t1",
+        sourceTerms: ["interiorizacion"],
+        targetTerms: ["huong noi"],
+      },
+    ],
+  }));
+
+  const highlights = buildEditorRowGlossaryHighlights([
+    {
+      code: "es",
+      text: "Solo interiorizacion",
+    },
+    {
+      code: "vi",
+      text: "huong noi",
+    },
+  ], model);
+
+  assert.match(highlights.get("es")?.html ?? "", /data-editor-glossary-term-id="t1"/);
+  assert.match(highlights.get("vi")?.html ?? "", /data-editor-glossary-term-id="t1"/);
+});
+
+test("marks for terms sharing a source term carry the first contributing term id", () => {
+  const model = buildEditorGlossaryModel(glossaryPayload({
+    terms: [
+      {
+        termId: "t1",
+        sourceTerms: ["meditacion"],
+        targetTerms: ["thien dinh"],
+      },
+      {
+        termId: "t2",
+        sourceTerms: ["meditacion"],
+        targetTerms: ["thien tap"],
+      },
+    ],
+  }));
+
+  const highlights = buildEditorRowSourceGlossaryHighlights([
+    {
+      code: "es",
+      text: "La meditacion",
+    },
+  ], model);
+
+  const sourceHtml = highlights.get("es")?.html ?? "";
+  assert.match(sourceHtml, /data-editor-glossary-term-id="t1"/);
+  assert.doesNotMatch(sourceHtml, /data-editor-glossary-term-id="t2"/);
+});
+
+test("derived glossary marks carry no term id", () => {
+  const model = buildEditorDerivedGlossaryModel({
+    sourceLanguage: {
+      code: "en",
+      name: "English",
+    },
+    targetLanguage: {
+      code: "vi",
+      name: "Vietnamese",
+    },
+    entries: [{
+      sourceTerm: "inner chamber",
+      glossarySourceTerm: "camara interior",
+      targetVariants: ["buong noi tam"],
+    }],
+  });
+
+  const highlights = buildEditorRowSourceGlossaryHighlights([
+    {
+      code: "en",
+      text: "The inner chamber glows.",
+    },
+  ], model);
+
+  const sourceHtml = highlights.get("en")?.html ?? "";
+  assert.match(sourceHtml, /data-editor-glossary-mark/);
+  assert.doesNotMatch(sourceHtml, /data-editor-glossary-term-id/);
+});
