@@ -9,7 +9,8 @@ use crate::{
     repo_layout_metadata::{
         new_v2_repo_layout_metadata, parse_repo_layout_metadata_bytes,
         read_repo_layout_metadata_state, write_repo_layout_metadata, RepoKind, RepoLayoutMetadata,
-        RepoLayoutMetadataState, MIGRATION_0810, MIGRATION_0856, REPO_METADATA_RELATIVE_PATH,
+        RepoLayoutMetadataState, MIGRATION_0810, MIGRATION_0856, MIGRATION_0875,
+        REPO_METADATA_RELATIVE_PATH,
     },
     repo_sync_shared::{format_git_spawn_error, git_command, git_output},
     short_path_names::{allocate_short_folder_name, allocate_short_image_filename},
@@ -57,6 +58,13 @@ const REPO_MIGRATION_REGISTRY: &[RepoMigrationDescriptor] = &[
         applies_to: &[RepoKind::Project],
         pending_description: "the chapter settings migration",
         run_content: Some(migrate_project_repo_to_0856),
+    },
+    RepoMigrationDescriptor {
+        id: MIGRATION_0875,
+        kind: RepoMigrationKind::Content,
+        applies_to: &[RepoKind::Project],
+        pending_description: "the image path repair migration",
+        run_content: Some(migrate_project_repo_to_0875),
     },
 ];
 
@@ -1054,6 +1062,237 @@ fn migrate_project_repo_to_0856(app: &AppHandle, repo_path: &Path) -> Result<(),
     )
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ImagePathRepairOutcome {
+    rewritten_paths: usize,
+    unresolved_paths: usize,
+    skipped_unreadable_rows: usize,
+}
+
+/// Collect every existing file under `chapters/*/images/**`, keyed by its
+/// path remainder after `images/` (covers both the old per-row-subdirectory
+/// layout and the current flat layout). Values are full repo-relative paths.
+fn collect_existing_chapter_image_paths(
+    chapters_root: &Path,
+) -> Result<BTreeMap<String, Vec<String>>, String> {
+    fn collect_files(dir: &Path, prefix: &str, out: &mut Vec<String>) -> Result<(), String> {
+        let entries = fs::read_dir(dir)
+            .map_err(|error| format!("Could not list image folder '{}': {error}", dir.display()))?;
+        for entry in entries {
+            let entry =
+                entry.map_err(|error| format!("Could not read an image folder entry: {error}"))?;
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+                continue;
+            };
+            let child_prefix = if prefix.is_empty() {
+                name.to_string()
+            } else {
+                format!("{prefix}/{name}")
+            };
+            if path.is_dir() {
+                collect_files(&path, &child_prefix, out)?;
+            } else {
+                out.push(child_prefix);
+            }
+        }
+        Ok(())
+    }
+
+    let mut index = BTreeMap::<String, Vec<String>>::new();
+    let entries = fs::read_dir(chapters_root).map_err(|error| {
+        format!(
+            "Could not list the chapters folder '{}': {error}",
+            chapters_root.display()
+        )
+    })?;
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| format!("Could not read a chapters folder entry: {error}"))?;
+        let chapter_dir = entry.path();
+        let Some(chapter_name) = chapter_dir.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        let images_dir = chapter_dir.join("images");
+        if !images_dir.is_dir() {
+            continue;
+        }
+        let mut remainders = Vec::new();
+        collect_files(&images_dir, "", &mut remainders)?;
+        for remainder in remainders {
+            index
+                .entry(remainder.clone())
+                .or_default()
+                .push(format!("chapters/{chapter_name}/images/{remainder}"));
+        }
+    }
+    Ok(index)
+}
+
+/// Recursively rewrite `{ kind: "upload", path }` references whose file is
+/// missing, when the same `images/`-remainder exists at exactly one other
+/// chapter location. Ambiguous or unlocatable references are left untouched
+/// and counted — the repair must never guess. Recursion keeps this decoupled
+/// from the row schema (image objects sit per language inside `fields`).
+fn rewrite_stale_upload_paths_in_value(
+    value: &mut Value,
+    repo_path: &Path,
+    index: &BTreeMap<String, Vec<String>>,
+    changed: &mut bool,
+    unresolved: &mut usize,
+) {
+    match value {
+        Value::Object(map) => {
+            let is_upload = map.get("kind").and_then(Value::as_str) == Some("upload");
+            if is_upload {
+                if let Some(Value::String(stored_path)) = map.get_mut("path") {
+                    // Windows history may hold backslash separators.
+                    let normalized = stored_path.replace('\\', "/");
+                    let is_chapter_image =
+                        normalized.starts_with("chapters/") && normalized.contains("/images/");
+                    if is_chapter_image && !repo_path.join(&normalized).is_file() {
+                        let remainder = normalized
+                            .find("/images/")
+                            .map(|position| &normalized[position + "/images/".len()..]);
+                        match remainder.and_then(|remainder| index.get(remainder)) {
+                            Some(candidates) if candidates.len() == 1 => {
+                                *stored_path = candidates[0].clone();
+                                *changed = true;
+                            }
+                            _ => {
+                                *unresolved += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            for child in map.values_mut() {
+                rewrite_stale_upload_paths_in_value(child, repo_path, index, changed, unresolved);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                rewrite_stale_upload_paths_in_value(item, repo_path, index, changed, unresolved);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Repair row image references that point at chapter folders that no longer
+/// exist (the 0.8.10 layout migration renamed orphaned image folders but only
+/// rewrote paths inside row files it was itself moving). Unparseable row
+/// files are skipped and counted, mirroring the 0.8.56 tolerance — failing a
+/// sync over one corrupt file would brick the repo.
+fn repair_stale_uploaded_image_paths(
+    repo_path: &Path,
+    chapters_root: &Path,
+) -> Result<ImagePathRepairOutcome, String> {
+    let index = collect_existing_chapter_image_paths(chapters_root)?;
+    let mut outcome = ImagePathRepairOutcome::default();
+
+    let chapter_entries = fs::read_dir(chapters_root).map_err(|error| {
+        format!(
+            "Could not list the chapters folder '{}': {error}",
+            chapters_root.display()
+        )
+    })?;
+    for chapter_entry in chapter_entries {
+        let chapter_entry = chapter_entry
+            .map_err(|error| format!("Could not read a chapters folder entry: {error}"))?;
+        let rows_dir = chapter_entry.path().join("rows");
+        if !rows_dir.is_dir() {
+            continue;
+        }
+        let row_entries = fs::read_dir(&rows_dir).map_err(|error| {
+            format!(
+                "Could not list the rows folder '{}': {error}",
+                rows_dir.display()
+            )
+        })?;
+        for row_entry in row_entries {
+            let row_entry = row_entry
+                .map_err(|error| format!("Could not read a rows folder entry: {error}"))?;
+            let row_path = row_entry.path();
+            if row_path.extension().and_then(|value| value.to_str()) != Some("json") {
+                continue;
+            }
+            let mut row_value = match read_json_value(&row_path, "row file") {
+                Ok(value) => value,
+                Err(_) => {
+                    outcome.skipped_unreadable_rows += 1;
+                    continue;
+                }
+            };
+            let mut changed = false;
+            rewrite_stale_upload_paths_in_value(
+                &mut row_value,
+                repo_path,
+                &index,
+                &mut changed,
+                &mut outcome.unresolved_paths,
+            );
+            if changed {
+                write_json_value(&row_path, &row_value)?;
+                outcome.rewritten_paths += 1;
+            }
+        }
+    }
+    Ok(outcome)
+}
+
+/// Content-only migration: repair stale uploaded-image paths and record the
+/// marker. Same execution model as 0.8.56 — inline during sync, mergeable
+/// edits, dirty worktree skips the run and the next sync retries.
+fn migrate_project_repo_to_0875(app: &AppHandle, repo_path: &Path) -> Result<(), String> {
+    let status = git_output(repo_path, &["status", "--porcelain"], None)?;
+    if !status.trim().is_empty() {
+        return Ok(());
+    }
+
+    let chapters_root = repo_path.join("chapters");
+    if chapters_root.exists() {
+        let outcome = repair_stale_uploaded_image_paths(repo_path, &chapters_root)?;
+        if outcome.skipped_unreadable_rows > 0 {
+            crate::github::report_backend_nonfatal_error(
+                app,
+                "repo.migrate.image_paths",
+                "row_json_unreadable_skipped",
+            );
+        }
+        if outcome.unresolved_paths > 0 {
+            crate::github::report_backend_nonfatal_error(
+                app,
+                "repo.migrate.image_paths",
+                "image_path_unresolved",
+            );
+        }
+    }
+
+    let mut metadata = match read_repo_layout_metadata_state(repo_path) {
+        RepoLayoutMetadataState::Readable(metadata) => metadata,
+        RepoLayoutMetadataState::Missing => new_v2_repo_layout_metadata(RepoKind::Project),
+        RepoLayoutMetadataState::Unreadable(detail) => {
+            return Err(unreadable_repo_metadata_error(&detail));
+        }
+    };
+    if !metadata
+        .applied_migrations
+        .iter()
+        .any(|migration| migration == MIGRATION_0875)
+    {
+        metadata.applied_migrations.push(MIGRATION_0875.to_string());
+    }
+    write_repo_layout_metadata(repo_path, &metadata)?;
+    git_output(repo_path, &["add", "-A"], None)?;
+    commit_migration_if_dirty(
+        app,
+        repo_path,
+        MIGRATION_0875,
+        "Repair uploaded image paths (0.8.75 migration)",
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use std::{env, process::Command};
@@ -1144,21 +1383,141 @@ mod tests {
             vec![MIGRATION_0810]
         );
 
-        // Metadata recording only 0.8.10 pends the project content migration,
-        // but not for glossaries, which 0.8.56 does not apply to.
+        // Metadata recording only 0.8.10 pends the project content migrations,
+        // but not for glossaries, which they do not apply to.
         write_repo_layout_metadata(&repo_path, &new_v2_repo_layout_metadata(RepoKind::Project))
             .expect("write metadata");
         assert_eq!(
             pending_ids(&repo_path, &RepoKind::Project),
-            vec![MIGRATION_0856]
+            vec![MIGRATION_0856, MIGRATION_0875]
         );
         assert!(pending_ids(&repo_path, &RepoKind::Glossary).is_empty());
 
-        // Both markers recorded → nothing pends.
+        // All markers recorded → nothing pends.
         let mut metadata = new_v2_repo_layout_metadata(RepoKind::Project);
         metadata.applied_migrations.push(MIGRATION_0856.to_string());
+        metadata.applied_migrations.push(MIGRATION_0875.to_string());
         write_repo_layout_metadata(&repo_path, &metadata).expect("write migrated metadata");
         assert!(pending_ids(&repo_path, &RepoKind::Project).is_empty());
+
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    fn write_row_with_image_path(rows_dir: &Path, row_name: &str, image_path: &str) {
+        fs::create_dir_all(rows_dir).expect("create rows dir");
+        let row = serde_json::json!({
+            "fields": {
+                "vi": {
+                    "text": "Xin chao",
+                    "image": { "kind": "upload", "path": image_path },
+                    "image_caption": "Caption",
+                }
+            }
+        });
+        fs::write(
+            rows_dir.join(row_name),
+            serde_json::to_string_pretty(&row).expect("serialize row"),
+        )
+        .expect("write row");
+    }
+
+    fn row_image_path(rows_dir: &Path, row_name: &str) -> String {
+        let value: Value =
+            serde_json::from_str(&fs::read_to_string(rows_dir.join(row_name)).expect("read row"))
+                .expect("parse row");
+        value["fields"]["vi"]["image"]["path"]
+            .as_str()
+            .expect("image path")
+            .to_string()
+    }
+
+    #[test]
+    fn repairs_stale_upload_paths_to_the_unique_existing_file() {
+        let repo_path = temp_repo("image-path-repair");
+        let chapters_root = repo_path.join("chapters");
+        // The field case: the images folder was renamed to the truncated dir,
+        // rows in the slug dir still reference the old full-id folder. The
+        // stored layout is the old per-row subdirectory shape.
+        let image_dir = chapters_root.join("019d80f1-f491-7292-b68/images/row-1-vi-2");
+        fs::create_dir_all(&image_dir).expect("create image dir");
+        fs::write(image_dir.join("rockStar.jpg"), b"jpg").expect("write image");
+        let rows_dir = chapters_root.join("5-pra-ctica-de-interio/rows");
+        write_row_with_image_path(
+            &rows_dir,
+            "row-1.json",
+            "chapters/019d80f1-f491-7292-b68c-db306df4468f/images/row-1-vi-2/rockStar.jpg",
+        );
+        // Backslash separators from Windows history repair the same way.
+        write_row_with_image_path(
+            &rows_dir,
+            "row-2.json",
+            "chapters\\019d80f1-f491-7292-b68c-db306df4468f\\images\\row-1-vi-2\\rockStar.jpg",
+        );
+
+        let outcome =
+            repair_stale_uploaded_image_paths(&repo_path, &chapters_root).expect("repair succeeds");
+
+        assert_eq!(outcome.rewritten_paths, 2);
+        assert_eq!(outcome.unresolved_paths, 0);
+        assert_eq!(outcome.skipped_unreadable_rows, 0);
+        for row_name in ["row-1.json", "row-2.json"] {
+            assert_eq!(
+                row_image_path(&rows_dir, row_name),
+                "chapters/019d80f1-f491-7292-b68/images/row-1-vi-2/rockStar.jpg",
+            );
+        }
+
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn leaves_valid_ambiguous_and_unlocatable_paths_untouched() {
+        let repo_path = temp_repo("image-path-repair-skips");
+        let chapters_root = repo_path.join("chapters");
+        let rows_dir = chapters_root.join("chapter-one/rows");
+
+        // Valid reference: the file exists where the row says (flat layout).
+        let valid_dir = chapters_root.join("chapter-one/images");
+        fs::create_dir_all(&valid_dir).expect("create valid image dir");
+        fs::write(valid_dir.join("photo.png"), b"png").expect("write valid image");
+        write_row_with_image_path(
+            &rows_dir,
+            "valid.json",
+            "chapters/chapter-one/images/photo.png",
+        );
+
+        // Ambiguous: the same remainder exists in two chapter folders.
+        for chapter in ["chapter-two", "chapter-three"] {
+            let dir = chapters_root.join(chapter).join("images");
+            fs::create_dir_all(&dir).expect("create ambiguous image dir");
+            fs::write(dir.join("twin.png"), b"png").expect("write ambiguous image");
+        }
+        write_row_with_image_path(&rows_dir, "ambiguous.json", "chapters/gone/images/twin.png");
+
+        // Unlocatable: the file exists nowhere.
+        write_row_with_image_path(&rows_dir, "missing.json", "chapters/gone/images/lost.png");
+
+        // Unreadable row files are skipped, not fatal.
+        fs::write(rows_dir.join("corrupt.json"), b"not json").expect("write corrupt row");
+
+        let outcome =
+            repair_stale_uploaded_image_paths(&repo_path, &chapters_root).expect("repair succeeds");
+
+        assert_eq!(outcome.rewritten_paths, 0);
+        assert_eq!(outcome.unresolved_paths, 2);
+        assert_eq!(outcome.skipped_unreadable_rows, 1);
+        assert_eq!(
+            row_image_path(&rows_dir, "valid.json"),
+            "chapters/chapter-one/images/photo.png",
+        );
+        assert_eq!(
+            row_image_path(&rows_dir, "ambiguous.json"),
+            "chapters/gone/images/twin.png",
+        );
+        assert_eq!(
+            row_image_path(&rows_dir, "missing.json"),
+            "chapters/gone/images/lost.png",
+        );
 
         let _ = fs::remove_dir_all(repo_path);
     }

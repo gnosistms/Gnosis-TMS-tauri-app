@@ -12,6 +12,7 @@ pub(crate) const MIGRATION_0810: &str = "0.8.10";
 // `settings`/`linked_glossaries` shapes and `glossary_1`/`glossary_2` keys).
 // Unlike 0.8.10 it is git-mergeable and runs inline during project repo sync.
 pub(crate) const MIGRATION_0856: &str = "0.8.56";
+pub(crate) const MIGRATION_0875: &str = "0.8.75";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum RepoKind {
