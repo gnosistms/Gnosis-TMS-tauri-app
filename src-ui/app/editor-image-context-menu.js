@@ -136,3 +136,36 @@ export function handleEditorImageContextMenuKeydown(root, event) {
   items[nextIndex]?.focus({ preventScroll: true });
   return true;
 }
+
+export function handleEditorImageContextMenuInvocationKeydown(
+  root,
+  event,
+  openMenu = openEditorImageContextMenu,
+) {
+  const isInvocationKey =
+    event?.key === "ContextMenu"
+    || (event?.key === "F10" && event?.shiftKey === true);
+  if (!isInvocationKey) {
+    return false;
+  }
+  const target = event.target?.closest?.("[data-editor-image-context-menu-target]");
+  if (!(target instanceof HTMLElement) || !root?.contains?.(target)) {
+    return false;
+  }
+
+  const rect = target.getBoundingClientRect();
+  const opened = openMenu(
+    root,
+    {
+      clientX: rect.left + Math.min(12, Math.max(0, rect.width)),
+      clientY: rect.top + Math.min(12, Math.max(0, rect.height)),
+    },
+    target,
+  );
+  if (!opened) {
+    return false;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  return true;
+}

@@ -116,6 +116,10 @@ test("renderTranslationContentRow makes image URL preview tooltips hang right", 
   }));
 
   assert.match(html, /data-action="open-editor-image-preview"/);
+  assert.match(
+    html,
+    /<button[\s\S]*?data-action="open-editor-image-preview"[\s\S]*?data-editor-image-context-menu-target/,
+  );
   assert.match(html, /data-editor-image-context-menu-target/);
   assert.match(html, /data-image-url="https:\/\/example\.com\/path\/to\/a\/long\/image-name\.webp"/);
   assert.match(html, /data-tooltip-align="start"/);

@@ -1292,6 +1292,10 @@ async function performEditorImageDuplicate(
 ) {
   const row = await ensureEditorRowReadyForWrite(render, rowId, { allowStaleDirty: true });
   if (editorImageWriteBlocked(row, render)) {
+    if (state.editorChapter?.imageDuplicateOverwriteModal?.isOpen === true) {
+      closeImageDuplicateOverwriteModalState();
+      render?.();
+    }
     return;
   }
   const sourceImage = currentImage(rowId, sourceLanguageCode);
@@ -1309,7 +1313,9 @@ async function performEditorImageDuplicate(
     return;
   }
   if (!sourceImage) {
+    closeImageDuplicateOverwriteModalState();
     showNoticeBadge("The source image is no longer available.", render);
+    render?.();
     return;
   }
 
@@ -1317,6 +1323,8 @@ async function performEditorImageDuplicate(
   const context = findChapterContextById(state.editorChapter?.chapterId);
   const repoScope = projectRepoScope({ team, project: context?.project ?? null });
   if (!Number.isFinite(team?.installationId) || !context?.project?.name || !repoScope) {
+    closeImageDuplicateOverwriteModalState();
+    render?.();
     return;
   }
 
@@ -1368,6 +1376,13 @@ export async function duplicateEditorLanguageImage(
   const sourceImage = currentImage(rowId, sourceLanguageCode);
   if (!sourceImage) {
     return;
+  }
+  if (
+    state.editorChapter?.imagePreviewOverlay?.isOpen === true
+    && state.editorChapter.imagePreviewOverlay.rowId === rowId
+    && state.editorChapter.imagePreviewOverlay.languageCode === sourceLanguageCode
+  ) {
+    closeEditorImagePreview(render);
   }
   const destinationImage = currentImage(rowId, destinationLanguageCode);
   if (!destinationImage) {
@@ -1431,17 +1446,31 @@ export async function confirmEditorImageDuplicateOverwrite(render, operations = 
     },
   };
   render?.();
-  await performEditorImageDuplicate(
-    render,
-    modal.rowId,
-    modal.sourceLanguageCode,
-    modal.destinationLanguageCode,
-    operations,
-    {
-      sourceImage: modal.sourceImage,
-      destinationImage: modal.destinationImage,
-    },
-  );
+  try {
+    await performEditorImageDuplicate(
+      render,
+      modal.rowId,
+      modal.sourceLanguageCode,
+      modal.destinationLanguageCode,
+      operations,
+      {
+        sourceImage: modal.sourceImage,
+        destinationImage: modal.destinationImage,
+      },
+    );
+  } catch (error) {
+    if (state.editorChapter?.imageDuplicateOverwriteModal?.isOpen === true) {
+      state.editorChapter = {
+        ...state.editorChapter,
+        imageDuplicateOverwriteModal: {
+          ...state.editorChapter.imageDuplicateOverwriteModal,
+          status: "idle",
+          error: error instanceof Error ? error.message : String(error),
+        },
+      };
+      render?.();
+    }
+  }
 }
 
 export async function copyEditorImageUrl(render, url) {

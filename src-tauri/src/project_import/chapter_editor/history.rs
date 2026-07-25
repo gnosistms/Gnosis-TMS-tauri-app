@@ -1,10 +1,60 @@
 use super::images::{
     file_bytes_equal, load_historical_blob_bytes, normalize_editor_field_image_value,
     push_repo_file_snapshot, push_uploaded_asset_snapshot, remove_uploaded_asset_from_disk,
-    row_language_stored_image, validated_uploaded_asset_relative_path, with_repo_file_rollback,
-    write_uploaded_asset_file,
+    row_language_stored_image, uploaded_path_identity, uploaded_path_is_referenced_by_other_row,
+    validated_uploaded_asset_relative_path, with_repo_file_rollback, write_uploaded_asset_file,
 };
 use super::*;
+
+fn ensure_historical_uploaded_asset_restore_is_reference_safe(
+    repo_path: &Path,
+    current_row_relative_path: &str,
+    language_code: &str,
+    updated_row_file: &StoredRowFile,
+    historical_uploaded_path: &str,
+    current_uploaded_path: Option<&str>,
+    rewrites_asset_bytes: bool,
+) -> Result<(), String> {
+    let current_identity = current_uploaded_path
+        .map(uploaded_path_identity)
+        .transpose()?;
+    let historical_identity = uploaded_path_identity(historical_uploaded_path)?;
+    let introduces_reference = current_identity.as_deref() != Some(historical_identity.as_str());
+
+    if rewrites_asset_bytes {
+        let mut row_without_restored_reference = updated_row_file.clone();
+        if let Some(field) = row_without_restored_reference.fields.get_mut(language_code) {
+            field.image = None;
+        }
+        let safe_to_rewrite = unreferenced_uploaded_paths_after_row_updates(
+            repo_path,
+            &[historical_uploaded_path.to_string()],
+            &BTreeMap::from([(
+                current_row_relative_path.to_string(),
+                Some(row_without_restored_reference),
+            )]),
+        )?;
+        if safe_to_rewrite.is_empty() {
+            return Err(
+                "The historical uploaded image is shared by another field and cannot be restored in place."
+                    .to_string(),
+            );
+        }
+    } else if introduces_reference
+        && uploaded_path_is_referenced_by_other_row(
+            repo_path,
+            historical_uploaded_path,
+            current_row_relative_path,
+        )?
+    {
+        return Err(
+            "The historical uploaded image is already referenced by another row and cannot be restored in place."
+                .to_string(),
+        );
+    }
+
+    Ok(())
+}
 
 /// Commit shas come straight from IPC input and are spliced into git revision
 /// arguments (`show`, `rev-parse`, `log <sha>..HEAD`). Require a plain hex object id
@@ -243,30 +293,16 @@ pub(crate) fn restore_gtms_editor_field_from_history_sync(
         push_uploaded_asset_snapshot(&mut rollback_snapshots, &repo_path, relative_path)?;
     }
 
-    if historical_asset_update.is_some() {
-        if let Some(relative_path) = historical_uploaded_path.as_deref() {
-            let mut row_without_restored_reference = updated_row_file.clone();
-            if let Some(field) = row_without_restored_reference
-                .fields
-                .get_mut(&input.language_code)
-            {
-                field.image = None;
-            }
-            let safe_to_rewrite = unreferenced_uploaded_paths_after_row_updates(
-                &repo_path,
-                &[relative_path.to_string()],
-                &BTreeMap::from([(
-                    relative_row_json.clone(),
-                    Some(row_without_restored_reference),
-                )]),
-            )?;
-            if safe_to_rewrite.is_empty() {
-                return Err(
-                    "The historical uploaded image is shared by another field and cannot be restored in place."
-                        .to_string(),
-                );
-            }
-        }
+    if let Some(relative_path) = historical_uploaded_path.as_deref() {
+        ensure_historical_uploaded_asset_restore_is_reference_safe(
+            &repo_path,
+            &relative_row_json,
+            &input.language_code,
+            &updated_row_file,
+            relative_path,
+            current_uploaded_path.as_deref(),
+            historical_asset_update.is_some(),
+        )?;
     }
 
     if updated_row_text != original_row_text
@@ -1058,9 +1094,95 @@ fn short_commit_sha(commit_sha: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::{fs, path::Path};
 
     use super::*;
+
+    fn stored_row_with_uploaded_images(row_id: &str, images: &[(&str, &str)]) -> StoredRowFile {
+        let fields = images
+            .iter()
+            .map(|(language_code, path)| {
+                (
+                    language_code.to_string(),
+                    json!({
+                        "plain_text": "",
+                        "image": {
+                            "kind": "upload",
+                            "path": path
+                        }
+                    }),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>();
+        serde_json::from_value(json!({
+            "row_id": row_id,
+            "structure": { "order_key": "0001" },
+            "status": { "review_state": "draft" },
+            "origin": { "source_row_number": 1 },
+            "fields": fields,
+        }))
+        .expect("stored row should decode")
+    }
+
+    #[test]
+    fn identical_historical_bytes_cannot_reintroduce_a_cross_row_asset_reference() {
+        let repo_path = std::env::temp_dir().join(format!(
+            "gnosis-tms-history-cross-row-{}",
+            uuid::Uuid::now_v7()
+        ));
+        let rows_path = repo_path.join("chapters/chapter-1/rows");
+        fs::create_dir_all(&rows_path).expect("create rows folder");
+        let asset_path = "chapters/chapter-1/images/shared.png";
+        fs::write(
+            rows_path.join("row-2.json"),
+            serde_json::to_vec_pretty(&stored_row_with_uploaded_images(
+                "row-2",
+                &[("es", asset_path)],
+            ))
+            .expect("serialize other row"),
+        )
+        .expect("write other row");
+        let updated_row = stored_row_with_uploaded_images("row-1", &[("vi", asset_path)]);
+
+        let result = ensure_historical_uploaded_asset_restore_is_reference_safe(
+            &repo_path,
+            "chapters/chapter-1/rows/row-1.json",
+            "vi",
+            &updated_row,
+            asset_path,
+            None,
+            false,
+        );
+
+        assert!(result
+            .expect_err("cross-row restore should be rejected")
+            .contains("another row"));
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn identical_historical_bytes_may_share_an_asset_within_the_same_row() {
+        let repo_path = std::env::temp_dir().join(format!(
+            "gnosis-tms-history-same-row-{}",
+            uuid::Uuid::now_v7()
+        ));
+        fs::create_dir_all(&repo_path).expect("create repo folder");
+        let asset_path = "chapters/chapter-1/images/shared.png";
+        let updated_row =
+            stored_row_with_uploaded_images("row-1", &[("vi", asset_path), ("es", asset_path)]);
+
+        ensure_historical_uploaded_asset_restore_is_reference_safe(
+            &repo_path,
+            "chapters/chapter-1/rows/row-1.json",
+            "vi",
+            &updated_row,
+            asset_path,
+            None,
+            false,
+        )
+        .expect("same-row shared restore should remain supported");
+        let _ = fs::remove_dir_all(repo_path);
+    }
 
     fn history_commit(commit_sha: &str, operation_type: Option<&str>) -> GitCommitMetadata {
         GitCommitMetadata {

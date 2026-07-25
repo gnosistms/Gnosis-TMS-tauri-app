@@ -259,3 +259,20 @@ larger feature branch, but not as an incidental UI-only change.
 - Run focused editor image render/flow/context-menu and backend command tests.
 - Run the full frontend unit suite and unused-export audit if focused checks pass.
 - If backend code changes, also run targeted Rust tests and `cargo check`.
+
+## Review Remediation
+
+- Keep the full-size preview context menu visible above the preview overlay, and
+  close the preview before opening overwrite confirmation so the standard modal
+  remains the top interactive layer.
+- Reset or close overwrite confirmation on every readiness failure and rejected
+  asynchronous path so the loading state can never strand a disabled Cancel
+  action.
+- Support keyboard invocation from focused thumbnail buttons with the Context
+  Menu key and Shift+F10, using the focused control as the menu invoker.
+- Enforce history restoration's row-local asset invariant even when the current
+  asset bytes already equal the historical bytes; reject a cross-row shared
+  restore until a distinct-path allocation flow is available.
+- Add focused regression tests for preview layering/closure, blocked overwrite
+  readiness, keyboard menu invocation, and identical-byte cross-row history
+  restoration.

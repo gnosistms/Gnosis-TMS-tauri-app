@@ -351,6 +351,35 @@ test("duplicateEditorLanguageImage asks before replacing an occupied language", 
   assert.deepEqual(render.calls, [[]]);
 });
 
+test("duplicateEditorLanguageImage closes a full-size preview before showing overwrite confirmation", async () => {
+  installEditorFixture();
+  installFixtureImage("https://example.com/source.png");
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    images: {
+      ...state.editorChapter.rows[0].images,
+      es: { kind: "url", url: "https://example.com/existing.png" },
+    },
+  };
+  state.editorChapter = {
+    ...state.editorChapter,
+    imagePreviewOverlay: {
+      isOpen: true,
+      rowId: "row-1",
+      languageCode: "vi",
+      src: "https://example.com/source.png",
+      imageUrl: "https://example.com/source.png",
+    },
+  };
+  const render = createRenderSpy();
+
+  await duplicateEditorLanguageImage(render, "row-1", "vi", "es", { updateEditorChapterRow });
+
+  assert.equal(state.editorChapter.imagePreviewOverlay.isOpen, false);
+  assert.equal(state.editorChapter.imageDuplicateOverwriteModal.isOpen, true);
+  assert.deepEqual(render.calls[0], [{ scope: "translate-image-preview-overlay" }]);
+});
+
 test("image duplicate overwrite modal cancels without changing either image", async () => {
   installEditorFixture();
   installFixtureImage("https://example.com/source.png");
@@ -445,6 +474,29 @@ test("confirmed image duplicate stops if the destination changes during readines
     state.editorChapter.rows[0].images.es.url,
     "https://example.com/newer-destination.png",
   );
+});
+
+test("confirmed image duplicate closes confirmation when row readiness blocks the write", async () => {
+  installEditorFixture();
+  installFixtureImage("https://example.com/source.png");
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    images: {
+      ...state.editorChapter.rows[0].images,
+      es: { kind: "url", url: "https://example.com/existing.png" },
+    },
+  };
+  const render = createRenderSpy();
+  await duplicateEditorLanguageImage(render, "row-1", "vi", "es", { updateEditorChapterRow });
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    freshness: "conflict",
+  };
+
+  await confirmEditorImageDuplicateOverwrite(render, { updateEditorChapterRow });
+
+  assert.equal(invokeLog.length, 0);
+  assert.equal(state.editorChapter.imageDuplicateOverwriteModal.isOpen, false);
 });
 
 test("copyEditorImageUrl writes the original URL to the clipboard", async () => {

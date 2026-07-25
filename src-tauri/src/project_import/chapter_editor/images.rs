@@ -779,7 +779,7 @@ fn canonical_uploaded_relative_path(path: &str) -> Result<String, String> {
     Ok(components.join("/"))
 }
 
-fn uploaded_path_identity(path: &str) -> Result<String, String> {
+pub(super) fn uploaded_path_identity(path: &str) -> Result<String, String> {
     let canonical = canonical_uploaded_relative_path(path)?;
     if cfg!(windows) {
         Ok(canonical.to_lowercase())
@@ -866,6 +866,31 @@ fn project_row_json_paths(repo_path: &Path) -> Result<Vec<PathBuf>, String> {
         }
     }
     Ok(paths)
+}
+
+pub(super) fn uploaded_path_is_referenced_by_other_row(
+    repo_path: &Path,
+    candidate: &str,
+    current_row_relative_path: &str,
+) -> Result<bool, String> {
+    let candidate = validated_uploaded_asset_relative_path(repo_path, candidate)?;
+    let candidate_identity = uploaded_path_identity(&candidate)?;
+    let current_row_relative_path = current_row_relative_path.trim().replace('\\', "/");
+
+    for row_path in project_row_json_paths(repo_path)? {
+        let relative_path = repo_relative_path(repo_path, &row_path)?
+            .trim()
+            .replace('\\', "/");
+        if relative_path == current_row_relative_path {
+            continue;
+        }
+        let row: StoredRowFile = read_json_file(&row_path, "row file")?;
+        if row_uploaded_path_identities(&row)?.contains(&candidate_identity) {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
 
 pub(super) fn unreferenced_uploaded_paths_after_row_updates(

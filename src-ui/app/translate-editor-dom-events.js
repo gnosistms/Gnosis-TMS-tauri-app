@@ -28,6 +28,7 @@ import { syncActiveEditorInlineStyleButtons } from "./editor-inline-markup-flow.
 import { showNoticeBadge } from "./status-feedback.js";
 import {
   dismissEditorImageContextMenu,
+  handleEditorImageContextMenuInvocationKeydown,
   handleEditorImageContextMenuKeydown,
   openEditorImageContextMenu,
 } from "./editor-image-context-menu.js";
@@ -272,7 +273,7 @@ function registerTranslateScrollIntentEvents(app) {
 export function registerTranslateEditorDomEvents(app, render) {
   app.addEventListener("contextmenu", (event) => {
     const image = closestEventTarget(event.target, "[data-editor-image-context-menu-target]");
-    if (!(image instanceof HTMLImageElement)) {
+    if (!(image instanceof HTMLElement)) {
       dismissEditorImageContextMenu(app);
       return;
     }
@@ -627,6 +628,9 @@ export function registerTranslateEditorDomEvents(app, render) {
   });
 
   app.addEventListener("keydown", (event) => {
+    if (handleEditorImageContextMenuInvocationKeydown(app, event)) {
+      return;
+    }
     if (handleEditorImageContextMenuKeydown(app, event)) {
       return;
     }
