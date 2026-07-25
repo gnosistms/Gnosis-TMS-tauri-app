@@ -179,7 +179,11 @@ function applyReviewResultToRow(row, languageCode, payload) {
   };
 }
 
-function enablePleaseCheckFilterAndShowModal(error = "") {
+// The closing dialog must reflect what actually happened: a run that ended
+// on a provider failure previously showed the plain "AI Review is finished"
+// copy with zero rows reviewed (field case 2026-07-25, OpenAI outage). The
+// error and progress ride along so the renderer can show a stopped state.
+function enablePleaseCheckFilterAndShowModal(error = "", progress = null) {
   if (!state.editorChapter?.chapterId) {
     return;
   }
@@ -195,6 +199,8 @@ function enablePleaseCheckFilterAndShowModal(error = "") {
       isOpen: true,
       step: "filter-enabled",
       error,
+      completedCount: progress?.completedCount ?? 0,
+      totalCount: progress?.totalCount ?? 0,
     },
   };
 }
@@ -414,6 +420,7 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
   const targetLanguageCode = counts.languageCode;
   let completedCount = 0;
   let started = false;
+  const runProgress = () => ({ completedCount, totalCount: work.length });
   applyEditorAiReviewAllModal({
     isOpen: true,
     step: "reviewing",
@@ -854,7 +861,7 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
     }
     if (outcome === "abort") {
       if (started) {
-        enablePleaseCheckFilterAndShowModal();
+        enablePleaseCheckFilterAndShowModal("", runProgress());
         render?.();
       }
       return;
@@ -862,7 +869,7 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (started) {
-      enablePleaseCheckFilterAndShowModal(message);
+      enablePleaseCheckFilterAndShowModal(message, runProgress());
       showNoticeBadge(message || "AI Review failed.", render);
       render?.();
       return;
@@ -878,12 +885,12 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
 
   if (activeReviewAllRunId !== runId) {
     if (started) {
-      enablePleaseCheckFilterAndShowModal();
+      enablePleaseCheckFilterAndShowModal("", runProgress());
       render?.();
     }
     return;
   }
-  enablePleaseCheckFilterAndShowModal();
+  enablePleaseCheckFilterAndShowModal("", runProgress());
   render?.();
 }
 

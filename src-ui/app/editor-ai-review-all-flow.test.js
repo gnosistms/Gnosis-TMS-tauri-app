@@ -422,6 +422,38 @@ test("AI Review All rows missing from the batch response fall back to the single
   assert.equal(state.editorChapter.aiReviewAllModal.step, "filter-enabled");
 });
 
+test("AI Review All ends in a visible stopped state when every provider call fails", async () => {
+  resetSessionState();
+  editorAiReviewAllTestApi.resetActiveReviewAllRunId();
+  setupReviewRunProjectContext();
+  state.editorChapter = reviewBatchChapter();
+  // A non-transient error keeps the test off the real retry backoff delays;
+  // the stopped-state surfacing is identical for any run-ending failure
+  // (transient retry timing is covered in editor-ai-batch-pool.test.js).
+  invokeHandler = async (command) => {
+    if (command === "run_ai_review") {
+      throw new Error("The OpenAI request was rejected.");
+    }
+    return null;
+  };
+
+  await confirmEditorAiReviewAll(() => {}, reviewBatchOperations({
+    runAiReviewBatch: async () => {
+      throw new Error("The OpenAI request was rejected.");
+    },
+    applyAiReviewResultsBatch: async () => {
+      throw new Error("the batched apply must not run when no results arrived");
+    },
+  }));
+
+  // The closing dialog carries the failure and the zero progress instead of
+  // presenting the success copy.
+  assert.equal(state.editorChapter.aiReviewAllModal.step, "filter-enabled");
+  assert.match(state.editorChapter.aiReviewAllModal.error, /rejected/);
+  assert.equal(state.editorChapter.aiReviewAllModal.completedCount, 0);
+  assert.equal(state.editorChapter.aiReviewAllModal.totalCount, 3);
+});
+
 test("AI Review All runs batches concurrently with capped AI calls and serialized applies", async () => {
   resetSessionState();
   editorAiReviewAllTestApi.resetActiveReviewAllRunId();
