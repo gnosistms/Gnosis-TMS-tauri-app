@@ -759,43 +759,188 @@ mod tests {
     }
 }
 
+/// Repo and chapter resolution shared by the batched row-write commands:
+/// validate the repo, locate the chapter, and load its languages and current
+/// word counts.
+struct BatchChapterContext {
+    repo_path: PathBuf,
+    chapter_path: PathBuf,
+    languages: Vec<ChapterLanguage>,
+    word_counts: BTreeMap<String, usize>,
+}
+
+fn load_batch_chapter_context(
+    app: &AppHandle,
+    installation_id: i64,
+    project_id: Option<&str>,
+    repo_name: &str,
+    chapter_id: &str,
+) -> Result<BatchChapterContext, String> {
+    let repo_path =
+        resolve_project_git_repo_path(app, installation_id, project_id, Some(repo_name))?;
+    ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
+    ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
+
+    let chapter_path = find_chapter_path_by_id(app, &repo_path.join("chapters"), chapter_id)?;
+    let chapter_file: StoredChapterFile =
+        read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
+    let languages = sanitize_chapter_languages(&chapter_file.languages);
+    let word_counts = load_word_counts(&chapter_path.join("rows"), &languages)?;
+    Ok(BatchChapterContext {
+        repo_path,
+        chapter_path,
+        languages,
+        word_counts,
+    })
+}
+
+/// One row file loaded for editing: the original text plus both parsed forms,
+/// so callers mutate `value` while validating against `original_file`.
+struct EditableRowFile {
+    row_id: String,
+    path: PathBuf,
+    relative_path: String,
+    original_text: String,
+    original_file: StoredRowFile,
+    value: Value,
+}
+
+fn load_editable_row_file(
+    repo_path: &Path,
+    chapter_path: &Path,
+    row_id: &str,
+) -> Result<EditableRowFile, String> {
+    let path = validated_row_json_path(chapter_path, row_id)?;
+    let relative_path = repo_relative_path(repo_path, &path)?;
+    let original_text = fs::read_to_string(&path)
+        .map_err(|error| format!("Could not read row file '{}': {error}", path.display()))?;
+    let original_file: StoredRowFile = serde_json::from_str(&original_text)
+        .map_err(|error| format!("Could not parse row file '{}': {error}", path.display()))?;
+    let value: Value = serde_json::from_str(&original_text)
+        .map_err(|error| format!("Could not parse row file '{}': {error}", path.display()))?;
+    Ok(EditableRowFile {
+        row_id: row_id.to_string(),
+        path,
+        relative_path,
+        original_text,
+        original_file,
+        value,
+    })
+}
+
+/// Serialize the edited value; when the text changed (or `force_changed`),
+/// fold the word-count delta, queue the write, and record the row id.
+/// Returns whether the row changed plus its final parsed form (the updated
+/// parse when changed, the original otherwise).
+fn finish_editable_row_file(
+    edit: EditableRowFile,
+    force_changed: bool,
+    languages: &[ChapterLanguage],
+    word_counts: &mut BTreeMap<String, usize>,
+    prepared_writes: &mut Vec<PreparedRowFileWrite>,
+    changed_row_ids: &mut Vec<String>,
+) -> Result<(bool, StoredRowFile), String> {
+    let updated_row_json = serde_json::to_string_pretty(&edit.value).map_err(|error| {
+        format!(
+            "Could not serialize row file '{}': {error}",
+            edit.path.display()
+        )
+    })?;
+    let updated_row_text = format!("{updated_row_json}\n");
+    if updated_row_text == edit.original_text && !force_changed {
+        return Ok((false, edit.original_file));
+    }
+
+    let updated_row_file: StoredRowFile =
+        serde_json::from_str(&updated_row_text).map_err(|error| {
+            format!(
+                "Could not parse updated row file '{}': {error}",
+                edit.path.display()
+            )
+        })?;
+    let next_word_counts = apply_word_count_delta(
+        word_counts,
+        &edit.original_file,
+        &updated_row_file,
+        languages,
+    );
+    *word_counts = next_word_counts;
+    prepared_writes.push(PreparedRowFileWrite {
+        relative_path: edit.relative_path,
+        path: edit.path,
+        original_text: Some(edit.original_text),
+        updated_text: updated_row_text,
+    });
+    changed_row_ids.push(edit.row_id);
+    Ok((true, updated_row_file))
+}
+
+/// The per-row accumulators a batch loop fills via `finish_editable_row_file`
+/// (plus any uploaded-image removals), handed to the commit epilogue as one
+/// unit.
+struct BatchRowWrites<'a> {
+    prepared_writes: &'a [PreparedRowFileWrite],
+    removed_uploaded_paths: &'a [String],
+    changed_row_ids: &'a [String],
+}
+
+/// Commit queued batch writes as one commit and clear the imported-conflict
+/// entries for every written row. No-op when no row changed. Returns the
+/// short commit sha when a commit was created.
+fn commit_batch_row_writes(
+    app: &AppHandle,
+    repo_path: &Path,
+    chapter_id: &str,
+    commit_message: &str,
+    metadata: CommitMetadata<'_>,
+    writes: BatchRowWrites<'_>,
+) -> Result<Option<String>, String> {
+    if writes.changed_row_ids.is_empty() {
+        return Ok(None);
+    }
+    let commit_output = write_row_files_and_commit_with_removals(
+        app,
+        repo_path,
+        commit_message,
+        metadata,
+        writes.prepared_writes,
+        writes.removed_uploaded_paths,
+    )?;
+    let commit_sha = if commit_output.is_empty() {
+        None
+    } else {
+        Some(git_output(repo_path, &["rev-parse", "--short", "HEAD"])?)
+    };
+    for row_id in writes.changed_row_ids {
+        let _ = clear_imported_editor_conflict_entry(repo_path, chapter_id, row_id);
+    }
+    Ok(commit_sha)
+}
+
 pub(crate) fn update_gtms_editor_row_fields_batch_sync(
     app: &AppHandle,
     input: UpdateEditorRowFieldsBatchInput,
 ) -> Result<UpdateEditorRowFieldsBatchResponse, String> {
-    let repo_path = resolve_project_git_repo_path(
+    let BatchChapterContext {
+        repo_path,
+        chapter_path,
+        languages,
+        mut word_counts,
+    } = load_batch_chapter_context(
         app,
         input.installation_id,
         input.project_id.as_deref(),
-        Some(&input.repo_name),
+        &input.repo_name,
+        &input.chapter_id,
     )?;
-    ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
-    ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
-    let chapter_path =
-        find_chapter_path_by_id(app, &repo_path.join("chapters"), &input.chapter_id)?;
-    let chapter_file: StoredChapterFile =
-        read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
-    let languages = sanitize_chapter_languages(&chapter_file.languages);
-    let mut word_counts = load_word_counts(&chapter_path.join("rows"), &languages)?;
     let mut rows_by_id = BTreeMap::new();
     for row in input.rows {
         let row_id = row.row_id.trim().to_string();
         if row_id.is_empty() {
             continue;
         }
-
-        rows_by_id.insert(
-            row_id,
-            UpdateEditorRowFieldsBatchRowInput {
-                row_id: row.row_id,
-                fields: row.fields,
-                footnotes: row.footnotes,
-                image_captions: row.image_captions,
-                timings: row.timings,
-                remove_images: row.remove_images,
-            },
-        );
+        rows_by_id.insert(row_id, row);
     }
 
     let mut changed_row_ids = Vec::new();
@@ -803,43 +948,19 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
     let mut removed_uploaded_paths = Vec::new();
 
     for (row_id, batch_row) in rows_by_id {
-        let fields = batch_row.fields;
-        let footnotes = batch_row.footnotes;
-        let image_captions = batch_row.image_captions;
-        let timings = batch_row.timings;
-        let remove_images = batch_row.remove_images;
-        let row_json_path = validated_row_json_path(&chapter_path, &row_id)?;
-        let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
-            format!(
-                "Could not read row file '{}': {error}",
-                row_json_path.display()
-            )
-        })?;
-        let original_row_file: StoredRowFile =
-            serde_json::from_str(&original_row_text).map_err(|error| {
-                format!(
-                    "Could not parse row file '{}': {error}",
-                    row_json_path.display()
-                )
-            })?;
-        let mut row_value: Value = serde_json::from_str(&original_row_text).map_err(|error| {
-            format!(
-                "Could not parse row file '{}': {error}",
-                row_json_path.display()
-            )
-        })?;
-        apply_editor_plain_text_updates(&mut row_value, &fields)?;
-        apply_editor_footnote_updates(&mut row_value, &footnotes)?;
-        apply_editor_image_caption_updates(&mut row_value, &image_captions)?;
-        apply_editor_timing_updates(&mut row_value, &timings)?;
-        for language_code in &remove_images {
+        let mut edit = load_editable_row_file(&repo_path, &chapter_path, &row_id)?;
+        apply_editor_plain_text_updates(&mut edit.value, &batch_row.fields)?;
+        apply_editor_footnote_updates(&mut edit.value, &batch_row.footnotes)?;
+        apply_editor_image_caption_updates(&mut edit.value, &batch_row.image_captions)?;
+        apply_editor_timing_updates(&mut edit.value, &batch_row.timings)?;
+        for language_code in &batch_row.remove_images {
             let language_code = language_code.trim();
             if language_code.is_empty() {
                 continue;
             }
             // Only touch fields that actually hold an image so image-free rows do not
             // churn (apply_editor_field_image_update inserts field defaults).
-            let Some(current_image) = row_language_stored_image(&original_row_file, language_code)
+            let Some(current_image) = row_language_stored_image(&edit.original_file, language_code)
             else {
                 continue;
             };
@@ -850,87 +971,50 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
                     }
                 }
             }
-            apply_editor_field_image_update(&mut row_value, language_code, None)?;
+            apply_editor_field_image_update(&mut edit.value, language_code, None)?;
         }
-
-        let updated_row_json = serde_json::to_string_pretty(&row_value).map_err(|error| {
-            format!(
-                "Could not serialize row file '{}': {error}",
-                row_json_path.display()
-            )
-        })?;
-        let updated_row_text = format!("{updated_row_json}\n");
-        if updated_row_text == original_row_text {
-            continue;
-        }
-
-        let updated_row_file: StoredRowFile =
-            serde_json::from_value(row_value.clone()).map_err(|error| {
-                format!(
-                    "Could not decode updated row '{}': {error}",
-                    row_json_path.display()
-                )
-            })?;
-        word_counts = apply_word_count_delta(
-            &word_counts,
-            &original_row_file,
-            &updated_row_file,
+        finish_editable_row_file(
+            edit,
+            false,
             &languages,
-        );
-        prepared_writes.push(PreparedRowFileWrite {
-            relative_path: repo_relative_path(&repo_path, &row_json_path)?,
-            path: row_json_path,
-            original_text: Some(original_row_text),
-            updated_text: updated_row_text,
-        });
-        changed_row_ids.push(row_id);
-    }
-
-    if !changed_row_ids.is_empty() {
-        let commit_message = input.commit_message.trim();
-        let operation = input.operation.trim();
-        let commit_output = write_row_files_and_commit_with_removals(
-            app,
-            &repo_path,
-            if commit_message.is_empty() {
-                "Update editor rows"
-            } else {
-                commit_message
-            },
-            CommitMetadata {
-                operation: if operation.is_empty() {
-                    None
-                } else {
-                    Some(operation)
-                },
-                migration: None,
-                status_note: None,
-                ai_model: Some(input.ai_model.trim()).filter(|value| !value.is_empty()),
-            },
-            &prepared_writes,
-            &removed_uploaded_paths,
+            &mut word_counts,
+            &mut prepared_writes,
+            &mut changed_row_ids,
         )?;
-        let commit_sha = if commit_output.is_empty() {
-            None
-        } else {
-            Some(git_output(&repo_path, &["rev-parse", "--short", "HEAD"])?)
-        };
-        for row_id in &changed_row_ids {
-            let _ = clear_imported_editor_conflict_entry(&repo_path, &input.chapter_id, row_id);
-        }
-
-        return Ok(UpdateEditorRowFieldsBatchResponse {
-            row_ids: changed_row_ids,
-            word_counts,
-            commit_sha,
-            chapter_base_commit_sha: current_repo_head_sha(&repo_path),
-        });
     }
+
+    let commit_message = input.commit_message.trim();
+    let operation = input.operation.trim();
+    let commit_sha = commit_batch_row_writes(
+        app,
+        &repo_path,
+        &input.chapter_id,
+        if commit_message.is_empty() {
+            "Update editor rows"
+        } else {
+            commit_message
+        },
+        CommitMetadata {
+            operation: if operation.is_empty() {
+                None
+            } else {
+                Some(operation)
+            },
+            migration: None,
+            status_note: None,
+            ai_model: Some(input.ai_model.trim()).filter(|value| !value.is_empty()),
+        },
+        BatchRowWrites {
+            prepared_writes: &prepared_writes,
+            removed_uploaded_paths: &removed_uploaded_paths,
+            changed_row_ids: &changed_row_ids,
+        },
+    )?;
 
     Ok(UpdateEditorRowFieldsBatchResponse {
         row_ids: changed_row_ids,
         word_counts,
-        commit_sha: None,
+        commit_sha,
         chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
 }
@@ -1164,21 +1248,18 @@ pub(crate) fn apply_gtms_editor_ai_review_results_batch_sync(
     app: &AppHandle,
     input: ApplyEditorAiReviewResultsBatchInput,
 ) -> Result<ApplyEditorAiReviewResultsBatchResponse, String> {
-    let repo_path = resolve_project_git_repo_path(
+    let BatchChapterContext {
+        repo_path,
+        chapter_path,
+        languages,
+        mut word_counts,
+    } = load_batch_chapter_context(
         app,
         input.installation_id,
         input.project_id.as_deref(),
-        Some(&input.repo_name),
+        &input.repo_name,
+        &input.chapter_id,
     )?;
-    ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
-    ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
-
-    let chapter_path =
-        find_chapter_path_by_id(app, &repo_path.join("chapters"), &input.chapter_id)?;
-    let chapter_file: StoredChapterFile =
-        read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
-    let languages = sanitize_chapter_languages(&chapter_file.languages);
-    let mut word_counts = load_word_counts(&chapter_path.join("rows"), &languages)?;
 
     let mut rows_by_id = BTreeMap::new();
     for row in input.rows {
@@ -1202,27 +1283,7 @@ pub(crate) fn apply_gtms_editor_ai_review_results_batch_sync(
     let mut pending_results = Vec::new();
 
     for (row_id, review_row) in rows_by_id {
-        let row_json_path = validated_row_json_path(&chapter_path, &row_id)?;
-        let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
-        let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
-            format!(
-                "Could not read row file '{}': {error}",
-                row_json_path.display()
-            )
-        })?;
-        let original_row_file: StoredRowFile =
-            serde_json::from_str(&original_row_text).map_err(|error| {
-                format!(
-                    "Could not parse row file '{}': {error}",
-                    row_json_path.display()
-                )
-            })?;
-        let mut row_value: Value = serde_json::from_str(&original_row_text).map_err(|error| {
-            format!(
-                "Could not parse row file '{}': {error}",
-                row_json_path.display()
-            )
-        })?;
+        let mut edit = load_editable_row_file(&repo_path, &chapter_path, &row_id)?;
 
         if !review_row.suggested_text.trim().is_empty() {
             let mut fields = BTreeMap::new();
@@ -1230,7 +1291,7 @@ pub(crate) fn apply_gtms_editor_ai_review_results_batch_sync(
                 input.language_code.clone(),
                 review_row.suggested_text.clone(),
             );
-            apply_editor_plain_text_updates(&mut row_value, &fields)?;
+            apply_editor_plain_text_updates(&mut edit.value, &fields)?;
         }
         if !review_row.suggested_footnote.trim().is_empty() {
             let mut footnotes = BTreeMap::new();
@@ -1238,7 +1299,7 @@ pub(crate) fn apply_gtms_editor_ai_review_results_batch_sync(
                 input.language_code.clone(),
                 review_row.suggested_footnote.clone(),
             );
-            apply_editor_footnote_updates(&mut row_value, &footnotes)?;
+            apply_editor_footnote_updates(&mut edit.value, &footnotes)?;
         }
         if !review_row.suggested_image_caption.trim().is_empty() {
             let mut image_captions = BTreeMap::new();
@@ -1246,92 +1307,66 @@ pub(crate) fn apply_gtms_editor_ai_review_results_batch_sync(
                 input.language_code.clone(),
                 review_row.suggested_image_caption.clone(),
             );
-            apply_editor_image_caption_updates(&mut row_value, &image_captions)?;
+            apply_editor_image_caption_updates(&mut edit.value, &image_captions)?;
         }
         let (_, _, reviewed_changed) = apply_editor_field_flag_update(
-            &mut row_value,
+            &mut edit.value,
             &input.language_code,
             "reviewed",
             review_row.reviewed,
         )?;
         let (reviewed, please_check, please_check_changed) = apply_editor_field_flag_update(
-            &mut row_value,
+            &mut edit.value,
             &input.language_code,
             "please-check",
             review_row.please_check,
         )?;
 
-        let updated_row_json = serde_json::to_string_pretty(&row_value).map_err(|error| {
-            format!(
-                "Could not serialize row file '{}': {error}",
-                row_json_path.display()
-            )
-        })?;
-        let updated_row_text = format!("{updated_row_json}\n");
-        let changed =
-            updated_row_text != original_row_text || reviewed_changed || please_check_changed;
-
-        let row_file = if changed {
-            let updated_row_file: StoredRowFile =
-                serde_json::from_str(&updated_row_text).map_err(|error| {
-                    format!(
-                        "Could not parse updated row file '{}': {error}",
-                        row_json_path.display()
-                    )
-                })?;
-            word_counts = apply_word_count_delta(
-                &word_counts,
-                &original_row_file,
-                &updated_row_file,
-                &languages,
-            );
-            prepared_writes.push(PreparedRowFileWrite {
-                relative_path: relative_row_json.clone(),
-                path: row_json_path,
-                original_text: Some(original_row_text),
-                updated_text: updated_row_text,
-            });
-            changed_row_ids.push(row_id.clone());
-            updated_row_file
-        } else {
-            original_row_file
-        };
+        let relative_path = edit.relative_path.clone();
+        let (_, row_file) = finish_editable_row_file(
+            edit,
+            reviewed_changed || please_check_changed,
+            &languages,
+            &mut word_counts,
+            &mut prepared_writes,
+            &mut changed_row_ids,
+        )?;
         pending_results.push(PendingRowResult {
             row_id,
-            relative_path: relative_row_json,
+            relative_path,
             row_file,
             reviewed,
             please_check,
         });
     }
 
-    if !changed_row_ids.is_empty() {
-        let ai_model = input.ai_model.trim();
-        write_row_files_and_commit(
-            app,
-            &repo_path,
-            &format!(
-                "AI review {} row{} {}",
-                changed_row_ids.len(),
-                if changed_row_ids.len() == 1 { "" } else { "s" },
-                input.language_code
-            ),
-            CommitMetadata {
-                operation: Some("ai-review"),
-                migration: None,
-                status_note: None,
-                ai_model: if ai_model.is_empty() {
-                    None
-                } else {
-                    Some(ai_model)
-                },
+    let ai_model = input.ai_model.trim();
+    commit_batch_row_writes(
+        app,
+        &repo_path,
+        &input.chapter_id,
+        &format!(
+            "AI review {} row{} {}",
+            changed_row_ids.len(),
+            if changed_row_ids.len() == 1 { "" } else { "s" },
+            input.language_code
+        ),
+        CommitMetadata {
+            operation: Some("ai-review"),
+            migration: None,
+            status_note: None,
+            ai_model: if ai_model.is_empty() {
+                None
+            } else {
+                Some(ai_model)
             },
-            &prepared_writes,
-        )?;
-        for row_id in &changed_row_ids {
-            let _ = clear_imported_editor_conflict_entry(&repo_path, &input.chapter_id, row_id);
-        }
-    }
+        },
+        BatchRowWrites {
+            prepared_writes: &prepared_writes,
+            removed_uploaded_paths: &[],
+            changed_row_ids: &changed_row_ids,
+        },
+    )?;
 
     let mut rows = Vec::new();
     for pending in pending_results {
