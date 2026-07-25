@@ -31,9 +31,24 @@ fn log_git_commit_diagnostic(event: &str, repo_path: &Path, message: &str, paths
         return;
     }
     eprintln!(
-        "[gtms git-commit] {event} repo='{}' message='{}' paths={:?}",
+        "[gtms git-commit] {event} repo='{}' message='{}' path_count={}",
         repo_path.display(),
         message,
+        paths.len()
+    );
+}
+
+/// Failure variant that includes the full path list, so failed commits stay
+/// fully diagnosable while routine per-stage events log only the path count.
+fn log_git_commit_diagnostic_failure(event: &str, repo_path: &Path, message: &str, paths: &[&str]) {
+    if !cfg!(debug_assertions) {
+        return;
+    }
+    eprintln!(
+        "[gtms git-commit] {event} repo='{}' message='{}' path_count={} paths={:?}",
+        repo_path.display(),
+        message,
+        paths.len(),
         paths
     );
 }
@@ -177,7 +192,7 @@ pub(crate) fn git_commit_as_signed_in_user_with_metadata(
             log_git_commit_diagnostic("nothing-to-commit", repo_path, message, paths);
             return Ok(String::new());
         }
-        log_git_commit_diagnostic("failed", repo_path, message, paths);
+        log_git_commit_diagnostic_failure("failed", repo_path, message, paths);
         return Err(format!("git commit failed: {detail}"));
     }
 
