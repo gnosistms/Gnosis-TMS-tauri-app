@@ -24,10 +24,12 @@ import {
   selectedEditorReviewTargetLanguageCode,
 } from "./editor-ai-review-request.js";
 import {
+  AI_BATCH_CONCURRENCY,
   chunkTranslateAllWork,
   estimateSourceTokens,
   mapWithConcurrency,
 } from "./editor-ai-batch-request.js";
+import { createAiBatchPool } from "./editor-ai-batch-pool.js";
 import { loadAssistantTargetLanguageHistory } from "./editor-ai-assistant-flow.js";
 import {
   cloneRowFields,
@@ -588,7 +590,9 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
   // preloadedHistory ({ targetText, history }) lets a batch fallback reuse the
   // history it already loaded instead of re-running the git-history invoke,
   // as long as the row text history was loaded for is still current.
-  const reviewSingleItem = async (item, preloadedHistory = null) => {
+  // The AI call holds a pool slot (sharing the run's in-flight cap with batch
+  // requests) and the write goes through the apply lane, never both at once.
+  const reviewSingleItem = async (item, preloadedHistory, tools) => {
     if (!isReviewActive()) {
       return "abort";
     }
@@ -612,7 +616,7 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
     if (!isReviewActive()) {
       return "abort";
     }
-    const reviewPayload = await invoke("run_ai_review", {
+    const reviewPayload = await tools.withSlot(() => invoke("run_ai_review", {
       request: buildEditorAiReviewRequest({
         chapterState: state.editorChapter,
         row,
@@ -624,14 +628,14 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
         targetLanguageHistory,
         installationId: team.installationId,
       }),
-    });
+    }));
     if (!isReviewActive()) {
       return "abort";
     }
-    return applyReviewOutcome(item, reviewPayload);
+    return tools.inApplyLane(() => applyReviewOutcome(item, reviewPayload));
   };
 
-  const reviewBatch = async (batch) => {
+  const reviewBatch = async (batch, tools) => {
     const liveItems = [];
     for (const item of batch.items) {
       const row = findEditorRowById(item.rowId, state.editorChapter);
@@ -657,7 +661,11 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
 
     const targetLanguageHistoryByRowId = new Map();
     if (reviewMode === "meaning") {
-      await mapWithConcurrency(liveItems, 3, async ({ item, row }) => {
+      // 2 (not 3) per batch: with AI_BATCH_CONCURRENCY batches in flight the
+      // worst case is pool × this many concurrent local git-history
+      // processes, which is the number to keep small (Windows process spawns
+      // are the slow path).
+      await mapWithConcurrency(liveItems, 2, async ({ item, row }) => {
         const history = await loadHistoryForItem(
           item,
           readEditorReviewRowFieldText(row, targetLanguageCode),
@@ -695,7 +703,7 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
 
     let payload;
     try {
-      payload = await runBatch(request);
+      payload = await tools.withSlot(() => runBatch(request));
     } catch (error) {
       console.warn("[gtms ai-review] Batch review call failed; reviewing these rows one at a time.", {
         rowCount: liveItems.length,
@@ -708,7 +716,7 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
         return "abort";
       }
       for (const entry of liveItems) {
-        const outcome = await reviewSingleItem(entry.item, preloadedHistoryForEntry(entry));
+        const outcome = await reviewSingleItem(entry.item, preloadedHistoryForEntry(entry), tools);
         if (outcome === "abort" || outcome === "chapter-changed") {
           return outcome;
         }
@@ -737,38 +745,46 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
       });
       reportBackendNonfatalError({ operation: "ai-review-batch", reason: "missing-rows" });
     }
-    const batchApplyEntries = [];
-    const fallbackEntries = [];
-    for (const entry of liveItems) {
-      const { item } = entry;
-      // Re-validate against the CURRENT row: the batch call leaves a long
-      // window in which the user or background sync may have changed this row.
-      const currentRow = findEditorRowById(item.rowId, state.editorChapter);
-      const currentTranslation = readEditorReviewRowFieldText(currentRow, targetLanguageCode);
-      const currentFootnote = readEditorReviewRowFootnote(currentRow, targetLanguageCode);
-      const currentImageCaption = readEditorReviewRowImageCaption(currentRow, targetLanguageCode);
-      if (
-        !currentRow
-        || (!currentTranslation.trim() && !currentFootnote.trim() && !currentImageCaption.trim())
-        || currentRow.fieldStates?.[targetLanguageCode]?.reviewed === true
-      ) {
-        // Row emptied or manually marked reviewed mid-flight — leave it alone.
-        continue;
+    // Partition and apply inside the lane so the row validation and the write
+    // happen against the same state snapshot, with no other batch's apply
+    // between them.
+    const { batchOutcome, fallbackEntries } = await tools.inApplyLane(async () => {
+      const batchApplyEntries = [];
+      const laneFallbackEntries = [];
+      for (const entry of liveItems) {
+        const { item } = entry;
+        // Re-validate against the CURRENT row: the batch call leaves a long
+        // window in which the user or background sync may have changed this row.
+        const currentRow = findEditorRowById(item.rowId, state.editorChapter);
+        const currentTranslation = readEditorReviewRowFieldText(currentRow, targetLanguageCode);
+        const currentFootnote = readEditorReviewRowFootnote(currentRow, targetLanguageCode);
+        const currentImageCaption = readEditorReviewRowImageCaption(currentRow, targetLanguageCode);
+        if (
+          !currentRow
+          || (!currentTranslation.trim() && !currentFootnote.trim() && !currentImageCaption.trim())
+          || currentRow.fieldStates?.[targetLanguageCode]?.reviewed === true
+        ) {
+          // Row emptied or manually marked reviewed mid-flight — leave it alone.
+          continue;
+        }
+        const rowResult = returnedById.get(item.rowId);
+        const textChangedMidFlight =
+          currentTranslation !== entry.latestTranslation
+          || currentFootnote !== entry.latestFootnote
+          || currentImageCaption !== entry.latestImageCaption;
+        // A changed row gets re-reviewed against its current text through the
+        // single-row path instead of receiving a verdict for text it no longer has.
+        if (rowResult && !textChangedMidFlight) {
+          batchApplyEntries.push({ item, reviewPayload: rowResult });
+        } else {
+          laneFallbackEntries.push(entry);
+        }
       }
-      const rowResult = returnedById.get(item.rowId);
-      const textChangedMidFlight =
-        currentTranslation !== entry.latestTranslation
-        || currentFootnote !== entry.latestFootnote
-        || currentImageCaption !== entry.latestImageCaption;
-      // A changed row gets re-reviewed against its current text through the
-      // single-row path instead of receiving a verdict for text it no longer has.
-      if (rowResult && !textChangedMidFlight) {
-        batchApplyEntries.push({ item, reviewPayload: rowResult });
-      } else {
-        fallbackEntries.push(entry);
-      }
-    }
-    const batchOutcome = await applyReviewOutcomesBatch(batchApplyEntries);
+      return {
+        batchOutcome: await applyReviewOutcomesBatch(batchApplyEntries),
+        fallbackEntries: laneFallbackEntries,
+      };
+    });
     if (batchOutcome !== "ok") {
       return batchOutcome;
     }
@@ -776,7 +792,7 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
       if (!isReviewActive()) {
         return "abort";
       }
-      const outcome = await reviewSingleItem(entry.item, preloadedHistoryForEntry(entry));
+      const outcome = await reviewSingleItem(entry.item, preloadedHistoryForEntry(entry), tools);
       if (outcome === "abort" || outcome === "chapter-changed") {
         return outcome;
       }
@@ -797,27 +813,30 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
           readEditorReviewRowFieldText(rowsById.get(item.rowId), targetLanguageCode),
         ),
     });
-    for (const batch of batches) {
-      if (!isReviewActive()) {
-        if (started) {
-          enablePleaseCheckFilterAndShowModal();
-          render?.();
-        }
-        return;
+    // Up to AI_BATCH_CONCURRENCY batches run their AI calls concurrently; the
+    // pool's apply lane keeps every write serialized (the review applies
+    // invoke commands directly, with no write queue underneath).
+    const pool = createAiBatchPool({
+      concurrency: AI_BATCH_CONCURRENCY,
+      isRunActive: isReviewActive,
+    });
+    const outcome = await pool.run(batches, async (batch, tools) => {
+      const result = batch.items.length === 1
+        ? await reviewSingleItem(batch.items[0], null, tools)
+        : await reviewBatch(batch, tools);
+      // "skip" (row went stale before its AI call) continues the run; only
+      // abort/chapter-changed/thrown errors may stop the pool.
+      return result === "skip" ? "ok" : result;
+    });
+    if (outcome === "chapter-changed") {
+      return;
+    }
+    if (outcome === "abort") {
+      if (started) {
+        enablePleaseCheckFilterAndShowModal();
+        render?.();
       }
-      const outcome = batch.items.length === 1
-        ? await reviewSingleItem(batch.items[0])
-        : await reviewBatch(batch);
-      if (outcome === "chapter-changed") {
-        return;
-      }
-      if (outcome === "abort") {
-        if (started) {
-          enablePleaseCheckFilterAndShowModal();
-          render?.();
-        }
-        return;
-      }
+      return;
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

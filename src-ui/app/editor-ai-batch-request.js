@@ -14,6 +14,13 @@ import { estimateSourceTokens } from "./editor-ai-context-window.js";
 // of unusually long rows blowing up a single prompt, not a measured quality point.
 export const AI_BATCH_MAX_ROWS = 15;
 export const AI_BATCH_TOKEN_TARGET = 4000;
+// Pool size for concurrent AI calls in a Translate All / Review All run
+// (see plans/ai-batch-parallelization-plan.md). 3 keeps three ~4k-token
+// requests in flight — under typical per-minute token limits for
+// team-provided keys. The slot semaphore in editor-ai-batch-pool.js makes
+// this the cap on ALL in-flight AI calls for a run, batch requests and
+// per-row fallbacks alike.
+export const AI_BATCH_CONCURRENCY = 3;
 
 function pairKey(item) {
   return `${item?.sourceLanguageCode ?? ""}::${item?.targetLanguageCode ?? ""}`;
