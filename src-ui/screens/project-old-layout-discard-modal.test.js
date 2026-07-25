@@ -23,3 +23,35 @@ test("renders remote migrated old-layout discard confirmation modal", () => {
 test("old-layout discard modal is hidden when closed", () => {
   assert.equal(renderProjectOldLayoutDiscardModal({ projectOldLayoutDiscard: { isOpen: false } }), "");
 });
+
+test("project old-layout discard loading state uses a keyed destructive button", () => {
+  const markup = renderProjectOldLayoutDiscardModal({
+    projectOldLayoutDiscard: {
+      isOpen: true,
+      resourceName: "Meditation Chamber Books",
+      status: "loading",
+      error: "",
+    },
+  });
+
+  assert.match(markup, /button--error button--loading/);
+  assert.match(markup, /data-action="noop"/);
+  assert.match(markup, /data-loading-spinner-key="confirm-project-old-layout-discard"/);
+  assert.match(markup, /disabled aria-busy="true"/);
+  assert.match(markup, /data-action="close-project-old-layout-discard"[^>]*disabled/);
+});
+
+test("project old-layout discard error state restores the real action", () => {
+  const markup = renderProjectOldLayoutDiscardModal({
+    projectOldLayoutDiscard: {
+      isOpen: true,
+      resourceName: "Meditation Chamber Books",
+      status: "idle",
+      error: "Could not discard local changes.",
+    },
+  });
+
+  assert.match(markup, /data-action="confirm-project-old-layout-discard"/);
+  assert.match(markup, /Could not discard local changes/);
+  assert.doesNotMatch(markup, /data-loading-spinner-key/);
+});

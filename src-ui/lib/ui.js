@@ -95,10 +95,37 @@ export function errorButton(label, action, options = {}) {
   )}"${disabledActionAttributes(options)}>${escapeHtml(label)}</button>`;
 }
 
-export function loadingPrimaryButton({ label, loadingLabel, action, isLoading }) {
+export function loadingSpinnerKeyAttribute(key) {
+  const normalizedKey = String(key ?? "").trim();
+  return normalizedKey
+    ? ` data-loading-spinner-key="${escapeHtml(normalizedKey)}"`
+    : "";
+}
+
+export function loadingButton({
+  label,
+  loadingLabel,
+  action,
+  isLoading,
+  variant = "primary",
+  compact = false,
+  className = "",
+}) {
+  const normalizedVariant = ["primary", "secondary", "error"].includes(variant)
+    ? variant
+    : "primary";
+  const additionalClass = String(className ?? "").trim();
+  const classes = [
+    "button",
+    `button--${normalizedVariant}`,
+    compact ? "button--compact" : "",
+    isLoading ? "button--loading" : "",
+    additionalClass,
+  ].filter(Boolean).join(" ");
+
   if (isLoading) {
     return `
-      <button class="button button--primary button--loading" data-action="noop" disabled>
+      <button class="${escapeHtml(classes)}" data-action="noop"${loadingSpinnerKeyAttribute(action)} disabled aria-busy="true">
         <span class="button__spinner" aria-hidden="true"></span>
         <span>${escapeHtml(loadingLabel)}</span>
       </button>
@@ -106,10 +133,14 @@ export function loadingPrimaryButton({ label, loadingLabel, action, isLoading })
   }
 
   return `
-    <button class="button button--primary" data-action="${escapeHtml(action)}">
+    <button class="${escapeHtml(classes)}" data-action="${escapeHtml(action)}">
       <span>${escapeHtml(label)}</span>
     </button>
   `;
+}
+
+export function loadingPrimaryButton(options) {
+  return loadingButton({ ...options, variant: "primary" });
 }
 
 export function setImmediateLoadingButton(button, loadingLabel) {
@@ -117,8 +148,11 @@ export function setImmediateLoadingButton(button, loadingLabel) {
     return;
   }
 
+  const loadingSpinnerKey = button.dataset.action || loadingLabel;
   button.disabled = true;
   button.dataset.action = "noop";
+  button.dataset.loadingSpinnerKey = loadingSpinnerKey;
+  button.setAttribute("aria-busy", "true");
   button.classList.add("button--loading");
   button.innerHTML = `
     <span class="button__spinner" aria-hidden="true"></span>
@@ -460,7 +494,7 @@ export function pageShell({
     ? `
         <div class="offline-banner" aria-live="polite">
           <span>Offline mode</span>
-          <button class="button button--secondary button--compact${offlineReconnectState ? " is-disabled" : ""}" data-action="reconnect-online"${offlineReconnectState ? ' aria-disabled="true"' : ""}>
+          <button class="button button--secondary button--compact${offlineReconnectState ? " is-disabled" : ""}" data-action="reconnect-online"${offlineReconnectState ? `${loadingSpinnerKeyAttribute("reconnect-online")} aria-disabled="true" aria-busy="true"` : ""}>
             ${
               offlineReconnectState
                 ? '<span class="button__spinner" aria-hidden="true"></span><span>Reconnect</span>'

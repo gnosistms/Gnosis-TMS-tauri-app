@@ -230,7 +230,7 @@ function delay(ms) {
 }
 
 function updateStageIfVisible(jobId, stage, render) {
-  if (currentTransferMatches(jobId)) {
+  if (currentTransferMatches(jobId) && state.projectTransfer?.stage !== stage) {
     patchTransfer({ stage }, render);
   }
 }

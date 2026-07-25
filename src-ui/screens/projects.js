@@ -3,6 +3,7 @@ import {
   buildSectionNav,
   createSearchField,
   escapeHtml,
+  loadingButton,
   pageShell,
   primaryButton,
   renderStateCard,
@@ -176,12 +177,14 @@ function renderProjectRepoConflictRecovery(state, selectedTeam) {
       : "";
 
   const overwriteButton = isLoading
-    ? `
-      <button class="button button--error button--loading project-conflict-recovery__button" disabled>
-        <span class="button__spinner" aria-hidden="true"></span>
-        <span>Overwriting...</span>
-      </button>
-    `
+    ? loadingButton({
+      label: "Overwrite and resolve",
+      loadingLabel: "Overwriting...",
+      action: "overwrite-conflicted-project-repos",
+      isLoading: true,
+      variant: "error",
+      className: "project-conflict-recovery__button",
+    })
     : `
       <button
         class="button button--error project-conflict-recovery__button${recoveryDisabled ? " is-disabled" : ""}"

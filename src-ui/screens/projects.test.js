@@ -124,6 +124,22 @@ test("offline banner renders inside the page header", () => {
   assert.ok(bannerStart < headerEnd);
 });
 
+test("offline reconnect banner preserves its guarded action with a stable loading key", () => {
+  const html = renderProjectsScreen(projectsState({
+    offline: {
+      isEnabled: true,
+      reconnecting: true,
+    },
+  }));
+  const reconnectButton = actionButtonHtml(html, "reconnect-online");
+
+  assert.match(reconnectButton, /data-loading-spinner-key="reconnect-online"/);
+  assert.match(reconnectButton, /aria-disabled="true"/);
+  assert.match(reconnectButton, /aria-busy="true"/);
+  assert.doesNotMatch(reconnectButton, /\sdisabled(?:\s|>)/);
+  assert.match(html, /button__spinner/);
+});
+
 test("project background refresh spins without disabling the refresh button", () => {
   const html = renderProjectsScreen(projectsState({
     projectsPage: {
@@ -152,6 +168,47 @@ test("project background refresh keeps refresh icon animation phase stable acros
   }));
 
   assert.match(html, /--title-icon-spin-delay: -\d+ms/);
+});
+
+test("project conflict recovery preserves idle, loading, and error button contracts", () => {
+  const conflictState = {
+    projectRepoSyncByProjectId: {
+      "project-1": {
+        status: "unresolvedConflict",
+        message: "Merge failed.",
+      },
+    },
+  };
+  const idleHtml = renderProjectsScreen(projectsState(conflictState));
+  assert.match(idleHtml, /data-action="overwrite-conflicted-project-repos"/);
+  assert.match(idleHtml, /project-conflict-recovery__button/);
+  assert.doesNotMatch(idleHtml, /data-loading-spinner-key="overwrite-conflicted-project-repos"/);
+
+  const loadingHtml = renderProjectsScreen(projectsState({
+    ...conflictState,
+    projectRepoConflictRecovery: {
+      teamId: "team-1",
+      status: "loading",
+      error: "",
+    },
+  }));
+  assert.match(loadingHtml, /project-conflict-recovery__button/);
+  assert.match(loadingHtml, /data-action="noop"/);
+  assert.match(loadingHtml, /data-loading-spinner-key="overwrite-conflicted-project-repos"/);
+  assert.match(loadingHtml, /disabled aria-busy="true"/);
+  assert.match(loadingHtml, /Overwriting\.\.\./);
+
+  const errorHtml = renderProjectsScreen(projectsState({
+    ...conflictState,
+    projectRepoConflictRecovery: {
+      teamId: "team-1",
+      status: "idle",
+      error: "Overwrite failed.",
+    },
+  }));
+  assert.match(errorHtml, /data-action="overwrite-conflicted-project-repos"/);
+  assert.match(errorHtml, /Overwrite failed\./);
+  assert.doesNotMatch(errorHtml, /data-loading-spinner-key="overwrite-conflicted-project-repos"/);
 });
 
 test("project discovery loading disables project creation even if refresh flag is stale", () => {

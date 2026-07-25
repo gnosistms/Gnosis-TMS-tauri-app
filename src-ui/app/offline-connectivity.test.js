@@ -253,6 +253,7 @@ test("connection failure modal uses Reconnect instead of Cancel", () => {
   assert.match(html, /Reconnect/);
   assert.doesNotMatch(html, /Cancel/);
   assert.match(html, /go-offline-from-connection-failure/);
+  assert.doesNotMatch(html, /data-loading-spinner-key/);
 });
 
 test("connection failure modal shows reconnecting state", () => {
@@ -269,6 +270,7 @@ test("connection failure modal shows reconnecting state", () => {
   assert.match(html, /button__spinner/);
   assert.match(html, /aria-busy="true"/);
   assert.match(html, /data-action="noop"/);
+  assert.match(html, /data-loading-spinner-key="reconnect-from-connection-failure"/);
   assert.match(html, /go-offline-from-connection-failure" disabled/);
 });
 

@@ -15,6 +15,7 @@ import {
 import { loadUserTeams, setGithubAppInstallation } from "./app/team-setup-flow.js";
 import { syncLanguagePickerAlphabetIndexes } from "./app/language-picker-alphabet-index.js";
 import { initializeConnectivity } from "./app/offline-connectivity.js";
+import { registerLoadingSpinnerContinuity } from "./app/loading-spinner-continuity.js";
 import {
   initializePersistentStorage,
   setPersistentStoreFailureReporter,
@@ -1076,6 +1077,7 @@ window.__gnosisDebug = {
 };
 
 async function bootstrap() {
+  registerLoadingSpinnerContinuity(app);
   render();
   await initializePersistentStorage();
   const needsTelemetryDisclosure = openTelemetryDisclosureIfNeeded(render);

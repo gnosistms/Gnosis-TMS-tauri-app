@@ -1,4 +1,8 @@
-import { escapeHtml, secondaryButton } from "../lib/ui.js";
+import {
+  escapeHtml,
+  loadingButton,
+  secondaryButton,
+} from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { adjacentActiveEditorRowIds } from "../app/editor-row-structure-state.js";
 
@@ -27,12 +31,12 @@ export function renderEditorRowMergeModal(state) {
     >${escapeHtml(label)}</button>
   `;
   const directionButtons = isSubmitting
-    ? `
-      <button class="button button--primary button--loading" data-action="noop" disabled>
-        <span class="button__spinner" aria-hidden="true"></span>
-        <span>Merging...</span>
-      </button>
-    `
+    ? loadingButton({
+      label: "Merge",
+      loadingLabel: "Merging...",
+      action: "merge-editor-rows",
+      isLoading: true,
+    })
     : directionButton("Previous", "confirm-merge-editor-rows-previous", Boolean(previousRowId))
       + directionButton("Next", "confirm-merge-editor-rows-next", Boolean(nextRowId));
 

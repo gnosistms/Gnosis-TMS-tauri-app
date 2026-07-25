@@ -23,6 +23,9 @@ test("project import modal renders the requested drop target copy", () => {
   assert.match(html, /Drop files here or click to open the file selector\./);
   assert.match(html, /Select files/);
   assert.match(html, /Supported formats: \.xlsx, \.txt, \.srt, \.docx, \.html, or \.htm\./);
+  assert.doesNotMatch(html, /button__spinner/);
+  assert.doesNotMatch(html, /data-loading-spinner-key/);
+  assert.doesNotMatch(html, /project-import-modal__drop-target is-loading/);
 });
 
 test("project import modal renders paste link input state", () => {

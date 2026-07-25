@@ -1,6 +1,6 @@
 import {
-  errorButton,
   escapeHtml,
+  loadingButton,
   secondaryButton,
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
@@ -29,11 +29,13 @@ export function renderProjectOldLayoutDiscardModal(state) {
           ${errorMarkup}
           <div class="modal__actions">
             ${secondaryButton("Cancel", "close-project-old-layout-discard", { disabled: isLoading })}
-            ${
-              isLoading
-                ? '<button class="button button--error button--loading" data-action="noop" disabled><span class="button__spinner" aria-hidden="true"></span><span>Discarding...</span></button>'
-                : errorButton("Discard my changes and continue", "confirm-project-old-layout-discard")
-            }
+            ${loadingButton({
+              label: "Discard my changes and continue",
+              loadingLabel: "Discarding...",
+              action: "confirm-project-old-layout-discard",
+              isLoading,
+              variant: "error",
+            })}
           </div>
         </div>
       </section>

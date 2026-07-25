@@ -989,12 +989,14 @@ a {
 }
 
 .button__spinner {
+  --button-spinner-duration: 0.7s;
+
   width: 16px;
   height: 16px;
   border-radius: 999px;
   border: 2px solid rgba(255, 248, 237, 0.42);
   border-top-color: var(--accent-text);
-  animation: button-spin 0.7s linear infinite;
+  animation: button-spin var(--button-spinner-duration) linear infinite;
 }
 
 .button--error .button__spinner {

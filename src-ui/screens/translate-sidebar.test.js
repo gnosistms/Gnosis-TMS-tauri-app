@@ -119,6 +119,42 @@ test("assistant translate button remains visible with spinner while translation 
   assert.match(html, /button--loading/);
   assert.match(html, /translate-ai-action-button__spinner/);
   assert.match(html, /aria-busy="true"/);
+  assert.match(html, /data-loading-spinner-key="run-editor-ai-translate:translate1"/);
+});
+
+test("detailed AI translate actions receive distinct loading keys", () => {
+  const actionConfig = createAiActionConfigurationState();
+  actionConfig.detailedConfiguration = true;
+  const loadingAction = (requestKey) => ({
+    status: "loading",
+    rowId: "row-1",
+    sourceLanguageCode: "es",
+    targetLanguageCode: "vi",
+    requestKey,
+    sourceText: "Hola",
+  });
+  const html = renderTranslateSidebar(
+    activeEditorChapter({
+      aiTranslate: {
+        translate1: loadingAction("request-1"),
+        translate2: loadingAction("request-2"),
+      },
+    }),
+    [{
+      id: "row-1",
+      sections: [
+        { code: "es", text: "Hola" },
+        { code: "vi", text: "Translating...", isAiTranslating: true },
+      ],
+    }],
+    languages,
+    "es",
+    "vi",
+    actionConfig,
+  );
+
+  assert.match(html, /data-loading-spinner-key="run-editor-ai-translate:translate1"/);
+  assert.match(html, /data-loading-spinner-key="run-editor-ai-translate:translate2"/);
 });
 
 test("assistant sidebar hides translate buttons when the selected translation is non-empty", () => {
@@ -1110,7 +1146,43 @@ test("review sidebar shows the loading spinner on the active full review button"
 
   assert.match(html, /Full review\.\.\./);
   assert.match(html, /button--loading/);
+  assert.match(html, /data-action="noop"/);
+  assert.match(html, /data-loading-spinner-key="review-editor-text-now:meaning"/);
+  assert.match(html, /data-ai-review-mode="meaning"/);
+  assert.match(html, /aria-busy="true"/);
   assert.doesNotMatch(html, />Spelling and grammar only<\/span>/);
+});
+
+test("review sidebar gives grammar review its own stable loading key", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter({
+      sidebarTab: "review",
+      aiReview: {
+        rowId: "row-1",
+        languageCode: "vi",
+        status: "loading",
+        sourceText: "Xin chao",
+        reviewMode: "grammar",
+      },
+    }),
+    [{
+      id: "row-1",
+      sections: [
+        { code: "es", text: "Hola" },
+        { code: "vi", text: "Xin chao" },
+      ],
+    }],
+    languages,
+    "es",
+    "vi",
+    createAiActionConfigurationState(),
+  );
+
+  assert.match(html, /Spelling and grammar only\.\.\./);
+  assert.match(html, /data-loading-spinner-key="review-editor-text-now:grammar"/);
+  assert.match(html, /data-ai-review-mode="grammar"/);
+  assert.match(html, /aria-busy="true"/);
+  assert.doesNotMatch(html, />Full review<\/span>/);
 });
 
 test("review sidebar keeps existing AI review suggestions locally applicable offline", () => {
