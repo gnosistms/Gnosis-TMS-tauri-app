@@ -410,6 +410,26 @@ export async function upsertProjectMetadataRecord(team, record, options = {}) {
             typeof record.deletedAt === "string" && record.deletedAt.trim()
               ? record.deletedAt.trim()
               : null,
+          chapterCount:
+            Number.isSafeInteger(record.chapterCount) && record.chapterCount >= 0
+              ? record.chapterCount
+              : null,
+        },
+        sessionToken: requireBrokerSession(),
+      }),
+    options,
+  );
+}
+
+export async function deleteProjectMetadataRecord(team, projectId, options = {}) {
+  await commitLocalMetadataMutation(
+    team,
+    () =>
+      invoke("delete_local_gnosis_project_metadata_record", {
+        input: {
+          installationId: team.installationId,
+          orgLogin: team.githubOrg,
+          projectId,
         },
         sessionToken: requireBrokerSession(),
       }),

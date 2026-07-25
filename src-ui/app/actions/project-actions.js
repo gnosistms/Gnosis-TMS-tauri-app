@@ -65,6 +65,11 @@ import {
   submitProjectAddTranslationPaste,
 } from "../project-add-translation-flow.js";
 import { openChapterExportOptions } from "../editor-export-flow.js";
+import {
+  cancelProjectTransfer,
+  openProjectTransfer,
+  submitProjectTransfer,
+} from "../project-transfer-flow.js";
 import { actionSuffix, runWithImmediateLoading } from "../action-helpers.js";
 
 const READ_ONLY_PROJECT_WRITE_ACTIONS = new Set([
@@ -235,6 +240,7 @@ export function createProjectActions(render) {
     "cancel-project-permanent-deletion": () => cancelProjectPermanentDeletion(render),
     "cancel-clear-deleted-files": () => cancelProjectClearDeletedFiles(render),
     "cancel-project-rename": () => cancelProjectRename(render),
+    "cancel-project-transfer": () => cancelProjectTransfer(render),
     "cancel-chapter-permanent-deletion": () => cancelChapterPermanentDeletion(render),
     "cancel-chapter-rename": () => cancelChapterRename(render),
     "clear-project-search": () => clearProjectSearch(render),
@@ -252,6 +258,7 @@ export function createProjectActions(render) {
     "load-more-project-search-results": () => loadMoreProjectSearchResults(render),
     "overwrite-conflicted-project-repos": () => overwriteConflictedProjectRepos(render),
     "toggle-deleted-projects": () => toggleDeletedProjects(render),
+    "submit-project-transfer": () => submitProjectTransfer(render),
   };
 
   const prefixHandlers = [
@@ -309,6 +316,10 @@ export function createProjectActions(render) {
     {
       prefix: "rename-project:",
       handler: (projectId) => openProjectRename(render, projectId),
+    },
+    {
+      prefix: "transfer-project:",
+      handler: (projectId) => openProjectTransfer(render, projectId),
     },
     {
       prefix: "open-project-old-layout-discard:",

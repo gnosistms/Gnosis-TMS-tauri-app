@@ -7,6 +7,7 @@ import {
 import { registerAppEvents } from "./app/events.js";
 import { registerWordPressExportListeners } from "./app/editor-export-wordpress-flow.js";
 import { registerTeamChapterCopyListeners } from "./app/editor-export-team-copy-flow.js";
+import { registerProjectTransferListeners } from "./app/project-transfer-flow.js";
 import { registerChapterPdfExportListeners } from "./app/editor-export-flow.js";
 import {
   initializeEditorVirtualization,
@@ -1099,6 +1100,7 @@ async function bootstrap() {
   void registerGithubAppInstallListener(render, setGithubAppInstallation);
   void registerWordPressExportListeners(render);
   void registerTeamChapterCopyListeners(render);
+  void registerProjectTransferListeners(render);
   void registerChapterPdfExportListeners(render);
   void checkForAppUpdate(render, { silent: true });
   render();

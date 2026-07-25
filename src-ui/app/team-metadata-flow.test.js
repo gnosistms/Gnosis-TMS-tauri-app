@@ -6,13 +6,15 @@ globalThis.document = globalThis.document ?? {
 };
 
 const invokeEvents = [];
+const invokePayloads = [];
 let releaseProjectWrite = null;
 
 globalThis.window = {
   __TAURI__: {
     core: {
-      invoke: async (command) => {
+      invoke: async (command, payload) => {
         invokeEvents.push(command);
+        invokePayloads.push({ command, payload });
         if (command === "upsert_local_gnosis_project_metadata_record") {
           return new Promise((resolve) => {
             releaseProjectWrite = resolve;
@@ -78,9 +80,27 @@ async function waitFor(condition) {
 
 test.beforeEach(() => {
   invokeEvents.length = 0;
+  invokePayloads.length = 0;
   releaseProjectWrite = null;
   resetSessionState();
   state.auth.session = { sessionToken: "session-token" };
+});
+
+test("project metadata writes forward an authoritative chapter count", async () => {
+  const projectWrite = upsertProjectMetadataRecord(
+    team(),
+    projectRecord({ chapterCount: 7 }),
+    { requirePushSuccess: true },
+  );
+
+  await waitFor(() => releaseProjectWrite instanceof Function);
+  const event = invokePayloads.find(
+    ({ command }) => command === "upsert_local_gnosis_project_metadata_record",
+  );
+  assert.equal(event.payload.input.chapterCount, 7);
+
+  releaseProjectWrite({ commitCreated: true });
+  await projectWrite;
 });
 
 test("team metadata writes for the same installation are serialized across resource types", async () => {

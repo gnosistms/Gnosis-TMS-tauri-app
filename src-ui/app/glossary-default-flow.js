@@ -16,7 +16,7 @@ function activeGlossariesExcept(glossaryId = null) {
   );
 }
 
-function compareDefaultCandidates(left, right) {
+export function compareDefaultCandidates(left, right) {
   const leftTermCount = Number.isFinite(left?.termCount) ? left.termCount : 0;
   const rightTermCount = Number.isFinite(right?.termCount) ? right.termCount : 0;
   return (

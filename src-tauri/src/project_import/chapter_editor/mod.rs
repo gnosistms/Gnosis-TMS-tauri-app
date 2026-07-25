@@ -41,6 +41,7 @@ mod git_conflicts;
 mod history;
 mod images;
 mod pdf_export;
+mod project_transfer;
 mod row_fields;
 mod row_merge;
 mod row_structure;
@@ -67,7 +68,8 @@ pub(crate) use self::chapter_selection::{
 pub(crate) use self::git_conflicts::{
     clear_imported_editor_conflict_entry, list_imported_editor_conflict_refs,
     persist_imported_editor_conflict_entries, repo_has_imported_editor_conflicts,
-    resolve_chapter_json_git_conflict_from_stage_texts, resolve_row_git_conflict_from_stage_texts,
+    resolve_chapter_json_git_conflict_from_stage_texts,
+    resolve_project_json_git_conflict_from_stage_texts, resolve_row_git_conflict_from_stage_texts,
     ImportedEditorConflictRef, PendingImportedEditorConflictEntry, ResolvedEditorConflictAction,
 };
 pub(super) use self::history::{
@@ -92,6 +94,11 @@ pub(super) use self::images::{
 pub(crate) use self::pdf_export::{
     cancel_gtms_chapter_pdf_export, inspect_gtms_chapter_pdf_fonts, start_gtms_chapter_pdf_export,
     PdfChapterExportInput, PdfFontInspection, PdfFontInspectionInput,
+};
+pub(crate) use self::project_transfer::{
+    acknowledge_project_transfer_status, get_project_transfer_status,
+    list_project_transfer_statuses, start_project_transfer, ProjectTransferInput,
+    ProjectTransferStatus, ProjectTransferStatusInput,
 };
 use self::row_fields::apply_editor_text_style_update;
 #[cfg(test)]

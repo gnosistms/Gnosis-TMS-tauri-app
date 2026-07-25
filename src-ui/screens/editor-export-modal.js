@@ -3,9 +3,9 @@ import {
   iconAction,
   loadingPrimaryButton,
   renderCollapseChevron,
-  renderListboxControl,
   secondaryButton,
 } from "../lib/ui.js";
+import { renderExportSelect, supportingText } from "./export-fields.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
 import {
   editorExportCategories,
@@ -61,10 +61,6 @@ function renderExportCategory(category, modal) {
       ${optionsMarkup}
     </div>
   `;
-}
-
-function supportingText(text) {
-  return `<p class="modal__supporting">${escapeHtml(text)}</p>`;
 }
 
 function pdfFontDisclosure(modal) {
@@ -253,22 +249,6 @@ function wordpressDetail(wordpress, isExporting) {
       isLoading: isExporting,
     }),
   };
-}
-
-function renderExportSelect({ id, label, selectAttributes, placeholder, options, value, disabled = false }) {
-  return `
-    <div class="field editor-export-modal__field">
-      ${renderListboxControl({
-        id,
-        label,
-        value,
-        placeholder,
-        disabled,
-        selectAttributes,
-        options,
-      })}
-    </div>
-  `;
 }
 
 // Copy-and-paste and WordPress exports serialize the editor's in-memory rows;

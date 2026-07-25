@@ -19,6 +19,7 @@ use crate::{
     project_import::{
         list_imported_editor_conflict_refs, persist_imported_editor_conflict_entries,
         repo_has_imported_editor_conflicts, resolve_chapter_json_git_conflict_from_stage_texts,
+        resolve_project_json_git_conflict_from_stage_texts,
         resolve_row_git_conflict_from_stage_texts, ImportedEditorConflictRef,
         PendingImportedEditorConflictEntry, ResolvedEditorConflictAction,
     },
@@ -1266,7 +1267,7 @@ fn pull_with_semantic_editor_conflict_resolution(
                     return Err(abort_rebase_after_failed_pull(repo_path, apply_error));
                 }
 
-                match git_output(repo_path, &["rebase", "--continue"], None) {
+                match continue_project_rebase(repo_path) {
                     Ok(_) => {
                         if !repo_has_rebase_in_progress_local(repo_path) {
                             break;
@@ -1305,7 +1306,7 @@ fn handle_project_rebase_without_unmerged_files(
     branch_name: &str,
     git_transport_auth: &GitTransportAuth,
 ) -> Result<bool, String> {
-    match git_output(repo_path, &["rebase", "--continue"], None) {
+    match continue_project_rebase(repo_path) {
         Ok(_) => return Ok(repo_has_rebase_in_progress_local(repo_path)),
         Err(continue_error) => {
             if git_error_indicates_empty_rebase_step(&continue_error) {
@@ -1317,6 +1318,17 @@ fn handle_project_rebase_without_unmerged_files(
 
     recover_project_rebase_without_unmerged_files(repo_path, branch_name, git_transport_auth)?;
     Ok(false)
+}
+
+fn continue_project_rebase(repo_path: &Path) -> Result<String, String> {
+    // Rebase continuation may otherwise launch the user's configured editor to
+    // confirm the replayed commit message. Backend Git commands have no interactive
+    // UI, so an inherited terminal would leave the sync worker waiting forever.
+    git_output(
+        repo_path,
+        &["-c", "core.editor=true", "rebase", "--continue"],
+        None,
+    )
 }
 
 fn recover_project_rebase_without_unmerged_files(
@@ -1402,8 +1414,23 @@ fn build_semantic_conflict_resolution_plan(
             continue;
         }
 
+        if path.trim() == "project.json" {
+            let merged_text = resolve_project_json_git_conflict_from_stage_texts(
+                &path,
+                read_git_stage_text(repo_path, stages.base_oid.as_deref())?.as_deref(),
+                read_git_stage_text(repo_path, stages.remote_oid.as_deref())?.as_deref(),
+                read_git_stage_text(repo_path, stages.local_oid.as_deref())?.as_deref(),
+            )?;
+            plan.push(SemanticConflictResolutionPlanEntry::WriteFile {
+                path,
+                text: merged_text,
+                imported_conflict: None,
+            });
+            continue;
+        }
+
         return Err(format!(
-            "Could not resolve the current Git rebase stop semantically because '{}' is not a supported editor file.",
+            "Could not resolve the current Git rebase stop semantically because '{}' is not a supported project file.",
             path
         ));
     }
@@ -2020,16 +2047,19 @@ fn try_begin_project_repo_sync(
 #[cfg(test)]
 mod tests {
     use super::{
-        backup_dirty_project_worktree, chapter_language_list_from_json_text,
-        git_status_porcelain_has_unmerged_entries, project_branch_name,
+        apply_semantic_conflict_resolution_plan, backup_dirty_project_worktree,
+        build_semantic_conflict_resolution_plan, chapter_language_list_from_json_text,
+        continue_project_rebase, git_status_porcelain_has_unmerged_entries, project_branch_name,
         recover_project_rebase_without_unmerged_files, snapshot_from_project_sync_error,
         try_begin_project_repo_sync, GitTransportAuth, ProjectRepoSyncDescriptor,
-        ProjectRepoSyncSnapshot, PROJECT_REPO_SYNC_STATUS_OUT_OF_SYNC,
+        ProjectRepoSyncSnapshot, SemanticConflictResolutionPlanEntry,
+        PROJECT_REPO_SYNC_STATUS_OUT_OF_SYNC,
         PROJECT_REPO_SYNC_STATUS_REMOTE_MIGRATED_LOCAL_CHANGES, PROJECT_REPO_SYNC_STATUS_SYNCING,
         PROJECT_REPO_SYNC_STATUS_UPDATE_REQUIRED,
     };
     use crate::repo_app_version::{encode_repo_app_update_requirement, RepoAppUpdateRequirement};
     use crate::repo_migrations::REMOTE_MIGRATED_LOCAL_OLD_LAYOUT_CHANGES_MESSAGE;
+    use crate::repo_sync_shared::repo_has_rebase_in_progress_local;
     use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
     use std::{env, fs, path::Path, process::Command};
@@ -2138,6 +2168,130 @@ mod tests {
         run_git(&repo_path, &["add", "project.json"]);
         run_git(&repo_path, &["commit", "-m", "Initial"]);
         repo_path
+    }
+
+    #[test]
+    fn semantic_plan_resolves_real_project_json_add_add_conflict() {
+        let repo_path =
+            env::temp_dir().join(format!("gnosis-tms-project-conflict-{}", Uuid::now_v7()));
+        fs::create_dir_all(&repo_path).expect("create repo");
+        run_git(&repo_path, &["init", "--initial-branch", "main"]);
+        run_git(&repo_path, &["config", "user.email", "test@example.com"]);
+        run_git(&repo_path, &["config", "user.name", "Test User"]);
+        fs::write(repo_path.join("README.md"), "project\n").expect("write initial file");
+        run_git(&repo_path, &["add", "README.md"]);
+        run_git(&repo_path, &["commit", "-m", "Initial"]);
+
+        run_git(&repo_path, &["switch", "-c", "remote-project"]);
+        fs::write(
+            repo_path.join("project.json"),
+            r#"{"title":"Destination","remote_metadata":true}"#,
+        )
+        .expect("write remote project metadata");
+        run_git(&repo_path, &["add", "project.json"]);
+        run_git(&repo_path, &["commit", "-m", "Initialize remote project"]);
+
+        run_git(&repo_path, &["switch", "main"]);
+        fs::write(
+            repo_path.join("project.json"),
+            r#"{"title":"Destination","local_metadata":true}"#,
+        )
+        .expect("write local project metadata");
+        run_git(&repo_path, &["add", "project.json"]);
+        run_git(&repo_path, &["commit", "-m", "Initialize local project"]);
+
+        let merge_output = Command::new("git")
+            .args(["merge", "remote-project"])
+            .current_dir(&repo_path)
+            .output()
+            .expect("run conflicting merge");
+        assert!(
+            !merge_output.status.success(),
+            "test setup should produce an add/add project.json conflict"
+        );
+
+        let plan = build_semantic_conflict_resolution_plan(&repo_path)
+            .expect("root project metadata conflict should be supported");
+        assert_eq!(plan.len(), 1);
+        match &plan[0] {
+            SemanticConflictResolutionPlanEntry::WriteFile { path, text, .. } => {
+                assert_eq!(path, "project.json");
+                let merged: serde_json::Value =
+                    serde_json::from_str(text).expect("resolved project metadata should parse");
+                assert_eq!(merged["title"], "Destination");
+                assert_eq!(merged["remote_metadata"], true);
+                assert_eq!(merged["local_metadata"], true);
+            }
+            SemanticConflictResolutionPlanEntry::DeleteFile { .. } => {
+                panic!("project metadata must not be deleted")
+            }
+        }
+
+        run_git(&repo_path, &["merge", "--abort"]);
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn rebase_continue_does_not_launch_the_configured_editor() {
+        let repo_path = init_test_repo("noninteractive-rebase-continue");
+        fs::write(repo_path.join("project.json"), r#"{"title":"Destination"}"#)
+            .expect("write valid project metadata");
+        run_git(&repo_path, &["add", "project.json"]);
+        run_git(&repo_path, &["commit", "-m", "Set project title"]);
+
+        run_git(&repo_path, &["switch", "-c", "remote-project"]);
+        fs::write(
+            repo_path.join("project.json"),
+            r#"{"title":"Destination","remote_metadata":true}"#,
+        )
+        .expect("write remote project metadata");
+        run_git(&repo_path, &["add", "project.json"]);
+        run_git(&repo_path, &["commit", "-m", "Initialize remote project"]);
+
+        run_git(&repo_path, &["switch", "main"]);
+        fs::write(
+            repo_path.join("project.json"),
+            r#"{"title":"Destination","local_metadata":true}"#,
+        )
+        .expect("write local project metadata");
+        run_git(&repo_path, &["add", "project.json"]);
+        run_git(&repo_path, &["commit", "-m", "Initialize local project"]);
+
+        let rebase_output = Command::new("git")
+            .args(["rebase", "remote-project"])
+            .current_dir(&repo_path)
+            .output()
+            .expect("run conflicting rebase");
+        assert!(
+            !rebase_output.status.success(),
+            "test setup should produce a project.json rebase conflict"
+        );
+
+        let plan = build_semantic_conflict_resolution_plan(&repo_path)
+            .expect("project metadata conflict should resolve semantically");
+        let mut pending_imported_conflicts = BTreeMap::new();
+        apply_semantic_conflict_resolution_plan(&repo_path, plan, &mut pending_imported_conflicts)
+            .expect("semantic project metadata resolution should be staged");
+        assert!(pending_imported_conflicts.is_empty());
+        run_git(&repo_path, &["config", "core.editor", "false"]);
+
+        continue_project_rebase(&repo_path)
+            .expect("backend rebase continuation must bypass the configured editor");
+
+        assert!(!repo_has_rebase_in_progress_local(&repo_path));
+        assert_eq!(
+            git_stdout(&repo_path, &["log", "-1", "--format=%s"]),
+            "Initialize local project"
+        );
+        let resolved: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(repo_path.join("project.json"))
+                .expect("resolved project metadata should remain"),
+        )
+        .expect("resolved project metadata should parse");
+        assert_eq!(resolved["title"], "Destination");
+        assert_eq!(resolved["local_metadata"], true);
+        assert_eq!(resolved["remote_metadata"], true);
+        let _ = fs::remove_dir_all(repo_path);
     }
 
     #[test]

@@ -21,6 +21,7 @@ import { renderProjectImportModal } from "./project-import-modal.js";
 import { renderEditorExportModal } from "./editor-export-modal.js";
 import { renderProjectAddTranslationModal } from "./project-add-translation-modal.js";
 import { renderProjectRenameModal } from "./project-rename-modal.js";
+import { renderProjectTransferModal } from "./project-transfer-modal.js";
 import { renderProjectOldLayoutDiscardModal } from "./project-old-layout-discard-modal.js";
 import {
   getNoticeBadgeText,
@@ -419,6 +420,7 @@ export function renderProjectsScreen(state) {
     renderChapterPermanentDeletionModal(state) +
     renderChapterRenameModal(state) +
     renderProjectRenameModal(state) +
+    renderProjectTransferModal(state) +
     renderProjectPermanentDeletionModal(state) +
     renderProjectOldLayoutDiscardModal(state) +
     renderProjectClearDeletedFilesModal(state) +

@@ -16,6 +16,7 @@ import {
   resetProjectCreation,
   resetProjectPermanentDeletion,
   resetProjectRename,
+  resetProjectTransfer,
   state,
 } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
@@ -160,9 +161,66 @@ function projectLifecycleBlockedMessage(selectedTeam, actionLabel) {
     : `You do not have permission to ${actionLabel} in this team.`;
 }
 
-async function completeProjectCreateSynchronously(selectedTeam, projectTitle, baseRepoName, render) {
-  const projectId = crypto.randomUUID();
+export async function rollbackCreatedProjectRepo(
+  selectedTeam,
+  created,
+  cause,
+  operations = {},
+) {
+  const invokeCommand = operations.invoke ?? invoke;
+  const requireSession = operations.requireBrokerSession ?? requireBrokerSession;
+  const remoteProject = created?.remoteProject ?? null;
+  const repoName = String(created?.repoName ?? remoteProject?.name ?? "").trim();
+  const projectId = String(created?.projectId ?? "").trim();
+
+  if (created?.localRepoInitialized && projectId && repoName) {
+    try {
+      await invokeCommand("purge_local_gtms_project_repo", {
+        input: {
+          installationId: selectedTeam.installationId,
+          projectId,
+          repoName,
+        },
+      });
+    } catch {}
+  }
+
+  if (remoteProject?.name) {
+    try {
+      await invokeCommand("rollback_created_gnosis_project_repo", {
+        input: {
+          installationId: selectedTeam.installationId,
+          orgLogin: selectedTeam.githubOrg,
+          repoName: remoteProject.name,
+        },
+        sessionToken: requireSession(),
+      });
+    } catch (rollbackError) {
+      throw new Error(
+        `${cause?.message ?? String(cause)} Automatic project create rollback also failed: ${
+          rollbackError?.message ?? String(rollbackError)
+        }`,
+      );
+    }
+  }
+
+  if (operations.rethrowCause !== false) {
+    throw cause;
+  }
+}
+
+export async function createProjectRepoForTeam(
+  selectedTeam,
+  projectTitle,
+  baseRepoName,
+  options = {},
+) {
+  const projectId = options.projectId ?? crypto.randomUUID();
   const normalizedBase = String(baseRepoName ?? "").trim();
+  const invokeCommand = options.invoke ?? invoke;
+  const requireSession = options.requireBrokerSession ?? requireBrokerSession;
+  const onProgress = typeof options.onProgress === "function" ? options.onProgress : () => {};
+  const writeMetadataRecord = options.writeMetadataRecord !== false;
   let remoteProject = null;
   let finalRepoName = "";
   let collisionResolved = false;
@@ -173,12 +231,14 @@ async function completeProjectCreateSynchronously(selectedTeam, projectTitle, ba
   }
 
   try {
-    showProjectsStatus(render, "Creating project repo...");
-    const usedLocalRepoNames = new Set(
-      [...(state.projects ?? []), ...(state.deletedProjects ?? [])]
-        .map((project) => String(project?.name ?? "").trim())
-        .filter(Boolean),
-    );
+    onProgress("Creating project repo...");
+    const usedLocalRepoNames = options.usedRepoNames instanceof Set
+      ? new Set(options.usedRepoNames)
+      : new Set(
+        [...(state.projects ?? []), ...(state.deletedProjects ?? [])]
+          .map((project) => String(project?.name ?? "").trim())
+          .filter(Boolean),
+      );
 
     for (let attempt = 1; attempt <= 100; attempt += 1) {
       const candidateRepoName = appendRepoNameSuffix(normalizedBase, attempt);
@@ -187,7 +247,7 @@ async function completeProjectCreateSynchronously(selectedTeam, projectTitle, ba
       }
 
       try {
-        remoteProject = await invoke("create_gnosis_project_repo", {
+        remoteProject = await invokeCommand("create_gnosis_project_repo", {
           input: {
             installationId: selectedTeam.installationId,
             orgLogin: selectedTeam.githubOrg,
@@ -195,7 +255,7 @@ async function completeProjectCreateSynchronously(selectedTeam, projectTitle, ba
             projectTitle,
             projectId,
           },
-          sessionToken: requireBrokerSession(),
+          sessionToken: requireSession(),
         });
         finalRepoName = candidateRepoName;
         collisionResolved = attempt > 1;
@@ -212,8 +272,8 @@ async function completeProjectCreateSynchronously(selectedTeam, projectTitle, ba
       throw new Error("Could not determine an available repo name.");
     }
 
-    showProjectsStatus(render, "Initializing local project...");
-    await invoke("initialize_gtms_project_repo", {
+    onProgress("Initializing local project...");
+    await invokeCommand("initialize_gtms_project_repo", {
       input: {
         installationId: selectedTeam.installationId,
         projectId,
@@ -223,67 +283,59 @@ async function completeProjectCreateSynchronously(selectedTeam, projectTitle, ba
     });
     localRepoInitialized = true;
 
-    showProjectsStatus(render, "Saving project metadata...");
-    await upsertProjectMetadataRecord(
-      selectedTeam,
-      {
-        projectId,
-        title: projectTitle,
-        repoName: remoteProject.name,
-        previousRepoNames: remoteProject.name !== finalRepoName ? [finalRepoName] : [],
-        githubRepoId: remoteProject.repoId ?? null,
-        githubNodeId: remoteProject.nodeId ?? null,
-        fullName: remoteProject.fullName ?? null,
-        defaultBranch: remoteProject.defaultBranchName || "main",
-        lifecycleState: "active",
-        remoteState: "linked",
-        recordState: "live",
-        deletedAt: null,
-        chapterCount: 0,
-      },
-      { requirePushSuccess: true },
-    );
+    const metadataRecord = {
+      projectId,
+      title: projectTitle,
+      repoName: remoteProject.name,
+      previousRepoNames: remoteProject.name !== finalRepoName ? [finalRepoName] : [],
+      githubRepoId: remoteProject.repoId ?? null,
+      githubNodeId: remoteProject.nodeId ?? null,
+      fullName: remoteProject.fullName ?? null,
+      defaultBranch: remoteProject.defaultBranchName || "main",
+      lifecycleState: "active",
+      remoteState: "linked",
+      recordState: "live",
+      deletedAt: null,
+      chapterCount: 0,
+    };
+
+    if (writeMetadataRecord) {
+      onProgress("Saving project metadata...");
+      await upsertProjectMetadataRecord(
+        selectedTeam,
+        metadataRecord,
+        { requirePushSuccess: true },
+      );
+    }
 
     return {
       projectId,
       title: projectTitle,
       repoName: finalRepoName,
       collisionResolved,
+      remoteProject,
+      metadataRecord,
+      localRepoInitialized,
     };
   } catch (error) {
-    if (localRepoInitialized) {
-      try {
-        await invoke("purge_local_gtms_project_repo", {
-          input: {
-            installationId: selectedTeam.installationId,
-            projectId,
-            repoName: finalRepoName || remoteProject?.name || normalizedBase,
-          },
-        });
-      } catch {}
-    }
-
-    if (remoteProject) {
-      try {
-        await invoke("rollback_created_gnosis_project_repo", {
-          input: {
-            installationId: selectedTeam.installationId,
-            orgLogin: selectedTeam.githubOrg,
-            repoName: remoteProject.name,
-          },
-          sessionToken: requireBrokerSession(),
-        });
-      } catch (rollbackError) {
-        throw new Error(
-          `${error?.message ?? String(error)} Automatic project create rollback also failed: ${
-            rollbackError?.message ?? String(rollbackError)
-          }`,
-        );
-      }
-    }
-
-    throw error;
+    return rollbackCreatedProjectRepo(
+      selectedTeam,
+      {
+        projectId,
+        repoName: finalRepoName || remoteProject?.name || normalizedBase,
+        remoteProject,
+        localRepoInitialized,
+      },
+      error,
+      { invoke: invokeCommand, requireBrokerSession: requireSession },
+    );
   }
+}
+
+async function completeProjectCreateSynchronously(selectedTeam, projectTitle, baseRepoName, render) {
+  return createProjectRepoForTeam(selectedTeam, projectTitle, baseRepoName, {
+    onProgress: (message) => showProjectsStatus(render, message),
+  });
 }
 
 const projectPageSyncController = {
@@ -296,7 +348,7 @@ function setProjectsPageProgress(render, text) {
   showProjectsStatus(render, text);
 }
 
-function projectsPageOwnsTeam(team) {
+export function projectsPageOwnsTeam(team) {
   const expectedCacheKey = teamCacheKey(team);
   return Boolean(
     team?.id
@@ -374,6 +426,7 @@ export function primeProjectsLoadingState(teamId = state.selectedTeamId, options
   resetProjectSearchState();
   resetProjectCreation();
   resetProjectRename();
+  resetProjectTransfer();
   resetProjectPermanentDeletion();
   if (canPreserveVisibleData) {
     return { preservedVisibleData: true, seededFromCache: false };
@@ -1104,7 +1157,7 @@ export async function restoreProject(render, projectId) {
   }
 }
 
-async function reloadProjectsAfterWrite(render, selectedTeam, options = {}) {
+export async function reloadProjectsAfterWrite(render, selectedTeam, options = {}) {
   await loadTeamProjects(render, selectedTeam?.id, {
     suppressRecoveryWarning: options.suppressRecoveryWarning === true,
   });
