@@ -29,7 +29,7 @@ import {
   estimateSourceTokens,
   mapWithConcurrency,
 } from "./editor-ai-batch-request.js";
-import { createAiBatchPool, runWithRateLimitRetry } from "./editor-ai-batch-pool.js";
+import { createAiBatchPool, runWithTransientAiRetry } from "./editor-ai-batch-pool.js";
 import { loadAssistantTargetLanguageHistory } from "./editor-ai-assistant-flow.js";
 import {
   cloneRowFields,
@@ -703,7 +703,7 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
 
     let payload;
     try {
-      payload = await runWithRateLimitRetry({
+      payload = await runWithTransientAiRetry({
         withSlot: tools.withSlot,
         isRunActive: isReviewActive,
         call: () => {
@@ -716,7 +716,7 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
           return runBatch(request);
         },
         onRetry: (attempt, error) => {
-          console.warn("[gtms ai-review] Batch review call rate limited; retrying on the batch path.", {
+          console.warn("[gtms ai-review] Batch review call hit a transient provider error; retrying on the batch path.", {
             attempt,
             error: error instanceof Error ? error.message : String(error),
           });

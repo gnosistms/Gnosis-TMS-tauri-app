@@ -4,8 +4,8 @@ import assert from "node:assert/strict";
 const {
   createAiBatchPool,
   createSerialLane,
-  isAiRateLimitError,
-  runWithRateLimitRetry,
+  isTransientAiProviderError,
+  runWithTransientAiRetry,
 } = await import("./editor-ai-batch-pool.js");
 
 function deferred() {
@@ -157,18 +157,20 @@ test("pool run lets in-flight batches settle after a failure, then rethrows the 
   assert.deepEqual(settled, [1]);
 });
 
-test("rate-limit detection matches every provider's 429 wording", () => {
-  assert.equal(isAiRateLimitError(new Error("OpenAI rate limited this request. Wait a moment and try again.")), true);
-  assert.equal(isAiRateLimitError(new Error("Claude rate limited this request. Wait a moment and try again.")), true);
-  assert.equal(isAiRateLimitError(new Error("The AI response was empty.")), false);
+test("transient detection matches every provider's 429 and 5xx wording", () => {
+  assert.equal(isTransientAiProviderError(new Error("OpenAI rate limited this request. Wait a moment and try again.")), true);
+  assert.equal(isTransientAiProviderError(new Error("Claude rate limited this request. Wait a moment and try again.")), true);
+  assert.equal(isTransientAiProviderError(new Error("OpenAI is temporarily unavailable. Try again in a moment.")), true);
+  assert.equal(isTransientAiProviderError(new Error("Gemini is temporarily unavailable: model overloaded")), true);
+  assert.equal(isTransientAiProviderError(new Error("The AI response was empty.")), false);
 });
 
-test("rate-limited batch calls retry with the slot released and then succeed", async () => {
+test("transient provider failures retry with the slot released and then succeed", async () => {
   const pool = createAiBatchPool({ concurrency: 1 });
   let attempts = 0;
   let slotFreeDuringWait = false;
 
-  const result = await runWithRateLimitRetry({
+  const result = await runWithTransientAiRetry({
     withSlot: pool.withSlot,
     delaysMs: [10],
     call: async () => {
@@ -181,7 +183,7 @@ test("rate-limited batch calls retry with the slot released and then succeed", a
             slotFreeDuringWait = true;
           });
         }, 3);
-        throw new Error("OpenAI rate limited this request. Wait a moment and try again.");
+        throw new Error("OpenAI is temporarily unavailable. Try again in a moment.");
       }
       return "second-attempt";
     },
@@ -192,12 +194,12 @@ test("rate-limited batch calls retry with the slot released and then succeed", a
   assert.equal(slotFreeDuringWait, true);
 });
 
-test("non-rate-limit errors and exhausted retries propagate to the fallback path", async () => {
+test("non-transient errors and exhausted retries propagate to the fallback path", async () => {
   const pool = createAiBatchPool({ concurrency: 1 });
 
   let attempts = 0;
   await assert.rejects(
-    runWithRateLimitRetry({
+    runWithTransientAiRetry({
       withSlot: pool.withSlot,
       delaysMs: [1],
       call: async () => {
@@ -211,7 +213,7 @@ test("non-rate-limit errors and exhausted retries propagate to the fallback path
 
   let limitedAttempts = 0;
   await assert.rejects(
-    runWithRateLimitRetry({
+    runWithTransientAiRetry({
       withSlot: pool.withSlot,
       delaysMs: [1, 1],
       call: async () => {

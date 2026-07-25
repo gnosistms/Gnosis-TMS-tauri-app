@@ -28,7 +28,7 @@ import {
 import {
   createAiBatchPool,
   createSerialLane,
-  runWithRateLimitRetry,
+  runWithTransientAiRetry,
 } from "./editor-ai-batch-pool.js";
 import { buildBatchSourceContext } from "./editor-ai-context-window.js";
 import { buildEditorAiTranslationGlossaryHints } from "./editor-glossary-highlighting.js";
@@ -788,7 +788,7 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
     let payload;
     let batchCallStartedAt = 0;
     try {
-      payload = await runWithRateLimitRetry({
+      payload = await runWithTransientAiRetry({
         withSlot: tools.withSlot,
         isRunActive,
         call: () => {
@@ -804,7 +804,7 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
           return runBatch(request);
         },
         onRetry: (attempt, error) => {
-          console.warn("[gtms ai-translate] Batch translation call rate limited; retrying on the batch path.", {
+          console.warn("[gtms ai-translate] Batch translation call hit a transient provider error; retrying on the batch path.", {
             batchIndex,
             attempt,
             error: error instanceof Error ? error.message : String(error),
