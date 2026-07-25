@@ -876,6 +876,94 @@ test("AI Translate All skips applying a batch result when the target was filled 
   assert.equal(state.editorChapter.rows.find((row) => row.rowId === "row-a").fields.vi, "vi:Hola");
 });
 
+test("AI Translate All finishes the glossary-source pair before derived-pair batches start", async () => {
+  resetSessionState();
+  editorAiTranslateAllTestApi.resetActiveBatchRunId();
+  // en is the glossary's own source language (the pivot): es->en translates
+  // first, and es->vi derivation reads the en column those batches wrote.
+  // 20 rows per pair => two batches per pair, so within-pair parallelism and
+  // cross-pair sequencing are both exercised.
+  const base = batchChapter();
+  state.editorChapter = {
+    ...base,
+    languages: [
+      { code: "es", name: "Spanish", role: "source" },
+      { code: "en", name: "English", role: "target" },
+      { code: "vi", name: "Vietnamese", role: "target" },
+    ],
+    rows: Array.from({ length: 20 }, (_, index) => ({
+      rowId: `row-${String(index + 1).padStart(2, "0")}`,
+      lifecycleState: "active",
+      fields: { es: `Hola ${index + 1}`, en: "", vi: "" },
+    })),
+    glossary: {
+      sourceLanguage: { code: "en" },
+      targetLanguage: { code: "vi" },
+      glossaryId: "g1",
+      repoName: "repo",
+      title: "Glossary",
+      matcherModel: {},
+      terms: [
+        {
+          lifecycleState: "active",
+          sourceTerms: ["hello"],
+          targetTerms: ["xin chao"],
+        },
+      ],
+    },
+    aiTranslateAllModal: {
+      ...createEditorAiTranslateAllModalState(),
+      isOpen: true,
+      selectedLanguageCodes: ["vi", "en"],
+    },
+  };
+
+  const events = [];
+  const derivationSourceTexts = [];
+
+  await confirmEditorAiTranslateAll(
+    () => {},
+    batchOperations({
+      prepareEditorAiTranslatedGlossaryBatch: async (request) => {
+        derivationSourceTexts.push(request.glossarySourceText);
+        return { glossarySourceText: request.glossarySourceText, entries: [] };
+      },
+      runAiTranslationBatch: async (request) => {
+        events.push(`start:${request.targetLanguageCode}`);
+        await new Promise((resolve) => setImmediate(resolve));
+        events.push(`end:${request.targetLanguageCode}`);
+        return {
+          rows: request.rows.map((row) => ({
+            rowId: row.rowId,
+            translatedText: `${request.targetLanguageCode}:${row.sourceText}`,
+          })),
+          promptText: "P",
+        };
+      },
+    }),
+  );
+
+  // Every en (pivot) call must fully finish before any vi (derived) call
+  // starts — derived batches read the en column the pivot batches wrote.
+  const lastEnEnd = events.lastIndexOf("end:en");
+  const firstViStart = events.indexOf("start:vi");
+  assert.notEqual(lastEnEnd, -1);
+  assert.notEqual(firstViStart, -1);
+  assert.equal(lastEnEnd < firstViStart, true, `pivot pair must complete first: ${events.join(", ")}`);
+  // The derivation saw pivot text produced by this run, not empty columns.
+  assert.equal(derivationSourceTexts.length > 0, true);
+  assert.equal(
+    derivationSourceTexts.every((text) => text.includes("en:Hola")),
+    true,
+  );
+  assert.equal(
+    state.editorChapter.rows.every(
+      (row) => row.fields.en === `en:${row.fields.es}` && row.fields.vi === `vi:${row.fields.es}`,
+    ),
+    true,
+  );
+});
+
 test("AI Translate All batches per language pair when multiple languages are selected", async () => {
   resetSessionState();
   editorAiTranslateAllTestApi.resetActiveBatchRunId();

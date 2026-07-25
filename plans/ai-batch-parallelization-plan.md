@@ -13,18 +13,25 @@ time roughly by the pool size.
 
 ## Goal
 
-Both flows run with a pool of `AI_BATCH_CONCURRENCY = 3` batches in flight,
+Both flows run with a pool of `AI_BATCH_CONCURRENCY = 6` batches in flight,
 built on one shared orchestrator so the two flows cannot drift, with:
 
 - git writes exactly as serialized as they are today,
 - derived-glossary terminology as consistent as the sequential flow,
-- no request amplification when the provider rate-limits or fails,
+- no request amplification when the provider rate-limits or fails
+  (rate-limited batch calls retry with backoff on the batch path),
 - unchanged cancel, progress, and fallback semantics per batch.
 
-3 (not 5) because teams bring their own API keys at unknown tiers; three
-concurrent ~4k-token requests stay under typical tokens-per-minute limits.
-Raising it later is a one-line change to a calibrated constant that lives next
-to `AI_BATCH_MAX_ROWS` in `editor-ai-batch-request.js`.
+**Measured (end-to-end benchmark, job completion = all rows applied + run
+finished; simulated AI latency 1000ms, commit 150ms):** sequential n=6 →
+6046ms; concurrency 6 → 1035ms (**5.8×**); n=10 at concurrency 10 → 1059ms
+(**~9.5×**) — job time is ~constant in n, orchestration overhead 35–60ms.
+Durable completion (background commit queue drained) trails by
+n × commit-time, as expected for serialized local commits. With a simulated
+provider allowing only 3 concurrent calls, 429 retries kept every batch on
+the batch path (zero per-row collapses) and the run still finished 2× faster
+than sequential. The constant is provider-limit policy, not a mechanism
+limit; changing it is one line in `editor-ai-batch-request.js`.
 
 ## Design
 
@@ -96,16 +103,18 @@ Why the apply lane is mandatory and not just tidy:
   `ensureEditorAiTranslateProviderReady` call (and its missing-key modal
   handling) ahead of the pool; a run with only single-item batches keeps the
   current behavior.
-- **Resolve derived glossaries before fan-out, per language pair.** Today each
-  derived-kind batch calls `resolveBatchDerivedGlossary` before its AI call,
-  and `ensureBatchDerivedGlossaries` warms a cache that later batches reuse.
-  Run in parallel, sibling batches would each derive overlapping terms:
-  duplicated token spend and last-write-wins inconsistency in chapter
-  glossary state. Instead, a pre-pass runs `ensureBatchDerivedGlossaries`
-  once per derived-kind pair over all of that pair's live items (it already
-  batches internally); each batch then builds hints from the warmed cache.
-  Rows the pre-pass fails to resolve are marked for the single-row fallback
-  exactly as `resolveBatchDerivedGlossary` does today.
+- **Language pairs run sequentially; batches within a pair fan out.** The
+  work order is a real dependency chain: the glossary-source (pivot) pair
+  translates first and derived pairs read the pivot column it writes, so
+  cross-pair batches must never overlap. Batches are grouped into
+  pair-contiguous groups (the chunker already emits them contiguously) and
+  each group runs through the pool with a barrier between groups. Derivation
+  itself stays per batch, wrapped in a dedicated serial lane — same-pair
+  batches derive row-disjoint sets, and the lane prevents interleaved
+  chapter-state writes. (An earlier draft warmed the derivation cache in a
+  run-level pre-pass; that was wrong — it derived before the pivot pair had
+  translated, reading empty pivot columns. The pair barrier is the correct
+  ordering guarantee.)
 - **Single-item batches** keep the proven `translateSingleItem` path, run as
   pool tasks (AI call holds a slot, apply/save in the lane).
 - **`glossarySourceLanguageChangedRowIds`** stays a run-level accumulator
@@ -239,5 +248,7 @@ meaning-mode history loads.
   behavior-preserving refactor (see reuse decisions).
 - No cross-run global limiter (two simultaneous runs in different chapters
   remain independent, as today).
-- No 429 backoff/retry protocol (only the shared concurrency cap).
+- 429 handling is retry-with-backoff on the batch path only
+  (`runWithRateLimitRetry`, slot released during the wait); no adaptive
+  concurrency reduction yet.
 - No migration of review applies onto the write-intent queue (follow-up).

@@ -29,7 +29,7 @@ import {
   estimateSourceTokens,
   mapWithConcurrency,
 } from "./editor-ai-batch-request.js";
-import { createAiBatchPool } from "./editor-ai-batch-pool.js";
+import { createAiBatchPool, runWithRateLimitRetry } from "./editor-ai-batch-pool.js";
 import { loadAssistantTargetLanguageHistory } from "./editor-ai-assistant-flow.js";
 import {
   cloneRowFields,
@@ -703,14 +703,24 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
 
     let payload;
     try {
-      payload = await tools.withSlot(() => {
-        // Start log pairs with the success log below to make batch overlap
-        // visible in the console: with the pool active, several "started"
-        // lines should appear before the first "succeeded".
-        console.info("[gtms ai-review] Batch review call started.", {
-          rowCount: liveItems.length,
-        });
-        return runBatch(request);
+      payload = await runWithRateLimitRetry({
+        withSlot: tools.withSlot,
+        isRunActive: isReviewActive,
+        call: () => {
+          // Start log pairs with the success log below to make batch overlap
+          // visible in the console: with the pool active, several "started"
+          // lines should appear before the first "succeeded".
+          console.info("[gtms ai-review] Batch review call started.", {
+            rowCount: liveItems.length,
+          });
+          return runBatch(request);
+        },
+        onRetry: (attempt, error) => {
+          console.warn("[gtms ai-review] Batch review call rate limited; retrying on the batch path.", {
+            attempt,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        },
       });
     } catch (error) {
       console.warn("[gtms ai-review] Batch review call failed; reviewing these rows one at a time.", {
@@ -824,8 +834,11 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
     // Up to AI_BATCH_CONCURRENCY batches run their AI calls concurrently; the
     // pool's apply lane keeps every write serialized (the review applies
     // invoke commands directly, with no write queue underneath).
+    const concurrencyOverride = Number(operations.aiBatchConcurrency);
     const pool = createAiBatchPool({
-      concurrency: AI_BATCH_CONCURRENCY,
+      concurrency: Number.isFinite(concurrencyOverride) && concurrencyOverride > 0
+        ? concurrencyOverride
+        : AI_BATCH_CONCURRENCY,
       isRunActive: isReviewActive,
     });
     const outcome = await pool.run(batches, async (batch, tools) => {

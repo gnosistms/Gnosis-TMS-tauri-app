@@ -25,7 +25,11 @@ import {
   groupWorkByLanguagePair,
   mergeGlossaryHintLists,
 } from "./editor-ai-batch-request.js";
-import { createAiBatchPool, createSerialLane } from "./editor-ai-batch-pool.js";
+import {
+  createAiBatchPool,
+  createSerialLane,
+  runWithRateLimitRetry,
+} from "./editor-ai-batch-pool.js";
 import { buildBatchSourceContext } from "./editor-ai-context-window.js";
 import { buildEditorAiTranslationGlossaryHints } from "./editor-glossary-highlighting.js";
 import {
@@ -784,17 +788,28 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
     let payload;
     let batchCallStartedAt = 0;
     try {
-      payload = await tools.withSlot(() => {
-        // Start/success logs carry batchIndex, run-relative time (tMs), and
-        // call duration (elapsedMs) so batch overlap — and whether concurrent
-        // calls stay as fast as lone calls — is readable from the console.
-        batchCallStartedAt = Date.now();
-        console.info("[gtms ai-translate] Batch translation call started.", {
-          batchIndex,
-          rowCount: liveEntries.length,
-          tMs: batchCallStartedAt - runStartedAt,
-        });
-        return runBatch(request);
+      payload = await runWithRateLimitRetry({
+        withSlot: tools.withSlot,
+        isRunActive,
+        call: () => {
+          // Start/success logs carry batchIndex, run-relative time (tMs), and
+          // call duration (elapsedMs) so batch overlap — and whether concurrent
+          // calls stay as fast as lone calls — is readable from the console.
+          batchCallStartedAt = Date.now();
+          console.info("[gtms ai-translate] Batch translation call started.", {
+            batchIndex,
+            rowCount: liveEntries.length,
+            tMs: batchCallStartedAt - runStartedAt,
+          });
+          return runBatch(request);
+        },
+        onRetry: (attempt, error) => {
+          console.warn("[gtms ai-translate] Batch translation call rate limited; retrying on the batch path.", {
+            batchIndex,
+            attempt,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        },
       });
     } catch (error) {
       console.warn("[gtms ai-translate] Batch translation call failed; translating these rows one at a time.", {
@@ -951,56 +966,22 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
         return;
       }
       provider = { providerId: ready.providerId, modelId: ready.modelId };
-
-      // Derived-glossary pre-pass: warm the per-row derived-entry cache once
-      // per language pair before batches fan out. Parallel batches would
-      // otherwise each derive overlapping terms — duplicated token spend and
-      // last-write-wins inconsistency in the stored entries. Rows this pass
-      // fails to resolve fall back per batch exactly as before.
-      const derivedItemsByPair = new Map();
-      for (const batch of pooledBatches) {
-        if (batch.glossaryKind !== "derived") {
-          continue;
-        }
-        for (const item of batch.items) {
-          const key = `${item.sourceLanguageCode}::${item.targetLanguageCode}`;
-          const pairItems = derivedItemsByPair.get(key) ?? [];
-          pairItems.push(item);
-          derivedItemsByPair.set(key, pairItems);
-        }
-      }
-      for (const pairItems of derivedItemsByPair.values()) {
-        if (!isRunActive()) {
-          return;
-        }
-        const { aborted } = await ensureBatchDerivedGlossaries({
-          chapterState: state.editorChapter,
-          items: pairItems,
-          providerId: provider.providerId,
-          modelId: provider.modelId,
-          isRunActive,
-          generateMissingPivotText: true,
-          persistPivotTextToRow: true,
-          render,
-          operations,
-        });
-        if (aborted || !isRunActive()) {
-          return;
-        }
-      }
     }
 
-    // Up to AI_BATCH_CONCURRENCY batches run their AI calls concurrently; the
+    // Up to the pool concurrency batches run their AI calls concurrently; the
     // pool's apply lane serializes every state application and save flush.
     // Single-item and non-applyable batches keep the proven single-row path
     // (which owns its own provider/key/glossary handling); it applies and
     // saves internally, so the whole call runs lane-serialized with its slot
     // acquired inside the lane task.
+    const concurrencyOverride = Number(operations.aiBatchConcurrency);
     const pool = createAiBatchPool({
-      concurrency: AI_BATCH_CONCURRENCY,
+      concurrency: Number.isFinite(concurrencyOverride) && concurrencyOverride > 0
+        ? concurrencyOverride
+        : AI_BATCH_CONCURRENCY,
       isRunActive,
     });
-    const outcome = await pool.run(batches, async (batch, tools, batchIndex) => {
+    const runPoolBatch = async (batch, tools, batchIndex) => {
       if (batch.items.length === 1 || !canApplyBatchLocally) {
         for (const item of batch.items) {
           const itemOutcome = await tools.inApplyLane(() =>
@@ -1012,7 +993,36 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
         return "ok";
       }
       return translateBatch(batch, provider, rowsById, tools, batchIndex);
-    });
+    };
+
+    // Language pairs run strictly one after another, in the prioritized work
+    // order: the glossary-source pair translates first and derived pairs read
+    // its output (pivot text), so cross-pair batches must never overlap.
+    // Batches WITHIN a pair are row-disjoint and fan out through the pool.
+    // chunkTranslateAllWork emits pair-contiguous batches, so consecutive
+    // grouping reconstructs the pairs.
+    const pairGroups = [];
+    for (const batch of batches) {
+      const first = batch.items[0];
+      const key = `${first?.sourceLanguageCode ?? ""}::${first?.targetLanguageCode ?? ""}`;
+      const lastGroup = pairGroups[pairGroups.length - 1];
+      if (lastGroup && lastGroup.key === key) {
+        lastGroup.batches.push(batch);
+      } else {
+        pairGroups.push({ key, batches: [batch] });
+      }
+    }
+    let outcome = "ok";
+    let groupStartIndex = 0;
+    for (const group of pairGroups) {
+      const offset = groupStartIndex;
+      outcome = await pool.run(group.batches, (batch, tools, index) =>
+        runPoolBatch(batch, tools, offset + index));
+      groupStartIndex += group.batches.length;
+      if (outcome !== "ok") {
+        break;
+      }
+    }
     if (outcome !== "ok") {
       return;
     }

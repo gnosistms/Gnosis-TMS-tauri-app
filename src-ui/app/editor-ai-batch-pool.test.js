@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-const { createAiBatchPool, createSerialLane } = await import("./editor-ai-batch-pool.js");
+const {
+  createAiBatchPool,
+  createSerialLane,
+  isAiRateLimitError,
+  runWithRateLimitRetry,
+} = await import("./editor-ai-batch-pool.js");
 
 function deferred() {
   let resolve;
@@ -150,6 +155,73 @@ test("pool run lets in-flight batches settle after a failure, then rethrows the 
 
   await assert.rejects(runPromise, /batch 2 exploded/);
   assert.deepEqual(settled, [1]);
+});
+
+test("rate-limit detection matches every provider's 429 wording", () => {
+  assert.equal(isAiRateLimitError(new Error("OpenAI rate limited this request. Wait a moment and try again.")), true);
+  assert.equal(isAiRateLimitError(new Error("Claude rate limited this request. Wait a moment and try again.")), true);
+  assert.equal(isAiRateLimitError(new Error("The AI response was empty.")), false);
+});
+
+test("rate-limited batch calls retry with the slot released and then succeed", async () => {
+  const pool = createAiBatchPool({ concurrency: 1 });
+  let attempts = 0;
+  let slotFreeDuringWait = false;
+
+  const result = await runWithRateLimitRetry({
+    withSlot: pool.withSlot,
+    delaysMs: [10],
+    call: async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        // While this call waits out its backoff, the slot must be available
+        // to others — probe it from a parallel acquisition.
+        setTimeout(() => {
+          pool.withSlot(async () => {
+            slotFreeDuringWait = true;
+          });
+        }, 3);
+        throw new Error("OpenAI rate limited this request. Wait a moment and try again.");
+      }
+      return "second-attempt";
+    },
+  });
+
+  assert.equal(result, "second-attempt");
+  assert.equal(attempts, 2);
+  assert.equal(slotFreeDuringWait, true);
+});
+
+test("non-rate-limit errors and exhausted retries propagate to the fallback path", async () => {
+  const pool = createAiBatchPool({ concurrency: 1 });
+
+  let attempts = 0;
+  await assert.rejects(
+    runWithRateLimitRetry({
+      withSlot: pool.withSlot,
+      delaysMs: [1],
+      call: async () => {
+        attempts += 1;
+        throw new Error("The AI response was empty.");
+      },
+    }),
+    /response was empty/,
+  );
+  assert.equal(attempts, 1);
+
+  let limitedAttempts = 0;
+  await assert.rejects(
+    runWithRateLimitRetry({
+      withSlot: pool.withSlot,
+      delaysMs: [1, 1],
+      call: async () => {
+        limitedAttempts += 1;
+        throw new Error("OpenAI rate limited this request. Wait a moment and try again.");
+      },
+    }),
+    /rate limited/,
+  );
+  assert.equal(limitedAttempts, 3);
 });
 
 test("pool run aborts before starting batches when the run is no longer active", async () => {
