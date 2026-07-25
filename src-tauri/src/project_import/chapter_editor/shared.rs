@@ -129,22 +129,46 @@ pub(in crate::project_import) fn write_row_files_and_commit_with_removals(
     let repo_lock = crate::repo_sync_shared::repo_sync_lock(repo_path);
     let _repo_lock_guard = crate::repo_sync_shared::acquire_repo_sync_lock(&repo_lock);
 
+    write_row_files_and_commit_with_removals_locked(
+        app,
+        repo_path,
+        commit_message,
+        metadata,
+        writes,
+        removed_relative_paths,
+    )
+}
+
+/// Locked variant for callers that must keep the reference scan and the resulting
+/// writes in one repository critical section.
+pub(in crate::project_import) fn write_row_files_and_commit_with_removals_locked(
+    app: &AppHandle,
+    repo_path: &Path,
+    commit_message: &str,
+    metadata: CommitMetadata<'_>,
+    writes: &[PreparedRowFileWrite],
+    removed_relative_paths: &[String],
+) -> Result<String, String> {
     crate::git_commit::ensure_local_commit_preconditions(app, repo_path)?;
+    let removed_relative_paths = removed_relative_paths
+        .iter()
+        .map(|path| validated_uploaded_asset_relative_path(repo_path, path))
+        .collect::<Result<Vec<_>, _>>()?;
 
     let mut snapshots = Vec::new();
     for write in writes {
         push_repo_file_snapshot(&mut snapshots, repo_path, &write.relative_path)?;
     }
-    for relative_path in removed_relative_paths {
-        push_repo_file_snapshot(&mut snapshots, repo_path, relative_path)?;
+    for relative_path in &removed_relative_paths {
+        push_uploaded_asset_snapshot(&mut snapshots, repo_path, relative_path)?;
     }
 
     with_repo_file_rollback(repo_path, &snapshots, || {
         for write in writes {
             write_text_file(&write.path, &write.updated_text)?;
         }
-        for relative_path in removed_relative_paths {
-            remove_repo_file_from_disk(repo_path, relative_path)?;
+        for relative_path in &removed_relative_paths {
+            remove_uploaded_asset_from_disk(repo_path, relative_path)?;
             git_output(
                 repo_path,
                 &["rm", "--cached", "--ignore-unmatch", relative_path],

@@ -127,6 +127,10 @@ const {
 } = await import("./repo-write-queue.js");
 const {
   dismissActiveIdleEditorImageUpload,
+  cancelEditorImageDuplicateOverwrite,
+  confirmEditorImageDuplicateOverwrite,
+  copyEditorImageUrl,
+  duplicateEditorLanguageImage,
   handleDroppedEditorImageFile,
   handleDroppedEditorImagePath,
   closeEditorImagePreview,
@@ -249,6 +253,7 @@ test("openEditorImagePreview renders only the overlay so editor scroll stays sta
     rowId: "row-1",
     languageCode: "vi",
     src: "https://example.com/image.png",
+    imageUrl: "https://example.com/image.png",
   });
   assert.deepEqual(render.calls, [[{ scope: "translate-image-preview-overlay" }]]);
 });
@@ -273,8 +278,191 @@ test("closeEditorImagePreview renders only the overlay so editor scroll stays st
     rowId: null,
     languageCode: null,
     src: "",
+    imageUrl: "",
   });
   assert.deepEqual(render.calls, [[{ scope: "translate-image-preview-overlay" }]]);
+});
+
+test("duplicateEditorLanguageImage duplicates into an empty language immediately", async () => {
+  installEditorFixture();
+  installFixtureImage("https://example.com/duplicate.png");
+  const render = createRenderSpy();
+  invokeHandler = async (command, payload) => {
+    assert.equal(command, "duplicate_gtms_editor_language_image");
+    assert.equal(payload.input.sourceLanguageCode, "vi");
+    assert.equal(payload.input.destinationLanguageCode, "es");
+    assert.equal(payload.input.baseDestinationImage, null);
+    return {
+      status: "saved",
+      row: {
+        ...state.editorChapter.rows[0],
+        images: {
+          vi: { kind: "url", url: "https://example.com/duplicate.png" },
+          es: { kind: "url", url: "https://example.com/duplicate.png" },
+        },
+      },
+      chapterBaseCommitSha: "duplicate123",
+    };
+  };
+
+  await duplicateEditorLanguageImage(
+    render,
+    "row-1",
+    "vi",
+    "es",
+    { updateEditorChapterRow },
+  );
+
+  assert.equal(invokeLog.at(-1)?.command, "duplicate_gtms_editor_language_image");
+  assert.deepEqual(state.editorChapter.rows[0].images.es, {
+    kind: "url",
+    url: "https://example.com/duplicate.png",
+    path: null,
+    filePath: null,
+    fileName: null,
+  });
+  assert.equal(state.editorChapter.rows[0].images.vi.url, "https://example.com/duplicate.png");
+});
+
+test("duplicateEditorLanguageImage asks before replacing an occupied language", async () => {
+  installEditorFixture();
+  installFixtureImage("https://example.com/source.png");
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    images: {
+      ...state.editorChapter.rows[0].images,
+      es: { kind: "url", url: "https://example.com/existing.png" },
+    },
+  };
+  const render = createRenderSpy();
+
+  await duplicateEditorLanguageImage(
+    render,
+    "row-1",
+    "vi",
+    "es",
+    { updateEditorChapterRow },
+  );
+
+  assert.equal(invokeLog.length, 0);
+  assert.equal(state.editorChapter.imageDuplicateOverwriteModal.isOpen, true);
+  assert.equal(state.editorChapter.imageDuplicateOverwriteModal.destinationLanguageName, "Spanish");
+  assert.equal(state.editorChapter.rows[0].images.es.url, "https://example.com/existing.png");
+  assert.deepEqual(render.calls, [[]]);
+});
+
+test("image duplicate overwrite modal cancels without changing either image", async () => {
+  installEditorFixture();
+  installFixtureImage("https://example.com/source.png");
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    images: {
+      ...state.editorChapter.rows[0].images,
+      es: { kind: "url", url: "https://example.com/existing.png" },
+    },
+  };
+  const render = createRenderSpy();
+  await duplicateEditorLanguageImage(render, "row-1", "vi", "es", { updateEditorChapterRow });
+
+  cancelEditorImageDuplicateOverwrite(render);
+
+  assert.equal(state.editorChapter.imageDuplicateOverwriteModal.isOpen, false);
+  assert.equal(state.editorChapter.rows[0].images.vi.url, "https://example.com/source.png");
+  assert.equal(state.editorChapter.rows[0].images.es.url, "https://example.com/existing.png");
+  assert.equal(invokeLog.length, 0);
+});
+
+test("confirmed image duplicate overwrites only the destination image", async () => {
+  installEditorFixture();
+  installFixtureImage("https://example.com/source.png");
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    imageCaptions: {
+      vi: "Source caption",
+      es: "Destination caption",
+    },
+    images: {
+      ...state.editorChapter.rows[0].images,
+      es: { kind: "url", url: "https://example.com/existing.png" },
+    },
+  };
+  const render = createRenderSpy();
+  await duplicateEditorLanguageImage(render, "row-1", "vi", "es", { updateEditorChapterRow });
+  invokeHandler = async (command) => {
+    assert.equal(command, "duplicate_gtms_editor_language_image");
+    return {
+      status: "saved",
+      row: {
+        ...state.editorChapter.rows[0],
+        images: {
+          vi: { kind: "url", url: "https://example.com/source.png" },
+          es: { kind: "url", url: "https://example.com/source.png" },
+        },
+      },
+      chapterBaseCommitSha: "overwrite123",
+    };
+  };
+
+  await confirmEditorImageDuplicateOverwrite(render, { updateEditorChapterRow });
+
+  assert.equal(state.editorChapter.rows[0].images.vi.url, "https://example.com/source.png");
+  assert.equal(state.editorChapter.rows[0].images.es.url, "https://example.com/source.png");
+  assert.deepEqual(state.editorChapter.rows[0].imageCaptions, {
+    vi: "Source caption",
+    es: "Destination caption",
+  });
+});
+
+test("confirmed image duplicate stops if the destination changes during readiness", async () => {
+  installEditorFixture();
+  installFixtureImage("https://example.com/source.png");
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    images: {
+      ...state.editorChapter.rows[0].images,
+      es: { kind: "url", url: "https://example.com/confirmed-destination.png" },
+    },
+  };
+  const render = createRenderSpy();
+  await duplicateEditorLanguageImage(render, "row-1", "vi", "es", { updateEditorChapterRow });
+
+  const pendingConfirmation = confirmEditorImageDuplicateOverwrite(
+    render,
+    { updateEditorChapterRow },
+  );
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    images: {
+      ...state.editorChapter.rows[0].images,
+      es: { kind: "url", url: "https://example.com/newer-destination.png" },
+    },
+  };
+  await pendingConfirmation;
+
+  assert.equal(invokeLog.length, 0);
+  assert.equal(state.editorChapter.imageDuplicateOverwriteModal.isOpen, false);
+  assert.equal(
+    state.editorChapter.rows[0].images.es.url,
+    "https://example.com/newer-destination.png",
+  );
+});
+
+test("copyEditorImageUrl writes the original URL to the clipboard", async () => {
+  installEditorFixture();
+  const copied = [];
+  const previousClipboard = globalThis.navigator.clipboard;
+  globalThis.navigator.clipboard = {
+    async writeText(value) {
+      copied.push(value);
+    },
+  };
+
+  try {
+    await copyEditorImageUrl(createRenderSpy(), "https://example.com/original.png");
+    assert.deepEqual(copied, ["https://example.com/original.png"]);
+  } finally {
+    globalThis.navigator.clipboard = previousClipboard;
+  }
 });
 
 test("submitEditorImageUrl clears an empty draft back to the pre-open state", async () => {

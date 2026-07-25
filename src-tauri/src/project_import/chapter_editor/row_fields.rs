@@ -780,7 +780,14 @@ fn load_batch_chapter_context(
         resolve_project_git_repo_path(app, installation_id, project_id, Some(repo_name))?;
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
+    load_batch_chapter_context_from_repo(app, repo_path, chapter_id)
+}
 
+fn load_batch_chapter_context_from_repo(
+    app: &AppHandle,
+    repo_path: PathBuf,
+    chapter_id: &str,
+) -> Result<BatchChapterContext, String> {
     let chapter_path = find_chapter_path_by_id(app, &repo_path.join("chapters"), chapter_id)?;
     let chapter_file: StoredChapterFile =
         read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
@@ -921,18 +928,22 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
     app: &AppHandle,
     input: UpdateEditorRowFieldsBatchInput,
 ) -> Result<UpdateEditorRowFieldsBatchResponse, String> {
+    let repo_path = resolve_project_git_repo_path(
+        app,
+        input.installation_id,
+        input.project_id.as_deref(),
+        Some(&input.repo_name),
+    )?;
+    ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
+    ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
+    let repo_lock = crate::repo_sync_shared::repo_sync_lock(&repo_path);
+    let _repo_lock_guard = crate::repo_sync_shared::acquire_repo_sync_lock(&repo_lock);
     let BatchChapterContext {
         repo_path,
         chapter_path,
         languages,
         mut word_counts,
-    } = load_batch_chapter_context(
-        app,
-        input.installation_id,
-        input.project_id.as_deref(),
-        &input.repo_name,
-        &input.chapter_id,
-    )?;
+    } = load_batch_chapter_context_from_repo(app, repo_path, &input.chapter_id)?;
 
     let mut rows_by_id = BTreeMap::new();
     for row in input.rows {
@@ -985,10 +996,27 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
 
     let commit_message = input.commit_message.trim();
     let operation = input.operation.trim();
-    let commit_sha = commit_batch_row_writes(
+    let row_overlays = prepared_writes
+        .iter()
+        .map(|write| {
+            serde_json::from_str::<StoredRowFile>(&write.updated_text)
+                .map(|row| (write.relative_path.clone(), Some(row)))
+                .map_err(|error| {
+                    format!(
+                        "Could not decode updated row '{}' while checking image references: {error}",
+                        write.relative_path
+                    )
+                })
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    let removable_uploaded_paths = unreferenced_uploaded_paths_after_row_updates(
+        &repo_path,
+        &removed_uploaded_paths,
+        &row_overlays,
+    )?;
+    let commit_output = write_row_files_and_commit_with_removals_locked(
         app,
         &repo_path,
-        &input.chapter_id,
         if commit_message.is_empty() {
             "Update editor rows"
         } else {
@@ -1004,12 +1032,17 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
             status_note: None,
             ai_model: Some(input.ai_model.trim()).filter(|value| !value.is_empty()),
         },
-        BatchRowWrites {
-            prepared_writes: &prepared_writes,
-            removed_uploaded_paths: &removed_uploaded_paths,
-            changed_row_ids: &changed_row_ids,
-        },
+        &prepared_writes,
+        &removable_uploaded_paths,
     )?;
+    let commit_sha = if commit_output.is_empty() {
+        None
+    } else {
+        Some(git_output(&repo_path, &["rev-parse", "--short", "HEAD"])?)
+    };
+    for row_id in &changed_row_ids {
+        let _ = clear_imported_editor_conflict_entry(&repo_path, &input.chapter_id, row_id);
+    }
 
     Ok(UpdateEditorRowFieldsBatchResponse {
         row_ids: changed_row_ids,

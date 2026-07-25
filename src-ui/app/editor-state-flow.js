@@ -50,6 +50,7 @@ import {
   createEditorFootnoteEditorState,
   createEditorImageCaptionEditorState,
   createEditorImageEditorState,
+  createEditorImageDuplicateOverwriteModalState,
   createEditorImageInvalidFileModalState,
   createEditorInsertLinkModalState,
   createWordPressExportSuccessModalState,
@@ -334,6 +335,13 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
           ...previousEditorChapter.rowPermanentDeletionModal,
         }
         : createEditorRowPermanentDeletionModalState(),
+    imageDuplicateOverwriteModal:
+      isSameChapter && previousEditorChapter?.imageDuplicateOverwriteModal?.isOpen === true
+        ? {
+          ...createEditorImageDuplicateOverwriteModalState(),
+          ...previousEditorChapter.imageDuplicateOverwriteModal,
+        }
+        : createEditorImageDuplicateOverwriteModalState(),
     replaceUndoModal:
       isSameChapter && previousEditorChapter?.replaceUndoModal?.isOpen === true
         ? {

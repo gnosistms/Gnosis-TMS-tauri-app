@@ -625,8 +625,10 @@ function renderEditorLanguageImage(row, language) {
           <img
             class="translation-language-panel__image"
             data-editor-language-image-preview-img
+            data-editor-image-context-menu-target
             data-row-id="${escapeHtml(row.id)}"
             data-language-code="${escapeHtml(language.code)}"
+            ${image.kind === "url" ? `data-image-url="${escapeHtml(image.url ?? "")}"` : ""}
             src="${escapeHtml(imageSrc)}"
             alt=""
             loading="eager"

@@ -25,7 +25,8 @@ use self::{
         apply_gtms_editor_ai_review_result_sync, apply_gtms_editor_ai_review_results_batch_sync,
         cancel_gtms_chapter_pdf_export as cancel_gtms_chapter_pdf_export_task,
         clear_gtms_editor_imported_conflict_sync, clear_gtms_editor_reviewed_markers_sync,
-        export_gtms_chapter_file_sync, get_project_transfer_status,
+        duplicate_gtms_editor_language_image_sync, export_gtms_chapter_file_sync,
+        get_project_transfer_status,
         initialize_gtms_project_repo_sync, insert_gtms_editor_row_sync,
         inspect_gtms_chapter_pdf_fonts as inspect_gtms_chapter_pdf_fonts_sync,
         list_local_gtms_project_files_sync, list_project_transfer_statuses,
@@ -47,11 +48,11 @@ use self::{
         ApplyEditorAiReviewResultResponse, ApplyEditorAiReviewResultsBatchInput,
         ApplyEditorAiReviewResultsBatchResponse, ClearEditorReviewedMarkersInput,
         ClearEditorReviewedMarkersResponse, ClearImportedEditorConflictInput,
-        ExportChapterFileInput, ExportChapterFileResponse, InitializeProjectRepoInput,
-        InitializeProjectRepoResponse, InsertEditorRowInput, InsertEditorRowResponse,
-        ListLocalProjectFilesInput, LoadChapterEditorInput, LoadChapterEditorResponse,
-        LoadEditorFieldHistoryInput, LoadEditorFieldHistoryResponse, LoadEditorRowInput,
-        LoadEditorRowResponse, LocalProjectFilesResponse, MergeEditorRowsInput,
+        DuplicateEditorLanguageImageInput, ExportChapterFileInput, ExportChapterFileResponse,
+        InitializeProjectRepoInput, InitializeProjectRepoResponse, InsertEditorRowInput,
+        InsertEditorRowResponse, ListLocalProjectFilesInput, LoadChapterEditorInput,
+        LoadChapterEditorResponse, LoadEditorFieldHistoryInput, LoadEditorFieldHistoryResponse,
+        LoadEditorRowInput, LoadEditorRowResponse, LocalProjectFilesResponse, MergeEditorRowsInput,
         MergeEditorRowsResponse, PdfChapterExportInput, PdfFontInspection, PdfFontInspectionInput,
         ProjectTransferInput, ProjectTransferStatus, ProjectTransferStatusInput,
         PurgeLocalProjectRepoInput, RemoveEditorLanguageImageInput, RestoreEditorFieldHistoryInput,
@@ -558,6 +559,19 @@ pub(crate) async fn remove_gtms_editor_language_image(
     })
     .await
     .map_err(|error| format!("The row image removal worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn duplicate_gtms_editor_language_image(
+    app: AppHandle,
+    input: DuplicateEditorLanguageImageInput,
+) -> Result<SaveEditorLanguageImageResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_chapter_writes(&app, input.installation_id)?;
+        duplicate_gtms_editor_language_image_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The row image duplication worker failed: {error}"))?
 }
 
 #[tauri::command]

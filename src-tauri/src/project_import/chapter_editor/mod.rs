@@ -82,12 +82,14 @@ use self::history::{
 };
 use self::images::{
     apply_editor_field_image_update, editor_field_image_from_stored,
-    normalize_editor_field_image_input, push_repo_file_snapshot, remove_repo_file_from_disk,
-    row_language_stored_image, row_uploaded_image_relative_paths, with_repo_file_rollback,
+    normalize_editor_field_image_input, push_repo_file_snapshot, push_uploaded_asset_snapshot,
+    remove_uploaded_asset_from_disk, row_language_stored_image, row_uploaded_image_relative_paths,
+    unreferenced_uploaded_paths_after_row_updates, validated_uploaded_asset_relative_path,
+    with_repo_file_rollback,
 };
 pub(super) use self::images::{
-    remove_gtms_editor_language_image_sync, save_gtms_editor_language_image_url_sync,
-    upload_gtms_editor_language_image_sync,
+    duplicate_gtms_editor_language_image_sync, remove_gtms_editor_language_image_sync,
+    save_gtms_editor_language_image_url_sync, upload_gtms_editor_language_image_sync,
 };
 pub(crate) use self::pdf_export::{
     cancel_gtms_chapter_pdf_export, inspect_gtms_chapter_pdf_fonts, start_gtms_chapter_pdf_export,
@@ -127,7 +129,7 @@ use self::shared::{
     normalize_editor_text_style_value, refresh_cached_chapter_source_word_count,
     row_fields_object_mut, row_footnote_map, row_image_caption_map, row_object_mut,
     row_plain_text_map, row_text_style, sanitize_chapter_languages, set_editor_field_flags,
-    write_row_files_and_commit_with_removals,
+    write_row_files_and_commit_with_removals, write_row_files_and_commit_with_removals_locked,
 };
 pub(crate) use self::team_copy::{start_team_chapter_copy, TeamChapterCopyInput};
 // Re-exported for the sibling `chapter_editor_comments` and `chapter_lifecycle` modules,
@@ -483,6 +485,22 @@ pub(crate) struct RemoveEditorLanguageImageInput {
     language_code: String,
     #[serde(default)]
     base_image: Option<EditorFieldImageInput>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DuplicateEditorLanguageImageInput {
+    pub(crate) installation_id: i64,
+    repo_name: String,
+    project_id: Option<String>,
+    chapter_id: String,
+    row_id: String,
+    source_language_code: String,
+    destination_language_code: String,
+    #[serde(default)]
+    base_source_image: Option<EditorFieldImageInput>,
+    #[serde(default)]
+    base_destination_image: Option<EditorFieldImageInput>,
 }
 
 #[derive(Deserialize)]
