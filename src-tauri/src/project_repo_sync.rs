@@ -19,6 +19,7 @@ use crate::{
     project_import::{
         list_imported_editor_conflict_refs, persist_imported_editor_conflict_entries,
         repo_has_imported_editor_conflicts, resolve_chapter_json_git_conflict_from_stage_texts,
+        resolve_project_json_git_conflict_from_stage_texts,
         resolve_row_git_conflict_from_stage_texts, ImportedEditorConflictRef,
         PendingImportedEditorConflictEntry, ResolvedEditorConflictAction,
     },
@@ -1402,8 +1403,23 @@ fn build_semantic_conflict_resolution_plan(
             continue;
         }
 
+        if path.trim() == "project.json" {
+            let merged_text = resolve_project_json_git_conflict_from_stage_texts(
+                &path,
+                read_git_stage_text(repo_path, stages.base_oid.as_deref())?.as_deref(),
+                read_git_stage_text(repo_path, stages.remote_oid.as_deref())?.as_deref(),
+                read_git_stage_text(repo_path, stages.local_oid.as_deref())?.as_deref(),
+            )?;
+            plan.push(SemanticConflictResolutionPlanEntry::WriteFile {
+                path,
+                text: merged_text,
+                imported_conflict: None,
+            });
+            continue;
+        }
+
         return Err(format!(
-            "Could not resolve the current Git rebase stop semantically because '{}' is not a supported editor file.",
+            "Could not resolve the current Git rebase stop semantically because '{}' is not a supported project file.",
             path
         ));
     }
@@ -2020,11 +2036,12 @@ fn try_begin_project_repo_sync(
 #[cfg(test)]
 mod tests {
     use super::{
-        backup_dirty_project_worktree, chapter_language_list_from_json_text,
-        git_status_porcelain_has_unmerged_entries, project_branch_name,
-        recover_project_rebase_without_unmerged_files, snapshot_from_project_sync_error,
-        try_begin_project_repo_sync, GitTransportAuth, ProjectRepoSyncDescriptor,
-        ProjectRepoSyncSnapshot, PROJECT_REPO_SYNC_STATUS_OUT_OF_SYNC,
+        backup_dirty_project_worktree, build_semantic_conflict_resolution_plan,
+        chapter_language_list_from_json_text, git_status_porcelain_has_unmerged_entries,
+        project_branch_name, recover_project_rebase_without_unmerged_files,
+        snapshot_from_project_sync_error, try_begin_project_repo_sync, GitTransportAuth,
+        ProjectRepoSyncDescriptor, ProjectRepoSyncSnapshot, SemanticConflictResolutionPlanEntry,
+        PROJECT_REPO_SYNC_STATUS_OUT_OF_SYNC,
         PROJECT_REPO_SYNC_STATUS_REMOTE_MIGRATED_LOCAL_CHANGES, PROJECT_REPO_SYNC_STATUS_SYNCING,
         PROJECT_REPO_SYNC_STATUS_UPDATE_REQUIRED,
     };
@@ -2138,6 +2155,67 @@ mod tests {
         run_git(&repo_path, &["add", "project.json"]);
         run_git(&repo_path, &["commit", "-m", "Initial"]);
         repo_path
+    }
+
+    #[test]
+    fn semantic_plan_resolves_real_project_json_add_add_conflict() {
+        let repo_path =
+            env::temp_dir().join(format!("gnosis-tms-project-conflict-{}", Uuid::now_v7()));
+        fs::create_dir_all(&repo_path).expect("create repo");
+        run_git(&repo_path, &["init", "--initial-branch", "main"]);
+        run_git(&repo_path, &["config", "user.email", "test@example.com"]);
+        run_git(&repo_path, &["config", "user.name", "Test User"]);
+        fs::write(repo_path.join("README.md"), "project\n").expect("write initial file");
+        run_git(&repo_path, &["add", "README.md"]);
+        run_git(&repo_path, &["commit", "-m", "Initial"]);
+
+        run_git(&repo_path, &["switch", "-c", "remote-project"]);
+        fs::write(
+            repo_path.join("project.json"),
+            r#"{"title":"Destination","remote_metadata":true}"#,
+        )
+        .expect("write remote project metadata");
+        run_git(&repo_path, &["add", "project.json"]);
+        run_git(&repo_path, &["commit", "-m", "Initialize remote project"]);
+
+        run_git(&repo_path, &["switch", "main"]);
+        fs::write(
+            repo_path.join("project.json"),
+            r#"{"title":"Destination","local_metadata":true}"#,
+        )
+        .expect("write local project metadata");
+        run_git(&repo_path, &["add", "project.json"]);
+        run_git(&repo_path, &["commit", "-m", "Initialize local project"]);
+
+        let merge_output = Command::new("git")
+            .args(["merge", "remote-project"])
+            .current_dir(&repo_path)
+            .output()
+            .expect("run conflicting merge");
+        assert!(
+            !merge_output.status.success(),
+            "test setup should produce an add/add project.json conflict"
+        );
+
+        let plan = build_semantic_conflict_resolution_plan(&repo_path)
+            .expect("root project metadata conflict should be supported");
+        assert_eq!(plan.len(), 1);
+        match &plan[0] {
+            SemanticConflictResolutionPlanEntry::WriteFile { path, text, .. } => {
+                assert_eq!(path, "project.json");
+                let merged: serde_json::Value =
+                    serde_json::from_str(text).expect("resolved project metadata should parse");
+                assert_eq!(merged["title"], "Destination");
+                assert_eq!(merged["remote_metadata"], true);
+                assert_eq!(merged["local_metadata"], true);
+            }
+            SemanticConflictResolutionPlanEntry::DeleteFile { .. } => {
+                panic!("project metadata must not be deleted")
+            }
+        }
+
+        run_git(&repo_path, &["merge", "--abort"]);
+        let _ = fs::remove_dir_all(repo_path);
     }
 
     #[test]

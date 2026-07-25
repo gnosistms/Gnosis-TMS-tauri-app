@@ -68,7 +68,8 @@ pub(crate) use self::chapter_selection::{
 pub(crate) use self::git_conflicts::{
     clear_imported_editor_conflict_entry, list_imported_editor_conflict_refs,
     persist_imported_editor_conflict_entries, repo_has_imported_editor_conflicts,
-    resolve_chapter_json_git_conflict_from_stage_texts, resolve_row_git_conflict_from_stage_texts,
+    resolve_chapter_json_git_conflict_from_stage_texts,
+    resolve_project_json_git_conflict_from_stage_texts, resolve_row_git_conflict_from_stage_texts,
     ImportedEditorConflictRef, PendingImportedEditorConflictEntry, ResolvedEditorConflictAction,
 };
 pub(super) use self::history::{

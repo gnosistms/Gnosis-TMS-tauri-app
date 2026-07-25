@@ -382,6 +382,89 @@ pub(crate) fn resolve_chapter_json_git_conflict_from_stage_texts(
     serialize_json_with_trailing_newline(path, &merged_value)
 }
 
+pub(crate) fn resolve_project_json_git_conflict_from_stage_texts(
+    path: &str,
+    base_text: Option<&str>,
+    remote_text: Option<&str>,
+    local_text: Option<&str>,
+) -> Result<String, String> {
+    let Some(remote_text) = remote_text else {
+        return Err(format!(
+            "Could not resolve conflicted project metadata '{path}': the rebased remote stage is missing."
+        ));
+    };
+    let Some(local_text) = local_text else {
+        return Err(format!(
+            "Could not resolve conflicted project metadata '{path}': the replayed local stage is missing."
+        ));
+    };
+
+    let base_value = base_text
+        .map(|text| parse_project_json_stage(path, text, "base"))
+        .transpose()?;
+    let remote_value = parse_project_json_stage(path, remote_text, "remote")?;
+    let local_value = parse_project_json_stage(path, local_text, "local")?;
+
+    let base_object = base_value.as_ref().and_then(Value::as_object);
+    let remote_object = remote_value
+        .as_object()
+        .ok_or_else(|| format!("The remote project metadata '{path}' is not a JSON object."))?;
+    let local_object = local_value
+        .as_object()
+        .ok_or_else(|| format!("The local project metadata '{path}' is not a JSON object."))?;
+
+    let field_names = base_object
+        .into_iter()
+        .flat_map(|object| object.keys())
+        .chain(remote_object.keys())
+        .chain(local_object.keys())
+        .collect::<BTreeSet<_>>();
+    let mut merged_object = serde_json::Map::new();
+    let mut ambiguous_fields = Vec::new();
+
+    for field_name in field_names {
+        let base_field = base_object.and_then(|object| object.get(field_name));
+        let remote_field = remote_object.get(field_name);
+        let local_field = local_object.get(field_name);
+        let merged_field = if base_value.is_some() {
+            if local_field == remote_field {
+                local_field
+            } else if local_field == base_field {
+                remote_field
+            } else if remote_field == base_field {
+                local_field
+            } else {
+                ambiguous_fields.push(field_name.as_str());
+                continue;
+            }
+        } else if local_field == remote_field {
+            local_field
+        } else if local_field.is_none() {
+            remote_field
+        } else if remote_field.is_none() {
+            local_field
+        } else {
+            ambiguous_fields.push(field_name.as_str());
+            continue;
+        };
+
+        if let Some(merged_field) = merged_field {
+            merged_object.insert(field_name.clone(), merged_field.clone());
+        }
+    }
+
+    if !ambiguous_fields.is_empty() {
+        return Err(format!(
+            "Could not resolve conflicted project metadata '{path}': concurrent changes to the same fields are ambiguous (fields: {}).",
+            ambiguous_fields.join(", ")
+        ));
+    }
+
+    let merged_value = Value::Object(merged_object);
+    validate_project_json_schema(path, &merged_value, "resolved")?;
+    serialize_json_with_trailing_newline(path, &merged_value)
+}
+
 fn imported_editor_conflicts_by_row_id(
     repo_path: &Path,
     chapter_id: &str,
@@ -1464,6 +1547,28 @@ fn parse_json_stage(path: &str, text: &str, stage_label: &str) -> Result<Value, 
     })
 }
 
+fn parse_project_json_stage(path: &str, text: &str, stage_label: &str) -> Result<Value, String> {
+    let value = parse_json_stage(path, text, stage_label)?;
+    validate_project_json_schema(path, &value, stage_label)?;
+    Ok(value)
+}
+
+fn validate_project_json_schema(
+    path: &str,
+    value: &Value,
+    stage_label: &str,
+) -> Result<(), String> {
+    let object = value.as_object().ok_or_else(|| {
+        format!("Could not parse the {stage_label} project metadata stage for '{path}': expected a JSON object.")
+    })?;
+    if !object.get("title").is_some_and(Value::is_string) {
+        return Err(format!(
+            "Could not parse the {stage_label} project metadata stage for '{path}': 'title' must be a string."
+        ));
+    }
+    Ok(())
+}
+
 fn serialize_json_with_trailing_newline(path: &str, value: &Value) -> Result<String, String> {
     let json = serde_json::to_string_pretty(value)
         .map_err(|error| format!("Could not serialize the resolved JSON for '{path}': {error}"))?;
@@ -1953,6 +2058,78 @@ mod tests {
             merged_value.get("source_word_count").is_none(),
             "merged chapter should drop the cached source_word_count so it is recomputed"
         );
+    }
+
+    #[test]
+    fn project_add_add_conflicts_union_unambiguous_fields() {
+        let merged = resolve_project_json_git_conflict_from_stage_texts(
+            "project.json",
+            None,
+            Some(r#"{"title":"Destination","remote_metadata":{"created":true}}"#),
+            Some(r#"{"title":"Destination","local_metadata":{"transfer":true}}"#),
+        )
+        .expect("matching project initialization should resolve");
+        let merged_value: Value =
+            serde_json::from_str(&merged).expect("merged project metadata should parse");
+
+        assert_eq!(merged_value["title"], json!("Destination"));
+        assert_eq!(merged_value["remote_metadata"], json!({ "created": true }));
+        assert_eq!(merged_value["local_metadata"], json!({ "transfer": true }));
+    }
+
+    #[test]
+    fn project_conflicts_preserve_independent_three_way_changes() {
+        let merged = resolve_project_json_git_conflict_from_stage_texts(
+            "project.json",
+            Some(r#"{"title":"Base","local_setting":"old","remote_setting":"old"}"#),
+            Some(r#"{"title":"Base","local_setting":"old","remote_setting":"new"}"#),
+            Some(r#"{"title":"Local title","local_setting":"new","remote_setting":"old"}"#),
+        )
+        .expect("independent project metadata edits should resolve");
+        let merged_value: Value =
+            serde_json::from_str(&merged).expect("merged project metadata should parse");
+
+        assert_eq!(merged_value["title"], json!("Local title"));
+        assert_eq!(merged_value["local_setting"], json!("new"));
+        assert_eq!(merged_value["remote_setting"], json!("new"));
+    }
+
+    #[test]
+    fn project_conflicts_reject_divergent_title_changes_without_leaking_values() {
+        let error = resolve_project_json_git_conflict_from_stage_texts(
+            "project.json",
+            Some(r#"{"title":"Base"}"#),
+            Some(r#"{"title":"Remote secret title"}"#),
+            Some(r#"{"title":"Local secret title"}"#),
+        )
+        .expect_err("divergent project titles are ambiguous");
+
+        assert!(error.contains("fields: title"), "unexpected error: {error}");
+        assert!(
+            !error.contains("secret title"),
+            "error must not leak project metadata values: {error}"
+        );
+    }
+
+    #[test]
+    fn project_conflicts_reject_missing_or_invalid_required_stages() {
+        let missing_stage_error = resolve_project_json_git_conflict_from_stage_texts(
+            "project.json",
+            Some(r#"{"title":"Base"}"#),
+            None,
+            Some(r#"{"title":"Local"}"#),
+        )
+        .expect_err("project deletion conflicts should not resolve");
+        assert!(missing_stage_error.contains("remote stage is missing"));
+
+        let invalid_schema_error = resolve_project_json_git_conflict_from_stage_texts(
+            "project.json",
+            None,
+            Some(r#"{"title":"Destination"}"#),
+            Some(r#"{"title":42}"#),
+        )
+        .expect_err("invalid project metadata should not resolve");
+        assert!(invalid_schema_error.contains("'title' must be a string"));
     }
 
     #[test]

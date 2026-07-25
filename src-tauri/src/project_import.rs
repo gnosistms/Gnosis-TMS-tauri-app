@@ -15,8 +15,8 @@ pub(crate) use self::chapter_editor::{
     fetch_public_image_dimensions, list_imported_editor_conflict_refs,
     normalize_chapter_settings_value, persist_imported_editor_conflict_entries,
     repo_has_imported_editor_conflicts, resolve_chapter_json_git_conflict_from_stage_texts,
-    resolve_row_git_conflict_from_stage_texts, ImportedEditorConflictRef,
-    PendingImportedEditorConflictEntry, ResolvedEditorConflictAction,
+    resolve_project_json_git_conflict_from_stage_texts, resolve_row_git_conflict_from_stage_texts,
+    ImportedEditorConflictRef, PendingImportedEditorConflictEntry, ResolvedEditorConflictAction,
 };
 
 use self::{
