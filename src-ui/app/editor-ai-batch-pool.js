@@ -58,32 +58,36 @@ export function createSerialLane() {
   };
 }
 
-// Every provider words its 429 as "<name> rate limited this request..." —
-// the stable signal that a failed batch call is worth retrying on the batch
-// path instead of collapsing into per-row fallback calls.
-export function isAiRateLimitError(error) {
+// Every provider words its 429 as "<name> rate limited this request..." and
+// its 5xx as "<name> is temporarily unavailable..." — the stable signals that
+// a failed batch call is worth retrying on the batch path instead of
+// collapsing into per-row fallback calls (which hit the same throttled or
+// briefly-down provider once per row; field case 2026-07-25: an OpenAI 5xx
+// window made whole Review All runs end in seconds with nothing applied).
+export function isTransientAiProviderError(error) {
   const message = error instanceof Error ? error.message : String(error ?? "");
-  return /rate limit/i.test(message);
+  return /rate limit|temporarily unavailable/i.test(message);
 }
 
-const RATE_LIMIT_RETRY_DELAYS_MS = [2000, 5000];
+const TRANSIENT_RETRY_DELAYS_MS = [2000, 5000];
 
-// Runs a slot-holding AI call, retrying rate-limited attempts after a backoff
-// pause. The pause happens with the slot RELEASED, so other batches keep
-// using the provider capacity that does exist. Any non-rate-limit error (or
-// an exhausted retry budget) propagates to the caller's normal fallback path.
-export async function runWithRateLimitRetry({
+// Runs a slot-holding AI call, retrying transient provider failures after a
+// backoff pause. The pause happens with the slot RELEASED, so other batches
+// keep using the provider capacity that does exist. Any non-transient error
+// (or an exhausted retry budget) propagates to the caller's normal fallback
+// path.
+export async function runWithTransientAiRetry({
   withSlot,
   call,
   isRunActive = () => true,
   onRetry = null,
-  delaysMs = RATE_LIMIT_RETRY_DELAYS_MS,
+  delaysMs = TRANSIENT_RETRY_DELAYS_MS,
 }) {
   for (let attempt = 0; ; attempt += 1) {
     try {
       return await withSlot(call);
     } catch (error) {
-      if (attempt >= delaysMs.length || !isAiRateLimitError(error) || !isRunActive()) {
+      if (attempt >= delaysMs.length || !isTransientAiProviderError(error) || !isRunActive()) {
         throw error;
       }
       onRetry?.(attempt + 1, error);

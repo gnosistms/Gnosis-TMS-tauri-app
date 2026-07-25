@@ -150,7 +150,40 @@ function renderReviewingModal(state, modal) {
   `;
 }
 
-function renderFilterEnabledModal() {
+function renderFilterEnabledModal(modal) {
+  const completedCount = Number(modal?.completedCount) || 0;
+  const totalCount = Number(modal?.totalCount) || 0;
+  const progressLine = totalCount > 0
+    ? `<p class="modal__supporting"><strong>${completedCount} of ${totalCount}</strong> unreviewed translation${totalCount === 1 ? "" : "s"} ${completedCount === 1 ? "was" : "were"} reviewed in this run.</p>`
+    : "";
+
+  // A run that ended on an error must never present the success copy — with
+  // a provider outage every call can fail in seconds and nothing is
+  // reviewed, which previously still showed "AI Review is finished".
+  if (modal?.error) {
+    return `
+    <div class="modal-backdrop">
+      <section class="card modal-card modal-card--compact modal-card--ai-translate-all">
+        <div class="card__body modal-card__body ai-translate-all-modal">
+          <p class="card__eyebrow">AI REVIEW</p>
+          <h2 class="modal__title">AI Review stopped</h2>
+          ${renderError(modal)}
+          ${progressLine}
+          <p class="modal__supporting">Rows the AI already reviewed are marked with the red &quot;please check&quot; (?) status, and the Please check filter is enabled so you can find them. Run AI Review again to continue &mdash; it only reviews rows without the &quot;mark reviewed&quot; [&#10003;] mark, so finished rows are not reviewed twice.</p>
+          <div class="modal__actions">
+            ${loadingPrimaryButton({
+              label: "Ok",
+              loadingLabel: "Ok",
+              action: "dismiss-editor-ai-review-all-filter",
+              isLoading: false,
+            })}
+          </div>
+        </div>
+      </section>
+    </div>
+  `;
+  }
+
   return `
     <div class="modal-backdrop">
       <section class="card modal-card modal-card--compact modal-card--ai-translate-all">
@@ -158,6 +191,7 @@ function renderFilterEnabledModal() {
           <p class="card__eyebrow">AI REVIEW</p>
           <h2 class="modal__title">Please check filter enabled</h2>
           <p class="modal__supporting">AI Review is finished. The Please check filter is now enabled so you can review translations that need attention. The AI Review has already made the recommended corrections and marked the corrected sections by setting the red &quot;please check&quot; (?) button on each one. Your job now is to open the history tab so you can see what changed.</p>
+          ${progressLine}
           <ul class="modal__list">
             <li>If you like what the AI did, just click the &quot;mark reviewed&quot; [&#10003;] button and then click the [?] button to remove the &quot;please check&quot; status.</li>
             <li>If you don't like the changes, use the history to restore the previous version or edit the text as desired.</li>
@@ -190,7 +224,7 @@ export function renderEditorAiReviewAllModal(state) {
     return renderReviewingModal(state, modal);
   }
   if (modal.step === "filter-enabled") {
-    return renderFilterEnabledModal();
+    return renderFilterEnabledModal(modal);
   }
 
   return renderConfigureModal(state, modal);
