@@ -202,6 +202,7 @@ const {
   loadStoredAiSettingsAboutDismissed,
 } = await import("./ai-settings-preferences.js");
 const { pickPreferredAiModelId } = await import("./ai-action-config.js");
+const { getNoticeBadgeText } = await import("./status-feedback.js");
 const {
   buildEditorDerivedGlossaryModel,
   buildEditorGlossaryModel,
@@ -3690,6 +3691,83 @@ test("AI key load and save flows populate and persist aiSettings state", async (
 
   updateAiProviderSecretDraft("sk-next");
   assert.equal(state.aiSettings.successMessage, "");
+});
+
+function installKeyCheckSaveHandler({ listModels }) {
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_ai_provider_secret") {
+      return payload.providerId === "openai" ? "sk-openai" : null;
+    }
+    if (command === "save_ai_provider_secret") {
+      return null;
+    }
+    if (command === "list_ai_provider_models") {
+      return listModels();
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+}
+
+test("key check badge says the provider is unreachable on a transient provider failure", async () => {
+  resetSessionState();
+  state.screen = "aiKey";
+  installKeyCheckSaveHandler({
+    listModels: () => {
+      throw new Error("OpenAI is temporarily unavailable. Please try again in a few minutes.");
+    },
+  });
+
+  const badgeTexts = [];
+  const render = () => {
+    badgeTexts.push(getNoticeBadgeText());
+  };
+
+  updateAiProviderSecretDraft("sk-new");
+  await saveAiProviderSecret(render);
+
+  assert.equal(state.aiSettings.status, "error");
+  assert.ok(badgeTexts.includes("Couldn't reach OpenAI to check this key — try again later"));
+  assert.ok(!badgeTexts.includes("This OpenAI key is not working"));
+  assert.notEqual(getNoticeBadgeText(), "Checking key...");
+});
+
+test("key check badge still reports a not-working key on a non-transient failure", async () => {
+  resetSessionState();
+  state.screen = "aiKey";
+  installKeyCheckSaveHandler({
+    listModels: () => {
+      throw new Error("Incorrect API key provided.");
+    },
+  });
+
+  const badgeTexts = [];
+  const render = () => {
+    badgeTexts.push(getNoticeBadgeText());
+  };
+
+  updateAiProviderSecretDraft("sk-new");
+  await saveAiProviderSecret(render);
+
+  assert.equal(state.aiSettings.status, "error");
+  assert.ok(badgeTexts.includes("This OpenAI key is not working"));
+  assert.notEqual(getNoticeBadgeText(), "Checking key...");
+});
+
+test("key check badge is cleared when the settings scope changes mid-check", async () => {
+  resetSessionState();
+  state.screen = "aiKey";
+  installKeyCheckSaveHandler({
+    listModels: () => {
+      state.screen = "teams";
+      return [{ id: "gpt-5.4", label: "gpt-5.4" }];
+    },
+  });
+
+  updateAiProviderSecretDraft("sk-new");
+  await saveAiProviderSecret(() => {});
+
+  assert.equal(getNoticeBadgeText(), "");
 });
 
 function installOpenAiGpt56ModelListHandler() {

@@ -1,6 +1,7 @@
 import { invoke } from "./runtime.js";
 import { selectedProjectsTeamInstallationId } from "./project-context.js";
-import { clearNoticeBadge, showNoticeBadge } from "./status-feedback.js";
+import { clearNoticeBadge, getNoticeBadgeText, showNoticeBadge } from "./status-feedback.js";
+import { isTransientAiProviderError } from "./editor-ai-batch-pool.js";
 import {
   AI_ACTION_IDS,
   coerceAiActionPreferencesToSavedProviders,
@@ -301,6 +302,23 @@ function getAiKeyWorkingBadgeText(providerId) {
 
 function getAiKeyNotWorkingBadgeText(providerId) {
   return `This ${getAiProviderConfig(providerId).label} key is not working`;
+}
+
+const AI_KEY_CHECKING_BADGE_TEXT = "Checking key...";
+
+function getAiKeyCheckUnreachableBadgeText(providerId) {
+  return `Couldn't reach ${getAiProviderConfig(providerId).label} to check this key — try again later`;
+}
+
+// The "Checking key..." badge is persistent (no auto-hide), so every exit
+// path between showing it and showing a result badge must clear it. Guarded
+// by text so a badge shown later by another flow is left alone.
+function clearAiKeyCheckingBadge(render) {
+  if (getNoticeBadgeText() !== AI_KEY_CHECKING_BADGE_TEXT) {
+    return;
+  }
+  clearNoticeBadge();
+  render?.({ scope: "status-surface" });
 }
 
 function missingTeamAiProviderMessage(providerId, reason, teamName = "") {
@@ -949,17 +967,19 @@ export async function saveAiProviderSecret(render) {
       };
       showNoticeBadge(successMessage, render);
     } else {
-      showNoticeBadge("Checking key...", render, null);
+      showNoticeBadge(AI_KEY_CHECKING_BADGE_TEXT, render, null);
       invalidateAiProviderModels(providerId);
       await refreshAiSavedProviders(render, {
         suppressLoadingState: true,
         forceTeamState: true,
       });
       if (!isAiSettingsProviderScopeCurrent(scope, providerId)) {
+        clearAiKeyCheckingBadge(render);
         return;
       }
       await ensureAiProviderModelsLoaded(render, providerId, { force: true });
       if (!isAiSettingsProviderScopeCurrent(scope, providerId)) {
+        clearAiKeyCheckingBadge(render);
         return;
       }
 
@@ -975,7 +995,15 @@ export async function saveAiProviderSecret(render) {
           apiKey: normalizedApiKey,
           hasLoaded: true,
         };
-        showNoticeBadge(getAiKeyNotWorkingBadgeText(providerId), render);
+        // A transient failure (rate limit, provider 5xx) means the provider
+        // was unreachable — the key was never actually checked, so don't
+        // call it "not working".
+        showNoticeBadge(
+          isTransientAiProviderError(providerModelsState.error)
+            ? getAiKeyCheckUnreachableBadgeText(providerId)
+            : getAiKeyNotWorkingBadgeText(providerId),
+          render,
+        );
         render?.();
         return;
       }
@@ -1010,6 +1038,7 @@ export async function saveAiProviderSecret(render) {
     }
   } catch (error) {
     if (!isAiSettingsProviderScopeCurrent(scope, providerId)) {
+      clearAiKeyCheckingBadge(render);
       return;
     }
     state.aiSettings = {
@@ -1020,6 +1049,13 @@ export async function saveAiProviderSecret(render) {
       providerId,
       hasLoaded: true,
     };
+    if (getNoticeBadgeText() === AI_KEY_CHECKING_BADGE_TEXT) {
+      if (isTransientAiProviderError(error)) {
+        showNoticeBadge(getAiKeyCheckUnreachableBadgeText(providerId), render);
+      } else {
+        clearAiKeyCheckingBadge(render);
+      }
+    }
   }
 
   render?.();
