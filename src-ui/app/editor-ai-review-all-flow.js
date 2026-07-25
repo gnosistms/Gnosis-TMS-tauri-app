@@ -703,7 +703,15 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
 
     let payload;
     try {
-      payload = await tools.withSlot(() => runBatch(request));
+      payload = await tools.withSlot(() => {
+        // Start log pairs with the success log below to make batch overlap
+        // visible in the console: with the pool active, several "started"
+        // lines should appear before the first "succeeded".
+        console.info("[gtms ai-review] Batch review call started.", {
+          rowCount: liveItems.length,
+        });
+        return runBatch(request);
+      });
     } catch (error) {
       console.warn("[gtms ai-review] Batch review call failed; reviewing these rows one at a time.", {
         rowCount: liveItems.length,
