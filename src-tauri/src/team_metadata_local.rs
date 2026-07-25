@@ -179,11 +179,13 @@ pub(crate) async fn list_local_gnosis_project_metadata_records(
         let repo_folders =
             scan_local_project_repo_folders(&app, installation_id).unwrap_or_default();
         for record in &mut records {
-            record.chapter_count = find_project_repo_in_scan(&repo_folders, record)
+            if let Some(local_count) = find_project_repo_in_scan(&repo_folders, record)
                 .ok()
                 .flatten()
                 .and_then(|repo_path| local_project_chapter_count(&repo_path).ok())
-                .unwrap_or(0);
+            {
+                record.chapter_count = local_count;
+            }
         }
         Ok(records)
     })

@@ -93,7 +93,11 @@ pub(crate) use self::pdf_export::{
     cancel_gtms_chapter_pdf_export, inspect_gtms_chapter_pdf_fonts, start_gtms_chapter_pdf_export,
     PdfChapterExportInput, PdfFontInspection, PdfFontInspectionInput,
 };
-pub(crate) use self::project_transfer::{start_project_transfer, ProjectTransferInput};
+pub(crate) use self::project_transfer::{
+    acknowledge_project_transfer_status, get_project_transfer_status,
+    list_project_transfer_statuses, start_project_transfer, ProjectTransferInput,
+    ProjectTransferStatus, ProjectTransferStatusInput,
+};
 use self::row_fields::apply_editor_text_style_update;
 #[cfg(test)]
 use self::row_fields::{

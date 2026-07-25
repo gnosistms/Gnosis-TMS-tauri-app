@@ -4,8 +4,9 @@ import test from "node:test";
 import {
   __resetProjectTransferJobsForTests,
   eligibleProjectTransferTargets,
-  handleProjectTransferProgressEvent,
+  recoverPendingProjectTransfers,
   reconcileProjectTransferGlossaries,
+  registerProjectTransferListeners,
   submitProjectTransfer,
 } from "./project-transfer-flow.js";
 import { createProjectTransferState, state } from "./state.js";
@@ -48,12 +49,99 @@ function resetFixture() {
   };
 }
 
+function transferStatus(jobId, {
+  status = "success",
+  message = status === "success" ? "Transferred." : "Push failed.",
+  copiedChapters = status === "success" ? 2 : 0,
+} = {}) {
+  return {
+    jobId,
+    status,
+    message,
+    copiedChapters,
+    targetProjectTitle: "Copied Project",
+    recovery: {
+      targetInstallationId: 2,
+      targetOrgLogin: "org-target",
+      targetProjectId: "new-project",
+      targetRepoName: "copied-project",
+      metadataRepoName: "copied-project",
+      previousRepoNames: [],
+      targetFullName: "org-target/copied-project",
+      targetRepoId: 22,
+      targetNodeId: "node-22",
+      targetDefaultBranch: "main",
+      targetLifecycleState: "active",
+      targetRecordState: "live",
+      targetRemoteState: "linked",
+      sourceProjectTitle: "Source Project",
+    },
+  };
+}
+
+function durableInvoke({
+  terminal = {},
+  onStart = () => {},
+  onAcknowledge = () => {},
+} = {}) {
+  let jobId = "";
+  return async (command, payload) => {
+    if (command === "transfer_gtms_project_to_team") {
+      jobId = payload.input.jobId;
+      onStart(payload);
+      return;
+    }
+    if (command === "get_gtms_project_transfer_status") {
+      return transferStatus(payload.input.jobId || jobId, terminal);
+    }
+    if (command === "acknowledge_gtms_project_transfer_status") {
+      onAcknowledge(payload.input.jobId);
+      return;
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+}
+
 test("eligible transfer targets require project-create capability and include the current team", () => {
   resetFixture();
   assert.deepEqual(
     eligibleProjectTransferTargets().map((entry) => entry.id),
     ["source", "target"],
   );
+});
+
+test("listener registration waits once before starting durable recovery", async () => {
+  resetFixture();
+  let releaseListener;
+  let listenCalls = 0;
+  let listCalls = 0;
+  const listenerReady = new Promise((resolve) => {
+    releaseListener = resolve;
+  });
+  const operations = {
+    listen: async () => {
+      listenCalls += 1;
+      await listenerReady;
+    },
+    requireBrokerSession: () => "session",
+    invoke: async (command) => {
+      assert.equal(command, "list_gtms_project_transfer_statuses");
+      listCalls += 1;
+      return [];
+    },
+  };
+
+  const first = registerProjectTransferListeners(() => {}, operations);
+  const second = registerProjectTransferListeners(() => {}, operations);
+  assert.equal(listenCalls, 1);
+  assert.equal(listCalls, 0);
+
+  releaseListener();
+  await Promise.all([first, second]);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(listenCalls, 1);
+  assert.equal(listCalls, 1);
 });
 
 test("transfer glossary reconciliation uses metadata identity and cached term counts", () => {
@@ -134,16 +222,15 @@ test("submit serializes target creation and exact source reads, then publishes m
         repoName: "copied-project",
       },
     }),
-    invoke: async (command, payload) => {
-      assert.equal(command, "transfer_gtms_project_to_team");
-      assert.equal(payload.input.source.projectId, "source-project");
-      queueMicrotask(() => handleProjectTransferProgressEvent({
-        jobId: payload.input.jobId,
-        status: "success",
-        message: "Transferred.",
-        copiedChapters: 4,
-      }, () => {}));
-    },
+    invoke: durableInvoke({
+      terminal: { copiedChapters: 4 },
+      onStart: (payload) => {
+        assert.equal(payload.input.source.projectId, "source-project");
+        assert.equal(payload.input.target.orgLogin, "org-target");
+      },
+      onAcknowledge: () => order.push("ack"),
+    }),
+    pollDelayMs: 0,
     upsertProjectMetadataRecord: async (_target, record) => {
       order.push("metadata");
       metadata.push(record);
@@ -164,9 +251,120 @@ test("submit serializes target creation and exact source reads, then publishes m
     "projectTransferSourceRead:start",
     "projectTransferSourceRead:end",
     "metadata",
+    "ack",
     "projectTransfer:end",
   ]);
   assert.equal(metadata[0].chapterCount, 4);
+});
+
+test("lost terminal events recover through durable status polling", async () => {
+  resetFixture();
+  let jobId = "";
+  let reads = 0;
+  let acknowledged = false;
+  let metadataCount = null;
+
+  const result = await submitProjectTransfer(() => {}, {
+    requireBrokerSession: () => "session",
+    enqueueRepoWrite: async ({ run }) => run(),
+    createProjectRepoForTeam: async () => ({
+      projectId: "new-project",
+      repoName: "copied-project",
+      localRepoInitialized: true,
+      remoteProject: {
+        name: "copied-project",
+        fullName: "org-target/copied-project",
+        repoId: 22,
+      },
+      metadataRecord: { projectId: "new-project", title: "Copied Project" },
+    }),
+    invoke: async (command, payload) => {
+      if (command === "transfer_gtms_project_to_team") {
+        jobId = payload.input.jobId;
+        return;
+      }
+      if (command === "get_gtms_project_transfer_status") {
+        reads += 1;
+        return reads === 1
+          ? { ...transferStatus(jobId), status: "progress", message: "Copying..." }
+          : transferStatus(jobId, { copiedChapters: 5 });
+      }
+      if (command === "acknowledge_gtms_project_transfer_status") {
+        acknowledged = true;
+        return;
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    },
+    pollDelayMs: 0,
+    upsertProjectMetadataRecord: async (_team, record) => {
+      metadataCount = record.chapterCount;
+    },
+    projectsPageOwnsTeam: () => false,
+  });
+
+  assert.equal(result, true);
+  assert.equal(reads, 2);
+  assert.equal(metadataCount, 5);
+  assert.equal(acknowledged, true);
+});
+
+test("reload recovery publishes terminal success and acknowledges only afterward", async () => {
+  resetFixture();
+  state.projectTransfer = createProjectTransferState();
+  const status = transferStatus("reloaded-job", { copiedChapters: 6 });
+  const order = [];
+
+  const recovered = await recoverPendingProjectTransfers(() => {}, {
+    requireBrokerSession: () => "session",
+    invoke: async (command, payload) => {
+      if (command === "list_gtms_project_transfer_statuses") {
+        return [status];
+      }
+      if (command === "acknowledge_gtms_project_transfer_status") {
+        assert.equal(payload.input.jobId, "reloaded-job");
+        order.push("ack");
+        return;
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    },
+    upsertProjectMetadataRecord: async (_team, record) => {
+      order.push(`metadata:${record.chapterCount}`);
+    },
+  });
+
+  assert.equal(recovered, true);
+  assert.deepEqual(order, ["metadata:6", "ack"]);
+});
+
+test("reload recovery rolls back a terminal push failure before acknowledging", async () => {
+  resetFixture();
+  const status = transferStatus("failed-job", {
+    status: "error",
+    message: "Content push failed.",
+  });
+  const order = [];
+
+  await recoverPendingProjectTransfers(() => {}, {
+    requireBrokerSession: () => "session",
+    invoke: async (command) => {
+      if (command === "list_gtms_project_transfer_statuses") {
+        return [status];
+      }
+      if (command === "acknowledge_gtms_project_transfer_status") {
+        order.push("ack");
+        return;
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    },
+    rollbackCreatedProjectRepo: async (_team, created, error, options) => {
+      assert.equal(created.projectId, "new-project");
+      assert.match(error.message, /Content push failed/);
+      assert.equal(options.rethrowCause, false);
+      order.push("rollback");
+    },
+  });
+
+  assert.deepEqual(order, ["rollback", "ack"]);
 });
 
 test("terminal events still finish metadata publication after modal state resets", async () => {
@@ -192,15 +390,13 @@ test("terminal events still finish metadata publication after modal state resets
         repoName: "copied-project",
       },
     }),
-    invoke: async (_command, payload) => {
-      state.projectTransfer = createProjectTransferState();
-      queueMicrotask(() => handleProjectTransferProgressEvent({
-        jobId: payload.input.jobId,
-        status: "success",
-        message: "Transferred.",
-        copiedChapters: 2,
-      }, () => {}));
-    },
+    invoke: durableInvoke({
+      terminal: { copiedChapters: 2 },
+      onStart: () => {
+        state.projectTransfer = createProjectTransferState();
+      },
+    }),
+    pollDelayMs: 0,
     upsertProjectMetadataRecord: async () => {
       metadataWritten = true;
     },
@@ -230,14 +426,8 @@ test("a transfer refreshes and selects the copy when the target projects page is
       },
       metadataRecord: { projectId: "new-project", title: "Copied Project" },
     }),
-    invoke: async (_command, payload) => {
-      queueMicrotask(() => handleProjectTransferProgressEvent({
-        jobId: payload.input.jobId,
-        status: "success",
-        message: "Transferred.",
-        copiedChapters: 3,
-      }, () => {}));
-    },
+    invoke: durableInvoke({ terminal: { copiedChapters: 3 } }),
+    pollDelayMs: 0,
     upsertProjectMetadataRecord: async () => {},
     projectsPageOwnsTeam: () => true,
     reloadProjectsAfterWrite: async () => {
@@ -269,16 +459,10 @@ test("terminal transfer errors roll back and never publish metadata", async () =
       },
       metadataRecord: { projectId: "new-project" },
     }),
-    invoke: async (_command, payload) => {
-      queueMicrotask(() => handleProjectTransferProgressEvent({
-        jobId: payload.input.jobId,
-        status: "error",
-        message: "Push failed.",
-      }, () => {}));
-    },
-    rollbackCreatedProjectRepo: async (_team, _created, error) => {
+    invoke: durableInvoke({ terminal: { status: "error", message: "Push failed." } }),
+    pollDelayMs: 0,
+    rollbackCreatedProjectRepo: async () => {
       rolledBack = true;
-      throw error;
     },
     upsertProjectMetadataRecord: async () => {
       metadataWritten = true;
@@ -310,14 +494,11 @@ test("metadata push failure deletes metadata before rolling back the created pro
       },
       metadataRecord: { projectId: "new-project", title: "Copied Project" },
     }),
-    invoke: async (_command, payload) => {
-      queueMicrotask(() => handleProjectTransferProgressEvent({
-        jobId: payload.input.jobId,
-        status: "success",
-        message: "Transferred.",
-        copiedChapters: 2,
-      }, () => {}));
-    },
+    invoke: durableInvoke({
+      terminal: { copiedChapters: 2 },
+      onAcknowledge: () => order.push("ack"),
+    }),
+    pollDelayMs: 0,
     upsertProjectMetadataRecord: async () => {
       order.push("metadata-upsert");
       throw new Error("metadata push failed");
@@ -327,15 +508,17 @@ test("metadata push failure deletes metadata before rolling back the created pro
       assert.equal(options.requirePushSuccess, true);
       order.push("metadata-delete");
     },
-    rollbackCreatedProjectRepo: async (_team, _created, error) => {
+    rollbackCreatedProjectRepo: async () => {
       order.push("project-rollback");
-      throw error;
     },
     projectsPageOwnsTeam: () => false,
   });
 
   assert.equal(result, false);
-  assert.deepEqual(order, ["metadata-upsert", "metadata-delete", "project-rollback"]);
+  assert.deepEqual(
+    order,
+    ["metadata-upsert", "metadata-delete", "project-rollback", "ack"],
+  );
   assert.match(state.projectTransfer.error, /metadata push failed/);
 });
 
@@ -357,14 +540,8 @@ test("ambiguous metadata cleanup preserves the created project", async () => {
       },
       metadataRecord: { projectId: "new-project", title: "Copied Project" },
     }),
-    invoke: async (_command, payload) => {
-      queueMicrotask(() => handleProjectTransferProgressEvent({
-        jobId: payload.input.jobId,
-        status: "success",
-        message: "Transferred.",
-        copiedChapters: 2,
-      }, () => {}));
-    },
+    invoke: durableInvoke({ terminal: { copiedChapters: 2 } }),
+    pollDelayMs: 0,
     upsertProjectMetadataRecord: async () => {
       throw new Error("metadata push outcome unknown");
     },

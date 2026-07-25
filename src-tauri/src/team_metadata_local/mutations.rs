@@ -215,7 +215,9 @@ pub(super) fn build_project_record_value(
         "deletedBy".to_string(),
         record.get("deletedBy").cloned().unwrap_or(Value::Null),
     );
-    record.remove("chapterCount");
+    if let Some(chapter_count) = input.chapter_count {
+        record.insert("chapterCount".to_string(), Value::from(chapter_count));
+    }
 
     Ok(Value::Object(record))
 }
@@ -621,7 +623,42 @@ pub(super) fn upsert_local_record(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::github::types::{TeamMetadataLanguageInput, UpsertGithubQaListMetadataRecordInput};
+    use crate::github::types::{
+        TeamMetadataLanguageInput, UpsertGithubProjectMetadataRecordInput,
+        UpsertGithubQaListMetadataRecordInput,
+    };
+
+    fn project_input(chapter_count: Option<usize>) -> UpsertGithubProjectMetadataRecordInput {
+        UpsertGithubProjectMetadataRecordInput {
+            installation_id: 42,
+            org_login: "gnosis".to_string(),
+            project_id: "project-1".to_string(),
+            title: "Project".to_string(),
+            repo_name: "project".to_string(),
+            previous_repo_names: None,
+            github_repo_id: Some(123),
+            github_node_id: Some("node-1".to_string()),
+            full_name: Some("gnosis/project".to_string()),
+            default_branch: Some("main".to_string()),
+            lifecycle_state: Some("active".to_string()),
+            remote_state: Some("linked".to_string()),
+            record_state: Some("live".to_string()),
+            deleted_at: None,
+            chapter_count,
+        }
+    }
+
+    #[test]
+    fn project_metadata_record_persists_and_preserves_authoritative_chapter_count() {
+        let value = build_project_record_value(None, &project_input(Some(7)), Some("owner"))
+            .expect("project metadata should build");
+        assert_eq!(value["chapterCount"], 7);
+
+        let current = value.as_object().cloned();
+        let preserved = build_project_record_value(current, &project_input(None), Some("owner"))
+            .expect("project metadata should update");
+        assert_eq!(preserved["chapterCount"], 7);
+    }
 
     #[test]
     fn qa_list_metadata_record_builder_serializes_required_fields() {

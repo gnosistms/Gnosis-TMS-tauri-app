@@ -204,7 +204,9 @@ export async function rollbackCreatedProjectRepo(
     }
   }
 
-  throw cause;
+  if (operations.rethrowCause !== false) {
+    throw cause;
+  }
 }
 
 export async function createProjectRepoForTeam(

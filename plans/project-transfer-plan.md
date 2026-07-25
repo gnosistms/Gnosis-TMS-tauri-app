@@ -31,6 +31,26 @@ implementation now:
 - removes frontend-card empty-state gating and uses the Rust terminal event's
   `copiedChapters` result as the authoritative count published with project metadata.
 
+The blocking PR review then identified four additional transfer gaps plus two
+mainline fixes missing because this branch predated them. The completion work will:
+
+- incorporate the current `origin/main` editor-close guard and AI key-check commits
+  unchanged, preserving their tests and avoiding transfer-specific reimplementations;
+- canonicalize the source repo and `chapters` root, enumerate entries without
+  following symlinks, and reject symlinked chapter metadata, row directories, or row
+  files before any source content is read;
+- persist `chapterCount` in project metadata and retain that authoritative value when
+  a local repo scan cannot provide a newer count;
+- journal backend transfer progress and terminal state before best-effort event
+  delivery, including only the destination recovery metadata needed for publication
+  or rollback (never the broker token);
+- make the frontend poll that durable status instead of depending on a terminal
+  event, acknowledge only after metadata publication or rollback, and reconcile
+  unacknowledged jobs after navigation/reload. A running record owned by an older
+  backend process becomes an interrupted error so restart recovery can roll it back;
+- add transaction-level coverage for success, content-push failure, lost events,
+  reload recovery, metadata cleanup, authoritative counts, and symlink containment.
+
 ---
 
 ## 1. Should this be a GitHub fork?

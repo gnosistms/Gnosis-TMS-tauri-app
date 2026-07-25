@@ -21,16 +21,17 @@ pub(crate) use self::chapter_editor::{
 
 use self::{
     chapter_editor::{
-        apply_aligned_translation_to_gtms_chapter_sync, apply_gtms_editor_ai_review_result_sync,
-        apply_gtms_editor_ai_review_results_batch_sync,
+        acknowledge_project_transfer_status, apply_aligned_translation_to_gtms_chapter_sync,
+        apply_gtms_editor_ai_review_result_sync, apply_gtms_editor_ai_review_results_batch_sync,
         cancel_gtms_chapter_pdf_export as cancel_gtms_chapter_pdf_export_task,
         clear_gtms_editor_imported_conflict_sync, clear_gtms_editor_reviewed_markers_sync,
-        export_gtms_chapter_file_sync, initialize_gtms_project_repo_sync,
-        insert_gtms_editor_row_sync,
+        export_gtms_chapter_file_sync, get_project_transfer_status,
+        initialize_gtms_project_repo_sync, insert_gtms_editor_row_sync,
         inspect_gtms_chapter_pdf_fonts as inspect_gtms_chapter_pdf_fonts_sync,
-        list_local_gtms_project_files_sync, load_gtms_chapter_editor_data_sync,
-        load_gtms_editor_field_history_sync, load_gtms_editor_row_sync,
-        merge_gtms_editor_rows_sync, permanently_delete_gtms_editor_row_sync,
+        list_local_gtms_project_files_sync, list_project_transfer_statuses,
+        load_gtms_chapter_editor_data_sync, load_gtms_editor_field_history_sync,
+        load_gtms_editor_row_sync, merge_gtms_editor_rows_sync,
+        permanently_delete_gtms_editor_row_sync,
         preflight_aligned_translation_to_gtms_chapter_sync, purge_local_gtms_project_repo_sync,
         remove_gtms_editor_language_image_sync, restore_gtms_editor_field_from_history_sync,
         reverse_gtms_editor_batch_replace_commit_sync, save_gtms_editor_language_image_url_sync,
@@ -52,12 +53,12 @@ use self::{
         LoadEditorFieldHistoryInput, LoadEditorFieldHistoryResponse, LoadEditorRowInput,
         LoadEditorRowResponse, LocalProjectFilesResponse, MergeEditorRowsInput,
         MergeEditorRowsResponse, PdfChapterExportInput, PdfFontInspection, PdfFontInspectionInput,
-        ProjectTransferInput, PurgeLocalProjectRepoInput, RemoveEditorLanguageImageInput,
-        RestoreEditorFieldHistoryInput, RestoreEditorFieldHistoryResponse,
-        ReverseEditorBatchReplaceCommitInput, ReverseEditorBatchReplaceCommitResponse,
-        SaveEditorLanguageImageResponse, SaveEditorLanguageImageUrlInput,
-        SaveEditorRowWithConcurrencyResponse, TeamChapterCopyInput,
-        UpdateChapterGlossaryLinksInput, UpdateChapterGlossaryLinksResponse,
+        ProjectTransferInput, ProjectTransferStatus, ProjectTransferStatusInput,
+        PurgeLocalProjectRepoInput, RemoveEditorLanguageImageInput, RestoreEditorFieldHistoryInput,
+        RestoreEditorFieldHistoryResponse, ReverseEditorBatchReplaceCommitInput,
+        ReverseEditorBatchReplaceCommitResponse, SaveEditorLanguageImageResponse,
+        SaveEditorLanguageImageUrlInput, SaveEditorRowWithConcurrencyResponse,
+        TeamChapterCopyInput, UpdateChapterGlossaryLinksInput, UpdateChapterGlossaryLinksResponse,
         UpdateChapterLanguageSelectionInput, UpdateChapterLanguageSelectionResponse,
         UpdateChapterLanguagesInput, UpdateChapterLanguagesResponse,
         UpdateChapterWorkflowStatusInput, UpdateChapterWorkflowStatusResponse,
@@ -266,6 +267,35 @@ pub(crate) async fn transfer_gtms_project_to_team(
     session_token: String,
 ) -> Result<(), String> {
     start_project_transfer(app, input, session_token)
+}
+
+#[tauri::command]
+pub(crate) async fn get_gtms_project_transfer_status(
+    app: AppHandle,
+    input: ProjectTransferStatusInput,
+) -> Result<Option<ProjectTransferStatus>, String> {
+    tauri::async_runtime::spawn_blocking(move || get_project_transfer_status(&app, input))
+        .await
+        .map_err(|error| format!("The project transfer status worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn list_gtms_project_transfer_statuses(
+    app: AppHandle,
+) -> Result<Vec<ProjectTransferStatus>, String> {
+    tauri::async_runtime::spawn_blocking(move || list_project_transfer_statuses(&app))
+        .await
+        .map_err(|error| format!("The project transfer status listing worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn acknowledge_gtms_project_transfer_status(
+    app: AppHandle,
+    input: ProjectTransferStatusInput,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || acknowledge_project_transfer_status(&app, input))
+        .await
+        .map_err(|error| format!("The project transfer acknowledgement worker failed: {error}"))?
 }
 
 #[tauri::command]
