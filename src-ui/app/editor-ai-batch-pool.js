@@ -86,7 +86,7 @@ export function createAiBatchPool({ concurrency, isRunActive = () => true }) {
   // try/catch error handling.
   const run = async (batches, task) => {
     let firstError = null;
-    await mapWithConcurrency(batches, concurrency, async (batch) => {
+    await mapWithConcurrency(batches, concurrency, async (batch, batchIndex) => {
       if (stopOutcome !== null) {
         return;
       }
@@ -95,7 +95,7 @@ export function createAiBatchPool({ concurrency, isRunActive = () => true }) {
         return;
       }
       try {
-        const outcome = await task(batch, tools);
+        const outcome = await task(batch, tools, batchIndex);
         if (outcome !== undefined && outcome !== "ok" && stopOutcome === null) {
           stopOutcome = outcome;
         }

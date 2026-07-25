@@ -449,6 +449,7 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
 
   const batchRunId = activeBatchRunId + 1;
   activeBatchRunId = batchRunId;
+  const runStartedAt = Date.now();
   let translatedCount = 0;
   let currentLanguageProgress = languageProgress;
 
@@ -691,7 +692,7 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
     return { fallbackEntries };
   };
 
-  const translateBatch = async (batch, provider, rowsById, tools) => {
+  const translateBatch = async (batch, provider, rowsById, tools, batchIndex) => {
     const chapterState = state.editorChapter;
     let liveEntries = [];
     for (const item of batch.items) {
@@ -781,13 +782,17 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
         : (batchRequest) => invoke("run_ai_translation_batch", { request: batchRequest });
 
     let payload;
+    let batchCallStartedAt = 0;
     try {
       payload = await tools.withSlot(() => {
-        // Start log pairs with the success log below to make batch overlap
-        // visible in the console: with the pool active, several "started"
-        // lines should appear before the first "succeeded".
+        // Start/success logs carry batchIndex, run-relative time (tMs), and
+        // call duration (elapsedMs) so batch overlap — and whether concurrent
+        // calls stay as fast as lone calls — is readable from the console.
+        batchCallStartedAt = Date.now();
         console.info("[gtms ai-translate] Batch translation call started.", {
+          batchIndex,
           rowCount: liveEntries.length,
+          tMs: batchCallStartedAt - runStartedAt,
         });
         return runBatch(request);
       });
@@ -830,8 +835,11 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
       (Array.isArray(payload?.rows) ? payload.rows : []).map((row) => [row.rowId, row]),
     );
     console.info("[gtms ai-translate] Batch translation call succeeded.", {
+      batchIndex,
       requestedRowCount: liveEntries.length,
       returnedRowCount: returnedById.size,
+      tMs: Date.now() - runStartedAt,
+      elapsedMs: Date.now() - batchCallStartedAt,
     });
     const missingRowIds = liveEntries
       .filter((entry) => !returnedById.has(entry.item.rowId))
@@ -992,7 +1000,7 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
       concurrency: AI_BATCH_CONCURRENCY,
       isRunActive,
     });
-    const outcome = await pool.run(batches, async (batch, tools) => {
+    const outcome = await pool.run(batches, async (batch, tools, batchIndex) => {
       if (batch.items.length === 1 || !canApplyBatchLocally) {
         for (const item of batch.items) {
           const itemOutcome = await tools.inApplyLane(() =>
@@ -1003,11 +1011,16 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
         }
         return "ok";
       }
-      return translateBatch(batch, provider, rowsById, tools);
+      return translateBatch(batch, provider, rowsById, tools, batchIndex);
     });
     if (outcome !== "ok") {
       return;
     }
+    console.info("[gtms ai-translate] Translate All run finished.", {
+      translatedCount,
+      totalCount: work.length,
+      elapsedMs: Date.now() - runStartedAt,
+    });
   } finally {
     // Runs regardless of how the loop above exits (completed, aborted,
     // errored) — any row that already got new text written into the
