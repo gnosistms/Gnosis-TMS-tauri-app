@@ -17,6 +17,8 @@ pub(crate) fn save_gtms_editor_language_image_url_sync(
     )?;
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
+    let repo_lock = crate::repo_sync_shared::repo_sync_lock(&repo_path);
+    let _repo_lock_guard = crate::repo_sync_shared::acquire_repo_sync_lock(&repo_lock);
 
     let chapter_path =
         find_chapter_path_by_id(app, &repo_path.join("chapters"), &input.chapter_id)?;
@@ -100,29 +102,37 @@ pub(crate) fn save_gtms_editor_language_image_url_sync(
     })?;
     let updated_row_text = format!("{updated_row_json}\n");
     let row_changed = updated_row_text != original_row_text;
+    let updated_row_file: StoredRowFile =
+        serde_json::from_value(row_value.clone()).map_err(|error| {
+            format!(
+                "Could not decode updated row '{}': {error}",
+                row_json_path.display()
+            )
+        })?;
+    let removable_paths = unreferenced_uploaded_paths_after_row_updates(
+        &repo_path,
+        &replaced_uploaded_path
+            .clone()
+            .into_iter()
+            .collect::<Vec<_>>(),
+        &BTreeMap::from([(relative_row_json.clone(), Some(updated_row_file.clone()))]),
+    )?;
     let mut rollback_snapshots = Vec::new();
 
     push_repo_file_snapshot(&mut rollback_snapshots, &repo_path, &relative_row_json)?;
-    if let Some(relative_path) = replaced_uploaded_path.as_deref() {
-        push_repo_file_snapshot(&mut rollback_snapshots, &repo_path, relative_path)?;
+    for relative_path in &removable_paths {
+        push_uploaded_asset_snapshot(&mut rollback_snapshots, &repo_path, relative_path)?;
     }
 
     let next_row = with_repo_file_rollback(&repo_path, &rollback_snapshots, || {
-        let mut next_row = original_row_file.clone();
         let mut paths_to_commit = vec![relative_row_json.clone()];
 
         if row_changed {
             write_text_file(&row_json_path, &updated_row_text)?;
-            next_row = serde_json::from_value(row_value.clone()).map_err(|error| {
-                format!(
-                    "Could not decode updated row '{}': {error}",
-                    row_json_path.display()
-                )
-            })?;
         }
 
-        if let Some(relative_path) = replaced_uploaded_path.as_deref() {
-            remove_repo_file_from_disk(&repo_path, relative_path)?;
+        for relative_path in &removable_paths {
+            remove_uploaded_asset_from_disk(&repo_path, relative_path)?;
             git_output(
                 &repo_path,
                 &["rm", "--cached", "--ignore-unmatch", relative_path],
@@ -150,7 +160,7 @@ pub(crate) fn save_gtms_editor_language_image_url_sync(
             )?;
         }
 
-        Ok(next_row)
+        Ok(updated_row_file.clone())
     })?;
 
     Ok(SaveEditorLanguageImageResponse {
@@ -178,6 +188,8 @@ pub(crate) fn upload_gtms_editor_language_image_sync(
     )?;
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
+    let repo_lock = crate::repo_sync_shared::repo_sync_lock(&repo_path);
+    let _repo_lock_guard = crate::repo_sync_shared::acquire_repo_sync_lock(&repo_lock);
 
     let chapter_path =
         find_chapter_path_by_id(app, &repo_path.join("chapters"), &input.chapter_id)?;
@@ -240,7 +252,8 @@ pub(crate) fn upload_gtms_editor_language_image_sync(
     let extension = validated_uploaded_image_extension(&input.filename, &bytes)?;
     let relative_image_path =
         relative_uploaded_image_path(&repo_path, &chapter_path, &input.filename, extension)?;
-    let absolute_image_path = repo_path.join(&relative_image_path);
+    let relative_image_path =
+        validated_uploaded_asset_relative_path(&repo_path, &relative_image_path)?;
     let next_image = Some(StoredFieldImage {
         kind: "upload".to_string(),
         url: None,
@@ -266,27 +279,34 @@ pub(crate) fn upload_gtms_editor_language_image_sync(
         )
     })?;
     let updated_row_text = format!("{updated_row_json}\n");
+    let updated_row_file: StoredRowFile =
+        serde_json::from_value(row_value.clone()).map_err(|error| {
+            format!(
+                "Could not decode updated row '{}': {error}",
+                row_json_path.display()
+            )
+        })?;
+    let removable_paths = unreferenced_uploaded_paths_after_row_updates(
+        &repo_path,
+        &replaced_uploaded_path
+            .clone()
+            .into_iter()
+            .collect::<Vec<_>>(),
+        &BTreeMap::from([(relative_row_json.clone(), Some(updated_row_file.clone()))]),
+    )?;
     let mut rollback_snapshots = Vec::new();
 
     push_repo_file_snapshot(&mut rollback_snapshots, &repo_path, &relative_row_json)?;
-    push_repo_file_snapshot(&mut rollback_snapshots, &repo_path, &relative_image_path)?;
-    if let Some(relative_path) = replaced_uploaded_path.as_deref() {
-        push_repo_file_snapshot(&mut rollback_snapshots, &repo_path, relative_path)?;
+    push_uploaded_asset_snapshot(&mut rollback_snapshots, &repo_path, &relative_image_path)?;
+    for relative_path in &removable_paths {
+        push_uploaded_asset_snapshot(&mut rollback_snapshots, &repo_path, relative_path)?;
     }
 
     let next_row = with_repo_file_rollback(&repo_path, &rollback_snapshots, || {
-        write_binary_file(&absolute_image_path, &bytes)?;
+        write_uploaded_asset_file(&repo_path, &relative_image_path, &bytes)?;
         write_text_file(&row_json_path, &updated_row_text)?;
-        let next_row: StoredRowFile =
-            serde_json::from_value(row_value.clone()).map_err(|error| {
-                format!(
-                    "Could not decode updated row '{}': {error}",
-                    row_json_path.display()
-                )
-            })?;
-
-        if let Some(relative_path) = replaced_uploaded_path.as_deref() {
-            remove_repo_file_from_disk(&repo_path, relative_path)?;
+        for relative_path in &removable_paths {
+            remove_uploaded_asset_from_disk(&repo_path, relative_path)?;
             git_output(
                 &repo_path,
                 &["rm", "--cached", "--ignore-unmatch", relative_path],
@@ -298,9 +318,7 @@ pub(crate) fn upload_gtms_editor_language_image_sync(
             &["add", &relative_row_json, &relative_image_path],
         )?;
         let mut commit_paths = vec![relative_row_json.clone(), relative_image_path.clone()];
-        if let Some(relative_path) = replaced_uploaded_path.as_deref() {
-            commit_paths.push(relative_path.to_string());
-        }
+        commit_paths.extend(removable_paths.clone());
         let commit_path_refs: Vec<&str> = commit_paths.iter().map(String::as_str).collect();
         git_commit_as_signed_in_user_with_metadata(
             app,
@@ -315,7 +333,7 @@ pub(crate) fn upload_gtms_editor_language_image_sync(
             },
         )?;
 
-        Ok(next_row)
+        Ok(updated_row_file.clone())
     })?;
 
     Ok(SaveEditorLanguageImageResponse {
@@ -343,6 +361,8 @@ pub(crate) fn remove_gtms_editor_language_image_sync(
     )?;
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
+    let repo_lock = crate::repo_sync_shared::repo_sync_lock(&repo_path);
+    let _repo_lock_guard = crate::repo_sync_shared::acquire_repo_sync_lock(&repo_lock);
 
     let chapter_path =
         find_chapter_path_by_id(app, &repo_path.join("chapters"), &input.chapter_id)?;
@@ -434,25 +454,32 @@ pub(crate) fn remove_gtms_editor_language_image_sync(
         )
     })?;
     let updated_row_text = format!("{updated_row_json}\n");
+    let updated_row_file: StoredRowFile =
+        serde_json::from_value(row_value.clone()).map_err(|error| {
+            format!(
+                "Could not decode updated row '{}': {error}",
+                row_json_path.display()
+            )
+        })?;
+    let removable_paths = unreferenced_uploaded_paths_after_row_updates(
+        &repo_path,
+        &removed_uploaded_path
+            .clone()
+            .into_iter()
+            .collect::<Vec<_>>(),
+        &BTreeMap::from([(relative_row_json.clone(), Some(updated_row_file.clone()))]),
+    )?;
     let mut rollback_snapshots = Vec::new();
 
     push_repo_file_snapshot(&mut rollback_snapshots, &repo_path, &relative_row_json)?;
-    if let Some(relative_path) = removed_uploaded_path.as_deref() {
-        push_repo_file_snapshot(&mut rollback_snapshots, &repo_path, relative_path)?;
+    for relative_path in &removable_paths {
+        push_uploaded_asset_snapshot(&mut rollback_snapshots, &repo_path, relative_path)?;
     }
 
     let next_row = with_repo_file_rollback(&repo_path, &rollback_snapshots, || {
         write_text_file(&row_json_path, &updated_row_text)?;
-        let next_row: StoredRowFile =
-            serde_json::from_value(row_value.clone()).map_err(|error| {
-                format!(
-                    "Could not decode updated row '{}': {error}",
-                    row_json_path.display()
-                )
-            })?;
-
-        if let Some(relative_path) = removed_uploaded_path.as_deref() {
-            remove_repo_file_from_disk(&repo_path, relative_path)?;
+        for relative_path in &removable_paths {
+            remove_uploaded_asset_from_disk(&repo_path, relative_path)?;
             git_output(
                 &repo_path,
                 &["rm", "--cached", "--ignore-unmatch", relative_path],
@@ -461,9 +488,7 @@ pub(crate) fn remove_gtms_editor_language_image_sync(
 
         git_output(&repo_path, &["add", &relative_row_json])?;
         let mut commit_paths = vec![relative_row_json.clone()];
-        if let Some(relative_path) = removed_uploaded_path.as_deref() {
-            commit_paths.push(relative_path.to_string());
-        }
+        commit_paths.extend(removable_paths.clone());
         let commit_path_refs: Vec<&str> = commit_paths.iter().map(String::as_str).collect();
         git_commit_as_signed_in_user_with_metadata(
             app,
@@ -478,7 +503,7 @@ pub(crate) fn remove_gtms_editor_language_image_sync(
             },
         )?;
 
-        Ok(next_row)
+        Ok(updated_row_file.clone())
     })?;
 
     Ok(SaveEditorLanguageImageResponse {
@@ -494,6 +519,221 @@ pub(crate) fn remove_gtms_editor_language_image_sync(
     })
 }
 
+enum DuplicateImageRowPlan {
+    Conflict(StoredRowFile),
+    MissingSource,
+    Unchanged(StoredRowFile),
+    Update {
+        updated_row_text: String,
+        updated_row_file: StoredRowFile,
+        release_candidates: Vec<String>,
+    },
+}
+
+fn plan_duplicate_editor_language_image(
+    original_row_text: &str,
+    source_language_code: &str,
+    destination_language_code: &str,
+    base_source_image: Option<StoredFieldImage>,
+    base_destination_image: Option<StoredFieldImage>,
+) -> Result<DuplicateImageRowPlan, String> {
+    let original_row_file: StoredRowFile = serde_json::from_str(original_row_text)
+        .map_err(|error| format!("Could not parse the row while duplicating its image: {error}"))?;
+    let source_image = row_language_stored_image(&original_row_file, source_language_code);
+    let destination_image =
+        row_language_stored_image(&original_row_file, destination_language_code);
+    if source_image != base_source_image || destination_image != base_destination_image {
+        return Ok(DuplicateImageRowPlan::Conflict(original_row_file));
+    }
+    let Some(source_image) = source_image else {
+        return Ok(DuplicateImageRowPlan::MissingSource);
+    };
+    if destination_image.as_ref() == Some(&source_image) {
+        return Ok(DuplicateImageRowPlan::Unchanged(original_row_file));
+    }
+
+    let mut row_value: Value = serde_json::from_str(original_row_text)
+        .map_err(|error| format!("Could not parse the row while duplicating its image: {error}"))?;
+    apply_editor_field_image_update(
+        &mut row_value,
+        destination_language_code,
+        Some(source_image.clone()),
+    )?;
+    let updated_row_json = serde_json::to_string_pretty(&row_value)
+        .map_err(|error| format!("Could not serialize the duplicated row image: {error}"))?;
+    let updated_row_file: StoredRowFile = serde_json::from_value(row_value)
+        .map_err(|error| format!("Could not decode the duplicated row image: {error}"))?;
+    let release_candidates = destination_image
+        .as_ref()
+        .filter(|image| image.kind == "upload" && Some(*image) != Some(&source_image))
+        .and_then(|image| image.path.clone())
+        .into_iter()
+        .collect::<Vec<_>>();
+    Ok(DuplicateImageRowPlan::Update {
+        updated_row_text: format!("{updated_row_json}\n"),
+        updated_row_file,
+        release_candidates,
+    })
+}
+
+pub(crate) fn duplicate_gtms_editor_language_image_sync(
+    app: &AppHandle,
+    input: DuplicateEditorLanguageImageInput,
+) -> Result<SaveEditorLanguageImageResponse, String> {
+    let repo_path = resolve_project_git_repo_path(
+        app,
+        input.installation_id,
+        input.project_id.as_deref(),
+        Some(&input.repo_name),
+    )?;
+    ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
+    ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
+    let repo_lock = crate::repo_sync_shared::repo_sync_lock(&repo_path);
+    let _repo_lock_guard = crate::repo_sync_shared::acquire_repo_sync_lock(&repo_lock);
+
+    if input.source_language_code.trim().is_empty()
+        || input.destination_language_code.trim().is_empty()
+        || input.source_language_code == input.destination_language_code
+    {
+        return Err("Choose a different destination language for the image.".to_string());
+    }
+
+    let chapter_path =
+        find_chapter_path_by_id(app, &repo_path.join("chapters"), &input.chapter_id)?;
+    let row_json_path = validated_row_json_path(&chapter_path, &input.row_id)?;
+    if !row_json_path.exists() {
+        return Ok(SaveEditorLanguageImageResponse {
+            row_id: input.row_id,
+            language_code: input.destination_language_code,
+            status: "deleted".to_string(),
+            row: None,
+            chapter_base_commit_sha: current_repo_head_sha(&repo_path),
+        });
+    }
+
+    let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
+    let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
+        format!(
+            "Could not read row file '{}': {error}",
+            row_json_path.display()
+        )
+    })?;
+    let original_row_file: StoredRowFile =
+        serde_json::from_str(&original_row_text).map_err(|error| {
+            format!(
+                "Could not parse row file '{}': {error}",
+                row_json_path.display()
+            )
+        })?;
+    if original_row_file.lifecycle.state == "deleted" {
+        return Ok(SaveEditorLanguageImageResponse {
+            row_id: input.row_id,
+            language_code: input.destination_language_code,
+            status: "deleted".to_string(),
+            row: Some(editor_row_from_stored_row_file_with_update(
+                &repo_path,
+                &chapter_path,
+                original_row_file,
+            )?),
+            chapter_base_commit_sha: current_repo_head_sha(&repo_path),
+        });
+    }
+
+    let (updated_row_text, updated_row_file, release_candidates) =
+        match plan_duplicate_editor_language_image(
+            &original_row_text,
+            &input.source_language_code,
+            &input.destination_language_code,
+            normalize_editor_field_image_input(input.base_source_image.as_ref()),
+            normalize_editor_field_image_input(input.base_destination_image.as_ref()),
+        )? {
+            DuplicateImageRowPlan::Conflict(row) => {
+                return Ok(SaveEditorLanguageImageResponse {
+                    row_id: input.row_id,
+                    language_code: input.destination_language_code,
+                    status: "conflict".to_string(),
+                    row: Some(editor_row_from_stored_row_file_with_update(
+                        &repo_path,
+                        &chapter_path,
+                        row,
+                    )?),
+                    chapter_base_commit_sha: current_repo_head_sha(&repo_path),
+                });
+            }
+            DuplicateImageRowPlan::MissingSource => {
+                return Err("The source image is no longer available.".to_string());
+            }
+            DuplicateImageRowPlan::Unchanged(row) => {
+                return Ok(SaveEditorLanguageImageResponse {
+                    row_id: input.row_id,
+                    language_code: input.destination_language_code,
+                    status: "saved".to_string(),
+                    row: Some(editor_row_from_stored_row_file_with_update(
+                        &repo_path,
+                        &chapter_path,
+                        row,
+                    )?),
+                    chapter_base_commit_sha: current_repo_head_sha(&repo_path),
+                });
+            }
+            DuplicateImageRowPlan::Update {
+                updated_row_text,
+                updated_row_file,
+                release_candidates,
+            } => (updated_row_text, updated_row_file, release_candidates),
+        };
+    let removable_paths = unreferenced_uploaded_paths_after_row_updates(
+        &repo_path,
+        &release_candidates,
+        &BTreeMap::from([(relative_row_json.clone(), Some(updated_row_file.clone()))]),
+    )?;
+    let mut rollback_snapshots = Vec::new();
+    push_repo_file_snapshot(&mut rollback_snapshots, &repo_path, &relative_row_json)?;
+    for path in &removable_paths {
+        push_uploaded_asset_snapshot(&mut rollback_snapshots, &repo_path, path)?;
+    }
+
+    with_repo_file_rollback(&repo_path, &rollback_snapshots, || {
+        write_text_file(&row_json_path, &updated_row_text)?;
+        for path in &removable_paths {
+            remove_uploaded_asset_from_disk(&repo_path, path)?;
+            git_output(&repo_path, &["rm", "--cached", "--ignore-unmatch", path])?;
+        }
+        git_output(&repo_path, &["add", &relative_row_json])?;
+        let mut commit_paths = vec![relative_row_json.clone()];
+        commit_paths.extend(removable_paths.clone());
+        let commit_path_refs = commit_paths.iter().map(String::as_str).collect::<Vec<_>>();
+        git_commit_as_signed_in_user_with_metadata(
+            app,
+            &repo_path,
+            &format!(
+                "Duplicate row {} image from {} to {}",
+                input.row_id, input.source_language_code, input.destination_language_code
+            ),
+            &commit_path_refs,
+            CommitMetadata {
+                operation: Some("editor-update"),
+                migration: None,
+                status_note: None,
+                ai_model: None,
+            },
+        )?;
+        Ok(())
+    })?;
+
+    Ok(SaveEditorLanguageImageResponse {
+        row_id: input.row_id,
+        language_code: input.destination_language_code,
+        status: "saved".to_string(),
+        row: Some(editor_row_from_stored_row_file_with_update(
+            &repo_path,
+            &chapter_path,
+            updated_row_file,
+        )?),
+        chapter_base_commit_sha: current_repo_head_sha(&repo_path),
+    })
+}
+
 pub(super) fn row_language_stored_image(
     row: &StoredRowFile,
     language_code: &str,
@@ -501,6 +741,187 @@ pub(super) fn row_language_stored_image(
     row.fields
         .get(language_code)
         .and_then(|field| normalize_editor_field_image_value(&field.image))
+}
+
+fn canonical_uploaded_relative_path(path: &str) -> Result<String, String> {
+    let normalized = path.trim().replace('\\', "/");
+    let mut components = Vec::new();
+    for component in Path::new(&normalized).components() {
+        match component {
+            std::path::Component::Normal(value) => {
+                let value = value
+                    .to_str()
+                    .ok_or_else(|| "A stored uploaded image path is not valid.".to_string())?;
+                components.push(value.to_string());
+            }
+            std::path::Component::CurDir => {}
+            _ => return Err("A stored uploaded image path is not valid.".to_string()),
+        }
+    }
+    let component_matches = |actual: &str, expected: &str| {
+        if cfg!(windows) {
+            actual.eq_ignore_ascii_case(expected)
+        } else {
+            actual == expected
+        }
+    };
+    if components.len() < 4
+        || !component_matches(&components[0], "chapters")
+        || components[1].is_empty()
+        || !component_matches(&components[2], "images")
+        || components[3..].iter().any(|component| component.is_empty())
+    {
+        return Err(
+            "A stored uploaded image path is outside a recognized chapter image folder."
+                .to_string(),
+        );
+    }
+    Ok(components.join("/"))
+}
+
+fn uploaded_path_identity(path: &str) -> Result<String, String> {
+    let canonical = canonical_uploaded_relative_path(path)?;
+    if cfg!(windows) {
+        Ok(canonical.to_lowercase())
+    } else {
+        Ok(canonical)
+    }
+}
+
+pub(super) fn validated_uploaded_asset_relative_path(
+    repo_path: &Path,
+    path: &str,
+) -> Result<String, String> {
+    let relative_path = canonical_uploaded_relative_path(path)?;
+    let canonical_repo = fs::canonicalize(repo_path).map_err(|error| {
+        format!("Could not validate the local project path before updating an image: {error}")
+    })?;
+    let mut current = repo_path.to_path_buf();
+    for component in relative_path.split('/') {
+        current.push(component);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() {
+                    return Err("A stored uploaded image path crosses a symbolic link.".to_string());
+                }
+                let resolved = fs::canonicalize(&current).map_err(|error| {
+                    format!("Could not validate a stored uploaded image path: {error}")
+                })?;
+                if !resolved.starts_with(&canonical_repo) {
+                    return Err(
+                        "A stored uploaded image path resolves outside the local project."
+                            .to_string(),
+                    );
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!(
+                    "Could not inspect a stored uploaded image path: {error}"
+                ));
+            }
+        }
+    }
+    Ok(relative_path)
+}
+
+fn row_uploaded_path_identities(row: &StoredRowFile) -> Result<BTreeSet<String>, String> {
+    row.fields
+        .values()
+        .filter_map(|field| normalize_editor_field_image_value(&field.image))
+        .filter(|image| image.kind == "upload")
+        .filter_map(|image| image.path)
+        .map(|path| uploaded_path_identity(&path))
+        .collect()
+}
+
+fn project_row_json_paths(repo_path: &Path) -> Result<Vec<PathBuf>, String> {
+    let chapters_path = repo_path.join("chapters");
+    if !chapters_path.exists() {
+        return Ok(Vec::new());
+    }
+    let mut paths = Vec::new();
+    let chapters = fs::read_dir(&chapters_path).map_err(|error| {
+        format!("Could not inspect project chapters while checking image references: {error}")
+    })?;
+    for chapter in chapters {
+        let chapter = chapter.map_err(|error| {
+            format!("Could not inspect a project chapter while checking image references: {error}")
+        })?;
+        let rows_path = chapter.path().join("rows");
+        if !rows_path.is_dir() {
+            continue;
+        }
+        let rows = fs::read_dir(&rows_path).map_err(|error| {
+            format!("Could not inspect chapter rows while checking image references: {error}")
+        })?;
+        for row in rows {
+            let row = row.map_err(|error| {
+                format!("Could not inspect a chapter row while checking image references: {error}")
+            })?;
+            let path = row.path();
+            if path.extension().and_then(|value| value.to_str()) == Some("json") {
+                paths.push(path);
+            }
+        }
+    }
+    Ok(paths)
+}
+
+pub(super) fn unreferenced_uploaded_paths_after_row_updates(
+    repo_path: &Path,
+    candidates: &[String],
+    row_overlays: &BTreeMap<String, Option<StoredRowFile>>,
+) -> Result<Vec<String>, String> {
+    let mut canonical_candidates = BTreeMap::new();
+    for path in candidates {
+        if path.trim().is_empty() {
+            continue;
+        }
+        let canonical = validated_uploaded_asset_relative_path(repo_path, path)?;
+        canonical_candidates
+            .entry(uploaded_path_identity(&canonical)?)
+            .or_insert(canonical);
+    }
+    if canonical_candidates.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut possible = canonical_candidates
+        .keys()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let overlay_paths = row_overlays
+        .keys()
+        .map(|path| path.trim().replace('\\', "/"))
+        .collect::<BTreeSet<_>>();
+    for row in row_overlays.values().flatten() {
+        let referenced = row_uploaded_path_identities(row)?;
+        possible.retain(|path| !referenced.contains(path));
+    }
+    if possible.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    for row_path in project_row_json_paths(repo_path)? {
+        let relative_path = repo_relative_path(repo_path, &row_path)?
+            .trim()
+            .replace('\\', "/");
+        if overlay_paths.contains(&relative_path) {
+            continue;
+        }
+        let row: StoredRowFile = read_json_file(&row_path, "row file")?;
+        let referenced = row_uploaded_path_identities(&row)?;
+        possible.retain(|path| !referenced.contains(path));
+        if possible.is_empty() {
+            break;
+        }
+    }
+
+    Ok(possible
+        .into_iter()
+        .filter_map(|identity| canonical_candidates.remove(&identity))
+        .collect())
 }
 
 pub(super) fn row_uploaded_image_relative_paths(row: &StoredRowFile) -> Vec<String> {
@@ -625,6 +1046,15 @@ pub(super) fn write_binary_file(path: &Path, bytes: &[u8]) -> Result<(), String>
     fs::write(path, bytes).map_err(|error| format!("Could not write '{}': {error}", path.display()))
 }
 
+pub(super) fn write_uploaded_asset_file(
+    repo_path: &Path,
+    relative_path: &str,
+    bytes: &[u8],
+) -> Result<(), String> {
+    let relative_path = validated_uploaded_asset_relative_path(repo_path, relative_path)?;
+    write_binary_file(&repo_path.join(relative_path), bytes)
+}
+
 fn remove_empty_parent_directories(path: &Path, stop_at: &Path) -> Result<(), String> {
     let mut current = path.parent();
     while let Some(parent) = current {
@@ -664,11 +1094,20 @@ pub(super) fn remove_repo_file_from_disk(
     }
 }
 
+pub(super) fn remove_uploaded_asset_from_disk(
+    repo_path: &Path,
+    relative_path: &str,
+) -> Result<(), String> {
+    let relative_path = validated_uploaded_asset_relative_path(repo_path, relative_path)?;
+    remove_repo_file_from_disk(repo_path, &relative_path)
+}
+
 #[derive(Clone)]
 pub(super) struct RepoFileSnapshot {
     relative_path: String,
     absolute_path: PathBuf,
     original_bytes: Option<Vec<u8>>,
+    uploaded_asset: bool,
 }
 
 pub(super) fn capture_repo_file_snapshot(
@@ -691,6 +1130,7 @@ pub(super) fn capture_repo_file_snapshot(
         relative_path: relative_path.to_string(),
         absolute_path,
         original_bytes,
+        uploaded_asset: false,
     })
 }
 
@@ -710,10 +1150,31 @@ pub(super) fn push_repo_file_snapshot(
     Ok(())
 }
 
+pub(super) fn push_uploaded_asset_snapshot(
+    snapshots: &mut Vec<RepoFileSnapshot>,
+    repo_path: &Path,
+    relative_path: &str,
+) -> Result<(), String> {
+    let relative_path = validated_uploaded_asset_relative_path(repo_path, relative_path)?;
+    if snapshots
+        .iter()
+        .any(|snapshot| snapshot.relative_path == relative_path)
+    {
+        return Ok(());
+    }
+    let mut snapshot = capture_repo_file_snapshot(repo_path, &relative_path)?;
+    snapshot.uploaded_asset = true;
+    snapshots.push(snapshot);
+    Ok(())
+}
+
 pub(super) fn restore_repo_file_snapshot_on_disk(
     repo_path: &Path,
     snapshot: &RepoFileSnapshot,
 ) -> Result<(), String> {
+    if snapshot.uploaded_asset {
+        validated_uploaded_asset_relative_path(repo_path, &snapshot.relative_path)?;
+    }
     if let Some(original_bytes) = snapshot.original_bytes.as_deref() {
         write_binary_file(&snapshot.absolute_path, original_bytes)?;
         return Ok(());
@@ -1006,6 +1467,40 @@ mod tests {
         path
     }
 
+    fn stored_row_with_uploaded_images(row_id: &str, images: &[(&str, &str)]) -> StoredRowFile {
+        let fields = images
+            .iter()
+            .map(|(language_code, path)| {
+                (
+                    language_code.to_string(),
+                    json!({
+                        "plain_text": "",
+                        "image": {
+                            "kind": "upload",
+                            "path": path
+                        }
+                    }),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>();
+        serde_json::from_value(json!({
+            "row_id": row_id,
+            "structure": { "order_key": "0001" },
+            "status": { "review_state": "draft" },
+            "origin": { "source_row_number": 1 },
+            "fields": fields,
+        }))
+        .expect("stored row should decode")
+    }
+
+    fn stored_upload(path: &str) -> StoredFieldImage {
+        StoredFieldImage {
+            kind: "upload".to_string(),
+            url: None,
+            path: Some(path.to_string()),
+        }
+    }
+
     #[test]
     fn restore_repo_file_snapshot_on_disk_restores_original_bytes() {
         let repo_path = temp_test_dir("snapshot-restores-bytes");
@@ -1096,6 +1591,347 @@ mod tests {
         assert_eq!(
             relative_path,
             "chapters/chapter-1/images/original-photo-2.png"
+        );
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn shared_upload_is_retained_while_another_language_in_the_row_references_it() {
+        let repo_path = temp_test_dir("shared-upload-row-reference");
+        let path = "chapters/chapter-1/images/shared.png";
+        let updated_row = stored_row_with_uploaded_images("row-1", &[("es", path)]);
+
+        let removable = unreferenced_uploaded_paths_after_row_updates(
+            &repo_path,
+            &[path.to_string()],
+            &BTreeMap::from([(
+                "chapters/chapter-1/rows/row-1.json".to_string(),
+                Some(updated_row),
+            )]),
+        )
+        .expect("reference check should succeed");
+
+        assert!(removable.is_empty());
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn final_release_uses_project_rows_as_a_cross_row_safeguard() {
+        let repo_path = temp_test_dir("shared-upload-cross-row-reference");
+        let path = "chapters/chapter-1/images/shared.png";
+        let rows_path = repo_path.join("chapters/chapter-1/rows");
+        fs::create_dir_all(&rows_path).expect("create rows folder");
+        fs::write(
+            rows_path.join("row-2.json"),
+            serde_json::to_vec_pretty(&stored_row_with_uploaded_images("row-2", &[("en", path)]))
+                .expect("serialize row"),
+        )
+        .expect("write second row");
+        let updated_row = stored_row_with_uploaded_images("row-1", &[]);
+
+        let retained = unreferenced_uploaded_paths_after_row_updates(
+            &repo_path,
+            &[path.to_string()],
+            &BTreeMap::from([(
+                "chapters/chapter-1/rows/row-1.json".to_string(),
+                Some(updated_row),
+            )]),
+        )
+        .expect("cross-row reference check should succeed");
+        assert!(retained.is_empty());
+
+        fs::remove_file(rows_path.join("row-2.json")).expect("remove second row");
+        let removable = unreferenced_uploaded_paths_after_row_updates(
+            &repo_path,
+            &[path.to_string()],
+            &BTreeMap::from([(
+                "chapters/chapter-1/rows/row-1.json".to_string(),
+                Some(stored_row_with_uploaded_images("row-1", &[])),
+            )]),
+        )
+        .expect("final reference check should succeed");
+        assert_eq!(removable, vec![path.to_string()]);
+
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn uploaded_path_identity_collapses_dot_segments_and_redundant_separators() {
+        let repo_path = temp_test_dir("canonical-upload-reference");
+        let canonical = "chapters/chapter-1/images/shared.png";
+        let updated_row = stored_row_with_uploaded_images("row-1", &[("es", canonical)]);
+
+        let removable = unreferenced_uploaded_paths_after_row_updates(
+            &repo_path,
+            &["./chapters//chapter-1/images/./shared.png".to_string()],
+            &BTreeMap::from([(
+                "chapters/chapter-1/rows/row-1.json".to_string(),
+                Some(updated_row),
+            )]),
+        )
+        .expect("aliased path should validate");
+
+        assert!(removable.is_empty());
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn uploaded_path_validation_rejects_cross_root_and_traversal_paths() {
+        let repo_path = temp_test_dir("reject-upload-paths");
+
+        assert!(validated_uploaded_asset_relative_path(&repo_path, "README.md").is_err());
+        assert!(validated_uploaded_asset_relative_path(
+            &repo_path,
+            "chapters/chapter-1/images/../../chapter.json"
+        )
+        .is_err());
+        assert!(validated_uploaded_asset_relative_path(
+            &repo_path,
+            "/chapters/chapter-1/images/photo.png"
+        )
+        .is_err());
+
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn malformed_remaining_upload_reference_aborts_asset_release() {
+        let repo_path = temp_test_dir("malformed-upload-reference");
+        let candidate = "chapters/chapter-1/images/photo.png";
+        let updated_row = stored_row_with_uploaded_images(
+            "row-1",
+            &[("es", "chapters/chapter-1/images/../images/photo.png")],
+        );
+
+        let result = unreferenced_uploaded_paths_after_row_updates(
+            &repo_path,
+            &[candidate.to_string()],
+            &BTreeMap::from([(
+                "chapters/chapter-1/rows/row-1.json".to_string(),
+                Some(updated_row),
+            )]),
+        );
+
+        assert!(result.is_err());
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn uploaded_path_validation_rejects_symbolic_link_escapes() {
+        use std::os::unix::fs::symlink;
+
+        let repo_path = temp_test_dir("reject-upload-symlink");
+        let outside_path = temp_test_dir("outside-upload-symlink");
+        fs::create_dir_all(repo_path.join("chapters/chapter-1")).expect("create chapter");
+        symlink(&outside_path, repo_path.join("chapters/chapter-1/images"))
+            .expect("create image-folder symlink");
+
+        assert!(validated_uploaded_asset_relative_path(
+            &repo_path,
+            "chapters/chapter-1/images/photo.png"
+        )
+        .is_err());
+
+        let _ = fs::remove_dir_all(repo_path);
+        let _ = fs::remove_dir_all(outside_path);
+    }
+
+    #[test]
+    fn duplicate_plan_preserves_captions_and_releases_only_the_old_destination() {
+        let source_path = "chapters/chapter-1/images/source.png";
+        let destination_path = "chapters/chapter-1/images/destination.png";
+        let original = serde_json::to_string_pretty(&json!({
+            "row_id": "row-1",
+            "structure": { "order_key": "0001" },
+            "status": { "review_state": "draft" },
+            "origin": { "source_row_number": 1 },
+            "fields": {
+                "vi": {
+                    "plain_text": "",
+                    "image_caption": "Source caption",
+                    "image": { "kind": "upload", "path": source_path }
+                },
+                "es": {
+                    "plain_text": "",
+                    "image_caption": "Destination caption",
+                    "image": { "kind": "upload", "path": destination_path }
+                }
+            }
+        }))
+        .expect("serialize row");
+
+        let plan = plan_duplicate_editor_language_image(
+            &original,
+            "vi",
+            "es",
+            Some(stored_upload(source_path)),
+            Some(stored_upload(destination_path)),
+        )
+        .expect("plan duplicate");
+        let DuplicateImageRowPlan::Update {
+            updated_row_file,
+            release_candidates,
+            ..
+        } = plan
+        else {
+            panic!("expected an update plan");
+        };
+
+        assert_eq!(
+            row_language_stored_image(&updated_row_file, "vi"),
+            Some(stored_upload(source_path))
+        );
+        assert_eq!(
+            row_language_stored_image(&updated_row_file, "es"),
+            Some(stored_upload(source_path))
+        );
+        assert_eq!(
+            updated_row_file.fields["vi"].image_caption,
+            "Source caption"
+        );
+        assert_eq!(
+            updated_row_file.fields["es"].image_caption,
+            "Destination caption"
+        );
+        assert_eq!(release_candidates, vec![destination_path.to_string()]);
+    }
+
+    #[test]
+    fn duplicate_plan_fills_an_empty_destination_without_releasing_an_asset() {
+        let source_path = "chapters/chapter-1/images/source.png";
+        let row = stored_row_with_uploaded_images("row-1", &[("vi", source_path)]);
+        let original = serde_json::to_string_pretty(&row).expect("serialize row");
+
+        let plan = plan_duplicate_editor_language_image(
+            &original,
+            "vi",
+            "es",
+            Some(stored_upload(source_path)),
+            None,
+        )
+        .expect("plan duplicate");
+        let DuplicateImageRowPlan::Update {
+            updated_row_file,
+            release_candidates,
+            ..
+        } = plan
+        else {
+            panic!("expected an update plan");
+        };
+
+        assert_eq!(
+            row_language_stored_image(&updated_row_file, "es"),
+            Some(stored_upload(source_path))
+        );
+        assert!(release_candidates.is_empty());
+    }
+
+    #[test]
+    fn duplicate_plan_reports_conflict_and_same_image_noop() {
+        let path = "chapters/chapter-1/images/shared.png";
+        let row = stored_row_with_uploaded_images("row-1", &[("vi", path), ("es", path)]);
+        let original = serde_json::to_string_pretty(&row).expect("serialize row");
+
+        assert!(matches!(
+            plan_duplicate_editor_language_image(
+                &original,
+                "vi",
+                "es",
+                Some(stored_upload(path)),
+                None,
+            )
+            .expect("plan conflict"),
+            DuplicateImageRowPlan::Conflict(_)
+        ));
+        assert!(matches!(
+            plan_duplicate_editor_language_image(
+                &original,
+                "vi",
+                "es",
+                Some(stored_upload(path)),
+                Some(stored_upload(path)),
+            )
+            .expect("plan no-op"),
+            DuplicateImageRowPlan::Unchanged(_)
+        ));
+    }
+
+    #[test]
+    fn image_mutation_commands_acquire_repo_lock_before_row_baselines() {
+        let source = include_str!("images.rs");
+        for function_name in [
+            "save_gtms_editor_language_image_url_sync",
+            "upload_gtms_editor_language_image_sync",
+            "remove_gtms_editor_language_image_sync",
+            "duplicate_gtms_editor_language_image_sync",
+        ] {
+            let start = source
+                .find(&format!("fn {function_name}"))
+                .expect("function should exist");
+            let body = &source[start..];
+            let lock = body
+                .find("acquire_repo_sync_lock")
+                .expect("command should acquire repo lock");
+            let baseline = body
+                .find("fs::read_to_string")
+                .expect("command should read a row baseline");
+            assert!(
+                lock < baseline,
+                "{function_name} must lock before reading its row baseline"
+            );
+        }
+    }
+
+    #[test]
+    fn repository_lock_serializes_competing_image_mutations() {
+        use std::{sync::mpsc, thread, time::Duration};
+
+        let repo_path = temp_test_dir("image-repo-lock");
+        let lock = crate::repo_sync_shared::repo_sync_lock(&repo_path);
+        let guard = crate::repo_sync_shared::acquire_repo_sync_lock(&lock);
+        let (sender, receiver) = mpsc::channel();
+        let competing_lock = crate::repo_sync_shared::repo_sync_lock(&repo_path);
+        let worker = thread::spawn(move || {
+            let _guard = crate::repo_sync_shared::acquire_repo_sync_lock(&competing_lock);
+            sender.send(()).expect("report lock acquisition");
+        });
+
+        assert!(receiver.recv_timeout(Duration::from_millis(50)).is_err());
+        drop(guard);
+        receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("competing mutation should proceed after release");
+        worker.join().expect("lock worker should finish");
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn duplicate_style_rollback_restores_row_and_released_asset() {
+        let repo_path = temp_test_dir("duplicate-rollback");
+        let row_path = "chapters/chapter-1/rows/row-1.json";
+        let asset_path = "chapters/chapter-1/images/destination.png";
+        write_binary_file(&repo_path.join(row_path), b"original row").expect("write row");
+        write_binary_file(&repo_path.join(asset_path), b"original image").expect("write image");
+        let mut snapshots = Vec::new();
+        push_repo_file_snapshot(&mut snapshots, &repo_path, row_path).expect("snapshot row");
+        push_uploaded_asset_snapshot(&mut snapshots, &repo_path, asset_path)
+            .expect("snapshot image");
+
+        let result: Result<(), String> = with_repo_file_rollback(&repo_path, &snapshots, || {
+            write_binary_file(&repo_path.join(row_path), b"changed row")?;
+            remove_uploaded_asset_from_disk(&repo_path, asset_path)?;
+            Err("simulated commit failure".to_string())
+        });
+
+        assert!(result.is_err());
+        assert_eq!(
+            fs::read(repo_path.join(row_path)).expect("read restored row"),
+            b"original row"
+        );
+        assert_eq!(
+            fs::read(repo_path.join(asset_path)).expect("read restored image"),
+            b"original image"
         );
         let _ = fs::remove_dir_all(repo_path);
     }

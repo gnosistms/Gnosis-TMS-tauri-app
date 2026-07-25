@@ -1,4 +1,4 @@
-use super::images::remove_repo_file_from_disk;
+use super::images::remove_uploaded_asset_from_disk;
 #[cfg(test)]
 use super::shared::row_revision_token;
 use super::*;
@@ -16,7 +16,6 @@ pub(crate) fn insert_gtms_editor_row_sync(
     )?;
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
-
     let chapter_path =
         find_chapter_path_by_id(app, &repo_path.join("chapters"), &input.chapter_id)?;
     let chapter_json_path = chapter_path.join("chapter.json");
@@ -238,6 +237,8 @@ pub(crate) fn permanently_delete_gtms_editor_row_sync(
     )?;
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
+    let repo_lock = crate::repo_sync_shared::repo_sync_lock(&repo_path);
+    let _repo_lock_guard = crate::repo_sync_shared::acquire_repo_sync_lock(&repo_lock);
 
     let chapter_path =
         find_chapter_path_by_id(app, &repo_path.join("chapters"), &input.chapter_id)?;
@@ -258,7 +259,11 @@ pub(crate) fn permanently_delete_gtms_editor_row_sync(
         &empty_deleted_row_stub(&row_file),
         &languages,
     );
-    let uploaded_image_paths = row_uploaded_image_relative_paths(&row_file);
+    let uploaded_image_paths = unreferenced_uploaded_paths_after_row_updates(
+        &repo_path,
+        &row_uploaded_image_relative_paths(&row_file),
+        &BTreeMap::from([(relative_row_json.clone(), None)]),
+    )?;
     // Fail the expected commit-gate failures (write access, signed-out session) before
     // any file is removed, so they cannot strand a dirty working tree.
     crate::git_commit::ensure_local_commit_preconditions(app, &repo_path)?;
@@ -273,7 +278,7 @@ pub(crate) fn permanently_delete_gtms_editor_row_sync(
             )
         })?;
         for relative_path in &uploaded_image_paths {
-            remove_repo_file_from_disk(&repo_path, relative_path)?;
+            remove_uploaded_asset_from_disk(&repo_path, relative_path)?;
             git_output(
                 &repo_path,
                 &["rm", "--cached", "--ignore-unmatch", relative_path],

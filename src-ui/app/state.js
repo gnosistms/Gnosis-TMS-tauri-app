@@ -444,6 +444,7 @@ export function createEditorChapterState() {
     imageCaptionEditor: createEditorImageCaptionEditorState(),
     imageEditor: createEditorImageEditorState(),
     imageInvalidFileModal: createEditorImageInvalidFileModalState(),
+    imageDuplicateOverwriteModal: createEditorImageDuplicateOverwriteModalState(),
     imagePreviewOverlay: createEditorImagePreviewOverlayState(),
     insertLinkModal: createEditorInsertLinkModalState(),
     wordpressExportSuccessModal: createWordPressExportSuccessModalState(),
@@ -529,12 +530,27 @@ export function createEditorImageInvalidFileModalState() {
   return createEntityModalState();
 }
 
+export function createEditorImageDuplicateOverwriteModalState() {
+  return {
+    isOpen: false,
+    rowId: null,
+    sourceLanguageCode: null,
+    destinationLanguageCode: null,
+    destinationLanguageName: "",
+    sourceImage: null,
+    destinationImage: null,
+    status: "idle",
+    error: "",
+  };
+}
+
 export function createEditorImagePreviewOverlayState() {
   return {
     isOpen: false,
     rowId: null,
     languageCode: null,
     src: "",
+    imageUrl: "",
   };
 }
 

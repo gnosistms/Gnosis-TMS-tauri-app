@@ -1,7 +1,8 @@
 use super::images::{
     file_bytes_equal, load_historical_blob_bytes, normalize_editor_field_image_value,
-    push_repo_file_snapshot, remove_repo_file_from_disk, row_language_stored_image,
-    with_repo_file_rollback, write_binary_file,
+    push_repo_file_snapshot, push_uploaded_asset_snapshot, remove_uploaded_asset_from_disk,
+    row_language_stored_image, validated_uploaded_asset_relative_path, with_repo_file_rollback,
+    write_uploaded_asset_file,
 };
 use super::*;
 
@@ -71,6 +72,8 @@ pub(crate) fn restore_gtms_editor_field_from_history_sync(
     )?;
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
+    let repo_lock = crate::repo_sync_shared::repo_sync_lock(&repo_path);
+    let _repo_lock_guard = crate::repo_sync_shared::acquire_repo_sync_lock(&repo_lock);
 
     let commit_sha = validated_commit_sha(&input.commit_sha)?;
     let chapter_path =
@@ -194,13 +197,14 @@ pub(crate) fn restore_gtms_editor_field_from_history_sync(
     let historical_uploaded_path = historical_image
         .as_ref()
         .filter(|image| image.kind == "upload")
-        .and_then(|image| image.path.clone());
+        .and_then(|image| image.path.clone())
+        .map(|path| validated_uploaded_asset_relative_path(&repo_path, &path))
+        .transpose()?;
     let current_uploaded_path = current_image
         .as_ref()
         .filter(|image| image.kind == "upload")
         .and_then(|image| image.path.clone());
     let mut added_asset_paths = Vec::new();
-    let mut removed_asset_paths = Vec::new();
     let mut rollback_snapshots = Vec::new();
     let mut historical_asset_update: Option<(String, Vec<u8>)> = None;
 
@@ -210,7 +214,7 @@ pub(crate) fn restore_gtms_editor_field_from_history_sync(
         let historical_bytes = load_historical_blob_bytes(&repo_path, &commit_sha, relative_path)?;
         let absolute_path = repo_path.join(relative_path);
         if !file_bytes_equal(&absolute_path, &historical_bytes) {
-            push_repo_file_snapshot(&mut rollback_snapshots, &repo_path, relative_path)?;
+            push_uploaded_asset_snapshot(&mut rollback_snapshots, &repo_path, relative_path)?;
             historical_asset_update = Some((relative_path.to_string(), historical_bytes));
             added_asset_paths.push(relative_path.to_string());
         }
@@ -220,22 +224,55 @@ pub(crate) fn restore_gtms_editor_field_from_history_sync(
         .as_deref()
         .filter(|path| Some(*path) != historical_uploaded_path.as_deref())
         .map(str::to_string);
-    if let Some(relative_path) = removed_uploaded_path.as_deref() {
-        push_repo_file_snapshot(&mut rollback_snapshots, &repo_path, relative_path)?;
-        removed_asset_paths.push(relative_path.to_string());
+    let updated_row_file: StoredRowFile =
+        serde_json::from_value(row_value.clone()).map_err(|error| {
+            format!(
+                "Could not decode restored row '{}': {error}",
+                row_json_path.display()
+            )
+        })?;
+    let removed_asset_paths = unreferenced_uploaded_paths_after_row_updates(
+        &repo_path,
+        &removed_uploaded_path
+            .clone()
+            .into_iter()
+            .collect::<Vec<_>>(),
+        &BTreeMap::from([(relative_row_json.clone(), Some(updated_row_file.clone()))]),
+    )?;
+    for relative_path in &removed_asset_paths {
+        push_uploaded_asset_snapshot(&mut rollback_snapshots, &repo_path, relative_path)?;
+    }
+
+    if historical_asset_update.is_some() {
+        if let Some(relative_path) = historical_uploaded_path.as_deref() {
+            let mut row_without_restored_reference = updated_row_file.clone();
+            if let Some(field) = row_without_restored_reference
+                .fields
+                .get_mut(&input.language_code)
+            {
+                field.image = None;
+            }
+            let safe_to_rewrite = unreferenced_uploaded_paths_after_row_updates(
+                &repo_path,
+                &[relative_path.to_string()],
+                &BTreeMap::from([(
+                    relative_row_json.clone(),
+                    Some(row_without_restored_reference),
+                )]),
+            )?;
+            if safe_to_rewrite.is_empty() {
+                return Err(
+                    "The historical uploaded image is shared by another field and cannot be restored in place."
+                        .to_string(),
+                );
+            }
+        }
     }
 
     if updated_row_text != original_row_text
         || !added_asset_paths.is_empty()
         || !removed_asset_paths.is_empty()
     {
-        let updated_row_file: StoredRowFile =
-            serde_json::from_value(row_value.clone()).map_err(|error| {
-                format!(
-                    "Could not decode restored row '{}': {error}",
-                    row_json_path.display()
-                )
-            })?;
         word_counts = apply_word_count_delta(
             &word_counts,
             &original_row_file,
@@ -245,12 +282,11 @@ pub(crate) fn restore_gtms_editor_field_from_history_sync(
         let short_commit = short_commit_sha(&commit_sha);
         with_repo_file_rollback(&repo_path, &rollback_snapshots, || {
             if let Some((relative_path, historical_bytes)) = historical_asset_update.as_ref() {
-                let absolute_path = repo_path.join(relative_path);
-                write_binary_file(&absolute_path, historical_bytes)?;
+                write_uploaded_asset_file(&repo_path, relative_path, historical_bytes)?;
             }
 
-            if let Some(relative_path) = removed_uploaded_path.as_deref() {
-                remove_repo_file_from_disk(&repo_path, relative_path)?;
+            for relative_path in &removed_asset_paths {
+                remove_uploaded_asset_from_disk(&repo_path, relative_path)?;
                 git_output(
                     &repo_path,
                     &["rm", "--cached", "--ignore-unmatch", relative_path],
