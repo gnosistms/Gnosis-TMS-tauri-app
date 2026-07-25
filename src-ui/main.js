@@ -149,12 +149,9 @@ import {
   getNoticeBadgeText,
   getScopedSyncBadgeText,
   getStatusSurfaceItems,
-  showNoticeBadge,
 } from "./app/status-feedback.js";
-import {
-  createEditorCloseGuard,
-  EDITOR_CLOSE_GUARD_NOTICE_DURATION_MS,
-} from "./app/editor-close-guard.js";
+import { createEditorCloseGuard } from "./app/editor-close-guard.js";
+import { beginEditorCloseWait } from "./app/editor-close-wait-flow.js";
 
 // Install crash handlers as early as possible so first-run crashes are captured (and
 // buffered until the consent gate opens). See plans/telemetry-plan.md.
@@ -843,13 +840,27 @@ function editorHasPendingDurableWrites() {
   );
 }
 
-// Set when the user force-closes past pending writes so beforeunload does not
-// re-block a close the user already approved.
+// Set when the user force-closes past pending writes so the close guard and
+// beforeunload do not re-block a close the user already approved.
 let editorCloseForceApproved = false;
+
+function closeAppWindow({ force = false } = {}) {
+  if (force) {
+    editorCloseForceApproved = true;
+  }
+  try {
+    const currentWindow = window.__TAURI__?.window?.getCurrentWindow?.();
+    void currentWindow?.close?.();
+  } catch {}
+}
 
 const editorCloseGuard = createEditorCloseGuard({
   hasPendingDurableWrites: editorHasPendingDurableWrites,
-  showBlockedNotice: (message) => showNoticeBadge(message, render, EDITOR_CLOSE_GUARD_NOTICE_DURATION_MS),
+  onCloseBlocked: () =>
+    beginEditorCloseWait(render, {
+      hasPendingDurableWrites: editorHasPendingDurableWrites,
+      closeWindow: closeAppWindow,
+    }),
 });
 
 window.addEventListener("beforeunload", (event) => {
@@ -895,15 +906,14 @@ function syncTauriEditorCloseGuardRegistration() {
 
     editorCloseGuardUnlistenPromise = currentWindow.onCloseRequested((event) => {
       persistCurrentEditorLocation(state);
-      const { allowClose, forced } = editorCloseGuard.handleCloseRequest();
-      if (allowClose) {
-        if (forced) {
-          editorCloseForceApproved = true;
-        }
+      if (editorCloseForceApproved) {
         return;
       }
 
-      event?.preventDefault?.();
+      const { allowClose } = editorCloseGuard.handleCloseRequest();
+      if (!allowClose) {
+        event?.preventDefault?.();
+      }
     });
   } catch {}
 }

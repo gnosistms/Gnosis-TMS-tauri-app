@@ -6,6 +6,10 @@ import {
 } from "../editor-write-permission.js";
 import { waitForNextPaint } from "../runtime.js";
 import { state } from "../state.js";
+import {
+  forceCloseFromEditorCloseWait,
+  keepAppOpenFromEditorCloseWait,
+} from "../editor-close-wait-flow.js";
 import { showNoticeBadge } from "../status-feedback.js";
 import {
   captureLanguageToggleVisibilityAnchor,
@@ -295,6 +299,16 @@ export function createTranslateActions(render) {
 
     if (action === "submit-target-language-manager") {
       await submitTargetLanguageManager(render);
+      return true;
+    }
+
+    if (action === "editor-close-wait-keep-open") {
+      keepAppOpenFromEditorCloseWait(render);
+      return true;
+    }
+
+    if (action === "editor-close-wait-force-close") {
+      forceCloseFromEditorCloseWait(render);
       return true;
     }
 

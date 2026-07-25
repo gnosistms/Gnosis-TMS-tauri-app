@@ -449,14 +449,26 @@ function scopedEditorRows(chapterState = state.editorChapter, options = {}) {
   });
 }
 
-export function hasPendingEditorWrites(chapterState = state.editorChapter, options = {}) {
-  return scopedEditorRows(chapterState, options).some((row) =>
+function rowHasPendingDurableWrite(row, chapterState) {
+  return (
     row?.saveStatus === "saving"
     || row?.markerSaveState?.status === "saving"
     || row?.textStyleSaveState?.status === "saving"
     || rowHasPersistedChanges(row)
     || rowHasPendingCommentWrite(row?.rowId, chapterState)
   );
+}
+
+export function hasPendingEditorWrites(chapterState = state.editorChapter, options = {}) {
+  return scopedEditorRows(chapterState, options).some((row) =>
+    rowHasPendingDurableWrite(row, chapterState),
+  );
+}
+
+export function countPendingEditorWriteRows(chapterState = state.editorChapter) {
+  return scopedEditorRows(chapterState).filter((row) =>
+    rowHasPendingDurableWrite(row, chapterState),
+  ).length;
 }
 
 function activeEditorRowFieldIsFocused() {
