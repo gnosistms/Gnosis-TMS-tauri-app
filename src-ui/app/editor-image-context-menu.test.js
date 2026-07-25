@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  handleEditorImageContextMenuInvocationKeydown,
   handleEditorImageContextMenuKeydown,
   renderEditorImageContextMenuItems,
 } from "./editor-image-context-menu.js";
@@ -146,5 +147,56 @@ test("image context menu Escape dismisses the menu", () => {
   } finally {
     globalThis.HTMLElement = PreviousHTMLElement;
     globalThis.HTMLButtonElement = PreviousHTMLButtonElement;
+  }
+});
+
+test("image context menu opens from the focused thumbnail with keyboard invocation", () => {
+  const PreviousHTMLElement = globalThis.HTMLElement;
+  class FakeElement {}
+  globalThis.HTMLElement = FakeElement;
+  try {
+    const target = new FakeElement();
+    target.closest = () => target;
+    target.getBoundingClientRect = () => ({
+      left: 40,
+      top: 60,
+      width: 80,
+      height: 50,
+    });
+    const root = { contains: (candidate) => candidate === target };
+    let openedAt = null;
+    let prevented = false;
+    let stopped = false;
+    const event = {
+      target,
+      key: "F10",
+      shiftKey: true,
+      preventDefault() {
+        prevented = true;
+      },
+      stopPropagation() {
+        stopped = true;
+      },
+    };
+
+    assert.equal(
+      handleEditorImageContextMenuInvocationKeydown(
+        root,
+        event,
+        (_root, point, invoker) => {
+          openedAt = { point, invoker };
+          return true;
+        },
+      ),
+      true,
+    );
+    assert.deepEqual(openedAt, {
+      point: { clientX: 52, clientY: 72 },
+      invoker: target,
+    });
+    assert.equal(prevented, true);
+    assert.equal(stopped, true);
+  } finally {
+    globalThis.HTMLElement = PreviousHTMLElement;
   }
 });

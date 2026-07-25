@@ -616,8 +616,10 @@ function renderEditorLanguageImage(row, language) {
           class="translation-language-panel__image-preview${isLoading ? " is-loading" : ""}"
           type="button"
           data-action="open-editor-image-preview"
+          data-editor-image-context-menu-target
           data-row-id="${escapeHtml(row.id)}"
           data-language-code="${escapeHtml(language.code)}"
+          ${image.kind === "url" ? `data-image-url="${escapeHtml(image.url ?? "")}"` : ""}
           ${isLoading ? 'aria-busy="true"' : ""}
           ${editorImagePreviewCachedStyle(cachedPreviewSize)}
           ${tooltipAttributes(imageLabel || "Preview image", { side: "top", align: "start" })}
