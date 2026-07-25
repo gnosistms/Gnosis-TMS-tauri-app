@@ -80,6 +80,7 @@ export const state = {
   qaListOldLayoutDiscard: createRepoOldLayoutDiscardState(),
   glossaryRepoSyncByRepoName: {},
   editorChapter: createEditorChapterState(),
+  editorCloseWait: createEditorCloseWaitState(),
   aiSettings: createAiSettingsState(),
   targetLanguageManager: createTargetLanguageManagerState(),
   glossaryEditor: createGlossaryEditorState(),
@@ -266,6 +267,14 @@ export function createProjectDiscoveryState() {
     error: "",
     glossaryWarning: "",
     recoveryMessage: "",
+  };
+}
+
+export function createEditorCloseWaitState() {
+  return {
+    isOpen: false,
+    pendingCount: 0,
+    initialCount: 0,
   };
 }
 
@@ -1316,6 +1325,7 @@ export function resetSessionState() {
   state.glossaryOldLayoutDiscard = createRepoOldLayoutDiscardState();
   state.qaListOldLayoutDiscard = createRepoOldLayoutDiscardState();
   state.editorChapter = createEditorChapterState();
+  state.editorCloseWait = createEditorCloseWaitState();
   state.aiSettings = createAiSettingsState();
   state.selectedChapterId = null;
   state.targetLanguageManager = createTargetLanguageManagerState();

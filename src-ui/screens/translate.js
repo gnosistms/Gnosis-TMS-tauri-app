@@ -34,6 +34,7 @@ import { renderEditorInsertLinkModal } from "./editor-insert-link-modal.js";
 import { renderEditorWordPressExportSuccessModal } from "./editor-wordpress-export-success-modal.js";
 import { renderEditorReplaceUndoModal } from "./editor-replace-undo-modal.js";
 import { renderAiReviewMissingKeyModal } from "./ai-review-missing-key-modal.js";
+import { renderEditorCloseWaitModal } from "./editor-close-wait-modal.js";
 import { renderTargetLanguageManagerModal } from "./target-language-manager-modal.js";
 import { renderTranslateSidebar as renderTranslateEditorSidebar } from "./translate-sidebar.js";
 import { resolveSelectedChapterGlossary } from "../app/project-context.js";
@@ -356,5 +357,6 @@ export function renderTranslateScreen(state) {
     + renderEditorInsertLinkModal(state)
     + renderEditorWordPressExportSuccessModal(state)
     + renderEditorReplaceUndoModal(state)
-    + renderAiReviewMissingKeyModal(state);
+    + renderAiReviewMissingKeyModal(state)
+    + renderEditorCloseWaitModal(state);
 }
