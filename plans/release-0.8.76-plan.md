@@ -28,10 +28,12 @@ Date: 2026-07-25
 - [x] Pre-tag verification: npm test (1762 pass), npm run audit:unused
       (clean), cargo fmt check (pre-commit hook), npm run test:rust
       (471 pass).
-- [ ] Commit "Release 0.8.76", tag `v0.8.76`, push main + tag.
-- [ ] Confirm the release build and updater artifacts publish successfully on
+- [x] Commit "Release 0.8.76" (a29de1f1), tag `v0.8.76`, push main + tag.
+- [x] Confirm the release build and updater artifacts publish successfully on
       every platform, and the GitHub Release is published with installers,
       updater bundles + signatures, and latest.json referencing 0.8.76.
+      Verified 2026-07-25: run succeeded, release published (not draft) with
+      all 13 assets and latest.json at 0.8.76 covering all 7 platform keys.
 - [ ] Post-release: happy-path field check of AI Review All once the
       provider outage clears (stacked "Batch review call started." lines,
       reviewed rows applied, honest closing dialog).
