@@ -421,3 +421,128 @@ test("AI Review All rows missing from the batch response fall back to the single
   assert.equal(rowsById.get("row-c").fields.vi, "fix:row-c");
   assert.equal(state.editorChapter.aiReviewAllModal.step, "filter-enabled");
 });
+
+test("AI Review All runs batches concurrently with capped AI calls and serialized applies", async () => {
+  resetSessionState();
+  editorAiReviewAllTestApi.resetActiveReviewAllRunId();
+  setupReviewRunProjectContext();
+  // 35 unreviewed rows chunk into batches of 15/15/5.
+  const manyRows = Array.from({ length: 35 }, (_, index) => {
+    const id = `row-${String(index + 1).padStart(2, "0")}`;
+    return row(id, { es: `Src ${id}`, vi: `Cu ${id}` }, { vi: { reviewed: false, pleaseCheck: false } });
+  });
+  state.editorChapter = chapter({
+    rows: manyRows,
+    aiReviewAllModal: {
+      ...createEditorChapterState().aiReviewAllModal,
+      isOpen: true,
+      step: "configure",
+      reviewMode: "grammar",
+    },
+  });
+
+  let aiCallsInFlight = 0;
+  let maxAiCallsInFlight = 0;
+  const enterAiCall = () => {
+    aiCallsInFlight += 1;
+    maxAiCallsInFlight = Math.max(maxAiCallsInFlight, aiCallsInFlight);
+  };
+  const exitAiCall = () => {
+    aiCallsInFlight -= 1;
+  };
+
+  invokeHandler = async (command, args) => {
+    if (command === "run_ai_review") {
+      enterAiCall();
+      exitAiCall();
+      return { reviewed: false, suggestedText: `single:${args.request.rowId ?? "row-20"}` };
+    }
+    if (command === "apply_gtms_editor_ai_review_result") {
+      return {
+        rowId: args.input.rowId,
+        languageCode: args.input.languageCode,
+        text: args.input.suggestedText,
+        footnote: "",
+        imageCaption: "",
+        reviewed: args.input.reviewed,
+        pleaseCheck: args.input.pleaseCheck,
+        lastUpdate: null,
+        chapterBaseCommitSha: "def5678",
+      };
+    }
+    return null;
+  };
+
+  const batchGates = [];
+  const batchCalls = [];
+  const applyCalls = [];
+  let applying = 0;
+
+  await confirmEditorAiReviewAll(() => {}, reviewBatchOperations({
+    runAiReviewBatch: async (request) => {
+      enterAiCall();
+      batchCalls.push(request.rows.map((requestRow) => requestRow.rowId));
+      const gate = {};
+      gate.promise = new Promise((resolve) => {
+        gate.resolve = resolve;
+      });
+      batchGates.push(gate);
+      if (batchGates.length === 3) {
+        // Resolve out of submission order (last batch first), deferred so
+        // every mock has attached its await before any gate opens.
+        setImmediate(() => {
+          batchGates[2].resolve();
+          batchGates[0].resolve();
+          batchGates[1].resolve();
+        });
+      }
+      await gate.promise;
+      exitAiCall();
+      return {
+        rows: request.rows
+          // row-20 is omitted from its batch response to force the
+          // single-row fallback while other batches are in flight.
+          .filter((requestRow) => requestRow.rowId !== "row-20")
+          .map((requestRow) => ({
+            rowId: requestRow.rowId,
+            reviewed: false,
+            suggestedText: `fix:${requestRow.rowId}`,
+          })),
+      };
+    },
+    applyAiReviewResultsBatch: async (input) => {
+      applying += 1;
+      assert.equal(applying, 1, "batched applies must never overlap");
+      await new Promise((resolve) => setImmediate(resolve));
+      applyCalls.push(input.rows.map((inputRow) => inputRow.rowId));
+      applying -= 1;
+      return {
+        languageCode: input.languageCode,
+        rows: input.rows.map((inputRow) => ({
+          rowId: inputRow.rowId,
+          text: inputRow.suggestedText,
+          footnote: "",
+          imageCaption: "",
+          reviewed: inputRow.reviewed,
+          pleaseCheck: inputRow.pleaseCheck,
+          lastUpdate: null,
+        })),
+        wordCounts: { vi: 99 },
+        chapterBaseCommitSha: "abc1234",
+      };
+    },
+  }));
+
+  assert.equal(batchCalls.length, 3);
+  assert.equal(maxAiCallsInFlight, 3);
+  // The last-submitted batch resolved first, so it applies first.
+  assert.deepEqual(applyCalls[0], batchCalls[2].filter((rowId) => rowId !== "row-20"));
+  assert.equal(applyCalls.length, 3);
+
+  const rowsById = new Map(state.editorChapter.rows.map((candidate) => [candidate.rowId, candidate]));
+  for (const currentRow of manyRows) {
+    const expected = currentRow.rowId === "row-20" ? /^single:/ : new RegExp(`^fix:${currentRow.rowId}$`);
+    assert.match(rowsById.get(currentRow.rowId).fields.vi, expected);
+  }
+  assert.equal(state.editorChapter.aiReviewAllModal.step, "filter-enabled");
+});

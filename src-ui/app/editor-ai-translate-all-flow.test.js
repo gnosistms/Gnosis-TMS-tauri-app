@@ -505,6 +505,82 @@ test("AI Translate All grouped save covers only batch-applied rows when some fal
   assert.equal(batchSaveCalls[0].options.commitMessage, "AI translate 2 rows to Vietnamese");
 });
 
+test("AI Translate All runs batches concurrently with capped AI calls and serialized grouped saves", async () => {
+  resetSessionState();
+  editorAiTranslateAllTestApi.resetActiveBatchRunId();
+  // 35 rows for one language pair chunk into batches of 15/15/5.
+  const base = batchChapter();
+  state.editorChapter = {
+    ...base,
+    rows: Array.from({ length: 35 }, (_, index) => ({
+      rowId: `row-${String(index + 1).padStart(2, "0")}`,
+      lifecycleState: "active",
+      fields: { es: `Hola ${index + 1}`, vi: "" },
+    })),
+  };
+
+  let aiCallsInFlight = 0;
+  let maxAiCallsInFlight = 0;
+  const batchGates = [];
+  const batchCalls = [];
+  const saveCalls = [];
+  let saving = 0;
+
+  await confirmEditorAiTranslateAll(
+    () => {},
+    batchOperations({
+      runAiTranslationBatch: async (request) => {
+        aiCallsInFlight += 1;
+        maxAiCallsInFlight = Math.max(maxAiCallsInFlight, aiCallsInFlight);
+        batchCalls.push(request.rows.map((row) => row.rowId));
+        const gate = {};
+        gate.promise = new Promise((resolve) => {
+          gate.resolve = resolve;
+        });
+        batchGates.push(gate);
+        if (batchGates.length === 3) {
+          // Resolve out of submission order (last batch first), deferred so
+          // every mock has attached its await before any gate opens.
+          setImmediate(() => {
+            batchGates[2].resolve();
+            batchGates[0].resolve();
+            batchGates[1].resolve();
+          });
+        }
+        await gate.promise;
+        aiCallsInFlight -= 1;
+        return {
+          rows: request.rows.map((row) => ({
+            rowId: row.rowId,
+            translatedText: `vi:${row.sourceText}`,
+          })),
+          promptText: "P",
+        };
+      },
+      persistEditorRowsBatch: async (_render, items, options) => {
+        saving += 1;
+        assert.equal(saving, 1, "grouped saves must never overlap");
+        await new Promise((resolve) => setImmediate(resolve));
+        saveCalls.push({ rowIds: items.map((item) => item.rowId), options });
+        saving -= 1;
+        return true;
+      },
+    }),
+  );
+
+  assert.equal(batchCalls.length, 3);
+  assert.equal(maxAiCallsInFlight, 3);
+  assert.equal(saveCalls.length, 3);
+  // The last-submitted batch resolved first, so its grouped save lands first.
+  assert.deepEqual(saveCalls[0].rowIds, batchCalls[2]);
+  assert.equal(
+    state.editorChapter.rows.every((row) => row.fields.vi === `vi:${row.fields.es}`),
+    true,
+  );
+  assert.equal(state.editorChapter.aiTranslateAllModal.isOpen, false);
+  assert.equal(state.statusBadges.left.text, "AI translated 35 fields.");
+});
+
 test("AI Translate All falls back to single-row for rows missing from the batch response", async () => {
   resetSessionState();
   editorAiTranslateAllTestApi.resetActiveBatchRunId();
@@ -798,6 +874,94 @@ test("AI Translate All skips applying a batch result when the target was filled 
     "teammate translation",
   );
   assert.equal(state.editorChapter.rows.find((row) => row.rowId === "row-a").fields.vi, "vi:Hola");
+});
+
+test("AI Translate All finishes the glossary-source pair before derived-pair batches start", async () => {
+  resetSessionState();
+  editorAiTranslateAllTestApi.resetActiveBatchRunId();
+  // en is the glossary's own source language (the pivot): es->en translates
+  // first, and es->vi derivation reads the en column those batches wrote.
+  // 20 rows per pair => two batches per pair, so within-pair parallelism and
+  // cross-pair sequencing are both exercised.
+  const base = batchChapter();
+  state.editorChapter = {
+    ...base,
+    languages: [
+      { code: "es", name: "Spanish", role: "source" },
+      { code: "en", name: "English", role: "target" },
+      { code: "vi", name: "Vietnamese", role: "target" },
+    ],
+    rows: Array.from({ length: 20 }, (_, index) => ({
+      rowId: `row-${String(index + 1).padStart(2, "0")}`,
+      lifecycleState: "active",
+      fields: { es: `Hola ${index + 1}`, en: "", vi: "" },
+    })),
+    glossary: {
+      sourceLanguage: { code: "en" },
+      targetLanguage: { code: "vi" },
+      glossaryId: "g1",
+      repoName: "repo",
+      title: "Glossary",
+      matcherModel: {},
+      terms: [
+        {
+          lifecycleState: "active",
+          sourceTerms: ["hello"],
+          targetTerms: ["xin chao"],
+        },
+      ],
+    },
+    aiTranslateAllModal: {
+      ...createEditorAiTranslateAllModalState(),
+      isOpen: true,
+      selectedLanguageCodes: ["vi", "en"],
+    },
+  };
+
+  const events = [];
+  const derivationSourceTexts = [];
+
+  await confirmEditorAiTranslateAll(
+    () => {},
+    batchOperations({
+      prepareEditorAiTranslatedGlossaryBatch: async (request) => {
+        derivationSourceTexts.push(request.glossarySourceText);
+        return { glossarySourceText: request.glossarySourceText, entries: [] };
+      },
+      runAiTranslationBatch: async (request) => {
+        events.push(`start:${request.targetLanguageCode}`);
+        await new Promise((resolve) => setImmediate(resolve));
+        events.push(`end:${request.targetLanguageCode}`);
+        return {
+          rows: request.rows.map((row) => ({
+            rowId: row.rowId,
+            translatedText: `${request.targetLanguageCode}:${row.sourceText}`,
+          })),
+          promptText: "P",
+        };
+      },
+    }),
+  );
+
+  // Every en (pivot) call must fully finish before any vi (derived) call
+  // starts — derived batches read the en column the pivot batches wrote.
+  const lastEnEnd = events.lastIndexOf("end:en");
+  const firstViStart = events.indexOf("start:vi");
+  assert.notEqual(lastEnEnd, -1);
+  assert.notEqual(firstViStart, -1);
+  assert.equal(lastEnEnd < firstViStart, true, `pivot pair must complete first: ${events.join(", ")}`);
+  // The derivation saw pivot text produced by this run, not empty columns.
+  assert.equal(derivationSourceTexts.length > 0, true);
+  assert.equal(
+    derivationSourceTexts.every((text) => text.includes("en:Hola")),
+    true,
+  );
+  assert.equal(
+    state.editorChapter.rows.every(
+      (row) => row.fields.en === `en:${row.fields.es}` && row.fields.vi === `vi:${row.fields.es}`,
+    ),
+    true,
+  );
 });
 
 test("AI Translate All batches per language pair when multiple languages are selected", async () => {
