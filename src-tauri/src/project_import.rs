@@ -35,7 +35,7 @@ use self::{
         remove_gtms_editor_language_image_sync, restore_gtms_editor_field_from_history_sync,
         reverse_gtms_editor_batch_replace_commit_sync, save_gtms_editor_language_image_url_sync,
         start_gtms_chapter_pdf_export as start_gtms_chapter_pdf_export_task,
-        start_team_chapter_copy, update_gtms_chapter_glossary_links_sync,
+        start_project_transfer, start_team_chapter_copy, update_gtms_chapter_glossary_links_sync,
         update_gtms_chapter_language_selection_sync, update_gtms_chapter_languages_sync,
         update_gtms_chapter_workflow_status_sync, update_gtms_editor_row_field_flag_sync,
         update_gtms_editor_row_fields_batch_sync, update_gtms_editor_row_fields_sync,
@@ -52,11 +52,12 @@ use self::{
         LoadEditorFieldHistoryInput, LoadEditorFieldHistoryResponse, LoadEditorRowInput,
         LoadEditorRowResponse, LocalProjectFilesResponse, MergeEditorRowsInput,
         MergeEditorRowsResponse, PdfChapterExportInput, PdfFontInspection, PdfFontInspectionInput,
-        PurgeLocalProjectRepoInput, RemoveEditorLanguageImageInput, RestoreEditorFieldHistoryInput,
-        RestoreEditorFieldHistoryResponse, ReverseEditorBatchReplaceCommitInput,
-        ReverseEditorBatchReplaceCommitResponse, SaveEditorLanguageImageResponse,
-        SaveEditorLanguageImageUrlInput, SaveEditorRowWithConcurrencyResponse,
-        TeamChapterCopyInput, UpdateChapterGlossaryLinksInput, UpdateChapterGlossaryLinksResponse,
+        ProjectTransferInput, PurgeLocalProjectRepoInput, RemoveEditorLanguageImageInput,
+        RestoreEditorFieldHistoryInput, RestoreEditorFieldHistoryResponse,
+        ReverseEditorBatchReplaceCommitInput, ReverseEditorBatchReplaceCommitResponse,
+        SaveEditorLanguageImageResponse, SaveEditorLanguageImageUrlInput,
+        SaveEditorRowWithConcurrencyResponse, TeamChapterCopyInput,
+        UpdateChapterGlossaryLinksInput, UpdateChapterGlossaryLinksResponse,
         UpdateChapterLanguageSelectionInput, UpdateChapterLanguageSelectionResponse,
         UpdateChapterLanguagesInput, UpdateChapterLanguagesResponse,
         UpdateChapterWorkflowStatusInput, UpdateChapterWorkflowStatusResponse,
@@ -253,6 +254,18 @@ pub(crate) async fn copy_gtms_chapter_to_team(
     session_token: String,
 ) -> Result<(), String> {
     start_team_chapter_copy(app, input, session_token)
+}
+
+/// Returns immediately after validation; the transfer runs in a background
+/// task and reports via `team-project-transfer-progress` events keyed by
+/// `jobId`.
+#[tauri::command]
+pub(crate) async fn transfer_gtms_project_to_team(
+    app: AppHandle,
+    input: ProjectTransferInput,
+    session_token: String,
+) -> Result<(), String> {
+    start_project_transfer(app, input, session_token)
 }
 
 #[tauri::command]

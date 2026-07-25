@@ -105,6 +105,7 @@ export const state = {
   projectCreation: createProjectCreationState(),
   inviteUser: createInviteUserState(),
   projectRename: createProjectRenameState(),
+  projectTransfer: createProjectTransferState(),
   projectPermanentDeletion: createProjectPermanentDeletionState(),
   projectClearDeletedFiles: createProjectClearDeletedFilesState(),
   chapterRename: createChapterRenameState(),
@@ -1086,6 +1087,24 @@ export function createProjectRenameState() {
   });
 }
 
+export function createProjectTransferState() {
+  return {
+    isOpen: false,
+    projectId: "",
+    sourceTitle: "",
+    targetTeamId: "",
+    projectName: "",
+    glossaryId: "",
+    glossaries: [],
+    targetProjects: [],
+    resourcesStatus: "idle",
+    status: "idle",
+    stage: "",
+    jobId: "",
+    error: "",
+  };
+}
+
 export function createChapterRenameState() {
   return createEntityModalState({
     projectId: null,
@@ -1186,6 +1205,10 @@ export function resetTeamMemberOwnerDemotion() {
 
 export function resetProjectRename() {
   state.projectRename = createProjectRenameState();
+}
+
+export function resetProjectTransfer() {
+  state.projectTransfer = createProjectTransferState();
 }
 
 export function resetChapterRename() {
@@ -1321,6 +1344,7 @@ export function resetSessionState() {
   resetProjectCreation();
   resetInviteUser();
   resetProjectRename();
+  resetProjectTransfer();
   resetChapterRename();
   resetChapterPermanentDeletion();
   resetProjectPermanentDeletion();

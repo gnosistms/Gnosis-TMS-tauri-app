@@ -41,6 +41,7 @@ mod git_conflicts;
 mod history;
 mod images;
 mod pdf_export;
+mod project_transfer;
 mod row_fields;
 mod row_merge;
 mod row_structure;
@@ -91,6 +92,7 @@ pub(crate) use self::pdf_export::{
     cancel_gtms_chapter_pdf_export, inspect_gtms_chapter_pdf_fonts, start_gtms_chapter_pdf_export,
     PdfChapterExportInput, PdfFontInspection, PdfFontInspectionInput,
 };
+pub(crate) use self::project_transfer::{start_project_transfer, ProjectTransferInput};
 use self::row_fields::apply_editor_text_style_update;
 #[cfg(test)]
 use self::row_fields::{

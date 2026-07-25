@@ -106,6 +106,11 @@ import {
   selectTeamCopyTargetTeam,
   updateTeamCopyTitle,
 } from "./editor-export-team-copy-flow.js";
+import {
+  selectProjectTransferGlossary,
+  selectProjectTransferTeam,
+  updateProjectTransferName,
+} from "./project-transfer-flow.js";
 import { normalizedConfirmationValue } from "./resource-entity-modal.js";
 
 let liveReviewSidebarRenderPending = false;
@@ -1099,6 +1104,39 @@ function handleTeamCopyProjectInput(event, render) {
   return true;
 }
 
+function handleProjectTransferNameInput(event, render) {
+  const input = event.target.closest("[data-project-transfer-name-input]");
+  if (!input) {
+    return false;
+  }
+  updateProjectTransferName(input.value, render);
+  return true;
+}
+
+function handleProjectTransferTeamInput(event, render) {
+  if (event.type !== "change") {
+    return false;
+  }
+  const input = event.target.closest("[data-project-transfer-team-select]");
+  if (!(input instanceof HTMLSelectElement)) {
+    return false;
+  }
+  selectProjectTransferTeam(render, input.value);
+  return true;
+}
+
+function handleProjectTransferGlossaryInput(event, render) {
+  if (event.type !== "change") {
+    return false;
+  }
+  const input = event.target.closest("[data-project-transfer-glossary-select]");
+  if (!(input instanceof HTMLSelectElement)) {
+    return false;
+  }
+  selectProjectTransferGlossary(render, input.value);
+  return true;
+}
+
 const inputHandlers = [
   handleProjectCreationInput,
   handleProjectPermanentDeleteInput,
@@ -1168,6 +1206,9 @@ const inputHandlers = [
   handleTeamCopyTitleInput,
   handleTeamCopyTeamInput,
   handleTeamCopyProjectInput,
+  handleProjectTransferNameInput,
+  handleProjectTransferTeamInput,
+  handleProjectTransferGlossaryInput,
 ];
 
 export function handleInputEvent(event, render) {

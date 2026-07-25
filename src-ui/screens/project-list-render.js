@@ -60,6 +60,11 @@ export function deriveProjectRenderState(project, options = {}) {
                   disabled: offlineMode || addFilesWriteDisabled || addFilesDisabled || localRepoSetupPending || disableContentActions,
                 })
               : "",
+            !isDeleted && canManageProjects
+              ? textAction("Transfer", `transfer-project:${project.id}`, {
+                  disabled: offlineMode || localRepoSetupPending || disableContentActions,
+                })
+              : "",
             canManageProjects
               ? textAction("Rename", `rename-project:${project.id}`, {
                   disabled: offlineMode || lifecycleActionsDisabled || disableLifecycleActions,

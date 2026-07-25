@@ -242,6 +242,7 @@ test("project background refresh does not disable add files for project managers
   }));
 
   assert.doesNotMatch(actionButtonHtml(html, "add-project-files:project-1"), /disabled/);
+  assert.doesNotMatch(actionButtonHtml(html, "transfer-project:project-1"), /disabled/);
 });
 
 test("project refresh hides missing local repo repair warnings while setup is in progress", () => {

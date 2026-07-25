@@ -234,10 +234,12 @@ fn run_team_chapter_copy(
     let chapter_title = chapter_file.title.clone();
     let written = write_chapter_copy(
         &source_repo_path,
+        &source_chapter_path,
         &mut chapter_file,
         &rows,
         &target_repo_path,
         input.default_glossary.as_ref(),
+        false,
     )?;
 
     if let Err(error) = commit_chapter_copy(
@@ -277,11 +279,11 @@ fn run_team_chapter_copy(
     })
 }
 
-struct WrittenChapterCopy {
-    chapter_id: String,
-    relative_chapter_path: String,
-    absolute_chapter_path: PathBuf,
-    gitattributes_existed: bool,
+pub(super) struct WrittenChapterCopy {
+    pub(super) chapter_id: String,
+    pub(super) relative_chapter_path: String,
+    pub(super) absolute_chapter_path: PathBuf,
+    pub(super) gitattributes_existed: bool,
 }
 
 /// Writes a faithful copy of the chapter into the target repo: fresh chapter and
@@ -290,12 +292,14 @@ struct WrittenChapterCopy {
 /// with their row paths rewritten to the new chapter slug. Everything else —
 /// languages, content, footnotes, captions, text styles, review states,
 /// comments, soft-deleted rows, order keys — carries over verbatim.
-fn write_chapter_copy(
+pub(super) fn write_chapter_copy(
     source_repo_path: &Path,
+    source_chapter_path: &Path,
     chapter_file: &mut StoredChapterFile,
     rows: &[StoredRowFile],
     target_repo_path: &Path,
     target_default_glossary: Option<&TeamCopyDefaultGlossaryInput>,
+    reset_workflow_status: bool,
 ) -> Result<WrittenChapterCopy, String> {
     let chapters_root = target_repo_path.join("chapters");
     let chapter_slug =
@@ -332,6 +336,12 @@ fn write_chapter_copy(
                 }
             }
         }
+        if reset_workflow_status {
+            chapter_file
+                .settings
+                .get_or_insert_with(StoredChapterSettings::default)
+                .workflow_status = None;
+        }
         write_json_pretty(&chapter_path.join("chapter.json"), &chapter_file)?;
 
         let mut copied_image_names = BTreeSet::new();
@@ -340,6 +350,7 @@ fn write_chapter_copy(
             copy.row_id = Uuid::now_v7().to_string();
             copy_row_images(
                 source_repo_path,
+                source_chapter_path,
                 target_repo_path,
                 &chapter_slug,
                 &mut copy,
@@ -372,9 +383,11 @@ fn write_chapter_copy(
 /// Copies each uploaded image asset referenced by the row into the new chapter's
 /// `images/` folder and rewrites the stored repo-relative path. A missing or
 /// unreadable source asset drops the image from the copy (the reference was
-/// already broken) rather than failing the whole copy. URL images pass through.
-fn copy_row_images(
+/// already broken) rather than failing the whole copy. Invalid or escaping
+/// paths reject the copy. URL images pass through.
+pub(super) fn copy_row_images(
     source_repo_path: &Path,
+    source_chapter_path: &Path,
     target_repo_path: &Path,
     chapter_slug: &str,
     row: &mut StoredRowFile,
@@ -398,7 +411,12 @@ fn copy_row_images(
             continue;
         };
 
-        let Ok(bytes) = fs::read(source_repo_path.join(&relative_path)) else {
+        let source_image_path = validate_source_chapter_image_path(
+            source_repo_path,
+            source_chapter_path,
+            &relative_path,
+        )?;
+        let Ok(bytes) = fs::read(&source_image_path) else {
             field.image = None;
             continue;
         };
@@ -431,9 +449,49 @@ fn copy_row_images(
     Ok(())
 }
 
+fn validate_source_chapter_image_path(
+    source_repo_path: &Path,
+    source_chapter_path: &Path,
+    stored_path: &str,
+) -> Result<PathBuf, String> {
+    let normalized = stored_path.replace('\\', "/");
+    let relative_path = Path::new(&normalized);
+    if relative_path.is_absolute()
+        || relative_path
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err("The source chapter contains an invalid uploaded image path.".to_string());
+    }
+
+    let chapter_relative = source_chapter_path
+        .strip_prefix(source_repo_path)
+        .map_err(|_| "The source chapter image folder is outside the project repo.".to_string())?;
+    let allowed_relative = chapter_relative.join("images");
+    if !relative_path.starts_with(&allowed_relative) || relative_path == allowed_relative {
+        return Err(
+            "The source chapter contains an uploaded image outside its image folder.".to_string(),
+        );
+    }
+
+    let candidate = source_repo_path.join(relative_path);
+    if let Ok(canonical_candidate) = fs::canonicalize(&candidate) {
+        let canonical_images = fs::canonicalize(source_chapter_path.join("images"))
+            .map_err(|_| "The source chapter image folder could not be validated.".to_string())?;
+        if !canonical_candidate.starts_with(&canonical_images) {
+            return Err(
+                "The source chapter contains an uploaded image that escapes its image folder."
+                    .to_string(),
+            );
+        }
+    }
+
+    Ok(candidate)
+}
+
 /// Image basenames are unique within a source chapter, but normalized Windows
 /// paths or odd history can collide; suffix duplicates instead of overwriting.
-fn unique_copied_image_name(base_name: &str, taken: &mut BTreeSet<String>) -> String {
+pub(super) fn unique_copied_image_name(base_name: &str, taken: &mut BTreeSet<String>) -> String {
     let fallback = "image".to_string();
     let base_name = if base_name.trim().is_empty() {
         &fallback
@@ -458,7 +516,7 @@ fn unique_copied_image_name(base_name: &str, taken: &mut BTreeSet<String>) -> St
     candidate
 }
 
-fn existing_folder_names(path: &Path) -> Result<Vec<String>, String> {
+pub(super) fn existing_folder_names(path: &Path) -> Result<Vec<String>, String> {
     if !path.exists() {
         return Ok(Vec::new());
     }
@@ -516,7 +574,7 @@ fn commit_chapter_copy(
     Ok(())
 }
 
-fn cleanup_chapter_copy(
+pub(super) fn cleanup_chapter_copy(
     target_repo_path: &Path,
     written: &WrittenChapterCopy,
 ) -> Result<(), String> {
@@ -665,9 +723,16 @@ mod tests {
             deleted,
         ];
 
-        let written =
-            write_chapter_copy(&source_repo, &mut chapter_file, &rows, &target_repo, None)
-                .expect("copy should write");
+        let written = write_chapter_copy(
+            &source_repo,
+            &source_repo.join("chapters/source-chapter"),
+            &mut chapter_file,
+            &rows,
+            &target_repo,
+            None,
+            false,
+        )
+        .expect("copy should write");
         let _ = fs::remove_dir_all(&source_repo);
 
         assert_ne!(written.chapter_id, "source-chapter");
@@ -747,10 +812,12 @@ mod tests {
         let mut chapter_file = test_chapter_file("Chapter With Images");
         let written = write_chapter_copy(
             &source_repo,
+            &source_repo.join("chapters/old-chapter"),
             &mut chapter_file,
             &[row, missing_row],
             &target_repo,
             None,
+            false,
         )
         .expect("copy should write");
 
@@ -779,6 +846,51 @@ mod tests {
     }
 
     #[test]
+    fn chapter_copy_rejects_uploaded_image_paths_outside_the_source_chapter() {
+        let source_repo = temp_dir("source-invalid-images");
+        let source_chapter = source_repo.join("chapters/source-chapter");
+        fs::create_dir_all(source_chapter.join("images")).expect("source image folder");
+
+        for invalid_path in [
+            "/tmp/outside.png",
+            "C:/outside.png",
+            "chapters/source-chapter/images/../../../outside.png",
+            "chapters/other-chapter/images/outside.png",
+        ] {
+            let error =
+                validate_source_chapter_image_path(&source_repo, &source_chapter, invalid_path)
+                    .expect_err("unsafe source image path should be rejected");
+            assert!(error.contains("image"));
+        }
+
+        let _ = fs::remove_dir_all(&source_repo);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn chapter_copy_rejects_uploaded_image_symlinks_that_escape_the_source_chapter() {
+        use std::os::unix::fs::symlink;
+
+        let source_repo = temp_dir("source-image-symlink");
+        let source_chapter = source_repo.join("chapters/source-chapter");
+        let images_path = source_chapter.join("images");
+        fs::create_dir_all(&images_path).expect("source image folder");
+        let outside = source_repo.join("outside.png");
+        fs::write(&outside, b"outside").expect("outside image");
+        symlink(&outside, images_path.join("escape.png")).expect("image symlink");
+
+        let error = validate_source_chapter_image_path(
+            &source_repo,
+            &source_chapter,
+            "chapters/source-chapter/images/escape.png",
+        )
+        .expect_err("escaping source image symlink should be rejected");
+        assert!(error.contains("escapes"));
+
+        let _ = fs::remove_dir_all(&source_repo);
+    }
+
+    #[test]
     fn chapter_copy_applies_the_target_team_default_glossary() {
         let source_repo = temp_dir("source-default-glossary");
         let target_repo = temp_dir("target-default-glossary");
@@ -790,10 +902,12 @@ mod tests {
         };
         let written = write_chapter_copy(
             &source_repo,
+            &source_repo.join("chapters/source-chapter"),
             &mut chapter_file,
             &[test_row("row-1", "00000000000000000000000000000001", "A")],
             &target_repo,
             Some(&default_glossary),
+            false,
         )
         .expect("copy should write");
 
@@ -816,6 +930,36 @@ mod tests {
     }
 
     #[test]
+    fn project_copy_resets_workflow_status() {
+        let source_repo = temp_dir("source-reset-workflow");
+        let target_repo = temp_dir("target-reset-workflow");
+        let mut chapter_file = test_chapter_file("Chapter One");
+        let written = write_chapter_copy(
+            &source_repo,
+            &source_repo.join("chapters/source-chapter"),
+            &mut chapter_file,
+            &[test_row("row-1", "00000000000000000000000000000001", "A")],
+            &target_repo,
+            None,
+            true,
+        )
+        .expect("project copy should write");
+
+        let copied_chapter: StoredChapterFile = read_json_file(
+            &written.absolute_chapter_path.join("chapter.json"),
+            "chapter.json",
+        )
+        .expect("copied chapter.json should read");
+        assert!(copied_chapter
+            .settings
+            .and_then(|settings| settings.workflow_status)
+            .is_none());
+
+        let _ = fs::remove_dir_all(&source_repo);
+        let _ = fs::remove_dir_all(&target_repo);
+    }
+
+    #[test]
     fn chapter_copy_allocates_a_unique_slug_when_the_title_collides() {
         let source_repo = temp_dir("source-slug");
         let target_repo = temp_dir("target-slug");
@@ -823,20 +967,24 @@ mod tests {
         let mut first = test_chapter_file("Chapter One");
         let first_written = write_chapter_copy(
             &source_repo,
+            &source_repo.join("chapters/source-chapter"),
             &mut first,
             &[test_row("row-1", "00000000000000000000000000000001", "A")],
             &target_repo,
             None,
+            false,
         )
         .expect("first copy should write");
 
         let mut second = test_chapter_file("Chapter One");
         let second_written = write_chapter_copy(
             &source_repo,
+            &source_repo.join("chapters/source-chapter"),
             &mut second,
             &[test_row("row-1", "00000000000000000000000000000001", "B")],
             &target_repo,
             None,
+            false,
         )
         .expect("second copy should write");
 
@@ -867,10 +1015,12 @@ mod tests {
         let mut chapter_file = test_chapter_file("Chapter One");
         let written = write_chapter_copy(
             &source_repo,
+            &source_repo.join("chapters/source-chapter"),
             &mut chapter_file,
             &[test_row("row-1", "00000000000000000000000000000001", "A")],
             &target_repo,
             None,
+            false,
         )
         .expect("copy should write");
         assert!(written.absolute_chapter_path.exists());
