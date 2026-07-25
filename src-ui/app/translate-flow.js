@@ -1,5 +1,9 @@
 import {
   closeEditorImageInvalidFileModal as closeEditorImageInvalidFileModalFlow,
+  cancelEditorImageDuplicateOverwrite as cancelEditorImageDuplicateOverwriteFlow,
+  confirmEditorImageDuplicateOverwrite as confirmEditorImageDuplicateOverwriteFlow,
+  copyEditorImageUrl as copyEditorImageUrlFlow,
+  duplicateEditorLanguageImage as duplicateEditorLanguageImageFlow,
   closeEditorImagePreview as closeEditorImagePreviewFlow,
   collapseEmptyEditorImageEditor as collapseEmptyEditorImageEditorFlow,
   dismissActiveIdleEditorImageUpload as dismissActiveIdleEditorImageUploadFlow,
@@ -1070,6 +1074,39 @@ export async function removeEditorLanguageImage(render, rowId, languageCode) {
     updateEditorChapterRow,
     loadActiveEditorFieldHistory,
   });
+}
+
+export async function duplicateEditorLanguageImage(
+  render,
+  rowId,
+  sourceLanguageCode,
+  destinationLanguageCode,
+) {
+  await duplicateEditorLanguageImageFlow(
+    render,
+    rowId,
+    sourceLanguageCode,
+    destinationLanguageCode,
+    {
+      updateEditorChapterRow,
+      loadActiveEditorFieldHistory,
+    },
+  );
+}
+
+export async function confirmEditorImageDuplicateOverwrite(render) {
+  await confirmEditorImageDuplicateOverwriteFlow(render, {
+    updateEditorChapterRow,
+    loadActiveEditorFieldHistory,
+  });
+}
+
+export function cancelEditorImageDuplicateOverwrite(render) {
+  cancelEditorImageDuplicateOverwriteFlow(render);
+}
+
+export async function copyEditorImageUrl(render, url) {
+  await copyEditorImageUrlFlow(render, url);
 }
 
 export function openEditorImagePreview(render, rowId, languageCode) {

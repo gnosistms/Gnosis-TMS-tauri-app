@@ -45,6 +45,10 @@ import {
   closeTargetLanguageManager,
   openTargetLanguageManagerPicker,
   closeEditorImageUrl,
+  cancelEditorImageDuplicateOverwrite,
+  confirmEditorImageDuplicateOverwrite,
+  copyEditorImageUrl,
+  duplicateEditorLanguageImage,
   closeEditorImageInvalidFileModal,
   closeEditorImagePreview,
   closeEditorExportOptions,
@@ -168,6 +172,8 @@ const CURRENT_WRITE_ACTIONS = new Set([
   "replace-selected-editor-rows",
   "save-editor-comment",
   "remove-editor-language-image",
+  "duplicate-editor-language-image",
+  "confirm-editor-image-duplicate-overwrite",
 ]);
 
 const SESSION_WRITE_PREFIXES = [
@@ -211,7 +217,7 @@ function isReadOnlyBlockedWriteAction(action) {
   return editorActionPermissionMode(action) !== "none";
 }
 
-function blockReadOnlyWriteAction(action, render) {
+function blockReadOnlyWriteAction(action, render, event = null) {
   if (!isReadOnlyBlockedWriteAction(action)) {
     return false;
   }
@@ -219,6 +225,12 @@ function blockReadOnlyWriteAction(action, render) {
     /^.*(?:editor-row|row|history|comment|draft|conflict)[^:]*:([^:]+)(?::|$)/.exec(action);
   const rowId =
     rowIdMatch?.[1]
+    ?? (
+      typeof Element !== "undefined" && event?.target instanceof Element
+        ? event.target.closest("[data-row-id]")?.dataset.rowId
+        : null
+    )
+    ?? state.editorChapter?.imageDuplicateOverwriteModal?.rowId
     ?? state.editorChapter?.rowPermanentDeletionModal?.rowId
     ?? state.editorChapter?.activeRowId
     ?? null;
@@ -245,7 +257,7 @@ function blockReadOnlyWriteAction(action, render) {
 
 export function createTranslateActions(render) {
   return async function handleTranslateAction(action, event) {
-    if (blockReadOnlyWriteAction(action, render)) {
+    if (blockReadOnlyWriteAction(action, render, event)) {
       return true;
     }
 
@@ -388,6 +400,16 @@ export function createTranslateActions(render) {
 
     if (action === "confirm-editor-row-permanent-delete") {
       await confirmEditorRowPermanentDeletion(render);
+      return true;
+    }
+
+    if (action === "confirm-editor-image-duplicate-overwrite") {
+      await confirmEditorImageDuplicateOverwrite(render);
+      return true;
+    }
+
+    if (action === "cancel-editor-image-duplicate-overwrite") {
+      cancelEditorImageDuplicateOverwrite(render);
       return true;
     }
 
@@ -668,6 +690,27 @@ export function createTranslateActions(render) {
         ? event.target.closest("[data-row-id][data-language-code]")
         : null;
       await removeEditorLanguageImage(render, button?.dataset.rowId ?? null, button?.dataset.languageCode ?? null);
+      return true;
+    }
+
+    if (action === "copy-editor-image-url") {
+      const button = event?.target instanceof Element
+        ? event.target.closest("[data-image-url]")
+        : null;
+      await copyEditorImageUrl(render, button?.dataset.imageUrl ?? "");
+      return true;
+    }
+
+    if (action === "duplicate-editor-language-image") {
+      const button = event?.target instanceof Element
+        ? event.target.closest("[data-row-id][data-source-language-code][data-destination-language-code]")
+        : null;
+      await duplicateEditorLanguageImage(
+        render,
+        button?.dataset.rowId ?? "",
+        button?.dataset.sourceLanguageCode ?? "",
+        button?.dataset.destinationLanguageCode ?? "",
+      );
       return true;
     }
 

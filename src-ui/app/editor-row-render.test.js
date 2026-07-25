@@ -7,6 +7,8 @@ import {
 } from "./editor-image-preview-size.js";
 import { renderTranslationContentRow } from "./editor-row-render.js";
 
+globalThis.window ??= {};
+
 test("renderTranslationContentRow renders the deleted-run end marker as a collapse action", () => {
   const html = renderTranslationContentRow({
     kind: "deleted-group-end",
@@ -114,7 +116,24 @@ test("renderTranslationContentRow makes image URL preview tooltips hang right", 
   }));
 
   assert.match(html, /data-action="open-editor-image-preview"/);
+  assert.match(html, /data-editor-image-context-menu-target/);
+  assert.match(html, /data-image-url="https:\/\/example\.com\/path\/to\/a\/long\/image-name\.webp"/);
   assert.match(html, /data-tooltip-align="start"/);
+});
+
+test("uploaded image preview has context-menu identity without URL metadata", () => {
+  const html = renderTranslationContentRow(rowWithSection({
+    hasVisibleImage: true,
+    image: {
+      kind: "upload",
+      path: "chapters/chapter-1/images/local.png",
+      filePath: "/tmp/local.png",
+    },
+    showAddImageCaptionButton: true,
+  }));
+
+  assert.match(html, /data-editor-image-context-menu-target/);
+  assert.doesNotMatch(html, /data-image-url=/);
 });
 
 test("renderTranslationContentRow keeps marker buttons clickable while marker save is pending", () => {

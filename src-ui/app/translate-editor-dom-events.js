@@ -26,6 +26,11 @@ import {
 } from "./translate-flow.js";
 import { syncActiveEditorInlineStyleButtons } from "./editor-inline-markup-flow.js";
 import { showNoticeBadge } from "./status-feedback.js";
+import {
+  dismissEditorImageContextMenu,
+  handleEditorImageContextMenuKeydown,
+  openEditorImageContextMenu,
+} from "./editor-image-context-menu.js";
 
 const PREVIEW_EDITABLE_TEXT_BLOCK_SELECTOR = [
   "[data-editor-preview-document] p.translate-preview__block[data-preview-block][data-row-id]",
@@ -265,6 +270,27 @@ function registerTranslateScrollIntentEvents(app) {
 }
 
 export function registerTranslateEditorDomEvents(app, render) {
+  app.addEventListener("contextmenu", (event) => {
+    const image = closestEventTarget(event.target, "[data-editor-image-context-menu-target]");
+    if (!(image instanceof HTMLImageElement)) {
+      dismissEditorImageContextMenu(app);
+      return;
+    }
+    if (openEditorImageContextMenu(app, event, image)) {
+      event.preventDefault();
+    }
+  });
+
+  app.addEventListener("pointerdown", (event) => {
+    if (closestEventTarget(event.target, "[data-editor-image-context-menu-popover]")) {
+      return;
+    }
+    dismissEditorImageContextMenu(app);
+  });
+
+  window.addEventListener("blur", () => dismissEditorImageContextMenu(app));
+  window.addEventListener("resize", () => dismissEditorImageContextMenu(app));
+
   let pendingImageUrlCloseRequest = null;
 
   registerTranslateScrollIntentEvents(app);
@@ -454,6 +480,9 @@ export function registerTranslateEditorDomEvents(app, render) {
   });
 
   app.addEventListener("click", (event) => {
+    if (closestEventTarget(event.target, ".editor-image-context-menu__item")) {
+      dismissEditorImageContextMenu(app);
+    }
     const externalLink = closestEventTarget(event.target, "a[href]");
     if (
       externalLink instanceof HTMLAnchorElement
@@ -598,6 +627,12 @@ export function registerTranslateEditorDomEvents(app, render) {
   });
 
   app.addEventListener("keydown", (event) => {
+    if (handleEditorImageContextMenuKeydown(app, event)) {
+      return;
+    }
+    if (event.key === "Escape") {
+      dismissEditorImageContextMenu(app, { restoreFocus: true });
+    }
     if (
       event.defaultPrevented
       || event.repeat

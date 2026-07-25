@@ -1,4 +1,7 @@
-import { normalizeEditorFieldImage } from "./editor-images.js";
+import {
+  editorFieldImageEqual,
+  normalizeEditorFieldImage,
+} from "./editor-images.js";
 import { enforceImportFileSizeLimit } from "./import-file-limit.js";
 import { openLocalFilePicker } from "./local-file-picker.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
@@ -11,6 +14,7 @@ import { noteUserScrollIntent } from "./editor-scroll-session.js";
 import { renderEditorRowScoped } from "./editor-row-scoped-render.js";
 import {
   createEditorImageEditorState,
+  createEditorImageDuplicateOverwriteModalState,
   createEditorImageInvalidFileModalState,
   createEditorImagePreviewOverlayState,
   state,
@@ -627,6 +631,8 @@ function queueEditorImageWrite({
           ? "Remove editor image"
           : kind === "imageUpload"
             ? "Upload editor image"
+            : kind === "imageDuplicate"
+              ? "Duplicate editor image"
             : "Update editor image",
       );
       onQueued?.();
@@ -644,6 +650,8 @@ function queueEditorImageWrite({
           ? "remove_gtms_editor_language_image"
           : kind === "imageUpload"
             ? "upload_gtms_editor_language_image"
+            : kind === "imageDuplicate"
+              ? "duplicate_gtms_editor_language_image"
             : "save_gtms_editor_language_image_url",
         { input: operation.value.input },
         operation.value.permissionContext,
@@ -1257,6 +1265,205 @@ export async function removeEditorLanguageImage(render, rowId, languageCode, ope
   });
 }
 
+function editorLanguageName(languageCode) {
+  const language = state.editorChapter?.languages?.find?.(
+    (candidate) => candidate?.code === languageCode,
+  );
+  return String(language?.name ?? "").trim() || languageCode;
+}
+
+function closeImageDuplicateOverwriteModalState() {
+  if (!state.editorChapter?.chapterId) {
+    return;
+  }
+  state.editorChapter = {
+    ...state.editorChapter,
+    imageDuplicateOverwriteModal: createEditorImageDuplicateOverwriteModalState(),
+  };
+}
+
+async function performEditorImageDuplicate(
+  render,
+  rowId,
+  sourceLanguageCode,
+  destinationLanguageCode,
+  operations = {},
+  expectedImages = null,
+) {
+  const row = await ensureEditorRowReadyForWrite(render, rowId, { allowStaleDirty: true });
+  if (editorImageWriteBlocked(row, render)) {
+    return;
+  }
+  const sourceImage = currentImage(rowId, sourceLanguageCode);
+  const destinationImage = currentImage(rowId, destinationLanguageCode);
+  if (
+    expectedImages
+    && (
+      !editorFieldImageEqual(sourceImage, expectedImages.sourceImage)
+      || !editorFieldImageEqual(destinationImage, expectedImages.destinationImage)
+    )
+  ) {
+    closeImageDuplicateOverwriteModalState();
+    showNoticeBadge("The image changed before it could be duplicated. Try again.", render);
+    render?.();
+    return;
+  }
+  if (!sourceImage) {
+    showNoticeBadge("The source image is no longer available.", render);
+    return;
+  }
+
+  const team = selectedProjectsTeam();
+  const context = findChapterContextById(state.editorChapter?.chapterId);
+  const repoScope = projectRepoScope({ team, project: context?.project ?? null });
+  if (!Number.isFinite(team?.installationId) || !context?.project?.name || !repoScope) {
+    return;
+  }
+
+  return queueEditorImageWrite({
+    render,
+    row,
+    team,
+    context,
+    repoScope,
+    rowId,
+    languageCode: destinationLanguageCode,
+    kind: "imageDuplicate",
+    input: {
+      installationId: team.installationId,
+      projectId: context.project.id,
+      repoName: context.project.name,
+      chapterId: state.editorChapter.chapterId,
+      rowId,
+      sourceLanguageCode,
+      destinationLanguageCode,
+      baseSourceImage: imagePayloadValue(sourceImage),
+      baseDestinationImage: imagePayloadValue(destinationImage),
+    },
+    previousImage: destinationImage,
+    nextImage: sourceImage,
+    operations,
+    failureMessage: "The image could not be duplicated.",
+    notice: "The image changed on disk. Reloaded the latest version.",
+    onQueued: closeImageDuplicateOverwriteModalState,
+  });
+}
+
+export async function duplicateEditorLanguageImage(
+  render,
+  rowId,
+  sourceLanguageCode,
+  destinationLanguageCode,
+  operations = {},
+) {
+  if (
+    !rowId
+    || !sourceLanguageCode
+    || !destinationLanguageCode
+    || sourceLanguageCode === destinationLanguageCode
+    || !state.editorChapter?.chapterId
+  ) {
+    return;
+  }
+  const sourceImage = currentImage(rowId, sourceLanguageCode);
+  if (!sourceImage) {
+    return;
+  }
+  const destinationImage = currentImage(rowId, destinationLanguageCode);
+  if (!destinationImage) {
+    return performEditorImageDuplicate(
+      render,
+      rowId,
+      sourceLanguageCode,
+      destinationLanguageCode,
+      operations,
+      {
+        sourceImage,
+        destinationImage,
+      },
+    );
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    imageDuplicateOverwriteModal: {
+      ...createEditorImageDuplicateOverwriteModalState(),
+      isOpen: true,
+      rowId,
+      sourceLanguageCode,
+      destinationLanguageCode,
+      destinationLanguageName: editorLanguageName(destinationLanguageCode),
+      sourceImage,
+      destinationImage,
+    },
+  };
+  render?.();
+}
+
+export function cancelEditorImageDuplicateOverwrite(render) {
+  closeImageDuplicateOverwriteModalState();
+  render?.();
+}
+
+export async function confirmEditorImageDuplicateOverwrite(render, operations = {}) {
+  const modal = state.editorChapter?.imageDuplicateOverwriteModal;
+  if (modal?.isOpen !== true) {
+    return;
+  }
+  const sourceImage = currentImage(modal.rowId, modal.sourceLanguageCode);
+  const destinationImage = currentImage(modal.rowId, modal.destinationLanguageCode);
+  if (
+    !editorFieldImageEqual(sourceImage, modal.sourceImage)
+    || !editorFieldImageEqual(destinationImage, modal.destinationImage)
+  ) {
+    closeImageDuplicateOverwriteModalState();
+    showNoticeBadge("The image changed before it could be duplicated. Try again.", render);
+    render?.();
+    return;
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    imageDuplicateOverwriteModal: {
+      ...modal,
+      status: "loading",
+      error: "",
+    },
+  };
+  render?.();
+  await performEditorImageDuplicate(
+    render,
+    modal.rowId,
+    modal.sourceLanguageCode,
+    modal.destinationLanguageCode,
+    operations,
+    {
+      sourceImage: modal.sourceImage,
+      destinationImage: modal.destinationImage,
+    },
+  );
+}
+
+export async function copyEditorImageUrl(render, url) {
+  const normalizedUrl = typeof url === "string" ? url.trim() : "";
+  if (!normalizedUrl) {
+    return;
+  }
+  try {
+    if (
+      typeof navigator === "undefined"
+      || typeof navigator.clipboard?.writeText !== "function"
+    ) {
+      throw new Error("Clipboard access is not available.");
+    }
+    await navigator.clipboard.writeText(normalizedUrl);
+    showNoticeBadge("Image URL copied.", render);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    showNoticeBadge(message || "The image URL could not be copied.", render);
+  }
+}
+
 export function openEditorImagePreview(render, rowId, languageCode) {
   if (!rowId || !languageCode || !state.editorChapter?.chapterId) {
     return;
@@ -1275,6 +1482,9 @@ export function openEditorImagePreview(render, rowId, languageCode) {
       rowId,
       languageCode,
       src,
+      imageUrl: image?.kind === "url"
+        ? image.url ?? ""
+        : "",
     },
   };
   render?.({ scope: "translate-image-preview-overlay" });

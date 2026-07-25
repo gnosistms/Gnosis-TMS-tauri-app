@@ -30,6 +30,7 @@ import { renderEditorDeriveGlossariesModal } from "./editor-derive-glossaries-mo
 import { renderEditorConflictResolutionModal } from "./editor-conflict-resolution-modal.js";
 import { renderEditorImageInvalidFileModal } from "./editor-image-invalid-file-modal.js";
 import { renderEditorImagePreviewOverlay } from "./editor-image-preview-overlay.js";
+import { renderEditorImageDuplicateOverwriteModal } from "./editor-image-duplicate-overwrite-modal.js";
 import { renderEditorInsertLinkModal } from "./editor-insert-link-modal.js";
 import { renderEditorWordPressExportSuccessModal } from "./editor-wordpress-export-success-modal.js";
 import { renderEditorReplaceUndoModal } from "./editor-replace-undo-modal.js";
@@ -353,6 +354,7 @@ export function renderTranslateScreen(state) {
     + renderEditorAiTranslateAllModal(state)
     + renderEditorConflictResolutionModal(state)
     + renderEditorImageInvalidFileModal(state)
+    + renderEditorImageDuplicateOverwriteModal(state)
     + renderEditorImagePreviewOverlay(state)
     + renderEditorInsertLinkModal(state)
     + renderEditorWordPressExportSuccessModal(state)
