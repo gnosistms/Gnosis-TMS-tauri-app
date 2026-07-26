@@ -16,7 +16,7 @@ test("caption-only AI translation applies the image caption without replacing ro
       sourceFootnote: "",
       targetFootnote: "",
       sourceImageCaption: "Source caption",
-      targetImageCaption: "Existing destination caption",
+      targetImageCaption: "",
     },
     {
       translatedText: "Translated row text",
