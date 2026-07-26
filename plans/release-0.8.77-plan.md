@@ -22,7 +22,10 @@ Date: 2026-07-25
       npm run test:rust (501 pass, 1 ignored). `npm run audit:unused` reports
       the pre-existing tracked `scripts/bench-ai-translate.mjs`, which is
       already present in v0.8.76 and is unrelated to this release bump.
-- [ ] Commit "Release 0.8.77", tag `v0.8.77`, push main + tag.
-- [ ] Confirm the release build and updater artifacts publish successfully on
+- [x] Commit "Release 0.8.77" (`d33c58e7`), tag `v0.8.77`, push main + tag.
+- [x] Confirm the release build and updater artifacts publish successfully on
       every platform, and the GitHub Release is published with installers,
       updater bundles + signatures, and latest.json referencing 0.8.77.
+      Verified 2026-07-25: run 30180529758 succeeded; release published
+      (not draft or prerelease) with all 13 assets and latest.json at 0.8.77
+      covering all 7 platform keys with tagged URLs and signatures.
