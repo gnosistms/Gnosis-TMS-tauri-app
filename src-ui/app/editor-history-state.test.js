@@ -19,6 +19,7 @@ import {
   cancelEditorReplaceUndoModalState,
   currentActiveEditorHistoryEntryByCommitSha,
   currentEditorHistoryRequestMatches,
+  editorRowMatchesHistoryPayload,
   historyEntryCanOpenReplaceUndo,
   openEditorReplaceUndoModalState,
   removeOptimisticEditorHistoryEntry,
@@ -313,13 +314,18 @@ test("applyEditorHistoryRestoreFailed returns the history panel to ready state",
   assert.equal(updatedChapter.history.restoringCommitSha, null);
 });
 
-test("applyEditorRowHistoryRestored updates current and persisted field values together", () => {
-  const updatedRow = applyEditorRowHistoryRestored(row(), "es", {
+test("applyEditorRowHistoryRestored updates content while preserving current review flags", () => {
+  const updatedRow = applyEditorRowHistoryRestored(row({
+    fieldStates: { es: { reviewed: false, pleaseCheck: true } },
+    persistedFieldStates: { es: { reviewed: false, pleaseCheck: true } },
+    commentCount: 2,
+    commentsRevision: 7,
+  }), "es", {
     plainText: "restored text",
     imageCaption: "Restored caption",
     textStyle: "heading1",
     reviewed: true,
-    pleaseCheck: true,
+    pleaseCheck: false,
   });
 
   assert.equal(updatedRow.textStyle, "heading1");
@@ -327,10 +333,28 @@ test("applyEditorRowHistoryRestored updates current and persisted field values t
   assert.equal(updatedRow.persistedFields.es, "restored text");
   assert.equal(updatedRow.imageCaptions.es, "Restored caption");
   assert.equal(updatedRow.persistedImageCaptions.es, "Restored caption");
-  assert.deepEqual(updatedRow.fieldStates.es, { reviewed: true, pleaseCheck: true });
-  assert.deepEqual(updatedRow.persistedFieldStates.es, { reviewed: true, pleaseCheck: true });
+  assert.deepEqual(updatedRow.fieldStates.es, { reviewed: false, pleaseCheck: true });
+  assert.deepEqual(updatedRow.persistedFieldStates.es, { reviewed: false, pleaseCheck: true });
+  assert.equal(updatedRow.commentCount, 2);
+  assert.equal(updatedRow.commentsRevision, 7);
   assert.equal(updatedRow.saveStatus, "idle");
   assert.equal(updatedRow.saveError, "");
+});
+
+test("editorRowMatchesHistoryPayload compares restored content without requiring historical review flags", () => {
+  assert.equal(editorRowMatchesHistoryPayload(row({
+    fields: { es: "restored text" },
+    persistedFields: { es: "restored text" },
+    fieldStates: { es: { reviewed: true, pleaseCheck: true } },
+  }), "es", {
+    plainText: "restored text",
+    footnote: "",
+    imageCaption: "",
+    image: null,
+    textStyle: "paragraph",
+    reviewed: false,
+    pleaseCheck: false,
+  }), true);
 });
 
 test("replace undo modal helpers open, load, fail, and cancel without losing the commit sha", () => {

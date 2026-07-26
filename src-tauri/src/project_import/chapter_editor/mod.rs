@@ -128,7 +128,7 @@ use self::shared::{
     load_word_counts, normalize_editor_footnote_value, normalize_editor_image_caption_value,
     normalize_editor_text_style_value, refresh_cached_chapter_source_word_count,
     row_fields_object_mut, row_footnote_map, row_image_caption_map, row_object_mut,
-    row_plain_text_map, row_text_style, sanitize_chapter_languages, set_editor_field_flags,
+    row_plain_text_map, row_text_style, sanitize_chapter_languages,
     write_row_files_and_commit_with_removals, write_row_files_and_commit_with_removals_locked,
 };
 pub(crate) use self::team_copy::{start_team_chapter_copy, TeamChapterCopyInput};

@@ -418,10 +418,6 @@ export function applyEditorRowHistoryRestored(row, languageCode, payload) {
     typeof payload?.textStyle === "string" && payload.textStyle.trim()
       ? payload.textStyle
       : row.textStyle;
-  const nextFieldState = normalizeFieldState({
-    reviewed: payload?.reviewed,
-    pleaseCheck: payload?.pleaseCheck,
-  });
   const nextImages = cloneRowImages(row.images);
   const nextPersistedImages = cloneRowImages(row.persistedImages);
   if (nextImage) {
@@ -448,10 +444,6 @@ export function applyEditorRowHistoryRestored(row, languageCode, payload) {
       [languageCode]: nextImageCaption,
     },
     images: nextImages,
-    fieldStates: {
-      ...cloneRowFieldStates(row.fieldStates),
-      [languageCode]: nextFieldState,
-    },
     persistedFields: {
       ...cloneRowFields(row.persistedFields),
       [languageCode]: nextValue,
@@ -465,10 +457,6 @@ export function applyEditorRowHistoryRestored(row, languageCode, payload) {
       [languageCode]: nextImageCaption,
     },
     persistedImages: nextPersistedImages,
-    persistedFieldStates: {
-      ...cloneRowFieldStates(row.persistedFieldStates),
-      [languageCode]: nextFieldState,
-    },
     saveStatus: "idle",
     saveError: "",
   };
@@ -483,11 +471,6 @@ export function editorRowMatchesHistoryPayload(row, languageCode, payload) {
     return false;
   }
 
-  const expectedFieldState = normalizeFieldState({
-    reviewed: payload?.reviewed,
-    pleaseCheck: payload?.pleaseCheck,
-  });
-  const currentFieldState = normalizeFieldState(row.fieldStates?.[languageCode]);
   const expectedTextStyle =
     typeof payload?.textStyle === "string" && payload.textStyle.trim()
       ? payload.textStyle
@@ -499,8 +482,6 @@ export function editorRowMatchesHistoryPayload(row, languageCode, payload) {
     && String(row.imageCaptions?.[languageCode] ?? "") === String(payload?.imageCaption ?? "")
     && historyImageKey(row.images?.[languageCode]) === historyImageKey(payload?.image)
     && String(row.textStyle ?? "") === String(expectedTextStyle ?? "")
-    && currentFieldState.reviewed === expectedFieldState.reviewed
-    && currentFieldState.pleaseCheck === expectedFieldState.pleaseCheck
   );
 }
 
