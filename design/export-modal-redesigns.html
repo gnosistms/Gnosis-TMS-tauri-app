@@ -1,0 +1,830 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gnosis TMS · Export dialog redesigns</title>
+  <link rel="stylesheet" href="../src-ui/styles/fonts-variable.css">
+  <link rel="stylesheet" href="../src-ui/styles/base.css">
+  <link rel="stylesheet" href="../src-ui/styles/modals.css">
+  <style>
+    :root {
+      color-scheme: light;
+      --page: var(--app-background);
+      --paper: var(--surface-strong);
+      --paper-2: rgba(var(--surface-rgb-strong), .84);
+      --ink: var(--text);
+      --line: var(--surface-border);
+      --line-strong: rgba(164, 112, 41, .28);
+      --amber: var(--accent);
+      --amber-strong: var(--accent-strong);
+      --amber-soft: rgba(166, 107, 41, .14);
+      --green: #2f6b41;
+      --blue: #376e8a;
+      --shadow: var(--surface-shadow);
+      --radius: var(--radius-ui);
+      --sans: var(--font-sans);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 10% 0%, rgba(255,255,255,.9), transparent 28rem),
+        var(--page);
+      font: 14px/1.45 var(--sans);
+    }
+    button, input, select { font: inherit; }
+    button { color: inherit; }
+
+    .page-header {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 64px 28px 28px;
+    }
+    .kicker {
+      margin: 0 0 8px;
+      color: var(--amber-strong);
+      font-size: 12px;
+      font-weight: 750;
+      letter-spacing: .09em;
+      text-transform: uppercase;
+    }
+    h1 {
+      max-width: 780px;
+      margin: 0;
+      font-size: clamp(34px, 5vw, 58px);
+      line-height: 1.03;
+      letter-spacing: -.045em;
+    }
+    .intro {
+      max-width: 720px;
+      margin: 18px 0 0;
+      color: var(--muted);
+      font-size: 17px;
+    }
+
+    .jump-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      max-width: 1240px;
+      margin: 8px auto 52px;
+      padding: 0 28px;
+    }
+    .jump-card {
+      min-height: 142px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      color: inherit;
+      background: rgba(255,253,249,.72);
+      text-decoration: none;
+      transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease;
+    }
+    .jump-card:hover { transform: translateY(-2px); border-color: #cfa873; box-shadow: 0 10px 25px rgba(68,45,21,.08); }
+    .jump-number { color: var(--amber-strong); font-size: 12px; font-weight: 800; }
+    .jump-title { display: block; margin-top: 20px; font-size: 16px; font-weight: 750; }
+    .jump-meta { display: block; margin-top: 5px; color: var(--muted); font-size: 12px; }
+
+    .concept {
+      max-width: 1440px;
+      margin: 0 auto 90px;
+      padding: 0 28px;
+      scroll-margin-top: 20px;
+    }
+    .concept-copy {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(280px, 430px);
+      gap: 32px;
+      align-items: end;
+      max-width: 1180px;
+      margin: 0 auto 20px;
+    }
+    .concept h2 { margin: 0; font-size: 28px; letter-spacing: -.025em; }
+    .concept-copy p { margin: 8px 0 0; color: var(--muted); }
+    .best-for {
+      padding: 12px 14px;
+      border-left: 3px solid var(--amber);
+      background: rgba(255,253,249,.55);
+      color: var(--muted);
+    }
+    .best-for strong { color: var(--ink); }
+
+    .stage {
+      position: relative;
+      display: grid;
+      place-items: center;
+      min-height: 760px;
+      overflow: hidden;
+      border: 1px solid rgba(91,68,43,.18);
+      border-radius: 22px;
+      background:
+        linear-gradient(rgba(46,37,30,.36), rgba(46,37,30,.36)),
+        linear-gradient(90deg, #f8f3eb 0 19%, #fffdf9 19% 100%);
+      box-shadow: 0 12px 36px rgba(75,51,27,.08);
+    }
+    .app-ghost {
+      position: absolute;
+      inset: 0;
+      opacity: .58;
+      pointer-events: none;
+    }
+    .ghost-bar { position: absolute; left: 19%; right: 0; top: 0; height: 58px; border-bottom: 1px solid #d9d0c5; background: #fffdf9; }
+    .ghost-side { position: absolute; inset: 0 auto 0 0; width: 19%; border-right: 1px solid #d9d0c5; }
+    .ghost-line { position: absolute; height: 9px; border-radius: 9px; background: #d9d0c5; }
+    .ghost-line.a { left: 3%; top: 86px; width: 11%; }
+    .ghost-line.b { left: 3%; top: 122px; width: 8%; }
+    .ghost-line.c { left: 24%; top: 105px; width: 22%; }
+    .ghost-line.d { left: 24%; top: 142px; width: 52%; }
+    .ghost-line.e { left: 24%; top: 178px; width: 43%; }
+
+    .dialog {
+      position: relative;
+      z-index: 1;
+    }
+    .dialog:not(.modal-card) {
+      width: min(1000px, calc(100% - 48px));
+      overflow: hidden;
+      border: 1px solid rgba(76,54,32,.16);
+      border-radius: 18px;
+      background: var(--paper);
+      box-shadow: var(--shadow);
+    }
+    .dialog button:focus-visible, .dialog select:focus-visible, .dialog input:focus-visible {
+      outline: 3px solid rgba(200,121,23,.28);
+      outline-offset: 2px;
+    }
+    .dialog-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 24px;
+      padding: 24px 26px 20px;
+      border-bottom: 1px solid var(--line);
+    }
+    .dialog-header h3 { margin: 0; font-size: 23px; line-height: 1.1; letter-spacing: -.02em; }
+    .close {
+      display: grid;
+      place-items: center;
+      width: 32px;
+      height: 32px;
+      border: 0;
+      border-radius: 9px;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 22px;
+    }
+    .close:hover { background: var(--paper-2); color: var(--ink); }
+
+    .actions { display: flex; justify-content: flex-end; gap: 10px; }
+
+    .detail h4 { margin: 0; font-size: 19px; letter-spacing: -.015em; }
+    .detail > p { margin: 8px 0 0; color: var(--muted); }
+    .form-stack { display: grid; gap: 14px; margin-top: 20px; }
+    .field { display: grid; gap: 6px; }
+    .field > span { font-size: 12px; font-weight: 750; }
+    .field select:not(.field__select), .field input[type="text"]:not(.field__input) {
+      width: 100%;
+      min-height: 40px;
+      padding: 8px 11px;
+      border: 1px solid var(--line-strong);
+      border-radius: 9px;
+      background: #fff;
+      color: var(--ink);
+    }
+    .app-select { position: relative; display: grid; gap: 8px; width: 100%; }
+    .app-select__trigger {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      width: 100%;
+      min-height: 54px;
+      padding: 0 16px;
+      border: 1px solid rgba(164, 112, 41, .18);
+      border-radius: var(--radius-ui);
+      background: rgba(255, 251, 246, .96);
+      color: var(--text);
+      cursor: pointer;
+      font: inherit;
+      text-align: left;
+    }
+    .app-select__trigger:hover { border-color: rgba(164, 112, 41, .34); background: var(--surface-strong); }
+    .app-select__trigger:focus-visible,
+    .app-select__trigger[aria-expanded="true"] {
+      border-color: rgba(236, 134, 9, .52);
+      box-shadow: 0 0 0 4px rgba(243, 156, 24, .12);
+      outline: none;
+    }
+    .app-select__value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .app-select__chevron { flex: 0 0 auto; color: var(--link); }
+    .app-select__trigger[aria-expanded="false"] .app-select__chevron {
+      transform: translateY(.06em) rotate(90deg);
+    }
+    .app-select__trigger[aria-expanded="true"] .app-select__chevron {
+      transform: translateY(-.02em) rotate(-90deg);
+    }
+    .app-select__popover {
+      position: absolute;
+      z-index: 20;
+      top: calc(100% + 6px);
+      right: 0;
+      left: 0;
+      display: grid;
+      gap: 4px;
+      padding: 6px;
+      border: 1px solid var(--surface-border);
+      border-radius: var(--radius-ui);
+      background: var(--surface-strong);
+      box-shadow: 0 16px 34px rgba(131, 82, 22, .18), var(--surface-shadow);
+    }
+    .app-select__option {
+      display: flex;
+      align-items: center;
+      width: 100%;
+      min-height: 38px;
+      padding: 0 12px;
+      border: 1px solid transparent;
+      border-radius: calc(var(--radius-ui) - 3px);
+      background: transparent;
+      color: var(--text);
+      cursor: pointer;
+      font: inherit;
+      font-weight: 600;
+      text-align: left;
+    }
+    .app-select__option:hover,
+    .app-select__option:focus-visible { background: rgba(255, 244, 227, .84); outline: none; }
+    .app-select__option[aria-selected="true"] {
+      border-color: var(--accent);
+      background: rgba(236, 152, 39, .12);
+      color: var(--link);
+    }
+    .note { padding: 11px 12px; border: 1px solid #ead6b9; border-radius: 10px; background: #fff8ec; color: #6f5638; font-size: 12px; }
+    .progress { height: 7px; overflow: hidden; border-radius: 999px; background: #eee5da; }
+    .progress span { display: block; width: 58%; height: 100%; background: var(--amber); }
+    .badge { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: 99px; background: #eee8e0; color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+    .format-code { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 9px; background: #eee8df; color: #615447; font-size: 10px; font-weight: 850; }
+    .toast { position: absolute; right: 18px; bottom: 18px; z-index: 4; padding: 10px 13px; border-radius: 9px; background: #2f2924; color: #fff; box-shadow: 0 10px 24px rgba(0,0,0,.2); opacity: 0; transform: translateY(8px); transition: .18s ease; pointer-events: none; }
+    .toast.show { opacity: 1; transform: translateY(0); }
+
+    /* Option 1: Quiet rail */
+    .c1 .dialog {
+      width: 760px !important;
+      min-width: 760px;
+      max-width: 760px;
+    }
+    .c1 .dialog-header h3 {
+      color: var(--title-color);
+      font-family: var(--font-sans);
+      font-size: clamp(2rem, 3vw, 2.8rem);
+      line-height: 1;
+      letter-spacing: var(--heading-letter-spacing);
+    }
+    .c1 .dialog-body { display: grid; grid-template-columns: 250px minmax(0, 1fr); height: 500px; }
+    .c1 .rail { height: 500px; overflow-y: auto; padding: 14px 6px 14px 14px; border-right: 1px solid rgba(164, 112, 41, .18); background: transparent; scrollbar-gutter: stable; }
+    .c1 .group { margin-bottom: 4px; }
+    .c1 .group-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      padding: 8px 10px;
+      border: 0;
+      border-radius: var(--radius-ui);
+      background: none;
+      color: var(--text);
+      cursor: pointer;
+      font: inherit;
+      font-weight: 600;
+      text-align: left;
+    }
+    .c1 .group-toggle:hover { background: rgba(166, 107, 41, .08); color: var(--text); }
+    .c1 .group-toggle.active { color: var(--text); }
+    .c1 .group-options { display: flex; flex-direction: column; gap: 2px; margin: 0 0 6px; padding: 0; list-style: none; }
+    .c1 .option {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      padding: 6px 10px 6px 32px;
+      border: 0;
+      border-radius: var(--radius-ui);
+      background: none;
+      color: var(--muted);
+      cursor: pointer;
+      font: inherit;
+      text-align: left;
+    }
+    .c1 .option:hover { background: rgba(166, 107, 41, .08); color: inherit; }
+    .c1 .option.active { background: rgba(166, 107, 41, .14); color: var(--link); font-weight: 600; }
+    .c1 .detail { display: flex; min-width: 0; height: 500px; overflow: hidden; flex-direction: column; padding: 26px 28px 22px; }
+    .c1 .detail-content { flex: 1 1 auto; min-width: 0; max-width: none; overflow-y: auto; padding-right: 8px; scrollbar-gutter: stable; }
+    .c1 .detail h4 { color: var(--text); font-family: var(--font-sans); font-size: 1.15rem; font-weight: 700; letter-spacing: 0; }
+    .c1 .detail > .detail-content > p { color: var(--muted); line-height: 1.6; }
+    .c1 .field { gap: 8px; }
+    .c1 .field > span { color: var(--text); font-size: 1rem; font-weight: 700; }
+    .c1 .field select:not(.field__select),
+    .c1 .field input[type="text"]:not(.field__input) {
+      min-height: 54px;
+      padding: 0 16px;
+      border: 1px solid rgba(164, 112, 41, .18);
+      border-radius: var(--radius-ui);
+      background: rgba(255, 251, 246, .96);
+      color: var(--text);
+      outline: none;
+    }
+    .c1 .field select:not(.field__select):focus,
+    .c1 .field input[type="text"]:not(.field__input):focus { border-color: rgba(236, 134, 9, .52); box-shadow: 0 0 0 4px rgba(243, 156, 24, .12); }
+    .c1 .note { border-color: var(--message-warning-border); border-radius: var(--radius-ui); background: var(--message-warning-bg); color: var(--message-warning-text); }
+    .c1 .editor-export-modal__wordpress-modes { gap: 8px; }
+    .c1 .editor-export-modal__wordpress-mode.wordpress-choice {
+      align-items: flex-start;
+      gap: 12px;
+      padding: 11px 12px;
+      border: 1px solid var(--surface-border);
+      border-radius: var(--radius-ui);
+      background: var(--panel-surface);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .65);
+      transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+    }
+    .c1 .editor-export-modal__wordpress-mode.wordpress-choice:hover { background: rgba(255, 244, 227, .84); }
+    .c1 .editor-export-modal__wordpress-mode.wordpress-choice.is-selected {
+      border-color: var(--accent);
+      background: rgba(236, 152, 39, .12);
+      box-shadow: 0 0 0 2px rgba(243, 156, 24, .08), inset 0 1px 0 rgba(255, 255, 255, .65);
+    }
+    .c1 .wordpress-choice input[type="radio"] {
+      appearance: none;
+      flex: 0 0 auto;
+      width: 18px;
+      height: 18px;
+      margin: 2px 0 0;
+      border: 1.5px solid rgba(164, 112, 41, .48);
+      border-radius: 50%;
+      background: var(--surface-strong);
+      cursor: pointer;
+    }
+    .c1 .wordpress-choice input[type="radio"]:checked {
+      border-color: var(--accent-strong);
+      background: radial-gradient(circle, var(--accent-strong) 0 4px, var(--surface-strong) 4.5px);
+    }
+    .c1 .wordpress-choice input[type="radio"]:focus-visible {
+      outline: 3px solid rgba(243, 156, 24, .2);
+      outline-offset: 2px;
+    }
+    .c1 .wordpress-choice__copy { display: grid; gap: 2px; min-width: 0; }
+    .c1 .wordpress-choice__title { color: var(--text); font-weight: 700; line-height: 1.3; }
+    .c1 .wordpress-choice__description { color: var(--muted); font-size: .86rem; line-height: 1.4; }
+    .c1 .actions { margin-top: auto; padding-top: 28px; }
+
+    /* Option 2: Format gallery */
+    .c2 .dialog { width: min(1050px, calc(100% - 48px)); }
+    .c2 .mode-tabs { display: flex; gap: 4px; padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--paper-2); }
+    .c2 .mode-tab { padding: 8px 13px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); cursor: pointer; font-weight: 700; }
+    .c2 .mode-tab.active { background: #fff; color: var(--amber-strong); box-shadow: 0 1px 4px rgba(61,41,20,.12); }
+    .c2 .dialog-body { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(300px, .8fr); min-height: 430px; }
+    .c2 .gallery-pane { padding: 22px; border-right: 1px solid var(--line); }
+    .c2 .gallery-pane > p { margin: 0 0 14px; color: var(--muted); }
+    .c2 .format-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; }
+    .c2 .format-card { display: grid; grid-template-columns: 38px 1fr auto; align-items: center; gap: 11px; min-height: 70px; padding: 11px; border: 1px solid var(--line); border-radius: 12px; background: #fff; cursor: pointer; text-align: left; }
+    .c2 .format-card:hover { border-color: #cfaa7c; }
+    .c2 .format-card.active { border-color: #d18a31; background: #fff9f0; box-shadow: 0 0 0 2px rgba(209,138,49,.12); }
+    .c2 .format-name { display: block; font-weight: 760; }
+    .c2 .format-desc { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; }
+    .c2 .checkmark { color: var(--amber-strong); font-weight: 900; }
+    .c2 .detail { display: flex; flex-direction: column; padding: 24px; background: #fffdfa; }
+    .c2 .actions { margin-top: auto; padding-top: 24px; }
+
+    /* Option 3: Guided flow */
+    .c3 .dialog { width: min(910px, calc(100% - 48px)); }
+    .c3 .dialog-body { display: grid; grid-template-columns: minmax(0, .85fr) minmax(340px, 1.15fr); min-height: 465px; }
+    .c3 .steps { padding: 25px 24px; border-right: 1px solid var(--line); background: #f7f3ed; }
+    .c3 .step { display: grid; grid-template-columns: 28px 1fr; gap: 10px; position: relative; padding-bottom: 24px; }
+    .c3 .step:not(:last-child)::after { content: ""; position: absolute; top: 31px; bottom: 3px; left: 13px; width: 1px; background: #d9ccbc; }
+    .c3 .step-number { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid #cab9a5; border-radius: 99px; background: #fff; color: var(--muted); font-size: 12px; font-weight: 800; }
+    .c3 .step.complete .step-number { border-color: var(--green); background: var(--green); color: #fff; }
+    .c3 .step-label { margin-top: 4px; font-weight: 780; }
+    .c3 .step-value { margin-top: 3px; color: var(--muted); font-size: 12px; }
+    .c3 .step-control { margin-top: 10px; }
+    .c3 .step-control select { width: 100%; min-height: 39px; padding: 7px 10px; border: 1px solid var(--line-strong); border-radius: 9px; background: #fff; }
+    .c3 .detail { display: flex; flex-direction: column; padding: 26px 28px 22px; }
+    .c3 .summary { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+    .c3 .summary strong { display: block; }
+    .c3 .summary span:last-child { color: var(--muted); font-size: 12px; }
+    .c3 .actions { margin-top: auto; padding-top: 24px; }
+
+    /* Option 4: Compact workspace */
+    .c4 .dialog { width: min(940px, calc(100% - 48px)); }
+    .c4 .dialog-header { padding-bottom: 16px; }
+    .c4 .workspace { padding: 0 24px 22px; }
+    .c4 .mode-tabs { display: flex; gap: 20px; border-bottom: 1px solid var(--line); }
+    .c4 .mode-tab { position: relative; padding: 13px 2px 11px; border: 0; background: none; color: var(--muted); cursor: pointer; font-weight: 720; }
+    .c4 .mode-tab.active { color: var(--ink); }
+    .c4 .mode-tab.active::after { content: ""; position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; background: var(--amber); }
+    .c4 .format-strip { display: flex; gap: 7px; overflow-x: auto; padding: 16px 0; }
+    .c4 .format-chip { flex: 0 0 auto; padding: 8px 12px; border: 1px solid var(--line); border-radius: 99px; background: #fff; cursor: pointer; }
+    .c4 .format-chip:hover { border-color: #c9a77d; }
+    .c4 .format-chip.active { border-color: #d18a31; background: var(--amber-soft); color: #8b500a; font-weight: 760; }
+    .c4 .detail-card { display: grid; grid-template-columns: minmax(0, 1fr) 285px; gap: 28px; min-height: 315px; padding: 22px; border: 1px solid var(--line); border-radius: 14px; background: #fff; }
+    .c4 .detail-side { padding-left: 24px; border-left: 1px solid var(--line); }
+    .c4 .actions { margin-top: 20px; }
+    .c4 .mini-summary { margin: 0 0 14px; color: var(--muted); font-size: 12px; }
+
+    .page-footer { max-width: 1180px; margin: -30px auto 70px; padding: 0 28px; color: var(--muted); }
+
+    @media (max-width: 900px) {
+      .jump-grid { grid-template-columns: repeat(2, 1fr); }
+      .concept-copy { grid-template-columns: 1fr; gap: 12px; }
+      .stage { min-height: 860px; }
+      .dialog { width: calc(100% - 26px) !important; }
+      .c1 .stage { justify-items: start; overflow-x: auto; padding: 13px; }
+      .c1 .dialog-body { grid-template-columns: 220px minmax(0, 1fr); }
+      .c1 .detail { padding: 22px; }
+      .c2 .dialog-body, .c3 .dialog-body { grid-template-columns: 1fr; }
+      .c2 .gallery-pane, .c3 .steps { border-right: 0; border-bottom: 1px solid var(--line); }
+      .c2 .gallery-pane { max-height: 265px; overflow: auto; }
+      .c3 .steps { display: grid; grid-template-columns: repeat(2,1fr); padding-bottom: 8px; }
+      .c3 .step::after { display: none; }
+      .c4 .detail-card { grid-template-columns: 1fr; }
+      .c4 .detail-side { padding: 20px 0 0; border-left: 0; border-top: 1px solid var(--line); }
+    }
+    @media (max-width: 560px) {
+      .page-header { padding-top: 36px; }
+      .jump-grid { grid-template-columns: 1fr; }
+      .concept, .jump-grid, .page-header { padding-left: 16px; padding-right: 16px; }
+      .stage { min-height: 950px; border-radius: 15px; }
+      .dialog-header { padding: 19px; }
+      .c2 .format-grid { grid-template-columns: 1fr; }
+      .c3 .steps { grid-template-columns: 1fr; }
+      .actions { flex-direction: column-reverse; }
+      .actions .button { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <header class="page-header">
+    <p class="kicker">Gnosis TMS · Design study</p>
+    <h1>Four calm ways to make export feel easier.</h1>
+    <p class="intro">Each option keeps the current destinations, formats, conditional settings, and actions. Click through the controls inside every mockup to compare the interaction model—not just the styling.</p>
+  </header>
+
+  <nav class="jump-grid" aria-label="Export dialog concepts">
+    <a class="jump-card" href="#option-1"><span class="jump-number">01</span><span class="jump-title">Quiet rail</span><span class="jump-meta">Familiar · Destinations stay visible</span></a>
+    <a class="jump-card" href="#option-2"><span class="jump-number">02</span><span class="jump-title">Format gallery</span><span class="jump-meta">Scannable · Most visual</span></a>
+    <a class="jump-card" href="#option-3"><span class="jump-number">03</span><span class="jump-title">Guided flow</span><span class="jump-meta">Explicit · Best for new users</span></a>
+    <a class="jump-card" href="#option-4"><span class="jump-number">04</span><span class="jump-title">Compact workspace</span><span class="jump-meta">Efficient · Best for repeat use</span></a>
+  </nav>
+
+  <main>
+    <section class="concept c1" id="option-1" data-concept="1">
+      <div class="concept-copy">
+        <div><p class="kicker">Option 1 · Revised</p><h2>Quiet rail</h2><p>A cleaner version of the original two-pane structure. One destination expands at a time, so File, Clipboard, and Transfer always remain visible while the right pane holds the selected format's settings.</p></div>
+        <div class="best-for"><strong>Best fit if:</strong> you want the least behavioral change and the easiest path from the current implementation.</div>
+      </div>
+      <div class="stage"><div class="app-ghost"><span class="ghost-bar"></span><span class="ghost-side"></span><span class="ghost-line a"></span><span class="ghost-line b"></span><span class="ghost-line c"></span><span class="ghost-line d"></span><span class="ghost-line e"></span></div><div class="dialog-root"></div><div class="toast">Prototype action complete</div></div>
+    </section>
+
+    <section class="concept c2" id="option-2" data-concept="2">
+      <div class="concept-copy">
+        <div><p class="kicker">Option 2</p><h2>Format gallery</h2><p>Destination tabs narrow the choice, then clear format cards provide recognition and a short explanation. Settings remain visible in a stable inspector on the right.</p></div>
+        <div class="best-for"><strong>Best fit if:</strong> export options are discoverability-sensitive and users benefit from seeing what each format is for.</div>
+      </div>
+      <div class="stage"><div class="app-ghost"><span class="ghost-bar"></span><span class="ghost-side"></span><span class="ghost-line a"></span><span class="ghost-line b"></span><span class="ghost-line c"></span><span class="ghost-line d"></span><span class="ghost-line e"></span></div><div class="dialog-root"></div><div class="toast">Prototype action complete</div></div>
+    </section>
+
+    <section class="concept c3" id="option-3" data-concept="3">
+      <div class="concept-copy">
+        <div><p class="kicker">Option 3</p><h2>Guided flow</h2><p>The choice is framed as three calm decisions: destination, format, settings. Everything still happens in one dialog—this is structured guidance, not a multi-screen wizard.</p></div>
+        <div class="best-for"><strong>Best fit if:</strong> people export infrequently, or the growing set of formats currently feels like too much at once.</div>
+      </div>
+      <div class="stage"><div class="app-ghost"><span class="ghost-bar"></span><span class="ghost-side"></span><span class="ghost-line a"></span><span class="ghost-line b"></span><span class="ghost-line c"></span><span class="ghost-line d"></span><span class="ghost-line e"></span></div><div class="dialog-root"></div><div class="toast">Prototype action complete</div></div>
+    </section>
+
+    <section class="concept c4" id="option-4" data-concept="4">
+      <div class="concept-copy">
+        <div><p class="kicker">Option 4</p><h2>Compact workspace</h2><p>Top tabs and horizontal format chips use less space and keep the action area close. It feels more like a focused tool panel than a settings dialog.</p></div>
+        <div class="best-for"><strong>Best fit if:</strong> experienced translators use export often and quick switching matters more than format explanations.</div>
+      </div>
+      <div class="stage"><div class="app-ghost"><span class="ghost-bar"></span><span class="ghost-side"></span><span class="ghost-line a"></span><span class="ghost-line b"></span><span class="ghost-line c"></span><span class="ghost-line d"></span><span class="ghost-line e"></span></div><div class="dialog-root"></div><div class="toast">Prototype action complete</div></div>
+    </section>
+  </main>
+
+  <footer class="page-footer">All four concepts show the PDF state by default. Try WordPress.com and Gnosis TMS team under Transfer, or the clipboard formats, to see the conditional panes.</footer>
+
+  <script>
+    const groups = [
+      { id: 'file', label: 'Save to file', short: 'File', helper: 'Download a reusable file', options: [
+        ['html', 'HTML', 'Web-ready document'], ['pdf', 'PDF', 'Fixed-layout print file'], ['xlsx', 'XLSX', 'All language columns'],
+        ['docx', 'DOCX', 'Microsoft Word document'], ['txt', 'TXT', 'Unformatted text'], ['rtf', 'RTF', 'Rich text document'], ['md', 'Markdown', 'Portable plain-text markup']
+      ]},
+      { id: 'copy', label: 'Copy and paste', short: 'Clipboard', helper: 'Paste into another app', options: [
+        ['text', 'Plain text', 'Formatting removed'], ['html', 'HTML', 'Formatting preserved'], ['vellum', 'Vellum', 'Vellum-compatible content'], ['docx-copy', 'DOCX', 'Coming soon', true]
+      ]},
+      { id: 'link', label: 'Link and transfer', short: 'Transfer', helper: 'Send content somewhere else', options: [
+        ['wordpress', 'WordPress.com', 'Create or overwrite a post'], ['team', 'Gnosis TMS team', 'Copy into another project']
+      ]}
+    ];
+
+    const paperSizeOptions = [
+      { value: 'us-letter', label: 'US Letter (8.5 × 11 in)' },
+      { value: 'a4', label: 'A4 (210 × 297 mm)' },
+      { value: 'a5', label: 'A5 (148 × 210 mm)' },
+    ];
+    const teamOptions = [
+      { value: 'gnosis', label: 'Gnosis Publishing' },
+      { value: 'partners', label: 'Localization Partners' },
+    ];
+    const projectOptions = [
+      { value: 'summer', label: 'Summer catalog' },
+      { value: 'website', label: 'Website relaunch' },
+    ];
+
+    const state = new Map();
+    document.querySelectorAll('[data-concept]').forEach(section => {
+      state.set(section.dataset.concept, {
+        instanceId: section.dataset.concept,
+        mode: 'file',
+        option: 'pdf',
+        expandedMode: 'file',
+        openDropdown: null,
+        wordpressMode: 'create',
+        dropdownValues: {
+          paperSize: 'us-letter',
+          team: 'gnosis',
+          project: 'summer',
+        },
+      });
+      render(section);
+    });
+
+    function currentGroup(s) { return groups.find(group => group.id === s.mode); }
+    function currentOption(s) { return currentGroup(s).options.find(option => option[0] === s.option) || currentGroup(s).options[0]; }
+    function optionCode(option) {
+      const value = option[1].replace('.com', '').replace('Gnosis TMS ', '').replace('Plain ', '');
+      return value.length > 5 ? value.slice(0, 4).toUpperCase() : value.toUpperCase();
+    }
+    function collapseChevron(isOpen) {
+      return `<span class="chevron-icon ${isOpen ? 'chevron-icon--down' : ''} collapse-chevron ${isOpen ? 'is-open' : ''}" aria-hidden="true"><svg viewBox="0 0 12 12" focusable="false" aria-hidden="true"><path d="M3 2 7 6 3 10"></path></svg></span>`;
+    }
+    function selectChevron() {
+      return `<span class="chevron-icon app-select__chevron" aria-hidden="true"><svg viewBox="0 0 12 12" focusable="false" aria-hidden="true"><path d="M3 2 7 6 3 10"></path></svg></span>`;
+    }
+    function customDropdown(s, { id, label, options }) {
+      const value = s.dropdownValues[id];
+      const selected = options.find(option => option.value === value) || options[0];
+      const isOpen = s.openDropdown === id;
+      const domId = `concept-${s.instanceId}-${id}`;
+      return `
+        <div class="field app-select" data-dropdown="${id}">
+          <span class="field__label" id="${domId}-label">${label}</span>
+          <button
+            type="button"
+            class="app-select__trigger"
+            data-dropdown-toggle="${id}"
+            aria-haspopup="listbox"
+            aria-expanded="${isOpen}"
+            aria-labelledby="${domId}-label ${domId}-value"
+          >
+            <span class="app-select__value" id="${domId}-value">${selected.label}</span>
+            ${selectChevron()}
+          </button>
+          ${isOpen ? `
+            <div class="app-select__popover" role="listbox" aria-labelledby="${domId}-label">
+              ${options.map(option => `
+                <button
+                  type="button"
+                  class="app-select__option"
+                  role="option"
+                  tabindex="-1"
+                  aria-selected="${option.value === selected.value}"
+                  data-dropdown-option="${id}"
+                  data-dropdown-value="${option.value}"
+                >${option.label}</button>
+              `).join('')}
+            </div>
+          ` : ''}
+        </div>
+      `;
+    }
+    function header() {
+      return `<header class="dialog-header"><div><h3>Export chapter</h3></div><button class="close" aria-label="Close export dialog">×</button></header>`;
+    }
+    function tabs(s) {
+      return `<div class="mode-tabs" role="tablist">${groups.map(group => `<button class="mode-tab ${group.id === s.mode ? 'active' : ''}" data-mode="${group.id}" role="tab" aria-selected="${group.id === s.mode}">${group.short}</button>`).join('')}</div>`;
+    }
+    function actions(s, option) {
+      const unavailable = !!option[3];
+      const label = unavailable
+        ? 'Coming soon'
+        : s.mode === 'copy'
+          ? 'Copy'
+          : option[0] === 'team'
+            ? 'Copy chapter'
+            : option[0] === 'wordpress'
+              ? s.wordpressMode === 'overwrite' ? 'Overwrite post' : 'Export draft'
+              : 'Save';
+      return `<div class="actions"><button class="button button--compact button--secondary">Cancel</button><button class="button button--compact button--primary" data-submit ${unavailable ? 'disabled' : ''}>${label}</button></div>`;
+    }
+    function detailMarkup(s, compact = false) {
+      const option = currentOption(s);
+      if (option[3]) return `<div class="detail-content"><h4>DOCX clipboard</h4><p>This export option is not available yet.</p><div class="form-stack"><div class="note">The option remains visible so the prototype matches the current export catalog.</div></div></div>`;
+      if (option[0] === 'wordpress') {
+        const createMode = s.wordpressMode === 'create';
+        const modeName = `wordpress-export-mode-${s.instanceId}`;
+        const modeDetail = createMode
+          ? `
+            <label class="field editor-export-modal__wordpress-field">
+              <span class="field__label">Post title</span>
+              <input class="field__input" type="text" value="The Art of Translation">
+            </label>
+          `
+          : `
+            <div class="editor-export-modal__wordpress-search">
+              <input class="field__input" type="text" placeholder="Search posts or paste URL">
+              <button type="button" class="button button--compact button--secondary">Search</button>
+            </div>
+            <p class="modal__supporting">Search for the post to overwrite, then choose it from the results.</p>
+          `;
+        return `
+          <div class="detail-content">
+            <h4>WordPress.com</h4>
+            <div class="form-stack">
+              <p class="modal__supporting">
+                Connected to <strong>example.wordpress.com</strong>.
+                <button type="button" class="editor-export-modal__wordpress-disconnect">Disconnect</button>
+              </p>
+              <div class="editor-export-modal__wordpress-modes">
+                <label class="editor-export-modal__wordpress-mode wordpress-choice ${createMode ? 'is-selected' : ''}">
+                  <input type="radio" name="${modeName}" value="create" data-wordpress-mode ${createMode ? 'checked' : ''}>
+                  <span class="wordpress-choice__copy">
+                    <span class="wordpress-choice__title">Create a new draft post</span>
+                    <span class="wordpress-choice__description">Publish it from WordPress when you are ready.</span>
+                  </span>
+                </label>
+                <label class="editor-export-modal__wordpress-mode wordpress-choice ${createMode ? '' : 'is-selected'}">
+                  <input type="radio" name="${modeName}" value="overwrite" data-wordpress-mode ${createMode ? '' : 'checked'}>
+                  <span class="wordpress-choice__copy">
+                    <span class="wordpress-choice__title">Overwrite an existing post</span>
+                    <span class="wordpress-choice__description">Replace the content of a post you choose.</span>
+                  </span>
+                </label>
+              </div>
+              ${modeDetail}
+            </div>
+          </div>
+        `;
+      }
+      if (option[0] === 'team') return `<div class="detail-content"><h4>Gnosis TMS team</h4><p>Copy every language and image into a project on another team.</p><div class="form-stack">${customDropdown(s, { id: 'team', label: 'Team', options: teamOptions })}${customDropdown(s, { id: 'project', label: 'Project', options: projectOptions })}<label class="field"><span class="field__label">File name</span><input class="field__input" type="text" value="The Art of Translation"></label></div></div>`;
+      if (s.mode === 'copy') return `<div class="detail-content"><h4>${option[1]}</h4><p>Copy ${option[1].toLowerCase()} data for pasting into another app.</p><div class="form-stack">${['text','vellum'].includes(option[0]) ? `<label class="field__checkbox"><input type="checkbox" checked><span>Show links in footnotes as plain text</span></label><label class="field__checkbox"><input type="checkbox" checked><span>Omit custom HTML</span></label>` : '<div class="note">Formatting and links will be preserved on the clipboard.</div>'}</div></div>`;
+      const isPdf = option[0] === 'pdf';
+      const omit = ['pdf','xlsx','docx','txt','rtf','md'].includes(option[0]);
+      const links = ['pdf','docx','rtf'].includes(option[0]);
+      const fileTypeLabel = option[0] === 'md' ? 'Markdown (.md)' : option[1];
+      return `<div class="detail-content"><h4>${option[1]}</h4><p>Save this chapter as a ${fileTypeLabel} file.</p><div class="form-stack">${isPdf ? customDropdown(s, { id: 'paperSize', label: 'Paper size', options: paperSizeOptions }) : ''}${links ? '<label class="field__checkbox"><input type="checkbox" checked><span>Show links in footnotes as plain text</span></label>' : ''}${omit ? '<label class="field__checkbox"><input type="checkbox" checked><span>Omit custom HTML</span></label>' : ''}${isPdf && compact ? '<div><div class="mini-summary">Ready to export</div><div class="progress"><span></span></div></div>' : ''}</div></div>`;
+    }
+
+    function railLayout(s) {
+      const option = currentOption(s);
+      return `${header()}<div class="dialog-body"><aside class="rail">${groups.map(group => {
+        const expanded = group.id === s.expandedMode;
+        return `<div class="group"><button class="group-toggle ${expanded ? 'active' : ''}" data-mode="${group.id}" aria-expanded="${expanded}">${collapseChevron(expanded)}<span>${group.label}</span></button>${expanded ? `<ul class="group-options">${group.options.map(item => `<li><button class="option ${item[0] === s.option ? 'active' : ''}" data-format="${group.id}:${item[0]}"><span>${item[1]}</span>${item[3] ? '<span class="badge">Soon</span>' : ''}</button></li>`).join('')}</ul>` : ''}</div>`;
+      }).join('')}</aside><section class="detail">${detailMarkup(s)}${actions(s, option)}</section></div>`;
+    }
+    function galleryLayout(s) {
+      const group = currentGroup(s), option = currentOption(s);
+      return `${header()}${tabs(s)}<div class="dialog-body"><section class="gallery-pane"><p>${group.helper}</p><div class="format-grid">${group.options.map(item => `<button class="format-card ${item[0] === s.option ? 'active' : ''}" data-format="${s.mode}:${item[0]}"><span class="format-code">${optionCode(item)}</span><span><span class="format-name">${item[1]}</span><span class="format-desc">${item[2]}</span></span>${item[3] ? '<span class="badge">Soon</span>' : item[0] === s.option ? '<span class="checkmark">✓</span>' : ''}</button>`).join('')}</div></section><section class="detail">${detailMarkup(s)}${actions(s, option)}</section></div>`;
+    }
+    function guidedLayout(s) {
+      const group = currentGroup(s), option = currentOption(s);
+      return `${header()}<div class="dialog-body"><aside class="steps"><div class="step complete"><span class="step-number">✓</span><div><div class="step-label">Destination</div><div class="step-value">Where should it go?</div><div class="step-control"><select data-guide-mode>${groups.map(g => `<option value="${g.id}" ${g.id === s.mode ? 'selected' : ''}>${g.label}</option>`).join('')}</select></div></div></div><div class="step complete"><span class="step-number">✓</span><div><div class="step-label">Format</div><div class="step-value">What should we create?</div><div class="step-control"><select data-guide-format>${group.options.map(item => `<option value="${item[0]}" ${item[0] === s.option ? 'selected' : ''}>${item[1]}${item[3] ? ' — coming soon' : ''}</option>`).join('')}</select></div></div></div><div class="step"><span class="step-number">3</span><div><div class="step-label">Settings</div><div class="step-value">Review the details and export.</div></div></div></aside><section class="detail"><div class="summary"><span class="format-code">${optionCode(option)}</span><span><strong>${option[1]}</strong><span>${group.label}</span></span></div>${detailMarkup(s)}${actions(s, option)}</section></div>`;
+    }
+    function compactLayout(s) {
+      const group = currentGroup(s), option = currentOption(s);
+      return `${header()}<div class="workspace">${tabs(s)}<div class="format-strip">${group.options.map(item => `<button class="format-chip ${item[0] === s.option ? 'active' : ''}" data-format="${s.mode}:${item[0]}">${item[1]} ${item[3] ? '· soon' : ''}</button>`).join('')}</div><div class="detail-card"><section class="detail">${detailMarkup(s, true)}</section><aside class="detail-side"><p class="mini-summary">Export summary</p><h4 style="margin:0">${option[1]}</h4><p style="margin:5px 0 0;color:var(--muted)">${group.helper}</p><div class="form-stack"><div class="note">The current chapter and selected language will be used.</div></div>${actions(s, option)}</aside></div></div>`;
+    }
+    function render(section) {
+      const s = state.get(section.dataset.concept);
+      const root = section.querySelector('.dialog-root');
+      const layouts = { '1': railLayout, '2': galleryLayout, '3': guidedLayout, '4': compactLayout };
+      const appModalClasses = section.dataset.concept === '1'
+        ? ' card modal-card modal-card--editor-export'
+        : '';
+      root.innerHTML = `<section class="dialog${appModalClasses}" role="dialog" aria-modal="true" aria-label="Export chapter redesign option ${section.dataset.concept}">${layouts[section.dataset.concept](s)}</section>`;
+    }
+
+    document.addEventListener('click', event => {
+      const section = event.target.closest('[data-concept]');
+      if (!section) return;
+      const s = state.get(section.dataset.concept);
+      const dropdownToggle = event.target.closest('[data-dropdown-toggle]');
+      const dropdownOption = event.target.closest('[data-dropdown-option]');
+      if (dropdownToggle) {
+        const dropdownId = dropdownToggle.dataset.dropdownToggle;
+        const willOpen = s.openDropdown !== dropdownId;
+        s.openDropdown = willOpen ? dropdownId : null;
+        render(section);
+        window.requestAnimationFrame(() => {
+          const target = willOpen
+            ? section.querySelector(`[data-dropdown-option="${dropdownId}"][aria-selected="true"]`)
+            : section.querySelector(`[data-dropdown-toggle="${dropdownId}"]`);
+          target?.focus();
+        });
+        return;
+      }
+      if (dropdownOption) {
+        const dropdownId = dropdownOption.dataset.dropdownOption;
+        s.dropdownValues[dropdownId] = dropdownOption.dataset.dropdownValue;
+        s.openDropdown = null;
+        render(section);
+        window.requestAnimationFrame(() => section.querySelector(`[data-dropdown-toggle="${dropdownId}"]`)?.focus());
+        return;
+      }
+      if (s.openDropdown && !event.target.closest('[data-dropdown]')) {
+        s.openDropdown = null;
+        render(section);
+      }
+      const modeButton = event.target.closest('[data-mode]');
+      const formatButton = event.target.closest('[data-format]');
+      if (modeButton) {
+        const nextMode = modeButton.dataset.mode;
+        s.openDropdown = null;
+        if (section.dataset.concept === '1' && s.expandedMode === nextMode) {
+          s.expandedMode = null;
+        } else {
+          s.expandedMode = nextMode;
+          s.mode = nextMode;
+          s.option = currentGroup(s).options[0][0];
+        }
+        render(section);
+      }
+      if (formatButton) {
+        const [mode, option] = formatButton.dataset.format.split(':');
+        s.mode = mode; s.option = option; s.expandedMode = mode; s.openDropdown = null; render(section);
+      }
+      if (event.target.closest('[data-submit]')) {
+        const toast = section.querySelector('.toast');
+        toast.classList.add('show');
+        window.setTimeout(() => toast.classList.remove('show'), 1400);
+      }
+    });
+    document.addEventListener('keydown', event => {
+      const section = event.target.closest('[data-concept]');
+      if (!section) return;
+      const s = state.get(section.dataset.concept);
+      const trigger = event.target.closest('[data-dropdown-toggle]');
+      const option = event.target.closest('[data-dropdown-option]');
+      if (trigger && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+        event.preventDefault();
+        const dropdownId = trigger.dataset.dropdownToggle;
+        s.openDropdown = dropdownId;
+        render(section);
+        window.requestAnimationFrame(() => {
+          const options = Array.from(section.querySelectorAll(`[data-dropdown-option="${dropdownId}"]`));
+          const selectedIndex = options.findIndex(item => item.getAttribute('aria-selected') === 'true');
+          const targetIndex = event.key === 'ArrowUp' ? options.length - 1 : Math.max(0, selectedIndex);
+          options[targetIndex]?.focus();
+        });
+        return;
+      }
+      if (!option) return;
+      const dropdownId = option.dataset.dropdownOption;
+      const list = option.closest('[role="listbox"]');
+      const options = Array.from(list.querySelectorAll('[data-dropdown-option]'));
+      const index = options.indexOf(option);
+      let targetIndex = null;
+      if (event.key === 'ArrowDown') targetIndex = Math.min(options.length - 1, index + 1);
+      if (event.key === 'ArrowUp') targetIndex = Math.max(0, index - 1);
+      if (event.key === 'Home') targetIndex = 0;
+      if (event.key === 'End') targetIndex = options.length - 1;
+      if (targetIndex !== null) {
+        event.preventDefault();
+        options[targetIndex]?.focus();
+        return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        s.openDropdown = null;
+        render(section);
+        window.requestAnimationFrame(() => section.querySelector(`[data-dropdown-toggle="${dropdownId}"]`)?.focus());
+      }
+    });
+    document.addEventListener('change', event => {
+      const section = event.target.closest('[data-concept]');
+      if (!section) return;
+      const s = state.get(section.dataset.concept);
+      if (event.target.matches('[data-wordpress-mode]')) {
+        s.wordpressMode = event.target.value;
+        render(section);
+        return;
+      }
+      if (event.target.matches('[data-guide-mode]')) { s.mode = event.target.value; s.option = currentGroup(s).options[0][0]; render(section); }
+      if (event.target.matches('[data-guide-format]')) { s.option = event.target.value; render(section); }
+    });
+  </script>
+</body>
+</html>
