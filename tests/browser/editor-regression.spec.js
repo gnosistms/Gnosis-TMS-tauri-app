@@ -5296,18 +5296,16 @@ test.describe("editor regressions", () => {
       return mockState?.histories?.["fixture-chapter::fixture-row-0001::vi"]?.length ?? 0;
     }).toBeGreaterThan(1);
 
-    await activateMainEditorField(page, "fixture-row-0001", "vi");
+    const activeField = await activateMainEditorField(page, "fixture-row-0001", "vi");
     await page.getByRole("button", { name: "History" }).click();
     await expect(page.locator(".history-tabs__item--active")).toHaveText("History");
-    const historyGroupToggle = page.locator(".history-group__toggle").first();
-    await expect(historyGroupToggle).toBeVisible();
-    await historyGroupToggle.click();
+    await expect(activeField).toBeFocused();
 
     const restoreButton = page.getByRole("button", { name: "Restore" }).first();
     await restoreButton.click();
 
-    const restoredField = await activateMainEditorField(page, "fixture-row-0001", "vi");
-    await expect(restoredField).toHaveValue("alpha 0001 target text");
+    await expect(activeField).toBeFocused();
+    await expect(activeField).toHaveValue("alpha 0001 target text");
     await expect.poll(async () => {
       const mockState = await readMockTauriState(page);
       return mockState?.histories?.["fixture-chapter::fixture-row-0001::vi"]?.[0]?.operationType ?? null;
