@@ -175,6 +175,7 @@ function installProjectDiscoveryInvokeMock({
   repairResults = [{ issues: [], autoRepairedCount: 0 }],
   repoSyncSnapshots = [],
   failFirstProjectMetadataRead = false,
+  metadataSyncPromise = Promise.resolve(null),
 } = {}) {
   let projectMetadataReads = 0;
   let localProjectFileReads = 0;
@@ -210,7 +211,9 @@ function installProjectDiscoveryInvokeMock({
       };
     }
     if (command === "sync_local_team_metadata_repo" || command === "ensure_local_team_metadata_repo") {
-      return null;
+      return command === "sync_local_team_metadata_repo"
+        ? metadataSyncPromise
+        : null;
     }
     if (command === "inspect_and_migrate_local_repo_bindings") {
       const index = Math.min(repairReads, repairResults.length - 1);
@@ -565,6 +568,98 @@ test("project loading renders local metadata and files before remote refresh fin
     event.type === "remoteSnapshot"
     && event.snapshot.items.some((project) => project.title === "Remote Project")
   ));
+});
+
+test("authoritative project discovery rereads metadata after the shared sync completes", async () => {
+  setupProjectDiscoveryFlowTest();
+  const metadataSync = deferred();
+  installProjectDiscoveryInvokeMock({
+    localMetadata: [projectMetadataRecord({
+      title: "Stale Deleted Project",
+      lifecycleState: "softDeleted",
+      remoteState: "deleted",
+      recordState: "live",
+    })],
+    remoteMetadata: [projectMetadataRecord({
+      title: "Stale Deleted Project",
+      lifecycleState: "softDeleted",
+      remoteState: "deleted",
+      recordState: "tombstone",
+    })],
+    remoteProjectsPromise: Promise.resolve([]),
+    localProjectFiles: [],
+    metadataSyncPromise: metadataSync.promise,
+  });
+
+  const loadPromise = loadProjectSnapshotForTeam(
+    () => {},
+    "team-1",
+    projectDiscoveryOptions(),
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(state.deletedProjects.map((project) => project.title), ["Stale Deleted Project"]);
+
+  metadataSync.resolve(null);
+  await loadPromise;
+
+  assert.deepEqual(state.projects, []);
+  assert.deepEqual(state.deletedProjects, []);
+});
+
+test("new-member bootstrap marks files loading until the post-sync listing is persisted", async () => {
+  setupProjectDiscoveryFlowTest();
+  const progressEvents = [];
+  const persistedSnapshots = [];
+  installProjectDiscoveryInvokeMock({
+    localMetadata: [],
+    remoteMetadata: [projectMetadataRecord({ title: "Remote Project" })],
+    remoteProjectsPromise: Promise.resolve([{
+      id: "project-1",
+      name: "project-repo",
+      title: "Remote Project",
+      fullName: "team/project-repo",
+      defaultBranchName: "main",
+      defaultBranchHeadOid: "remote-head",
+    }]),
+    localProjectFilesResults: [[{
+      projectId: "project-1",
+      repoName: "project-repo",
+      chapters: [{ id: "chapter-1", name: "Chapter", status: "active" }],
+    }]],
+    repoSyncSnapshots: [{
+      projectId: "project-1",
+      repoName: "project-repo",
+      status: "upToDate",
+      message: null,
+    }],
+  });
+
+  await loadProjectSnapshotForTeam(
+    () => {},
+    "team-1",
+    projectDiscoveryOptions({
+      onProjectLoadProgress: (event) => progressEvents.push(event),
+      persistProjectsForTeam: () => {
+        persistedSnapshots.push(structuredClone({
+          projects: state.projects,
+          deletedProjects: state.deletedProjects,
+        }));
+      },
+    }),
+  );
+
+  const remoteSnapshot = progressEvents.find((event) => event.type === "remoteSnapshot");
+  assert.equal(remoteSnapshot?.snapshot.items[0]?.fileLoadState, "loading");
+  assert.deepEqual(remoteSnapshot?.snapshot.items[0]?.chapters, []);
+  assert.equal(state.projects[0]?.fileLoadState, "ready");
+  assert.deepEqual(state.projects[0]?.chapters.map((chapter) => chapter.id), ["chapter-1"]);
+  assert.equal(persistedSnapshots.length, 1);
+  assert.equal(persistedSnapshots[0].projects[0]?.fileLoadState, "ready");
+  assert.deepEqual(
+    persistedSnapshots[0].projects[0]?.chapters.map((chapter) => chapter.id),
+    ["chapter-1"],
+  );
 });
 
 test("direct project snapshot loading does not own projects page sync state", async () => {

@@ -86,6 +86,34 @@ test("project cache strips legacy persisted top-level lifecycle UI intent fields
   removeStoredProjectDataForTeam(team);
 });
 
+test("project cache never persists incomplete file-loading states", () => {
+  setActiveStorageLogin("tester");
+
+  saveStoredProjectsForTeam(team, {
+    projects: [
+      project({
+        id: "loading-project",
+        name: "loading-project",
+        fileLoadState: "loading",
+      }),
+      project({
+        id: "ready-project",
+        name: "ready-project",
+        fileLoadState: "ready",
+      }),
+    ],
+    deletedProjects: [],
+  });
+
+  const stored = readPersistentValue(STORAGE_KEY, {});
+  assert.equal(stored["installation:42"].projects[0]?.fileLoadState, undefined);
+  assert.equal(stored["installation:42"].projects[1]?.fileLoadState, "ready");
+
+  const loaded = loadStoredProjectsForTeam(team);
+  assert.equal(loaded.projects[0]?.fileLoadState, undefined);
+  assert.equal(loaded.projects[1]?.fileLoadState, "ready");
+});
+
 test("project cache does not persist chapter lifecycle UI intent fields", () => {
   setActiveStorageLogin("tester");
 

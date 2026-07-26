@@ -18,6 +18,8 @@ const ITEM_TYPE_CLASS = {
   "project-header": "header",
   "project-file": "file",
   "project-empty-body": "empty-body",
+  "project-files-loading": "empty-body",
+  "project-files-error": "empty-body",
   "deleted-toggle": "deleted-toggle",
   "deleted-clear": "deleted-clear",
   "deleted-file": "deleted-file",
@@ -42,6 +44,10 @@ function renderItemContent(item, derived) {
       return renderActiveChapterRow(item.chapter, derived.fileRowOptions);
     case "project-empty-body":
       return "";
+    case "project-files-loading":
+      return '<p class="list-row__meta" role="status" aria-live="polite">Loading files…</p>';
+    case "project-files-error":
+      return '<p class="list-row__meta" role="status">Files could not be loaded.</p>';
     case "deleted-toggle":
       return renderDeletedFilesToggle(item.project, derived.fileRowOptions);
     case "deleted-clear":
