@@ -1,4 +1,6 @@
 import { escapeHtml } from "../lib/ui.js";
+import { resolveEffectiveAiActionSelection } from "./ai-action-config.js";
+import { normalizeAiProviderId } from "./ai-provider-config.js";
 import { normalizeEditorFieldImage } from "./editor-images.js";
 import { findEditorRowById } from "./editor-utils.js";
 import { state } from "./state.js";
@@ -8,6 +10,19 @@ const menuInvokers = new WeakMap();
 
 function languageDisplayName(language) {
   return String(language?.name ?? "").trim() || String(language?.code ?? "").trim();
+}
+
+export function editorImageCaptionTranslationIsAvailable(aiSettings = state.aiSettings) {
+  const selection = resolveEffectiveAiActionSelection(
+    aiSettings?.actionConfig,
+    "translate1",
+  );
+  const providerId = normalizeAiProviderId(selection?.providerId);
+  const modelId = String(selection?.modelId ?? "").trim();
+  return Boolean(
+    modelId
+    && aiSettings?.teamShared?.secrets?.providers?.[providerId]?.configured === true
+  );
 }
 
 export function dismissEditorImageContextMenu(root = document, { restoreFocus = false } = {}) {
@@ -43,6 +58,10 @@ export function renderEditorImageContextMenuItems(rowId, sourceLanguageCode) {
   const languages = Array.isArray(state.editorChapter?.languages)
     ? state.editorChapter.languages
     : [];
+  const sourceCaption = String(row.imageCaptions?.[sourceLanguageCode] ?? "").trim();
+  const canTranslateCaption =
+    Boolean(sourceCaption)
+    && editorImageCaptionTranslationIsAvailable();
   for (const language of languages) {
     const destinationLanguageCode = String(language?.code ?? "").trim();
     if (!destinationLanguageCode || destinationLanguageCode === sourceLanguageCode) {
@@ -60,6 +79,20 @@ export function renderEditorImageContextMenuItems(rowId, sourceLanguageCode) {
         data-destination-language-code="${escapeHtml(destinationLanguageCode)}"
       >Duplicate to ${escapeHtml(languageDisplayName(language))}</button>
     `);
+    if (canTranslateCaption) {
+      items.push(`
+        <button
+          class="editor-image-context-menu__item"
+          type="button"
+          role="menuitem"
+          tabindex="-1"
+          data-action="duplicate-editor-language-image-with-caption"
+          data-row-id="${escapeHtml(rowId)}"
+          data-source-language-code="${escapeHtml(sourceLanguageCode)}"
+          data-destination-language-code="${escapeHtml(destinationLanguageCode)}"
+        >Duplicate to ${escapeHtml(languageDisplayName(language))} with caption</button>
+      `);
+    }
   }
 
   return items.join("");

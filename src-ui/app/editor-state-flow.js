@@ -51,6 +51,7 @@ import {
   createEditorImageCaptionEditorState,
   createEditorImageEditorState,
   createEditorImageDuplicateOverwriteModalState,
+  createEditorImageCaptionTranslationModalState,
   createEditorImageInvalidFileModalState,
   createEditorInsertLinkModalState,
   createWordPressExportSuccessModalState,
@@ -342,6 +343,13 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
           ...previousEditorChapter.imageDuplicateOverwriteModal,
         }
         : createEditorImageDuplicateOverwriteModalState(),
+    imageCaptionTranslationModal:
+      isSameChapter && previousEditorChapter?.imageCaptionTranslationModal?.isOpen === true
+        ? {
+          ...createEditorImageCaptionTranslationModalState(),
+          ...previousEditorChapter.imageCaptionTranslationModal,
+        }
+        : createEditorImageCaptionTranslationModalState(),
     replaceUndoModal:
       isSameChapter && previousEditorChapter?.replaceUndoModal?.isOpen === true
         ? {

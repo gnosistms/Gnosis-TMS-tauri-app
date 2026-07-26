@@ -56,6 +56,7 @@ test("editor permission guard keeps setup actions session-scoped and writes curr
     "save-editor-comment",
     "confirm-editor-ai-review-all",
     "replace-selected-editor-rows",
+    "duplicate-editor-language-image-with-caption",
   );
   assertBodyContains(
     extractArrayBody("SESSION_WRITE_PREFIXES"),

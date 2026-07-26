@@ -31,6 +31,7 @@ import { renderEditorConflictResolutionModal } from "./editor-conflict-resolutio
 import { renderEditorImageInvalidFileModal } from "./editor-image-invalid-file-modal.js";
 import { renderEditorImagePreviewOverlay } from "./editor-image-preview-overlay.js";
 import { renderEditorImageDuplicateOverwriteModal } from "./editor-image-duplicate-overwrite-modal.js";
+import { renderEditorImageCaptionTranslationModal } from "./editor-image-caption-translation-modal.js";
 import { renderEditorInsertLinkModal } from "./editor-insert-link-modal.js";
 import { renderEditorWordPressExportSuccessModal } from "./editor-wordpress-export-success-modal.js";
 import { renderEditorReplaceUndoModal } from "./editor-replace-undo-modal.js";
@@ -355,6 +356,7 @@ export function renderTranslateScreen(state) {
     + renderEditorConflictResolutionModal(state)
     + renderEditorImageInvalidFileModal(state)
     + renderEditorImageDuplicateOverwriteModal(state)
+    + renderEditorImageCaptionTranslationModal(state)
     + renderEditorImagePreviewOverlay(state)
     + renderEditorInsertLinkModal(state)
     + renderEditorWordPressExportSuccessModal(state)
