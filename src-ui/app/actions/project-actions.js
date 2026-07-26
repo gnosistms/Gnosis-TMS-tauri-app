@@ -57,11 +57,16 @@ import {
 } from "../project-import-flow.js";
 import {
   cancelProjectAddTranslation,
+  closeProjectAddTranslationLinkError,
   continueProjectAddTranslationAfterMismatch,
   continueProjectAddTranslationLanguage,
   continueProjectAddTranslationWithExistingText,
   openProjectAddTranslation,
+  retryProjectAddTranslationLink,
+  selectProjectAddTranslationFile,
+  selectProjectAddTranslationInputMode,
   selectProjectAddTranslationLanguage,
+  submitProjectAddTranslationLink,
   submitProjectAddTranslationPaste,
 } from "../project-add-translation-flow.js";
 import { openChapterExportOptions } from "../editor-export-flow.js";
@@ -77,6 +82,7 @@ const READ_ONLY_PROJECT_WRITE_ACTIONS = new Set([
   "submit-project-import-link",
   "submit-project-import-pasted-text",
   "submit-project-add-translation-paste",
+  "submit-project-add-translation-link",
   "continue-project-add-translation-language",
   "continue-project-add-translation-existing",
   "continue-project-add-translation-mismatch",
@@ -246,14 +252,18 @@ export function createProjectActions(render) {
     "clear-project-search": () => clearProjectSearch(render),
     "cancel-project-import": () => cancelProjectImportModal(render),
     "cancel-project-add-translation": () => cancelProjectAddTranslation(render),
+    "close-project-add-translation-link-error": () => closeProjectAddTranslationLinkError(render),
     "close-project-old-layout-discard": () => closeProjectOldLayoutDiscard(render),
     "confirm-project-old-layout-discard": () => confirmProjectOldLayoutDiscard(render),
     "close-project-import-link-error": () => closeProjectImportLinkError(render),
     "close-project-import-upload-error": () => closeProjectImportUploadError(render),
     "continue-project-import-text": () => continueProjectImportText(render),
     "retry-project-import-link": () => retryProjectImportLink(render),
+    "retry-project-add-translation-link": () => retryProjectAddTranslationLink(render),
     "select-project-import-file": () => selectProjectImportFile(render),
+    "select-project-add-translation-file": () => selectProjectAddTranslationFile(render),
     "submit-project-import-link": () => submitProjectImportLink(render),
+    "submit-project-add-translation-link": () => submitProjectAddTranslationLink(render),
     "submit-project-import-pasted-text": () => submitProjectImportPastedText(render),
     "load-more-project-search-results": () => loadMoreProjectSearchResults(render),
     "overwrite-conflicted-project-repos": () => overwriteConflictedProjectRepos(render),
@@ -265,6 +275,10 @@ export function createProjectActions(render) {
     {
       prefix: "select-project-import-input-mode:",
       handler: (mode) => selectProjectImportInputMode(render, mode),
+    },
+    {
+      prefix: "select-project-add-translation-input-mode:",
+      handler: (mode) => selectProjectAddTranslationInputMode(render, mode),
     },
     {
       prefix: "open-project-search-result:",

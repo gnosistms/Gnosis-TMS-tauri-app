@@ -39,6 +39,7 @@ import { openLocalFilePathPicker, openLocalFilePicker } from "./local-file-picke
 import { enforceImportFileSizeLimit } from "./import-file-limit.js";
 import { canManageProjects } from "./resource-capabilities.js";
 import { normalizeSupportedLanguageCode } from "../lib/language-options.js";
+import { normalizeProjectDocumentInputMode } from "./project-document-input.js";
 
 export const PROJECT_IMPORT_ACCEPT =
   ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.txt,text/plain,.srt,application/x-subrip,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.html,.htm,text/html";
@@ -254,11 +255,6 @@ function projectImportModalState(overrides = {}) {
   };
 }
 
-function normalizeProjectImportInputMode(value) {
-  const mode = String(value ?? "").trim();
-  return mode === "pasteLink" || mode === "pasteText" ? mode : "upload";
-}
-
 function importSummaryNoticeSuffix(result) {
   return `${docxImportSummaryNoticeSuffix(result)}${srtImportSummaryNoticeSuffix(result)}`;
 }
@@ -317,7 +313,7 @@ function setProjectImportError(render, message) {
 }
 
 function projectImportUsesUploadProgress() {
-  return normalizeProjectImportInputMode(state.projectImport.inputMode) === "upload";
+  return normalizeProjectDocumentInputMode(state.projectImport.inputMode) === "upload";
 }
 
 function resetProjectImportUploadProgress() {
@@ -661,11 +657,11 @@ export function selectProjectImportInputMode(render, mode) {
   }
 
   state.projectImport = projectImportModalState({
-    inputMode: normalizeProjectImportInputMode(mode),
+    inputMode: normalizeProjectDocumentInputMode(mode),
     error: "",
     linkErrorModal: null,
-    ...(normalizeProjectImportInputMode(mode) === "pasteLink" ? {} : { linkUrl: "" }),
-    ...(normalizeProjectImportInputMode(mode) === "pasteText" ? {} : { pastedText: "" }),
+    ...(normalizeProjectDocumentInputMode(mode) === "pasteLink" ? {} : { linkUrl: "" }),
+    ...(normalizeProjectDocumentInputMode(mode) === "pasteText" ? {} : { pastedText: "" }),
   });
   render();
 }

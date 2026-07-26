@@ -76,10 +76,12 @@ use self::{
         SaveEditorRowCommentInput, SaveEditorRowCommentResponse,
     },
     chapter_import::{
-        import_docx_to_gtms_sync, import_html_to_gtms_sync, import_project_files_to_gtms_sync,
-        import_srt_to_gtms_sync, import_txt_to_gtms_sync, import_xlsx_to_gtms_sync,
-        ImportDocxInput, ImportHtmlInput, ImportProjectFilesInput, ImportProjectFilesResponse,
-        ImportSrtInput, ImportTxtInput, ImportXlsxInput, ImportXlsxResponse,
+        extract_project_translation_text_sync, import_docx_to_gtms_sync, import_html_to_gtms_sync,
+        import_project_files_to_gtms_sync, import_srt_to_gtms_sync, import_txt_to_gtms_sync,
+        import_xlsx_to_gtms_sync, ExtractProjectTranslationTextInput,
+        ExtractProjectTranslationTextResponse, ImportDocxInput, ImportHtmlInput,
+        ImportProjectFilesInput, ImportProjectFilesResponse, ImportSrtInput, ImportTxtInput,
+        ImportXlsxInput, ImportXlsxResponse,
     },
     chapter_lifecycle::{
         clear_deleted_gtms_chapters_sync, permanently_delete_gtms_chapter_sync,
@@ -210,6 +212,15 @@ pub(crate) async fn resolve_project_import_link(
     tauri::async_runtime::spawn_blocking(move || resolve_project_import_link_sync(input))
         .await
         .map_err(|error| format!("The link import worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn extract_project_translation_text(
+    input: ExtractProjectTranslationTextInput,
+) -> Result<ExtractProjectTranslationTextResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || extract_project_translation_text_sync(input))
+        .await
+        .map_err(|error| format!("The translation text extraction worker failed: {error}"))?
 }
 
 #[tauri::command]

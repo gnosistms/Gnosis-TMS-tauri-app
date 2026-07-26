@@ -1,6 +1,10 @@
 import { escapeHtml, primaryButton, secondaryButton } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { findIsoLanguageOption, isoLanguageOptions } from "../lib/language-options.js";
+import {
+  renderProjectDocumentInputModal,
+  renderProjectDocumentLinkError,
+} from "../app/project-document-input.js";
 
 function renderError(error) {
   const text = typeof error === "string" ? error.trim() : "";
@@ -9,32 +13,37 @@ function renderError(error) {
     : "";
 }
 
-function renderPasteModal(modal) {
-  const value = typeof modal?.pastedText === "string" ? modal.pastedText : "";
-  return `
-    <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact">
-        <div class="card__body modal-card__body">
-          <p class="card__eyebrow">Add translations</p>
-          <h2 class="modal__title">Paste your translation</h2>
-          <p class="modal__supporting">Paste your translation text for the entire file into the box below. Your text will be automatically aligned with the existing text and inserted.</p>
-          <div class="modal__form">
-            ${renderError(modal.error)}
-            <textarea
-              class="field__textarea"
-              rows="10"
-              placeholder="Paste your translation here."
-              data-project-add-translation-textarea
-            >${escapeHtml(value)}</textarea>
-          </div>
-          <div class="modal__actions">
-            ${secondaryButton("Cancel", "cancel-project-add-translation")}
-            ${primaryButton("Continue", "submit-project-add-translation-paste", { disabled: !value.trim() })}
-          </div>
-        </div>
-      </section>
-    </div>
-  `;
+function renderInputModal(modal) {
+  const isResolvingLink = modal.status === "resolvingLink";
+  const isExtracting = modal.status === "extracting";
+  return renderProjectDocumentInputModal(modal, {
+    eyebrow: "ADD TRANSLATIONS",
+    title: "Add translation text",
+    supportingText: "Choose how to provide the translation for this entire file. The text will be automatically aligned and inserted.",
+    modeAriaLabel: "Add translation method",
+    selectModeAction: "select-project-add-translation-input-mode",
+    selectFileAction: "select-project-add-translation-file",
+    submitLinkAction: "submit-project-add-translation-link",
+    submitPasteAction: "submit-project-add-translation-paste",
+    cancelAction: "cancel-project-add-translation",
+    dropzoneAttribute: "data-project-add-translation-dropzone",
+    dropzoneLabel: "Drop one file here or click to open the file selector.",
+    uploadHint: "Supported formats: .txt, .docx, or .rtf. Only plain text is added; the existing chapter keeps its formatting.",
+    linkInputId: "project-add-translation-link-input",
+    linkInputAttribute: "data-project-add-translation-link-input",
+    linkPlaceholder: "https://docs.google.com/document/d/...",
+    linkHint: "Paste a public Google Docs link here.",
+    pasteInputAttribute: "data-project-add-translation-textarea",
+    pastePlaceholder: "Paste your translation here.",
+    pasteHint: "Paste the translation text for the entire file.",
+    selectFileLabel: "Select file",
+    processingUploadLabel: "Opening...",
+    processingPasteLabel: "Continue",
+    controlsDisabled: isResolvingLink || isExtracting,
+    isResolvingLink,
+    isProcessingUpload: isExtracting,
+    isProcessingPaste: false,
+  });
 }
 
 function renderLanguageOption(language, selectedCode) {
@@ -62,8 +71,8 @@ function renderLanguageModal(modal) {
       <section class="card modal-card modal-card--compact modal-card--language-picker">
         <div class="card__body modal-card__body language-picker-modal">
           <p class="card__eyebrow">TRANSLATION LANGUAGE</p>
-          <h2 class="modal__title">What language did you paste?</h2>
-          <p class="modal__supporting">Select the language of the pasted translation text.</p>
+          <h2 class="modal__title">What language is this translation?</h2>
+          <p class="modal__supporting">Select the language of the translation text.</p>
           ${renderError(modal.error)}
           <div class="language-picker-modal__list-frame">
             <div class="language-picker-modal__list" role="list" data-project-add-translation-language-list>
@@ -210,7 +219,7 @@ function renderProgressModal(modal) {
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">Aligning and inserting</p>
           <h2 class="modal__title">Please wait</h2>
-          <p class="modal__supporting">Aligning your pasted translation with this file. This may take a few minutes.</p>
+          <p class="modal__supporting">Aligning your translation text with this file. This may take a few minutes.</p>
           <ol class="add-translation-progress" aria-label="Alignment and insertion progress">
             ${steps.map((step, index) => renderProgressStep(step, progress, index, activeIndex)).join("")}
           </ol>
@@ -262,6 +271,14 @@ function renderMismatchModal(modal) {
 
 export function renderProjectAddTranslationModal(state) {
   const modal = state.projectAddTranslation;
+  const linkErrorMarkup = renderProjectDocumentLinkError(modal, {
+    closeAction: "close-project-add-translation-link-error",
+    retryAction: "retry-project-add-translation-link",
+    invalidMessage: "Paste a valid Google Docs document link. Google Sheets, web pages, and local paths are not supported here.",
+  });
+  if (linkErrorMarkup) {
+    return linkErrorMarkup;
+  }
   if (!modal?.isOpen) {
     return "";
   }
@@ -277,5 +294,5 @@ export function renderProjectAddTranslationModal(state) {
   if (modal.step === "mismatchWarning") {
     return renderMismatchModal(modal);
   }
-  return renderPasteModal(modal);
+  return renderInputModal(modal);
 }

@@ -357,7 +357,12 @@ export function createProjectImportState() {
 export function createProjectAddTranslationState() {
   return {
     isOpen: false,
-    step: "pasteText",
+    step: "input",
+    inputMode: "upload",
+    linkUrl: "",
+    linkErrorModal: null,
+    inputRequestId: 0,
+    pendingFileName: "",
     chapterId: "",
     projectId: "",
     repoName: "",
