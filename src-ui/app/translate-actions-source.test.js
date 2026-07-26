@@ -33,6 +33,17 @@ test("language visibility toggle has access to editor collapsed language state",
   assert.match(source, /captureLanguageToggleVisibilityAnchor\([\s\S]*state\.editorChapter\?\.collapsedLanguageCodes/);
 });
 
+test("target language selection dispatch accepts supported language codes with subtags", () => {
+  assert.match(
+    source,
+    /actionSuffix\(\s*action,\s*"select-target-language-manager-picker-language:",\s*\)/,
+  );
+  assert.doesNotMatch(
+    source,
+    /\^select-target-language-manager-picker-language:\(\[a-z\]\{2\}\)\$/,
+  );
+});
+
 test("editor permission guard keeps setup actions session-scoped and writes current-scoped", () => {
   assertBodyContains(
     extractSetBody("SESSION_WRITE_ACTIONS"),
