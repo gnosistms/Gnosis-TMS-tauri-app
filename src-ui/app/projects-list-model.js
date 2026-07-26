@@ -124,9 +124,22 @@ function pushProjectItems(items, project, options) {
   }
 
   if (items.length === firstBodyLength) {
+    const fileLoadState = String(project?.fileLoadState ?? "").trim();
+    const bodyType =
+      fileLoadState === "loading"
+        ? "project-files-loading"
+        : fileLoadState === "error"
+          ? "project-files-error"
+          : "project-empty-body";
+    const keyPrefix =
+      fileLoadState === "loading"
+        ? "fl"
+        : fileLoadState === "error"
+          ? "fe"
+          : "e";
     items.push({
-      type: "project-empty-body",
-      key: `e:${projectId}`,
+      type: bodyType,
+      key: `${keyPrefix}:${projectId}`,
       projectId,
       project,
       isCardStart: false,
@@ -249,6 +262,8 @@ export function estimateProjectsListItemHeight(item) {
       height = 40 + (item.isBodyStart ? PROJECTS_LIST_BODY_TOP_PADDING_PX : 12);
       break;
     case "project-empty-body":
+    case "project-files-loading":
+    case "project-files-error":
       height = PROJECTS_LIST_BODY_TOP_PADDING_PX + PROJECTS_LIST_BODY_BOTTOM_PADDING_PX;
       break;
     case "deleted-toggle":

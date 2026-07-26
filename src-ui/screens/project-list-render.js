@@ -22,11 +22,15 @@ export function deriveProjectRenderState(project, options = {}) {
   const syncSnapshot = options.syncSnapshot ?? null;
   const syncStatus = typeof syncSnapshot?.status === "string" ? syncSnapshot.status.trim() : "";
   const filesLength = visibleProjectFileCount(project);
+  const fileLoadState = String(project?.fileLoadState ?? "").trim();
   const localRepoUnavailable = syncStatus === "notCloned";
   const localRepoSetupPending = (
+    fileLoadState === "loading"
+    ||
     (syncStatus === "syncing" && filesLength === 0)
     || localRepoUnavailable
   );
+  const projectFilesUnavailable = fileLoadState === "error";
   const resolution = deriveProjectResolution(project, syncSnapshot, {
     suppressMissingLocalRepoRepair:
       options.suppressMissingLocalRepoRepair === true
@@ -79,8 +83,12 @@ export function deriveProjectRenderState(project, options = {}) {
     );
   const fileCount = isDeleted && isTombstone
       ? "Permanently deleted"
+    : projectFilesUnavailable && filesLength === 0
+      ? "Files could not be loaded"
     : localRepoSetupPending && filesLength === 0
-      ? "Downloading data from remote repo..."
+      ? fileLoadState === "loading" && !syncStatus
+        ? "Loading files..."
+        : "Downloading data from remote repo..."
       : `${filesLength} file${filesLength === 1 ? "" : "s"}`;
   const resolutionMarkup = resolution
     ? renderInlineStateBox({

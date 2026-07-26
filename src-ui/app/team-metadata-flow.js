@@ -601,6 +601,11 @@ export async function listLocalProjectMetadataRecords(team) {
     .filter(Boolean);
 }
 
+export async function refreshProjectMetadataRecords(team) {
+  await syncTeamMetadataRepoShared(team);
+  return listLocalProjectMetadataRecords(team);
+}
+
 export async function listLocalGlossaryMetadataRecords(team) {
   const records = await invoke("list_local_gnosis_glossary_metadata_records", {
     installationId: team.installationId,

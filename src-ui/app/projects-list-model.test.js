@@ -9,12 +9,13 @@ const {
   projectHeaderItemKey,
 } = await import("./projects-list-model.js");
 
-function project(id, { files = [], deletedFiles = [] } = {}) {
+function project(id, { files = [], deletedFiles = [], fileLoadState } = {}) {
   return {
     id,
     title: `Project ${id}`,
     name: id,
     status: "active",
+    ...(fileLoadState ? { fileLoadState } : {}),
     chapters: [
       ...files.map((name, index) => ({ id: `${id}-file-${index}`, name, status: "active" })),
       ...deletedFiles.map((name, index) => ({ id: `${id}-deleted-${index}`, name, status: "deleted" })),
@@ -86,11 +87,35 @@ test("expanded project with no files gets an empty body segment", () => {
   assert.equal(items[1].isCardEnd, true);
 });
 
+test("expanded projects distinguish loading and failed file listings from empty projects", () => {
+  const loadingItems = buildProjectsListItems({
+    projects: [project("loading", { fileLoadState: "loading" })],
+    expandedProjects: new Set(["loading"]),
+    expandedDeletedFiles: new Set(),
+  });
+  const errorItems = buildProjectsListItems({
+    projects: [project("error", { fileLoadState: "error" })],
+    expandedProjects: new Set(["error"]),
+    expandedDeletedFiles: new Set(),
+  });
+
+  assert.deepEqual(
+    loadingItems.map((item) => [item.type, item.key]),
+    [["project-header", "p:loading"], ["project-files-loading", "fl:loading"]],
+  );
+  assert.deepEqual(
+    errorItems.map((item) => [item.type, item.key]),
+    [["project-header", "p:error"], ["project-files-error", "fe:error"]],
+  );
+});
+
 test("item keys resolve back to their project id", () => {
   assert.equal(parseProjectsListItemProjectId("p:proj-1"), "proj-1");
   assert.equal(parseProjectsListItemProjectId("f:proj-1:chapter-9"), "proj-1");
   assert.equal(parseProjectsListItemProjectId("df:proj-1:chapter-9"), "proj-1");
   assert.equal(parseProjectsListItemProjectId("dt:proj-1"), "proj-1");
+  assert.equal(parseProjectsListItemProjectId("fl:proj-1"), "proj-1");
+  assert.equal(parseProjectsListItemProjectId("fe:proj-1"), "proj-1");
   assert.equal(projectHeaderItemKey("proj-1"), "p:proj-1");
   assert.equal(parseProjectsListItemProjectId("nonsense"), "");
 });
@@ -132,4 +157,3 @@ test("calculateProjectsVirtualWindow clamps to the ends", () => {
   const empty = calculateProjectsVirtualWindow([], 100, 400);
   assert.deepEqual(empty, { startIndex: 0, endIndex: 0, topSpacerHeight: 0, bottomSpacerHeight: 0 });
 });
-

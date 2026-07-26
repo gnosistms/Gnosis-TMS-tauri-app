@@ -598,6 +598,39 @@ test("project setup from remote hides missing local repo repair warning", () => 
   assert.equal(actionButtonHtml(html, "rebuild-project-repo:project-1"), "");
 });
 
+test("projects show file loading instead of a completed empty body before repo setup starts", () => {
+  const html = renderProjectsScreen(projectsState({
+    projects: [{
+      id: "project-1",
+      title: "Project",
+      name: "project-repo",
+      status: "active",
+      fileLoadState: "loading",
+      chapters: [],
+    }],
+  }));
+
+  assert.match(html, /Loading files\.\.\./);
+  assert.match(html, /Loading files…/);
+  assert.doesNotMatch(html, />0 files</);
+});
+
+test("projects show a file-load failure instead of treating the project as empty", () => {
+  const html = renderProjectsScreen(projectsState({
+    projects: [{
+      id: "project-1",
+      title: "Project",
+      name: "project-repo",
+      status: "active",
+      fileLoadState: "error",
+      chapters: [],
+    }],
+  }));
+
+  assert.match(html, /Files could not be loaded/);
+  assert.doesNotMatch(html, />0 files</);
+});
+
 test("projects glossary selector keeps local selection and options during project refresh", () => {
   const html = renderProjectsScreen(projectsState({
     projectsPage: {

@@ -31,11 +31,14 @@ function normalizeProject(project) {
   const {
     pendingMutation: _pendingMutation,
     localLifecycleIntent: _localLifecycleIntent,
+    fileLoadState: _fileLoadState,
     ...durableProject
   } = project;
+  const fileLoadState = project.fileLoadState === "ready" ? "ready" : null;
 
   return {
     ...durableProject,
+    ...(fileLoadState ? { fileLoadState } : {}),
     id,
     name,
     title:

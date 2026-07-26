@@ -18,6 +18,7 @@ import {
   inspectAndMigrateLocalRepoBindings,
   listLocalProjectMetadataRecords,
   listProjectMetadataRecords,
+  refreshProjectMetadataRecords,
   repairAutoRepairableRepoBindings,
 } from "./team-metadata-flow.js";
 import {
@@ -34,6 +35,19 @@ import {
 import { runTeamResourceMigrationSync } from "./team-resource-migration-flow.js";
 
 const LOCAL_PROJECT_FILE_LISTING_REPO_WAIT_MS = 1200;
+const PROJECT_FILE_LOAD_ERROR_STATUSES = new Set([
+  "importedEditorConflicts",
+  "missingRemoteHead",
+  "syncError",
+  "syncStalled",
+  "unresolvedConflict",
+  "updateRequired",
+]);
+const PROJECT_FILE_LOAD_PENDING_STATUSES = new Set([
+  "notCloned",
+  "outOfSync",
+  "syncing",
+]);
 
 function countRecoverableProjectMetadataRecords(records) {
   return (Array.isArray(records) ? records : []).filter((record) =>
@@ -52,6 +66,51 @@ function sameArrayItems(left, right) {
 
 function preserveArrayIdentity(original, next) {
   return sameArrayItems(original, next) ? original : next;
+}
+
+function projectRepoSyncSnapshot(project, repoSyncByProjectId = {}) {
+  return repoSyncByProjectId?.[project?.id] ?? null;
+}
+
+function projectFileLoadState(project, {
+  hasListing = false,
+  repoSyncByProjectId = {},
+  missingListingState = "loading",
+} = {}) {
+  if (
+    project?.lifecycleState === "deleted"
+    || project?.recordState === "tombstone"
+    || project?.remoteState === "deleted"
+  ) {
+    return "ready";
+  }
+  if (Array.isArray(project?.chapters) && project.chapters.length > 0) {
+    return "ready";
+  }
+
+  const syncStatus = String(projectRepoSyncSnapshot(project, repoSyncByProjectId)?.status ?? "").trim();
+  if (PROJECT_FILE_LOAD_PENDING_STATUSES.has(syncStatus)) {
+    return "loading";
+  }
+  if (PROJECT_FILE_LOAD_ERROR_STATUSES.has(syncStatus)) {
+    return "error";
+  }
+  if (hasListing) {
+    return "ready";
+  }
+  return missingListingState;
+}
+
+function applyProjectFileLoadStates(projects, options = {}) {
+  return (Array.isArray(projects) ? projects : []).map((project) => {
+    const fileLoadState = projectFileLoadState(project, options);
+    return project?.fileLoadState === fileLoadState
+      ? project
+      : {
+          ...project,
+          fileLoadState,
+        };
+  });
 }
 
 function filterLocalHardDeletedChapters(selectedTeam, chapters) {
@@ -529,16 +588,32 @@ function mergeProjectsWithLocalFiles(snapshot, listings = [], targets = [], opti
       return {
         ...project,
         chapters: [],
+        fileLoadState: "ready",
       };
     }
 
-    const chapters =
-      listingByProjectId.get(project.id)
-      ?? listingByRepoName.get(project.name)
-      ?? [];
+    const hasProjectIdListing = listingByProjectId.has(project.id);
+    const hasRepoNameListing = listingByRepoName.has(project.name);
+    const hasListing = hasProjectIdListing || hasRepoNameListing;
+    const chapters = hasProjectIdListing
+      ? listingByProjectId.get(project.id)
+      : hasRepoNameListing
+        ? listingByRepoName.get(project.name)
+        : [];
     return {
       ...project,
       chapters,
+      fileLoadState: projectFileLoadState(
+        {
+          ...project,
+          chapters,
+        },
+        {
+          hasListing,
+          repoSyncByProjectId: options.repoSyncByProjectId,
+          missingListingState: options.missingListingState,
+        },
+      ),
     };
   };
 
@@ -745,6 +820,8 @@ export async function refreshProjectFilesFromDisk(render, selectedTeam, projects
   const listings = await loadLocalProjectFileListings(selectedTeam, targetProjects);
   const mergedSnapshot = mergeProjectsWithLocalFiles(baseSnapshot, listings, targetProjects, {
     normalizeListedChapter: options.normalizeListedChapter,
+    repoSyncByProjectId: options.repoSyncByProjectId,
+    missingListingState: "error",
     selectedTeam,
   });
   const pendingChapterMutations = Array.isArray(options.pendingChapterMutations)
@@ -895,7 +972,7 @@ export async function loadProjectSnapshotForTeam(render, teamId = state.selected
   try {
     const [projectsResult, metadataResult, repairResult, glossaryDiscoveryResult] = await Promise.allSettled([
       listRemoteProjectsForInstallation(selectedTeam.installationId),
-      listProjectMetadataRecords(selectedTeam),
+      refreshProjectMetadataRecords(selectedTeam),
       inspectAndMigrateLocalRepoBindings(selectedTeam),
       glossaryLoadPromise,
     ]);
@@ -1020,11 +1097,14 @@ export async function loadProjectSnapshotForTeam(render, teamId = state.selected
         ? mergedProjects
         : [...localProjectSnapshot.items, ...localProjectSnapshot.deletedItems];
     options.setProjectUiDebug(render, "Refreshing local project data...");
-    let mappedProjects = nextVisibleProjects.map((project) => ({
-      ...project,
-      chapters: Array.isArray(project.chapters) ? project.chapters : [],
-      remoteState: project.remoteState ?? "linked",
-    }));
+    let mappedProjects = applyProjectFileLoadStates(
+      nextVisibleProjects.map((project) => ({
+        ...project,
+        chapters: Array.isArray(project.chapters) ? project.chapters : [],
+        remoteState: project.remoteState ?? "linked",
+      })),
+      { missingListingState: "loading" },
+    );
     // list_local_gtms_project_files returns one entry per requested project (a missing repo
     // still yields an entry with no chapters), so the pre-sync listing this check used to make
     // only ever signalled whether any eligible project was requested at all. Use the target
@@ -1077,7 +1157,6 @@ export async function loadProjectSnapshotForTeam(render, teamId = state.selected
         recoveryMessage,
       },
       progressType: "remoteSnapshot",
-      persist: true,
     });
     await waitForNextPaint();
     if (
@@ -1114,6 +1193,10 @@ export async function loadProjectSnapshotForTeam(render, teamId = state.selected
       shouldAbort: () => !isProjectDiscoveryCurrent(selectedTeam.id, requestId, syncVersionAtStart),
       applySnapshots: (snapshots) => {
         repoSyncByProjectId = repoSyncSnapshotMap(snapshots);
+        mappedProjects = applyProjectFileLoadStates(mappedProjects, {
+          repoSyncByProjectId,
+          missingListingState: "loading",
+        });
         currentLoadResult = publishProjectLoadSnapshot({
           render,
           selectedTeam,
@@ -1133,6 +1216,10 @@ export async function loadProjectSnapshotForTeam(render, teamId = state.selected
           ...repoSyncByProjectId,
           ...repoSyncSnapshotMap(snapshots),
         };
+        mappedProjects = applyProjectFileLoadStates(mappedProjects, {
+          repoSyncByProjectId,
+          missingListingState: "loading",
+        });
         currentLoadResult = publishProjectLoadSnapshot({
           render,
           selectedTeam,
@@ -1177,11 +1264,17 @@ export async function loadProjectSnapshotForTeam(render, teamId = state.selected
         repairedMergedProjects.length > 0 || metadataLoaded || remoteLoaded
           ? repairedMergedProjects
           : [...localProjectSnapshot.items, ...localProjectSnapshot.deletedItems];
-      mappedProjects = repairedVisibleProjects.map((project) => ({
-        ...project,
-        chapters: Array.isArray(project.chapters) ? project.chapters : [],
-        remoteState: project.remoteState ?? "linked",
-      }));
+      mappedProjects = applyProjectFileLoadStates(
+        repairedVisibleProjects.map((project) => ({
+          ...project,
+          chapters: Array.isArray(project.chapters) ? project.chapters : [],
+          remoteState: project.remoteState ?? "linked",
+        })),
+        {
+          repoSyncByProjectId,
+          missingListingState: "loading",
+        },
+      );
       const repairedSnapshot = applyPendingMutations(
         {
           items: mappedProjects.filter((project) => project.lifecycleState !== "deleted"),
@@ -1205,7 +1298,6 @@ export async function loadProjectSnapshotForTeam(render, teamId = state.selected
         pendingChapterMutations,
         repoSyncByProjectId,
         progressType: "repairSnapshot",
-        persist: true,
       });
     }
     if (
