@@ -55,3 +55,18 @@ test("normalizeQaTerm preserves a notes-only term and leaves notes unprocessed",
   assert.equal(normalized.text, "");
   assert.equal(normalized.notes, "just a note");
 });
+
+test("normalizeQaTerm preserves QA matching flags with false defaults", () => {
+  const flagged = normalizeQaTerm({
+    termId: "term-1",
+    text: "\\d+",
+    isCaseSensitive: true,
+    isRegularExpression: true,
+  });
+  const legacy = normalizeQaTerm({ termId: "term-2", text: "literal" });
+
+  assert.equal(flagged.isCaseSensitive, true);
+  assert.equal(flagged.isRegularExpression, true);
+  assert.equal(legacy.isCaseSensitive, false);
+  assert.equal(legacy.isRegularExpression, false);
+});

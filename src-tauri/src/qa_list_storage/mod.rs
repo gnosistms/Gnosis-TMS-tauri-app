@@ -1,8 +1,11 @@
 use std::{
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock},
 };
 
+use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::AppHandle;
@@ -35,6 +38,25 @@ use crate::repo_resource_storage::{
 use tmx::{parse_tmx_qa_list, serialize_tmx_qa_list};
 
 const QA_LIST_FILE_NAME: &str = "qa-list.json";
+const MAX_QA_MATCHES_PER_ROW: usize = 100;
+const NON_SPACE_DELIMITED_LANGUAGE_CODES: &[&str] =
+    &["zh", "ja", "th", "lo", "km", "my", "bo", "dz"];
+
+struct CompiledQaTerm {
+    term: String,
+    notes: String,
+    is_case_sensitive: bool,
+    is_regular_expression: bool,
+    regex: Regex,
+    literal_capture: bool,
+}
+
+struct CachedQaMatcher {
+    revision: String,
+    terms: Arc<Vec<CompiledQaTerm>>,
+}
+
+static QA_MATCHER_CACHE: OnceLock<Mutex<HashMap<String, CachedQaMatcher>>> = OnceLock::new();
 
 /// QA-list-specific values for the shared repo-resource storage scaffolding.
 struct QaListStorageDomain;
@@ -120,6 +142,10 @@ pub(super) struct StoredQaListTermFile {
     text: String,
     #[serde(default)]
     notes: String,
+    #[serde(default)]
+    is_case_sensitive: bool,
+    #[serde(default)]
+    is_regular_expression: bool,
     lifecycle: StoredLifecycle,
 }
 
@@ -220,6 +246,10 @@ pub(crate) struct UpsertQaListTermInput {
     text: String,
     #[serde(default)]
     notes: String,
+    #[serde(default)]
+    is_case_sensitive: bool,
+    #[serde(default)]
+    is_regular_expression: bool,
 }
 
 #[derive(Deserialize)]
@@ -238,6 +268,61 @@ pub(crate) struct DeleteQaListTermInput {
     repo_name: String,
     qa_list_id: Option<String>,
     term_id: String,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct QaReviewRowTextInput {
+    row_id: String,
+    #[serde(default)]
+    text: String,
+    #[serde(default)]
+    footnote: String,
+    #[serde(default)]
+    image_caption: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MatchQaListTermsInput {
+    installation_id: i64,
+    qa_list_id: Option<String>,
+    #[serde(default)]
+    repo_name: String,
+    #[serde(default)]
+    language_code: String,
+    #[serde(default)]
+    rows: Vec<QaReviewRowTextInput>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct QaMatchedText {
+    section: String,
+    text: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct QaReviewHint {
+    term: String,
+    notes: String,
+    is_case_sensitive: bool,
+    is_regular_expression: bool,
+    matches: Vec<QaMatchedText>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct QaReviewRowMatches {
+    row_id: String,
+    hints: Vec<QaReviewHint>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MatchQaListTermsResponse {
+    rows: Vec<QaReviewRowMatches>,
 }
 
 #[derive(Clone, Serialize)]
@@ -272,6 +357,8 @@ pub(crate) struct QaListTermEditorRecord {
     term_id: String,
     text: String,
     notes: String,
+    is_case_sensitive: bool,
+    is_regular_expression: bool,
     lifecycle_state: String,
 }
 
@@ -339,6 +426,24 @@ pub(crate) async fn load_gtms_qa_list_term(
     tauri::async_runtime::spawn_blocking(move || load_gtms_qa_list_term_sync(&app, input))
         .await
         .map_err(|error| format!("The QA term load worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn match_gtms_qa_list_terms(
+    app: AppHandle,
+    input: MatchQaListTermsInput,
+) -> Result<MatchQaListTermsResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || match_gtms_qa_list_terms_sync(&app, input))
+        .await
+        .map_err(|error| format!("The QA term matching worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) fn validate_gtms_qa_regular_expression(
+    pattern: String,
+    is_case_sensitive: bool,
+) -> Result<(), String> {
+    validate_qa_regular_expression(&pattern, is_case_sensitive)
 }
 
 #[tauri::command]
@@ -577,6 +682,248 @@ fn load_gtms_qa_list_term_sync(
         term_id: input.term_id,
         term,
     })
+}
+
+fn primary_language_subtag(language_code: &str) -> String {
+    language_code
+        .trim()
+        .to_lowercase()
+        .split(['-', '_'])
+        .next()
+        .unwrap_or("")
+        .to_string()
+}
+
+fn is_non_space_delimited_language(language_code: &str) -> bool {
+    let primary = primary_language_subtag(language_code);
+    NON_SPACE_DELIMITED_LANGUAGE_CODES.contains(&primary.as_str())
+}
+
+fn regex_contains_inline_case_flag(pattern: &str) -> bool {
+    let bytes = pattern.as_bytes();
+    let mut index = 0;
+    let mut escaped = false;
+    let mut in_character_class = false;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if escaped {
+            escaped = false;
+            index += 1;
+            continue;
+        }
+        if byte == b'\\' {
+            escaped = true;
+            index += 1;
+            continue;
+        }
+        if byte == b'[' {
+            in_character_class = true;
+            index += 1;
+            continue;
+        }
+        if byte == b']' && in_character_class {
+            in_character_class = false;
+            index += 1;
+            continue;
+        }
+        if !in_character_class && byte == b'(' && bytes.get(index + 1) == Some(&b'?') {
+            let mut flag_index = index + 2;
+            while let Some(flag) = bytes.get(flag_index) {
+                if *flag == b':' || *flag == b')' {
+                    break;
+                }
+                if !matches!(*flag, b'i' | b'm' | b's' | b'R' | b'U' | b'u' | b'x' | b'-') {
+                    break;
+                }
+                if *flag == b'i' {
+                    return true;
+                }
+                flag_index += 1;
+            }
+        }
+        index += 1;
+    }
+    false
+}
+
+fn validate_qa_regular_expression(pattern: &str, is_case_sensitive: bool) -> Result<(), String> {
+    if regex_contains_inline_case_flag(pattern) {
+        return Err(
+            "The regular expression cannot contain an inline case-sensitivity flag. Use the case sensitive checkbox instead."
+                .to_string(),
+        );
+    }
+    RegexBuilder::new(pattern)
+        .case_insensitive(!is_case_sensitive)
+        .unicode(true)
+        .build()
+        .map(|_| ())
+        .map_err(|error| format!("The regular expression is invalid: {error}"))
+}
+
+fn compile_qa_term(
+    term: StoredQaListTermFile,
+    language_code: &str,
+) -> Result<CompiledQaTerm, String> {
+    let (pattern, literal_capture) = if term.is_regular_expression {
+        (term.text.clone(), false)
+    } else if is_non_space_delimited_language(language_code) {
+        (format!("(?P<qa>{})", regex::escape(&term.text)), true)
+    } else {
+        (
+            format!(
+                r"(?:^|[^\p{{L}}\p{{M}}\p{{N}}])(?P<qa>{})(?:$|[^\p{{L}}\p{{M}}\p{{N}}])",
+                regex::escape(&term.text)
+            ),
+            true,
+        )
+    };
+    let regex = RegexBuilder::new(&pattern)
+        .case_insensitive(!term.is_case_sensitive)
+        .unicode(true)
+        .build()
+        .map_err(|error| {
+            format!(
+                "QA term '{}' contains an invalid regular expression: {error}",
+                term.term_id
+            )
+        })?;
+    Ok(CompiledQaTerm {
+        term: term.text,
+        notes: term.notes,
+        is_case_sensitive: term.is_case_sensitive,
+        is_regular_expression: term.is_regular_expression,
+        regex,
+        literal_capture,
+    })
+}
+
+fn qa_matcher_for_repo(
+    repo_path: &Path,
+    language_code: &str,
+) -> Result<Arc<Vec<CompiledQaTerm>>, String> {
+    let revision =
+        git_output(repo_path, &["rev-parse", "HEAD"]).unwrap_or_else(|_| "uncommitted".to_string());
+    let cache_key = repo_path.to_string_lossy().to_string();
+    let cache = QA_MATCHER_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    {
+        let guard = cache
+            .lock()
+            .map_err(|_| "The QA matcher cache is unavailable.".to_string())?;
+        if let Some(cached) = guard.get(&cache_key) {
+            if cached.revision == revision {
+                return Ok(Arc::clone(&cached.terms));
+            }
+        }
+    }
+
+    let terms = load_qa_list_terms(&repo_path.join("terms"))?
+        .into_iter()
+        .filter(|term| term.lifecycle.state == "active")
+        .map(|term| compile_qa_term(term, language_code))
+        .collect::<Result<Vec<_>, _>>()?;
+    let terms = Arc::new(terms);
+    let mut guard = cache
+        .lock()
+        .map_err(|_| "The QA matcher cache is unavailable.".to_string())?;
+    guard.insert(
+        cache_key,
+        CachedQaMatcher {
+            revision,
+            terms: Arc::clone(&terms),
+        },
+    );
+    Ok(terms)
+}
+
+fn first_qa_match(term: &CompiledQaTerm, text: &str) -> Option<String> {
+    if text.is_empty() {
+        return None;
+    }
+    if term.literal_capture {
+        term.regex
+            .captures(text)
+            .and_then(|captures| captures.name("qa"))
+            .map(|matched| matched.as_str().to_string())
+    } else {
+        term.regex
+            .find(text)
+            .map(|matched| matched.as_str().to_string())
+    }
+}
+
+fn match_qa_row(
+    row: QaReviewRowTextInput,
+    terms: &[CompiledQaTerm],
+) -> Result<QaReviewRowMatches, String> {
+    let sections = [
+        ("text", row.text.as_str()),
+        ("footnote", row.footnote.as_str()),
+        ("imageCaption", row.image_caption.as_str()),
+    ];
+    let mut hints = Vec::new();
+    for term in terms {
+        let matches = sections
+            .iter()
+            .filter_map(|(section, text)| {
+                first_qa_match(term, text).map(|matched| QaMatchedText {
+                    section: (*section).to_string(),
+                    text: matched,
+                })
+            })
+            .collect::<Vec<_>>();
+        if matches.is_empty() {
+            continue;
+        }
+        hints.push(QaReviewHint {
+            term: term.term.clone(),
+            notes: term.notes.clone(),
+            is_case_sensitive: term.is_case_sensitive,
+            is_regular_expression: term.is_regular_expression,
+            matches,
+        });
+        if hints.len() > MAX_QA_MATCHES_PER_ROW {
+            return Err(format!(
+                "More than {MAX_QA_MATCHES_PER_ROW} QA terms match row '{}'. Narrow the QA regular expressions before running AI Review.",
+                row.row_id
+            ));
+        }
+    }
+    Ok(QaReviewRowMatches {
+        row_id: row.row_id,
+        hints,
+    })
+}
+
+fn match_gtms_qa_list_terms_sync(
+    app: &AppHandle,
+    input: MatchQaListTermsInput,
+) -> Result<MatchQaListTermsResponse, String> {
+    let repo_name = input.repo_name.trim();
+    let repo_path = qa_list_repo_path(
+        app,
+        input.installation_id,
+        input.qa_list_id.as_deref(),
+        if repo_name.is_empty() {
+            None
+        } else {
+            Some(repo_name)
+        },
+    )?;
+    let qa_list = read_qa_list_file(&repo_path)?;
+    if qa_list.lifecycle.state != "active" {
+        return Err("The selected QA list is not active.".to_string());
+    }
+    if qa_list.language.code != input.language_code {
+        return Err("The selected QA list does not match the review language.".to_string());
+    }
+    let terms = qa_matcher_for_repo(&repo_path, &input.language_code)?;
+    let rows = input
+        .rows
+        .into_iter()
+        .map(|row| match_qa_row(row, &terms))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(MatchQaListTermsResponse { rows })
 }
 
 fn initialize_gtms_qa_list_repo_sync(
@@ -909,6 +1256,9 @@ fn upsert_gtms_qa_list_term_sync(
     if text.is_empty() {
         return Err("Enter QA term text.".to_string());
     }
+    if input.is_regular_expression {
+        validate_qa_regular_expression(text, input.is_case_sensitive)?;
+    }
 
     let term_id = input
         .term_id
@@ -940,6 +1290,14 @@ fn upsert_gtms_qa_list_term_sync(
     term_object.insert(
         "notes".to_string(),
         Value::String(input.notes.trim().to_string()),
+    );
+    term_object.insert(
+        "isCaseSensitive".to_string(),
+        Value::Bool(input.is_case_sensitive),
+    );
+    term_object.insert(
+        "isRegularExpression".to_string(),
+        Value::Bool(input.is_regular_expression),
     );
     let lifecycle_value = term_object
         .entry("lifecycle".to_string())
@@ -979,6 +1337,8 @@ fn upsert_gtms_qa_list_term_sync(
             term_id,
             text: text.to_string(),
             notes: input.notes.trim().to_string(),
+            is_case_sensitive: input.is_case_sensitive,
+            is_regular_expression: input.is_regular_expression,
             lifecycle_state: "active".to_string(),
         },
     })
@@ -1124,6 +1484,8 @@ fn map_term_record(term: StoredQaListTermFile) -> QaListTermEditorRecord {
         term_id: term.term_id,
         text: term.text,
         notes: term.notes,
+        is_case_sensitive: term.is_case_sensitive,
+        is_regular_expression: term.is_regular_expression,
         lifecycle_state: term.lifecycle.state,
     }
 }
@@ -1153,8 +1515,10 @@ mod tests {
         };
         let term = StoredQaListTermFile {
             term_id: "term-123".to_string(),
-            text: "không dịch".to_string(),
+            text: "foo\n  bar".to_string(),
             notes: "Use in review checks.".to_string(),
+            is_case_sensitive: true,
+            is_regular_expression: true,
             lifecycle: StoredLifecycle {
                 state: "active".to_string(),
             },
@@ -1163,15 +1527,100 @@ mod tests {
         let xml = serialize_tmx_qa_list(&qa_list, &[term]);
         assert!(xml.contains("<tu tuid=\"term-123\">"));
         assert!(xml.contains("<note>Use in review checks.</note>"));
-        assert!(xml.contains("<seg>không dịch</seg>"));
+        assert!(xml.contains("<prop type=\"x-gnosis-qa-case-sensitive\">true</prop>"));
+        assert!(xml.contains("<prop type=\"x-gnosis-qa-regular-expression\">true</prop>"));
+        assert!(xml.contains("<seg>foo\n  bar</seg>"));
 
         let parsed =
             parse_tmx_qa_list("round-trip.tmx", xml.as_bytes()).expect("export should reimport");
         assert_eq!(parsed.language.code, "vi");
         assert_eq!(parsed.terms.len(), 1);
         assert_eq!(parsed.terms[0].term_id, "term-123");
-        assert_eq!(parsed.terms[0].text, "không dịch");
+        assert_eq!(parsed.terms[0].text, "foo\n  bar");
         assert_eq!(parsed.terms[0].notes, "Use in review checks.");
+        assert!(parsed.terms[0].is_case_sensitive);
+        assert!(parsed.terms[0].is_regular_expression);
+    }
+
+    fn matcher_term(
+        text: &str,
+        is_case_sensitive: bool,
+        is_regular_expression: bool,
+    ) -> StoredQaListTermFile {
+        StoredQaListTermFile {
+            term_id: format!("term-{text}"),
+            text: text.to_string(),
+            notes: "Follow this note.".to_string(),
+            is_case_sensitive,
+            is_regular_expression,
+            lifecycle: StoredLifecycle {
+                state: "active".to_string(),
+            },
+        }
+    }
+
+    #[test]
+    fn qa_literal_matching_uses_word_boundaries_and_case_setting() {
+        let insensitive =
+            compile_qa_term(matcher_term("text", false, false), "en").expect("compile insensitive");
+        assert_eq!(
+            first_qa_match(&insensitive, "Some Text here.").as_deref(),
+            Some("Text")
+        );
+        assert_eq!(first_qa_match(&insensitive, "textual"), None);
+
+        let sensitive =
+            compile_qa_term(matcher_term("text", true, false), "en").expect("compile sensitive");
+        assert_eq!(first_qa_match(&sensitive, "Some Text here."), None);
+        assert_eq!(
+            first_qa_match(&sensitive, "Some text here.").as_deref(),
+            Some("text")
+        );
+    }
+
+    #[test]
+    fn qa_literal_matching_uses_substrings_for_non_space_delimited_languages() {
+        let term =
+            compile_qa_term(matcher_term("東京", false, false), "ja").expect("compile Japanese");
+        assert_eq!(first_qa_match(&term, "東京都").as_deref(), Some("東京"));
+    }
+
+    #[test]
+    fn qa_regex_matching_returns_the_concrete_match_and_rejects_invalid_patterns() {
+        let term =
+            compile_qa_term(matcher_term(r"\d{3}", false, true), "en").expect("compile regex");
+        assert_eq!(first_qa_match(&term, "Code 123.").as_deref(), Some("123"));
+        assert!(validate_qa_regular_expression("(", false).is_err());
+        assert!(validate_qa_regular_expression("(?i)text", true).is_err());
+        assert!(validate_qa_regular_expression("(?-i:text)", false).is_err());
+        assert!(validate_qa_regular_expression(r"\(\?i\)", true).is_ok());
+        assert!(validate_qa_regular_expression(r"[(?i)]", true).is_ok());
+    }
+
+    #[test]
+    fn qa_row_matching_rejects_more_than_one_hundred_terms() {
+        let terms = (0..=MAX_QA_MATCHES_PER_ROW)
+            .map(|index| {
+                compile_qa_term(matcher_term(&format!("term{index}"), false, false), "en")
+                    .expect("compile term")
+            })
+            .collect::<Vec<_>>();
+        let text = (0..=MAX_QA_MATCHES_PER_ROW)
+            .map(|index| format!("term{index}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let result = match_qa_row(
+            QaReviewRowTextInput {
+                row_id: "row-1".to_string(),
+                text,
+                footnote: String::new(),
+                image_caption: String::new(),
+            },
+            &terms,
+        );
+        assert!(result
+            .expect_err("too many matches should fail")
+            .contains("More than 100 QA terms"));
     }
 
     #[test]

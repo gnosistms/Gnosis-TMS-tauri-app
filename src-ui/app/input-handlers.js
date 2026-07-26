@@ -493,6 +493,30 @@ function handleQaTermNotesInput(event) {
   return true;
 }
 
+function handleQaTermCaseSensitiveInput(event) {
+  if (event.type !== "change") {
+    return false;
+  }
+  const input = event.target.closest("[data-qa-term-case-sensitive-input]");
+  if (!(input instanceof HTMLInputElement) || input.type !== "checkbox") {
+    return false;
+  }
+  updateQaTermDraftField("isCaseSensitive", input.checked);
+  return true;
+}
+
+function handleQaTermRegularExpressionInput(event) {
+  if (event.type !== "change") {
+    return false;
+  }
+  const input = event.target.closest("[data-qa-term-regular-expression-input]");
+  if (!(input instanceof HTMLInputElement) || input.type !== "checkbox") {
+    return false;
+  }
+  updateQaTermDraftField("isRegularExpression", input.checked);
+  return true;
+}
+
 function handleEditorSourceLanguageInput(event, render) {
   if (event.type !== "change") {
     return false;
@@ -1178,6 +1202,8 @@ const inputHandlers = [
   handleQaTermSearchInput,
   handleQaTermTextInput,
   handleQaTermNotesInput,
+  handleQaTermCaseSensitiveInput,
+  handleQaTermRegularExpressionInput,
   handleEditorSourceLanguageInput,
   handleEditorTargetLanguageInput,
   handleEditorPreviewLanguageInput,

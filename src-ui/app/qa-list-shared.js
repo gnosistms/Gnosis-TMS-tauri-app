@@ -54,6 +54,8 @@ export function normalizeQaTerm(value) {
   // QA terms only carry allowed <ruby>/<rt> tags (mirrors normalizeGlossaryTerm). Notes stay plain.
   const text = sanitizeGlossaryRubyMarkup(String(value?.text ?? value?.term ?? "")).trim();
   const notes = String(value?.notes ?? value?.note ?? "").trim();
+  const isCaseSensitive = value?.isCaseSensitive === true;
+  const isRegularExpression = value?.isRegularExpression === true;
 
   if (!text && !notes) {
     return null;
@@ -63,6 +65,8 @@ export function normalizeQaTerm(value) {
     termId,
     text,
     notes,
+    isCaseSensitive,
+    isRegularExpression,
   };
 }
 

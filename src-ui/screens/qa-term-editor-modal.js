@@ -7,6 +7,11 @@ import {
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { rubyButtonConfig } from "../app/editor-inline-markup.js";
 
+const QA_CASE_SENSITIVE_TOOLTIP =
+  'When checked, the term found in the translation text must exactly match the case of the text entered above. For example, "text" will not match "Text" when this is checked.';
+const QA_REGULAR_EXPRESSION_TOOLTIP =
+  "check this to match the term to the translation text using regular expression search rather than plain text.";
+
 export function renderQaTermEditorModal(state) {
   const editor = state.qaTermEditor;
   if (!editor?.isOpen) {
@@ -32,15 +37,35 @@ export function renderQaTermEditorModal(state) {
               <h3 class="term-lane__title term-lane__title--notes">Notes</h3>
             </div>
             <div class="qa-term-modal__fields">
-              <textarea
-                class="field__textarea"
-                aria-label="QA term text"
-                placeholder="Enter QA term..."
-                rows="3"
-                data-qa-term-text-input
-                data-language-code="${escapeHtml(languageCode)}"
-                ${isSubmitting ? "disabled" : ""}
-              >${escapeHtml(editor.text)}</textarea>
+              <div class="qa-term-modal__term-field">
+                <textarea
+                  class="field__textarea"
+                  aria-label="QA term text"
+                  placeholder="Enter QA term..."
+                  rows="3"
+                  data-qa-term-text-input
+                  data-language-code="${escapeHtml(languageCode)}"
+                  ${isSubmitting ? "disabled" : ""}
+                >${escapeHtml(editor.text)}</textarea>
+                <label class="field__checkbox"${tooltipAttributes(QA_CASE_SENSITIVE_TOOLTIP)}>
+                  <input
+                    type="checkbox"
+                    data-qa-term-case-sensitive-input
+                    ${editor.isCaseSensitive === true ? "checked" : ""}
+                    ${isSubmitting ? "disabled" : ""}
+                  />
+                  <span>case sensitive</span>
+                </label>
+                <label class="field__checkbox"${tooltipAttributes(QA_REGULAR_EXPRESSION_TOOLTIP)}>
+                  <input
+                    type="checkbox"
+                    data-qa-term-regular-expression-input
+                    ${editor.isRegularExpression === true ? "checked" : ""}
+                    ${isSubmitting ? "disabled" : ""}
+                  />
+                  <span>regular expression</span>
+                </label>
+              </div>
               <textarea
                 class="field__textarea"
                 aria-label="QA term notes"

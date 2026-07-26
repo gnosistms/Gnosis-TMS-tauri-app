@@ -136,6 +136,7 @@ export function buildEditorAiReviewRequest({
   modelId,
   reviewMode,
   targetLanguageHistory = [],
+  qaHints = [],
   installationId = null,
 }) {
   const normalizedReviewMode = normalizeEditorAiReviewMode(reviewMode);
@@ -166,6 +167,7 @@ export function buildEditorAiReviewRequest({
     glossaryHints: normalizedReviewMode === "meaning"
       ? buildEditorAiReviewGlossaryHints(chapterState, row, sourceLanguageCode, targetLanguageCode)
       : [],
+    qaHints: Array.isArray(qaHints) ? qaHints : [],
     alternateLanguageTexts: normalizedReviewMode === "meaning"
       ? buildEditorAiReviewAlternateLanguageTexts(chapterState, row, sourceLanguageCode, targetLanguageCode)
       : [],
@@ -190,6 +192,7 @@ export function buildEditorAiReviewBatchRequest({
   modelId,
   reviewMode,
   targetLanguageHistoryByRowId = new Map(),
+  qaHintsByRowId = new Map(),
   installationId = null,
 }) {
   const normalizedReviewMode = normalizeEditorAiReviewMode(reviewMode);
@@ -214,6 +217,7 @@ export function buildEditorAiReviewBatchRequest({
       targetLanguageHistory: meaning
         ? (targetLanguageHistoryByRowId.get(rowId) ?? [])
         : [],
+      qaHints: qaHintsByRowId.get(rowId) ?? [],
     };
   });
 

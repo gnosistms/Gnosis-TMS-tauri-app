@@ -394,6 +394,7 @@ test("runEditorAiReview uses the configured provider and model", async () => {
           targetLanguage: "Vietnamese",
           languageCode: "vi",
           glossaryHints: [],
+          qaHints: [],
           alternateLanguageTexts: [],
           rowWindow: [],
           targetLanguageHistory: [],
@@ -413,6 +414,109 @@ test("runEditorAiReview uses the configured provider and model", async () => {
   assert.equal(state.editorChapter.aiReview.status, "ready");
   assert.equal(state.editorChapter.aiReview.suggestedText, "Texto revisado");
   assert.equal(state.editorChapter.aiReview.promptText, "Review prompt for Texto original");
+});
+
+test("runEditorAiReview matches the default QA list and sends advisory QA hints", async () => {
+  installTranslateFixture({
+    footnotes: { vi: "Footnote 123" },
+    imageCaptions: { vi: "Caption text" },
+  });
+  installSelectedTeam({ canDelete: true });
+  state.qaLists = [{
+    id: "qa-vi",
+    qaListId: "qa-vi",
+    title: "Vietnamese QA",
+    language: { code: "vi", name: "Vietnamese" },
+    lifecycleState: "active",
+    repoName: "qa-vi-repo",
+    terms: [],
+  }];
+
+  let matchedInput = null;
+  let reviewRequest = null;
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_team_ai_settings" || command === "load_team_ai_secrets_metadata") {
+      return null;
+    }
+    if (command === "load_ai_provider_secret") {
+      return "oa-key";
+    }
+    if (command === "match_gtms_qa_list_terms") {
+      matchedInput = payload.input;
+      return {
+        rows: [{
+          rowId: "row-1",
+          hints: [{
+            term: "\\d+",
+            notes: "Spell out numbers.",
+            isCaseSensitive: false,
+            isRegularExpression: true,
+            matches: [{ section: "footnote", text: "123" }],
+          }],
+        }],
+      };
+    }
+    if (command === "run_ai_review") {
+      reviewRequest = payload.request;
+      return { suggestedText: "", reviewed: true };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await runEditorAiReview(() => {}, "grammar");
+
+  assert.ok(matchedInput, JSON.stringify(invokeLog));
+  assert.equal(matchedInput.qaListId, "qa-vi");
+  assert.equal(matchedInput.rows[0].text, "Texto original");
+  assert.equal(matchedInput.rows[0].footnote, "Footnote 123");
+  assert.equal(matchedInput.rows[0].imageCaption, "Caption text");
+  assert.equal(reviewRequest.qaHints[0].term, "\\d+");
+  assert.equal(reviewRequest.qaHints[0].matches[0].text, "123");
+});
+
+test("runEditorAiReview uses the base language QA list for a duplicate target column", async () => {
+  installTranslateFixture({
+    languages: [
+      { code: "es", name: "Spanish" },
+      { code: "vi-x-2", baseCode: "vi", name: "Vietnamese 2" },
+    ],
+    selectedTargetLanguageCode: "vi-x-2",
+    activeLanguageCode: "vi-x-2",
+    fields: { "vi-x-2": "Ban dich" },
+  });
+  installSelectedTeam({ canDelete: true });
+  state.qaLists = [{
+    id: "qa-vi",
+    qaListId: "qa-vi",
+    title: "Vietnamese QA",
+    language: { code: "vi", name: "Vietnamese" },
+    lifecycleState: "active",
+    repoName: "qa-vi-repo",
+    terms: [],
+  }];
+
+  let matchedInput = null;
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_team_ai_settings" || command === "load_team_ai_secrets_metadata") {
+      return null;
+    }
+    if (command === "load_ai_provider_secret") {
+      return "oa-key";
+    }
+    if (command === "match_gtms_qa_list_terms") {
+      matchedInput = payload.input;
+      return { rows: [{ rowId: "row-1", hints: [] }] };
+    }
+    if (command === "run_ai_review") {
+      return { suggestedText: "", reviewed: true };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await runEditorAiReview(() => {}, "grammar");
+
+  assert.equal(matchedInput.languageCode, "vi");
+  assert.equal(matchedInput.rows[0].text, "Ban dich");
 });
 
 test("runEditorAiReview translation mode uses the same review request shape as Review All", async () => {
@@ -4765,6 +4869,7 @@ test("runEditorAiReview loads shared team action preferences before choosing the
           targetLanguage: "Vietnamese",
           languageCode: "vi",
           glossaryHints: [],
+          qaHints: [],
           alternateLanguageTexts: [],
           rowWindow: [],
           targetLanguageHistory: [],

@@ -37,3 +37,20 @@ test("QA term modal uses shared textarea styling for both fields", () => {
   assert.match(html, /class="field__textarea"[\s\S]*data-qa-term-notes-input/);
   assert.doesNotMatch(html, /term-variant-row__input/);
 });
+
+test("QA term modal renders case-sensitive and regex checkboxes below the term", () => {
+  installModalFixture();
+  state.qaTermEditor.isCaseSensitive = true;
+  state.qaTermEditor.isRegularExpression = true;
+
+  const html = renderQaTermEditorModal(state);
+  const termIndex = html.indexOf("data-qa-term-text-input");
+  const caseIndex = html.indexOf("data-qa-term-case-sensitive-input");
+  const regexIndex = html.indexOf("data-qa-term-regular-expression-input");
+
+  assert.ok(termIndex >= 0 && caseIndex > termIndex && regexIndex > caseIndex);
+  assert.match(html, /data-qa-term-case-sensitive-input[\s\S]*checked/);
+  assert.match(html, /data-qa-term-regular-expression-input[\s\S]*checked/);
+  assert.match(html, /term found in the translation text must exactly match the case/);
+  assert.match(html, /regular expression search rather than plain text/);
+});

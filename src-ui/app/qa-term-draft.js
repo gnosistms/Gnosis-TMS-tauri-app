@@ -38,6 +38,8 @@ function qaTermRecordsMatch(left, right) {
     String(left?.termId ?? "") === String(right?.termId ?? "")
     && String(left?.text ?? "") === String(right?.text ?? "")
     && String(left?.notes ?? "") === String(right?.notes ?? "")
+    && (left?.isCaseSensitive === true) === (right?.isCaseSensitive === true)
+    && (left?.isRegularExpression === true) === (right?.isRegularExpression === true)
     && String(left?.lifecycleState ?? "active") === String(right?.lifecycleState ?? "active")
   );
 }
@@ -46,7 +48,13 @@ function normalizeQaTermTextForDuplicateDetection(value) {
   return extractGlossaryRubyBaseText(value).trim();
 }
 
-function qaTermTextDuplicatesExistingTerm(text, terms, termId = null) {
+function qaTermTextDuplicatesExistingTerm(
+  text,
+  terms,
+  termId = null,
+  isCaseSensitive = false,
+  isRegularExpression = false,
+) {
   const normalizedText = normalizeQaTermTextForDuplicateDetection(text);
   if (!normalizedText) {
     return false;
@@ -56,6 +64,8 @@ function qaTermTextDuplicatesExistingTerm(text, terms, termId = null) {
     term
       && term.lifecycleState !== "deleted"
       && term.termId !== termId
+      && (term.isCaseSensitive === true) === isCaseSensitive
+      && (term.isRegularExpression === true) === isRegularExpression
       && normalizeQaTermTextForDuplicateDetection(term.text) === normalizedText,
   );
 }
@@ -111,6 +121,8 @@ export function openQaTermEditor(render, termId = null) {
     termId: existing?.termId ?? null,
     text: existing?.text ?? "",
     notes: existing?.notes ?? "",
+    isCaseSensitive: existing?.isCaseSensitive === true,
+    isRegularExpression: existing?.isRegularExpression === true,
   };
   render();
 }
@@ -121,7 +133,12 @@ export function cancelQaTermEditor(render) {
 }
 
 export function updateQaTermDraftField(field, value) {
-  if (field !== "text" && field !== "notes") {
+  if (
+    field !== "text"
+    && field !== "notes"
+    && field !== "isCaseSensitive"
+    && field !== "isRegularExpression"
+  ) {
     return;
   }
 
@@ -158,6 +175,8 @@ export async function submitQaTermEditor(render) {
   // allowed <ruby>/<rt> markup (mirrors glossary's sanitizeEditableTerms on submit).
   const text = sanitizeGlossaryRubyMarkup(String(editor.text ?? "")).trim();
   const notes = String(editor.notes ?? "").trim();
+  const isCaseSensitive = editor.isCaseSensitive === true;
+  const isRegularExpression = editor.isRegularExpression === true;
   if (!text) {
     state.qaTermEditor = {
       ...editor,
@@ -166,10 +185,31 @@ export async function submitQaTermEditor(render) {
     render();
     return;
   }
-  if (qaTermTextDuplicatesExistingTerm(text, state.qaListEditor.terms, editor.termId)) {
+  if (qaTermTextDuplicatesExistingTerm(
+    text,
+    state.qaListEditor.terms,
+    editor.termId,
+    isCaseSensitive,
+    isRegularExpression,
+  )) {
     state.qaTermEditor = qaTermDuplicateErrorState(editor);
     render();
     return;
+  }
+  if (isRegularExpression) {
+    try {
+      await invoke("validate_gtms_qa_regular_expression", {
+        pattern: text,
+        isCaseSensitive,
+      });
+    } catch (error) {
+      state.qaTermEditor = {
+        ...editor,
+        error: error?.message ?? String(error),
+      };
+      render();
+      return;
+    }
   }
 
   const team = currentQaListTeam();
@@ -214,7 +254,13 @@ export async function submitQaTermEditor(render) {
           return;
         }
       }
-      if (qaTermTextDuplicatesExistingTerm(text, latestQaList.terms, editor.termId)) {
+      if (qaTermTextDuplicatesExistingTerm(
+        text,
+        latestQaList.terms,
+        editor.termId,
+        isCaseSensitive,
+        isRegularExpression,
+      )) {
         state.qaTermEditor = qaTermDuplicateErrorState(editor);
         render();
         return;
@@ -229,6 +275,8 @@ export async function submitQaTermEditor(render) {
             termId: editor.termId,
             text,
             notes,
+            isCaseSensitive,
+            isRegularExpression,
           },
         });
         previousHeadSha = response?.previousHeadSha ?? null;
@@ -258,6 +306,8 @@ export async function submitQaTermEditor(render) {
         termId: editor.termId ?? createQaResourceId("qa-term"),
         text,
         notes,
+        isCaseSensitive,
+        isRegularExpression,
       });
       const terms = Array.isArray(state.qaListEditor.terms) ? state.qaListEditor.terms : [];
       const nextTerms = editor.termId

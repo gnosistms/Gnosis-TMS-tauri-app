@@ -1019,6 +1019,8 @@ test("saving a QA term syncs first and then persists the user's modal draft", as
     termId: "term-1",
     text: "local text",
     notes: "local note",
+    isCaseSensitive: false,
+    isRegularExpression: false,
   });
   assert.equal(state.qaTermEditor.isOpen, false);
   assert.equal(state.qaListEditor.terms[0]?.text, "local text");

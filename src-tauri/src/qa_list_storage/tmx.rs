@@ -3,7 +3,10 @@ use std::{collections::BTreeSet, path::Path, sync::OnceLock};
 use quick_xml::{events::Event, Reader};
 use uuid::Uuid;
 
-use super::{QaListLanguageInfo, StoredLifecycle, StoredQaListFile, StoredQaListTermFile};
+use super::{
+    validate_qa_regular_expression, QaListLanguageInfo, StoredLifecycle, StoredQaListFile,
+    StoredQaListTermFile,
+};
 
 const ISO_LANGUAGE_OPTIONS_SOURCE: &str = include_str!("../../../src-ui/lib/language-options.js");
 
@@ -18,11 +21,16 @@ struct WorkingTmxUnit {
     term_id: Option<String>,
     current_language: Option<String>,
     current_note: String,
+    current_prop: String,
+    current_prop_type: Option<String>,
     current_segment: String,
     notes: Vec<String>,
     segments: Vec<(String, String)>,
     inside_note: bool,
+    inside_prop: bool,
     inside_segment: bool,
+    is_case_sensitive: bool,
+    is_regular_expression: bool,
 }
 
 pub(super) fn parse_tmx_qa_list(file_name: &str, bytes: &[u8]) -> Result<ParsedTmxQaList, String> {
@@ -69,6 +77,13 @@ pub(super) fn parse_tmx_qa_list(file_name: &str, bytes: &[u8]) -> Result<ParsedT
                         unit.current_language = read_tuv_language(&reader, &event)?;
                     }
                 }
+                b"prop" => {
+                    if let Some(unit) = current_unit.as_mut() {
+                        unit.inside_prop = true;
+                        unit.current_prop_type = read_tmx_attr(&reader, &event, b"type")?;
+                        unit.current_prop.clear();
+                    }
+                }
                 b"note" => {
                     if let Some(unit) = current_unit.as_mut() {
                         unit.inside_note = true;
@@ -97,6 +112,8 @@ pub(super) fn parse_tmx_qa_list(file_name: &str, bytes: &[u8]) -> Result<ParsedT
                         .into_owned();
                     if unit.inside_note {
                         unit.current_note.push_str(&value);
+                    } else if unit.inside_prop {
+                        unit.current_prop.push_str(&value);
                     } else if unit.inside_segment {
                         unit.current_segment.push_str(&value);
                     }
@@ -107,6 +124,8 @@ pub(super) fn parse_tmx_qa_list(file_name: &str, bytes: &[u8]) -> Result<ParsedT
                     let value = String::from_utf8_lossy(text.as_ref()).into_owned();
                     if unit.inside_note {
                         unit.current_note.push_str(&value);
+                    } else if unit.inside_prop {
+                        unit.current_prop.push_str(&value);
                     } else if unit.inside_segment {
                         unit.current_segment.push_str(&value);
                     }
@@ -128,12 +147,28 @@ pub(super) fn parse_tmx_qa_list(file_name: &str, bytes: &[u8]) -> Result<ParsedT
                         unit.current_note.clear();
                     }
                 }
+                b"prop" => {
+                    if let Some(unit) = current_unit.as_mut() {
+                        unit.inside_prop = false;
+                        let value = clean_tmx_text(&unit.current_prop);
+                        match unit.current_prop_type.as_deref() {
+                            Some("x-gnosis-qa-case-sensitive") => {
+                                unit.is_case_sensitive = value.eq_ignore_ascii_case("true");
+                            }
+                            Some("x-gnosis-qa-regular-expression") => {
+                                unit.is_regular_expression = value.eq_ignore_ascii_case("true");
+                            }
+                            _ => {}
+                        }
+                        unit.current_prop_type = None;
+                        unit.current_prop.clear();
+                    }
+                }
                 b"seg" => {
                     if let Some(unit) = current_unit.as_mut() {
                         unit.inside_segment = false;
-                        let segment = clean_tmx_text(&unit.current_segment);
                         let language = unit.current_language.clone().unwrap_or_default();
-                        unit.segments.push((language, segment));
+                        unit.segments.push((language, unit.current_segment.clone()));
                         unit.current_segment.clear();
                     }
                 }
@@ -178,6 +213,7 @@ pub(super) fn parse_tmx_qa_list(file_name: &str, bytes: &[u8]) -> Result<ParsedT
     let terms = units
         .into_iter()
         .filter_map(|unit| {
+            let is_regular_expression = unit.is_regular_expression;
             let text = unit
                 .segments
                 .into_iter()
@@ -186,11 +222,15 @@ pub(super) fn parse_tmx_qa_list(file_name: &str, bytes: &[u8]) -> Result<ParsedT
                     if !segment_language_code.is_empty() && segment_language_code != language_code {
                         return None;
                     }
-                    let trimmed = clean_tmx_text(&segment);
-                    if trimmed.is_empty() {
+                    let normalized = if is_regular_expression {
+                        segment
+                    } else {
+                        clean_tmx_text(&segment)
+                    };
+                    if normalized.is_empty() {
                         None
                     } else {
-                        Some(trimmed)
+                        Some(normalized)
                     }
                 })?;
             Some(StoredQaListTermFile {
@@ -201,6 +241,8 @@ pub(super) fn parse_tmx_qa_list(file_name: &str, bytes: &[u8]) -> Result<ParsedT
                     .unwrap_or_else(|| Uuid::now_v7().to_string()),
                 text,
                 notes: unit.notes.join("\n\n"),
+                is_case_sensitive: unit.is_case_sensitive,
+                is_regular_expression,
                 lifecycle: StoredLifecycle {
                     state: "active".to_string(),
                 },
@@ -210,6 +252,12 @@ pub(super) fn parse_tmx_qa_list(file_name: &str, bytes: &[u8]) -> Result<ParsedT
 
     if terms.is_empty() {
         return Err("The TMX file does not contain any QA terms.".to_string());
+    }
+    for term in &terms {
+        if term.is_regular_expression {
+            validate_qa_regular_expression(&term.text, term.is_case_sensitive)
+                .map_err(|error| format!("QA term '{}': {error}", term.term_id))?;
+        }
     }
     let mut term_ids = BTreeSet::new();
     if let Some(duplicate_id) = terms
@@ -242,10 +290,22 @@ pub(super) fn serialize_tmx_qa_list(
             } else {
                 format!("      <note>{}</note>\n", escape_xml_text(&term.notes))
             };
+            let case_sensitive = if term.is_case_sensitive {
+                "      <prop type=\"x-gnosis-qa-case-sensitive\">true</prop>\n"
+            } else {
+                ""
+            };
+            let regular_expression = if term.is_regular_expression {
+                "      <prop type=\"x-gnosis-qa-regular-expression\">true</prop>\n"
+            } else {
+                ""
+            };
             format!(
-                "    <tu tuid=\"{}\">\n{}      <tuv xml:lang=\"{}\"><seg>{}</seg></tuv>\n    </tu>",
+                "    <tu tuid=\"{}\">\n{}{}{}      <tuv xml:lang=\"{}\"><seg>{}</seg></tuv>\n    </tu>",
                 escape_xml_attr(&term.term_id),
                 notes,
+                case_sensitive,
+                regular_expression,
                 language_code,
                 escape_xml_text(&term.text),
             )
