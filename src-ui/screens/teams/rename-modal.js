@@ -16,17 +16,19 @@ export function renderTeamRenameModal(state) {
     loadingLabel: "Saving...",
     action: "submit-team-rename",
     isLoading: isSubmitting,
+    modalDefault: true,
   });
   const cancelButton = secondaryButton("Cancel", "cancel-team-rename", {
     disabled: isSubmitting,
+    modalCancel: true,
   });
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact">
+      <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="team-rename-modal-title" data-modal-dialog="team-rename" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">RENAME TEAM</p>
-          <h2 class="modal__title">Rename This Team</h2>
+          <h2 class="modal__title" id="team-rename-modal-title">Rename This Team</h2>
           <p class="modal__supporting">
             This changes the team name shown in Gnosis TMS. It does not change the team's GitHub address.
           </p>
@@ -39,6 +41,7 @@ export function renderTeamRenameModal(state) {
                 placeholder="Enter team name"
                 value="${escapeHtml(rename.teamName)}"
                 data-team-rename-input
+                data-modal-initial-focus
                 ${isSubmitting ? "disabled" : ""}
               />
             </label>

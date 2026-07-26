@@ -20,20 +20,22 @@ export function renderChapterPermanentDeletionModal(state) {
         loadingLabel: "Deleting...",
         action: "confirm-chapter-permanent-deletion",
         isLoading: true,
+        modalDefault: true,
       })
-    : `<button class="button button--primary" data-action="confirm-chapter-permanent-deletion" data-chapter-permanent-delete-button ${
+    : `<button class="button button--primary" data-action="confirm-chapter-permanent-deletion" data-modal-default data-chapter-permanent-delete-button ${
         matchesName ? "" : "disabled"
       }>Delete</button>`;
   const cancelButton = secondaryButton("Cancel", "cancel-chapter-permanent-deletion", {
     disabled: isDeleting,
+    modalCancel: true,
   });
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact">
+      <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="chapter-permanent-deletion-modal-title" data-modal-dialog="chapter-permanent-deletion" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">PERMANENT DELETE</p>
-          <h2 class="modal__title">Permanently Delete File?</h2>
+          <h2 class="modal__title" id="chapter-permanent-deletion-modal-title">Permanently Delete File?</h2>
           <p class="modal__supporting">
             To permanently delete this file, type <strong>${escapeHtml(
               deletion.chapterName,
@@ -48,6 +50,7 @@ export function renderChapterPermanentDeletionModal(state) {
                 placeholder="Enter file name here to delete"
                 value="${escapeHtml(deletion.confirmationText)}"
                 data-chapter-permanent-delete-input
+                data-modal-initial-focus
                 ${isDeleting ? "disabled" : ""}
               />
             </label>

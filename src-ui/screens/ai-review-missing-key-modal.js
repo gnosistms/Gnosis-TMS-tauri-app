@@ -17,19 +17,23 @@ export function renderAiReviewMissingKeyModal(state) {
     : `In order to use this AI feature, you must enter a ${providerLabel} API key. Click below to do that.`;
   const primaryActionMarkup = isMemberMessage
     ? ""
-    : primaryButton("Enter key", "enter-ai-key");
+    : primaryButton("Enter key", "enter-ai-key", { modalDefault: true });
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact">
+      <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="ai-review-missing-key-modal-title" data-modal-dialog="ai-review-missing-key" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">${escapeHtml("NEEDS API KEY")}</p>
-          <h2 class="modal__title">${escapeHtml(title)}</h2>
+          <h2 class="modal__title" id="ai-review-missing-key-modal-title">${escapeHtml(title)}</h2>
           <p class="modal__supporting">
             ${escapeHtml(message)}
           </p>
           <div class="modal__actions">
-            ${secondaryButton(isMemberMessage ? "OK" : "Cancel", "cancel-ai-review-missing-key")}
+            ${secondaryButton(isMemberMessage ? "OK" : "Cancel", "cancel-ai-review-missing-key", {
+              modalCancel: true,
+              modalDefault: isMemberMessage,
+              modalInitialFocus: isMemberMessage,
+            })}
             ${primaryActionMarkup}
           </div>
         </div>

@@ -19,14 +19,16 @@ export function renderTeamMemberOwnerModal(state) {
   });
   const cancelButton = secondaryButton("Cancel", "cancel-team-member-owner-promotion", {
     disabled: isPromoting,
+    modalCancel: true,
+    modalInitialFocus: true,
   });
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact">
+      <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="team-member-owner-promotion-modal-title" data-modal-dialog="team-member-owner-promotion" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">MAKE OWNER</p>
-          <h2 class="modal__title">Promote this user to co-owner of the team?</h2>
+          <h2 class="modal__title" id="team-member-owner-promotion-modal-title">Promote this user to co-owner of the team?</h2>
           <p class="modal__supporting">
             GitHub recommends having two owners on each team so that you don't lose access if one of the owners is unable to log in. However, you should know that when you promote another user to the owner role, they will have the same permissions as you do, including the ability to delete the team.
           </p>

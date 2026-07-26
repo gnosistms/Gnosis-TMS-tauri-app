@@ -57,13 +57,14 @@ export function renderEditorConflictResolutionModal(state) {
   const showFootnotes = editorConflictResolutionShowsFootnotes(modal);
   const showImageCaptions = editorConflictResolutionShowsImageCaptions(modal);
   const showImages = editorConflictResolutionShowsImages(modal);
-  const autofocusFootnote =
+  const initiallyFocusFootnote =
     showFootnotes && String(modal.localText ?? "") === String(modal.remoteText ?? "");
   const errorMarkup = modal.error
     ? `<p class="modal__error">${escapeHtml(formatErrorForDisplay(modal.error))}</p>`
     : "";
   const cancelButton = secondaryButton("Cancel", "cancel-editor-conflict-resolution", {
     disabled: isSubmitting,
+    modalCancel: true,
   });
   const localCopyButton = secondaryButton("Copy", "copy-editor-conflict-version:local", {
     compact: true,
@@ -78,6 +79,7 @@ export function renderEditorConflictResolutionModal(state) {
     loadingLabel: "Saving and finalizing...",
     action: "save-editor-conflict-resolution",
     isLoading: isSubmitting,
+    modalDefault: true,
   });
 
   const renderVersionStack = (text, footnote, imageCaption, imageUrl) => {
@@ -98,10 +100,10 @@ export function renderEditorConflictResolutionModal(state) {
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--editor-conflict">
+      <section class="card modal-card modal-card--editor-conflict" role="dialog" aria-modal="true" aria-labelledby="editor-conflict-resolution-modal-title" data-modal-dialog="editor-conflict-resolution" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">CONFLICT</p>
-          <h2 class="modal__title">Resolve translation conflict</h2>
+          <h2 class="modal__title" id="editor-conflict-resolution-modal-title">Resolve translation conflict</h2>
           <div class="editor-conflict-modal__versions">
             <section class="editor-conflict-modal__column">
               <p class="editor-conflict-modal__version-label">Your version</p>
@@ -123,8 +125,8 @@ export function renderEditorConflictResolutionModal(state) {
             <textarea
               class="field__textarea editor-conflict-modal__final-input"
               data-editor-conflict-final-input
+              ${initiallyFocusFootnote ? "" : "data-modal-initial-focus"}
               rows="1"
-              ${autofocusFootnote ? "" : "autofocus"}
               ${isSubmitting ? "disabled" : ""}
             >${escapeHtml(modal.finalText)}</textarea>
           </label>
@@ -136,9 +138,9 @@ export function renderEditorConflictResolutionModal(state) {
                   <textarea
                     class="field__textarea editor-conflict-modal__final-input editor-conflict-modal__final-input--footnote"
                     data-editor-conflict-final-footnote-input
+                    ${initiallyFocusFootnote ? "data-modal-initial-focus" : ""}
                     rows="1"
                     placeholder="Enter footnote text here."
-                    ${autofocusFootnote ? "autofocus" : ""}
                     ${isSubmitting ? "disabled" : ""}
                   >${escapeHtml(modal.finalFootnote)}</textarea>
                 </label>

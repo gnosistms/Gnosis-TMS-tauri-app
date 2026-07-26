@@ -54,7 +54,9 @@ function getStepConfig(setup) {
       afterBodyClass: "",
       afterBodySupporting: "",
       body: "",
-      actionButton: primaryButton("I understand", "acknowledge-team-setup"),
+      actionButton: primaryButton("I understand", "acknowledge-team-setup", {
+        modalDefault: true,
+      }),
     };
   }
 
@@ -68,7 +70,9 @@ function getStepConfig(setup) {
       afterBodySupporting:
         'After you click <strong>Next</strong> on GitHub, come back here for step 2.',
       body: renderGuideStep(),
-      actionButton: primaryButton("Open GitHub Organization Setup", "begin-team-org-setup"),
+      actionButton: primaryButton("Open GitHub Organization Setup", "begin-team-org-setup", {
+        modalDefault: true,
+      }),
     };
   }
 
@@ -83,7 +87,9 @@ function getStepConfig(setup) {
       afterBodyClass: "modal__supporting--please-check",
       afterBodySupporting: RETURN_FROM_ORG_CREATION_MESSAGE,
       body: renderGuideStep(),
-      actionButton: primaryButton("Continue", "continue-team-setup-after-org-creation"),
+      actionButton: primaryButton("Continue", "continue-team-setup-after-org-creation", {
+        modalDefault: true,
+      }),
     };
   }
 
@@ -98,7 +104,9 @@ function getStepConfig(setup) {
       afterBodyClass: "",
       afterBodySupporting: "",
       body: "",
-      actionButton: primaryButton("Install Gnosis TMS GitHub App", "begin-github-app-install"),
+      actionButton: primaryButton("Install Gnosis TMS GitHub App", "begin-github-app-install", {
+        modalDefault: true,
+      }),
     };
   }
 
@@ -122,7 +130,9 @@ function getStepConfig(setup) {
       afterBodyClass: "",
       afterBodySupporting: "",
       body: "",
-      actionButton: primaryButton("Redo installation", "redo-github-app-install"),
+      actionButton: primaryButton("Redo installation", "redo-github-app-install", {
+        modalDefault: true,
+      }),
     };
   }
 
@@ -139,8 +149,11 @@ function getStepConfig(setup) {
           loadingLabel: "Finishing...",
           action: "finish-team-setup",
           isLoading: true,
+          modalDefault: true,
         })
-      : primaryButton("Finish setting up your team", "finish-team-setup"),
+      : primaryButton("Finish setting up your team", "finish-team-setup", {
+        modalDefault: true,
+      }),
   };
 }
 
@@ -174,16 +187,16 @@ export function renderSetupModal(state) {
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card">
+      <section class="card modal-card" role="dialog" aria-modal="true" aria-labelledby="team-setup-modal-title" data-modal-dialog="team-setup:${escapeHtml(setup.step)}" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">${eyebrow}</p>
-          <h2 class="modal__title">${heading}</h2>
+          <h2 class="modal__title" id="team-setup-modal-title">${heading}</h2>
           ${supportingMarkup}
           ${bodyMarkup}
           ${afterBodyMarkup}
           ${errorMarkup}
           <div class="modal__actions">
-            ${secondaryButton("Cancel", "cancel-team-setup")}
+            ${secondaryButton("Cancel", "cancel-team-setup", { modalCancel: true })}
             ${actionButton}
           </div>
         </div>

@@ -16,17 +16,19 @@ export function renderGlossaryRenameModal(state) {
     loadingLabel: "Saving...",
     action: "submit-glossary-rename",
     isLoading: isSubmitting,
+    modalDefault: true,
   });
   const cancelButton = secondaryButton("Cancel", "cancel-glossary-rename", {
     disabled: isSubmitting,
+    modalCancel: true,
   });
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact">
+      <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="glossary-rename-modal-title" data-modal-dialog="glossary-rename" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">RENAME GLOSSARY</p>
-          <h2 class="modal__title">Rename This Glossary</h2>
+          <h2 class="modal__title" id="glossary-rename-modal-title">Rename This Glossary</h2>
           <div class="modal__form">
             <label class="field">
               <span class="field__label">Glossary Name</span>
@@ -36,6 +38,7 @@ export function renderGlossaryRenameModal(state) {
                 placeholder="Enter glossary name"
                 value="${escapeHtml(rename.glossaryName)}"
                 data-glossary-rename-input
+                data-modal-initial-focus
                 ${isSubmitting ? "disabled" : ""}
               />
             </label>

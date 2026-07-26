@@ -14,10 +14,10 @@ export function renderQaListImportModal(state) {
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact modal-card--project-import">
+      <section class="card modal-card modal-card--compact modal-card--project-import" role="dialog" aria-modal="true" aria-labelledby="qa-list-import-modal-title" data-modal-dialog="qa-list-import" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">IMPORT QA LIST</p>
-          <h2 class="modal__title">Upload a TMX file</h2>
+          <h2 class="modal__title" id="qa-list-import-modal-title">Upload a TMX file</h2>
           <p class="modal__supporting">Import a supported QA list file into this team.</p>
           <div class="modal__form project-import-modal">
             ${errorMarkup}
@@ -26,6 +26,7 @@ export function renderQaListImportModal(state) {
               class="project-import-modal__drop-target qa-list-import-modal__drop-target${isImporting ? " is-loading" : ""}"
               data-action="select-qa-list-import-file"
               data-qa-list-import-dropzone
+              data-modal-initial-focus
               ${isImporting ? 'disabled aria-disabled="true"' : ""}
             >
               <span>${isImporting ? "Importing QA list; please wait." : "Drop a file here or click to open a file selector."}</span>
@@ -33,8 +34,14 @@ export function renderQaListImportModal(state) {
             <p class="project-import-modal__hint">Supported format: .tmx.</p>
           </div>
           <div class="modal__actions">
-            ${secondaryButton("Cancel", "cancel-qa-list-import", { disabled: isImporting })}
-            ${primaryButton(isImporting ? "Importing..." : "Select File", "select-qa-list-import-file", { disabled: isImporting })}
+            ${secondaryButton("Cancel", "cancel-qa-list-import", {
+              disabled: isImporting,
+              modalCancel: true,
+            })}
+            ${primaryButton(isImporting ? "Importing..." : "Select File", "select-qa-list-import-file", {
+              disabled: isImporting,
+              modalDefault: true,
+            })}
           </div>
         </div>
       </section>

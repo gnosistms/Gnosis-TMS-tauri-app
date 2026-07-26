@@ -32,7 +32,7 @@ function renderLanguageCheckboxes(languages, selectedLanguageCodes, disabled) {
   const selected = new Set(Array.isArray(selectedLanguageCodes) ? selectedLanguageCodes : []);
   return `
     <div class="ai-translate-all-modal__language-list">
-      ${languages.map((language) => {
+      ${languages.map((language, index) => {
         const code = String(language?.code ?? "").trim();
         const name = String(language?.name ?? "").trim() || code;
         return `
@@ -40,6 +40,7 @@ function renderLanguageCheckboxes(languages, selectedLanguageCodes, disabled) {
             <input
               type="checkbox"
               data-editor-ai-translate-all-language
+              ${index === 0 ? "data-modal-initial-focus" : ""}
               value="${escapeHtml(code)}"
               ${selected.has(code) ? "checked" : ""}
               ${disabled ? "disabled" : ""}
@@ -94,6 +95,10 @@ export function renderEditorAiTranslateAllModal(state) {
   const cancelButton = secondaryButton(
     isSubmitting ? "Stop" : "Cancel",
     "cancel-editor-ai-translate-all",
+    {
+      modalCancel: !isSubmitting,
+      modalInitialFocus: isSubmitting,
+    },
   );
   const confirmButton = isSubmitting
     ? loadingPrimaryButton({
@@ -110,6 +115,7 @@ export function renderEditorAiTranslateAllModal(state) {
         loadingLabel: "Translating...",
         action: "confirm-editor-ai-translate-all",
         isLoading: false,
+        modalDefault: true,
       })
       : disabledPrimaryButton("Begin translating");
   const languageStatusMarkup = isSubmitting
@@ -126,10 +132,10 @@ export function renderEditorAiTranslateAllModal(state) {
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact modal-card--ai-translate-all">
+      <section class="card modal-card modal-card--compact modal-card--ai-translate-all" role="dialog" aria-modal="true" aria-labelledby="editor-ai-translate-all-modal-title" aria-busy="${isSubmitting ? "true" : "false"}" data-modal-dialog="editor-ai-translate-all" tabindex="-1">
         <div class="card__body modal-card__body ai-translate-all-modal">
           <p class="card__eyebrow">BATCH TRANSLATE</p>
-          <h2 class="modal__title">AI Translate the entire file</h2>
+          <h2 class="modal__title" id="editor-ai-translate-all-modal-title">AI Translate the entire file</h2>
           ${supportingMarkup}
           ${languageStatusMarkup}
           ${errorMarkup}

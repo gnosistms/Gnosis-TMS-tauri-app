@@ -28,9 +28,9 @@ export function renderQaTermEditorModal(state) {
 
   return `
     <div class="modal-backdrop modal-backdrop--glossary-term">
-      <section class="card modal-card modal-card--glossary-term">
+      <section class="card modal-card modal-card--glossary-term" role="dialog" aria-modal="true" aria-labelledby="qa-term-editor-modal-title" data-modal-dialog="qa-term-editor" tabindex="-1">
         <div class="card__body modal-card__body glossary-term-modal">
-          <h2 class="modal__title">${editor.termId ? "Edit QA Term" : "New QA Term"}</h2>
+          <h2 class="modal__title" id="qa-term-editor-modal-title">${editor.termId ? "Edit QA Term" : "New QA Term"}</h2>
           <section class="term-lane">
             <div class="term-lane__header">
               <h3 class="term-lane__title">${escapeHtml(languageName)}</h3>
@@ -44,6 +44,7 @@ export function renderQaTermEditorModal(state) {
                   placeholder="Enter QA term..."
                   rows="3"
                   data-qa-term-text-input
+                  data-modal-initial-focus
                   data-language-code="${escapeHtml(languageCode)}"
                   ${isSubmitting ? "disabled" : ""}
                 >${escapeHtml(editor.text)}</textarea>
@@ -92,12 +93,16 @@ export function renderQaTermEditorModal(state) {
           </section>
           ${errorMarkup}
           <div class="modal__actions">
-            ${secondaryButton("Cancel", "cancel-qa-term-editor", { disabled: isSubmitting })}
+            ${secondaryButton("Cancel", "cancel-qa-term-editor", {
+              disabled: isSubmitting,
+              modalCancel: true,
+            })}
             ${loadingPrimaryButton({
               label: editor.termId ? "Save QA Term" : "Add QA Term",
               loadingLabel: "Saving...",
               action: "submit-qa-term-editor",
               isLoading: isSubmitting,
+              modalDefault: true,
             })}
           </div>
         </div>

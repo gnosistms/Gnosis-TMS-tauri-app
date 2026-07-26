@@ -26,6 +26,7 @@ function renderModeOptions(modal, disabled) {
           type="radio"
           name="editor-ai-review-all-mode"
           data-editor-ai-review-all-mode
+          data-modal-initial-focus
           value="grammar"
           ${selectedMode === "grammar" ? "checked" : ""}
           ${disabled ? "disabled" : ""}
@@ -57,20 +58,21 @@ function renderPreflightModal(modal) {
   const totalLabel = totalTranslationCount === 1 ? "translation" : "translations";
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact modal-card--ai-translate-all">
+      <section class="card modal-card modal-card--compact modal-card--ai-translate-all" role="dialog" aria-modal="true" aria-labelledby="editor-ai-review-preflight-modal-title" data-modal-dialog="editor-ai-review:preflight" tabindex="-1">
         <div class="card__body modal-card__body ai-translate-all-modal">
           <p class="card__eyebrow">AI REVIEW</p>
-          <h2 class="modal__title">Some translations are already reviewed</h2>
+          <h2 class="modal__title" id="editor-ai-review-preflight-modal-title">Some translations are already reviewed</h2>
           <p class="modal__supporting">${escapeHtml(String(reviewedCount))} ${escapeHtml(skippedLabel)} already marked reviewed out of ${escapeHtml(String(totalTranslationCount))} non-empty target language ${escapeHtml(totalLabel)}. AI Review will skip reviewed translations.</p>
           <p class="modal__supporting">If you want to review all of the translations, cancel this review, remove the "reviewed" mark from all the translations, and then restart the AI review. There's a button to remove the reviewed mark from all translations on the right side of the Gnosis TMS toolbar.</p>
           ${renderError(modal)}
           <div class="modal__actions">
-            ${secondaryButton("Cancel", "cancel-editor-ai-review-all")}
+            ${secondaryButton("Cancel", "cancel-editor-ai-review-all", { modalCancel: true })}
             ${loadingPrimaryButton({
               label: "Continue",
               loadingLabel: "Continue",
               action: "continue-editor-ai-review-all",
               isLoading: false,
+              modalDefault: true,
             })}
           </div>
         </div>
@@ -93,6 +95,7 @@ function renderConfigureModal(state, modal) {
       loadingLabel: "Reviewing...",
       action: "confirm-editor-ai-review-all",
       isLoading: modal.status === "loading",
+      modalDefault: true,
     });
   const supportingMarkup = offlineMode
     ? '<p class="modal__supporting">AI actions are unavailable offline.</p>'
@@ -100,15 +103,18 @@ function renderConfigureModal(state, modal) {
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact modal-card--ai-translate-all">
+      <section class="card modal-card modal-card--compact modal-card--ai-translate-all" role="dialog" aria-modal="true" aria-labelledby="editor-ai-review-configure-modal-title" data-modal-dialog="editor-ai-review:configure" tabindex="-1">
         <div class="card__body modal-card__body ai-translate-all-modal">
           <p class="card__eyebrow">AI REVIEW</p>
-          <h2 class="modal__title">AI Review target language</h2>
+          <h2 class="modal__title" id="editor-ai-review-configure-modal-title">AI Review target language</h2>
           ${supportingMarkup}
           ${renderModeOptions(modal, disabled)}
           ${renderError(modal)}
           <div class="modal__actions">
-            ${secondaryButton("Cancel", "cancel-editor-ai-review-all", { disabled })}
+            ${secondaryButton("Cancel", "cancel-editor-ai-review-all", {
+              disabled,
+              modalCancel: true,
+            })}
             ${confirmButton}
           </div>
         </div>
@@ -122,10 +128,10 @@ function renderReviewingModal(state, modal) {
   const isPreparing = modal.status === "preparing";
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact modal-card--ai-translate-all">
+      <section class="card modal-card modal-card--compact modal-card--ai-translate-all" role="dialog" aria-modal="true" aria-labelledby="editor-ai-review-running-modal-title" aria-busy="true" data-modal-dialog="editor-ai-review:running" tabindex="-1">
         <div class="card__body modal-card__body ai-translate-all-modal">
           <p class="card__eyebrow">AI REVIEW</p>
-          <h2 class="modal__title">${isPreparing ? "Preparing review" : "Reviewing translations"}</h2>
+          <h2 class="modal__title" id="editor-ai-review-running-modal-title">${isPreparing ? "Preparing review" : "Reviewing translations"}</h2>
           ${renderBatchOverallProgress(modal, "translation", "translations")}
           ${renderBatchLanguageProgressBars({
             languages: [language],
@@ -136,7 +142,10 @@ function renderReviewingModal(state, modal) {
           })}
           ${renderError(modal)}
           <div class="modal__actions">
-            ${secondaryButton("Stop", "cancel-editor-ai-review-all", { disabled: isPreparing })}
+            ${secondaryButton("Stop", "cancel-editor-ai-review-all", {
+              disabled: isPreparing,
+              modalInitialFocus: !isPreparing,
+            })}
             ${loadingPrimaryButton({
               label: "Begin review",
               loadingLabel: isPreparing ? "Preparing..." : "Reviewing...",
@@ -163,10 +172,10 @@ function renderFilterEnabledModal(modal) {
   if (modal?.error) {
     return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact modal-card--ai-translate-all">
+      <section class="card modal-card modal-card--compact modal-card--ai-translate-all" role="dialog" aria-modal="true" aria-labelledby="editor-ai-review-stopped-modal-title" data-modal-dialog="editor-ai-review:stopped" tabindex="-1">
         <div class="card__body modal-card__body ai-translate-all-modal">
           <p class="card__eyebrow">AI REVIEW</p>
-          <h2 class="modal__title">AI Review stopped</h2>
+          <h2 class="modal__title" id="editor-ai-review-stopped-modal-title">AI Review stopped</h2>
           ${renderError(modal)}
           ${progressLine}
           <p class="modal__supporting">Rows the AI already reviewed are marked with the red &quot;please check&quot; (?) status, and the Please check filter is enabled so you can find them. Run AI Review again to continue &mdash; it only reviews rows without the &quot;mark reviewed&quot; [&#10003;] mark, so finished rows are not reviewed twice.</p>
@@ -176,6 +185,9 @@ function renderFilterEnabledModal(modal) {
               loadingLabel: "Ok",
               action: "dismiss-editor-ai-review-all-filter",
               isLoading: false,
+              modalDefault: true,
+              modalCancel: true,
+              modalInitialFocus: true,
             })}
           </div>
         </div>
@@ -186,10 +198,10 @@ function renderFilterEnabledModal(modal) {
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact modal-card--ai-translate-all">
+      <section class="card modal-card modal-card--compact modal-card--ai-translate-all" role="dialog" aria-modal="true" aria-labelledby="editor-ai-review-finished-modal-title" data-modal-dialog="editor-ai-review:finished" tabindex="-1">
         <div class="card__body modal-card__body ai-translate-all-modal">
           <p class="card__eyebrow">AI REVIEW</p>
-          <h2 class="modal__title">Please check filter enabled</h2>
+          <h2 class="modal__title" id="editor-ai-review-finished-modal-title">Please check filter enabled</h2>
           <p class="modal__supporting">AI Review is finished. The Please check filter is now enabled so you can review translations that need attention. The AI Review has already made the recommended corrections and marked the corrected sections by setting the red &quot;please check&quot; (?) button on each one. Your job now is to open the history tab so you can see what changed.</p>
           ${progressLine}
           <ul class="modal__list">
@@ -203,6 +215,9 @@ function renderFilterEnabledModal(modal) {
               loadingLabel: "Ok",
               action: "dismiss-editor-ai-review-all-filter",
               isLoading: false,
+              modalDefault: true,
+              modalCancel: true,
+              modalInitialFocus: true,
             })}
           </div>
         </div>

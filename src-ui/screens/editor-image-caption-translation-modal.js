@@ -16,6 +16,8 @@ export function renderEditorImageCaptionTranslationModal(state) {
         class="card modal-card modal-card--compact modal-card--navigation-loading"
         role="dialog"
         aria-modal="true"
+        data-modal-dialog="editor-image-caption-translation"
+        tabindex="-1"
         aria-busy="true"
         aria-labelledby="editor-image-caption-translation-title"
       >
@@ -24,7 +26,10 @@ export function renderEditorImageCaptionTranslationModal(state) {
           <h2 class="modal__title navigation-loading-modal__title" id="editor-image-caption-translation-title">Translating caption</h2>
           <p class="modal__supporting navigation-loading-modal__message">Please wait while the image caption is translated${languageName ? ` into ${escapeHtml(languageName)}` : ""}.</p>
           <div class="modal__actions">
-            ${secondaryButton("Cancel", "cancel-editor-image-caption-translation")}
+            ${secondaryButton("Cancel", "cancel-editor-image-caption-translation", {
+              modalCancel: true,
+              modalInitialFocus: true,
+            })}
           </div>
         </div>
       </section>

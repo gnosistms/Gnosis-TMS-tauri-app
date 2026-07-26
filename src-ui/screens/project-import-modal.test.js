@@ -14,11 +14,12 @@ test("project import modal renders the requested drop target copy", () => {
   });
 
   assert.match(html, /<p class="card__eyebrow">ADD FILES<\/p>/);
-  assert.match(html, /<h2 class="modal__title">Add new files to the project<\/h2>/);
+  assert.match(html, /<h2 class="modal__title"[^>]*>Add new files to the project<\/h2>/);
   assert.match(html, /Choose how to add content to Translation Project\./);
   assert.match(html, /data-action="select-project-import-input-mode:upload"[\s\S]*Upload/);
   assert.match(html, /data-action="select-project-import-input-mode:pasteLink"[\s\S]*Paste link/);
   assert.match(html, /data-action="select-project-import-input-mode:pasteText"[\s\S]*Paste text/);
+  assert.match(html, /role="radiogroup"[^>]*data-roving-choice-selection-follows-focus="true"/);
   assert.match(html, /data-project-import-dropzone/);
   assert.match(html, /Drop files here or click to open the file selector\./);
   assert.match(html, /Select files/);
@@ -44,7 +45,7 @@ test("project import modal renders paste link input state", () => {
   assert.match(html, /data-project-import-link-input/);
   assert.match(html, /Paste link here\. Supports Google Docs, Google Sheets, HTML web pages, and local file paths\./);
   assert.match(html, /Continue/);
-  assert.match(html, /data-action="submit-project-import-link" disabled/);
+  assert.match(html, /data-action="submit-project-import-link"[^>]*disabled/);
   assert.doesNotMatch(html, /data-project-import-dropzone/);
   assert.doesNotMatch(html, /Select files/);
 });
@@ -62,7 +63,7 @@ test("project import modal enables paste link continue after a link is entered",
   });
 
   assert.match(html, /value="https:\/\/example\.com\/article"/);
-  assert.match(html, /data-action="submit-project-import-link">Continue<\/button>/);
+  assert.match(html, /data-action="submit-project-import-link"[^>]*>Continue<\/button>/);
   assert.doesNotMatch(html, /data-action="submit-project-import-link" disabled/);
 });
 
@@ -79,7 +80,7 @@ test("project import modal disables paste link controls while resolving", () => 
   });
 
   assert.match(html, /data-project-import-link-input[\s\S]*disabled/);
-  assert.match(html, /data-action="submit-project-import-link" disabled[\s\S]*Opening\.\.\.<\/button>/);
+  assert.match(html, /data-action="submit-project-import-link"[^>]*disabled[\s\S]*Opening\.\.\.<\/button>/);
   assert.match(html, /data-action="cancel-project-import"[\s\S]*disabled/);
 });
 
@@ -130,7 +131,7 @@ test("project import modal renders paste text input state", () => {
   assert.match(html, /placeholder="Paste text here\."/);
   assert.match(html, /Paste plain text here\. You will choose its source language before importing\./);
   assert.match(html, /Continue/);
-  assert.match(html, /data-action="submit-project-import-pasted-text" disabled/);
+  assert.match(html, /data-action="submit-project-import-pasted-text"[^>]*disabled/);
   assert.doesNotMatch(html, /data-project-import-dropzone/);
   assert.doesNotMatch(html, /Select files/);
 });
@@ -148,7 +149,7 @@ test("project import modal enables paste text continue after text is pasted", ()
   });
 
   assert.match(html, />Line one\nLine two<\/textarea>/);
-  assert.match(html, /data-action="submit-project-import-pasted-text">Continue<\/button>/);
+  assert.match(html, /data-action="submit-project-import-pasted-text"[^>]*>Continue<\/button>/);
   assert.doesNotMatch(html, /data-action="submit-project-import-pasted-text" disabled/);
 });
 
@@ -165,7 +166,7 @@ test("project import modal disables paste text controls while importing", () => 
   });
 
   assert.match(html, /data-project-import-paste-textarea[\s\S]*disabled/);
-  assert.match(html, /data-action="submit-project-import-pasted-text" disabled[\s\S]*Importing\.\.\.<\/button>/);
+  assert.match(html, /data-action="submit-project-import-pasted-text"[^>]*disabled[\s\S]*Importing\.\.\.<\/button>/);
 });
 
 test("project import modal renders upload progress step while importing upload files", () => {
@@ -190,7 +191,7 @@ test("project import modal renders upload progress step while importing upload f
   assert.match(html, /aria-valuemax="5"/);
   assert.match(html, /aria-valuenow="2"/);
   assert.match(html, /style="width: 40%;"/);
-  assert.match(html, /data-action="cancel-project-import">Cancel<\/button>/);
+  assert.match(html, /data-action="cancel-project-import"[^>]*>Cancel<\/button>/);
   assert.doesNotMatch(html, /data-project-import-dropzone/);
 });
 
@@ -231,7 +232,7 @@ test("project import modal renders source language selection step for text-like 
   assert.match(html, /data-action="select-project-import-source-language:zh-Hans"/);
   assert.match(html, /data-action="select-project-import-source-language:zh-Hant"/);
   assert.doesNotMatch(html, /data-action="select-project-import-source-language:zh"/);
-  assert.match(html, /data-action="continue-project-import-text" disabled/);
+  assert.match(html, /data-action="continue-project-import-text"[^>]*disabled/);
 });
 
 test("project import modal renders batch source language copy", () => {

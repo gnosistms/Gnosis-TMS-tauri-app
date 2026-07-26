@@ -271,7 +271,7 @@ test("connection failure modal shows reconnecting state", () => {
   assert.match(html, /aria-busy="true"/);
   assert.match(html, /data-action="noop"/);
   assert.match(html, /data-loading-spinner-key="reconnect-from-connection-failure"/);
-  assert.match(html, /go-offline-from-connection-failure" disabled/);
+  assert.match(html, /data-action="go-offline-from-connection-failure"[^>]*disabled/);
 });
 
 test("reconnectFromConnectionFailure stays open when the connection is still unavailable", async () => {

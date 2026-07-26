@@ -32,6 +32,7 @@ function renderExportOption(option, selectedOptionId) {
         type="button"
         class="${classes}"
         data-action="select-editor-export-option:${escapeHtml(option.id)}"
+        ${option.id === selectedOptionId ? "data-modal-initial-focus" : ""}
         aria-pressed="${option.id === selectedOptionId ? "true" : "false"}"
       >${escapeHtml(option.label)}</button>
     </li>
@@ -204,6 +205,7 @@ function wordpressDetail(wordpress, isExporting) {
           placeholder="Search posts or paste URL"
           value="${escapeHtml(wordpress.searchQuery)}"
           data-wordpress-search-input
+          data-modal-enter-action="search-wordpress-posts"
         />
         ${secondaryButton("Search", "search-wordpress-posts", { disabled: wordpress.searchStatus === "searching" })}
       </div>
@@ -247,6 +249,7 @@ function wordpressDetail(wordpress, isExporting) {
       loadingLabel: "Exporting...",
       action: "submit-editor-export",
       isLoading: isExporting,
+      modalDefault: true,
     }),
   };
 }
@@ -399,6 +402,7 @@ function teamCopyDetail(teamCopy, isExporting, appState) {
       loadingLabel: "Copying...",
       action: "submit-editor-export",
       isLoading: isExporting,
+      modalDefault: true,
     }),
   };
 }
@@ -502,6 +506,7 @@ function exportDetail(option, isExporting, modal, appState) {
         loadingLabel: "Saving...",
         action: "submit-editor-export",
         isLoading: isExporting,
+        modalDefault: true,
       }) : "",
     };
   }
@@ -517,6 +522,7 @@ function exportDetail(option, isExporting, modal, appState) {
       loadingLabel: "Copying...",
       action: "submit-editor-export",
       isLoading: isExporting,
+      modalDefault: true,
     }),
   };
 }
@@ -543,10 +549,10 @@ export function renderEditorExportModal(state) {
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--editor-export">
+      <section class="card modal-card modal-card--editor-export" role="dialog" aria-modal="true" aria-labelledby="editor-export-modal-title" data-modal-dialog="editor-export" tabindex="-1">
         <div class="card__body modal-card__body modal-card__body--editor-export">
           <header class="editor-export-modal__header">
-            <h2 class="modal__title">Export chapter</h2>
+            <h2 class="modal__title" id="editor-export-modal-title">Export chapter</h2>
             ${iconAction("Close export options", "close-editor-export-options", closeIcon, {
               disabled: isCancelling || (isExporting && !canCancelPdf),
               className: "editor-export-modal__close",
@@ -563,6 +569,7 @@ export function renderEditorExportModal(state) {
               <div class="modal__actions">
                 ${secondaryButton(isCancelling ? "Cancelling…" : canCancelPdf ? "Cancel export" : "Cancel", "close-editor-export-options", {
                   disabled: isCancelling || (isExporting && !canCancelPdf),
+                  modalCancel: true,
                 })}
                 ${detail.submitButton}
               </div>

@@ -22,6 +22,8 @@ export function renderEditorRowMergeModal(state) {
     : "";
   const cancelButton = secondaryButton("Cancel", "cancel-merge-editor-rows", {
     disabled: isSubmitting,
+    modalCancel: true,
+    modalInitialFocus: true,
   });
   const directionButton = (label, action, isAvailable) => `
     <button
@@ -42,10 +44,10 @@ export function renderEditorRowMergeModal(state) {
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact">
+      <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="editor-row-merge-modal-title" data-modal-dialog="editor-row-merge" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">MERGE ROWS</p>
-          <h2 class="modal__title">Previous or next?</h2>
+          <h2 class="modal__title" id="editor-row-merge-modal-title">Previous or next?</h2>
           <p class="modal__supporting">Do you want to merge this row with the previous row or the next row?</p>
           ${errorMarkup}
           <div class="modal__actions">

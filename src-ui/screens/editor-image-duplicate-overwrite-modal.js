@@ -23,7 +23,7 @@ export function renderEditorImageDuplicateOverwriteModal(state) {
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="editor-image-duplicate-overwrite-title">
+      <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="editor-image-duplicate-overwrite-title" data-modal-dialog="editor-image-duplicate-overwrite" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">Duplicate image</p>
           <h2 class="modal__title" id="editor-image-duplicate-overwrite-title">Overwrite the ${escapeHtml(languageName)} image?</h2>
@@ -32,12 +32,14 @@ export function renderEditorImageDuplicateOverwriteModal(state) {
           <div class="modal__actions">
             ${secondaryButton("Cancel", "cancel-editor-image-duplicate-overwrite", {
               disabled: isLoading,
+              modalCancel: true,
             })}
             ${loadingPrimaryButton({
               label: "Overwrite",
               loadingLabel: "Overwriting...",
               action: "confirm-editor-image-duplicate-overwrite",
               isLoading,
+              modalDefault: true,
             })}
           </div>
         </div>

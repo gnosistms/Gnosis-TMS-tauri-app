@@ -20,20 +20,22 @@ export function renderProjectClearDeletedFilesModal(state) {
         loadingLabel: "Deleting...",
         action: "confirm-clear-deleted-files",
         isLoading: true,
+        modalDefault: true,
       })
-    : `<button class="button button--primary" data-action="confirm-clear-deleted-files" data-project-clear-deleted-files-button ${
+    : `<button class="button button--primary" data-action="confirm-clear-deleted-files" data-modal-default data-project-clear-deleted-files-button ${
         matchesName ? "" : "disabled"
       }>Delete all</button>`;
   const cancelButton = secondaryButton("Cancel", "cancel-clear-deleted-files", {
     disabled: isDeleting,
+    modalCancel: true,
   });
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact">
+      <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="project-clear-deleted-files-modal-title" data-modal-dialog="project-clear-deleted-files" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">CLEAR DELETED FILES</p>
-          <h2 class="modal__title">Permanently remove all deleted files</h2>
+          <h2 class="modal__title" id="project-clear-deleted-files-modal-title">Permanently remove all deleted files</h2>
           <p class="modal__supporting">
             To permanently remove all deleted files in this project, type the project name:
             <strong>${escapeHtml(modal.projectName)}</strong> in the box below and click Delete all.
@@ -48,6 +50,7 @@ export function renderProjectClearDeletedFilesModal(state) {
                 placeholder="Enter project name here to delete all"
                 value="${escapeHtml(modal.confirmationText)}"
                 data-project-clear-deleted-files-input
+                data-modal-initial-focus
                 ${isDeleting ? "disabled" : ""}
               />
             </label>

@@ -4,6 +4,7 @@ export function renderQaListOldLayoutDiscardModal(state) {
   return renderRepoOldLayoutDiscardModal({
     modal: state.qaListOldLayoutDiscard,
     resourceLabel: "QA list",
+    modalId: "qa-list-old-layout-discard",
     closeAction: "close-qa-list-old-layout-discard",
     confirmAction: "confirm-qa-list-old-layout-discard",
   });

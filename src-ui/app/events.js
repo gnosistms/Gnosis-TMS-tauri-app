@@ -7,6 +7,8 @@ import { syncGlossaryTermInlineStyleButtons } from "./glossary-term-inline-marku
 import { syncQaTermInlineStyleButtons } from "./qa-term-inline-markup-flow.js";
 import { registerKeyboardShortcutEvents } from "./events/keyboard-shortcuts.js";
 import { registerListboxControlEvents } from "./events/listbox-control.js";
+import { registerModalDialogEvents } from "./events/modal-dialog.js";
+import { registerRovingChoiceEvents } from "./events/roving-choice.js";
 import { registerNativeDropEvents } from "./events/native-drops.js";
 import { reportBackendNonfatalError } from "./telemetry.js";
 import {
@@ -45,6 +47,8 @@ export function registerAppEvents(render) {
   registerNativeDropEvents(render);
   registerKeyboardShortcutEvents(dispatchAction);
   registerListboxControlEvents();
+  registerRovingChoiceEvents();
+  registerModalDialogEvents();
   registerGlossaryTooltipEvents();
   registerProjectAddTranslationProgress(render);
 

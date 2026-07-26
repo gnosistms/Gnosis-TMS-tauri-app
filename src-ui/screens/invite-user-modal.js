@@ -38,10 +38,10 @@ export function renderInviteUserModal(state) {
   if (invite.step === "success") {
     return `
       <div class="modal-backdrop">
-        <section class="card modal-card modal-card--compact">
+        <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="invite-user-success-modal-title" data-modal-dialog="invite-user:success" tabindex="-1">
           <div class="card__body modal-card__body">
             <p class="card__eyebrow">INVITATION SENT</p>
-            <h2 class="modal__title">Check for invitation email</h2>
+            <h2 class="modal__title" id="invite-user-success-modal-title">Check for invitation email</h2>
             <p class="modal__supporting">
               We sent an email to the GitHub user you selected asking them to join the GitHub organization where your team data is stored. Ask them to check their email and accept the invitation.
             </p>
@@ -51,6 +51,9 @@ export function renderInviteUserModal(state) {
                 loadingLabel: "Ok",
                 action: "acknowledge-invite-user-success",
                 isLoading: false,
+                modalDefault: true,
+                modalCancel: true,
+                modalInitialFocus: true,
               })}
             </div>
           </div>
@@ -75,9 +78,11 @@ export function renderInviteUserModal(state) {
     loadingLabel: "Inviting...",
     action: "submit-invite-user",
     isLoading: isSubmitting,
+    modalDefault: true,
   });
   const cancelButton = secondaryButton("Cancel", "cancel-invite-user", {
     disabled: isSubmitting,
+    modalCancel: true,
   });
   const errorMarkup = invite.error
     ? `<p class="modal__error">${escapeHtml(formatErrorForDisplay(invite.error))}</p>`
@@ -100,10 +105,10 @@ export function renderInviteUserModal(state) {
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact modal-card--allow-overflow">
+      <section class="card modal-card modal-card--compact modal-card--allow-overflow" role="dialog" aria-modal="true" aria-labelledby="invite-user-modal-title" data-modal-dialog="invite-user" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">INVITE MEMBER</p>
-          <h2 class="modal__title">Invite A Member</h2>
+          <h2 class="modal__title" id="invite-user-modal-title">Invite A Member</h2>
           <p class="modal__supporting">
             Type in the box below to search for GitHub users.
           </p>
@@ -139,6 +144,8 @@ export function renderInviteUserModal(state) {
                         placeholder="Enter GitHub username"
                         value="${escapeHtml(invite.query)}"
                         data-invite-user-input
+                        data-modal-initial-focus
+                        ${showSuggestions ? "data-modal-enter-ignores-default" : ""}
                         autocomplete="off"
                         ${isSubmitting ? "disabled" : ""}
                       />

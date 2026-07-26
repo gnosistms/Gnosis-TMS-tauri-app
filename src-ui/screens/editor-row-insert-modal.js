@@ -13,6 +13,8 @@ export function renderEditorRowInsertModal(state) {
     : "";
   const cancelButton = secondaryButton("Cancel", "cancel-insert-editor-row", {
     disabled: isSubmitting,
+    modalCancel: true,
+    modalInitialFocus: true,
   });
   const beforeButton = loadingPrimaryButton({
     label: "Before",
@@ -26,10 +28,10 @@ export function renderEditorRowInsertModal(state) {
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact">
+      <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="editor-row-insert-modal-title" data-modal-dialog="editor-row-insert" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">INSERT NEW ROW</p>
-          <h2 class="modal__title">Before or after?</h2>
+          <h2 class="modal__title" id="editor-row-insert-modal-title">Before or after?</h2>
           <p class="modal__supporting">Do you want to insert the new row before or after this row?</p>
           ${errorMarkup}
           <div class="modal__actions">

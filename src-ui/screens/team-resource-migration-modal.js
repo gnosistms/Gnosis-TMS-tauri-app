@@ -10,11 +10,11 @@ export function renderTeamResourceMigrationModal(state) {
 
   return `
     <div class="modal-backdrop modal-backdrop--team-resource-migration" aria-live="polite">
-      <section class="card modal-card modal-card--compact modal-card--team-resource-migration" role="status" aria-busy="true">
+      <section class="card modal-card modal-card--compact modal-card--team-resource-migration" role="dialog" aria-modal="true" aria-labelledby="team-resource-migration-modal-title" aria-busy="true" data-modal-dialog="team-resource-migration" tabindex="-1">
         <div class="card__body modal-card__body modal-card__body--navigation-loading">
           <p class="card__eyebrow">Migrating</p>
           <div class="navigation-loading-modal__spinner" aria-hidden="true"></div>
-          <h2 class="modal__title navigation-loading-modal__title">Updating team data</h2>
+          <h2 class="modal__title navigation-loading-modal__title" id="team-resource-migration-modal-title">Updating team data</h2>
           <p class="modal__supporting navigation-loading-modal__message">${escapeHtml(message)}</p>
         </div>
       </section>

@@ -56,6 +56,10 @@ import {
   restoreFocusedInputState,
   shouldRestoreFocusedInputStateForScope,
 } from "./app/focused-input-state.js";
+import {
+  captureModalRenderState,
+  reconcileModalRenderState,
+} from "./app/events/modal-dialog.js";
 import { buildEditorFieldSelector } from "./app/editor-utils.js";
 import {
   EDITOR_MODE_PREVIEW,
@@ -607,6 +611,7 @@ function renderTranslateVisibleRowsOnly(options = {}) {
 
 function renderTranslateAiTranslateAllModalOnly() {
   const html = renderEditorAiTranslateAllModal(state);
+  const modalSnapshot = captureModalRenderState(app);
   const modalCard = app.querySelector(".modal-card--ai-translate-all");
   const backdrop = modalCard?.closest?.(".modal-backdrop");
   if (backdrop instanceof HTMLElement) {
@@ -615,16 +620,19 @@ function renderTranslateAiTranslateAllModalOnly() {
     } else {
       backdrop.remove();
     }
+    reconcileModalRenderState(app, modalSnapshot);
     return;
   }
 
   if (html) {
     app.insertAdjacentHTML("beforeend", html);
   }
+  reconcileModalRenderState(app, modalSnapshot);
 }
 
 function renderTranslateDeriveGlossariesModalOnly() {
   const html = renderEditorDeriveGlossariesModal(state);
+  const modalSnapshot = captureModalRenderState(app);
   const modalCard = app.querySelector(".modal-card--derive-glossaries");
   const backdrop = modalCard?.closest?.(".modal-backdrop");
   if (backdrop instanceof HTMLElement) {
@@ -633,16 +641,19 @@ function renderTranslateDeriveGlossariesModalOnly() {
     } else {
       backdrop.remove();
     }
+    reconcileModalRenderState(app, modalSnapshot);
     return;
   }
 
   if (html) {
     app.insertAdjacentHTML("beforeend", html);
   }
+  reconcileModalRenderState(app, modalSnapshot);
 }
 
 function renderTranslateInsertLinkModalOnly() {
   const html = renderEditorInsertLinkModal(state);
+  const modalSnapshot = captureModalRenderState(app);
   const modalCard = app.querySelector(".modal-card--insert-link");
   const backdrop = modalCard?.closest?.(".modal-backdrop");
   if (backdrop instanceof HTMLElement) {
@@ -651,12 +662,14 @@ function renderTranslateInsertLinkModalOnly() {
     } else {
       backdrop.remove();
     }
+    reconcileModalRenderState(app, modalSnapshot);
     return;
   }
 
   if (html) {
     app.insertAdjacentHTML("beforeend", html);
   }
+  reconcileModalRenderState(app, modalSnapshot);
 }
 
 function renderTranslateImagePreviewOverlayOnly() {
@@ -755,6 +768,7 @@ function renderWithOptions(options = {}) {
     previousScreen === "translate" && state.screen === "translate"
       ? captureAssistantTranscriptScrollTop(app)
       : null;
+  const modalSnapshot = captureModalRenderState(app);
   app.innerHTML =
     renderScreen()
     + renderAppUpdateModal(state)
@@ -795,6 +809,7 @@ function renderWithOptions(options = {}) {
   const restoredFocus = shouldRestoreFocusedInputStateForScope(focusSnapshot, "full")
     ? restoreFocusedInputState(focusSnapshot)
     : false;
+  reconcileModalRenderState(app, modalSnapshot);
   if (focusSnapshot?.kind === "editor-row-field" && !restoredFocus && focusSnapshot.rowId) {
     scheduleDirtyEditorRowScan(render, focusSnapshot.rowId);
   }

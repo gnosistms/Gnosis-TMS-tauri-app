@@ -33,6 +33,14 @@ function disabledActionAttributes(options = {}) {
   return ' disabled aria-disabled="true" data-offline-blocked="true"';
 }
 
+function modalControlAttributes(options = {}) {
+  return [
+    options.modalDefault ? " data-modal-default" : "",
+    options.modalCancel ? " data-modal-cancel" : "",
+    options.modalInitialFocus ? " data-modal-initial-focus" : "",
+  ].join("");
+}
+
 function serializeAttributes(attributes = {}) {
   return Object.entries(attributes)
     .map(([key, value]) => {
@@ -86,13 +94,13 @@ export function actionNavButton(label, action, isGhost = false, options = {}) {
 export function primaryButton(label, action, options = {}) {
   return `<button class="button button--primary${options.disabled ? " is-disabled" : ""}" data-action="${escapeHtml(
     action,
-  )}"${disabledActionAttributes(options)}>${escapeHtml(label)}</button>`;
+  )}"${modalControlAttributes(options)}${disabledActionAttributes(options)}>${escapeHtml(label)}</button>`;
 }
 
 export function errorButton(label, action, options = {}) {
   return `<button class="button button--error${options.disabled ? " is-disabled" : ""}" data-action="${escapeHtml(
     action,
-  )}"${disabledActionAttributes(options)}>${escapeHtml(label)}</button>`;
+  )}"${modalControlAttributes(options)}${disabledActionAttributes(options)}>${escapeHtml(label)}</button>`;
 }
 
 export function loadingSpinnerKeyAttribute(key) {
@@ -110,6 +118,9 @@ export function loadingButton({
   variant = "primary",
   compact = false,
   className = "",
+  modalDefault = false,
+  modalCancel = false,
+  modalInitialFocus = false,
 }) {
   const normalizedVariant = ["primary", "secondary", "error"].includes(variant)
     ? variant
@@ -125,7 +136,11 @@ export function loadingButton({
 
   if (isLoading) {
     return `
-      <button class="${escapeHtml(classes)}" data-action="noop"${loadingSpinnerKeyAttribute(action)} disabled aria-busy="true">
+      <button class="${escapeHtml(classes)}" data-action="noop"${modalControlAttributes({
+        modalDefault,
+        modalCancel,
+        modalInitialFocus,
+      })}${loadingSpinnerKeyAttribute(action)} disabled aria-busy="true">
         <span class="button__spinner" aria-hidden="true"></span>
         <span>${escapeHtml(loadingLabel)}</span>
       </button>
@@ -133,7 +148,11 @@ export function loadingButton({
   }
 
   return `
-    <button class="${escapeHtml(classes)}" data-action="${escapeHtml(action)}">
+    <button class="${escapeHtml(classes)}" data-action="${escapeHtml(action)}"${modalControlAttributes({
+      modalDefault,
+      modalCancel,
+      modalInitialFocus,
+    })}>
       <span>${escapeHtml(label)}</span>
     </button>
   `;
@@ -169,7 +188,7 @@ export function secondaryButton(label, action, options = {}) {
     : "";
   return `<button class="button button--secondary${options.compact ? " button--compact" : ""}${options.disabled ? " is-disabled" : ""}${className}" data-action="${escapeHtml(
     action,
-  )}"${tooltip}${disabledActionAttributes(options)}>${escapeHtml(label)}</button>`;
+  )}"${modalControlAttributes(options)}${tooltip}${disabledActionAttributes(options)}>${escapeHtml(label)}</button>`;
 }
 
 export function textAction(label, action, options = {}) {

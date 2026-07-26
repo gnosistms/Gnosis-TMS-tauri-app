@@ -20,10 +20,10 @@ export function renderConnectionFailureModal(state) {
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact">
+      <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="connection-failure-modal-title" data-modal-dialog="connection-failure" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">CONNECTION ERROR</p>
-          <h2 class="modal__title">Connection unavailable</h2>
+          <h2 class="modal__title" id="connection-failure-modal-title">Connection unavailable</h2>
           <p class="modal__supporting">
             ${escapeHtml(failure.message)}
           </p>
@@ -34,6 +34,7 @@ export function renderConnectionFailureModal(state) {
             ${reconnectButton}
             ${primaryButton("Go offline", "go-offline-from-connection-failure", {
               disabled: failure.canGoOffline !== true || isReconnecting,
+              modalDefault: true,
             })}
           </div>
         </div>

@@ -1931,6 +1931,11 @@
   background: var(--control-selected-surface);
 }
 
+.language-picker-modal__option:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: -2px;
+}
+
 .language-picker-modal__code {
   color: rgba(132, 103, 70, 0.72);
   font-size: 0.92rem;

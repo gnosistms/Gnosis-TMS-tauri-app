@@ -16,17 +16,19 @@ export function renderProjectRenameModal(state) {
     loadingLabel: "Saving...",
     action: "submit-project-rename",
     isLoading: isSubmitting,
+    modalDefault: true,
   });
   const cancelButton = secondaryButton("Cancel", "cancel-project-rename", {
     disabled: isSubmitting,
+    modalCancel: true,
   });
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact">
+      <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="project-rename-modal-title" data-modal-dialog="project-rename" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">RENAME PROJECT</p>
-          <h2 class="modal__title">Rename This Project</h2>
+          <h2 class="modal__title" id="project-rename-modal-title">Rename This Project</h2>
           <div class="modal__form">
             <label class="field">
               <span class="field__label">Project Name</span>
@@ -36,6 +38,7 @@ export function renderProjectRenameModal(state) {
                 placeholder="Enter project name"
                 value="${escapeHtml(rename.projectName)}"
                 data-project-rename-input
+                data-modal-initial-focus
                 ${isSubmitting ? "disabled" : ""}
               />
             </label>

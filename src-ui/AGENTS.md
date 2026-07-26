@@ -207,6 +207,26 @@ Sync may change row content on disk. Sync results flow through
 
 ## Common Mistakes
 
+### Modal Dialogs
+
+Interactive modal cards use the shared controller in `app/events/modal-dialog.js`.
+Renderers declare behavior; they must not add document-level Enter/Escape handlers.
+
+- Add `role="dialog"`, `aria-modal="true"`, a stable `data-modal-dialog`, an
+  `aria-labelledby` title, and `tabindex="-1"` to the modal card.
+- Mark at most one enabled action with `data-modal-default` and at most one
+  dismiss action with `data-modal-cancel`. Shared button helpers accept
+  `modalDefault`, `modalCancel`, and `modalInitialFocus`.
+- Mark the preferred entry control with `data-modal-initial-focus`. Do not use
+  `autofocus`; full renders replace modal DOM and would steal focus repeatedly.
+- The focused control owns Enter before the dialog does. Textareas keep newline
+  behavior; buttons, listboxes, search actions, and structured choices keep their
+  local behavior. Only eligible single-line inputs fall through to the default.
+- Do not infer keyboard defaults from `.button--primary`. Consequential ungated
+  actions may intentionally have no Return default.
+- Use `data-roving-choice-group` / `data-roving-choice-option` for arrow-navigable
+  radio-like or listbox choices. Ordinary modal footer buttons remain Tab-navigated.
+
 ### Team-Scoping
 
 When seeding visible state from cache or local disk, always check that the cached
