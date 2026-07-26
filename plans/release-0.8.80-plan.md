@@ -28,7 +28,7 @@ Date: 2026-07-26
 - [x] Run pre-tag verification: JavaScript and workflow tests, JavaScript lint,
       frontend build, Cargo formatting, Rust tests, version consistency, and
       `git diff --check`.
-- [ ] Merge the release PR.
-- [ ] Tag `v0.8.80` and push the tag.
-- [ ] Confirm the release workflow succeeds on macOS arm64, macOS x64, and Windows
+- [x] Merge the release PR.
+- [x] Tag `v0.8.80` and push the tag.
+- [x] Confirm the release workflow succeeds on macOS arm64, macOS x64, and Windows
       x64, and verify the published GitHub Release assets and updater metadata.
