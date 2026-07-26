@@ -114,6 +114,10 @@ fn review_qa_guidance() -> &'static str {
     "Matched QA entries are advisory context. Use each entry's notes to decide whether anything is wrong and what correction is appropriate. Do not treat a match by itself as an error."
 }
 
+fn review_target_language_punctuation_guidance() -> &'static str {
+    "Use the punctuation marks and follow the punctuation rules of the target language. Do not copy source-language punctuation conventions, including quotation marks, when they differ from the target language."
+}
+
 fn meaning_review_guidance() -> &'static str {
     "Translation accuracy is about preserving meaning, not mirroring the source's structure. Treat differences in word order, clause order, or the order of items in a list as correct when the relationships and meaning are preserved and the target-language text is grammatical. Do not suggest a change merely to match the source's order, syntax, phrasing, or style, or to substitute equally valid wording. For translation-accuracy reasons, suggest a correction only when the target adds, omits, contradicts, or otherwise misrepresents meaning."
 }
@@ -189,6 +193,7 @@ pub(crate) fn build_review_prompt(request: &AiReviewRequest) -> String {
                 "Decision rule:\n- If every reviewed section is correct and complies with relevant QA notes: set all suggested fields to empty strings and reviewed to true.\n- If any section has errors or violates a relevant QA note: set reviewed to false and put corrected content only in the matching suggested field. Keep unchanged sections as empty strings."
                     .to_string(),
             );
+            sections.push(review_target_language_punctuation_guidance().to_string());
             sections.push(meaning_review_guidance().to_string());
             sections.push(
                 "Use supporting context when relevant. Do not treat reference translations or edit history as more authoritative than the source-language sections. Keep main text, footnotes, and image captions separate."
@@ -230,6 +235,7 @@ pub(crate) fn build_review_prompt(request: &AiReviewRequest) -> String {
             review_response_contract().to_string(),
             "Task:\nReview the target-language sections for spelling and grammar errors and apply any relevant matched QA-entry notes. Do not otherwise review translation accuracy or compare against source text.".to_string(),
             "Decision rule:\n- If every reviewed section is correct and complies with relevant QA notes: set all suggested fields to empty strings and reviewed to true.\n- If any section has errors or violates a relevant QA note: set reviewed to false and put corrected content only in the matching suggested field. Keep unchanged sections as empty strings.".to_string(),
+            review_target_language_punctuation_guidance().to_string(),
             "Preserve the meaning, terminology, tone, and style unless a change is needed to correct spelling or grammar or to follow a relevant QA note. Keep main text, footnotes, and image captions separate.".to_string(),
         ];
         if !qa_info.is_empty() {
@@ -246,12 +252,12 @@ pub(crate) fn build_review_prompt(request: &AiReviewRequest) -> String {
     let language_code = request.language_code.trim();
     if language_code.is_empty() {
         format!(
-            "Check spelling and grammar on the following text. Output only your suggested revised version of the text. Do not explain what you changed and why. If the text to review is already correct, do not change anything.\n\nText to review:\n{}",
+            "Check spelling and grammar on the following text. Use the punctuation marks and follow the punctuation rules of the target language. Do not copy source-language punctuation conventions, including quotation marks, when they differ from the target language. Output only your suggested revised version of the text. Do not explain what you changed and why. If the text to review is already correct, do not change anything.\n\nText to review:\n{}",
             request.text
         )
     } else {
         format!(
-            "Check spelling and grammar on the following text. Output only your suggested revised version of the text. Do not explain what you changed and why. If the text to review is already correct, do not change anything.\n\nLanguage code: {language_code}\n\nText to review:\n{}",
+            "Check spelling and grammar on the following text. Use the punctuation marks and follow the punctuation rules of the target language. Do not copy source-language punctuation conventions, including quotation marks, when they differ from the target language. Output only your suggested revised version of the text. Do not explain what you changed and why. If the text to review is already correct, do not change anything.\n\nLanguage code: {language_code}\n\nText to review:\n{}",
             request.text
         )
     }
@@ -620,6 +626,7 @@ pub(crate) fn build_review_batch_prompt(request: &AiReviewBatchRequest) -> Strin
             review_batch_response_contract().to_string(),
             "Task:\nReview each row's target-language sections for spelling and grammar errors and apply any relevant matched QA-entry notes. Do not otherwise review translation accuracy or compare against source text.".to_string(),
             "Decision rule (per row):\n- If every section is correct and complies with relevant QA notes: set that row's suggested fields to empty strings and reviewed to true.\n- If any section has errors or violates a relevant QA note: set reviewed to false and put corrected content only in the matching suggested field; keep unchanged sections as empty strings.".to_string(),
+            review_target_language_punctuation_guidance().to_string(),
             "Preserve meaning, terminology, tone, and style unless a change is needed to correct spelling or grammar or to follow a relevant QA note. Keep main text, footnotes, and image captions separate.".to_string(),
         ];
         if has_qa_hints {
@@ -653,6 +660,7 @@ pub(crate) fn build_review_batch_prompt(request: &AiReviewBatchRequest) -> Strin
             .to_string(),
         "Decision rule (per row):\n- If every reviewed section is correct and complies with relevant QA notes: set that row's suggested fields to empty strings and reviewed to true.\n- If any section has errors or violates a relevant QA note: set reviewed to false and put corrected content only in the matching suggested field; keep unchanged sections as empty strings."
             .to_string(),
+        review_target_language_punctuation_guidance().to_string(),
         meaning_review_guidance().to_string(),
         "Use supporting context when relevant. Do not treat reference translations or edit history as more authoritative than the source-language sections. Keep main text, footnotes, and image captions separate."
             .to_string(),
@@ -2466,7 +2474,7 @@ mod tests {
 
         assert_eq!(
             prompt,
-            "Check spelling and grammar on the following text. Output only your suggested revised version of the text. Do not explain what you changed and why. If the text to review is already correct, do not change anything.\n\nLanguage code: vi\n\nText to review:\nBan dich hien tai"
+            "Check spelling and grammar on the following text. Use the punctuation marks and follow the punctuation rules of the target language. Do not copy source-language punctuation conventions, including quotation marks, when they differ from the target language. Output only your suggested revised version of the text. Do not explain what you changed and why. If the text to review is already correct, do not change anything.\n\nLanguage code: vi\n\nText to review:\nBan dich hien tai"
         );
     }
 
@@ -2483,6 +2491,12 @@ mod tests {
             "Task:\nReview the target-language sections for spelling and grammar errors"
         ));
         assert!(prompt.contains("Do not otherwise review translation accuracy"));
+        assert!(prompt.contains(
+            "Use the punctuation marks and follow the punctuation rules of the target language"
+        ));
+        assert!(prompt.contains(
+            "Do not copy source-language punctuation conventions, including quotation marks"
+        ));
         assert!(prompt.contains("Keep main text, footnotes, and image captions separate."));
         assert!(prompt.contains("<review_item>"));
         assert!(prompt.contains("These are the only sections you are reviewing."));
@@ -2583,6 +2597,12 @@ mod tests {
         ));
         assert!(prompt.contains(
             "If a human has edited an AI translation, do not revert those human changes"
+        ));
+        assert!(prompt.contains(
+            "Use the punctuation marks and follow the punctuation rules of the target language"
+        ));
+        assert!(prompt.contains(
+            "Do not copy source-language punctuation conventions, including quotation marks"
         ));
         assert!(prompt.contains(
             "Treat differences in word order, clause order, or the order of items in a list as correct when the relationships and meaning are preserved"
@@ -3593,6 +3613,12 @@ mod tests {
         assert!(prompt.contains("<rows_to_review>"));
         assert!(prompt.contains("<row id=\"r0\">"));
         assert!(prompt.contains("<latest_translation>"));
+        assert!(prompt.contains(
+            "Use the punctuation marks and follow the punctuation rules of the target language"
+        ));
+        assert!(prompt.contains(
+            "Do not copy source-language punctuation conventions, including quotation marks"
+        ));
         // Grammar mode does not compare against the source.
         assert!(!prompt.contains("<source_text>"));
         assert!(!prompt.contains("<languages>"));
@@ -3620,6 +3646,12 @@ mod tests {
         assert!(prompt.contains("<source_text>\nThe source.\n</source_text>"));
         assert!(prompt.contains("<latest_translation>"));
         assert!(prompt.contains("<glossary_info"));
+        assert!(prompt.contains(
+            "Use the punctuation marks and follow the punctuation rules of the target language"
+        ));
+        assert!(prompt.contains(
+            "Do not copy source-language punctuation conventions, including quotation marks"
+        ));
         assert!(prompt.contains(
             "Treat differences in word order, clause order, or the order of items in a list as correct when the relationships and meaning are preserved"
         ));
