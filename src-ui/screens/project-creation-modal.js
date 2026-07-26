@@ -16,17 +16,19 @@ export function renderProjectCreationModal(state) {
     loadingLabel: "Creating...",
     action: "submit-project-creation",
     isLoading: isSubmitting,
+    modalDefault: true,
   });
   const cancelButton = secondaryButton("Cancel", "cancel-project-creation", {
     disabled: isSubmitting,
+    modalCancel: true,
   });
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact">
+      <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="project-creation-modal-title" data-modal-dialog="project-creation" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">NEW PROJECT</p>
-          <h2 class="modal__title">Create A New Project</h2>
+          <h2 class="modal__title" id="project-creation-modal-title">Create A New Project</h2>
           <div class="modal__form">
             <label class="field">
               <span class="field__label">Project Name</span>
@@ -36,6 +38,7 @@ export function renderProjectCreationModal(state) {
                 placeholder="Enter project name"
                 value="${escapeHtml(creation.projectName)}"
                 data-project-name-input
+                data-modal-initial-focus
                 ${isSubmitting ? "disabled" : ""}
               />
             </label>

@@ -22,13 +22,14 @@ function renderLanguageCheckboxes(languages, selectedLanguageCodes, disabled) {
   const selected = new Set(Array.isArray(selectedLanguageCodes) ? selectedLanguageCodes : []);
   return `
     <div class="ai-translate-all-modal__language-list">
-      ${languages.map((language) => {
+      ${languages.map((language, index) => {
         const code = String(language?.code ?? "").trim();
         return `
           <label class="field__checkbox ai-translate-all-modal__language">
             <input
               type="checkbox"
               data-editor-clear-translations-language
+              ${index === 0 ? "data-modal-initial-focus" : ""}
               value="${escapeHtml(code)}"
               ${selected.has(code) ? "checked" : ""}
               ${disabled ? "disabled" : ""}
@@ -76,6 +77,7 @@ export function renderEditorClearTranslationsModal(state) {
     : "";
   const cancelButton = secondaryButton("Cancel", "cancel-editor-clear-translations", {
     disabled: isSubmitting,
+    modalCancel: true,
   });
 
   if (modal.step === "confirm") {
@@ -85,10 +87,10 @@ export function renderEditorClearTranslationsModal(state) {
 
     return `
       <div class="modal-backdrop">
-        <section class="card modal-card modal-card--compact modal-card--ai-translate-all">
+        <section class="card modal-card modal-card--compact modal-card--ai-translate-all" role="dialog" aria-modal="true" aria-labelledby="editor-clear-translations-confirm-modal-title" data-modal-dialog="editor-clear-translations:confirm" tabindex="-1">
           <div class="card__body modal-card__body ai-translate-all-modal">
             <p class="card__eyebrow">Confirm deletion</p>
-            <h2 class="modal__title">Are you sure you want to delete these translations?</h2>
+            <h2 class="modal__title" id="editor-clear-translations-confirm-modal-title">Are you sure you want to delete these translations?</h2>
             <p class="modal__supporting">
               All translations in this file for the following languages will be deleted:
             </p>
@@ -109,7 +111,7 @@ export function renderEditorClearTranslationsModal(state) {
 
   const clearButton = hasSelection
     ? `
-      <button class="button button--primary" data-action="review-editor-clear-translations">
+      <button class="button button--primary" data-action="review-editor-clear-translations" data-modal-default>
         <span>Clear selected</span>
       </button>
     `
@@ -117,10 +119,10 @@ export function renderEditorClearTranslationsModal(state) {
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact modal-card--ai-translate-all">
+      <section class="card modal-card modal-card--compact modal-card--ai-translate-all" role="dialog" aria-modal="true" aria-labelledby="editor-clear-translations-configure-modal-title" data-modal-dialog="editor-clear-translations:configure" tabindex="-1">
         <div class="card__body modal-card__body ai-translate-all-modal">
           <p class="card__eyebrow">Clear translations</p>
-          <h2 class="modal__title">Clear all translations for selected languages</h2>
+          <h2 class="modal__title" id="editor-clear-translations-configure-modal-title">Clear all translations for selected languages</h2>
           <p class="modal__supporting">
             Select the languages for which you want to clear the translations.
           </p>

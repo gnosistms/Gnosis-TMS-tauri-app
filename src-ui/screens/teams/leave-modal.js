@@ -19,14 +19,16 @@ export function renderTeamLeaveModal(state) {
   });
   const cancelButton = secondaryButton("Cancel", "cancel-team-leave", {
     disabled: isLeaving,
+    modalCancel: true,
+    modalInitialFocus: true,
   });
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact">
+      <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="team-leave-modal-title" data-modal-dialog="team-leave" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">${escapeHtml(leave.teamName)}</p>
-          <h2 class="modal__title">Leave this team?</h2>
+          <h2 class="modal__title" id="team-leave-modal-title">Leave this team?</h2>
           <p class="modal__supporting">
             Do you want to leave this team? Once you leave, only the team owner can add you back.
           </p>

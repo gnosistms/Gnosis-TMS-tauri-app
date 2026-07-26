@@ -14,10 +14,10 @@ export function renderQaListRenameModal(state) {
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact">
+      <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="qa-list-rename-modal-title" data-modal-dialog="qa-list-rename" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">RENAME QA LIST</p>
-          <h2 class="modal__title">Rename This QA List</h2>
+          <h2 class="modal__title" id="qa-list-rename-modal-title">Rename This QA List</h2>
           <div class="modal__form">
             <label class="field">
               <span class="field__label">QA List Name</span>
@@ -27,18 +27,23 @@ export function renderQaListRenameModal(state) {
                 placeholder="Enter QA list name"
                 value="${escapeHtml(rename.qaListName)}"
                 data-qa-list-rename-input
+                data-modal-initial-focus
                 ${isSubmitting ? "disabled" : ""}
               />
             </label>
           </div>
           ${errorMarkup}
           <div class="modal__actions">
-            ${secondaryButton("Cancel", "cancel-qa-list-rename", { disabled: isSubmitting })}
+            ${secondaryButton("Cancel", "cancel-qa-list-rename", {
+              disabled: isSubmitting,
+              modalCancel: true,
+            })}
             ${loadingPrimaryButton({
               label: "Rename QA List",
               loadingLabel: "Saving...",
               action: "submit-qa-list-rename",
               isLoading: isSubmitting,
+              modalDefault: true,
             })}
           </div>
         </div>

@@ -22,7 +22,7 @@ test("add translation input modal defaults to upload with supported formats", ()
   assert.match(html, /data-project-add-translation-dropzone/);
   assert.match(html, /\.txt, \.docx, or \.rtf/);
   assert.match(html, /existing chapter keeps its formatting/);
-  assert.match(html, /data-action="select-project-add-translation-file">Select file<\/button>/);
+  assert.match(html, /data-action="select-project-add-translation-file"[^>]*>Select file<\/button>/);
 });
 
 test("add translation paste mode renders requested copy", () => {
@@ -37,7 +37,7 @@ test("add translation paste mode renders requested copy", () => {
   });
 
   assert.match(html, /placeholder="Paste your translation here\."/);
-  assert.match(html, /data-action="submit-project-add-translation-paste" disabled[\s\S]*>Continue<\/button>/);
+  assert.match(html, /data-action="submit-project-add-translation-paste"[^>]*disabled[\s\S]*>Continue<\/button>/);
 });
 
 test("add translation paste modal enables Continue after text is pasted", () => {
@@ -51,7 +51,7 @@ test("add translation paste modal enables Continue after text is pasted", () => 
     },
   });
 
-  assert.match(html, /data-action="submit-project-add-translation-paste">Continue<\/button>/);
+  assert.match(html, /data-action="submit-project-add-translation-paste"[^>]*>Continue<\/button>/);
   assert.doesNotMatch(html, /data-action="submit-project-add-translation-paste" disabled/);
 });
 
@@ -68,7 +68,7 @@ test("add translation link mode only advertises Google Docs", () => {
 
   assert.match(html, /Paste a public Google Docs link here/);
   assert.match(html, /data-project-add-translation-link-input/);
-  assert.match(html, /data-action="submit-project-add-translation-link">Continue<\/button>/);
+  assert.match(html, /data-action="submit-project-add-translation-link"[^>]*>Continue<\/button>/);
   assert.doesNotMatch(html, /Google Sheets/);
 });
 
@@ -83,7 +83,7 @@ test("add translation language modal disables Continue until selection", () => {
   });
 
   assert.match(html, /class="language-picker-modal__list-frame"[\s\S]*data-project-add-translation-language-list/);
-  assert.match(html, /data-action="continue-project-add-translation-language" disabled/);
+  assert.match(html, /data-action="continue-project-add-translation-language"[^>]*disabled/);
   assert.match(html, /data-action="cancel-project-add-translation"/);
 });
 
@@ -99,7 +99,7 @@ test("add translation language modal enables Continue after selection", () => {
 
   assert.match(html, /class="language-picker-modal__option is-selected"[\s\S]*data-action="select-project-add-translation-language:vi"/);
   assert.match(html, /aria-pressed="true"/);
-  assert.match(html, /data-action="continue-project-add-translation-language">Continue<\/button>/);
+  assert.match(html, /data-action="continue-project-add-translation-language"[^>]*>Continue<\/button>/);
 });
 
 test("add translation language modal uses translation language actions", () => {

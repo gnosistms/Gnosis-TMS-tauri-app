@@ -24,10 +24,10 @@ export function renderEditorCloseWaitModal(state) {
 
   return `
     <div class="modal-backdrop" aria-live="polite">
-      <section class="card modal-card modal-card--compact">
+      <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="editor-close-wait-modal-title" aria-busy="true" data-modal-dialog="editor-close-wait" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">CLOSING</p>
-          <h2 class="modal__title">Saving changes before closing</h2>
+          <h2 class="modal__title" id="editor-close-wait-modal-title">Saving changes before closing</h2>
           <p class="modal__supporting">
             The app will close by itself when saving finishes. This can include
             syncing to GitHub, which may take a while on a slow connection.
@@ -47,7 +47,7 @@ export function renderEditorCloseWaitModal(state) {
           </div>
           <div class="modal__actions">
             ${secondaryButton("Close without saving", "editor-close-wait-force-close")}
-            <button class="button button--primary" data-action="editor-close-wait-keep-open">Keep app open</button>
+            <button class="button button--primary" data-action="editor-close-wait-keep-open" data-modal-default data-modal-cancel data-modal-initial-focus>Keep app open</button>
           </div>
         </div>
       </section>

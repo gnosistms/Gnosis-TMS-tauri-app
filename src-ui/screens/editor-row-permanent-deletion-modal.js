@@ -13,6 +13,8 @@ export function renderEditorRowPermanentDeletionModal(state) {
     : "";
   const cancelButton = secondaryButton("Cancel", "cancel-editor-row-permanent-delete", {
     disabled: isDeleting,
+    modalCancel: true,
+    modalInitialFocus: true,
   });
   const deleteButton = loadingPrimaryButton({
     label: "Delete",
@@ -23,10 +25,10 @@ export function renderEditorRowPermanentDeletionModal(state) {
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact">
+      <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="editor-row-permanent-deletion-modal-title" data-modal-dialog="editor-row-permanent-deletion" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">PERMANENT DELETE</p>
-          <h2 class="modal__title">Permanently delete row?</h2>
+          <h2 class="modal__title" id="editor-row-permanent-deletion-modal-title">Permanently delete row?</h2>
           <p class="modal__supporting">To permanently delete this row, click Delete. This action cannot be undone.</p>
           ${errorMarkup}
           <div class="modal__actions">

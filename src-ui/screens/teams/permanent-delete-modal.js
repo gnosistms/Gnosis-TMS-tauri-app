@@ -20,20 +20,22 @@ export function renderTeamPermanentDeletionModal(state) {
         loadingLabel: "Deleting...",
         action: "confirm-team-permanent-deletion",
         isLoading: true,
+        modalDefault: true,
       })
-    : `<button class="button button--primary" data-action="confirm-team-permanent-deletion" data-team-permanent-delete-button ${
+    : `<button class="button button--primary" data-action="confirm-team-permanent-deletion" data-modal-default data-team-permanent-delete-button ${
         matchesName ? "" : "disabled"
       }>Delete</button>`;
   const cancelButton = secondaryButton("Cancel", "cancel-team-permanent-deletion", {
     disabled: isDeleting,
+    modalCancel: true,
   });
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact">
+      <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="team-permanent-deletion-modal-title" data-modal-dialog="team-permanent-deletion" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">LOCAL DELETE</p>
-          <h2 class="modal__title">Remove Local Team Copy?</h2>
+          <h2 class="modal__title" id="team-permanent-deletion-modal-title">Remove Local Team Copy?</h2>
           <p class="modal__supporting">
             This removes the local copy from this computer only. It will not delete the GitHub organization, its repositories, or other team members' computers. To remove it, type <strong>${escapeHtml(
               deletion.teamName,
@@ -48,6 +50,7 @@ export function renderTeamPermanentDeletionModal(state) {
                 placeholder="Enter team name here to remove"
                 value="${escapeHtml(deletion.confirmationText)}"
                 data-team-permanent-delete-input
+                data-modal-initial-focus
                 ${isDeleting ? "disabled" : ""}
               />
             </label>

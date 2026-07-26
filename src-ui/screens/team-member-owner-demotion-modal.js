@@ -21,6 +21,7 @@ export function renderTeamMemberOwnerDemotionModal(state) {
         loadingLabel: "Changing...",
         action: "confirm-team-member-owner-demotion",
         isLoading: isSubmitting,
+        modalDefault: true,
       })
     : `
       <button class="button button--primary is-disabled" data-action="noop" aria-disabled="true" disabled>
@@ -29,14 +30,15 @@ export function renderTeamMemberOwnerDemotionModal(state) {
     `;
   const cancelButton = secondaryButton("Cancel", "cancel-team-member-owner-demotion", {
     disabled: isSubmitting,
+    modalCancel: true,
   });
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact">
+      <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="team-member-owner-demotion-modal-title" data-modal-dialog="team-member-owner-demotion" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">CHANGE OWNER ROLE</p>
-          <h2 class="modal__title">Change @${escapeHtml(demotion.username)} to ${escapeHtml(demotion.targetRole)}?</h2>
+          <h2 class="modal__title" id="team-member-owner-demotion-modal-title">Change @${escapeHtml(demotion.username)} to ${escapeHtml(demotion.targetRole)}?</h2>
           <p class="modal__supporting">
             This removes Owner access for @${escapeHtml(demotion.username)}. Type ${escapeHtml(demotion.username)} to confirm this change.
           </p>
@@ -48,6 +50,7 @@ export function renderTeamMemberOwnerDemotionModal(state) {
               value="${escapeHtml(demotion.confirmationText)}"
               placeholder="${escapeHtml(demotion.username)}"
               data-team-member-owner-demotion-confirmation-input
+              data-modal-initial-focus
               ${isSubmitting ? "disabled" : ""}
             />
           </label>

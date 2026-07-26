@@ -31,10 +31,10 @@ export function renderAppUpdateModal(state) {
   if (update.status === "installing") {
     return `
       <div class="modal-backdrop" aria-live="polite">
-        <section class="card modal-card modal-card--compact">
+        <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="app-update-installing-modal-title" aria-busy="true" data-modal-dialog="app-update:installing" tabindex="-1">
           <div class="card__body modal-card__body">
             <p class="card__eyebrow">APP UPDATE</p>
-            <h2 class="modal__title">Installing update</h2>
+            <h2 class="modal__title" id="app-update-installing-modal-title">Installing update</h2>
             <p class="modal__supporting">
               Downloading and installing the latest version now. The app will restart when it is ready.
             </p>
@@ -55,10 +55,10 @@ export function renderAppUpdateModal(state) {
   if (update.status === "restarting") {
     return `
       <div class="modal-backdrop" aria-live="polite">
-        <section class="card modal-card modal-card--compact">
+        <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="app-update-restarting-modal-title" aria-busy="true" data-modal-dialog="app-update:restarting" tabindex="-1">
           <div class="card__body modal-card__body">
             <p class="card__eyebrow">APP UPDATE</p>
-            <h2 class="modal__title">Restarting to finish update</h2>
+            <h2 class="modal__title" id="app-update-restarting-modal-title">Restarting to finish update</h2>
             <p class="modal__supporting">
               The update has been installed. Gnosis TMS is restarting now.
             </p>
@@ -73,10 +73,10 @@ export function renderAppUpdateModal(state) {
 
   return `
     <div class="modal-backdrop" aria-live="polite">
-      <section class="card modal-card modal-card--compact">
+      <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="app-update-prompt-modal-title" data-modal-dialog="app-update:prompt" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">APP UPDATE</p>
-          <h2 class="modal__title">${update.required === true ? "Update required" : "Update available"}</h2>
+          <h2 class="modal__title" id="app-update-prompt-modal-title">${update.required === true ? "Update required" : "Update available"}</h2>
           <p class="modal__supporting">
             ${escapeHtml(update.required === true ? (update.message || renderVersionMessage(update)) : renderVersionMessage(update))}
           </p>
@@ -95,8 +95,12 @@ export function renderAppUpdateModal(state) {
           }
           ${error ? `<p class="modal__error" role="alert">${escapeHtml(error)}</p>` : ""}
           <div class="modal__actions">
-            ${update.required === true ? "" : secondaryButton("Later", "dismiss-app-update")}
-            ${primaryButton("Update now", "install-app-update")}
+            ${update.required === true ? "" : secondaryButton("Later", "dismiss-app-update", {
+              modalCancel: true,
+            })}
+            ${primaryButton("Update now", "install-app-update", {
+              modalDefault: true,
+            })}
           </div>
         </div>
       </section>

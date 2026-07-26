@@ -10,7 +10,7 @@ export function renderTelemetryDisclosureModal(state) {
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="telemetry-disclosure-title">
+      <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="telemetry-disclosure-title" data-modal-dialog="telemetry-disclosure" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">${escapeHtml("Error logging")}</p>
           <h2 class="modal__title" id="telemetry-disclosure-title">Send error reports to Gnosis TMS developers</h2>
@@ -23,6 +23,7 @@ export function renderTelemetryDisclosureModal(state) {
               <input
                 type="checkbox"
                 data-telemetry-disclosure-enabled-toggle
+                data-modal-initial-focus
                 ${checked}
               />
               <span class="telemetry-disclosure-modal__switch-track">
@@ -31,7 +32,9 @@ export function renderTelemetryDisclosureModal(state) {
             </span>
           </label>
           <div class="modal__actions">
-            ${primaryButton("Save", "save-error-reporting-settings")}
+            ${primaryButton("Save", "save-error-reporting-settings", {
+              modalDefault: true,
+            })}
           </div>
         </div>
       </section>

@@ -31,17 +31,19 @@ export function renderGlossaryCreationModal(state) {
     loadingLabel: "Creating...",
     action: "submit-glossary-creation",
     isLoading: isSubmitting,
+    modalDefault: true,
   });
   const cancelButton = secondaryButton("Cancel", "cancel-glossary-creation", {
     disabled: isSubmitting,
+    modalCancel: true,
   });
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact">
+      <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="glossary-creation-modal-title" data-modal-dialog="glossary-creation" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">NEW GLOSSARY</p>
-          <h2 class="modal__title">Create A New Glossary</h2>
+          <h2 class="modal__title" id="glossary-creation-modal-title">Create A New Glossary</h2>
           <p class="modal__supporting">
             Create a glossary for this team so you can start adding terms.
           </p>
@@ -54,6 +56,7 @@ export function renderGlossaryCreationModal(state) {
                 placeholder="Enter glossary name"
                 value="${escapeHtml(creation.title)}"
                 data-glossary-title-input
+                data-modal-initial-focus
                 ${isSubmitting ? "disabled" : ""}
               />
             </label>

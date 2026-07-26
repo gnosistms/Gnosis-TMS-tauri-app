@@ -17,6 +17,7 @@ function renderInputModal(modal) {
   const isResolvingLink = modal.status === "resolvingLink";
   const isExtracting = modal.status === "extracting";
   return renderProjectDocumentInputModal(modal, {
+    modalId: "project-add-translation",
     eyebrow: "ADD TRANSLATIONS",
     title: "Add translation text",
     supportingText: "Choose how to provide the translation for this entire file. The text will be automatically aligned and inserted.",
@@ -53,7 +54,11 @@ function renderLanguageOption(language, selectedCode) {
       class="language-picker-modal__option${isSelected ? " is-selected" : ""}"
       type="button"
       data-action="select-project-add-translation-language:${escapeHtml(language.code)}"
+      data-roving-choice-option
+      role="option"
+      aria-selected="${isSelected ? "true" : "false"}"
       aria-pressed="${isSelected ? "true" : "false"}"
+      tabindex="${isSelected ? "0" : "-1"}"
     >
       <span>${escapeHtml(language.name)}</span>
       <span class="language-picker-modal__code">${escapeHtml(language.code)}</span>
@@ -68,20 +73,23 @@ function renderLanguageModal(modal) {
     .sort((left, right) => left.name.localeCompare(right.name));
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact modal-card--language-picker">
+      <section class="card modal-card modal-card--compact modal-card--language-picker" role="dialog" aria-modal="true" aria-labelledby="project-add-translation-language-modal-title" data-modal-dialog="project-add-translation:language" tabindex="-1">
         <div class="card__body modal-card__body language-picker-modal">
           <p class="card__eyebrow">TRANSLATION LANGUAGE</p>
-          <h2 class="modal__title">What language is this translation?</h2>
+          <h2 class="modal__title" id="project-add-translation-language-modal-title">What language is this translation?</h2>
           <p class="modal__supporting">Select the language of the translation text.</p>
           ${renderError(modal.error)}
           <div class="language-picker-modal__list-frame">
-            <div class="language-picker-modal__list" role="list" data-project-add-translation-language-list>
+            <div class="language-picker-modal__list" role="listbox" aria-label="Translation language" data-project-add-translation-language-list data-roving-choice-group data-roving-choice-axis="vertical">
               ${languages.map((language) => renderLanguageOption(language, selectedCode)).join("")}
             </div>
           </div>
           <div class="modal__actions">
-            ${secondaryButton("Cancel", "cancel-project-add-translation")}
-            ${primaryButton("Continue", "continue-project-add-translation-language", { disabled: !selectedCode })}
+            ${secondaryButton("Cancel", "cancel-project-add-translation", { modalCancel: true })}
+            ${primaryButton("Continue", "continue-project-add-translation-language", {
+              disabled: !selectedCode,
+              modalDefault: true,
+            })}
           </div>
         </div>
       </section>
@@ -215,10 +223,10 @@ function renderProgressModal(modal) {
   const detail = [progress.message, progressLabel(progress)].filter(Boolean).join(" ");
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact modal-card--navigation-loading modal-card--add-translation-progress" role="status" aria-busy="true">
+      <section class="card modal-card modal-card--compact modal-card--navigation-loading modal-card--add-translation-progress" role="dialog" aria-modal="true" aria-labelledby="project-add-translation-progress-modal-title" aria-busy="true" data-modal-dialog="project-add-translation:progress" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">Aligning and inserting</p>
-          <h2 class="modal__title">Please wait</h2>
+          <h2 class="modal__title" id="project-add-translation-progress-modal-title">Please wait</h2>
           <p class="modal__supporting">Aligning your translation text with this file. This may take a few minutes.</p>
           <ol class="add-translation-progress" aria-label="Alignment and insertion progress">
             ${steps.map((step, index) => renderProgressStep(step, progress, index, activeIndex)).join("")}
@@ -234,15 +242,17 @@ function renderProgressModal(modal) {
 function renderExistingTranslationsModal(modal) {
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact">
+      <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="project-add-translation-existing-modal-title" data-modal-dialog="project-add-translation:existing" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">EXISTING TRANSLATIONS</p>
-          <h2 class="modal__title">This language already has translation text</h2>
+          <h2 class="modal__title" id="project-add-translation-existing-modal-title">This language already has translation text</h2>
           <p class="modal__supporting">When you insert to this language, your text will only be inserted into the empty rows. It will not overwrite the existing translations. If you intend to insert for the entire file, cancel and delete the existing text first.</p>
           ${renderError(modal.error)}
           <div class="modal__actions">
-            ${secondaryButton("Cancel", "cancel-project-add-translation")}
-            ${primaryButton("Insert to empty rows", "continue-project-add-translation-existing")}
+            ${secondaryButton("Cancel", "cancel-project-add-translation", { modalCancel: true })}
+            ${primaryButton("Insert to empty rows", "continue-project-add-translation-existing", {
+              modalDefault: true,
+            })}
           </div>
         </div>
       </section>
@@ -253,15 +263,17 @@ function renderExistingTranslationsModal(modal) {
 function renderMismatchModal(modal) {
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact">
+      <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="project-add-translation-mismatch-modal-title" data-modal-dialog="project-add-translation:mismatch" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">TEXT MISMATCH</p>
-          <h2 class="modal__title">Inserted text does not match well</h2>
+          <h2 class="modal__title" id="project-add-translation-mismatch-modal-title">Inserted text does not match well</h2>
           <p class="modal__supporting">Much of the pasted text does not appear to match this file. If you continue, some parts may be inserted in the wrong place or left blank. Please review the result carefully.</p>
           ${renderError(modal.error)}
           <div class="modal__actions">
-            ${secondaryButton("Cancel", "cancel-project-add-translation")}
-            ${primaryButton("Continue", "continue-project-add-translation-mismatch")}
+            ${secondaryButton("Cancel", "cancel-project-add-translation", { modalCancel: true })}
+            ${primaryButton("Continue", "continue-project-add-translation-mismatch", {
+              modalDefault: true,
+            })}
           </div>
         </div>
       </section>
@@ -272,6 +284,7 @@ function renderMismatchModal(modal) {
 export function renderProjectAddTranslationModal(state) {
   const modal = state.projectAddTranslation;
   const linkErrorMarkup = renderProjectDocumentLinkError(modal, {
+    modalId: "project-add-translation",
     closeAction: "close-project-add-translation-link-error",
     retryAction: "retry-project-add-translation-link",
     invalidMessage: "Paste a valid Google Docs document link. Google Sheets, web pages, and local paths are not supported here.",

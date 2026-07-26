@@ -29,10 +29,10 @@ export function renderQaListCreationModal(state) {
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact">
+      <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="qa-list-creation-modal-title" data-modal-dialog="qa-list-creation" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">NEW QA LIST</p>
-          <h2 class="modal__title">Create A New QA List</h2>
+          <h2 class="modal__title" id="qa-list-creation-modal-title">Create A New QA List</h2>
           <div class="modal__form">
             <label class="field">
               <span class="field__label">QA List Name</span>
@@ -42,6 +42,7 @@ export function renderQaListCreationModal(state) {
                 placeholder="Enter QA list name"
                 value="${escapeHtml(creation.title)}"
                 data-qa-list-title-input
+                data-modal-initial-focus
                 ${isSubmitting ? "disabled" : ""}
               />
             </label>
@@ -58,12 +59,16 @@ export function renderQaListCreationModal(state) {
           </div>
           ${errorMarkup}
           <div class="modal__actions">
-            ${secondaryButton("Cancel", "cancel-qa-list-creation", { disabled: isSubmitting })}
+            ${secondaryButton("Cancel", "cancel-qa-list-creation", {
+              disabled: isSubmitting,
+              modalCancel: true,
+            })}
             ${loadingPrimaryButton({
               label: "Create QA List",
               loadingLabel: "Creating...",
               action: "submit-qa-list-creation",
               isLoading: isSubmitting,
+              modalDefault: true,
             })}
           </div>
         </div>

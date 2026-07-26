@@ -13,7 +13,11 @@ function renderSourceLanguageOption(language, selectedCode) {
       class="language-picker-modal__option${isSelected ? " is-selected" : ""}"
       type="button"
       data-action="select-project-import-source-language:${escapeHtml(language.code)}"
+      data-roving-choice-option
+      role="option"
+      aria-selected="${isSelected ? "true" : "false"}"
       aria-pressed="${isSelected ? "true" : "false"}"
+      tabindex="${isSelected ? "0" : "-1"}"
     >
       <span>${escapeHtml(language.name)}</span>
       <span class="language-picker-modal__code">${escapeHtml(language.code)}</span>
@@ -31,19 +35,22 @@ function renderSourceLanguageStep(modal) {
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact modal-card--language-picker">
+      <section class="card modal-card modal-card--compact modal-card--language-picker" role="dialog" aria-modal="true" aria-labelledby="project-import-source-language-modal-title" data-modal-dialog="project-import:source-language" tabindex="-1">
         <div class="card__body modal-card__body language-picker-modal">
           <p class="card__eyebrow">SOURCE LANGUAGE</p>
-          <h2 class="modal__title">What is the language of ${fileLabel}?</h2>
+          <h2 class="modal__title" id="project-import-source-language-modal-title">What is the language of ${fileLabel}?</h2>
           <p class="modal__supporting">Select the language of ${fileLabel} from the list below. This will be the source language.</p>
           <div class="language-picker-modal__list-frame">
-            <div class="language-picker-modal__list" role="list" data-project-import-source-language-list>
+            <div class="language-picker-modal__list" role="listbox" aria-label="Source language" data-project-import-source-language-list data-roving-choice-group data-roving-choice-axis="vertical">
               ${languages.map((language) => renderSourceLanguageOption(language, selectedCode)).join("")}
             </div>
           </div>
           <div class="modal__actions">
-            ${secondaryButton("Cancel", "cancel-project-import")}
-            ${primaryButton("Continue", "continue-project-import-text", { disabled: !selectedCode })}
+            ${secondaryButton("Cancel", "cancel-project-import", { modalCancel: true })}
+            ${primaryButton("Continue", "continue-project-import-text", {
+              disabled: !selectedCode,
+              modalDefault: true,
+            })}
           </div>
         </div>
       </section>
@@ -61,16 +68,20 @@ function renderProjectImportBatchErrorModal(modal) {
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact">
+      <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="project-import-batch-error-modal-title" data-modal-dialog="project-import:batch-error" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">FILE UPLOAD ERROR</p>
-          <h2 class="modal__title">Some files were not uploaded</h2>
+          <h2 class="modal__title" id="project-import-batch-error-modal-title">Some files were not uploaded</h2>
           <p class="modal__supporting">The following files did not upload successfully:</p>
           <ul class="modal__list">
             ${failedFileNames.map((fileName) => `<li>${escapeHtml(fileName)}</li>`).join("")}
           </ul>
           <div class="modal__actions">
-            ${primaryButton("Ok", "close-project-import-upload-error")}
+            ${primaryButton("Ok", "close-project-import-upload-error", {
+              modalDefault: true,
+              modalCancel: true,
+              modalInitialFocus: true,
+            })}
           </div>
         </div>
       </section>
@@ -90,10 +101,10 @@ function renderProjectImportUploadProgressStep(modal) {
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact modal-card--project-import" role="status" aria-busy="true">
+      <section class="card modal-card modal-card--compact modal-card--project-import" role="dialog" aria-modal="true" aria-labelledby="project-import-progress-modal-title" aria-busy="true" data-modal-dialog="project-import:progress" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">Uploading</p>
-          <h2 class="modal__title">Importing files to ${escapeHtml(projectTitle)}</h2>
+          <h2 class="modal__title" id="project-import-progress-modal-title">Importing files to ${escapeHtml(projectTitle)}</h2>
           <div class="project-import-modal__upload-progress">
             <div class="ai-translate-all-modal__progress-row">
               <div class="ai-translate-all-modal__progress-label">
@@ -113,7 +124,10 @@ function renderProjectImportUploadProgressStep(modal) {
             </div>
           </div>
           <div class="modal__actions project-import-modal__actions">
-            ${secondaryButton("Cancel", "cancel-project-import")}
+            ${secondaryButton("Cancel", "cancel-project-import", {
+              modalCancel: true,
+              modalInitialFocus: true,
+            })}
           </div>
         </div>
       </section>
@@ -129,6 +143,7 @@ export function renderProjectImportModal(state) {
   }
 
   const linkErrorMarkup = renderProjectDocumentLinkError(modal, {
+    modalId: "project-import",
     closeAction: "close-project-import-link-error",
     retryAction: "retry-project-import-link",
     invalidMessage: "This link is not readable. The exact reason is unknown. Note that only Google Docs, Google Sheets, HTML website links, and local file paths are supported.",
@@ -154,6 +169,7 @@ export function renderProjectImportModal(state) {
     return renderProjectImportUploadProgressStep(modal);
   }
   return renderProjectDocumentInputModal(modal, {
+    modalId: "project-import",
     eyebrow: "ADD FILES",
     title: "Add new files to the project",
     supportingText: `Choose how to add content to ${projectTitle}.`,

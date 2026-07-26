@@ -60,6 +60,10 @@ export function renderEditorDeriveGlossariesModal(state) {
   const cancelButton = secondaryButton(
     isSubmitting ? "Stop" : "Cancel",
     "cancel-editor-derive-glossaries",
+    {
+      modalCancel: !isSubmitting,
+      modalInitialFocus: isSubmitting,
+    },
   );
   const confirmButton = isSubmitting
     ? loadingPrimaryButton({
@@ -76,6 +80,7 @@ export function renderEditorDeriveGlossariesModal(state) {
         loadingLabel: "Deriving...",
         action: "confirm-editor-derive-glossaries",
         isLoading: false,
+        modalDefault: true,
       })
       : disabledPrimaryButton("Continue");
 
@@ -103,10 +108,10 @@ export function renderEditorDeriveGlossariesModal(state) {
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact modal-card--derive-glossaries">
+      <section class="card modal-card modal-card--compact modal-card--derive-glossaries" role="dialog" aria-modal="true" aria-labelledby="editor-derive-glossaries-modal-title" aria-busy="${isSubmitting ? "true" : "false"}" data-modal-dialog="editor-derive-glossaries" tabindex="-1">
         <div class="card__body modal-card__body ai-translate-all-modal">
           <p class="card__eyebrow">DERIVE GLOSSARIES</p>
-          <h2 class="modal__title">Automatically generate glossaries</h2>
+          <h2 class="modal__title" id="editor-derive-glossaries-modal-title">Automatically generate glossaries</h2>
           ${languageStatusMarkup}
           ${errorMarkup}
           <div class="modal__actions">

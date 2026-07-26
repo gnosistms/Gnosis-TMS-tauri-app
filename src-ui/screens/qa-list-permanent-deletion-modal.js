@@ -21,20 +21,22 @@ export function renderQaListPermanentDeletionModal(state) {
         loadingLabel: "Deleting...",
         action: "confirm-qa-list-permanent-deletion",
         isLoading: true,
+        modalDefault: true,
       })
-    : `<button class="button button--primary" data-action="confirm-qa-list-permanent-deletion" data-qa-list-permanent-delete-button ${
+    : `<button class="button button--primary" data-action="confirm-qa-list-permanent-deletion" data-modal-default data-qa-list-permanent-delete-button ${
         matchesName ? "" : "disabled"
       }>Delete</button>`;
   const cancelButton = secondaryButton("Cancel", "cancel-qa-list-permanent-deletion", {
     disabled: isDeleting,
+    modalCancel: true,
   });
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact">
+      <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="qa-list-permanent-deletion-modal-title" data-modal-dialog="qa-list-permanent-deletion" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">LOCAL DELETE</p>
-          <h2 class="modal__title">Remove Local QA List Copy?</h2>
+          <h2 class="modal__title" id="qa-list-permanent-deletion-modal-title">Remove Local QA List Copy?</h2>
           <p class="modal__supporting">
             This removes the local copy from this computer only. It will not delete anything from GitHub or other team members' computers. To remove it, type <strong>${escapeHtml(
               deletion.qaListName,
@@ -49,6 +51,7 @@ export function renderQaListPermanentDeletionModal(state) {
                 placeholder="Enter QA list name here to remove"
                 value="${escapeHtml(deletion.confirmationText)}"
                 data-qa-list-permanent-delete-input
+                data-modal-initial-focus
                 ${isDeleting ? "disabled" : ""}
               />
             </label>

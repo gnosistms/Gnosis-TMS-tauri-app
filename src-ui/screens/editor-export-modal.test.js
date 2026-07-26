@@ -404,7 +404,7 @@ test("editor export modal shows errors and the busy submit state", () => {
 
   assert.match(html, /export failed/);
   assert.match(html, /Saving\.\.\./);
-  assert.match(html, /data-action="close-editor-export-options" disabled/);
+  assert.match(html, /data-action="close-editor-export-options"[^>]*disabled/);
 });
 
 function projectsPageExportState(modalOverrides = {}) {

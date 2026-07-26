@@ -57,16 +57,19 @@ export function renderProjectTransferModal(state) {
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--editor-export">
+      <section class="card modal-card modal-card--editor-export" role="dialog" aria-modal="true" aria-labelledby="project-transfer-modal-title" data-modal-dialog="project-transfer" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">TRANSFER PROJECT</p>
-          <h2 class="modal__title">Transfer project</h2>
+          <h2 class="modal__title" id="project-transfer-modal-title">Transfer project</h2>
           ${supportingText("Create a new, independent project from the current content. Commit history is not copied, and the source project is left untouched.")}
           <div class="modal__form">
             ${renderExportSelect({
               id: "project-transfer-team",
               label: "Team",
-              selectAttributes: { "data-project-transfer-team-select": true },
+              selectAttributes: {
+                "data-project-transfer-team-select": true,
+                "data-modal-initial-focus": true,
+              },
               placeholder: "Choose a team",
               options: targets.map((team) => ({ value: team.id, label: teamLabel(team) })),
               value: transfer.targetTeamId,
@@ -105,16 +108,21 @@ export function renderProjectTransferModal(state) {
           ${stageMarkup}
           ${errorMarkup}
           <div class="modal__actions">
-            ${secondaryButton("Cancel", "cancel-project-transfer", { disabled: isTransferring })}
+            ${secondaryButton("Cancel", "cancel-project-transfer", {
+              disabled: isTransferring,
+              modalCancel: true,
+            })}
             ${isTransferring
               ? loadingPrimaryButton({
                   label: "Transfer project",
                   loadingLabel: "Transferring...",
                   action: "submit-project-transfer",
                   isLoading: true,
+                  modalDefault: true,
                 })
               : primaryButton("Transfer project", "submit-project-transfer", {
                   disabled: transfer.resourcesStatus !== "done",
+                  modalDefault: true,
                 })}
           </div>
         </div>

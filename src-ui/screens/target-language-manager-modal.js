@@ -16,7 +16,11 @@ function renderPickerLanguageOption(language, selectedCode, disabled = false) {
       class="language-picker-modal__option${isSelected ? " is-selected" : ""}"
       type="button"
       data-action="select-target-language-manager-picker-language:${escapeHtml(language.code)}"
+      data-roving-choice-option
+      role="option"
+      aria-selected="${isSelected ? "true" : "false"}"
       aria-pressed="${isSelected ? "true" : "false"}"
+      tabindex="${isSelected ? "0" : "-1"}"
       ${disabled ? 'disabled aria-disabled="true"' : ""}
     >
       <span>${escapeHtml(language.name)}</span>
@@ -104,21 +108,26 @@ function renderLanguagePickerModal(state) {
 
   return `
     <div class="modal-backdrop modal-backdrop--nested-picker">
-      <section class="card modal-card modal-card--compact modal-card--language-picker">
+      <section class="card modal-card modal-card--compact modal-card--language-picker" role="dialog" aria-modal="true" aria-labelledby="target-language-picker-modal-title" data-modal-dialog="target-language-manager:picker" tabindex="-1">
         <div class="card__body modal-card__body language-picker-modal">
           <p class="card__eyebrow">CHAPTER LANGUAGES</p>
-          <h2 class="modal__title">Add Language</h2>
+          <h2 class="modal__title" id="target-language-picker-modal-title">Add Language</h2>
           <p class="modal__supporting">Choose a language to add to this file.</p>
           <div class="language-picker-modal__list-frame">
-            <div class="language-picker-modal__list" role="list" data-target-language-manager-picker-list>
+            <div class="language-picker-modal__list" role="listbox" aria-label="Language to add" data-target-language-manager-picker-list data-roving-choice-group data-roving-choice-axis="vertical">
               ${availableLanguages.length > 0
                 ? availableLanguages.map((language) => renderPickerLanguageOption(language, selectedCode, offlineMode)).join("")
                 : '<p class="language-picker-modal__empty">No supported languages are available.</p>'}
             </div>
           </div>
           <div class="modal__actions">
-            ${secondaryButton("Cancel", "close-target-language-manager-picker")}
-            ${primaryButton("Add language", "add-target-language-manager-language", { disabled: offlineMode || !selectedCode })}
+            ${secondaryButton("Cancel", "close-target-language-manager-picker", {
+              modalCancel: true,
+            })}
+            ${primaryButton("Add language", "add-target-language-manager-language", {
+              disabled: offlineMode || !selectedCode,
+              modalDefault: true,
+            })}
           </div>
         </div>
       </section>
@@ -142,10 +151,10 @@ export function renderTargetLanguageManagerModal(state) {
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--glossary-term modal-card--chapter-languages">
+      <section class="card modal-card modal-card--glossary-term modal-card--chapter-languages" role="dialog" aria-modal="true" aria-labelledby="target-language-manager-modal-title" data-modal-dialog="target-language-manager" tabindex="-1">
         <div class="card__body modal-card__body glossary-term-modal chapter-language-manager-modal">
           <p class="card__eyebrow">CHAPTER LANGUAGES</p>
-          <h2 class="modal__title">Add / Remove Languages</h2>
+          <h2 class="modal__title" id="target-language-manager-modal-title">Add / Remove Languages</h2>
           <p class="modal__supporting">This list determines which languages are shown and in what order. Translations for deleted languages are saved so that they can be recovered by re-adding the deleted language.</p>
 
           <section class="term-lane">
@@ -158,6 +167,7 @@ export function renderTargetLanguageManagerModal(state) {
                 class="term-lane__add-button"
                 type="button"
                 data-action="open-target-language-manager-picker"
+                data-modal-initial-focus
                 aria-label="Add a new language"
                 ${tooltipAttributes("Add a new language", { align: "end" })}
                 ${controlsDisabled ? "disabled" : ""}
@@ -169,14 +179,21 @@ export function renderTargetLanguageManagerModal(state) {
           ${errorMarkup}
 
           <div class="modal__actions">
-            ${secondaryButton("Cancel", "close-target-language-manager", { disabled: isSubmitting })}
+            ${secondaryButton("Cancel", "close-target-language-manager", {
+              disabled: isSubmitting,
+              modalCancel: true,
+            })}
             ${offlineMode
-              ? primaryButton("Save", "submit-target-language-manager", { disabled: true })
+              ? primaryButton("Save", "submit-target-language-manager", {
+                disabled: true,
+                modalDefault: true,
+              })
               : loadingPrimaryButton({
                 label: "Save",
                 loadingLabel: "Saving...",
                 action: "submit-target-language-manager",
                 isLoading: isSubmitting,
+                modalDefault: true,
               })}
           </div>
         </div>

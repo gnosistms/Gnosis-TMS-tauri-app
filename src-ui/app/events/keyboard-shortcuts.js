@@ -80,13 +80,6 @@ function focusPageSearchInput(selectContents = false) {
 
 export function registerKeyboardShortcutEvents(dispatchAction) {
   document.addEventListener("keydown", (event) => {
-    if (shouldFocusPageSearch(event)) {
-      if (focusPageSearchInput(true)) {
-        event.preventDefault();
-      }
-      return;
-    }
-
     const glossaryTermModalField = event.target instanceof Element
       ? event.target.closest(
         "[data-glossary-term-variant-input], [data-glossary-term-variant-note-input], [data-glossary-term-notes-input], [data-glossary-term-footnote-input]",
@@ -107,21 +100,17 @@ export function registerKeyboardShortcutEvents(dispatchAction) {
       }
     }
 
-    const insertLinkUrlInput = event.target instanceof Element
-      ? event.target.closest("[data-editor-insert-link-url-input]")
-      : null;
-    if (insertLinkUrlInput instanceof HTMLInputElement) {
-      const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
-      if (key === "enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
+    // Dialog-local keyboard behavior is delegated to the modal controller.
+    // Page-level shortcuts must not move focus or trigger work behind a modal.
+    if (document.querySelector("[data-modal-dialog]")) {
+      return;
+    }
+
+    if (shouldFocusPageSearch(event)) {
+      if (focusPageSearchInput(true)) {
         event.preventDefault();
-        void dispatchAction("submit-editor-insert-link", event);
-        return;
       }
-      if (key === "escape") {
-        event.preventDefault();
-        void dispatchAction("close-editor-insert-link-modal", event);
-        return;
-      }
+      return;
     }
 
     if (shouldBlurActiveEditorField(event)) {

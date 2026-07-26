@@ -20,20 +20,22 @@ export function renderGlossaryPermanentDeletionModal(state) {
         loadingLabel: "Deleting...",
         action: "confirm-glossary-permanent-deletion",
         isLoading: true,
+        modalDefault: true,
       })
-    : `<button class="button button--primary" data-action="confirm-glossary-permanent-deletion" data-glossary-permanent-delete-button ${
+    : `<button class="button button--primary" data-action="confirm-glossary-permanent-deletion" data-modal-default data-glossary-permanent-delete-button ${
         matchesName ? "" : "disabled"
       }>Delete</button>`;
   const cancelButton = secondaryButton("Cancel", "cancel-glossary-permanent-deletion", {
     disabled: isDeleting,
+    modalCancel: true,
   });
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact">
+      <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="glossary-permanent-deletion-modal-title" data-modal-dialog="glossary-permanent-deletion" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">LOCAL DELETE</p>
-          <h2 class="modal__title">Remove Local Glossary Copy?</h2>
+          <h2 class="modal__title" id="glossary-permanent-deletion-modal-title">Remove Local Glossary Copy?</h2>
           <p class="modal__supporting">
             This removes the local copy from this computer only. It will not delete anything from GitHub or other team members' computers. To remove it, type <strong>${escapeHtml(
               deletion.glossaryName,
@@ -48,6 +50,7 @@ export function renderGlossaryPermanentDeletionModal(state) {
                 placeholder="Enter glossary name here to remove"
                 value="${escapeHtml(deletion.confirmationText)}"
                 data-glossary-permanent-delete-input
+                data-modal-initial-focus
                 ${isDeleting ? "disabled" : ""}
               />
             </label>

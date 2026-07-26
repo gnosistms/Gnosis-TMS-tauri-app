@@ -15,7 +15,8 @@ test("renders the team resource migration modal with status", () => {
   assert.match(html, /Migrating/);
   assert.match(html, /Updating team data/);
   assert.match(html, /Migrating glossaries: Shared Terms/);
-  assert.match(html, /role="status"/);
+  assert.match(html, /role="dialog"/);
+  assert.match(html, /aria-modal="true"/);
   assert.match(html, /aria-busy="true"/);
 });
 

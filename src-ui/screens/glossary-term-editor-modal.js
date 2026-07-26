@@ -89,6 +89,7 @@ function renderVariantRow(
           data-variant-side="${escapeHtml(side)}"
           data-variant-index="${index}"
           data-language-code="${escapeHtml(languageCode)}"
+          ${side === "source" && index === 0 ? "data-modal-initial-focus" : ""}
           ${isSubmitting ? "disabled" : ""}
         >${escapeHtml(value)}</textarea>
       `;
@@ -211,6 +212,7 @@ export function renderGlossaryTermEditorModal(state) {
   const isSubmitting = editor.status === "loading";
   const cancelButton = secondaryButton("Cancel", "cancel-glossary-term-editor", {
     disabled: isSubmitting,
+    modalCancel: true,
   });
   const sourceLanguageName = state.glossaryEditor?.sourceLanguage?.name ?? "Source";
   const sourceLanguageCode = state.glossaryEditor?.sourceLanguage?.code ?? "";
@@ -235,13 +237,14 @@ export function renderGlossaryTermEditorModal(state) {
     loadingLabel: "Saving...",
     action: "submit-glossary-term-editor",
     isLoading: isSubmitting,
+    modalDefault: true,
   });
 
   return `
     <div class="modal-backdrop modal-backdrop--glossary-term">
-      <section class="card modal-card modal-card--glossary-term">
+      <section class="card modal-card modal-card--glossary-term" role="dialog" aria-modal="true" aria-labelledby="glossary-term-editor-modal-title" data-modal-dialog="glossary-term-editor" tabindex="-1">
         <div class="card__body modal-card__body glossary-term-modal">
-          <h2 class="modal__title">${editor.termId ? "Edit Term" : "New Term"}</h2>
+          <h2 class="modal__title" id="glossary-term-editor-modal-title">${editor.termId ? "Edit Term" : "New Term"}</h2>
           ${noticeMarkup}
           ${duplicateWarningMarkup}
 

@@ -18,17 +18,21 @@ export function renderProjectOldLayoutDiscardModal(state) {
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact">
+      <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="project-old-layout-discard-modal-title" data-modal-dialog="project-old-layout-discard" tabindex="-1">
         <div class="card__body modal-card__body">
           <p class="eyebrow">SYNC UPDATE</p>
-          <h2 class="modal__title">Overwrite local changes</h2>
+          <h2 class="modal__title" id="project-old-layout-discard-modal-title">Overwrite local changes</h2>
           <p class="modal__supporting">
             A newer version of this project is available online. To continue syncing, discard the unsynced changes saved on this computer.
           </p>
           ${modal.resourceName ? `<p class="modal__supporting">Project: ${escapeHtml(modal.resourceName)}</p>` : ""}
           ${errorMarkup}
           <div class="modal__actions">
-            ${secondaryButton("Cancel", "close-project-old-layout-discard", { disabled: isLoading })}
+            ${secondaryButton("Cancel", "close-project-old-layout-discard", {
+              disabled: isLoading,
+              modalCancel: true,
+              modalInitialFocus: true,
+            })}
             ${loadingButton({
               label: "Discard my changes and continue",
               loadingLabel: "Discarding...",
