@@ -642,20 +642,15 @@ pub(crate) fn build_review_batch_prompt(request: &AiReviewBatchRequest) -> Strin
         },
     );
 
-    let mut sections = Vec::new();
-    sections.push(review_batch_response_contract().to_string());
-    sections.push(
+    let mut sections = vec![
+        review_batch_response_contract().to_string(),
         "Task:\nReview each row's latest target-language sections against its source-language sections for translation accuracy, spelling, and grammar, and apply any relevant matched QA-entry notes. Respect the user's word choices unless there is a real error. Pay attention to each row's target-language history: notice which edits are human and which are AI. If a human edited an AI translation, do not revert those human changes unless they introduced a real translation, spelling, grammar, or QA-note error."
             .to_string(),
-    );
-    sections.push(
         "Decision rule (per row):\n- If every reviewed section is correct and complies with relevant QA notes: set that row's suggested fields to empty strings and reviewed to true.\n- If any section has errors or violates a relevant QA note: set reviewed to false and put corrected content only in the matching suggested field; keep unchanged sections as empty strings."
             .to_string(),
-    );
-    sections.push(
         "Use supporting context when relevant. Do not treat reference translations or edit history as more authoritative than the source-language sections. Keep main text, footnotes, and image captions separate."
             .to_string(),
-    );
+    ];
     if request.rows.iter().any(|row| !row.qa_hints.is_empty()) {
         sections.push(review_qa_guidance().to_string());
     }
