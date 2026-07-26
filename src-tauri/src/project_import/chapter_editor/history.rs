@@ -174,6 +174,11 @@ pub(crate) fn restore_gtms_editor_field_from_history_sync(
             )
         })?;
     let current_image = row_language_stored_image(&original_row_file, &input.language_code);
+    let current_editor_flags = original_row_file
+        .fields
+        .get(&input.language_code)
+        .map(|field| field.editor_flags.clone())
+        .unwrap_or_default();
     let mut row_value: Value = serde_json::from_str(&original_row_text).map_err(|error| {
         format!(
             "Could not parse row file '{}': {error}",
@@ -221,20 +226,15 @@ pub(crate) fn restore_gtms_editor_field_from_history_sync(
         .get(&input.language_code)
         .map(|field| {
             field.plain_text != historical_plain_text
-                || field.editor_flags.reviewed
-                    != historical_field_value.field_value.editor_flags.reviewed
-                || field.editor_flags.please_check
-                    != historical_field_value.field_value.editor_flags.please_check
+                || normalize_editor_footnote_value(&field.footnote) != historical_footnote
+                || normalize_editor_image_caption_value(&field.image_caption)
+                    != historical_image_caption
+                || normalize_editor_field_image_value(&field.image) != historical_image
         })
         .unwrap_or(true);
     if field_changed {
         field_object.remove("html_preview");
     }
-    set_editor_field_flags(
-        field_object,
-        &historical_field_value.field_value.editor_flags,
-    );
-
     let updated_row_json = serde_json::to_string_pretty(&row_value).map_err(|error| {
         format!(
             "Could not serialize row file '{}': {error}",
@@ -380,8 +380,8 @@ pub(crate) fn restore_gtms_editor_field_from_history_sync(
             &historical_field_value.field_value.image,
         ),
         text_style: historical_text_style,
-        reviewed: historical_field_value.field_value.editor_flags.reviewed,
-        please_check: historical_field_value.field_value.editor_flags.please_check,
+        reviewed: current_editor_flags.reviewed,
+        please_check: current_editor_flags.please_check,
         word_counts,
         chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })

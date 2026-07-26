@@ -1657,6 +1657,11 @@ test("restore history coalesces queued repeated restores to the latest commit", 
       ],
     },
   };
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    fieldStates: { es: { reviewed: true, pleaseCheck: true } },
+    persistedFieldStates: { es: { reviewed: true, pleaseCheck: true } },
+  };
 
   const blocker = deferred();
   const blockerPromise = enqueueRepoWrite({
@@ -1692,6 +1697,7 @@ test("restore history coalesces queued repeated restores to the latest commit", 
     applyEditorSelectionsToProjectState,
   });
   assert.equal(state.editorChapter.rows[0].fields.es, "optimistic text from commit-1");
+  assert.deepEqual(state.editorChapter.rows[0].fieldStates.es, { reviewed: true, pleaseCheck: true });
   assert.equal(state.editorChapter.rows[0].saveStatus, "saving");
 
   await restoreEditorFieldHistory(() => {}, "commit-2", {
@@ -1700,6 +1706,7 @@ test("restore history coalesces queued repeated restores to the latest commit", 
     applyEditorSelectionsToProjectState,
   });
   assert.equal(state.editorChapter.rows[0].fields.es, "optimistic text from commit-2");
+  assert.deepEqual(state.editorChapter.rows[0].fieldStates.es, { reviewed: true, pleaseCheck: true });
 
   assert.equal(state.editorChapter.history.restoringCommitSha, "commit-2");
   assert.deepEqual(invokeLog, []);
@@ -1712,6 +1719,7 @@ test("restore history coalesces queued repeated restores to the latest commit", 
   assert.equal(restoreCalls.length, 1);
   assert.equal(restoreCalls[0].payload.input.commitSha, "commit-2");
   assert.equal(state.editorChapter.rows[0].fields.es, "text from commit-2");
+  assert.deepEqual(state.editorChapter.rows[0].fieldStates.es, { reviewed: true, pleaseCheck: true });
   assert.equal(state.editorChapter.history.restoringCommitSha, null);
 });
 

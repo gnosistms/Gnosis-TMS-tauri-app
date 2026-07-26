@@ -543,19 +543,6 @@ pub(super) fn clear_editor_html_preview_cache(
     Ok(())
 }
 
-pub(super) fn set_editor_field_flags(
-    field_object: &mut serde_json::Map<String, Value>,
-    flags: &StoredFieldEditorFlags,
-) {
-    if let Some(editor_flags_object) = field_object
-        .get_mut("editor_flags")
-        .and_then(Value::as_object_mut)
-    {
-        editor_flags_object.insert("reviewed".to_string(), Value::Bool(flags.reviewed));
-        editor_flags_object.insert("please_check".to_string(), Value::Bool(flags.please_check));
-    }
-}
-
 pub(super) fn chapter_source_formats(chapter_file: &StoredChapterFile) -> Vec<String> {
     let mut formats = Vec::new();
     for source_file in &chapter_file.source_files {
