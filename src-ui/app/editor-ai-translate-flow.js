@@ -80,10 +80,24 @@ function errorMeansMissingAiKey(message) {
 
 function latestEditorTranslateSourceTextMatches(context) {
   const latestRow = findEditorRowById(context.rowId, state.editorChapter);
+  if (context.captionOnly === true) {
+    return (
+      (latestRow?.imageCaptions?.[context.sourceLanguageCode] ?? "")
+      === context.sourceImageCaption
+    );
+  }
   return (
     (latestRow?.fields?.[context.sourceLanguageCode] ?? "") === context.sourceText
     && editorFootnotesPlainText(latestRow?.footnotes?.[context.sourceLanguageCode]) === context.sourceFootnote
     && (latestRow?.imageCaptions?.[context.sourceLanguageCode] ?? "") === context.sourceImageCaption
+  );
+}
+
+function latestEditorTranslateTargetImageCaptionMatches(context) {
+  const latestRow = findEditorRowById(context.rowId, state.editorChapter);
+  return (
+    (latestRow?.imageCaptions?.[context.targetLanguageCode] ?? "")
+    === context.targetImageCaption
   );
 }
 
@@ -93,12 +107,18 @@ function latestEditorTranslateTargetTextIsEmpty(context) {
 }
 
 function requestedSourceFootnote(context) {
+  if (context?.captionOnly === true) {
+    return "";
+  }
   return context?.sourceFootnote?.trim() && !context?.targetFootnote?.trim()
     ? context.sourceFootnote
     : "";
 }
 
 function requestedSourceImageCaption(context) {
+  if (context?.captionOnly === true) {
+    return context?.sourceImageCaption?.trim() ? context.sourceImageCaption : "";
+  }
   return context?.sourceImageCaption?.trim() && !context?.targetImageCaption?.trim()
     ? context.sourceImageCaption
     : "";
@@ -114,8 +134,11 @@ export function applyEditorAiTranslatePayloadToRow(context, payload, updateEdito
   const translatedImageCaption = translatedSectionValue(payload, "translatedImageCaption");
 
   const shouldWriteMainText =
-    !context.targetText?.trim()
-    || (!requestedSourceFootnote(context) && !requestedSourceImageCaption(context));
+    context.captionOnly !== true
+    && (
+      !context.targetText?.trim()
+      || (!requestedSourceFootnote(context) && !requestedSourceImageCaption(context))
+    );
   if (shouldWriteMainText) {
     updateEditorRowFieldValue(
       context.rowId,
@@ -142,6 +165,12 @@ export function applyEditorAiTranslatePayloadToRow(context, payload, updateEdito
 }
 
 function resolveGlossaryUsage(context) {
+  if (context.captionOnly === true) {
+    return {
+      kind: "none",
+      glossaryHints: [],
+    };
+  }
   const glossaryState = context.chapterState?.glossary ?? null;
   const glossaryModel = glossaryState?.matcherModel ?? null;
   const glossarySourceLanguageCode = resolveLanguageCode(
@@ -601,7 +630,7 @@ export async function runEditorAiTranslateForContext(
       request: withSelectedInstallation({
         providerId,
         modelId,
-        text: context.sourceText,
+        text: context.captionOnly === true ? "" : context.sourceText,
         sourceLanguageCode: context.sourceLanguageCode,
         targetLanguageCode: context.targetLanguageCode,
         ...(requestedSourceFootnote(context)
@@ -610,12 +639,17 @@ export async function runEditorAiTranslateForContext(
         ...(requestedSourceImageCaption(context)
           ? { sourceImageCaption: requestedSourceImageCaption(context) }
           : {}),
-        ...(context.targetFootnote?.trim() ? { targetFootnote: context.targetFootnote } : {}),
-        ...(context.targetImageCaption?.trim() ? { targetImageCaption: context.targetImageCaption } : {}),
+        ...(context.captionOnly !== true && context.targetFootnote?.trim()
+          ? { targetFootnote: context.targetFootnote }
+          : {}),
+        ...(context.captionOnly !== true && context.targetImageCaption?.trim()
+          ? { targetImageCaption: context.targetImageCaption }
+          : {}),
         sourceLanguage: context.sourceLanguageLabel,
         targetLanguage: context.targetLanguageLabel,
-        rowWindow: context.rowWindow,
-        alternateLanguageTexts: context.alternateLanguageTexts,
+        rowWindow: context.captionOnly === true ? [] : context.rowWindow,
+        alternateLanguageTexts:
+          context.captionOnly === true ? [] : context.alternateLanguageTexts,
         ...(Array.isArray(glossaryHints) && glossaryHints.length > 0
           ? { glossaryHints }
           : {}),
@@ -642,6 +676,19 @@ export async function runEditorAiTranslateForContext(
       renderEditorAiTranslateRow(render, context, {
         renderMode: options.renderMode,
         reason: "ai-translate-source-changed",
+      });
+      return { ok: false, skipped: true };
+    }
+
+    if (
+      context.captionOnly === true
+      && !latestEditorTranslateTargetImageCaptionMatches(context)
+    ) {
+      state.editorChapter = clearEditorAiTranslateAction(state.editorChapter, actionId);
+      render?.({ scope: "translate-sidebar" });
+      renderEditorAiTranslateRow(render, context, {
+        renderMode: options.renderMode,
+        reason: "ai-translate-target-changed",
       });
       return { ok: false, skipped: true };
     }

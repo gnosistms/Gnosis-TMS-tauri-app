@@ -59,7 +59,12 @@ import {
   openEditorAiReviewAllModal as openEditorAiReviewAllModalFlow,
   updateEditorAiReviewAllMode as updateEditorAiReviewAllModeFlow,
 } from "./editor-ai-review-all-flow.js";
-import { runEditorAiTranslate as runEditorAiTranslateFlow } from "./editor-ai-translate-flow.js";
+import {
+  buildEditorAiTranslateContext,
+  runEditorAiTranslate as runEditorAiTranslateFlow,
+  runEditorAiTranslateForContext,
+} from "./editor-ai-translate-flow.js";
+import { clearEditorAiTranslateAction } from "./editor-ai-translate-state.js";
 import {
   cancelEditorAiTranslateAllModal as cancelEditorAiTranslateAllModalFlow,
   confirmEditorAiTranslateAll as confirmEditorAiTranslateAllFlow,
@@ -203,11 +208,13 @@ import {
   hideNavigationLoadingModal,
   showNavigationLoadingModal,
 } from "./navigation-loading.js";
+import { showNoticeBadge } from "./status-feedback.js";
 import { syncEditorVirtualizationRowLayout } from "./editor-virtualization.js";
 import { renderEditorRowScoped } from "./editor-row-scoped-render.js";
 import {
   coerceEditorFontSizePx,
   createEditorMainFieldEditorState,
+  createEditorImageCaptionTranslationModalState,
   createEditorPendingSelectionState,
   createEditorPreviewSearchState,
   state,
@@ -1082,7 +1089,7 @@ export async function duplicateEditorLanguageImage(
   sourceLanguageCode,
   destinationLanguageCode,
 ) {
-  await duplicateEditorLanguageImageFlow(
+  return duplicateEditorLanguageImageFlow(
     render,
     rowId,
     sourceLanguageCode,
@@ -1094,15 +1101,130 @@ export async function duplicateEditorLanguageImage(
   );
 }
 
+function imageCaptionTranslationRequestId() {
+  return typeof globalThis.crypto?.randomUUID === "function"
+    ? globalThis.crypto.randomUUID()
+    : `image-caption-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+async function translateDuplicatedEditorImageCaption(
+  render,
+  rowId,
+  sourceLanguageCode,
+  destinationLanguageCode,
+) {
+  const context = buildEditorAiTranslateContext(state.editorChapter, {
+    rowId,
+    sourceLanguageCode,
+    targetLanguageCode: destinationLanguageCode,
+  });
+  if (!context?.sourceImageCaption?.trim()) {
+    return { ok: false, skipped: true };
+  }
+
+  const requestId = imageCaptionTranslationRequestId();
+  state.editorChapter = {
+    ...state.editorChapter,
+    imageCaptionTranslationModal: {
+      ...createEditorImageCaptionTranslationModalState(),
+      isOpen: true,
+      requestId,
+      rowId,
+      sourceLanguageCode,
+      destinationLanguageCode,
+      destinationLanguageName: context.targetLanguageLabel,
+    },
+  };
+  render?.();
+
+  const result = await runEditorAiTranslateForContext(
+    render,
+    "translate1",
+    {
+      ...context,
+      captionOnly: true,
+      sourceFootnote: "",
+    },
+    {
+      updateEditorRowFieldValue,
+      persistEditorRowOnBlur,
+      syncEditorGlossaryHighlightRowDom,
+    },
+    {
+      showNotice: false,
+      suppressDerivedGlossaryRefresh: true,
+    },
+  );
+
+  if (state.editorChapter?.imageCaptionTranslationModal?.requestId === requestId) {
+    state.editorChapter = {
+      ...state.editorChapter,
+      imageCaptionTranslationModal: createEditorImageCaptionTranslationModalState(),
+    };
+    render?.();
+    if (result?.ok) {
+      showNoticeBadge(`Image and caption duplicated to ${context.targetLanguageLabel}.`, render);
+    }
+  }
+  return result;
+}
+
+async function duplicateEditorLanguageImageWithCaptionResult(render, result) {
+  if (result?.status !== "completed" || result.withCaption !== true) {
+    return result;
+  }
+  await translateDuplicatedEditorImageCaption(
+    render,
+    result.rowId,
+    result.sourceLanguageCode,
+    result.destinationLanguageCode,
+  );
+  return result;
+}
+
+export async function duplicateEditorLanguageImageWithCaption(
+  render,
+  rowId,
+  sourceLanguageCode,
+  destinationLanguageCode,
+) {
+  const result = await duplicateEditorLanguageImageFlow(
+    render,
+    rowId,
+    sourceLanguageCode,
+    destinationLanguageCode,
+    {
+      updateEditorChapterRow,
+      loadActiveEditorFieldHistory,
+    },
+    { withCaption: true },
+  );
+  return duplicateEditorLanguageImageWithCaptionResult(render, result);
+}
+
 export async function confirmEditorImageDuplicateOverwrite(render) {
-  await confirmEditorImageDuplicateOverwriteFlow(render, {
+  const result = await confirmEditorImageDuplicateOverwriteFlow(render, {
     updateEditorChapterRow,
     loadActiveEditorFieldHistory,
   });
+  return duplicateEditorLanguageImageWithCaptionResult(render, result);
 }
 
 export function cancelEditorImageDuplicateOverwrite(render) {
   cancelEditorImageDuplicateOverwriteFlow(render);
+}
+
+export function cancelEditorImageCaptionTranslation(render) {
+  const modal = state.editorChapter?.imageCaptionTranslationModal;
+  if (modal?.isOpen !== true) {
+    return;
+  }
+  state.editorChapter = {
+    ...clearEditorAiTranslateAction(state.editorChapter, "translate1"),
+    imageCaptionTranslationModal: createEditorImageCaptionTranslationModalState(),
+  };
+  render?.();
+  showNoticeBadge("Caption translation canceled. The image was duplicated.", render);
 }
 
 export async function copyEditorImageUrl(render, url) {

@@ -451,6 +451,7 @@ export function createEditorChapterState() {
     imageEditor: createEditorImageEditorState(),
     imageInvalidFileModal: createEditorImageInvalidFileModalState(),
     imageDuplicateOverwriteModal: createEditorImageDuplicateOverwriteModalState(),
+    imageCaptionTranslationModal: createEditorImageCaptionTranslationModalState(),
     imagePreviewOverlay: createEditorImagePreviewOverlayState(),
     insertLinkModal: createEditorInsertLinkModalState(),
     wordpressExportSuccessModal: createWordPressExportSuccessModalState(),
@@ -545,8 +546,20 @@ export function createEditorImageDuplicateOverwriteModalState() {
     destinationLanguageName: "",
     sourceImage: null,
     destinationImage: null,
+    withCaption: false,
     status: "idle",
     error: "",
+  };
+}
+
+export function createEditorImageCaptionTranslationModalState() {
+  return {
+    isOpen: false,
+    requestId: null,
+    rowId: null,
+    sourceLanguageCode: null,
+    destinationLanguageCode: null,
+    destinationLanguageName: "",
   };
 }
 

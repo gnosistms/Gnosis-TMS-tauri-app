@@ -22,3 +22,19 @@ test("image duplicate overwrite modal reuses compact modal controls", () => {
   assert.match(html, /data-action="cancel-editor-image-duplicate-overwrite"/);
   assert.match(html, /data-action="confirm-editor-image-duplicate-overwrite"/);
 });
+
+test("image duplicate overwrite modal explains when the destination caption will also be replaced", () => {
+  const html = renderEditorImageDuplicateOverwriteModal({
+    editorChapter: {
+      imageDuplicateOverwriteModal: {
+        isOpen: true,
+        destinationLanguageName: "Spanish",
+        withCaption: true,
+        status: "idle",
+        error: "",
+      },
+    },
+  });
+
+  assert.match(html, /Its image and caption will be replaced/);
+});

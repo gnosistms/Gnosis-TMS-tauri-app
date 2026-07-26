@@ -14,6 +14,9 @@ export function renderEditorImageDuplicateOverwriteModal(state) {
   const languageName = String(modal.destinationLanguageName || modal.destinationLanguageCode || "")
     .trim();
   const isLoading = modal.status === "loading";
+  const supportingText = modal.withCaption === true
+    ? `${languageName} already has an image. Its image and caption will be replaced.`
+    : `${languageName} already has an image. Do you want to overwrite it?`;
   const errorMarkup = modal.error
     ? `<p class="modal__error">${escapeHtml(formatErrorForDisplay(modal.error))}</p>`
     : "";
@@ -24,7 +27,7 @@ export function renderEditorImageDuplicateOverwriteModal(state) {
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">Duplicate image</p>
           <h2 class="modal__title" id="editor-image-duplicate-overwrite-title">Overwrite the ${escapeHtml(languageName)} image?</h2>
-          <p class="modal__supporting">${escapeHtml(languageName)} already has an image. Do you want to overwrite it?</p>
+          <p class="modal__supporting">${escapeHtml(supportingText)}</p>
           ${errorMarkup}
           <div class="modal__actions">
             ${secondaryButton("Cancel", "cancel-editor-image-duplicate-overwrite", {

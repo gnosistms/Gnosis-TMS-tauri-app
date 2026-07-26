@@ -46,9 +46,11 @@ import {
   openTargetLanguageManagerPicker,
   closeEditorImageUrl,
   cancelEditorImageDuplicateOverwrite,
+  cancelEditorImageCaptionTranslation,
   confirmEditorImageDuplicateOverwrite,
   copyEditorImageUrl,
   duplicateEditorLanguageImage,
+  duplicateEditorLanguageImageWithCaption,
   closeEditorImageInvalidFileModal,
   closeEditorImagePreview,
   closeEditorExportOptions,
@@ -173,6 +175,7 @@ const CURRENT_WRITE_ACTIONS = new Set([
   "save-editor-comment",
   "remove-editor-language-image",
   "duplicate-editor-language-image",
+  "duplicate-editor-language-image-with-caption",
   "confirm-editor-image-duplicate-overwrite",
 ]);
 
@@ -413,6 +416,11 @@ export function createTranslateActions(render) {
 
     if (action === "cancel-editor-image-duplicate-overwrite") {
       cancelEditorImageDuplicateOverwrite(render);
+      return true;
+    }
+
+    if (action === "cancel-editor-image-caption-translation") {
+      cancelEditorImageCaptionTranslation(render);
       return true;
     }
 
@@ -709,6 +717,19 @@ export function createTranslateActions(render) {
         ? event.target.closest("[data-row-id][data-source-language-code][data-destination-language-code]")
         : null;
       await duplicateEditorLanguageImage(
+        render,
+        button?.dataset.rowId ?? "",
+        button?.dataset.sourceLanguageCode ?? "",
+        button?.dataset.destinationLanguageCode ?? "",
+      );
+      return true;
+    }
+
+    if (action === "duplicate-editor-language-image-with-caption") {
+      const button = event?.target instanceof Element
+        ? event.target.closest("[data-row-id][data-source-language-code][data-destination-language-code]")
+        : null;
+      await duplicateEditorLanguageImageWithCaption(
         render,
         button?.dataset.rowId ?? "",
         button?.dataset.sourceLanguageCode ?? "",

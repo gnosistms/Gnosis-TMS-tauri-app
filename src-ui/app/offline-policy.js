@@ -24,6 +24,7 @@ const OFFLINE_BLOCKED_EXACT_ACTIONS = new Set([
   "submit-glossary-term-editor",
   "review-editor-text-now",
   "run-editor-ai-assistant",
+  "duplicate-editor-language-image-with-caption",
   "open-editor-ai-review-all",
   "confirm-editor-ai-review-all",
   "open-editor-ai-translate-all",

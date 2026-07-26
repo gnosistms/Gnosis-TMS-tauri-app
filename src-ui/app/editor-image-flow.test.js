@@ -380,6 +380,32 @@ test("duplicateEditorLanguageImage closes a full-size preview before showing ove
   assert.deepEqual(render.calls[0], [{ scope: "translate-image-preview-overlay" }]);
 });
 
+test("image duplicate overwrite confirmation preserves the with-caption intent", async () => {
+  installEditorFixture();
+  installFixtureImage("https://example.com/source.png");
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    imageCaptions: { vi: "Source caption" },
+    images: {
+      ...state.editorChapter.rows[0].images,
+      es: { kind: "url", url: "https://example.com/existing.png" },
+    },
+  };
+
+  const result = await duplicateEditorLanguageImage(
+    createRenderSpy(),
+    "row-1",
+    "vi",
+    "es",
+    { updateEditorChapterRow },
+    { withCaption: true },
+  );
+
+  assert.equal(result.status, "confirmation-required");
+  assert.equal(result.withCaption, true);
+  assert.equal(state.editorChapter.imageDuplicateOverwriteModal.withCaption, true);
+});
+
 test("image duplicate overwrite modal cancels without changing either image", async () => {
   installEditorFixture();
   installFixtureImage("https://example.com/source.png");

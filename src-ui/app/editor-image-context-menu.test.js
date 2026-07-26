@@ -6,9 +6,14 @@ import {
   handleEditorImageContextMenuKeydown,
   renderEditorImageContextMenuItems,
 } from "./editor-image-context-menu.js";
-import { createEditorChapterState, state } from "./state.js";
+import {
+  createAiSettingsState,
+  createEditorChapterState,
+  state,
+} from "./state.js";
 
-function installContextMenuFixture(image) {
+function installContextMenuFixture(image, caption = "") {
+  state.aiSettings = createAiSettingsState();
   state.editorChapter = {
     ...createEditorChapterState(),
     chapterId: "chapter-1",
@@ -23,7 +28,22 @@ function installContextMenuFixture(image) {
         vi: image,
         es: { kind: "url", url: "https://example.com/existing.png" },
       },
+      imageCaptions: {
+        vi: caption,
+      },
     }],
+  };
+}
+
+function configureTeamAiTranslation() {
+  state.aiSettings.teamShared.secrets = {
+    providers: {
+      openai: {
+        configured: true,
+        keyVersion: 1,
+        algorithm: "test",
+      },
+    },
   };
 }
 
@@ -51,6 +71,51 @@ test("uploaded image context menu omits URL copy and still lists occupied destin
   assert.doesNotMatch(html, /Copy image URL/);
   assert.match(html, /Duplicate to Spanish/);
   assert.match(html, /Duplicate to English/);
+});
+
+test("image context menu adds a caption action after every destination when team AI and a caption are available", () => {
+  installContextMenuFixture(
+    { kind: "url", url: "https://example.com/source.png" },
+    "Source caption",
+  );
+  configureTeamAiTranslation();
+
+  const html = renderEditorImageContextMenuItems("row-1", "vi");
+
+  assert.ok(
+    html.indexOf("Duplicate to Spanish</button>")
+      < html.indexOf("Duplicate to Spanish with caption"),
+  );
+  assert.ok(
+    html.indexOf("Duplicate to Spanish with caption")
+      < html.indexOf("Duplicate to English</button>"),
+  );
+  assert.match(html, /data-action="duplicate-editor-language-image-with-caption"/);
+  assert.match(html, /Duplicate to English with caption/);
+  assert.equal((html.match(/tabindex="-1"/g) ?? []).length, 5);
+});
+
+test("image context menu omits caption actions without a configured team AI provider", () => {
+  installContextMenuFixture(
+    { kind: "url", url: "https://example.com/source.png" },
+    "Source caption",
+  );
+
+  const html = renderEditorImageContextMenuItems("row-1", "vi");
+
+  assert.doesNotMatch(html, /with caption/);
+});
+
+test("image context menu omits caption actions when the source caption is blank", () => {
+  installContextMenuFixture(
+    { kind: "url", url: "https://example.com/source.png" },
+    "   ",
+  );
+  configureTeamAiTranslation();
+
+  const html = renderEditorImageContextMenuItems("row-1", "vi");
+
+  assert.doesNotMatch(html, /with caption/);
 });
 
 test("image context menu items use roving-focus menu semantics", () => {
