@@ -33,7 +33,8 @@ const MAX_DEPTH = 6;
 
 // Patterns for secret-looking substrings that can appear inside free-text error messages.
 const SECRET_VALUE_PATTERNS = [
-  /\bgh[pousr]_[A-Za-z0-9]{16,}\b/g, // GitHub tokens
+  /\bgithub_pat_[A-Za-z0-9_]{16,}\b/g, // GitHub fine-grained PATs
+  /\bgh[pousr]_[A-Za-z0-9]{16,}\b/g, // GitHub classic tokens
   /\bsk-ant-[A-Za-z0-9_-]{16,}\b/g, // Anthropic keys
   /\bsk-[A-Za-z0-9_-]{16,}\b/g, // OpenAI-style keys
   /\bAIza[A-Za-z0-9_-]{30,}\b/g, // Google API keys (Gemini)
@@ -175,8 +176,14 @@ export function scrubEvent(event) {
     });
   }
 
-  if (Array.isArray(event.breadcrumbs)) {
-    event.breadcrumbs = event.breadcrumbs.map((crumb) => {
+  // Handle both the legacy bare-array format and Sentry SDK's { values: [] } format.
+  const rawBreadcrumbs = Array.isArray(event.breadcrumbs)
+    ? event.breadcrumbs
+    : Array.isArray(event.breadcrumbs?.values)
+    ? event.breadcrumbs.values
+    : null;
+  if (rawBreadcrumbs !== null) {
+    const scrubbed = rawBreadcrumbs.map((crumb) => {
       if (!crumb || typeof crumb !== "object") {
         return crumb;
       }
@@ -189,6 +196,11 @@ export function scrubEvent(event) {
       }
       return next;
     });
+    if (Array.isArray(event.breadcrumbs)) {
+      event.breadcrumbs = scrubbed;
+    } else {
+      event.breadcrumbs = { ...event.breadcrumbs, values: scrubbed };
+    }
   }
 
   if (event.extra !== undefined) {

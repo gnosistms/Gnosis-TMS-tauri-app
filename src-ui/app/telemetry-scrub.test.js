@@ -129,6 +129,23 @@ test("scrubEvent scrubs breadcrumbs and extra/contexts/tags", () => {
   assert.equal(out.tags.command, "list_gnosis_projects_for_installation");
 });
 
+test("scrubEvent scrubs breadcrumbs in Sentry SDK { values: [] } format", () => {
+  const event = {
+    breadcrumbs: {
+      values: [{ message: "saved /home/henry/x", data: { token: "abc" } }],
+    },
+  };
+  const out = scrubEvent(event);
+  assert.equal(out.breadcrumbs.values[0].message, "saved /home/<user>/x");
+  assert.equal(out.breadcrumbs.values[0].data.token, "<redacted>");
+});
+
+test("scrubString redacts fine-grained GitHub PATs (github_pat_ prefix)", () => {
+  const pat = "github_pat_" + "A".repeat(20);
+  assert.match(scrubString(`token ${pat} expired`), /<redacted>/);
+  assert.doesNotMatch(scrubString(`token ${pat} expired`), /github_pat_/);
+});
+
 test("scrubEvent tolerates non-object input", () => {
   assert.equal(scrubEvent(null), null);
   assert.equal(scrubEvent(undefined), undefined);
