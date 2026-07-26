@@ -29,8 +29,9 @@ Date: 2026-07-26
       -- --quiet`, `npm run build`, Cargo formatting, and `npm run test:rust`
       (513 passed, 1 ignored) succeeded. `npm run audit:unused` reports only
       the known `scripts/bench-ai-translate.mjs` baseline.
-- [ ] Commit "Release 0.8.78", tag `v0.8.78`, and push `main` plus the tag.
-- [ ] Confirm the release workflow succeeds on macOS arm64, macOS x64, and
-      Windows x64; confirm the published GitHub Release has installers,
-      updater bundles and signatures, and latest.json references 0.8.78 for
-      all supported platform keys.
+- [x] Commit "Release 0.8.78" (`56fe4f84`), tag `v0.8.78`, and push `main`
+      plus the tag.
+- [x] Confirm release workflow run `30197250965` succeeds on macOS arm64,
+      macOS x64, and Windows x64. The published GitHub Release contains 13
+      installers, updater bundles, signatures, and `latest.json`; its seven
+      supported platform keys all reference 0.8.78 with signatures.
