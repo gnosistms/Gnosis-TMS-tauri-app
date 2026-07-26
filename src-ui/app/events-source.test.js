@@ -26,9 +26,11 @@ test("events route native project import drops to the visible project import dro
   assert.match(source, /onCurrentWebviewDragDrop\(\(event\) => \{/);
   assert.match(source, /eventType === "enter" \|\| eventType === "over"/);
   assert.match(source, /setProjectImportDropzoneNativeDragActive/);
+  assert.match(source, /setProjectAddTranslationDropzoneNativeDragActive/);
   assert.match(source, /setGlossaryImportDropzoneNativeDragActive/);
   assert.match(source, /eventType !== "drop"/);
   assert.match(source, /function projectImportDropzoneFromNativeDropEvent\(event\)/);
+  assert.match(source, /function projectAddTranslationDropzoneFromNativeDropEvent\(event\)/);
   assert.match(source, /function glossaryImportDropzoneFromNativeDropEvent\(event\)/);
   assert.match(source, /function visibleProjectImportDropzone\(\)/);
   assert.match(source, /function visibleGlossaryImportDropzone\(\)/);
@@ -37,8 +39,10 @@ test("events route native project import drops to the visible project import dro
   assert.match(source, /position\.x \/ scale/);
   assert.match(source, /return visibleDropzone/);
   assert.match(source, /if \(projectImportDropzoneFromNativeDropEvent\(event\)\) \{/);
+  assert.match(source, /if \(projectAddTranslationDropzoneFromNativeDropEvent\(event\)\) \{/);
   assert.match(source, /if \(glossaryImportDropzoneFromNativeDropEvent\(event\)\) \{/);
   assert.match(source, /void handleDroppedProjectImportPaths\(render, importPaths\)/);
+  assert.match(source, /void handleDroppedProjectAddTranslationPaths\(render, importPaths\)/);
   assert.match(source, /void handleDroppedGlossaryImportPath\(render, droppedPath\)/);
 });
 

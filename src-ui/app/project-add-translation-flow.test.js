@@ -60,8 +60,12 @@ globalThis.requestAnimationFrame = (callback) => {
 
 const {
   continueProjectAddTranslationLanguage,
+  handleDroppedProjectAddTranslationFiles,
   registerProjectAddTranslationProgress,
+  selectProjectAddTranslationInputMode,
   selectProjectAddTranslationLanguage,
+  submitProjectAddTranslationLink,
+  updateProjectAddTranslationLink,
   updateProjectAddTranslationPaste,
 } = await import("./project-add-translation-flow.js");
 const {
@@ -119,6 +123,110 @@ test("add translation paste input updates state without rerendering the focused 
   assert.equal(state.projectAddTranslation.pastedText, "Translated paragraph");
   assert.equal(state.projectAddTranslation.error, "");
   assert.equal(renderCount, 0);
+});
+
+test("add translation upload extracts plain text before language selection", async () => {
+  resetProjectAddTranslationTestState();
+  state.projectAddTranslation = {
+    ...state.projectAddTranslation,
+    step: "input",
+    inputMode: "upload",
+    status: "idle",
+  };
+  const calls = [];
+  invokeHandler = async (command, payload) => {
+    calls.push([command, payload]);
+    if (command === "extract_project_translation_text") {
+      return { plainText: "One\nTwo", unitCount: 2 };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await handleDroppedProjectAddTranslationFiles(() => {}, [{
+    name: "translation.rtf",
+    size: 4,
+    arrayBuffer: async () => Uint8Array.from([1, 2, 3, 4]).buffer,
+  }]);
+
+  assert.equal(state.projectAddTranslation.step, "selectLanguage");
+  assert.equal(state.projectAddTranslation.pastedText, "One\nTwo");
+  assert.equal(state.projectAddTranslation.pendingFileName, "translation.rtf");
+  assert.deepEqual(calls[0], [
+    "extract_project_translation_text",
+    { input: { fileName: "translation.rtf", bytes: [1, 2, 3, 4] } },
+  ]);
+});
+
+test("add translation Google Docs link uses the DOCX-only resolver and extractor", async () => {
+  resetProjectAddTranslationTestState();
+  state.projectAddTranslation = {
+    ...state.projectAddTranslation,
+    step: "input",
+    inputMode: "pasteLink",
+    status: "idle",
+    linkUrl: "",
+  };
+  updateProjectAddTranslationLink(() => {}, "https://docs.google.com/document/d/doc-id/edit");
+  const calls = [];
+  invokeHandler = async (command, payload) => {
+    calls.push([command, payload]);
+    if (command === "resolve_project_import_link") {
+      return {
+        fileName: "translation.docx",
+        dataBase64: Buffer.from([80, 75]).toString("base64"),
+      };
+    }
+    if (command === "extract_project_translation_text") {
+      return { plainText: "Translated paragraph", unitCount: 1 };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await submitProjectAddTranslationLink(() => {});
+
+  assert.equal(state.projectAddTranslation.step, "selectLanguage");
+  assert.equal(state.projectAddTranslation.pastedText, "Translated paragraph");
+  assert.deepEqual(calls[0], [
+    "resolve_project_import_link",
+    {
+      input: {
+        url: "https://docs.google.com/document/d/doc-id/edit",
+        allowedFileTypes: ["docx"],
+      },
+    },
+  ]);
+  assert.equal(calls[1][0], "extract_project_translation_text");
+});
+
+test("add translation rejects non-document Google links before resolving", async () => {
+  resetProjectAddTranslationTestState();
+  state.projectAddTranslation = {
+    ...state.projectAddTranslation,
+    step: "input",
+    inputMode: "pasteLink",
+    linkUrl: "https://docs.google.com/spreadsheets/d/sheet-id/edit",
+  };
+  const calls = [];
+  invokeHandler = async (...args) => {
+    calls.push(args);
+    return null;
+  };
+
+  await submitProjectAddTranslationLink(() => {});
+
+  assert.equal(state.projectAddTranslation.linkErrorModal, "invalid");
+  assert.deepEqual(calls, []);
+});
+
+test("add translation input mode selection uses shared normalization", () => {
+  resetProjectAddTranslationTestState();
+  state.projectAddTranslation.step = "input";
+
+  selectProjectAddTranslationInputMode(() => {}, "pasteText");
+  assert.equal(state.projectAddTranslation.inputMode, "pasteText");
+
+  selectProjectAddTranslationInputMode(() => {}, "unknown");
+  assert.equal(state.projectAddTranslation.inputMode, "upload");
 });
 
 test("add translation language selection preserves scroll and waits for Continue", async () => {

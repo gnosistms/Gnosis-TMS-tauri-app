@@ -1,6 +1,10 @@
 import { escapeHtml, primaryButton, secondaryButton } from "../lib/ui.js";
-import { formatErrorForDisplay } from "../app/error-display.js";
 import { findIsoLanguageOption, isoLanguageOptions } from "../lib/language-options.js";
+import {
+  normalizeProjectDocumentInputMode,
+  renderProjectDocumentInputModal,
+  renderProjectDocumentLinkError,
+} from "../app/project-document-input.js";
 
 function renderSourceLanguageOption(language, selectedCode) {
   const isSelected = language.code === selectedCode;
@@ -74,89 +78,6 @@ function renderProjectImportBatchErrorModal(modal) {
   `;
 }
 
-function renderProjectImportLinkErrorModal(modal) {
-  const errorModal = modal?.linkErrorModal;
-  if (errorModal === "accessDenied") {
-    return `
-      <div class="modal-backdrop">
-        <section class="card modal-card modal-card--compact">
-          <div class="card__body modal-card__body">
-            <p class="card__eyebrow">FILE NOT SHARED PUBLICLY</p>
-            <h2 class="modal__title">Please share this file with everyone</h2>
-            <p class="modal__supporting">Please open this file in your web browser and share it to &quot;Anyone with the link&quot;.</p>
-            <div class="modal__actions">
-              ${secondaryButton("Cancel", "close-project-import-link-error")}
-              ${primaryButton("Retry", "retry-project-import-link")}
-            </div>
-          </div>
-        </section>
-      </div>
-    `;
-  }
-
-  if (errorModal === "invalid") {
-    return `
-      <div class="modal-backdrop">
-        <section class="card modal-card modal-card--compact">
-          <div class="card__body modal-card__body">
-            <p class="card__eyebrow">INVALID LINK</p>
-            <h2 class="modal__title">This link can not be opened</h2>
-            <p class="modal__supporting">This link is not readable. The exact reason is unknown. Note that only Google Docs, Google Sheets, HTML website links, and local file paths are supported.</p>
-            <div class="modal__actions">
-              ${primaryButton("Cancel", "close-project-import-link-error")}
-            </div>
-          </div>
-        </section>
-      </div>
-    `;
-  }
-
-  return "";
-}
-
-function normalizeProjectImportInputMode(value) {
-  const mode = String(value ?? "").trim();
-  return mode === "pasteLink" || mode === "pasteText" ? mode : "upload";
-}
-
-function renderProjectImportModeButton(mode, label, selectedMode, disabled) {
-  const isActive = mode === selectedMode;
-  return `
-    <button
-      type="button"
-      class="segmented-control__button${isActive ? " is-active" : ""}"
-      data-action="select-project-import-input-mode:${escapeHtml(mode)}"
-      aria-pressed="${isActive ? "true" : "false"}"
-      ${disabled ? 'disabled aria-disabled="true"' : ""}
-    >
-      ${escapeHtml(label)}
-    </button>
-  `;
-}
-
-function renderProjectImportModeControl(selectedMode, disabled) {
-  return `
-    <div class="segmented-control project-import-modal__mode-control" role="group" aria-label="Add file method">
-      ${renderProjectImportModeButton("upload", "Upload", selectedMode, disabled)}
-      ${renderProjectImportModeButton("pasteLink", "Paste link", selectedMode, disabled)}
-      ${renderProjectImportModeButton("pasteText", "Paste text", selectedMode, disabled)}
-    </div>
-  `;
-}
-
-function renderProjectImportUploadPanel() {
-  return `
-    <button
-      type="button"
-      class="project-import-modal__drop-target"
-      data-action="select-project-import-file"
-      data-project-import-dropzone
-    >
-      <span>Drop files here or click to open the file selector.</span>
-    </button>
-    <p class="project-import-modal__hint">Supported formats: .xlsx, .txt, .srt, .docx, .html, or .htm. For .xlsx files, the first row must contain supported language codes such as es, en, vi, zh-Hans, or zh-Hant.</p>
-  `;
-}
 
 function renderProjectImportUploadProgressStep(modal) {
   const projectTitle = String(modal?.projectTitle ?? "").trim() || "this project";
@@ -200,44 +121,6 @@ function renderProjectImportUploadProgressStep(modal) {
   `;
 }
 
-function renderProjectImportLinkPanel(modal, disabled) {
-  const value = typeof modal?.linkUrl === "string" ? modal.linkUrl : "";
-  return `
-    <label class="field">
-      <input
-        id="project-import-link-input"
-        class="field__input"
-        type="url"
-        inputmode="url"
-        aria-label="Paste link"
-        autocomplete="off"
-        spellcheck="false"
-        data-project-import-link-input
-        value="${escapeHtml(value)}"
-        placeholder="https://docs.google.com/..."
-        ${disabled ? 'disabled aria-disabled="true"' : ""}
-      />
-      <span class="project-import-modal__hint">Paste link here. Supports Google Docs, Google Sheets, HTML web pages, and local file paths.</span>
-    </label>
-  `;
-}
-
-function renderProjectImportPasteTextPanel(modal, disabled) {
-  const value = typeof modal?.pastedText === "string" ? modal.pastedText : "";
-  return `
-    <label class="field">
-      <textarea
-        class="field__textarea"
-        rows="10"
-        placeholder="Paste text here."
-        data-project-import-paste-textarea
-        ${disabled ? 'disabled aria-disabled="true"' : ""}
-      >${escapeHtml(value)}</textarea>
-      <span class="project-import-modal__hint">Paste plain text here. You will choose its source language before importing.</span>
-    </label>
-  `;
-}
-
 export function renderProjectImportModal(state) {
   const modal = state.projectImport;
   const batchErrorMarkup = renderProjectImportBatchErrorModal(modal);
@@ -245,7 +128,11 @@ export function renderProjectImportModal(state) {
     return batchErrorMarkup;
   }
 
-  const linkErrorMarkup = renderProjectImportLinkErrorModal(modal);
+  const linkErrorMarkup = renderProjectDocumentLinkError(modal, {
+    closeAction: "close-project-import-link-error",
+    retryAction: "retry-project-import-link",
+    invalidMessage: "This link is not readable. The exact reason is unknown. Note that only Google Docs, Google Sheets, HTML website links, and local file paths are supported.",
+  });
   if (linkErrorMarkup) {
     return linkErrorMarkup;
   }
@@ -260,60 +147,38 @@ export function renderProjectImportModal(state) {
 
   const isImporting = modal.status === "importing";
   const isResolvingLink = modal.status === "resolvingLink";
-  const controlsDisabled = isImporting || isResolvingLink;
   const projectTitle = String(modal.projectTitle ?? "").trim() || "this project";
-  const inputMode = normalizeProjectImportInputMode(modal.inputMode);
+  const inputMode = normalizeProjectDocumentInputMode(modal.inputMode);
   const isUploadMode = inputMode === "upload";
-  const isPasteLinkMode = inputMode === "pasteLink";
-  const isPasteTextMode = inputMode === "pasteText";
   if (isImporting && isUploadMode) {
     return renderProjectImportUploadProgressStep(modal);
   }
-
-  const linkUrl = String(modal.linkUrl ?? "").trim();
-  const pastedText = String(modal.pastedText ?? "").trim();
-  const errorMarkup = modal.error
-    ? `<div class="project-import-modal__error-badge" role="alert">${escapeHtml(formatErrorForDisplay(modal.error))}</div>`
-    : "";
-  const primaryLabel = isPasteLinkMode
-    ? (isResolvingLink ? "Opening..." : "Continue")
-    : isUploadMode
-    ? (isImporting ? "Uploading..." : "Select files")
-    : isPasteTextMode
-    ? (isImporting ? "Importing..." : "Continue")
-    : "Continue";
-  const primaryAction = isPasteLinkMode
-    ? "submit-project-import-link"
-    : isUploadMode
-    ? "select-project-import-file"
-    : isPasteTextMode ? "submit-project-import-pasted-text" : "noop";
-  const primaryDisabled = controlsDisabled
-    || (!isUploadMode && !isPasteLinkMode && !isPasteTextMode)
-    || (isPasteLinkMode && !linkUrl)
-    || (isPasteTextMode && !pastedText);
-
-  return `
-    <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact modal-card--project-import">
-        <div class="card__body modal-card__body">
-          <p class="card__eyebrow">ADD FILES</p>
-          <h2 class="modal__title">Add new files to the project</h2>
-          <p class="modal__supporting">Choose how to add content to ${escapeHtml(projectTitle)}.</p>
-          <div class="modal__form project-import-modal">
-            ${errorMarkup}
-            ${renderProjectImportModeControl(inputMode, controlsDisabled)}
-            ${isUploadMode
-              ? renderProjectImportUploadPanel()
-              : isPasteLinkMode
-                ? renderProjectImportLinkPanel(modal, controlsDisabled)
-                : renderProjectImportPasteTextPanel(modal, controlsDisabled)}
-          </div>
-          <div class="modal__actions project-import-modal__actions">
-            ${secondaryButton("Cancel", "cancel-project-import", { disabled: controlsDisabled })}
-            ${primaryButton(primaryLabel, primaryAction, { disabled: primaryDisabled })}
-          </div>
-        </div>
-      </section>
-    </div>
-  `;
+  return renderProjectDocumentInputModal(modal, {
+    eyebrow: "ADD FILES",
+    title: "Add new files to the project",
+    supportingText: `Choose how to add content to ${projectTitle}.`,
+    modeAriaLabel: "Add file method",
+    selectModeAction: "select-project-import-input-mode",
+    selectFileAction: "select-project-import-file",
+    submitLinkAction: "submit-project-import-link",
+    submitPasteAction: "submit-project-import-pasted-text",
+    cancelAction: "cancel-project-import",
+    dropzoneAttribute: "data-project-import-dropzone",
+    dropzoneLabel: "Drop files here or click to open the file selector.",
+    uploadHint: "Supported formats: .xlsx, .txt, .srt, .docx, .html, or .htm. For .xlsx files, the first row must contain supported language codes such as es, en, vi, zh-Hans, or zh-Hant.",
+    linkInputId: "project-import-link-input",
+    linkInputAttribute: "data-project-import-link-input",
+    linkPlaceholder: "https://docs.google.com/...",
+    linkHint: "Paste link here. Supports Google Docs, Google Sheets, HTML web pages, and local file paths.",
+    pasteInputAttribute: "data-project-import-paste-textarea",
+    pastePlaceholder: "Paste text here.",
+    pasteHint: "Paste plain text here. You will choose its source language before importing.",
+    selectFileLabel: "Select files",
+    processingUploadLabel: "Uploading...",
+    processingPasteLabel: "Importing...",
+    controlsDisabled: isImporting || isResolvingLink,
+    isResolvingLink,
+    isProcessingUpload: isImporting,
+    isProcessingPaste: isImporting,
+  });
 }

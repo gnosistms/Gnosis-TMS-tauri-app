@@ -29,7 +29,10 @@ import {
   toggleEditorExportFootnoteLinks,
   toggleEditorExportOmitCustomHtml,
 } from "./editor-export-flow.js";
-import { updateProjectAddTranslationPaste } from "./project-add-translation-flow.js";
+import {
+  updateProjectAddTranslationLink,
+  updateProjectAddTranslationPaste,
+} from "./project-add-translation-flow.js";
 import {
   updateProjectImportLinkUrl,
   updateProjectImportPastedText,
@@ -925,6 +928,15 @@ function handleProjectAddTranslationInput(event, render) {
   return true;
 }
 
+function handleProjectAddTranslationLinkInput(event, render) {
+  const input = event.target.closest("[data-project-add-translation-link-input]");
+  if (!input) {
+    return false;
+  }
+  updateProjectAddTranslationLink(render, input.value);
+  return true;
+}
+
 export function handlePasteEvent(event, render) {
   const input = event.target.closest("[data-project-add-translation-textarea]");
   if (!input) {
@@ -1193,6 +1205,7 @@ const inputHandlers = [
   handleEditorExportPaperSizeInput,
   handleProjectImportLinkInput,
   handleProjectImportPastedTextInput,
+  handleProjectAddTranslationLinkInput,
   handleProjectAddTranslationInput,
   handleAiKeyInput,
   handleAiDetailedConfigurationInput,

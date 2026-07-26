@@ -14,6 +14,7 @@ use crate::constants::ensure_within_import_size_limit;
 mod docx;
 mod html;
 pub(crate) mod languages;
+mod rtf;
 mod srt;
 mod txt;
 mod write_gtms;
@@ -21,6 +22,7 @@ mod xlsx;
 
 use docx::{parse_docx_file, DocxImportSummary, DocxRowMetadata};
 use html::{parse_html_file, HtmlRowMetadata};
+use rtf::extract_rtf_plain_text;
 pub(super) use srt::format_srt_timestamp;
 use srt::{parse_srt_file, SrtImportSummary, SrtRowMetadata};
 #[cfg(test)]
@@ -93,6 +95,20 @@ pub(crate) struct ImportHtmlInput {
     source_language_code: String,
     source_url: String,
     source_path: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ExtractProjectTranslationTextInput {
+    file_name: String,
+    bytes: Vec<u8>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ExtractProjectTranslationTextResponse {
+    plain_text: String,
+    unit_count: usize,
 }
 
 #[derive(Deserialize)]
@@ -458,6 +474,91 @@ pub(super) fn import_html_to_gtms_sync(
     ensure_within_import_size_limit(input.bytes.len() as u64, &input.file_name)?;
     let parsed = parse_html_file(input)?;
     import_parsed_workbook_to_gtms_sync(app, parsed)
+}
+
+pub(super) fn extract_project_translation_text_sync(
+    input: ExtractProjectTranslationTextInput,
+) -> Result<ExtractProjectTranslationTextResponse, String> {
+    let file_name = input.file_name.trim();
+    if file_name.is_empty() {
+        return Err("The selected file is missing a file name.".to_string());
+    }
+    ensure_within_import_size_limit(input.bytes.len() as u64, file_name)?;
+
+    let extension = Path::new(file_name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let blocks = match extension.as_str() {
+        "txt" => {
+            let parsed = parse_txt_file(ImportTxtInput {
+                installation_id: 0,
+                repo_name: String::new(),
+                project_id: None,
+                file_name: file_name.to_string(),
+                bytes: input.bytes,
+                source_language_code: "en".to_string(),
+            })?;
+            parsed_plain_text_blocks(parsed, "en")
+        }
+        "docx" => {
+            let parsed = parse_docx_file(ImportDocxInput {
+                installation_id: 0,
+                repo_name: String::new(),
+                project_id: None,
+                file_name: file_name.to_string(),
+                bytes: input.bytes,
+                source_language_code: "en".to_string(),
+            })?;
+            parsed_plain_text_blocks(parsed, "en")
+        }
+        "rtf" => extract_rtf_plain_text(&input.bytes)?,
+        _ => {
+            return Err(
+                "Only TXT, DOCX, and RTF files can be used to add translations.".to_string(),
+            )
+        }
+    };
+
+    let normalized_blocks = blocks
+        .into_iter()
+        .flat_map(|block| normalize_translation_text_lines(&block))
+        .collect::<Vec<_>>();
+    if normalized_blocks.is_empty() {
+        return Err("The selected file does not contain any readable text.".to_string());
+    }
+    if normalized_blocks.len() > 20_000 {
+        return Err("The selected file contains too many text units to align.".to_string());
+    }
+
+    Ok(ExtractProjectTranslationTextResponse {
+        unit_count: normalized_blocks.len(),
+        plain_text: normalized_blocks.join("\n"),
+    })
+}
+
+fn parsed_plain_text_blocks(parsed: ParsedWorkbook, language_code: &str) -> Vec<String> {
+    parsed
+        .rows
+        .into_iter()
+        .filter_map(|row| {
+            row.fields
+                .get(language_code)
+                .map(|field| field.plain_text.clone())
+        })
+        .collect()
+}
+
+fn normalize_translation_text_lines(value: &str) -> Vec<String> {
+    value
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 pub(super) fn import_project_files_to_gtms_sync(
@@ -857,6 +958,58 @@ mod tests {
             Some("second line")
         );
         assert_eq!(parsed.rows[2].source_row_number, 5);
+    }
+
+    #[test]
+    fn extracts_txt_translation_text_as_ordered_units() {
+        let response = extract_project_translation_text_sync(ExtractProjectTranslationTextInput {
+            file_name: "translation.txt".to_string(),
+            bytes: b" first \n\n second\r\n".to_vec(),
+        })
+        .expect("TXT translation text should extract");
+
+        assert_eq!(response.plain_text, "first\nsecond");
+        assert_eq!(response.unit_count, 2);
+    }
+
+    #[test]
+    fn extracts_docx_translation_text_without_footnotes() {
+        let document_xml = r#"
+            <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+              <w:body>
+                <w:p><w:r><w:t>First paragraph</w:t></w:r></w:p>
+                <w:p>
+                  <w:r><w:t>Second paragraph</w:t></w:r>
+                  <w:r><w:footnoteReference w:id="2"/></w:r>
+                </w:p>
+              </w:body>
+            </w:document>
+        "#;
+        let footnotes_xml = r#"
+            <w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+              <w:footnote w:id="2"><w:p><w:r><w:t>Hidden footnote</w:t></w:r></w:p></w:footnote>
+            </w:footnotes>
+        "#;
+        let response = extract_project_translation_text_sync(ExtractProjectTranslationTextInput {
+            file_name: "translation.docx".to_string(),
+            bytes: minimal_docx(document_xml, Some(footnotes_xml)),
+        })
+        .expect("DOCX translation text should extract");
+
+        assert_eq!(response.plain_text, "First paragraph\nSecond paragraph");
+        assert_eq!(response.unit_count, 2);
+        assert!(!response.plain_text.contains("Hidden footnote"));
+    }
+
+    #[test]
+    fn translation_text_extraction_rejects_unsupported_files() {
+        let error = extract_project_translation_text_sync(ExtractProjectTranslationTextInput {
+            file_name: "translation.html".to_string(),
+            bytes: b"<p>Text</p>".to_vec(),
+        })
+        .expect_err("HTML should not be accepted for Add translations");
+
+        assert!(error.contains("Only TXT, DOCX, and RTF"));
     }
 
     #[test]

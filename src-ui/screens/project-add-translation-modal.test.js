@@ -3,19 +3,39 @@ import assert from "node:assert/strict";
 
 import { renderProjectAddTranslationModal } from "./project-add-translation-modal.js";
 
-test("add translation paste modal renders requested copy", () => {
+test("add translation input modal defaults to upload with supported formats", () => {
   const html = renderProjectAddTranslationModal({
     projectAddTranslation: {
       isOpen: true,
-      step: "pasteText",
+      step: "input",
+      inputMode: "upload",
       pastedText: "",
       error: "",
     },
   });
 
-  assert.match(html, /Add translations/);
-  assert.match(html, /Paste your translation/);
-  assert.match(html, /Paste your translation text for the entire file into the box below/);
+  assert.match(html, /ADD TRANSLATIONS/);
+  assert.match(html, /Add translation text/);
+  assert.match(html, /select-project-add-translation-input-mode:upload/);
+  assert.match(html, /select-project-add-translation-input-mode:pasteLink/);
+  assert.match(html, /select-project-add-translation-input-mode:pasteText/);
+  assert.match(html, /data-project-add-translation-dropzone/);
+  assert.match(html, /\.txt, \.docx, or \.rtf/);
+  assert.match(html, /existing chapter keeps its formatting/);
+  assert.match(html, /data-action="select-project-add-translation-file">Select file<\/button>/);
+});
+
+test("add translation paste mode renders requested copy", () => {
+  const html = renderProjectAddTranslationModal({
+    projectAddTranslation: {
+      isOpen: true,
+      step: "input",
+      inputMode: "pasteText",
+      pastedText: "",
+      error: "",
+    },
+  });
+
   assert.match(html, /placeholder="Paste your translation here\."/);
   assert.match(html, /data-action="submit-project-add-translation-paste" disabled[\s\S]*>Continue<\/button>/);
 });
@@ -24,7 +44,8 @@ test("add translation paste modal enables Continue after text is pasted", () => 
   const html = renderProjectAddTranslationModal({
     projectAddTranslation: {
       isOpen: true,
-      step: "pasteText",
+      step: "input",
+      inputMode: "pasteText",
       pastedText: "Translated text",
       error: "",
     },
@@ -32,6 +53,23 @@ test("add translation paste modal enables Continue after text is pasted", () => 
 
   assert.match(html, /data-action="submit-project-add-translation-paste">Continue<\/button>/);
   assert.doesNotMatch(html, /data-action="submit-project-add-translation-paste" disabled/);
+});
+
+test("add translation link mode only advertises Google Docs", () => {
+  const html = renderProjectAddTranslationModal({
+    projectAddTranslation: {
+      isOpen: true,
+      step: "input",
+      inputMode: "pasteLink",
+      linkUrl: "https://docs.google.com/document/d/example/edit",
+      error: "",
+    },
+  });
+
+  assert.match(html, /Paste a public Google Docs link here/);
+  assert.match(html, /data-project-add-translation-link-input/);
+  assert.match(html, /data-action="submit-project-add-translation-link">Continue<\/button>/);
+  assert.doesNotMatch(html, /Google Sheets/);
 });
 
 test("add translation language modal disables Continue until selection", () => {
@@ -75,7 +113,7 @@ test("add translation language modal uses translation language actions", () => {
   });
 
   assert.match(html, /TRANSLATION LANGUAGE/);
-  assert.match(html, /What language did you paste\?/);
+  assert.match(html, /What language is this translation\?/);
   assert.match(html, /data-action="select-project-add-translation-language:vi"/);
   assert.doesNotMatch(html, /select-project-import-source-language/);
   assert.doesNotMatch(html, /data-action="continue-project-add-translation-language" disabled/);
@@ -125,7 +163,7 @@ test("add translation progress modal shows full staged progress", () => {
 
   assert.match(html, /Aligning and inserting/);
   assert.match(html, /Please wait/);
-  assert.match(html, /Aligning your pasted translation with this file\. This may take a few minutes\./);
+  assert.match(html, /Aligning your translation text with this file\. This may take a few minutes\./);
   assert.match(html, /Preparing text units/);
   assert.match(html, /Summarizing sections/);
   assert.match(html, /Finding section matches/);

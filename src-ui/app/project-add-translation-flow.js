@@ -15,10 +15,83 @@ import {
   resolveAiActionProviderAndModel,
 } from "./ai-settings-flow.js";
 import { ensureSelectedTeamAiProviderReady } from "./team-ai-flow.js";
+import { openLocalFilePathPicker, openLocalFilePicker } from "./local-file-picker.js";
+import { enforceImportFileSizeLimit } from "./import-file-limit.js";
+import { normalizeProjectDocumentInputMode } from "./project-document-input.js";
 
 export const ALIGNED_TRANSLATION_PROGRESS_EVENT = "aligned-translation-progress";
+export const PROJECT_ADD_TRANSLATION_ACCEPT =
+  ".txt,text/plain,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.rtf,application/rtf,text/rtf";
+export const PROJECT_ADD_TRANSLATION_DIALOG_FILTERS = [{
+  name: "Translation documents",
+  extensions: ["txt", "docx", "rtf"],
+}];
 
 let progressUnlistenPromise = null;
+let inputRequestSequence = 0;
+
+function inputFileName(value, fallback = "translation") {
+  const name = typeof value?.name === "string" ? value.name.trim() : "";
+  return name || fallback;
+}
+
+function pathFileName(path) {
+  return String(path ?? "").split(/[\\/]/).filter(Boolean).pop() || "translation";
+}
+
+function supportedTranslationFileName(fileName) {
+  return /\.(txt|docx|rtf)$/i.test(String(fileName ?? "").trim());
+}
+
+function decodeBase64ToBytes(value) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) {
+    throw new Error("The selected file could not be read.");
+  }
+  if (typeof globalThis.atob === "function") {
+    const binary = globalThis.atob(normalized);
+    return Array.from(binary, (character) => character.charCodeAt(0));
+  }
+  if (typeof Buffer === "function") {
+    return Array.from(Buffer.from(normalized, "base64"));
+  }
+  throw new Error("Base64 decoding is unavailable.");
+}
+
+async function translationFileBytes(file) {
+  if (typeof file?.path === "string" && file.path.trim()) {
+    const local = await invoke("read_local_dropped_file", { path: file.path.trim() });
+    return decodeBase64ToBytes(local?.dataBase64);
+  }
+  if (typeof file?.dataBase64 === "string") {
+    return decodeBase64ToBytes(file.dataBase64);
+  }
+  if (typeof file?.arrayBuffer === "function") {
+    enforceImportFileSizeLimit(file.size, inputFileName(file));
+    return Array.from(new Uint8Array(await file.arrayBuffer()));
+  }
+  throw new Error("The selected file could not be read.");
+}
+
+function linkImportErrorKind(error) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return message.includes("PROJECT_IMPORT_LINK_ACCESS_DENIED:")
+    ? "accessDenied"
+    : "invalid";
+}
+
+function isGoogleDocsDocumentUrl(value) {
+  try {
+    const url = new URL(String(value ?? "").trim());
+    return (
+      url.protocol === "https:"
+      && url.hostname.toLowerCase() === "docs.google.com"
+      && /^\/document\/d\/[^/]+/.test(url.pathname)
+    );
+  } catch {
+    return false;
+  }
+}
 
 function selectedSourceLanguageCode(chapter) {
   const languages = normalizeChapterLanguages(chapter?.languages);
@@ -172,7 +245,8 @@ export function openProjectAddTranslation(render, chapterId) {
   state.projectAddTranslation = {
     ...createProjectAddTranslationState(),
     isOpen: true,
-    step: "pasteText",
+    step: "input",
+    inputMode: "upload",
     chapterId: context.chapter.id ?? "",
     projectId: context.project.id ?? "",
     repoName: context.project.name ?? "",
@@ -194,7 +268,224 @@ export function updateProjectAddTranslationPaste(render, value) {
   };
 }
 
+export function selectProjectAddTranslationInputMode(render, mode) {
+  const modal = state.projectAddTranslation;
+  if (!modal?.isOpen || modal.status === "extracting" || modal.status === "resolvingLink") {
+    return;
+  }
+  inputRequestSequence += 1;
+  state.projectAddTranslation = {
+    ...modal,
+    step: "input",
+    inputMode: normalizeProjectDocumentInputMode(mode),
+    status: "idle",
+    error: "",
+    linkErrorModal: null,
+    inputRequestId: inputRequestSequence,
+  };
+  render();
+}
+
+export function updateProjectAddTranslationLink(render, value) {
+  const modal = state.projectAddTranslation;
+  if (!modal?.isOpen || modal.status === "extracting" || modal.status === "resolvingLink") {
+    return;
+  }
+  state.projectAddTranslation = {
+    ...modal,
+    linkUrl: typeof value === "string" ? value : "",
+    error: "",
+    linkErrorModal: null,
+  };
+}
+
+async function extractProjectAddTranslationFile(render, file) {
+  const modal = state.projectAddTranslation;
+  const fileName = inputFileName(file);
+  if (!modal?.isOpen) {
+    return;
+  }
+  if (!supportedTranslationFileName(fileName)) {
+    state.projectAddTranslation = {
+      ...modal,
+      status: "idle",
+      error: "Choose a TXT, DOCX, or RTF file.",
+    };
+    render();
+    return;
+  }
+
+  const requestId = ++inputRequestSequence;
+  state.projectAddTranslation = {
+    ...modal,
+    status: "extracting",
+    inputRequestId: requestId,
+    pendingFileName: fileName,
+    error: "",
+    linkErrorModal: null,
+  };
+  render();
+
+  try {
+    const bytes = await translationFileBytes(file);
+    const response = await invoke("extract_project_translation_text", {
+      input: { fileName, bytes },
+    });
+    const current = state.projectAddTranslation;
+    if (!current?.isOpen || current.inputRequestId !== requestId) {
+      return;
+    }
+    const plainText = typeof response?.plainText === "string" ? response.plainText : "";
+    if (!plainText.trim()) {
+      throw new Error("The selected file does not contain any readable text.");
+    }
+    state.projectAddTranslation = {
+      ...current,
+      pastedText: plainText,
+      step: "selectLanguage",
+      status: "idle",
+      pendingFileName: fileName,
+      error: "",
+    };
+    render();
+  } catch (error) {
+    const current = state.projectAddTranslation;
+    if (!current?.isOpen || current.inputRequestId !== requestId) {
+      return;
+    }
+    state.projectAddTranslation = {
+      ...current,
+      status: "idle",
+      error: formatErrorForDisplay(error),
+    };
+    render();
+  }
+}
+
+export async function selectProjectAddTranslationFile(render) {
+  const modal = state.projectAddTranslation;
+  if (!modal?.isOpen || modal.status === "extracting" || modal.status === "resolvingLink") {
+    return;
+  }
+  const paths = await openLocalFilePathPicker({
+    multiple: false,
+    filters: PROJECT_ADD_TRANSLATION_DIALOG_FILTERS,
+  });
+  if (paths === null) {
+    const file = await openLocalFilePicker({
+      accept: PROJECT_ADD_TRANSLATION_ACCEPT,
+      multiple: false,
+    });
+    if (file) {
+      await extractProjectAddTranslationFile(render, file);
+    }
+    return;
+  }
+  const path = paths[0];
+  if (path) {
+    await extractProjectAddTranslationFile(render, { name: pathFileName(path), path });
+  }
+}
+
+export async function handleDroppedProjectAddTranslationFiles(render, files) {
+  const normalized = Array.isArray(files) ? files.filter(Boolean) : [];
+  if (normalized.length !== 1) {
+    state.projectAddTranslation = {
+      ...state.projectAddTranslation,
+      error: "Drop one TXT, DOCX, or RTF file.",
+    };
+    render();
+    return;
+  }
+  await extractProjectAddTranslationFile(render, normalized[0]);
+}
+
+export async function handleDroppedProjectAddTranslationPaths(render, paths) {
+  const normalized = Array.isArray(paths)
+    ? paths.filter((path) => typeof path === "string" && path.trim())
+    : [];
+  if (normalized.length !== 1) {
+    state.projectAddTranslation = {
+      ...state.projectAddTranslation,
+      error: "Drop one TXT, DOCX, or RTF file.",
+    };
+    render();
+    return;
+  }
+  const path = normalized[0].trim();
+  await extractProjectAddTranslationFile(render, { name: pathFileName(path), path });
+}
+
+export async function submitProjectAddTranslationLink(render) {
+  const modal = state.projectAddTranslation;
+  if (!modal?.isOpen || modal.status === "extracting" || modal.status === "resolvingLink") {
+    return;
+  }
+  const url = String(modal.linkUrl ?? "").trim();
+  if (!isGoogleDocsDocumentUrl(url)) {
+    state.projectAddTranslation = {
+      ...modal,
+      linkErrorModal: "invalid",
+      error: "",
+    };
+    render();
+    return;
+  }
+  const requestId = ++inputRequestSequence;
+  state.projectAddTranslation = {
+    ...modal,
+    status: "resolvingLink",
+    inputRequestId: requestId,
+    error: "",
+    linkErrorModal: null,
+  };
+  render();
+  try {
+    const resolved = await invoke("resolve_project_import_link", {
+      input: { url, allowedFileTypes: ["docx"] },
+    });
+    const current = state.projectAddTranslation;
+    if (!current?.isOpen || current.inputRequestId !== requestId) {
+      return;
+    }
+    await extractProjectAddTranslationFile(render, {
+      name: typeof resolved?.fileName === "string" ? resolved.fileName : "google-doc.docx",
+      dataBase64: resolved?.dataBase64,
+    });
+  } catch (error) {
+    const current = state.projectAddTranslation;
+    if (!current?.isOpen || current.inputRequestId !== requestId) {
+      return;
+    }
+    state.projectAddTranslation = {
+      ...current,
+      status: "idle",
+      linkErrorModal: linkImportErrorKind(error),
+      error: "",
+    };
+    render();
+  }
+}
+
+export function closeProjectAddTranslationLinkError(render) {
+  state.projectAddTranslation = {
+    ...state.projectAddTranslation,
+    status: "idle",
+    linkErrorModal: null,
+  };
+  render();
+}
+
+export async function retryProjectAddTranslationLink(render) {
+  state.projectAddTranslation = {
+    ...state.projectAddTranslation,
+    linkErrorModal: null,
+  };
+  await submitProjectAddTranslationLink(render);
+}
+
 export function cancelProjectAddTranslation(render) {
+  inputRequestSequence += 1;
   resetProjectAddTranslation();
   render();
 }

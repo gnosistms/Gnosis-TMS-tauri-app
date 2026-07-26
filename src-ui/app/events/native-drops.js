@@ -4,6 +4,10 @@ import {
   handleDroppedProjectImportPaths,
 } from "../project-import-flow.js";
 import {
+  handleDroppedProjectAddTranslationFiles,
+  handleDroppedProjectAddTranslationPaths,
+} from "../project-add-translation-flow.js";
+import {
   handleDroppedGlossaryImportFile,
   handleDroppedGlossaryImportPath,
 } from "../glossary-import-flow.js";
@@ -13,6 +17,7 @@ import {
 } from "../qa-list-flow.js";
 
 const PROJECT_IMPORT_DROPZONE_SELECTOR = "[data-project-import-dropzone]";
+const PROJECT_ADD_TRANSLATION_DROPZONE_SELECTOR = "[data-project-add-translation-dropzone]";
 const GLOSSARY_IMPORT_DROPZONE_SELECTOR = "[data-glossary-import-dropzone]";
 const QA_LIST_IMPORT_DROPZONE_SELECTOR = "[data-qa-list-import-dropzone]";
 
@@ -64,6 +69,14 @@ function closestProjectImportDropzoneFromElement(element) {
   return dropzone instanceof HTMLElement ? dropzone : null;
 }
 
+function closestProjectAddTranslationDropzoneFromElement(element) {
+  if (!(element instanceof Element)) {
+    return null;
+  }
+  const dropzone = element.closest(PROJECT_ADD_TRANSLATION_DROPZONE_SELECTOR);
+  return dropzone instanceof HTMLElement ? dropzone : null;
+}
+
 function closestGlossaryImportDropzoneFromElement(element) {
   if (!(element instanceof Element)) {
     return null;
@@ -94,6 +107,15 @@ function visibleProjectImportDropzone() {
   }
 
   return dropzone;
+}
+
+function visibleProjectAddTranslationDropzone() {
+  const dropzone = document.querySelector(PROJECT_ADD_TRANSLATION_DROPZONE_SELECTOR);
+  if (!(dropzone instanceof HTMLElement)) {
+    return null;
+  }
+  const rect = dropzone.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0 ? dropzone : null;
 }
 
 function visibleGlossaryImportDropzone() {
@@ -130,6 +152,15 @@ function setProjectImportDropzoneNativeDragActive(isActive) {
     return null;
   }
 
+  dropzone.classList.toggle("is-native-drag-over", isActive);
+  return dropzone;
+}
+
+function setProjectAddTranslationDropzoneNativeDragActive(isActive) {
+  const dropzone = visibleProjectAddTranslationDropzone();
+  if (!dropzone) {
+    return null;
+  }
   dropzone.classList.toggle("is-native-drag-over", isActive);
   return dropzone;
 }
@@ -194,6 +225,31 @@ function projectImportDropzoneFromNativeDropEvent(event) {
     }
   }
 
+  return visibleDropzone;
+}
+
+function projectAddTranslationDropzoneFromNativeDropEvent(event) {
+  const visibleDropzone = visibleProjectAddTranslationDropzone();
+  if (!visibleDropzone) {
+    return null;
+  }
+  const position = nativeDropPosition(event);
+  if (!position) {
+    return visibleDropzone;
+  }
+  const scale = Number.isFinite(window.devicePixelRatio) && window.devicePixelRatio > 0
+    ? window.devicePixelRatio
+    : 1;
+  for (const [x, y] of [
+    [position.x, position.y],
+    [position.x / scale, position.y / scale],
+  ]) {
+    const element = document.elementFromPoint(x, y);
+    const dropzone = closestProjectAddTranslationDropzoneFromElement(element);
+    if (dropzone || pointIsInsideElement(visibleDropzone, x, y)) {
+      return dropzone ?? visibleDropzone;
+    }
+  }
   return visibleDropzone;
 }
 
@@ -270,6 +326,7 @@ export function registerNativeDropEvents(render) {
     const eventType = event?.payload?.type;
     if (eventType === "enter" || eventType === "over") {
       setProjectImportDropzoneNativeDragActive(Boolean(projectImportDropzoneFromNativeDropEvent(event)));
+      setProjectAddTranslationDropzoneNativeDragActive(Boolean(projectAddTranslationDropzoneFromNativeDropEvent(event)));
       setGlossaryImportDropzoneNativeDragActive(Boolean(glossaryImportDropzoneFromNativeDropEvent(event)));
       setQaListImportDropzoneNativeDragActive(Boolean(qaListImportDropzoneFromNativeDropEvent(event)));
       return;
@@ -277,6 +334,7 @@ export function registerNativeDropEvents(render) {
 
     if (eventType === "leave") {
       setProjectImportDropzoneNativeDragActive(false);
+      setProjectAddTranslationDropzoneNativeDragActive(false);
       setGlossaryImportDropzoneNativeDragActive(false);
       setQaListImportDropzoneNativeDragActive(false);
       return;
@@ -287,6 +345,7 @@ export function registerNativeDropEvents(render) {
     }
 
     setProjectImportDropzoneNativeDragActive(false);
+    setProjectAddTranslationDropzoneNativeDragActive(false);
     setGlossaryImportDropzoneNativeDragActive(false);
     setQaListImportDropzoneNativeDragActive(false);
     const droppedPaths = Array.isArray(event?.payload?.paths)
@@ -294,6 +353,11 @@ export function registerNativeDropEvents(render) {
       : [];
     const importPaths = droppedPaths.filter((value) => typeof value === "string" && value.trim());
     if (importPaths.length === 0) {
+      return;
+    }
+
+    if (projectAddTranslationDropzoneFromNativeDropEvent(event)) {
+      void handleDroppedProjectAddTranslationPaths(render, importPaths);
       return;
     }
 
@@ -317,6 +381,7 @@ export function registerNativeDropEvents(render) {
     const target = event.target instanceof Element ? event.target : null;
     const dropzone =
       target?.closest(PROJECT_IMPORT_DROPZONE_SELECTOR)
+      ?? target?.closest(PROJECT_ADD_TRANSLATION_DROPZONE_SELECTOR)
       ?? target?.closest(GLOSSARY_IMPORT_DROPZONE_SELECTOR)
       ?? target?.closest(QA_LIST_IMPORT_DROPZONE_SELECTOR);
     if (!(dropzone instanceof HTMLElement)) {
@@ -334,6 +399,7 @@ export function registerNativeDropEvents(render) {
     const target = event.target instanceof Element ? event.target : null;
     const dropzone =
       target?.closest(PROJECT_IMPORT_DROPZONE_SELECTOR)
+      ?? target?.closest(PROJECT_ADD_TRANSLATION_DROPZONE_SELECTOR)
       ?? target?.closest(GLOSSARY_IMPORT_DROPZONE_SELECTOR)
       ?? target?.closest(QA_LIST_IMPORT_DROPZONE_SELECTOR);
     if (!(dropzone instanceof HTMLElement)) {
@@ -346,9 +412,10 @@ export function registerNativeDropEvents(render) {
   document.addEventListener("drop", (event) => {
     const target = event.target instanceof Element ? event.target : null;
     const projectDropzone = target?.closest(PROJECT_IMPORT_DROPZONE_SELECTOR);
+    const addTranslationDropzone = target?.closest(PROJECT_ADD_TRANSLATION_DROPZONE_SELECTOR);
     const glossaryDropzone = target?.closest(GLOSSARY_IMPORT_DROPZONE_SELECTOR);
     const qaListDropzone = target?.closest(QA_LIST_IMPORT_DROPZONE_SELECTOR);
-    const dropzone = projectDropzone ?? glossaryDropzone ?? qaListDropzone;
+    const dropzone = addTranslationDropzone ?? projectDropzone ?? glossaryDropzone ?? qaListDropzone;
     if (!(dropzone instanceof HTMLElement)) {
       return;
     }
@@ -357,6 +424,11 @@ export function registerNativeDropEvents(render) {
     dropzone.classList.remove("is-native-drag-over");
     const files = droppedProjectImportFiles(event.dataTransfer);
     if (files.length === 0) {
+      return;
+    }
+
+    if (addTranslationDropzone instanceof HTMLElement) {
+      void handleDroppedProjectAddTranslationFiles(render, files);
       return;
     }
 

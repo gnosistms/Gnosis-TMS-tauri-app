@@ -20,6 +20,8 @@ const USER_AGENT_VALUE: &str = "GnosisTMS/0.7";
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ResolveProjectImportLinkInput {
     url: String,
+    #[serde(default)]
+    allowed_file_types: Option<Vec<String>>,
 }
 
 #[derive(Serialize)]
@@ -42,6 +44,7 @@ pub(crate) fn resolve_project_import_link_sync(
 
     if is_google_docs_host(&parsed_url) {
         if let Some(document_id) = google_file_id(&parsed_url, "document") {
+            ensure_file_type_allowed(input.allowed_file_types.as_deref(), "docx")?;
             return resolve_google_export(
                 &parsed_url,
                 &format!("https://docs.google.com/document/d/{document_id}/export?format=docx"),
@@ -51,6 +54,7 @@ pub(crate) fn resolve_project_import_link_sync(
         }
 
         if let Some(spreadsheet_id) = google_file_id(&parsed_url, "spreadsheets") {
+            ensure_file_type_allowed(input.allowed_file_types.as_deref(), "xlsx")?;
             return resolve_google_export(
                 &parsed_url,
                 &format!(
@@ -66,7 +70,24 @@ pub(crate) fn resolve_project_import_link_sync(
         ));
     }
 
+    ensure_file_type_allowed(input.allowed_file_types.as_deref(), "html")?;
     resolve_html_link(&parsed_url)
+}
+
+fn ensure_file_type_allowed(
+    allowed_file_types: Option<&[String]>,
+    file_type: &str,
+) -> Result<(), String> {
+    let Some(allowed_file_types) = allowed_file_types else {
+        return Ok(());
+    };
+    if allowed_file_types
+        .iter()
+        .any(|allowed| allowed.trim().eq_ignore_ascii_case(file_type))
+    {
+        return Ok(());
+    }
+    Err(invalid_link("This type of link is not supported here."))
 }
 
 fn resolve_google_export(
@@ -401,6 +422,14 @@ mod tests {
         let url = Url::parse("https://docs.google.com/document/d/doc-id/edit").unwrap();
         assert_eq!(google_file_id(&url, "document").as_deref(), Some("doc-id"));
         assert_eq!(google_file_id(&url, "spreadsheets"), None);
+    }
+
+    #[test]
+    fn optional_file_type_allowlist_preserves_general_import_and_can_restrict_translation_links() {
+        assert!(ensure_file_type_allowed(None, "html").is_ok());
+        assert!(ensure_file_type_allowed(Some(&["docx".to_string()]), "docx").is_ok());
+        assert!(ensure_file_type_allowed(Some(&["docx".to_string()]), "xlsx").is_err());
+        assert!(ensure_file_type_allowed(Some(&["DOCX".to_string()]), "docx").is_ok());
     }
 
     #[test]
