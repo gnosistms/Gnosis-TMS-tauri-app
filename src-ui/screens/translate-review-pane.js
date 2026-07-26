@@ -8,6 +8,7 @@ import { editorFieldImageEqual } from "../app/editor-images.js";
 import { normalizeEditorRowTextStyle } from "../app/editor-row-text-style.js";
 import {
   escapeHtml,
+  loadingSpinnerKeyAttribute,
   renderCollapseChevron,
   renderInlineStateBox,
   secondaryButton,
@@ -45,7 +46,7 @@ function renderAiReviewModeButton({ label, action, reviewMode, tooltip, isLoadin
   const reviewModeAttribute = reviewMode ? ` data-ai-review-mode="${escapeHtml(reviewMode)}"` : "";
   if (isLoading) {
     return `
-      <button class="button button--primary button--loading" data-action="noop"${reviewModeAttribute} disabled${tooltipMarkup}>
+      <button class="button button--primary button--loading" data-action="noop"${loadingSpinnerKeyAttribute(action)}${reviewModeAttribute} disabled aria-busy="true"${tooltipMarkup}>
         <span class="button__spinner" aria-hidden="true"></span>
         <span>${escapeHtml(label)}...</span>
       </button>

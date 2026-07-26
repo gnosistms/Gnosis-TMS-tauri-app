@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   __resetProjectTransferJobsForTests,
   eligibleProjectTransferTargets,
+  handleProjectTransferProgressEvent,
   recoverPendingProjectTransfers,
   reconcileProjectTransferGlossaries,
   registerProjectTransferListeners,
@@ -108,6 +109,31 @@ test("eligible transfer targets require project-create capability and include th
     eligibleProjectTransferTargets().map((entry) => entry.id),
     ["source", "target"],
   );
+});
+
+test("repeated identical transfer progress does not render the modal again", () => {
+  resetFixture();
+  state.projectTransfer.status = "transferring";
+  state.projectTransfer.jobId = "transfer-job";
+  state.projectTransfer.stage = "Starting the transfer...";
+  let renderCount = 0;
+  const render = () => {
+    renderCount += 1;
+  };
+
+  handleProjectTransferProgressEvent({
+    jobId: "transfer-job",
+    status: "progress",
+    message: "Copying file 1 of 2…",
+  }, render);
+  handleProjectTransferProgressEvent({
+    jobId: "transfer-job",
+    status: "progress",
+    message: "Copying file 1 of 2…",
+  }, render);
+
+  assert.equal(state.projectTransfer.stage, "Copying file 1 of 2…");
+  assert.equal(renderCount, 1);
 });
 
 test("listener registration waits once before starting durable recovery", async () => {

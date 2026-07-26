@@ -476,9 +476,16 @@ fn validate_source_chapter_image_path(
 
     let candidate = source_repo_path.join(relative_path);
     if let Ok(canonical_candidate) = fs::canonicalize(&candidate) {
+        let canonical_repo = fs::canonicalize(source_repo_path)
+            .map_err(|_| "The source project folder could not be validated.".to_string())?;
+        let canonical_chapter = fs::canonicalize(source_chapter_path)
+            .map_err(|_| "The source chapter folder could not be validated.".to_string())?;
         let canonical_images = fs::canonicalize(source_chapter_path.join("images"))
             .map_err(|_| "The source chapter image folder could not be validated.".to_string())?;
-        if !canonical_candidate.starts_with(&canonical_images) {
+        if !canonical_chapter.starts_with(&canonical_repo)
+            || !canonical_images.starts_with(&canonical_chapter)
+            || !canonical_candidate.starts_with(&canonical_images)
+        {
             return Err(
                 "The source chapter contains an uploaded image that escapes its image folder."
                     .to_string(),
@@ -888,6 +895,30 @@ mod tests {
         assert!(error.contains("escapes"));
 
         let _ = fs::remove_dir_all(&source_repo);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn chapter_copy_rejects_an_images_directory_symlink_that_escapes_the_source_repo() {
+        use std::os::unix::fs::symlink;
+
+        let source_repo = temp_dir("source-images-directory-symlink");
+        let source_chapter = source_repo.join("chapters/source-chapter");
+        fs::create_dir_all(&source_chapter).expect("source chapter folder");
+        let outside_images = temp_dir("outside-images-directory");
+        fs::write(outside_images.join("secret.png"), b"outside").expect("outside image");
+        symlink(&outside_images, source_chapter.join("images")).expect("images directory symlink");
+
+        let error = validate_source_chapter_image_path(
+            &source_repo,
+            &source_chapter,
+            "chapters/source-chapter/images/secret.png",
+        )
+        .expect_err("an escaping images directory symlink should be rejected");
+        assert!(error.contains("escapes"));
+
+        let _ = fs::remove_dir_all(&source_repo);
+        let _ = fs::remove_dir_all(&outside_images);
     }
 
     #[test]

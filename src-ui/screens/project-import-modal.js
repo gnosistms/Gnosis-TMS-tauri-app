@@ -144,16 +144,14 @@ function renderProjectImportModeControl(selectedMode, disabled) {
   `;
 }
 
-function renderProjectImportUploadPanel(isImporting) {
+function renderProjectImportUploadPanel() {
   return `
     <button
       type="button"
-      class="project-import-modal__drop-target${isImporting ? " is-loading" : ""}"
+      class="project-import-modal__drop-target"
       data-action="select-project-import-file"
       data-project-import-dropzone
-      ${isImporting ? 'disabled aria-disabled="true"' : ""}
     >
-      ${isImporting ? '<span class="button__spinner" aria-hidden="true"></span>' : ""}
       <span>Drop files here or click to open the file selector.</span>
     </button>
     <p class="project-import-modal__hint">Supported formats: .xlsx, .txt, .srt, .docx, .html, or .htm. For .xlsx files, the first row must contain supported language codes such as es, en, vi, zh-Hans, or zh-Hant.</p>
@@ -305,7 +303,7 @@ export function renderProjectImportModal(state) {
             ${errorMarkup}
             ${renderProjectImportModeControl(inputMode, controlsDisabled)}
             ${isUploadMode
-              ? renderProjectImportUploadPanel(isImporting)
+              ? renderProjectImportUploadPanel()
               : isPasteLinkMode
                 ? renderProjectImportLinkPanel(modal, controlsDisabled)
                 : renderProjectImportPasteTextPanel(modal, controlsDisabled)}

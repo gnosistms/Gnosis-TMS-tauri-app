@@ -16,6 +16,7 @@ use crate::repo_layout_metadata::{
     read_repo_layout_metadata_state, RepoKind, RepoLayoutMetadataState, STORAGE_LAYOUT_VERSION_V2,
 };
 use crate::repo_sync_shared::load_git_transport_token;
+use crate::util::atomic_replace;
 
 const PROJECT_TRANSFER_JOBS_DIR: &str = "project-transfer-jobs";
 
@@ -637,10 +638,14 @@ fn persist_transfer_status(app: &AppHandle, status: ProjectTransferStatus) -> Re
         .map_err(|error| format!("Could not create the project transfer journal: {error}"))?;
     let bytes = serde_json::to_vec_pretty(&status)
         .map_err(|error| format!("Could not serialize the project transfer status: {error}"))?;
+    write_transfer_status_file(&path, &bytes)
+}
+
+fn write_transfer_status_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let temporary_path = path.with_extension("json.tmp");
     fs::write(&temporary_path, bytes)
         .map_err(|error| format!("Could not write the project transfer status: {error}"))?;
-    fs::rename(&temporary_path, &path)
+    atomic_replace(&temporary_path, path)
         .map_err(|error| format!("Could not publish the project transfer status: {error}"))
 }
 
@@ -704,6 +709,23 @@ mod tests {
             .expect("layout metadata should write");
         assert!(ensure_current_project_layout(&repo_path).is_ok());
         let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn transfer_status_file_replaces_an_existing_journal() {
+        let journal_dir = temp_dir("journal-replacement");
+        let journal_path = journal_dir.join("job.json");
+        fs::write(&journal_path, b"running").expect("initial journal should write");
+
+        write_transfer_status_file(&journal_path, b"success")
+            .expect("existing journal should be replaced");
+
+        assert_eq!(
+            fs::read(&journal_path).expect("replacement journal should read"),
+            b"success"
+        );
+        assert!(!journal_path.with_extension("json.tmp").exists());
+        let _ = fs::remove_dir_all(journal_dir);
     }
 
     #[test]

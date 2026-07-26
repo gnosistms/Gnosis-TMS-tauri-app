@@ -13,6 +13,7 @@ import {
 import { resolveVisibleEditorAiTranslateAction } from "../app/editor-ai-translate-state.js";
 import {
   escapeHtml,
+  loadingSpinnerKeyAttribute,
   renderFlowArrowIcon,
   renderInlineStateBox,
   secondaryButton,
@@ -53,6 +54,7 @@ function renderTranslateActionButton(buttonModel, isAnyActionRunning) {
       class="button button--secondary translate-ai-action-button${buttonModel.isLoading ? " button--loading" : ""}"
       type="button"
       data-action="run-editor-ai-translate:${escapeHtml(buttonModel.actionId)}"
+      ${buttonModel.isLoading ? loadingSpinnerKeyAttribute(`run-editor-ai-translate:${buttonModel.actionId}`) : ""}
       aria-label="${escapeHtml(buttonModel.tooltip)}"
       aria-busy="${buttonModel.isLoading ? "true" : "false"}"
       ${tooltipAttributes(buttonModel.tooltip, { align: "start", side: "bottom" })}

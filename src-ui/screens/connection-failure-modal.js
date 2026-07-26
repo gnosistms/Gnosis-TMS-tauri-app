@@ -1,4 +1,8 @@
-import { escapeHtml, primaryButton, secondaryButton } from "../lib/ui.js";
+import {
+  escapeHtml,
+  loadingButton,
+  primaryButton,
+} from "../lib/ui.js";
 
 export function renderConnectionFailureModal(state) {
   const failure = state.connectionFailure;
@@ -6,14 +10,13 @@ export function renderConnectionFailureModal(state) {
     return "";
   }
   const isReconnecting = failure.reconnecting === true;
-  const reconnectButton = isReconnecting
-    ? `
-      <button class="button button--secondary button--loading" data-action="noop" disabled aria-busy="true">
-        <span class="button__spinner" aria-hidden="true"></span>
-        <span>Reconnect</span>
-      </button>
-    `
-    : secondaryButton("Reconnect", "reconnect-from-connection-failure");
+  const reconnectButton = loadingButton({
+    label: "Reconnect",
+    loadingLabel: "Reconnect",
+    action: "reconnect-from-connection-failure",
+    isLoading: isReconnecting,
+    variant: "secondary",
+  });
 
   return `
     <div class="modal-backdrop">
