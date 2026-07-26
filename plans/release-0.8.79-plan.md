@@ -20,6 +20,9 @@ Date: 2026-07-26
       -- --quiet`, `npm run build`, Cargo formatting, version consistency, and
       `git diff --check` passed. PR #214's Rust Quality gate also passed strict
       Clippy and the Rust test suite against the release source.
-- [ ] Commit "Release 0.8.79", tag `v0.8.79`, and push `main` plus the tag.
-- [ ] Confirm the release workflow succeeds and the GitHub Release publishes
-      the expected installers, updater bundles, signatures, and `latest.json`.
+- [x] Commit "Release 0.8.79" (`82f6f6fc`), tag `v0.8.79`, and push `main`
+      plus the tag.
+- [x] Confirm release workflow run `30207993034` succeeds on macOS arm64,
+      macOS x64, and Windows x64. The published GitHub Release contains 13
+      installers, updater bundles, signatures, and `latest.json`; its seven
+      supported platform keys all reference 0.8.79 with signatures.
