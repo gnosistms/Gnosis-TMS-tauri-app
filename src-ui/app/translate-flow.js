@@ -1144,6 +1144,8 @@ async function translateDuplicatedEditorImageCaption(
       ...context,
       captionOnly: true,
       sourceFootnote: "",
+      targetFootnote: context.targetFootnote || "\u0000",
+      targetImageCaption: "",
     },
     {
       updateEditorRowFieldValue,
