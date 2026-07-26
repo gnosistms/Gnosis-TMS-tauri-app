@@ -12,7 +12,7 @@ use crate::ai::types::{
     AiAssistantTurnKind, AiAssistantTurnRequest, AiAssistantTurnResponse, AiModelProbeRequest,
     AiPromptOutputFormat, AiPromptRequest, AiProviderContinuationMetadata, AiProviderId,
     AiProviderModel, AiReviewBatchRequest, AiReviewBatchResponse, AiReviewBatchRowInput,
-    AiReviewBatchRowResult, AiReviewRequest, AiReviewResponse,
+    AiReviewBatchRowResult, AiReviewQaHint, AiReviewRequest, AiReviewResponse,
     AiTranslatedGlossaryBatchPreparationRequest, AiTranslatedGlossaryEntry,
     AiTranslatedGlossaryPreparationRequest, AiTranslatedGlossaryPreparationResponse,
     AiTranslatedGlossaryTermInput, AiTranslationBatchRequest, AiTranslationBatchResponse,
@@ -102,6 +102,18 @@ fn format_review_source_sections(
     sections.join("\n\n")
 }
 
+fn format_review_qa_hints(hints: &[AiReviewQaHint]) -> String {
+    if hints.is_empty() {
+        String::new()
+    } else {
+        serde_json::to_string(hints).unwrap_or_default()
+    }
+}
+
+fn review_qa_guidance() -> &'static str {
+    "Matched QA entries are advisory context. Use each entry's notes to decide whether anything is wrong and what correction is appropriate. Do not treat a match by itself as an error."
+}
+
 pub(crate) fn build_review_prompt(request: &AiReviewRequest) -> String {
     if let Some(review_mode) = normalize_review_mode(request) {
         let latest_translation = request
@@ -162,14 +174,15 @@ pub(crate) fn build_review_prompt(request: &AiReviewRequest) -> String {
                 latest_translation,
             );
             let reference_translations = format_assistant_reference_translations(&row);
+            let qa_info = format_review_qa_hints(&request.qa_hints);
             let mut sections = Vec::new();
             sections.push(review_response_contract().to_string());
             sections.push(
-                "Task:\nReview the latest target-language sections against the source-language sections for translation accuracy, spelling, and grammar. When evaluating translation accuracy, respect the user's choice of words unless there is a real error in the translation. Pay attention to the target-language history. Notice which edits are from humans and which are from AI. If a human has edited an AI translation, do not revert those human changes unless they introduced a real translation, spelling, or grammar error."
+                "Task:\nReview the latest target-language sections against the source-language sections for translation accuracy, spelling, and grammar, and apply any relevant matched QA-entry notes. When evaluating translation accuracy, respect the user's choice of words unless there is a real error in the translation. Pay attention to the target-language history. Notice which edits are from humans and which are from AI. If a human has edited an AI translation, do not revert those human changes unless they introduced a real translation, spelling, grammar, or QA-note error."
                     .to_string(),
             );
             sections.push(
-                "Decision rule:\n- If every reviewed section is correct: set all suggested fields to empty strings and reviewed to true.\n- If any section has errors: set reviewed to false and put corrected content only in the matching suggested field. Keep unchanged sections as empty strings."
+                "Decision rule:\n- If every reviewed section is correct and complies with relevant QA notes: set all suggested fields to empty strings and reviewed to true.\n- If any section has errors or violates a relevant QA note: set reviewed to false and put corrected content only in the matching suggested field. Keep unchanged sections as empty strings."
                     .to_string(),
             );
             sections.push(
@@ -182,6 +195,10 @@ pub(crate) fn build_review_prompt(request: &AiReviewRequest) -> String {
             sections.push(format!(
                 "<glossary_info format=\"json\">\n{glossary_info}\n</glossary_info>"
             ));
+            if !qa_info.is_empty() {
+                sections.push(review_qa_guidance().to_string());
+                sections.push(format!("<qa_info format=\"json\">\n{qa_info}\n</qa_info>"));
+            }
             sections.push(format!(
                 "<target_language_history>\n{target_language_history}\n</target_language_history>"
             ));
@@ -203,16 +220,21 @@ pub(crate) fn build_review_prompt(request: &AiReviewRequest) -> String {
             &request.footnote,
             &request.image_caption,
         );
-        let sections = [
+        let qa_info = format_review_qa_hints(&request.qa_hints);
+        let mut sections = vec![
             review_response_contract().to_string(),
-            "Task:\nReview the target-language sections only for spelling and grammar errors. Do not review translation accuracy or compare them against source text.".to_string(),
-            "Decision rule:\n- If every reviewed section is correct: set all suggested fields to empty strings and reviewed to true.\n- If any section has errors: set reviewed to false and put corrected content only in the matching suggested field. Keep unchanged sections as empty strings.".to_string(),
-            "Preserve the meaning, terminology, tone, and style unless a change is needed to correct spelling or grammar. Keep main text, footnotes, and image captions separate.".to_string(),
-            format!(
-                "<review_item>\nThese are the only sections you are reviewing.\n\n{target_sections}\n</review_item>"
-            ),
-            review_response_contract().to_string(),
+            "Task:\nReview the target-language sections for spelling and grammar errors and apply any relevant matched QA-entry notes. Do not otherwise review translation accuracy or compare against source text.".to_string(),
+            "Decision rule:\n- If every reviewed section is correct and complies with relevant QA notes: set all suggested fields to empty strings and reviewed to true.\n- If any section has errors or violates a relevant QA note: set reviewed to false and put corrected content only in the matching suggested field. Keep unchanged sections as empty strings.".to_string(),
+            "Preserve the meaning, terminology, tone, and style unless a change is needed to correct spelling or grammar or to follow a relevant QA note. Keep main text, footnotes, and image captions separate.".to_string(),
         ];
+        if !qa_info.is_empty() {
+            sections.push(review_qa_guidance().to_string());
+            sections.push(format!("<qa_info format=\"json\">\n{qa_info}\n</qa_info>"));
+        }
+        sections.push(format!(
+            "<review_item>\nThese are the only sections you are reviewing.\n\n{target_sections}\n</review_item>"
+        ));
+        sections.push(review_response_contract().to_string());
         return sections.join("\n\n");
     }
 
@@ -521,12 +543,17 @@ fn format_review_batch_row(
     let latest_translation = row.latest_translation.trim();
     let target_sections =
         format_review_target_sections(latest_translation, &row.footnote, &row.image_caption);
+    let qa_info = format_review_qa_hints(&row.qa_hints);
 
     if review_mode != "meaning" {
+        let mut sections = vec![target_sections];
+        if !qa_info.is_empty() {
+            sections.push(format!("<qa_info format=\"json\">\n{qa_info}\n</qa_info>"));
+        }
         return format!(
             "<row id=\"{}\">\n{}\n</row>",
             row.row_id.trim(),
-            target_sections
+            sections.join("\n\n")
         );
     }
 
@@ -538,6 +565,9 @@ fn format_review_batch_row(
         &row.source_image_caption,
     ));
     sections.push(target_sections);
+    if !qa_info.is_empty() {
+        sections.push(format!("<qa_info format=\"json\">\n{qa_info}\n</qa_info>"));
+    }
     let reference_translations = format_reference_translations(
         &row.alternate_language_texts,
         &request.source_language_code,
@@ -580,14 +610,18 @@ pub(crate) fn build_review_batch_prompt(request: &AiReviewBatchRequest) -> Strin
             .map(|row| format_review_batch_row(row, "grammar", request))
             .collect::<Vec<_>>()
             .join("\n\n");
-        let sections = [
+        let has_qa_hints = request.rows.iter().any(|row| !row.qa_hints.is_empty());
+        let mut sections = vec![
             review_batch_response_contract().to_string(),
-            "Task:\nReview each row's target-language sections only for spelling and grammar errors. Do not review translation accuracy or compare against source text.".to_string(),
-            "Decision rule (per row):\n- If every section is correct: set that row's suggested fields to empty strings and reviewed to true.\n- If any section has errors: set reviewed to false and put corrected content only in the matching suggested field; keep unchanged sections as empty strings.".to_string(),
-            "Preserve meaning, terminology, tone, and style unless a change is needed to correct spelling or grammar. Keep main text, footnotes, and image captions separate.".to_string(),
-            format!("<rows_to_review>\n{rows_block}\n</rows_to_review>"),
-            review_batch_response_contract().to_string(),
+            "Task:\nReview each row's target-language sections for spelling and grammar errors and apply any relevant matched QA-entry notes. Do not otherwise review translation accuracy or compare against source text.".to_string(),
+            "Decision rule (per row):\n- If every section is correct and complies with relevant QA notes: set that row's suggested fields to empty strings and reviewed to true.\n- If any section has errors or violates a relevant QA note: set reviewed to false and put corrected content only in the matching suggested field; keep unchanged sections as empty strings.".to_string(),
+            "Preserve meaning, terminology, tone, and style unless a change is needed to correct spelling or grammar or to follow a relevant QA note. Keep main text, footnotes, and image captions separate.".to_string(),
         ];
+        if has_qa_hints {
+            sections.push(review_qa_guidance().to_string());
+        }
+        sections.push(format!("<rows_to_review>\n{rows_block}\n</rows_to_review>"));
+        sections.push(review_batch_response_contract().to_string());
         return sections.join("\n\n");
     }
 
@@ -611,17 +645,20 @@ pub(crate) fn build_review_batch_prompt(request: &AiReviewBatchRequest) -> Strin
     let mut sections = Vec::new();
     sections.push(review_batch_response_contract().to_string());
     sections.push(
-        "Task:\nReview each row's latest target-language sections against its source-language sections for translation accuracy, spelling, and grammar. Respect the user's word choices unless there is a real error. Pay attention to each row's target-language history: notice which edits are human and which are AI. If a human edited an AI translation, do not revert those human changes unless they introduced a real translation, spelling, or grammar error."
+        "Task:\nReview each row's latest target-language sections against its source-language sections for translation accuracy, spelling, and grammar, and apply any relevant matched QA-entry notes. Respect the user's word choices unless there is a real error. Pay attention to each row's target-language history: notice which edits are human and which are AI. If a human edited an AI translation, do not revert those human changes unless they introduced a real translation, spelling, grammar, or QA-note error."
             .to_string(),
     );
     sections.push(
-        "Decision rule (per row):\n- If every reviewed section is correct: set that row's suggested fields to empty strings and reviewed to true.\n- If any section has errors: set reviewed to false and put corrected content only in the matching suggested field; keep unchanged sections as empty strings."
+        "Decision rule (per row):\n- If every reviewed section is correct and complies with relevant QA notes: set that row's suggested fields to empty strings and reviewed to true.\n- If any section has errors or violates a relevant QA note: set reviewed to false and put corrected content only in the matching suggested field; keep unchanged sections as empty strings."
             .to_string(),
     );
     sections.push(
         "Use supporting context when relevant. Do not treat reference translations or edit history as more authoritative than the source-language sections. Keep main text, footnotes, and image captions separate."
             .to_string(),
     );
+    if request.rows.iter().any(|row| !row.qa_hints.is_empty()) {
+        sections.push(review_qa_guidance().to_string());
+    }
     sections.push(format!(
         "<languages>\nsource: {source_language}\ntarget: {target_language}\n</languages>"
     ));
@@ -2372,15 +2409,28 @@ mod tests {
         AiAssistantRowContext, AiAssistantRowLanguageText, AiAssistantRowWindowEntry,
         AiAssistantTargetLanguageHistoryEntry, AiAssistantTranscriptEntry, AiAssistantTurnKind,
         AiAssistantTurnRequest, AiPromptOutputFormat, AiProviderId, AiReviewBatchRequest,
-        AiReviewBatchRowInput, AiReviewRequest, AiTranslatedGlossaryPreparationRequest,
-        AiTranslatedGlossaryTermInput, AiTranslationBatchRequest, AiTranslationBatchRowInput,
-        AiTranslationGlossaryHint, AiTranslationGlossaryTargetVariant,
-        AiTranslationNoTranslationHint, AiTranslationRequest,
+        AiReviewBatchRowInput, AiReviewQaHint, AiReviewQaMatch, AiReviewRequest,
+        AiTranslatedGlossaryPreparationRequest, AiTranslatedGlossaryTermInput,
+        AiTranslationBatchRequest, AiTranslationBatchRowInput, AiTranslationGlossaryHint,
+        AiTranslationGlossaryTargetVariant, AiTranslationNoTranslationHint, AiTranslationRequest,
     };
     use std::collections::HashSet;
 
     fn target_variant(value: &str) -> AiTranslationGlossaryTargetVariant {
         AiTranslationGlossaryTargetVariant::Text(value.to_string())
+    }
+
+    fn review_qa_hint() -> AiReviewQaHint {
+        AiReviewQaHint {
+            term: r"\bfoo\d+\b".to_string(),
+            notes: "Replace this legacy code.".to_string(),
+            is_case_sensitive: false,
+            is_regular_expression: true,
+            matches: vec![AiReviewQaMatch {
+                section: "text".to_string(),
+                text: "Foo42".to_string(),
+            }],
+        }
     }
 
     fn review_request() -> AiReviewRequest {
@@ -2401,6 +2451,7 @@ mod tests {
             source_language: String::new(),
             target_language: String::new(),
             glossary_hints: vec![],
+            qa_hints: vec![],
             alternate_language_texts: vec![],
             target_language_history: vec![],
             row_window: vec![],
@@ -2428,9 +2479,9 @@ mod tests {
 
         assert!(prompt.contains("Return only valid JSON"));
         assert!(prompt.contains(
-            "Task:\nReview the target-language sections only for spelling and grammar errors."
+            "Task:\nReview the target-language sections for spelling and grammar errors"
         ));
-        assert!(prompt.contains("Do not review translation accuracy"));
+        assert!(prompt.contains("Do not otherwise review translation accuracy"));
         assert!(prompt.contains("Keep main text, footnotes, and image captions separate."));
         assert!(prompt.contains("<review_item>"));
         assert!(prompt.contains("These are the only sections you are reviewing."));
@@ -2446,6 +2497,21 @@ mod tests {
             1
         );
         assert_eq!(prompt.matches("If any section has errors").count(), 1);
+    }
+
+    #[test]
+    fn build_review_prompt_includes_advisory_qa_info_in_grammar_mode() {
+        let mut request = review_request();
+        request.review_mode = Some("grammar".to_string());
+        request.qa_hints = vec![review_qa_hint()];
+
+        let prompt = build_review_prompt(&request);
+
+        assert!(prompt.contains("<qa_info format=\"json\">"));
+        assert!(prompt.contains(r#""term":"\\bfoo\\d+\\b""#));
+        assert!(prompt.contains(r#""text":"Foo42""#));
+        assert!(prompt.contains("Use each entry's notes to decide whether anything is wrong"));
+        assert!(prompt.contains("Do not treat a match by itself as an error"));
     }
 
     #[test]
@@ -2510,7 +2576,7 @@ mod tests {
         assert!(prompt.contains("English: Current English reference"));
         assert!(prompt.contains("<source_text>\nFuente actual\n</source_text>"));
         assert!(prompt.contains("<glossary_info format=\"json\">"));
-        assert!(prompt.contains("Review the latest target-language sections against the source-language sections for translation accuracy, spelling, and grammar."));
+        assert!(prompt.contains("Review the latest target-language sections against the source-language sections for translation accuracy, spelling, and grammar"));
         assert!(prompt.contains(
             "respect the user's choice of words unless there is a real error in the translation"
         ));
@@ -3485,6 +3551,7 @@ mod tests {
             source_image_caption: String::new(),
             alternate_language_texts: vec![],
             target_language_history: vec![],
+            qa_hints: vec![],
         }
     }
 
@@ -3519,6 +3586,18 @@ mod tests {
         // Grammar mode does not compare against the source.
         assert!(!prompt.contains("<source_text>"));
         assert!(!prompt.contains("<languages>"));
+    }
+
+    #[test]
+    fn build_review_batch_prompt_places_qa_info_inside_its_row() {
+        let mut row = review_batch_row("r0");
+        row.qa_hints = vec![review_qa_hint()];
+        let prompt = build_review_batch_prompt(&review_batch_request("grammar", vec![row]));
+
+        assert!(prompt.contains("<row id=\"r0\">"));
+        assert!(prompt.contains("<qa_info format=\"json\">"));
+        assert!(prompt.contains("Replace this legacy code."));
+        assert!(prompt.contains("Do not treat a match by itself as an error"));
     }
 
     #[test]

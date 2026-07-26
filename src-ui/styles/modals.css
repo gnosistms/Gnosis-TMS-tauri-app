@@ -1168,6 +1168,12 @@
   gap: 12px;
 }
 
+.qa-term-modal__term-field {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
 .term-lane,
 .glossary-term-modal__details {
   display: grid;

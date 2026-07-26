@@ -40,9 +40,30 @@ test("buildEditorAiReviewBatchRequest grammar mode omits source, history, glossa
   assert.equal(request.rows[0].latestTranslation, "Mot");
   assert.equal(request.rows[0].sourceText, "");
   assert.deepEqual(request.rows[0].targetLanguageHistory, []);
+  assert.deepEqual(request.rows[0].qaHints, []);
   assert.deepEqual(request.glossaryHints, []);
   assert.deepEqual(request.contextBefore, []);
   assert.deepEqual(request.contextAfter, []);
+});
+
+test("buildEditorAiReviewBatchRequest includes per-row QA hints in both modes", () => {
+  const state = chapterState();
+  const qaHintsByRowId = new Map([
+    ["r1", [{ term: "bad", notes: "Use good.", matches: [{ section: "text", text: "Bad" }] }]],
+  ]);
+  const request = buildEditorAiReviewBatchRequest({
+    chapterState: state,
+    rows: [state.rows[1], state.rows[2]],
+    sourceLanguageCode: "es",
+    targetLanguageCode: "vi",
+    providerId: "openai",
+    modelId: "gpt-5.5",
+    reviewMode: "grammar",
+    qaHintsByRowId,
+  });
+
+  assert.equal(request.rows[0].qaHints[0].term, "bad");
+  assert.deepEqual(request.rows[1].qaHints, []);
 });
 
 test("buildEditorAiReviewBatchRequest meaning mode includes source, history, and batch context", () => {

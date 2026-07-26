@@ -1187,6 +1187,8 @@ export function createQaTermEditorState() {
     termId: null,
     text: "",
     notes: "",
+    isCaseSensitive: false,
+    isRegularExpression: false,
   });
 }
 

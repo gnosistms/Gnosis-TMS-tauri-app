@@ -34,6 +34,29 @@ impl AiProviderId {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct AiReviewQaMatch {
+    #[serde(default)]
+    pub section: String,
+    #[serde(default)]
+    pub text: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiReviewQaHint {
+    pub term: String,
+    #[serde(default)]
+    pub notes: String,
+    #[serde(default)]
+    pub is_case_sensitive: bool,
+    #[serde(default)]
+    pub is_regular_expression: bool,
+    #[serde(default)]
+    pub matches: Vec<AiReviewQaMatch>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct AiReviewRequest {
     pub provider_id: AiProviderId,
     pub model_id: String,
@@ -63,6 +86,8 @@ pub struct AiReviewRequest {
     pub target_language: String,
     #[serde(default)]
     pub glossary_hints: Vec<AiTranslationGlossaryHint>,
+    #[serde(default)]
+    pub qa_hints: Vec<AiReviewQaHint>,
     #[serde(default)]
     pub alternate_language_texts: Vec<AiAssistantRowLanguageText>,
     #[serde(default)]
@@ -332,6 +357,8 @@ pub struct AiReviewBatchRowInput {
     pub alternate_language_texts: Vec<AiAssistantRowLanguageText>,
     #[serde(default)]
     pub target_language_history: Vec<AiAssistantTargetLanguageHistoryEntry>,
+    #[serde(default)]
+    pub qa_hints: Vec<AiReviewQaHint>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

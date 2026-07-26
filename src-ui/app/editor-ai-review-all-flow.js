@@ -31,6 +31,7 @@ import {
 } from "./editor-ai-batch-request.js";
 import { createAiBatchPool, runWithTransientAiRetry } from "./editor-ai-batch-pool.js";
 import { loadAssistantTargetLanguageHistory } from "./editor-ai-assistant-flow.js";
+import { loadEditorAiReviewQaHints } from "./editor-ai-qa.js";
 import {
   cloneRowFields,
   cloneRowFieldStates,
@@ -620,6 +621,15 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
       preloadedHistory && preloadedHistory.targetText === latestTranslation
         ? preloadedHistory.history
         : await loadHistoryForItem(item, latestTranslation);
+    const qaHintsByRowId = await loadEditorAiReviewQaHints({
+      targetLanguageCode,
+      rows: [{
+        rowId: item.rowId,
+        text: latestTranslation,
+        footnote: latestFootnote,
+        imageCaption: latestImageCaption,
+      }],
+    });
     if (!isReviewActive()) {
       return "abort";
     }
@@ -633,6 +643,7 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
         sourceLanguageCode,
         targetLanguageCode,
         targetLanguageHistory,
+        qaHints: qaHintsByRowId.get(item.rowId) ?? [],
         installationId: team.installationId,
       }),
     }));
@@ -684,6 +695,19 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
       }
     }
 
+    const qaHintsByRowId = await loadEditorAiReviewQaHints({
+      targetLanguageCode,
+      rows: liveItems.map((entry) => ({
+        rowId: entry.item.rowId,
+        text: entry.latestTranslation,
+        footnote: entry.latestFootnote,
+        imageCaption: entry.latestImageCaption,
+      })),
+    });
+    if (!isReviewActive()) {
+      return "abort";
+    }
+
     const request = buildEditorAiReviewBatchRequest({
       chapterState: state.editorChapter,
       rows: liveItems.map((entry) => entry.row),
@@ -693,6 +717,7 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
       modelId,
       reviewMode,
       targetLanguageHistoryByRowId,
+      qaHintsByRowId,
       installationId: team.installationId,
     });
 

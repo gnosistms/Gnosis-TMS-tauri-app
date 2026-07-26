@@ -27,6 +27,7 @@ import {
   selectedEditorReviewSourceLanguageCode,
 } from "./editor-ai-review-request.js";
 import { loadAssistantTargetLanguageHistory } from "./editor-ai-assistant-flow.js";
+import { loadEditorAiReviewQaHints } from "./editor-ai-qa.js";
 import { invoke } from "./runtime.js";
 import { state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
@@ -218,6 +219,15 @@ export async function runEditorAiReview(render, reviewMode = "grammar") {
         targetText: context.text,
       })
       : [];
+    const qaHintsByRowId = await loadEditorAiReviewQaHints({
+      targetLanguageCode: context.languageCode,
+      rows: [{
+        rowId: context.rowId,
+        text: context.text,
+        footnote: context.footnote,
+        imageCaption: context.imageCaption,
+      }],
+    });
     if (
       !currentEditorAiReviewRequestMatches(
         state.editorChapter,
@@ -240,6 +250,7 @@ export async function runEditorAiReview(render, reviewMode = "grammar") {
           sourceLanguageCode: context.sourceLanguageCode,
           targetLanguageCode: context.languageCode,
           targetLanguageHistory,
+          qaHints: qaHintsByRowId.get(context.rowId) ?? [],
         }),
       }),
     });

@@ -35,6 +35,8 @@ test("buildQaTermFromDraft builds QA text and notes fields from a draft", () => 
     termId: "term-1",
     text: "Use consistent capitalization.",
     notes: "Applies to headings.",
+    isCaseSensitive: false,
+    isRegularExpression: false,
     pendingMutation: "save",
     pendingError: "retry later",
     optimisticClientId: "client-term-1",
