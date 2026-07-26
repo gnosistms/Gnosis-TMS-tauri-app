@@ -278,9 +278,12 @@ export function createTranslateActions(render) {
       return true;
     }
 
-    const selectTargetLanguageMatch = /^select-target-language-manager-picker-language:([a-z]{2})$/.exec(action);
-    if (selectTargetLanguageMatch) {
-      selectTargetLanguageManagerPickerLanguage(selectTargetLanguageMatch[1]);
+    const selectedTargetLanguageCode = actionSuffix(
+      action,
+      "select-target-language-manager-picker-language:",
+    );
+    if (selectedTargetLanguageCode) {
+      selectTargetLanguageManagerPickerLanguage(selectedTargetLanguageCode);
       render();
       return true;
     }
