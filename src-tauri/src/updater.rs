@@ -15,6 +15,7 @@ const GITHUB_RELEASE_DOWNLOADS_BASE_URL: &str =
     "https://github.com/gnosistms/Gnosis-TMS-tauri-app/releases/download";
 const GITHUB_API_USER_AGENT: &str = "gnosis-tms-updater";
 const UPDATER_PUBLIC_KEY: &str = include_str!("../updater-public-key.txt");
+const DEVELOPMENT_UPDATE_INSTALL_ERROR: &str = "Automatic updates are unavailable in development builds. Merge or rebase this branch onto current main, then restart the development app.";
 
 pub(crate) struct PendingUpdate(pub(crate) Mutex<Option<Update>>);
 
@@ -502,7 +503,7 @@ pub(crate) async fn install_app_update(
     requested_version: Option<String>,
 ) -> Result<(), String> {
     if !updates_enabled() {
-        return Ok(());
+        return Err(DEVELOPMENT_UPDATE_INSTALL_ERROR.to_string());
     }
 
     let requested_version = normalize_requested_version(requested_version);
@@ -563,6 +564,7 @@ mod tests {
         compare_stable_versions, github_release_latest_json_url, parse_github_release_tags,
         pending_update_decision, platform_wait_and_lookup_failed_message, platform_wait_message,
         release_tag_candidates_for_version, version_satisfies_requested, PendingUpdateDecision,
+        DEVELOPMENT_UPDATE_INSTALL_ERROR,
     };
     use std::cmp::Ordering;
 
@@ -597,6 +599,12 @@ mod tests {
     fn platform_wait_messages_are_non_empty() {
         assert!(!platform_wait_message().trim().is_empty());
         assert!(!platform_wait_and_lookup_failed_message().trim().is_empty());
+    }
+
+    #[test]
+    fn development_update_install_error_is_actionable() {
+        assert!(DEVELOPMENT_UPDATE_INSTALL_ERROR.contains("development builds"));
+        assert!(DEVELOPMENT_UPDATE_INSTALL_ERROR.contains("Merge or rebase"));
     }
 
     #[test]
