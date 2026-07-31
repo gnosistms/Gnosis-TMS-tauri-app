@@ -158,6 +158,7 @@ import {
 } from "./app/status-feedback.js";
 import { createEditorCloseGuard } from "./app/editor-close-guard.js";
 import { beginEditorCloseWait } from "./app/editor-close-wait-flow.js";
+import { destroyCurrentAppWindow } from "./app/app-window-close.js";
 
 // Install crash handlers as early as possible so first-run crashes are captured (and
 // buffered until the consent gate opens). See plans/telemetry-plan.md.
@@ -865,10 +866,7 @@ function closeAppWindow({ force = false } = {}) {
   if (force) {
     editorCloseForceApproved = true;
   }
-  try {
-    const currentWindow = window.__TAURI__?.window?.getCurrentWindow?.();
-    void currentWindow?.close?.();
-  } catch {}
+  destroyCurrentAppWindow();
 }
 
 const editorCloseGuard = createEditorCloseGuard({
