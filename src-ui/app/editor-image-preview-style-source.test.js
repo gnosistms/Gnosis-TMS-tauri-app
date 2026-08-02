@@ -23,3 +23,14 @@ test("image preview loading placeholder keeps unloaded frames legible", () => {
   assert.match(placeholderRule, /text-align:\s*center;/);
   assert.match(visiblePlaceholderRule, /display:\s*flex;/);
 });
+
+test("image caption links use the same colors as body and footnote links", () => {
+  assert.match(
+    translateCssSource,
+    /\.translation-language-panel__footnote-display-text a,\s*\.translation-language-panel__image-caption-text a\s*{[\s\S]*?color:\s*var\(--link\);/,
+  );
+  assert.match(
+    translateCssSource,
+    /\.translation-language-panel__footnote-display-text a:hover,\s*\.translation-language-panel__image-caption-text a:hover\s*{[\s\S]*?color:\s*var\(--link-hover\);/,
+  );
+});
