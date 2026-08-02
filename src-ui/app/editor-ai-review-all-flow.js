@@ -46,7 +46,7 @@ import { findChapterContextById, selectedProjectsTeam } from "./project-context.
 import { invoke } from "./runtime.js";
 import { createEditorAiReviewAllModalState, state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
-import { reportBackendNonfatalError } from "./telemetry.js";
+import { addTelemetryBreadcrumb, reportBackendNonfatalError } from "./telemetry.js";
 import { ensureSelectedTeamAiProviderReady } from "./team-ai-flow.js";
 import { loadActiveEditorFieldHistory } from "./editor-history-flow.js";
 import { invokeEditorWriteCommand } from "./editor-write-permission.js";
@@ -759,9 +759,9 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
         rowCount: liveItems.length,
         error: error instanceof Error ? error.message : String(error),
       });
-      // The invoke wrapper already reports the raw command failure; this adds a
-      // stable, countable signal that the run degraded to single-row review.
-      reportBackendNonfatalError({ operation: "ai-review-batch", reason: "fallback-single-row" });
+      // The invoke wrapper owns the terminal command failure. Successful fallback is
+      // diagnostic context, not a separate product defect.
+      addTelemetryBreadcrumb({ operation: "ai-review-batch", reason: "fallback-single-row" });
       if (!isReviewActive()) {
         return "abort";
       }

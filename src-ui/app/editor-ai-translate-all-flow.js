@@ -46,7 +46,7 @@ import { selectedProjectsTeamInstallationId } from "./project-context.js";
 import { invoke } from "./runtime.js";
 import { createEditorAiTranslateAllModalState, state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
-import { reportBackendNonfatalError } from "./telemetry.js";
+import { addTelemetryBreadcrumb, reportBackendNonfatalError } from "./telemetry.js";
 
 const BATCH_TRANSLATE_ACTION_ID = AI_TRANSLATE_ACTION_IDS[0] ?? "translate1";
 
@@ -816,9 +816,9 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
         rowCount: liveEntries.length,
         error: error instanceof Error ? error.message : String(error),
       });
-      // The invoke wrapper already reports the raw command failure; this adds a
-      // stable, countable signal that the run degraded to single-row translation.
-      reportBackendNonfatalError({ operation: "ai-translate-batch", reason: "fallback-single-row" });
+      // The invoke wrapper owns the terminal command failure. Successful fallback is
+      // diagnostic context, not a separate product defect.
+      addTelemetryBreadcrumb({ operation: "ai-translate-batch", reason: "fallback-single-row" });
       if (!isRunActive()) {
         return "abort";
       }

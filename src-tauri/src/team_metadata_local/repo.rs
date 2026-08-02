@@ -84,23 +84,110 @@ fn clone_team_metadata_repo(
 
     let repo_url = expected_remote_url(org_login)?;
     let git_transport_auth = GitTransportAuth::from_token(git_transport_token)?;
-    let repo_path_string = repo_path.display().to_string();
+    let staging_path = metadata_clone_staging_path(repo_path)?;
+    let staging_path_string = staging_path.display().to_string();
     let clone_result = git_output(
         repo_parent,
-        &["clone", repo_url.as_str(), repo_path_string.as_str()],
+        &["clone", repo_url.as_str(), staging_path_string.as_str()],
         Some(&git_transport_auth),
     );
     if let Err(error) = clone_result {
-        // git removes its own target on most failures, but an interrupted
-        // transfer/checkout can leave a partial clone behind. If it stays, every
-        // retry sees a git dir without manifest.json and cascades "missing
-        // manifest.json" / "not available yet" errors instead of re-cloning.
-        if repo_path.exists() {
-            let _ = fs::remove_dir_all(repo_path);
-        }
+        // The clone target is operation-owned staging, never the authoritative path.
+        // A failed/interrupted clone can therefore be removed without risking an
+        // existing checkout or exposing a partial repo to concurrent readers.
+        cleanup_metadata_clone_staging(&staging_path);
         return Err(error);
     }
+
+    let validation_result = (|| {
+        if !repo_has_git_dir(&staging_path)
+            || read_current_head_oid(&staging_path).is_none()
+            || !manifest_path(&staging_path).exists()
+        {
+            return Err(
+                "The cloned team-metadata repository is incomplete and was not installed."
+                    .to_string(),
+            );
+        }
+        ensure_origin_remote(&staging_path, org_login)?;
+        publish_metadata_clone(&staging_path, repo_path)
+    })();
+    if validation_result.is_err() {
+        cleanup_metadata_clone_staging(&staging_path);
+    }
+    validation_result?;
     Ok(())
+}
+
+fn metadata_clone_staging_path(repo_path: &Path) -> Result<PathBuf, String> {
+    let repo_parent = repo_path
+        .parent()
+        .ok_or_else(|| "Could not resolve the local team-metadata repo folder.".to_string())?;
+    let repo_name = repo_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("team-metadata");
+    Ok(repo_parent.join(format!(".{repo_name}.clone-{}", uuid::Uuid::now_v7())))
+}
+
+fn cleanup_metadata_clone_staging(staging_path: &Path) {
+    if staging_path.exists() {
+        let _ = fs::remove_dir_all(staging_path);
+    }
+}
+
+const STALE_METADATA_CLONE_AGE: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+
+/// Remove operation-owned clone directories left behind when the process was
+/// interrupted. The age gate avoids touching a clone that another app process may
+/// still be preparing, and the exact sibling prefix keeps cleanup scoped to this
+/// installation's destination.
+fn cleanup_stale_metadata_clone_staging(repo_path: &Path, stale_after: std::time::Duration) {
+    let Some(repo_parent) = repo_path.parent() else {
+        return;
+    };
+    let repo_name = repo_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("team-metadata");
+    let staging_prefix = format!(".{repo_name}.clone-");
+    let Ok(entries) = fs::read_dir(repo_parent) else {
+        return;
+    };
+    let now = std::time::SystemTime::now();
+    for entry in entries.flatten() {
+        let name_matches = entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.starts_with(&staging_prefix));
+        let is_directory = entry.file_type().is_ok_and(|file_type| file_type.is_dir());
+        let is_stale = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|modified| now.duration_since(modified).ok())
+            .is_some_and(|age| age >= stale_after);
+        if name_matches && is_directory && is_stale {
+            cleanup_metadata_clone_staging(&entry.path());
+        }
+    }
+}
+
+fn publish_metadata_clone(staging_path: &Path, repo_path: &Path) -> Result<(), String> {
+    if repo_path.exists() {
+        return Err(format!(
+            "The local team-metadata path '{}' became occupied while the repository was being prepared.",
+            repo_path.display()
+        ));
+    }
+    fs::rename(staging_path, repo_path).map_err(|error| {
+        format!(
+            "Could not install the prepared local team-metadata repository '{}': {error}",
+            repo_path.display()
+        )
+    })
 }
 
 pub(super) fn manifest_path(repo_path: &Path) -> PathBuf {
@@ -174,6 +261,13 @@ pub(super) fn ensure_local_repo_exists(
     session_token: &str,
 ) -> Result<PathBuf, String> {
     let repo_path = local_team_metadata_repo_path(app, installation_id)?;
+    // Ensure, clone, repair, and publication form one per-installation operation.
+    // Frontend project/glossary/QA discovery may request bootstrap concurrently; the
+    // backend lock keeps those callers from cloning into the same destination or
+    // observing an intermediate checkout.
+    let repo_lock = crate::repo_sync_shared::repo_sync_lock(&repo_path);
+    let _repo_lock_guard = crate::repo_sync_shared::acquire_repo_sync_lock(&repo_lock);
+    cleanup_stale_metadata_clone_staging(&repo_path, STALE_METADATA_CLONE_AGE);
 
     if repo_path.exists() {
         if repo_has_git_dir(&repo_path) {
@@ -222,6 +316,12 @@ pub(super) fn require_local_metadata_repo(
     installation_id: i64,
 ) -> Result<PathBuf, String> {
     let repo_path = local_team_metadata_repo_path(app, installation_id)?;
+    // Discovery reads can arrive while another project/glossary/QA flow is cloning
+    // this installation's shared metadata repo. Wait for bootstrap publication instead
+    // of observing the absent/intermediate path and emitting a cascade of secondary
+    // "not available yet" errors.
+    let repo_lock = crate::repo_sync_shared::repo_sync_lock(&repo_path);
+    let _repo_lock_guard = crate::repo_sync_shared::acquire_repo_sync_lock(&repo_lock);
     if !repo_path.exists() || !repo_has_git_dir(&repo_path) {
         return Err(format!(
             "The local team-metadata repo for installation {installation_id} is not available yet."
@@ -420,6 +520,86 @@ pub(super) fn push_local_metadata_repo(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_root(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "gnosis-team-metadata-{label}-{}",
+            uuid::Uuid::now_v7()
+        ))
+    }
+
+    #[test]
+    fn metadata_clone_staging_is_a_unique_sibling() {
+        let root = test_root("staging-path");
+        let repo_path = root.join("team-metadata");
+        let first = metadata_clone_staging_path(&repo_path).expect("first staging path");
+        let second = metadata_clone_staging_path(&repo_path).expect("second staging path");
+
+        assert_eq!(first.parent(), repo_path.parent());
+        assert_ne!(first, second);
+        assert!(first
+            .file_name()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| value.starts_with(".team-metadata.clone-")));
+    }
+
+    #[test]
+    fn stale_clone_cleanup_is_scoped_to_matching_sibling_directories() {
+        let root = test_root("stale-staging");
+        let repo_path = root.join("team-metadata");
+        let stale_staging = root.join(".team-metadata.clone-interrupted");
+        let unrelated_directory = root.join(".other-repo.clone-interrupted");
+        let similarly_named_file = root.join(".team-metadata.clone-not-a-directory");
+        fs::create_dir_all(&stale_staging).expect("create stale staging directory");
+        fs::create_dir_all(&unrelated_directory).expect("create unrelated directory");
+        fs::write(&similarly_named_file, "preserve").expect("create similarly named file");
+
+        cleanup_stale_metadata_clone_staging(&repo_path, std::time::Duration::ZERO);
+
+        assert!(!stale_staging.exists());
+        assert!(unrelated_directory.exists());
+        assert!(similarly_named_file.exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn publishing_staged_clone_never_replaces_an_existing_checkout() {
+        let root = test_root("publish-existing");
+        let staging_path = root.join(".team-metadata.clone-test");
+        let repo_path = root.join("team-metadata");
+        fs::create_dir_all(&staging_path).expect("create staging");
+        fs::create_dir_all(&repo_path).expect("create existing checkout");
+        fs::write(repo_path.join("preserve.txt"), "existing").expect("write existing marker");
+
+        assert!(publish_metadata_clone(&staging_path, &repo_path).is_err());
+        assert_eq!(
+            fs::read_to_string(repo_path.join("preserve.txt")).expect("existing marker"),
+            "existing"
+        );
+        assert!(staging_path.exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn publishing_staged_clone_atomically_moves_it_into_place() {
+        let root = test_root("publish-new");
+        let staging_path = root.join(".team-metadata.clone-test");
+        let repo_path = root.join("team-metadata");
+        fs::create_dir_all(&staging_path).expect("create staging");
+        fs::write(staging_path.join("manifest.json"), "{}").expect("write staged marker");
+
+        publish_metadata_clone(&staging_path, &repo_path).expect("publish staging");
+
+        assert!(!staging_path.exists());
+        assert_eq!(
+            fs::read_to_string(repo_path.join("manifest.json")).expect("published marker"),
+            "{}"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
 
     #[test]
     fn resource_record_path_accepts_plain_ids_and_trims() {

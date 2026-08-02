@@ -30,6 +30,15 @@ test("classifySyncError treats GitHub connect failures as GitHub connection fail
   assert.equal(classified.source, "github");
 });
 
+test("classifySyncError treats an empty GitHub response as a connection failure", () => {
+  const classified = classifySyncError(new Error(
+    "git fetch origin main failed: fatal: unable to access 'https://github.com/org/repo.git/': Empty reply from server",
+  ));
+
+  assert.equal(classified.type, "connection_unavailable");
+  assert.equal(classified.source, "github");
+});
+
 test("classifySyncError treats generic network unreachable errors as internet failures", () => {
   const classified = classifySyncError(new Error("Network is unreachable"));
 
@@ -76,6 +85,15 @@ test("classifySyncError keeps auth failures out of connection handling", () => {
   const classified = classifySyncError(new Error("AUTH_REQUIRED:Your GitHub session expired."));
 
   assert.equal(classified.type, "auth_invalid");
+});
+
+test("classifySyncError treats non-interactive GitHub credential rejection as invalid auth", () => {
+  for (const message of [
+    "git fetch origin main failed: fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+    "git pull --rebase origin main failed: remote: Invalid username or token. fatal: Authentication failed for 'https://github.com/org/repo.git/'",
+  ]) {
+    assert.equal(classifySyncError(new Error(message)).type, "auth_invalid", message);
+  }
 });
 
 test("classifySyncError keeps access loss out of connection handling", () => {

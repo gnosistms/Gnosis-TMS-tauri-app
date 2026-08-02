@@ -1,4 +1,4 @@
-import { reportBackendNonfatalError } from "./telemetry.js";
+import { addTelemetryBreadcrumb, reportBackendNonfatalError } from "./telemetry.js";
 
 const ACTIVE_REPO_WRITE_STATUSES = new Set(["queued", "running"]);
 const LOCAL_REPO_WRITE_OPERATION_TYPES = new Set(["localEditorWrite", "localMetadataWrite"]);
@@ -22,7 +22,7 @@ let nextRepoInvalidationId = 1;
 let nowMsClock = () => Date.now();
 let scheduleOverdueCheck = (callback, delayMs) => setTimeout(callback, delayMs);
 let cancelOverdueCheck = (handle) => clearTimeout(handle);
-let reportRepoWriteOverdue = (payload) => reportBackendNonfatalError(payload);
+let reportRepoWriteOverdue = (payload) => addTelemetryBreadcrumb(payload);
 let reportRepoWriteReentrancy = (payload) => reportBackendNonfatalError(payload);
 
 const DEBUG_REPO_WRITE = false;
@@ -682,7 +682,7 @@ export function __setRepoWriteOverdueScheduler(schedule, cancel) {
 export function __setRepoWriteOverdueReporter(reporter) {
   reportRepoWriteOverdue = typeof reporter === "function"
     ? reporter
-    : ((payload) => reportBackendNonfatalError(payload));
+    : ((payload) => addTelemetryBreadcrumb(payload));
 }
 
 export function __setRepoWriteReentrancyReporter(reporter) {
@@ -822,7 +822,7 @@ export function resetRepoWriteQueue() {
   nowMsClock = () => Date.now();
   scheduleOverdueCheck = (callback, delayMs) => setTimeout(callback, delayMs);
   cancelOverdueCheck = (handle) => clearTimeout(handle);
-  reportRepoWriteOverdue = (payload) => reportBackendNonfatalError(payload);
+  reportRepoWriteOverdue = (payload) => addTelemetryBreadcrumb(payload);
   reportRepoWriteReentrancy = (payload) => reportBackendNonfatalError(payload);
   emitQueueChanged();
 }

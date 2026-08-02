@@ -23,13 +23,6 @@ export function formatErrorForDisplay(value) {
       typeof payload?.message === "string" && payload.message.trim()
         ? payload.message.trim()
         : "";
-    const nestedMessages =
-      Array.isArray(payload?.errors)
-        ? payload.errors.find(
-            (item) => typeof item?.message === "string" && item.message.trim(),
-          )
-        : null;
-
     const nestedMessageList = Array.isArray(payload?.errors)
       ? payload.errors
           .map((item) => (typeof item?.message === "string" ? item.message.trim() : ""))
