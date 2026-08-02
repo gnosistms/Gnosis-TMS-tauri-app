@@ -1078,6 +1078,141 @@ test("review sidebar ignores marker-only differences when choosing current text"
   assert.doesNotMatch(html, /Current text/);
 });
 
+test("review sidebar keeps the last text update visible after marker and comment-only commits", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter({
+      sidebarTab: "review",
+      history: {
+        status: "ready",
+        entries: [
+          {
+            commitSha: "marker-only",
+            authorName: "reviewer",
+            statusNote: "Marked reviewed",
+            plainText: "Xin chao",
+            footnote: "",
+            imageCaption: "",
+            reviewed: true,
+            pleaseCheck: false,
+            textStyle: "paragraph",
+          },
+          {
+            commitSha: "comment-only",
+            authorName: "commenter",
+            statusNote: "Added comment",
+            plainText: "Xin chao",
+            footnote: "",
+            imageCaption: "",
+            reviewed: false,
+            pleaseCheck: false,
+            textStyle: "paragraph",
+          },
+          {
+            commitSha: "text-update",
+            authorName: "text editor",
+            plainText: "Xin chao",
+            footnote: "",
+            imageCaption: "",
+            reviewed: false,
+            pleaseCheck: false,
+            textStyle: "paragraph",
+          },
+          {
+            commitSha: "previous-text",
+            authorName: "translator",
+            plainText: "Xin chau",
+            footnote: "",
+            imageCaption: "",
+            reviewed: false,
+            pleaseCheck: false,
+            textStyle: "paragraph",
+          },
+        ],
+      },
+    }),
+    [{
+      id: "row-1",
+      textStyle: "paragraph",
+      sections: [
+        { code: "es", text: "Hola" },
+        { code: "vi", text: "Xin chao", reviewed: true },
+      ],
+    }],
+    languages,
+    "es",
+    "vi",
+    createAiActionConfigurationState(),
+  );
+
+  assert.match(html, /Last update - text editor/);
+  assert.match(html, /Compared with the previous commit/);
+  assert.match(html, /history-diff__delete">u<\/span>/);
+  assert.match(html, /history-diff__insert">o<\/span>/);
+  assert.doesNotMatch(html, /Last update - reviewer/);
+  assert.doesNotMatch(html, /Last update - commenter/);
+});
+
+test("review sidebar ignores a pending marker-only save in Last update", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter({
+      sidebarTab: "review",
+      history: {
+        status: "ready",
+        entries: [
+          {
+            commitSha: "optimistic:marker-save",
+            optimistic: true,
+            authorName: "Pending local save",
+            plainText: "Xin chao",
+            footnote: "",
+            imageCaption: "",
+            reviewed: true,
+            pleaseCheck: false,
+            textStyle: "paragraph",
+          },
+          {
+            commitSha: "text-update",
+            authorName: "text editor",
+            plainText: "Xin chao",
+            footnote: "",
+            imageCaption: "",
+            reviewed: false,
+            pleaseCheck: false,
+            textStyle: "paragraph",
+          },
+          {
+            commitSha: "previous-text",
+            authorName: "translator",
+            plainText: "Xin chau",
+            footnote: "",
+            imageCaption: "",
+            reviewed: false,
+            pleaseCheck: false,
+            textStyle: "paragraph",
+          },
+        ],
+      },
+    }),
+    [{
+      id: "row-1",
+      textStyle: "paragraph",
+      sections: [
+        { code: "es", text: "Hola" },
+        { code: "vi", text: "Xin chao", reviewed: true },
+      ],
+    }],
+    languages,
+    "es",
+    "vi",
+    createAiActionConfigurationState(),
+  );
+
+  assert.match(html, /Last update - text editor/);
+  assert.match(html, /history-diff__delete">u<\/span>/);
+  assert.match(html, /history-diff__insert">o<\/span>/);
+  assert.doesNotMatch(html, /Saving locally/);
+});
+
 test("review sidebar treats text style differences as current text", () => {
   const html = renderTranslateSidebar(
     activeEditorChapter({

@@ -1,6 +1,5 @@
 import { resolveVisibleEditorAiReview } from "../app/editor-ai-review-state.js";
 import {
-  findEditorHistoryPreviousCommitEntry,
   historyLastUpdateHeadingLabel,
   isOptimisticEditorHistoryEntry,
 } from "../app/editor-history.js";
@@ -88,18 +87,45 @@ function renderAiReviewSuggestionSections(aiReview, currentEntry, activeLanguage
   return sections.join("");
 }
 
-function editorReviewLiveEntryMatchesHistoryEntry(entry, liveEntry) {
-  if (!entry || !liveEntry) {
+function editorReviewEntriesHaveSameContent(leftEntry, rightEntry) {
+  if (!leftEntry || !rightEntry) {
     return false;
   }
 
   return (
-    String(entry.plainText ?? "") === String(liveEntry.plainText ?? "")
-    && String(entry.footnote ?? "") === String(liveEntry.footnote ?? "")
-    && String(entry.imageCaption ?? "") === String(liveEntry.imageCaption ?? "")
-    && editorFieldImageEqual(entry.image, liveEntry.image)
-    && normalizeEditorRowTextStyle(entry.textStyle) === normalizeEditorRowTextStyle(liveEntry.textStyle)
+    String(leftEntry.plainText ?? "") === String(rightEntry.plainText ?? "")
+    && String(leftEntry.footnote ?? "") === String(rightEntry.footnote ?? "")
+    && String(leftEntry.imageCaption ?? "") === String(rightEntry.imageCaption ?? "")
+    && editorFieldImageEqual(leftEntry.image, rightEntry.image)
+    && normalizeEditorRowTextStyle(leftEntry.textStyle) === normalizeEditorRowTextStyle(rightEntry.textStyle)
   );
+}
+
+function findLastCommittedReviewContentUpdate(entries) {
+  const committedEntries = entries.filter((entry) => !isOptimisticEditorHistoryEntry(entry));
+  if (committedEntries.length === 0) {
+    return { entry: null, baselineEntry: null };
+  }
+
+  // Marker toggles and comment writes can create newer row revisions without
+  // changing anything rendered in Last update. Walk to the oldest revision in
+  // the newest equal-content run: that is the commit which introduced the
+  // current text/image/style state. The next entry is its meaningful baseline.
+  let contentUpdateIndex = 0;
+  while (
+    contentUpdateIndex + 1 < committedEntries.length
+    && editorReviewEntriesHaveSameContent(
+      committedEntries[contentUpdateIndex],
+      committedEntries[contentUpdateIndex + 1],
+    )
+  ) {
+    contentUpdateIndex += 1;
+  }
+
+  return {
+    entry: committedEntries[contentUpdateIndex],
+    baselineEntry: committedEntries[contentUpdateIndex + 1] ?? null,
+  };
 }
 
 function pendingLocalSaveAgeMs(entry) {
@@ -128,9 +154,21 @@ export function renderReviewPane(editorChapter, rows, languages, offlineMode = f
           entries: [],
   };
   const historyEntries = Array.isArray(history.entries) ? history.entries : [];
-  const pendingLocalSaveEntry = historyEntries.find((entry) => isOptimisticEditorHistoryEntry(entry)) ?? null;
-  const lastCommittedEntry = historyEntries.find((entry) => !isOptimisticEditorHistoryEntry(entry)) ?? null;
-  const previousEntry = findEditorHistoryPreviousCommitEntry(history.entries);
+  const newestPendingLocalSaveEntry =
+    historyEntries.find((entry) => isOptimisticEditorHistoryEntry(entry)) ?? null;
+  const newestCommittedEntry =
+    historyEntries.find((entry) => !isOptimisticEditorHistoryEntry(entry)) ?? null;
+  const committedContentUpdate = findLastCommittedReviewContentUpdate(historyEntries);
+  const lastCommittedEntry = committedContentUpdate.entry;
+  const previousEntry = committedContentUpdate.baselineEntry;
+  const pendingLocalSaveEntry =
+    newestPendingLocalSaveEntry
+    && (
+      !newestCommittedEntry
+      || !editorReviewEntriesHaveSameContent(newestPendingLocalSaveEntry, newestCommittedEntry)
+    )
+      ? newestPendingLocalSaveEntry
+      : null;
   const currentEntry = {
     plainText: activeSection?.text ?? "",
     footnote: activeSection?.footnote ?? "",
@@ -142,10 +180,10 @@ export function renderReviewPane(editorChapter, rows, languages, offlineMode = f
   };
   const currentEntryMatchesPendingSave =
     pendingLocalSaveEntry
-    && editorReviewLiveEntryMatchesHistoryEntry(pendingLocalSaveEntry, currentEntry);
+    && editorReviewEntriesHaveSameContent(pendingLocalSaveEntry, currentEntry);
   const currentEntryMatchesLastCommit =
     lastCommittedEntry
-    && editorReviewLiveEntryMatchesHistoryEntry(lastCommittedEntry, currentEntry);
+    && editorReviewEntriesHaveSameContent(lastCommittedEntry, currentEntry);
   const showsPendingLocalSave = Boolean(currentEntryMatchesPendingSave);
   const pendingLocalSaveIsOverdue =
     showsPendingLocalSave
