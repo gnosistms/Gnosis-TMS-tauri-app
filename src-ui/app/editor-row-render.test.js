@@ -270,6 +270,27 @@ test("renderTranslationContentRow renders a closed footnote as a static live-mar
   assert.doesNotMatch(html, /<textarea[^>]*data-content-kind="footnote"/);
 });
 
+test("renderTranslationContentRow makes an empty closed footnote marker reopenable", () => {
+  const html = renderTranslationContentRow({
+    ...rowWithSection({
+      canEdit: true,
+      text: "Text[3]",
+      footnotes: [{ marker: 3, text: "" }],
+      hasVisibleFootnote: true,
+      isTextEditorOpen: true,
+      openFootnoteMarker: null,
+    }),
+    canEdit: true,
+  });
+
+  assert.match(
+    html,
+    /<div[\s\S]*?data-action="open-editor-footnote-entry"[\s\S]*?data-editor-footnote-display[\s\S]*?data-footnote-marker="3"[\s\S]*?<span class="translation-language-panel__footnote-marker"[^>]*>\[3\]<\/span>/,
+  );
+  assert.match(html, /aria-label="Edit footnote 3"/);
+  assert.match(html, /translation-language-panel__footnote-display-text">&nbsp;<\/span>/);
+});
+
 test("renderTranslationContentRow renders valid static footnote markers as non-link superscripts", () => {
   const html = renderTranslationContentRow({
     ...rowWithSection({

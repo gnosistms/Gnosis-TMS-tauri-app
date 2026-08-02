@@ -764,19 +764,25 @@ function renderEditorFootnoteField(row, language) {
         `;
       }
 
+      const displayHtml = entry.text.trim().length > 0
+        ? renderSanitizedInlineMarkupHtml(entry.text)
+        : "&nbsp;";
       return `
-      <div class="translation-language-panel__footnote-editor-row">
+      <div
+        class="translation-language-panel__footnote-editor-row"
+        data-action="open-editor-footnote-entry"
+        data-editor-footnote-display
+        data-footnote-marker="${escapeHtml(entry.marker)}"
+        data-row-id="${escapeHtml(row.id)}"
+        data-language-code="${escapeHtml(language.code)}"
+      >
         ${markerHtml}
         <button
           class="translation-language-panel__field--footnote translation-language-panel__footnote-display"
           type="button"
-          data-action="open-editor-footnote-entry"
-          data-editor-footnote-display
-          data-footnote-marker="${escapeHtml(entry.marker)}"
-          data-row-id="${escapeHtml(row.id)}"
-          data-language-code="${escapeHtml(language.code)}"
+          aria-label="Edit footnote ${escapeHtml(entry.marker)}"
           lang="${escapeHtml(language.baseCode || language.code)}"
-        ><span class="translation-language-panel__footnote-display-text">${renderSanitizedInlineMarkupHtml(entry.text)}</span></button>
+        ><span class="translation-language-panel__footnote-display-text">${displayHtml}</span></button>
       </div>
       `;
     })
