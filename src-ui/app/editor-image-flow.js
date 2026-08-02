@@ -8,7 +8,7 @@ import { findChapterContextById, selectedProjectsTeam } from "./project-context.
 import {
   applyEditorRowImageSaved,
 } from "./editor-persistence-state.js";
-import { invoke, convertLocalFileSrc, waitForNextPaint } from "./runtime.js";
+import { invoke, listen, convertLocalFileSrc, waitForNextPaint } from "./runtime.js";
 import { logEditorScrollDebug } from "./editor-scroll-debug.js";
 import { noteUserScrollIntent } from "./editor-scroll-session.js";
 import { renderEditorRowScoped } from "./editor-row-scoped-render.js";
@@ -39,10 +39,14 @@ import {
   removeOptimisticEditorHistoryEntry,
 } from "./editor-history-state.js";
 import { projectRepoScope } from "./repo-write-queue.js";
+import { updateEditorChapterRow } from "./editor-state-flow.js";
 
 const IMAGE_FILE_ACCEPT =
   ".jpg,.jpeg,.png,.gif,.svg,.webp,.avif,.bmp,.ico,.apng,image/jpeg,image/png,image/gif,image/svg+xml,image/webp,image/avif,image/bmp,image/x-icon";
 const TRANSLATE_MAIN_BOTTOM_PIN_TOLERANCE_PX = 80;
+export const EDITOR_IMAGE_CAPTION_ENRICHED_EVENT = "editor-image-caption-enriched";
+
+let editorImageCaptionListenerPromise = null;
 
 
 function nextChapterBaseCommitSha(payload, chapterState = state.editorChapter) {
@@ -310,15 +314,59 @@ function translateMainScrollDebugDetail(rowId = "", languageCode = "") {
 }
 
 function updateRowForImagePayload(rowId, payloadRow, operations = {}) {
-  const { updateEditorChapterRow } = operations;
-  if (!payloadRow || typeof updateEditorChapterRow !== "function") {
+  const updateRow = operations.updateEditorChapterRow ?? updateEditorChapterRow;
+  if (!payloadRow || typeof updateRow !== "function") {
     return null;
   }
 
-  return updateEditorChapterRow(
+  return updateRow(
     rowId,
     (currentRow) => applyEditorRowImageSaved(currentRow, payloadRow),
   );
+}
+
+export function handleEditorImageCaptionEnrichedEvent(payload, render, operations = {}) {
+  const rowId = String(payload?.rowId ?? "");
+  const languageCode = String(payload?.languageCode ?? "");
+  const imageUrl = String(payload?.imageUrl ?? "");
+  if (
+    !rowId
+    || !languageCode
+    || !imageUrl
+    || state.editorChapter?.chapterId !== payload?.chapterId
+    || !editorFieldImageEqual(
+      currentImage(rowId, languageCode),
+      { kind: "url", url: imageUrl },
+    )
+  ) {
+    return false;
+  }
+
+  if (!updateRowForImagePayload(rowId, payload?.row, operations)) {
+    return false;
+  }
+  state.editorChapter = {
+    ...state.editorChapter,
+    chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
+  };
+  renderEditorRowScoped(render, rowId, "wordpress-image-caption-enriched");
+  if (state.editorChapter.activeRowId === rowId) {
+    render?.({ scope: "translate-sidebar" });
+  }
+  return true;
+}
+
+export function registerEditorImageCaptionListeners(render) {
+  if (!listen) {
+    return Promise.resolve(null);
+  }
+  if (!editorImageCaptionListenerPromise) {
+    editorImageCaptionListenerPromise = listen(
+      EDITOR_IMAGE_CAPTION_ENRICHED_EVENT,
+      (event) => handleEditorImageCaptionEnrichedEvent(event?.payload, render),
+    );
+  }
+  return editorImageCaptionListenerPromise;
 }
 
 function currentImage(rowId, languageCode) {

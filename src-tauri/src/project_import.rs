@@ -37,22 +37,23 @@ use self::{
         remove_gtms_editor_language_image_sync, restore_gtms_editor_field_from_history_sync,
         reverse_gtms_editor_batch_replace_commit_sync, save_gtms_editor_language_image_url_sync,
         start_gtms_chapter_pdf_export as start_gtms_chapter_pdf_export_task,
-        start_project_transfer, start_team_chapter_copy, update_gtms_chapter_glossary_links_sync,
-        update_gtms_chapter_language_selection_sync, update_gtms_chapter_languages_sync,
-        update_gtms_chapter_workflow_status_sync, update_gtms_editor_row_field_flag_sync,
-        update_gtms_editor_row_fields_batch_sync, update_gtms_editor_row_fields_sync,
-        update_gtms_editor_row_lifecycle_sync, update_gtms_editor_row_text_style_sync,
-        upload_gtms_editor_language_image_sync, AlignedTranslationApplyInput,
-        AlignedTranslationApplyResponse, AlignedTranslationPreflightInput,
-        AlignedTranslationPreflightResponse, ApplyEditorAiReviewResultInput,
-        ApplyEditorAiReviewResultResponse, ApplyEditorAiReviewResultsBatchInput,
-        ApplyEditorAiReviewResultsBatchResponse, ClearEditorReviewedMarkersInput,
-        ClearEditorReviewedMarkersResponse, ClearImportedEditorConflictInput,
-        DuplicateEditorLanguageImageInput, ExportChapterFileInput, ExportChapterFileResponse,
-        InitializeProjectRepoInput, InitializeProjectRepoResponse, InsertEditorRowInput,
-        InsertEditorRowResponse, ListLocalProjectFilesInput, LoadChapterEditorInput,
-        LoadChapterEditorResponse, LoadEditorFieldHistoryInput, LoadEditorFieldHistoryResponse,
-        LoadEditorRowInput, LoadEditorRowResponse, LocalProjectFilesResponse, MergeEditorRowsInput,
+        start_project_transfer, start_team_chapter_copy, start_wordpress_caption_enrichment,
+        update_gtms_chapter_glossary_links_sync, update_gtms_chapter_language_selection_sync,
+        update_gtms_chapter_languages_sync, update_gtms_chapter_workflow_status_sync,
+        update_gtms_editor_row_field_flag_sync, update_gtms_editor_row_fields_batch_sync,
+        update_gtms_editor_row_fields_sync, update_gtms_editor_row_lifecycle_sync,
+        update_gtms_editor_row_text_style_sync, upload_gtms_editor_language_image_sync,
+        AlignedTranslationApplyInput, AlignedTranslationApplyResponse,
+        AlignedTranslationPreflightInput, AlignedTranslationPreflightResponse,
+        ApplyEditorAiReviewResultInput, ApplyEditorAiReviewResultResponse,
+        ApplyEditorAiReviewResultsBatchInput, ApplyEditorAiReviewResultsBatchResponse,
+        ClearEditorReviewedMarkersInput, ClearEditorReviewedMarkersResponse,
+        ClearImportedEditorConflictInput, DuplicateEditorLanguageImageInput,
+        ExportChapterFileInput, ExportChapterFileResponse, InitializeProjectRepoInput,
+        InitializeProjectRepoResponse, InsertEditorRowInput, InsertEditorRowResponse,
+        ListLocalProjectFilesInput, LoadChapterEditorInput, LoadChapterEditorResponse,
+        LoadEditorFieldHistoryInput, LoadEditorFieldHistoryResponse, LoadEditorRowInput,
+        LoadEditorRowResponse, LocalProjectFilesResponse, MergeEditorRowsInput,
         MergeEditorRowsResponse, PdfChapterExportInput, PdfFontInspection, PdfFontInspectionInput,
         ProjectTransferInput, ProjectTransferStatus, ProjectTransferStatusInput,
         PurgeLocalProjectRepoInput, RemoveEditorLanguageImageInput, RestoreEditorFieldHistoryInput,
@@ -538,12 +539,16 @@ pub(crate) async fn save_gtms_editor_language_image_url(
     app: AppHandle,
     input: SaveEditorLanguageImageUrlInput,
 ) -> Result<SaveEditorLanguageImageResponse, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_chapter_writes(&app, input.installation_id)?;
-        save_gtms_editor_language_image_url_sync(&app, input)
+    let worker_app = app.clone();
+    let worker_input = input.clone();
+    let response = tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_chapter_writes(&worker_app, worker_input.installation_id)?;
+        save_gtms_editor_language_image_url_sync(&worker_app, worker_input)
     })
     .await
-    .map_err(|error| format!("The row image URL worker failed: {error}"))?
+    .map_err(|error| format!("The row image URL worker failed: {error}"))??;
+    start_wordpress_caption_enrichment(app, input, &response);
+    Ok(response)
 }
 
 #[tauri::command]

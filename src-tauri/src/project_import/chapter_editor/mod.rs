@@ -89,7 +89,8 @@ use self::images::{
 };
 pub(super) use self::images::{
     duplicate_gtms_editor_language_image_sync, remove_gtms_editor_language_image_sync,
-    save_gtms_editor_language_image_url_sync, upload_gtms_editor_language_image_sync,
+    save_gtms_editor_language_image_url_sync, start_wordpress_caption_enrichment,
+    upload_gtms_editor_language_image_sync,
 };
 pub(crate) use self::pdf_export::{
     cancel_gtms_chapter_pdf_export, inspect_gtms_chapter_pdf_fonts, start_gtms_chapter_pdf_export,
@@ -445,7 +446,7 @@ pub(crate) struct EditorFieldImageInput {
     path: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SaveEditorLanguageImageUrlInput {
     pub(crate) installation_id: i64,
