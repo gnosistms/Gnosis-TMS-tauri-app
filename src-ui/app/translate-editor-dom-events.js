@@ -398,7 +398,7 @@ export function registerTranslateEditorDomEvents(app, render) {
       return;
     }
 
-    const editorControlButton = closestEventTarget(
+    const editorControl = closestEventTarget(
       event.target,
       "[data-editor-row-text-style-button], [data-editor-inline-style-button], [data-editor-separator-button], [data-editor-link-button], [data-editor-footnote-button], [data-editor-footnote-display], [data-editor-image-button], [data-editor-image-caption-button], [data-editor-image-upload-close-button], [data-editor-image-url-close-button], [data-editor-image-url-status-button], [data-editor-language-image-remove-button], [data-action^=\"switch-editor-sidebar-tab:\"]",
     );
@@ -413,7 +413,7 @@ export function registerTranslateEditorDomEvents(app, render) {
     const aiTranslateButton = closestEventTarget(event.target, '[data-action^="run-editor-ai-translate:"]');
     const nextTextarea = closestEventTarget(event.target, "[data-editor-row-field]");
     const dismissedUploadEditor =
-      !(editorControlButton instanceof HTMLButtonElement)
+      !(editorControl instanceof HTMLElement)
       && !(uploadDropzone instanceof HTMLButtonElement)
       && !(uploadCloseButton instanceof HTMLButtonElement)
       && !(aiTranslateButton instanceof HTMLButtonElement)

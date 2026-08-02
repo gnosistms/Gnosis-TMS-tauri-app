@@ -76,6 +76,13 @@ test("editor footnote collapse preserves the row viewport anchor", async () => {
     translateEventsSource,
     /previouslyFocusedControl instanceof HTMLTextAreaElement[\s\S]*?previouslyFocusedControl\.dataset\.contentKind === "footnote"[\s\S]*?previouslyFocusedRowId === rowId[\s\S]*?previouslyFocusedControl\.dataset\.languageCode === languageCode[\s\S]*?collapseEmptyEditorFootnote\(render, rowId, languageCode\)/,
   );
+  // The empty marker's reopen action is owned by the whole footnote row. Treat
+  // that HTMLElement as a control so dismissing an idle image uploader cannot
+  // rerender the row and detach the marker before its click is dispatched.
+  assert.match(
+    translateEventsSource,
+    /const editorControl = closestEventTarget\([\s\S]*?\[data-editor-footnote-display\][\s\S]*?!\(editorControl instanceof HTMLElement\)[\s\S]*?dismissActiveIdleEditorImageUpload\(render\)/,
+  );
   // Row-scoped mutations render via row patching (scroll redesign P3), which
   // preserves the viewport by construction.
   assert.match(persistenceSource, /renderEditorRowScoped\(render, rowId, "footnote-collapse"\)/);
