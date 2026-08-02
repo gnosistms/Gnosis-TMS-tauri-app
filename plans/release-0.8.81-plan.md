@@ -22,7 +22,17 @@ Date: 2026-08-02
 - [x] Run pre-tag verification: JavaScript and workflow tests, JavaScript lint,
       frontend build, Cargo formatting, Rust tests, version consistency, and
       `git diff --check`.
-- [ ] Merge the release PR.
-- [ ] Tag `v0.8.81` and push the tag.
-- [ ] Confirm the release workflow succeeds on macOS arm64, macOS x64, and Windows
+- [x] Merge the release PR.
+- [x] Tag `v0.8.81` and push the tag.
+- [x] Confirm the release workflow succeeds on macOS arm64, macOS x64, and Windows
       x64, and verify the published GitHub Release assets and updater metadata.
+
+## Verification
+
+- Release PR #229 merged as `7cc8ad7e753b53d0191a61a135491406a57bfcf9`.
+- Annotated tag `v0.8.81` points to the release commit.
+- Release workflow run 30732714692 succeeded for macOS arm64, macOS x64, and
+  Windows x64.
+- The stable GitHub Release contains 13 non-empty uploaded assets.
+- `latest.json` reports version 0.8.81 with seven signed platform entries, all
+  targeting `v0.8.81` assets.
