@@ -1067,7 +1067,10 @@ struct ImagePathRepairOutcome {
     rewritten_paths: usize,
     unresolved_paths: usize,
     skipped_unreadable_rows: usize,
+    affected_row_files: Vec<String>,
 }
+
+const IMAGE_PATH_REPAIR_REPORT_RELATIVE_PATH: &str = ".gtms/image-path-repair.json";
 
 /// Collect every existing file under `chapters/*/images/**`, keyed by its
 /// path remainder after `images/` (covers both the old per-row-subdirectory
@@ -1221,10 +1224,18 @@ fn repair_stale_uploaded_image_paths(
                 Ok(value) => value,
                 Err(_) => {
                     outcome.skipped_unreadable_rows += 1;
+                    outcome.affected_row_files.push(
+                        row_path
+                            .strip_prefix(repo_path)
+                            .unwrap_or(&row_path)
+                            .to_string_lossy()
+                            .replace('\\', "/"),
+                    );
                     continue;
                 }
             };
             let mut changed = false;
+            let unresolved_before = outcome.unresolved_paths;
             rewrite_stale_upload_paths_in_value(
                 &mut row_value,
                 repo_path,
@@ -1232,12 +1243,23 @@ fn repair_stale_uploaded_image_paths(
                 &mut changed,
                 &mut outcome.unresolved_paths,
             );
+            if outcome.unresolved_paths > unresolved_before {
+                outcome.affected_row_files.push(
+                    row_path
+                        .strip_prefix(repo_path)
+                        .unwrap_or(&row_path)
+                        .to_string_lossy()
+                        .replace('\\', "/"),
+                );
+            }
             if changed {
                 write_json_value(&row_path, &row_value)?;
                 outcome.rewritten_paths += 1;
             }
         }
     }
+    outcome.affected_row_files.sort();
+    outcome.affected_row_files.dedup();
     Ok(outcome)
 }
 
@@ -1251,24 +1273,59 @@ fn migrate_project_repo_to_0875(app: &AppHandle, repo_path: &Path) -> Result<(),
     }
 
     let chapters_root = repo_path.join("chapters");
+    let mut outcome = ImagePathRepairOutcome::default();
     if chapters_root.exists() {
-        let outcome = repair_stale_uploaded_image_paths(repo_path, &chapters_root)?;
-        if outcome.skipped_unreadable_rows > 0 {
-            crate::github::report_backend_nonfatal_error(
-                app,
-                "repo.migrate.image_paths",
-                "row_json_unreadable_skipped",
-            );
-        }
-        if outcome.unresolved_paths > 0 {
-            crate::github::report_backend_nonfatal_error(
-                app,
-                "repo.migrate.image_paths",
-                "image_path_unresolved",
-            );
-        }
+        outcome = repair_stale_uploaded_image_paths(repo_path, &chapters_root)?;
     }
 
+    write_image_path_repair_report(repo_path, &outcome)?;
+    record_image_path_repair_migration(repo_path)?;
+    git_output(repo_path, &["add", "-A"], None)?;
+    commit_migration_if_dirty(
+        app,
+        repo_path,
+        MIGRATION_0875,
+        "Repair uploaded image paths (0.8.75 migration)",
+    )
+}
+
+fn write_image_path_repair_report(
+    repo_path: &Path,
+    outcome: &ImagePathRepairOutcome,
+) -> Result<(), String> {
+    let report_path = repo_path.join(IMAGE_PATH_REPAIR_REPORT_RELATIVE_PATH);
+    if outcome.unresolved_paths > 0 || outcome.skipped_unreadable_rows > 0 {
+        if let Some(report_parent) = report_path.parent() {
+            fs::create_dir_all(report_parent).map_err(|error| {
+                format!(
+                    "Could not create the image path repair report folder '{}': {error}",
+                    report_parent.display()
+                )
+            })?;
+        }
+        return write_json_value(
+            &report_path,
+            &serde_json::json!({
+                "schemaVersion": 1,
+                "status": "needsManualRepair",
+                "unresolvedPathCount": outcome.unresolved_paths,
+                "unreadableRowCount": outcome.skipped_unreadable_rows,
+                "affectedRowFiles": outcome.affected_row_files,
+            }),
+        );
+    }
+    if report_path.exists() {
+        fs::remove_file(&report_path).map_err(|error| {
+            format!(
+                "Could not remove the completed image path repair report '{}': {error}",
+                report_path.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn record_image_path_repair_migration(repo_path: &Path) -> Result<(), String> {
     let mut metadata = match read_repo_layout_metadata_state(repo_path) {
         RepoLayoutMetadataState::Readable(metadata) => metadata,
         RepoLayoutMetadataState::Missing => new_v2_repo_layout_metadata(RepoKind::Project),
@@ -1284,13 +1341,7 @@ fn migrate_project_repo_to_0875(app: &AppHandle, repo_path: &Path) -> Result<(),
         metadata.applied_migrations.push(MIGRATION_0875.to_string());
     }
     write_repo_layout_metadata(repo_path, &metadata)?;
-    git_output(repo_path, &["add", "-A"], None)?;
-    commit_migration_if_dirty(
-        app,
-        repo_path,
-        MIGRATION_0875,
-        "Repair uploaded image paths (0.8.75 migration)",
-    )
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1518,6 +1569,63 @@ mod tests {
             row_image_path(&rows_dir, "missing.json"),
             "chapters/gone/images/lost.png",
         );
+
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn incomplete_image_path_repair_records_a_manual_report_without_blocking_sync() {
+        let repo_path = temp_repo("image-path-repair-incomplete-marker");
+        let outcome = ImagePathRepairOutcome {
+            rewritten_paths: 1,
+            unresolved_paths: 2,
+            skipped_unreadable_rows: 1,
+            affected_row_files: vec!["chapters/one/rows/row-1.json".to_string()],
+        };
+
+        write_image_path_repair_report(&repo_path, &outcome).expect("write repair report");
+        record_image_path_repair_migration(&repo_path).expect("record attempted migration");
+
+        assert_eq!(
+            pending_ids(&repo_path, &RepoKind::Project),
+            vec![MIGRATION_0856]
+        );
+        let report = read_json_value(
+            &repo_path.join(IMAGE_PATH_REPAIR_REPORT_RELATIVE_PATH),
+            "repair report",
+        )
+        .expect("read repair report");
+        assert_eq!(report["status"], "needsManualRepair");
+        assert_eq!(report["unresolvedPathCount"], 2);
+        assert_eq!(
+            report["affectedRowFiles"],
+            serde_json::json!(["chapters/one/rows/row-1.json"])
+        );
+
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn complete_image_path_repair_records_the_migration_marker() {
+        let repo_path = temp_repo("image-path-repair-complete-marker");
+        let mut metadata = new_v2_repo_layout_metadata(RepoKind::Project);
+        metadata.applied_migrations.push(MIGRATION_0856.to_string());
+        write_repo_layout_metadata(&repo_path, &metadata).expect("write metadata");
+
+        fs::create_dir_all(repo_path.join(".gtms")).expect("create report folder");
+        fs::write(
+            repo_path.join(IMAGE_PATH_REPAIR_REPORT_RELATIVE_PATH),
+            "stale report",
+        )
+        .expect("write stale report");
+        write_image_path_repair_report(&repo_path, &ImagePathRepairOutcome::default())
+            .expect("remove stale report");
+        record_image_path_repair_migration(&repo_path).expect("complete repair records marker");
+
+        assert!(pending_ids(&repo_path, &RepoKind::Project).is_empty());
+        assert!(!repo_path
+            .join(IMAGE_PATH_REPAIR_REPORT_RELATIVE_PATH)
+            .exists());
 
         let _ = fs::remove_dir_all(repo_path);
     }

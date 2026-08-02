@@ -99,7 +99,18 @@ export const invoke = rawInvoke
           throw new Error("AUTH_REQUIRED:Your GitHub session expired. Please log in with GitHub again to continue.");
         }
 
-        return rawInvoke(command, updatePayloadSessionToken(payload, refreshedSession.sessionToken));
+        try {
+          return await rawInvoke(
+            command,
+            updatePayloadSessionToken(payload, refreshedSession.sessionToken),
+          );
+        } catch (retryError) {
+          // A refreshed broker session may still yield a rejected installation token
+          // or a genuinely non-auth command failure. Preserve that final failure in
+          // telemetry instead of letting the retry bypass the normal report boundary.
+          maybeReportCommandFailure(command, retryError);
+          throw retryError;
+        }
       }
     }
   : null;
@@ -148,14 +159,14 @@ export function resolveCommandFailureReport(command, error) {
     };
   }
   // Remote permission denials: access rules working as intended for that account.
+  // The UI surfaces these; standalone telemetry groups do not indicate defects.
   if (
     normalizedMessage.includes("write access to repository not granted")
     || normalizedMessage.includes("cannot manage shared resources")
+    || normalizedMessage.includes("account type cannot edit shared content")
+    || normalizedMessage.includes("need admin access in @")
   ) {
-    return {
-      error,
-      options: { level: "warning", tags: { reason: "permission-denied" } },
-    };
+    return null;
   }
   // Expected user-input / validation failures. The UI already surfaces these and they
   // are corrected by user action, not a code fix — do not report them as defects
@@ -165,6 +176,14 @@ export function resolveCommandFailureReport(command, error) {
     || normalizedMessage.includes("is not a file") // dropped a folder / non-file
     || normalizedMessage.includes("not a valid supported image") // unsupported upload
     || normalizedMessage.includes("api key was rejected") // user's saved key is wrong
+    || normalizedMessage.includes("expected an srt timing line") // malformed subtitle input
+    || normalizedMessage.includes("openai is temporarily unavailable") // provider outage
+  ) {
+    return null;
+  }
+  if (
+    command === "create_gnosis_project_repo"
+    && normalizedMessage.includes("name already exists on this account")
   ) {
     return null;
   }
@@ -259,14 +278,7 @@ function shouldAttemptBrokerSessionRefresh(command, payload, error) {
     return false;
   }
 
-  const message = String(error?.message ?? error ?? "").trim().toLowerCase();
-  return (
-    message.startsWith("auth_required:")
-    || message.includes("your github session expired")
-    || message.includes("bad credentials")
-    || message.includes("github api 401")
-    || message === "unauthorized"
-  );
+  return classifySyncError(error).type === "auth_invalid";
 }
 
 function extractBrokerSessionToken(payload) {

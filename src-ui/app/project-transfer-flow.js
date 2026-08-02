@@ -711,6 +711,13 @@ export async function registerProjectTransferListeners(render, operations = {}) 
   if (!listenerRegistrationPromise) {
     listenerRegistrationPromise = (async () => {
       const listenForEvent = operations.listen ?? listen;
+      // The browser-only Vite development surface has no Tauri event API. Treat that
+      // as a supported runtime instead of turning every hot reload into a first-run
+      // crash. Do not mark listeners registered: a later Tauri-backed call must still
+      // be able to install the listener.
+      if (typeof listenForEvent !== "function") {
+        return;
+      }
       await listenForEvent("team-project-transfer-progress", (event) => {
         handleProjectTransferProgressEvent(event?.payload, render);
       });

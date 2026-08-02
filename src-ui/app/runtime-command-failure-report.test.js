@@ -75,16 +75,18 @@ test("does not treat GitHub 4xx as a transient outage", () => {
   assert.equal(report.options, undefined);
 });
 
-test("downgrades remote permission denials to warning tagged permission-denied", () => {
+test("skips expected remote permission denials", () => {
   for (const message of [
     "git push failed: remote: Write access to repository not granted.",
     "Your account type cannot manage shared resources.",
+    "Your account type cannot edit shared content.",
+    "You need admin access in @Gnosis-VN for this action.",
   ]) {
-    const error = new Error(message);
-    const report = resolveCommandFailureReport("push_command", error);
-    assert.equal(report.error, error, `expected original error for: ${message}`);
-    assert.equal(report.options.level, "warning");
-    assert.deepEqual(report.options.tags, { reason: "permission-denied" });
+    assert.equal(
+      resolveCommandFailureReport("push_command", new Error(message)),
+      null,
+      `expected skip for: ${message}`,
+    );
   }
 });
 
@@ -104,6 +106,8 @@ test("skips expected user-input / validation failures", () => {
     "The dropped item '/Users/x/Desktop/folder' is not a file.",
     "The uploaded file is not a valid supported image.",
     "The saved OpenAI API key was rejected. Update it in AI Settings and try again.",
+    "Line 4: Expected an SRT timing line like 00:00:01,000 --> 00:00:02,000.",
+    "OpenAI is temporarily unavailable. Try again in a moment.",
   ]) {
     assert.equal(
       resolveCommandFailureReport("some_command", new Error(message)),
@@ -111,6 +115,21 @@ test("skips expected user-input / validation failures", () => {
       `expected skip for: ${message}`,
     );
   }
+});
+
+test("skips expected repository creation validation", () => {
+  assert.equal(
+    resolveCommandFailureReport(
+      "create_gnosis_project_repo",
+      new Error("GitHub API 422: name already exists on this account"),
+    ),
+    null,
+  );
+  const unexpected = new Error('GitHub API 422: {"message":"Malformed repository payload."}');
+  assert.equal(
+    resolveCommandFailureReport("create_gnosis_project_repo", unexpected).error,
+    unexpected,
+  );
 });
 
 test("reports ordinary failures unchanged at the default level", () => {

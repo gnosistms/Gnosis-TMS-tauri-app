@@ -22,6 +22,7 @@ const CONNECTION_PATTERNS = [
   "connection refused",
   "connection reset",
   "connection closed",
+  "empty reply from server",
   "connection timed out",
   "operation timed out",
   "ssl connect error",
@@ -40,6 +41,11 @@ const RESOURCE_ACCESS_LOST_PATTERNS = [
   "resource access lost",
 ];
 
+const GIT_AUTH_PATTERNS = [
+  "authentication failed for 'https://github.com",
+  "could not read username for 'https://github.com",
+];
+
 export function classifySyncError(error, context = {}) {
   const message = (error?.message ?? String(error ?? "")).trim();
   const normalized = message.toLowerCase();
@@ -51,9 +57,10 @@ export function classifySyncError(error, context = {}) {
 
   if (
     message.startsWith(AUTH_REQUIRED_PREFIX) ||
-    message === "Unauthorized" ||
+    normalized === "unauthorized" ||
     normalized.includes("your github session expired") ||
     normalized.includes("bad credentials") ||
+    GIT_AUTH_PATTERNS.some((pattern) => normalized.includes(pattern)) ||
     status === 401
   ) {
     return { type: "auth_invalid", message, status };

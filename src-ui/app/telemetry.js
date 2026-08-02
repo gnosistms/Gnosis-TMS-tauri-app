@@ -263,3 +263,24 @@ export function reportBackendNonfatalError(payload = {}) {
     });
   });
 }
+
+/**
+ * Preserve an operational degradation as context on a later actionable event without
+ * creating a standalone unresolved issue. Payloads remain stable operation/reason
+ * strings so breadcrumbs cannot carry document content or backend error text.
+ */
+export function addTelemetryBreadcrumb(payload = {}) {
+  if (!sentry || !gateOpen()) {
+    return;
+  }
+  safe(() => {
+    const operation = String(payload?.operation ?? "unknown");
+    const reason = String(payload?.reason ?? "unknown");
+    sentry.addBreadcrumb({
+      category: operation,
+      message: scrubString(`${operation}: ${reason}`, COMMAND_ERROR_MAX_LENGTH),
+      level: "warning",
+      data: { reason },
+    });
+  });
+}

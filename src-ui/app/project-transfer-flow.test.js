@@ -170,6 +170,30 @@ test("listener registration waits once before starting durable recovery", async 
   assert.equal(listCalls, 1);
 });
 
+test("listener registration tolerates browser development without a Tauri event API", async () => {
+  resetFixture();
+
+  await registerProjectTransferListeners(() => {});
+
+  let listenCalls = 0;
+  let listCalls = 0;
+  await registerProjectTransferListeners(() => {}, {
+    listen: async () => {
+      listenCalls += 1;
+    },
+    requireBrokerSession: () => "session",
+    invoke: async (command) => {
+      assert.equal(command, "list_gtms_project_transfer_statuses");
+      listCalls += 1;
+      return [];
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(listenCalls, 1);
+  assert.equal(listCalls, 1);
+});
+
 test("transfer glossary reconciliation uses metadata identity and cached term counts", () => {
   const result = reconcileProjectTransferGlossaries(
     [
