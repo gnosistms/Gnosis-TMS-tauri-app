@@ -133,6 +133,7 @@ const {
   duplicateEditorLanguageImage,
   handleDroppedEditorImageFile,
   handleDroppedEditorImagePath,
+  handleEditorImageCaptionEnrichedEvent,
   closeEditorImagePreview,
   openEditorImagePreview,
   openEditorImageUrl,
@@ -281,6 +282,85 @@ test("closeEditorImagePreview renders only the overlay so editor scroll stays st
     imageUrl: "",
   });
   assert.deepEqual(render.calls, [[{ scope: "translate-image-preview-overlay" }]]);
+});
+
+test("WordPress caption enrichment applies the background row for the saved image", () => {
+  installEditorFixture();
+  const imageUrl = "https://example.com/wp-content/uploads/photo.jpg";
+  installFixtureImage(imageUrl);
+  const row = state.editorChapter.rows[0];
+  state.editorChapter = {
+    ...state.editorChapter,
+    rows: [{
+      ...row,
+      imageCaptions: { ...row.imageCaptions, vi: "Previous image caption" },
+      persistedImageCaptions: { ...row.persistedImageCaptions, vi: "Previous image caption" },
+    }],
+  };
+  const render = createRenderSpy();
+  const payloadRow = {
+    ...state.editorChapter.rows[0],
+    imageCaptions: { ...state.editorChapter.rows[0].imageCaptions, vi: "WordPress caption" },
+  };
+
+  assert.equal(handleEditorImageCaptionEnrichedEvent({
+    chapterId: "chapter-1",
+    rowId: "row-1",
+    languageCode: "vi",
+    imageUrl,
+    row: payloadRow,
+    chapterBaseCommitSha: "caption-commit",
+  }, render), true);
+
+  assert.equal(state.editorChapter.rows[0].imageCaptions.vi, "WordPress caption");
+  assert.equal(state.editorChapter.chapterBaseCommitSha, "caption-commit");
+});
+
+test("WordPress caption enrichment preserves a newer unsaved caption edit", () => {
+  installEditorFixture();
+  const imageUrl = "https://example.com/wp-content/uploads/photo.jpg";
+  installFixtureImage(imageUrl);
+  const row = state.editorChapter.rows[0];
+  state.editorChapter = {
+    ...state.editorChapter,
+    rows: [{
+      ...row,
+      imageCaptions: { ...row.imageCaptions, vi: "New local caption" },
+      persistedImageCaptions: { ...row.persistedImageCaptions, vi: "Previous image caption" },
+    }],
+  };
+  const payloadRow = {
+    ...state.editorChapter.rows[0],
+    imageCaptions: { ...state.editorChapter.rows[0].imageCaptions, vi: "WordPress caption" },
+    persistedImageCaptions: {
+      ...state.editorChapter.rows[0].persistedImageCaptions,
+      vi: "WordPress caption",
+    },
+  };
+
+  assert.equal(handleEditorImageCaptionEnrichedEvent({
+    chapterId: "chapter-1",
+    rowId: "row-1",
+    languageCode: "vi",
+    imageUrl,
+    row: payloadRow,
+  }, createRenderSpy()), true);
+
+  assert.equal(state.editorChapter.rows[0].imageCaptions.vi, "New local caption");
+  assert.equal(state.editorChapter.rows[0].persistedImageCaptions.vi, "WordPress caption");
+});
+
+test("WordPress caption enrichment ignores an event for a replaced image", () => {
+  installEditorFixture();
+  installFixtureImage("https://example.com/wp-content/uploads/new.jpg");
+
+  assert.equal(handleEditorImageCaptionEnrichedEvent({
+    chapterId: "chapter-1",
+    rowId: "row-1",
+    languageCode: "vi",
+    imageUrl: "https://example.com/wp-content/uploads/old.jpg",
+    row: state.editorChapter.rows[0],
+  }, createRenderSpy()), false);
 });
 
 test("duplicateEditorLanguageImage duplicates into an empty language immediately", async () => {

@@ -1704,19 +1704,7 @@ fn download_public_image_bytes_once(url: &str) -> Result<Vec<u8>, PublicImageDow
     // export must not let one of them point this fetch at the exporting machine's own
     // network. Reject non-public hosts, refuse redirects (a public URL could otherwise 302
     // into a private range), and cap the body size.
-    let request = validated_export_image_request(url)?;
-    let mut builder = BlockingClient::builder()
-        .timeout(Duration::from_secs(8))
-        .user_agent(EXPORT_IMAGE_USER_AGENT)
-        .redirect(reqwest::redirect::Policy::none());
-    if let Some((host, addresses)) = request.pinned_addresses.as_ref() {
-        // Pin the host to the exact addresses we validated so reqwest's own DNS lookup at
-        // connect time cannot rebind the name to a private address (TOCTOU).
-        builder = builder.resolve_to_addrs(host, addresses);
-    }
-    let client = builder
-        .build()
-        .map_err(|_| PublicImageDownloadError::ClientSetupFailed)?;
+    let client = public_http_client_for_url(url, Duration::from_secs(8), EXPORT_IMAGE_USER_AGENT)?;
     let response = client.get(url).send().map_err(|error| {
         if error.is_timeout() {
             PublicImageDownloadError::TimedOut
@@ -1740,6 +1728,27 @@ fn download_public_image_bytes_once(url: &str) -> Result<Vec<u8>, PublicImageDow
         return Err(PublicImageDownloadError::TooLarge);
     }
     Ok(data)
+}
+
+/// Builds a redirect-free client for a URL whose host has been checked to resolve
+/// only to public addresses. Domain results are pinned into the client to prevent a
+/// DNS rebinding between validation and connection.
+pub(super) fn public_http_client_for_url(
+    url: &str,
+    timeout: Duration,
+    user_agent: &str,
+) -> Result<BlockingClient, PublicImageDownloadError> {
+    let request = validated_export_image_request(url)?;
+    let mut builder = BlockingClient::builder()
+        .timeout(timeout)
+        .user_agent(user_agent)
+        .redirect(reqwest::redirect::Policy::none());
+    if let Some((host, addresses)) = request.pinned_addresses.as_ref() {
+        builder = builder.resolve_to_addrs(host, addresses);
+    }
+    builder
+        .build()
+        .map_err(|_| PublicImageDownloadError::ClientSetupFailed)
 }
 
 /// Fetches a remote image (with the same public-host validation, redirect

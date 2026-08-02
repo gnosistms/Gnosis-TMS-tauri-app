@@ -2,13 +2,54 @@ use crate::{
     constants::{decoded_base64_len, ensure_within_import_size_limit},
     short_path_names::allocate_short_image_filename,
 };
+use reqwest::blocking::Response;
+use scraper::Html;
+use std::{io::Read as _, time::Duration};
+use tauri::Emitter;
 
 use super::*;
+
+const WORDPRESS_CAPTION_USER_AGENT: &str = concat!(
+    "Gnosis-TMS/",
+    env!("CARGO_PKG_VERSION"),
+    " (+https://github.com/gnosistms/Gnosis-TMS-tauri-app)"
+);
+const MAX_WORDPRESS_MEDIA_RESPONSE_BYTES: u64 = 256 * 1024;
+pub(super) const EDITOR_IMAGE_CAPTION_ENRICHED_EVENT: &str = "editor-image-caption-enriched";
+
+#[derive(Debug, PartialEq, Eq)]
+struct WordPressMediaLookup {
+    endpoint: url::Url,
+    image_identity: String,
+}
+
+struct WordPressCaptionEnrichmentInput {
+    installation_id: i64,
+    project_id: Option<String>,
+    repo_name: String,
+    chapter_id: String,
+    row_id: String,
+    language_code: String,
+    image_url: String,
+    base_caption: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EditorImageCaptionEnrichedEvent {
+    chapter_id: String,
+    row_id: String,
+    language_code: String,
+    image_url: String,
+    row: EditorRow,
+    chapter_base_commit_sha: Option<String>,
+}
 
 pub(crate) fn save_gtms_editor_language_image_url_sync(
     app: &AppHandle,
     input: SaveEditorLanguageImageUrlInput,
 ) -> Result<SaveEditorLanguageImageResponse, String> {
+    let normalized_url = validate_editor_image_url(&input.url)?;
     let repo_path = resolve_project_git_repo_path(
         app,
         input.installation_id,
@@ -79,7 +120,7 @@ pub(crate) fn save_gtms_editor_language_image_url_sync(
 
     let next_image = Some(StoredFieldImage {
         kind: "url".to_string(),
-        url: Some(validate_editor_image_url(&input.url)?),
+        url: Some(normalized_url),
         path: None,
     });
     let replaced_uploaded_path = current_image
@@ -174,6 +215,399 @@ pub(crate) fn save_gtms_editor_language_image_url_sync(
         )?),
         chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
+}
+
+fn fetch_wordpress_media_caption(image_url: &str) -> Option<String> {
+    let lookup = wordpress_media_lookup(image_url)?;
+    let client = super::chapter_export::public_http_client_for_url(
+        lookup.endpoint.as_str(),
+        Duration::from_secs(4),
+        WORDPRESS_CAPTION_USER_AGENT,
+    )
+    .ok()?;
+    let response = client.get(lookup.endpoint).send().ok()?;
+    wordpress_caption_response(response, &lookup.image_identity)
+}
+
+fn wordpress_caption_response(response: Response, image_identity: &str) -> Option<String> {
+    if !response.status().is_success() {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    response
+        .take(MAX_WORDPRESS_MEDIA_RESPONSE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() as u64 > MAX_WORDPRESS_MEDIA_RESPONSE_BYTES {
+        return None;
+    }
+    let value: Value = serde_json::from_slice(&bytes).ok()?;
+    wordpress_caption_from_media_response(&value, image_identity)
+}
+
+fn wordpress_media_lookup(image_url: &str) -> Option<WordPressMediaLookup> {
+    let image = url::Url::parse(image_url).ok()?;
+    if !matches!(image.scheme(), "http" | "https") {
+        return None;
+    }
+    let host = image.host_str()?.to_ascii_lowercase();
+    if matches!(host.as_str(), "i0.wp.com" | "i1.wp.com" | "i2.wp.com") {
+        let mut segments = image.path_segments()?;
+        let origin_host = segments.next()?.trim();
+        if origin_host.is_empty() || origin_host.contains('@') || origin_host.contains(':') {
+            return None;
+        }
+        let origin_path = segments.collect::<Vec<_>>().join("/");
+        return wordpress_media_lookup(&format!("https://{origin_host}/{origin_path}"));
+    }
+    let filename = image.path_segments()?.next_back()?;
+    let search = wordpress_attachment_search_term(filename)?;
+    let image_identity = wordpress_image_identity(image.as_str())?;
+
+    let mut endpoint = if let Some(site_prefix) = host.strip_suffix(".files.wordpress.com") {
+        if site_prefix.is_empty() || site_prefix.contains('.') {
+            return None;
+        }
+        url::Url::parse(&format!(
+            "https://public-api.wordpress.com/wp/v2/sites/{site_prefix}.wordpress.com/media"
+        ))
+        .ok()?
+    } else {
+        let lower_path = image.path().to_ascii_lowercase();
+        let marker_index = lower_path.find("/wp-content/uploads/")?;
+        let install_prefix = image.path().get(..marker_index)?;
+        let mut site = image.clone();
+        site.set_query(None);
+        site.set_fragment(None);
+        site.set_path(&format!("{install_prefix}/wp-json/wp/v2/media"));
+        site
+    };
+    endpoint
+        .query_pairs_mut()
+        .append_pair("search", &search)
+        .append_pair("per_page", "100")
+        .append_pair("media_type", "image")
+        .append_pair("_fields", "caption,source_url,media_details");
+    Some(WordPressMediaLookup {
+        endpoint,
+        image_identity,
+    })
+}
+
+fn wordpress_attachment_search_term(filename: &str) -> Option<String> {
+    let decoded = percent_decode_utf8_lossy(filename);
+    let stem = decoded
+        .rsplit_once('.')
+        .map(|(stem, _)| stem)
+        .unwrap_or(decoded.as_str());
+    let mut normalized = stem.trim().to_string();
+    loop {
+        let before = normalized.len();
+        let lowercase = normalized.to_ascii_lowercase();
+        if let Some((prefix, dimensions)) = lowercase.rsplit_once('-') {
+            if let Some((width, height)) = dimensions.split_once('x') {
+                if !width.is_empty()
+                    && !height.is_empty()
+                    && width.bytes().all(|byte| byte.is_ascii_digit())
+                    && height.bytes().all(|byte| byte.is_ascii_digit())
+                {
+                    normalized.truncate(prefix.len());
+                }
+            }
+        }
+        for suffix in ["-scaled", "-rotated"] {
+            if normalized.to_ascii_lowercase().ends_with(suffix) {
+                normalized.truncate(normalized.len() - suffix.len());
+            }
+        }
+        if normalized.len() == before {
+            break;
+        }
+    }
+    let search = normalized
+        .split(|ch: char| ch == '-' || ch == '_' || ch.is_whitespace())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    (!search.is_empty()).then_some(search)
+}
+
+fn wordpress_caption_from_media_response(value: &Value, image_identity: &str) -> Option<String> {
+    let media = value
+        .as_array()?
+        .iter()
+        .find(|item| wordpress_media_item_matches_url(item, image_identity))?;
+    let rendered = media.pointer("/caption/rendered")?.as_str()?;
+    wordpress_caption_plain_text(rendered)
+}
+
+fn wordpress_media_item_matches_url(item: &Value, image_identity: &str) -> bool {
+    let source_url = item.get("source_url").and_then(Value::as_str);
+    let source_matches = source_url
+        .and_then(wordpress_image_identity)
+        .map(|identity| identity == image_identity)
+        .unwrap_or(false);
+    if source_matches {
+        return true;
+    }
+
+    let size_matches = item
+        .pointer("/media_details/sizes")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flat_map(|sizes| sizes.values())
+        .filter_map(|size| size.get("source_url").and_then(Value::as_str))
+        .filter_map(wordpress_image_identity)
+        .any(|identity| identity == image_identity);
+    if size_matches {
+        return true;
+    }
+
+    let Some(original_filename) = item
+        .pointer("/media_details/original_image")
+        .and_then(Value::as_str)
+    else {
+        return false;
+    };
+    let Some(source_url) = source_url else {
+        return false;
+    };
+    let Ok(mut original_url) = url::Url::parse(source_url) else {
+        return false;
+    };
+    let decoded_source_path = percent_decode_utf8_lossy(original_url.path());
+    let Some((directory, _)) = decoded_source_path.rsplit_once('/') else {
+        return false;
+    };
+    original_url.set_path(&format!("{directory}/{original_filename}"));
+    wordpress_image_identity(original_url.as_str())
+        .map(|identity| identity == image_identity)
+        .unwrap_or(false)
+}
+
+fn wordpress_image_identity(value: &str) -> Option<String> {
+    let url = url::Url::parse(value).ok()?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    let host = url.host_str()?.to_ascii_lowercase();
+    let port = url
+        .port()
+        .map(|port| format!(":{port}"))
+        .unwrap_or_default();
+    Some(format!(
+        "{host}{port}{}",
+        percent_decode_utf8_lossy(url.path())
+    ))
+}
+
+fn percent_decode_utf8_lossy(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            let hex = str::from_utf8(&bytes[index + 1..index + 3])
+                .ok()
+                .and_then(|pair| u8::from_str_radix(pair, 16).ok());
+            if let Some(hex) = hex {
+                decoded.push(hex);
+                index += 3;
+                continue;
+            }
+        }
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&decoded).to_string()
+}
+
+fn wordpress_caption_plain_text(rendered: &str) -> Option<String> {
+    let fragment = Html::parse_fragment(rendered);
+    let text = fragment
+        .root_element()
+        .text()
+        .flat_map(str::split_whitespace)
+        .collect::<Vec<_>>()
+        .join(" ");
+    (!text.is_empty()).then_some(text)
+}
+
+pub(crate) fn start_wordpress_caption_enrichment(
+    app: AppHandle,
+    input: SaveEditorLanguageImageUrlInput,
+    response: &SaveEditorLanguageImageResponse,
+) {
+    if response.status != "saved" {
+        return;
+    }
+    let Ok(image_url) = validate_editor_image_url(&input.url) else {
+        return;
+    };
+    if wordpress_media_lookup(&image_url).is_none() {
+        return;
+    }
+    let Some(saved_row) = response.row.as_ref() else {
+        return;
+    };
+    let base_caption = saved_row
+        .image_captions
+        .get(&input.language_code)
+        .cloned()
+        .unwrap_or_default();
+    let enrichment = WordPressCaptionEnrichmentInput {
+        installation_id: input.installation_id,
+        project_id: input.project_id,
+        repo_name: input.repo_name,
+        chapter_id: input.chapter_id,
+        row_id: input.row_id,
+        language_code: input.language_code,
+        image_url,
+        base_caption,
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let event = enrich_wordpress_caption_sync(&app, enrichment)
+            .ok()
+            .flatten();
+        if let Some(event) = event {
+            let _ = app.emit(EDITOR_IMAGE_CAPTION_ENRICHED_EVENT, event);
+        }
+    });
+}
+
+fn enrich_wordpress_caption_sync(
+    app: &AppHandle,
+    input: WordPressCaptionEnrichmentInput,
+) -> Result<Option<EditorImageCaptionEnrichedEvent>, String> {
+    let Some(caption) = fetch_wordpress_media_caption(&input.image_url) else {
+        return Ok(None);
+    };
+    let repo_path = resolve_project_git_repo_path(
+        app,
+        input.installation_id,
+        input.project_id.as_deref(),
+        Some(&input.repo_name),
+    )?;
+    ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
+    ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
+    let repo_lock = crate::repo_sync_shared::repo_sync_lock(&repo_path);
+    let _repo_lock_guard = crate::repo_sync_shared::acquire_repo_sync_lock(&repo_lock);
+    let chapter_path =
+        find_chapter_path_by_id(app, &repo_path.join("chapters"), &input.chapter_id)?;
+    let row_json_path = validated_row_json_path(&chapter_path, &input.row_id)?;
+    if !row_json_path.exists() {
+        return Ok(None);
+    }
+
+    let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
+    let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
+        format!(
+            "Could not read row file '{}': {error}",
+            row_json_path.display()
+        )
+    })?;
+    let original_row_file: StoredRowFile =
+        serde_json::from_str(&original_row_text).map_err(|error| {
+            format!(
+                "Could not parse row file '{}': {error}",
+                row_json_path.display()
+            )
+        })?;
+    if original_row_file.lifecycle.state == "deleted" {
+        return Ok(None);
+    }
+
+    if !wordpress_caption_enrichment_is_current(
+        &original_row_file,
+        &input.language_code,
+        &input.image_url,
+        &input.base_caption,
+    ) {
+        return Ok(None);
+    }
+    let current_caption = original_row_file
+        .fields
+        .get(&input.language_code)
+        .map(|field| normalize_editor_image_caption_value(&field.image_caption))
+        .unwrap_or_default();
+    if current_caption == caption {
+        return Ok(None);
+    }
+
+    let mut row_value: Value = serde_json::from_str(&original_row_text).map_err(|error| {
+        format!(
+            "Could not parse row file '{}': {error}",
+            row_json_path.display()
+        )
+    })?;
+    super::row_fields::apply_editor_image_caption_updates(
+        &mut row_value,
+        &BTreeMap::from([(input.language_code.clone(), caption)]),
+    )?;
+    let updated_row_json = serde_json::to_string_pretty(&row_value).map_err(|error| {
+        format!(
+            "Could not serialize row file '{}': {error}",
+            row_json_path.display()
+        )
+    })?;
+    let updated_row_text = format!("{updated_row_json}\n");
+    let updated_row_file: StoredRowFile = serde_json::from_value(row_value).map_err(|error| {
+        format!(
+            "Could not decode updated row '{}': {error}",
+            row_json_path.display()
+        )
+    })?;
+    let mut rollback_snapshots = Vec::new();
+    push_repo_file_snapshot(&mut rollback_snapshots, &repo_path, &relative_row_json)?;
+    let next_row = with_repo_file_rollback(&repo_path, &rollback_snapshots, || {
+        write_text_file(&row_json_path, &updated_row_text)?;
+        git_output(&repo_path, &["add", &relative_row_json])?;
+        git_commit_as_signed_in_user_with_metadata(
+            app,
+            &repo_path,
+            &format!(
+                "Import row {} {} image caption",
+                input.row_id, input.language_code
+            ),
+            &[&relative_row_json],
+            CommitMetadata {
+                operation: Some("editor-update"),
+                migration: None,
+                status_note: None,
+                ai_model: None,
+            },
+        )?;
+        Ok(updated_row_file.clone())
+    })?;
+    let row = editor_row_from_stored_row_file_with_update(&repo_path, &chapter_path, next_row)?;
+    Ok(Some(EditorImageCaptionEnrichedEvent {
+        chapter_id: input.chapter_id,
+        row_id: input.row_id,
+        language_code: input.language_code,
+        image_url: input.image_url,
+        row,
+        chapter_base_commit_sha: current_repo_head_sha(&repo_path),
+    }))
+}
+
+fn wordpress_caption_enrichment_is_current(
+    row: &StoredRowFile,
+    language_code: &str,
+    image_url: &str,
+    base_caption: &str,
+) -> bool {
+    let expected_image = Some(StoredFieldImage {
+        kind: "url".to_string(),
+        url: Some(image_url.to_string()),
+        path: None,
+    });
+    let current_caption = row
+        .fields
+        .get(language_code)
+        .map(|field| normalize_editor_image_caption_value(&field.image_caption))
+        .unwrap_or_default();
+    row_language_stored_image(row, language_code) == expected_image
+        && current_caption == normalize_editor_image_caption_value(base_caption)
 }
 
 pub(crate) fn upload_gtms_editor_language_image_sync(
@@ -1524,6 +1958,166 @@ mod tests {
             url: None,
             path: Some(path.to_string()),
         }
+    }
+
+    #[test]
+    fn wordpress_media_lookup_supports_self_hosted_subdirectories_and_thumbnails() {
+        let lookup = wordpress_media_lookup(
+            "https://example.com/news/wp-content/uploads/2026/07/Temple-Entrance-1024x683.jpg?fit=800",
+        )
+        .expect("WordPress upload URL should produce a lookup");
+
+        assert_eq!(lookup.endpoint.path(), "/news/wp-json/wp/v2/media");
+        assert_eq!(
+            lookup.image_identity,
+            "example.com/news/wp-content/uploads/2026/07/Temple-Entrance-1024x683.jpg"
+        );
+        let query = lookup
+            .endpoint
+            .query_pairs()
+            .into_owned()
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(
+            query.get("search").map(String::as_str),
+            Some("Temple Entrance")
+        );
+        assert_eq!(
+            query.get("_fields").map(String::as_str),
+            Some("caption,source_url,media_details")
+        );
+    }
+
+    #[test]
+    fn wordpress_media_lookup_supports_wordpress_dot_com_file_hosts() {
+        let lookup = wordpress_media_lookup(
+            "https://gnosistms.files.wordpress.com/2026/07/plate-12-scaled.jpeg",
+        )
+        .expect("WordPress.com file URL should produce a lookup");
+
+        assert_eq!(lookup.endpoint.host_str(), Some("public-api.wordpress.com"));
+        assert_eq!(
+            lookup.endpoint.path(),
+            "/wp/v2/sites/gnosistms.wordpress.com/media"
+        );
+        assert_eq!(
+            lookup.image_identity,
+            "gnosistms.files.wordpress.com/2026/07/plate-12-scaled.jpeg"
+        );
+    }
+
+    #[test]
+    fn wordpress_media_lookup_supports_jetpack_image_cdn_urls() {
+        let lookup = wordpress_media_lookup(
+            "https://i0.wp.com/example.com/wp-content/uploads/2026/07/plate-scaled-1024x768.jpg?resize=800%2C600",
+        )
+        .expect("Jetpack CDN URL should produce an origin-site lookup");
+
+        assert_eq!(lookup.endpoint.host_str(), Some("example.com"));
+        assert_eq!(lookup.endpoint.path(), "/wp-json/wp/v2/media");
+        assert_eq!(
+            lookup.image_identity,
+            "example.com/wp-content/uploads/2026/07/plate-scaled-1024x768.jpg"
+        );
+    }
+
+    #[test]
+    fn wordpress_media_lookup_decodes_non_ascii_filename_search_terms() {
+        let lookup = wordpress_media_lookup(
+            "https://example.com/wp-content/uploads/2026/07/Caf%C3%A9-Exterior-800x600.jpg",
+        )
+        .expect("encoded WordPress upload URL should produce a lookup");
+        let query = lookup
+            .endpoint
+            .query_pairs()
+            .into_owned()
+            .collect::<BTreeMap<_, _>>();
+
+        assert_eq!(
+            query.get("search").map(String::as_str),
+            Some("Café Exterior")
+        );
+    }
+
+    #[test]
+    fn wordpress_media_lookup_ignores_non_wordpress_image_urls() {
+        assert!(wordpress_media_lookup("https://cdn.example.com/images/photo.jpg").is_none());
+    }
+
+    #[test]
+    fn wordpress_caption_response_matches_generated_size_url_not_editable_slug() {
+        let response = json!([
+            {
+                "slug": "temple-entrance",
+                "source_url": "https://example.com/wp-content/uploads/2026/07/other.jpg",
+                "media_details": { "sizes": {} },
+                "caption": { "rendered": "<p>Wrong caption</p>" }
+            },
+            {
+                "slug": "an-editor-renamed-this-attachment",
+                "source_url": "http://example.com/wp-content/uploads/2026/07/Temple-Entrance.jpg",
+                "media_details": {
+                    "sizes": {
+                        "large": {
+                            "source_url": "https://example.com/wp-content/uploads/2026/07/Temple-Entrance-1024x683.jpg"
+                        }
+                    }
+                },
+                "caption": {
+                    "rendered": "<p>Temple <em>entrance</em> &amp; courtyard.</p>"
+                }
+            }
+        ]);
+
+        assert_eq!(
+            wordpress_caption_from_media_response(
+                &response,
+                "example.com/wp-content/uploads/2026/07/Temple-Entrance-1024x683.jpg"
+            ),
+            Some("Temple entrance & courtyard.".to_string())
+        );
+        assert!(
+            wordpress_caption_from_media_response(&response, "example.com/missing.jpg").is_none()
+        );
+    }
+
+    #[test]
+    fn wordpress_caption_enrichment_replaces_old_caption_but_rejects_newer_edits() {
+        let row: StoredRowFile = serde_json::from_value(json!({
+            "row_id": "row-1",
+            "structure": { "order_key": "0001" },
+            "status": { "review_state": "draft" },
+            "origin": { "source_row_number": 1 },
+            "fields": {
+                "vi": {
+                    "plain_text": "",
+                    "image_caption": "Previous image caption",
+                    "image": {
+                        "kind": "url",
+                        "url": "https://example.com/wp-content/uploads/new.jpg"
+                    }
+                }
+            }
+        }))
+        .expect("stored row should decode");
+
+        assert!(wordpress_caption_enrichment_is_current(
+            &row,
+            "vi",
+            "https://example.com/wp-content/uploads/new.jpg",
+            "Previous image caption",
+        ));
+        assert!(!wordpress_caption_enrichment_is_current(
+            &row,
+            "vi",
+            "https://example.com/wp-content/uploads/new.jpg",
+            "Newer user caption",
+        ));
+        assert!(!wordpress_caption_enrichment_is_current(
+            &row,
+            "vi",
+            "https://example.com/wp-content/uploads/replaced.jpg",
+            "Previous image caption",
+        ));
     }
 
     #[test]
