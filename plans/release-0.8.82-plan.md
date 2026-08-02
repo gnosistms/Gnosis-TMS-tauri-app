@@ -27,9 +27,9 @@ Date: 2026-08-02
 - [x] Run pre-tag verification: JavaScript and workflow tests, JavaScript lint,
       frontend build, Cargo formatting, Rust tests, version consistency, and
       `git diff --check`.
-- [ ] Merge the release PR.
-- [ ] Tag `v0.8.82` and push the tag.
-- [ ] Confirm the release workflow succeeds on macOS arm64, macOS x64, and Windows
+- [x] Merge the release PR.
+- [x] Tag `v0.8.82` and push the tag.
+- [x] Confirm the release workflow succeeds on macOS arm64, macOS x64, and Windows
       x64, and verify the published GitHub Release assets and updater metadata.
 
 ## Pre-tag verification
@@ -42,3 +42,14 @@ Date: 2026-08-02
 - The unused-code audit reports the known baseline file
   `scripts/bench-ai-translate.mjs` and no additional findings.
 - `git diff --check` passed.
+
+## Release verification
+
+- Release PR #232 merged as `36ae41ac4ede386640ef6c78eb5d4097edf2f7aa`.
+- Annotated tag `v0.8.82` points to the release commit.
+- Release workflow run 30765886156 succeeded for macOS arm64, macOS x64, and
+  Windows x64.
+- The stable GitHub Release is public, not a draft or prerelease, and contains 13
+  non-empty uploaded assets.
+- `latest.json` reports version 0.8.82 with seven signed platform entries, all
+  targeting `v0.8.82` assets.
