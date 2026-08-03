@@ -133,6 +133,19 @@ function setWordPress(patch) {
   };
 }
 
+function readyWordPressSubmitOperations(overrides = {}) {
+  return {
+    flushDirtyEditorRows: async () => true,
+    waitForEditorOperations: async () => {},
+    waitForRepoQueue: async () => {},
+    assertRowsReady() {},
+    async reloadChapter() {
+      state.editorChapter = { ...state.editorChapter, status: "ready" };
+    },
+    ...overrides,
+  };
+}
+
 test.afterEach(() => {
   resetSessionState();
   clearActiveStorageLogin();
@@ -355,11 +368,11 @@ test("submitWordPressExport strips the leading H1 and sends it as the overwrite 
   });
 
   const invokeCalls = [];
-  await submitWordPressExport(() => {}, {
+  await submitWordPressExport(() => {}, readyWordPressSubmitOperations({
     invoke: async (command, payload) => {
       invokeCalls.push({ command, payload });
     },
-  });
+  }));
 
   assert.equal(invokeCalls.length, 1);
   const input = invokeCalls[0].payload.input;
@@ -384,11 +397,11 @@ test("submitWordPressExport sends no overwrite title without a leading H1", asyn
   });
 
   const invokeCalls = [];
-  await submitWordPressExport(() => {}, {
+  await submitWordPressExport(() => {}, readyWordPressSubmitOperations({
     invoke: async (command, payload) => {
       invokeCalls.push({ command, payload });
     },
-  });
+  }));
 
   assert.equal(invokeCalls.length, 1);
   assert.equal(invokeCalls[0].payload.input.title, "");
@@ -498,11 +511,11 @@ test("submitWordPressExport sends content, footnotes, and a job id for create", 
   updateWordPressTitle("My Draft");
 
   const invokeCalls = [];
-  await submitWordPressExport(() => {}, {
+  await submitWordPressExport(() => {}, readyWordPressSubmitOperations({
     invoke: async (command, payload) => {
       invokeCalls.push({ command, payload });
     },
-  });
+  }));
 
   assert.equal(invokeCalls.length, 1);
   assert.equal(invokeCalls[0].command, "export_chapter_to_wordpress");
@@ -519,6 +532,130 @@ test("submitWordPressExport sends content, footnotes, and a job id for create", 
   assert.ok(input.jobId);
   assert.equal(state.editorChapter.exportModal.status, "exporting");
   assert.equal(currentWordPressExportState().jobId, input.jobId);
+});
+
+test("submitWordPressExport refreshes after pending writes before serializing quote styles", async () => {
+  installWordPressFixture();
+  setWordPress({
+    connectionStatus: "connected",
+    connection: { blogId: "12345", blogUrl: "https://example.wordpress.com" },
+    title: "Fresh chapter",
+  });
+  const events = [];
+  const invokeCalls = [];
+
+  await submitWordPressExport(() => {}, readyWordPressSubmitOperations({
+    async flushDirtyEditorRows(_render, options) {
+      events.push(`flush:${options.waitForDurable}`);
+      return true;
+    },
+    async waitForEditorOperations(predicate) {
+      assert.equal(predicate({
+        repoScope: "42:project-1:project-repo",
+        metadata: { chapterId: "chapter-1" },
+      }), true);
+      events.push("editor-idle");
+    },
+    async waitForRepoQueue(scope) {
+      events.push(`repo-idle:${scope}`);
+    },
+    assertRowsReady() {
+      events.push("rows-ready");
+    },
+    async reloadChapter(_render, options) {
+      events.push(`reload:${options.preserveVisibleRows}`);
+      state.editorChapter = {
+        ...state.editorChapter,
+        status: "ready",
+        rows: [{
+          ...state.editorChapter.rows[0],
+          textStyle: "quote",
+          fields: { ...state.editorChapter.rows[0].fields, vi: "Quoted after refresh" },
+        }],
+      };
+    },
+    async invoke(command, payload) {
+      events.push("invoke");
+      invokeCalls.push({ command, payload });
+    },
+  }));
+
+  assert.deepEqual(events, [
+    "flush:true",
+    "editor-idle",
+    "repo-idle:42:project-1:project-repo",
+    "rows-ready",
+    "reload:true",
+    "rows-ready",
+    "invoke",
+  ]);
+  assert.match(invokeCalls[0].payload.input.content, /<!-- wp:quote -->/);
+  assert.match(invokeCalls[0].payload.input.content, /Quoted after refresh/);
+});
+
+test("submitWordPressExport stops when dirty rows cannot be saved", async () => {
+  installWordPressFixture();
+  setWordPress({
+    connectionStatus: "connected",
+    connection: { blogId: "12345", blogUrl: "https://example.wordpress.com" },
+    title: "Blocked export",
+  });
+  let invoked = false;
+
+  await submitWordPressExport(() => {}, readyWordPressSubmitOperations({
+    async flushDirtyEditorRows() {
+      return false;
+    },
+    async invoke() {
+      invoked = true;
+    },
+  }));
+
+  assert.equal(invoked, false);
+  assert.match(state.editorChapter.exportModal.error, /finish saving or resolve/i);
+});
+
+test("submitWordPressExport ignores soft-deleted rows during readiness validation", async () => {
+  installWordPressFixture({
+    status: "ready",
+    rows: [
+      {
+        rowId: "row-1",
+        lifecycleState: "active",
+        textStyle: "quote",
+        fields: { vi: "Visible quotation", es: "Visible quotation" },
+        footnotes: {},
+      },
+      {
+        rowId: "row-deleted",
+        lifecycleState: "deleted",
+        textStyle: "paragraph",
+        fields: { vi: "Deleted text", es: "Deleted text" },
+        footnotes: {},
+      },
+    ],
+  });
+  setWordPress({
+    connectionStatus: "connected",
+    connection: { blogId: "12345", blogUrl: "https://example.wordpress.com" },
+    title: "Chapter with deleted row",
+  });
+  const readinessChecks = [];
+  const invokeCalls = [];
+
+  await submitWordPressExport(() => {}, readyWordPressSubmitOperations({
+    assertRowsReady(options) {
+      readinessChecks.push(options.rowIds);
+    },
+    async invoke(command, payload) {
+      invokeCalls.push({ command, payload });
+    },
+  }));
+
+  assert.deepEqual(readinessChecks, [["row-1"], ["row-1"]]);
+  assert.equal(invokeCalls.length, 1);
+  assert.match(invokeCalls[0].payload.input.content, /<!-- wp:quote -->/);
+  assert.doesNotMatch(invokeCalls[0].payload.input.content, /Deleted text/);
 });
 
 test("submitWordPressExport validates the form before invoking", async () => {

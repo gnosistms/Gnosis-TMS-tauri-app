@@ -830,7 +830,8 @@ export async function submitEditorExport(render, operations = {}) {
     return;
   }
 
-  // Clipboard and WordPress exports serialize the editor's in-memory rows.
+  // Clipboard exports serialize the editor's in-memory rows. WordPress export
+  // requires an open editor, then refreshes it from durable storage first.
   const needsOpenEditor = option.kind === "copy"
     || (option.kind === "link" && option.format === "wordpress");
   if (needsOpenEditor && !exportChapterIsOpenInEditor()) {
