@@ -1,1 +1,170 @@
-m«ëˆ§½©buªàºg§¶ÊÜº/Ú¦ŸŞv+h®	h²Æ«Ê †X †×r­zËc±KæÚ±î¸Ø[é¢Šwâ•ê(º×â•æÛ­æ¤n·š‘éÜ¡×¢ëiºÛ©Š{h–)Ş²‡åzx-†{¦×^r‡^uç(uè§¦ëa…éiv+)•¬­†+&zËè¢›­Šznµø¥y×Ÿjém~ŠìµØ§¢‹­¦ëhºÚnµø¥y×Ÿjém~ŠìµÚ.
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import { buildEditorDerivedGlossaryModel, buildEditorGlossaryModel } from "./editor-glossary-highlighting.js";
+import { buildCachedEditorRowGlossaryHighlights } from "./editor-glossary-highlight-cache.js";
+
+function buildDirectGlossaryState() {
+  const glossary = {
+    glossaryId: "glossary-1",
+    repoName: "glossary-1",
+    title: "Glossary",
+    sourceLanguage: {
+      code: "es",
+      name: "Spanish",
+    },
+    targetLanguage: {
+      code: "vi",
+      name: "Vietnamese",
+    },
+    terms: [
+      {
+        termId: "term-1",
+        sourceTerms: ["intelectual"],
+        targetTerms: ["lÃ½ trÃ­"],
+      },
+      {
+        termId: "term-2",
+        sourceTerms: ["el intelectual"],
+        targetTerms: ["trung tÃ¢m lÃ½ trÃ­"],
+      },
+    ],
+  };
+
+  return {
+    ...glossary,
+    matcherModel: buildEditorGlossaryModel(glossary),
+  };
+}
+
+test("direct glossary target highlights take precedence over derived target highlights", () => {
+  const row = {
+    rowId: "row-1",
+    fields: {
+      es: "El intelectual.",
+      en: "The intellectual.",
+      vi: "trung tÃ¢m lÃ½ trÃ­.",
+    },
+  };
+  const chapterState = {
+    chapterId: "chapter-1",
+    languages: [
+      { code: "es", name: "Spanish" },
+      { code: "en", name: "English" },
+      { code: "vi", name: "Vietnamese" },
+    ],
+    glossary: buildDirectGlossaryState(),
+    rows: [row],
+    derivedGlossariesByRowId: {
+      "row-1": {
+        status: "ready",
+        error: "",
+        requestKey: "req-1",
+        translationSourceLanguageCode: "en",
+        glossarySourceLanguageCode: "es",
+        targetLanguageCode: "vi",
+        translationSourceText: "The intellectual.",
+        glossarySourceText: "El intelectual.",
+        glossarySourceTextOrigin: "row",
+        glossaryRevisionKey: JSON.stringify({
+          glossaryId: "glossary-1",
+          repoName: "glossary-1",
+          sourceLanguageCode: "es",
+          targetLanguageCode: "vi",
+          terms: [
+            {
+              termId: "term-1",
+              sourceTerms: ["intelectual"],
+              targetTerms: ["lÃ½ trÃ­"],
+              notes: [],
+            },
+            {
+              termId: "term-2",
+              sourceTerms: ["el intelectual"],
+              targetTerms: ["trung tÃ¢m lÃ½ trÃ­"],
+              notes: [],
+            },
+          ],
+        }),
+        entries: [
+          {
+            sourceTerm: "intellectual",
+            glossarySourceTerm: "intelectual",
+            targetVariants: ["lÃ½ trÃ­"],
+            notes: [],
+          },
+        ],
+        matcherModel: buildEditorDerivedGlossaryModel({
+          sourceLanguage: { code: "en", name: "English" },
+          targetLanguage: { code: "vi", name: "Vietnamese" },
+          entries: [
+            {
+              sourceTerm: "intellectual",
+              glossarySourceTerm: "intelectual",
+              targetVariants: ["lÃ½ trÃ­"],
+              notes: [],
+            },
+          ],
+          glossaryId: "glossary-1",
+          repoName: "glossary-1",
+          title: "Glossary",
+        }),
+      },
+    },
+  };
+
+  const highlights = buildCachedEditorRowGlossaryHighlights(row, chapterState);
+
+  assert.match(highlights.get("es")?.html ?? "", />El intelectual<\/mark>/);
+  assert.match(highlights.get("en")?.html ?? "", />intellectual<\/mark>/);
+  assert.match(highlights.get("vi")?.html ?? "", />trung tÃ¢m lÃ½ trÃ­<\/mark>/);
+  assert.doesNotMatch(highlights.get("vi")?.html ?? "", />lÃ½ trÃ­<\/mark>/);
+});
+
+test("Chinese target edits invalidate highlights when glossary script-code casing differs", () => {
+  const glossary = {
+    glossaryId: "glossary-zh-hant",
+    repoName: "glossary-zh-hant",
+    title: "English to Traditional Chinese",
+    sourceLanguage: { code: "en", name: "English" },
+    targetLanguage: { code: "zh-hant", name: "Chinese (Traditional)" },
+    terms: [{
+      termId: "term-zh-1",
+      sourceTerms: ["Level of Being"],
+      targetTerms: ["å­˜åœ¨å±¤æ¬¡"],
+    }],
+  };
+  const row = {
+    rowId: "row-zh-1",
+    fields: {
+      en: "Our Level of Being can change.",
+      "zh-Hant": "æˆ‘å€‘å¯ä»¥æ”¹è®Šã€‚",
+    },
+  };
+  const chapterState = {
+    chapterId: "chapter-zh-1",
+    languages: [
+      { code: "en", name: "English" },
+      { code: "zh-Hant", name: "Chinese (Traditional)" },
+    ],
+    glossary: {
+      ...glossary,
+      matcherModel: buildEditorGlossaryModel(glossary),
+    },
+    rows: [row],
+    derivedGlossariesByRowId: {},
+  };
+
+  const missingTargetHighlights = buildCachedEditorRowGlossaryHighlights(row, chapterState);
+  assert.match(missingTargetHighlights.get("en")?.html ?? "", /glossary-match-error/);
+  assert.equal(missingTargetHighlights.has("zh-Hant"), false);
+
+  row.fields["zh-Hant"] = "æˆ‘å€‘çš„å­˜åœ¨å±¤æ¬¡å¯ä»¥æ”¹è®Šã€‚";
+  const matchingTargetHighlights = buildCachedEditorRowGlossaryHighlights(row, chapterState);
+
+  assert.doesNotMatch(matchingTargetHighlights.get("en")?.html ?? "", /glossary-match-error/);
+  assert.match(
+    matchingTargetHighlights.get("zh-Hant")?.html ?? "",
+    /<mark[^>]*>å­˜åœ¨å±¤æ¬¡<\/mark>/,
+  );
+});
