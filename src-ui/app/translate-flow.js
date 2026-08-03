@@ -805,7 +805,10 @@ export function selectEditorExportOption(render, optionId) {
 }
 
 export async function submitEditorExport(render) {
-  await submitEditorExportFlow(render);
+  await submitEditorExportFlow(render, {
+    flushDirtyEditorRows,
+    reloadChapter: reloadSelectedChapterEditorData,
+  });
 }
 
 export function closeWordPressExportSuccessModal(render) {

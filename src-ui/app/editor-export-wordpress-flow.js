@@ -14,6 +14,13 @@ import {
   state,
 } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
+import { waitForEditorOperationQueueIdle } from "./editor-operation-queue.js";
+import { assertQueuedEditorRowsReady } from "./editor-queued-write.js";
+import { reloadSelectedChapterEditorData } from "./editor-chapter-reload.js";
+import {
+  projectRepoScope,
+  waitForRepoWriteQueueIdle,
+} from "./repo-write-queue.js";
 import {
   loadStoredEditorExportDefault,
   saveStoredEditorExportDefault,
@@ -242,6 +249,58 @@ export function selectedWordPressPost(wordpress) {
   return wordpress.searchResults.find((post) => post.id === wordpress.selectedPostId) ?? null;
 }
 
+function editorOperationMatchesChapter(operation, repoScope, chapterId) {
+  return operation?.repoScope === repoScope
+    && operation?.metadata?.chapterId === chapterId;
+}
+
+async function prepareWordPressExportSnapshot(render, team, context, operations = {}) {
+  const chapterId = state.editorChapter?.chapterId ?? "";
+  const repoScope = projectRepoScope({ team, project: context?.project ?? null });
+  if (!chapterId || !repoScope) {
+    throw new Error("Could not identify the open file for export.");
+  }
+
+  const flushDirtyRows = operations.flushDirtyEditorRows;
+  if (typeof flushDirtyRows !== "function") {
+    throw new Error("Could not prepare the latest saved file for WordPress export.");
+  }
+  const flushed = await flushDirtyRows(render, { waitForDurable: true });
+  if (flushed === false) {
+    throw new Error("Finish saving or resolve the file before exporting to WordPress.");
+  }
+
+  const matchesChapter = (operation) =>
+    editorOperationMatchesChapter(operation, repoScope, chapterId);
+  const waitForEditorOperations =
+    operations.waitForEditorOperations ?? waitForEditorOperationQueueIdle;
+  const waitForRepoQueue = operations.waitForRepoQueue ?? waitForRepoWriteQueueIdle;
+  await waitForEditorOperations(matchesChapter);
+  await waitForRepoQueue(repoScope);
+
+  const assertRowsReady = operations.assertRowsReady ?? assertQueuedEditorRowsReady;
+  const assertReady = () => {
+    const activeRowIds = (Array.isArray(state.editorChapter?.rows) ? state.editorChapter.rows : [])
+      .filter((row) => row?.lifecycleState !== "deleted")
+      .map((row) => row?.rowId ?? row?.id ?? "")
+      .filter(Boolean);
+    assertRowsReady({
+      chapterId,
+      rowIds: activeRowIds,
+      forbidPendingWrites: true,
+      message: "Finish saving, refresh, or resolve the file before exporting to WordPress.",
+    });
+  };
+  assertReady();
+
+  const reloadChapter = operations.reloadChapter ?? reloadSelectedChapterEditorData;
+  await reloadChapter(render, { preserveVisibleRows: true });
+  if (state.editorChapter?.chapterId !== chapterId || state.editorChapter?.status !== "ready") {
+    throw new Error("The file changed while preparing the WordPress export. Please try again.");
+  }
+  assertReady();
+}
+
 export async function submitWordPressExport(render, operations = {}) {
   const invokeCommand = operations.invoke ?? invoke;
   const modal = currentExportModal();
@@ -275,7 +334,39 @@ export async function submitWordPressExport(render, operations = {}) {
     return;
   }
 
-  const blocks = buildEditorPreviewDocument(state.editorChapter?.rows, languageCode);
+  updateExportModal({ status: "exporting", error: "" });
+  updateWordPressState({ exportStage: "Preparing the latest saved chapter..." });
+  render();
+
+  try {
+    await prepareWordPressExportSnapshot(render, team, context, operations);
+  } catch (error) {
+    failWordPressAction(render, error);
+    return;
+  }
+
+  const refreshedWordPress = currentWordPressExportState();
+  const refreshedTeam = selectedProjectsTeam();
+  const refreshedContext = findChapterContext(state.editorChapter?.chapterId);
+  const refreshedLanguageCode = String(
+    selectedEditorPreviewLanguageCode(state.editorChapter) ?? "",
+  ).trim();
+  if (
+    !refreshedWordPress
+    || !Number.isFinite(refreshedTeam?.installationId)
+    || !refreshedContext?.project
+    || !refreshedLanguageCode
+  ) {
+    failWordPressAction(render, "The file changed while preparing the WordPress export. Please try again.");
+    return;
+  }
+  const refreshedOverwritePost = selectedWordPressPost(refreshedWordPress);
+  if (refreshedWordPress.mode === "overwrite" && !refreshedOverwritePost) {
+    failWordPressAction(render, "Choose the post to overwrite first.");
+    return;
+  }
+
+  const blocks = buildEditorPreviewDocument(state.editorChapter?.rows, refreshedLanguageCode);
   const { content, footnotes, title: headingTitle } = serializeEditorPreviewWordPress(blocks);
   if (!content.trim()) {
     failWordPressAction(render, "There is nothing to export.");
@@ -283,23 +374,22 @@ export async function submitWordPressExport(render, operations = {}) {
   }
 
   const jobId = createWordPressJobId();
-  updateExportModal({ status: "exporting", error: "" });
   updateWordPressState({ jobId, exportStage: "Starting the export..." });
   render();
 
   try {
     await invokeCommand("export_chapter_to_wordpress", {
       input: {
-        installationId: team.installationId,
-        repoName: context.project.name,
-        projectId: context.project.id ?? null,
+        installationId: refreshedTeam.installationId,
+        repoName: refreshedContext.project.name,
+        projectId: refreshedContext.project.id ?? null,
         jobId,
-        mode: wordpress.mode,
-        postId: wordpress.mode === "overwrite" ? overwritePost.id : null,
+        mode: refreshedWordPress.mode,
+        postId: refreshedWordPress.mode === "overwrite" ? refreshedOverwritePost.id : null,
         // Create uses the (editable) title field; overwrite only updates the
         // post title when the chapter's leading H1 supplies one.
-        title: wordpress.mode === "create"
-          ? String(wordpress.title ?? "").trim()
+        title: refreshedWordPress.mode === "create"
+          ? String(refreshedWordPress.title ?? "").trim()
           : headingTitle ?? "",
         content,
         footnotes,
