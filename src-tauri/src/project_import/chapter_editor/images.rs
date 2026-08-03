@@ -3,7 +3,7 @@ use crate::{
     short_path_names::allocate_short_image_filename,
 };
 use reqwest::blocking::Response;
-use scraper::Html;
+use scraper::{ElementRef, Html, Selector};
 use std::{io::Read as _, time::Duration};
 use tauri::Emitter;
 
@@ -15,12 +15,21 @@ const WORDPRESS_CAPTION_USER_AGENT: &str = concat!(
     " (+https://github.com/gnosistms/Gnosis-TMS-tauri-app)"
 );
 const MAX_WORDPRESS_MEDIA_RESPONSE_BYTES: u64 = 256 * 1024;
+const MAX_WORDPRESS_MEDIA_SEARCH_ATTEMPTS: usize = 4;
+const MIN_WORDPRESS_MEDIA_SEARCH_TOKENS: usize = 3;
 pub(super) const EDITOR_IMAGE_CAPTION_ENRICHED_EVENT: &str = "editor-image-caption-enriched";
 
 #[derive(Debug, PartialEq, Eq)]
 struct WordPressMediaLookup {
-    endpoint: url::Url,
+    endpoints: Vec<url::Url>,
     image_identity: String,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum WordPressCaptionMatch {
+    NoMatch,
+    MatchedWithoutCaption,
+    Caption(String),
 }
 
 struct WordPressCaptionEnrichmentInput {
@@ -220,16 +229,28 @@ pub(crate) fn save_gtms_editor_language_image_url_sync(
 fn fetch_wordpress_media_caption(image_url: &str) -> Option<String> {
     let lookup = wordpress_media_lookup(image_url)?;
     let client = super::chapter_export::public_http_client_for_url(
-        lookup.endpoint.as_str(),
+        lookup.endpoints.first()?.as_str(),
         Duration::from_secs(4),
         WORDPRESS_CAPTION_USER_AGENT,
     )
     .ok()?;
-    let response = client.get(lookup.endpoint).send().ok()?;
-    wordpress_caption_response(response, &lookup.image_identity)
+    for endpoint in lookup.endpoints {
+        let Ok(response) = client.get(endpoint).send() else {
+            continue;
+        };
+        match wordpress_caption_response(response, &lookup.image_identity) {
+            Some(WordPressCaptionMatch::Caption(caption)) => return Some(caption),
+            Some(WordPressCaptionMatch::MatchedWithoutCaption) => return None,
+            Some(WordPressCaptionMatch::NoMatch) | None => {}
+        }
+    }
+    None
 }
 
-fn wordpress_caption_response(response: Response, image_identity: &str) -> Option<String> {
+fn wordpress_caption_response(
+    response: Response,
+    image_identity: &str,
+) -> Option<WordPressCaptionMatch> {
     if !response.status().is_success() {
         return None;
     }
@@ -261,10 +282,11 @@ fn wordpress_media_lookup(image_url: &str) -> Option<WordPressMediaLookup> {
         return wordpress_media_lookup(&format!("https://{origin_host}/{origin_path}"));
     }
     let filename = image.path_segments()?.next_back()?;
-    let search = wordpress_attachment_search_term(filename)?;
+    let slug = wordpress_attachment_slug_candidate(filename)?;
+    let searches = wordpress_attachment_search_terms(filename)?;
     let image_identity = wordpress_image_identity(image.as_str())?;
 
-    let mut endpoint = if let Some(site_prefix) = host.strip_suffix(".files.wordpress.com") {
+    let endpoint = if let Some(site_prefix) = host.strip_suffix(".files.wordpress.com") {
         if site_prefix.is_empty() || site_prefix.contains('.') {
             return None;
         }
@@ -282,19 +304,54 @@ fn wordpress_media_lookup(image_url: &str) -> Option<WordPressMediaLookup> {
         site.set_path(&format!("{install_prefix}/wp-json/wp/v2/media"));
         site
     };
-    endpoint
+    let mut exact_endpoint = endpoint.clone();
+    exact_endpoint
         .query_pairs_mut()
-        .append_pair("search", &search)
-        .append_pair("per_page", "100")
+        .append_pair("slug", &slug)
+        .append_pair("per_page", "1")
         .append_pair("media_type", "image")
         .append_pair("_fields", "caption,source_url,media_details");
+    let mut endpoints = vec![exact_endpoint];
+    endpoints.extend(searches.into_iter().map(|search| {
+        let mut search_endpoint = endpoint.clone();
+        search_endpoint
+            .query_pairs_mut()
+            .append_pair("search", &search)
+            .append_pair("per_page", "100")
+            .append_pair("media_type", "image")
+            .append_pair("_fields", "caption,source_url,media_details");
+        search_endpoint
+    }));
     Some(WordPressMediaLookup {
-        endpoint,
+        endpoints,
         image_identity,
     })
 }
 
-fn wordpress_attachment_search_term(filename: &str) -> Option<String> {
+fn wordpress_attachment_slug_candidate(filename: &str) -> Option<String> {
+    let decoded = percent_decode_utf8_lossy(filename);
+    let stem = decoded
+        .rsplit_once('.')
+        .map(|(stem, _)| stem)
+        .unwrap_or(decoded.as_str());
+    let mut slug = String::with_capacity(stem.len());
+    let mut last_was_dash = false;
+    for ch in stem.chars().flat_map(char::to_lowercase) {
+        if ch.is_alphanumeric() || ch == '_' {
+            slug.push(ch);
+            last_was_dash = false;
+        } else if (ch == '-' || ch.is_whitespace()) && !slug.is_empty() && !last_was_dash {
+            slug.push('-');
+            last_was_dash = true;
+        }
+    }
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+    (!slug.is_empty()).then_some(slug)
+}
+
+fn wordpress_attachment_search_terms(filename: &str) -> Option<Vec<String>> {
     let decoded = percent_decode_utf8_lossy(filename);
     let stem = decoded
         .rsplit_once('.')
@@ -324,21 +381,43 @@ fn wordpress_attachment_search_term(filename: &str) -> Option<String> {
             break;
         }
     }
-    let search = normalized
+    let tokens = normalized
         .split(|ch: char| ch == '-' || ch == '_' || ch.is_whitespace())
         .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ");
-    (!search.is_empty()).then_some(search)
+        .collect::<Vec<_>>();
+    if tokens.is_empty() {
+        return None;
+    }
+    let removable_tokens = tokens
+        .len()
+        .saturating_sub(MIN_WORDPRESS_MEDIA_SEARCH_TOKENS);
+    let fallback_count = removable_tokens.min(MAX_WORDPRESS_MEDIA_SEARCH_ATTEMPTS - 1);
+    Some(
+        (0..=fallback_count)
+            .map(|removed| tokens[..tokens.len() - removed].join(" "))
+            .collect(),
+    )
 }
 
-fn wordpress_caption_from_media_response(value: &Value, image_identity: &str) -> Option<String> {
-    let media = value
+fn wordpress_caption_from_media_response(
+    value: &Value,
+    image_identity: &str,
+) -> Option<WordPressCaptionMatch> {
+    let Some(media) = value
         .as_array()?
         .iter()
-        .find(|item| wordpress_media_item_matches_url(item, image_identity))?;
-    let rendered = media.pointer("/caption/rendered")?.as_str()?;
-    wordpress_caption_plain_text(rendered)
+        .find(|item| wordpress_media_item_matches_url(item, image_identity))
+    else {
+        return Some(WordPressCaptionMatch::NoMatch);
+    };
+    let caption = media
+        .pointer("/caption/rendered")
+        .and_then(Value::as_str)
+        .and_then(wordpress_caption_plain_text);
+    Some(match caption {
+        Some(caption) => WordPressCaptionMatch::Caption(caption),
+        None => WordPressCaptionMatch::MatchedWithoutCaption,
+    })
 }
 
 fn wordpress_media_item_matches_url(item: &Value, image_identity: &str) -> bool {
@@ -424,13 +503,53 @@ fn percent_decode_utf8_lossy(value: &str) -> String {
 
 fn wordpress_caption_plain_text(rendered: &str) -> Option<String> {
     let fragment = Html::parse_fragment(rendered);
+    let more_link_selector = Selector::parse(".more-link").ok()?;
+    let last_text_node = fragment
+        .root_element()
+        .descendants()
+        .filter(|node| {
+            node.value()
+                .as_text()
+                .is_some_and(|text| !text.trim().is_empty())
+        })
+        .last();
+    let trailing_more_link = last_text_node.and_then(|last_text_node| {
+        fragment.select(&more_link_selector).find(|more_link| {
+            more_link
+                .descendants()
+                .any(|node| node.id() == last_text_node.id())
+        })
+    });
     let text = fragment
         .root_element()
-        .text()
+        .descendants()
+        .filter(|node| {
+            !trailing_more_link.is_some_and(|more_link| {
+                node.ancestors()
+                    .filter_map(ElementRef::wrap)
+                    .any(|ancestor| ancestor.id() == more_link.id())
+            })
+        })
+        .filter_map(|node| node.value().as_text().map(|text| text.as_ref()))
         .flat_map(str::split_whitespace)
         .collect::<Vec<_>>()
         .join(" ");
+    let text = if trailing_more_link.is_some() {
+        strip_wordpress_generated_more_ellipsis(&text)
+    } else {
+        text
+    };
     (!text.is_empty()).then_some(text)
+}
+
+fn strip_wordpress_generated_more_ellipsis(text: &str) -> String {
+    let trimmed = text.trim_end();
+    for suffix in [" […]", " [...]", " …", "..."] {
+        if let Some(caption) = trimmed.strip_suffix(suffix) {
+            return caption.trim_end().to_string();
+        }
+    }
+    trimmed.to_string()
 }
 
 pub(crate) fn start_wordpress_caption_enrichment(
@@ -1960,20 +2079,31 @@ mod tests {
         }
     }
 
+    fn lookup_endpoint_with_query<'a>(
+        lookup: &'a WordPressMediaLookup,
+        query_key: &str,
+    ) -> &'a url::Url {
+        lookup
+            .endpoints
+            .iter()
+            .find(|endpoint| endpoint.query_pairs().any(|(key, _)| key == query_key))
+            .expect("lookup should have the requested endpoint")
+    }
+
     #[test]
     fn wordpress_media_lookup_supports_self_hosted_subdirectories_and_thumbnails() {
         let lookup = wordpress_media_lookup(
             "https://example.com/news/wp-content/uploads/2026/07/Temple-Entrance-1024x683.jpg?fit=800",
         )
         .expect("WordPress upload URL should produce a lookup");
+        let endpoint = lookup_endpoint_with_query(&lookup, "search");
 
-        assert_eq!(lookup.endpoint.path(), "/news/wp-json/wp/v2/media");
+        assert_eq!(endpoint.path(), "/news/wp-json/wp/v2/media");
         assert_eq!(
             lookup.image_identity,
             "example.com/news/wp-content/uploads/2026/07/Temple-Entrance-1024x683.jpg"
         );
-        let query = lookup
-            .endpoint
+        let query = endpoint
             .query_pairs()
             .into_owned()
             .collect::<BTreeMap<_, _>>();
@@ -1993,10 +2123,14 @@ mod tests {
             "https://gnosistms.files.wordpress.com/2026/07/plate-12-scaled.jpeg",
         )
         .expect("WordPress.com file URL should produce a lookup");
+        let endpoint = lookup
+            .endpoints
+            .first()
+            .expect("lookup should have an endpoint");
 
-        assert_eq!(lookup.endpoint.host_str(), Some("public-api.wordpress.com"));
+        assert_eq!(endpoint.host_str(), Some("public-api.wordpress.com"));
         assert_eq!(
-            lookup.endpoint.path(),
+            endpoint.path(),
             "/wp/v2/sites/gnosistms.wordpress.com/media"
         );
         assert_eq!(
@@ -2011,9 +2145,13 @@ mod tests {
             "https://i0.wp.com/example.com/wp-content/uploads/2026/07/plate-scaled-1024x768.jpg?resize=800%2C600",
         )
         .expect("Jetpack CDN URL should produce an origin-site lookup");
+        let endpoint = lookup
+            .endpoints
+            .first()
+            .expect("lookup should have an endpoint");
 
-        assert_eq!(lookup.endpoint.host_str(), Some("example.com"));
-        assert_eq!(lookup.endpoint.path(), "/wp-json/wp/v2/media");
+        assert_eq!(endpoint.host_str(), Some("example.com"));
+        assert_eq!(endpoint.path(), "/wp-json/wp/v2/media");
         assert_eq!(
             lookup.image_identity,
             "example.com/wp-content/uploads/2026/07/plate-scaled-1024x768.jpg"
@@ -2026,8 +2164,7 @@ mod tests {
             "https://example.com/wp-content/uploads/2026/07/Caf%C3%A9-Exterior-800x600.jpg",
         )
         .expect("encoded WordPress upload URL should produce a lookup");
-        let query = lookup
-            .endpoint
+        let query = lookup_endpoint_with_query(&lookup, "search")
             .query_pairs()
             .into_owned()
             .collect::<BTreeMap<_, _>>();
@@ -2035,6 +2172,84 @@ mod tests {
         assert_eq!(
             query.get("search").map(String::as_str),
             Some("Café Exterior")
+        );
+    }
+
+    #[test]
+    fn wordpress_media_lookup_adds_bounded_fallbacks_for_optimizer_suffixes() {
+        let lookup = wordpress_media_lookup(
+            "https://gnosisvn.org/wp-content/uploads/2026/08/Gerard_van_Honthorst_-_Adoration_of_the_Shepherds_1622-cloud-wonder-3-3400w.webp",
+        )
+        .expect("WordPress upload URL should produce a lookup");
+        let searches = lookup
+            .endpoints
+            .iter()
+            .filter_map(|endpoint| {
+                endpoint
+                    .query_pairs()
+                    .find_map(|(key, value)| (key == "search").then(|| value.into_owned()))
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            searches,
+            vec![
+                "Gerard van Honthorst Adoration of the Shepherds 1622 cloud wonder 3 3400w",
+                "Gerard van Honthorst Adoration of the Shepherds 1622 cloud wonder 3",
+                "Gerard van Honthorst Adoration of the Shepherds 1622 cloud wonder",
+                "Gerard van Honthorst Adoration of the Shepherds 1622 cloud",
+            ]
+        );
+    }
+
+    #[test]
+    fn wordpress_media_lookup_prefers_exact_filename_derived_slug() {
+        let lookup = wordpress_media_lookup(
+            "https://gnosisvn.org/wp-content/uploads/2026/08/Gerard_van_Honthorst_-_Adoration_of_the_Shepherds_1622-cloud-wonder-3-3400w.webp",
+        )
+        .expect("WordPress upload URL should produce a lookup");
+        let exact_endpoint = lookup
+            .endpoints
+            .first()
+            .expect("exact slug lookup should be first");
+        let query = exact_endpoint
+            .query_pairs()
+            .into_owned()
+            .collect::<BTreeMap<_, _>>();
+
+        assert_eq!(
+            query.get("slug").map(String::as_str),
+            Some("gerard_van_honthorst_-_adoration_of_the_shepherds_1622-cloud-wonder-3-3400w")
+        );
+        assert!(!query.contains_key("search"));
+        assert_eq!(query.get("per_page").map(String::as_str), Some("1"));
+    }
+
+    #[test]
+    fn wordpress_attachment_slug_candidate_sanitizes_filename_conservatively() {
+        assert_eq!(
+            wordpress_attachment_slug_candidate("A_(Careful)  Name--01.webp"),
+            Some("a_careful-name-01".to_string())
+        );
+        assert_eq!(
+            wordpress_attachment_slug_candidate("Caf%C3%A9-Exterior.jpg"),
+            Some("café-exterior".to_string())
+        );
+    }
+
+    #[test]
+    fn wordpress_attachment_search_fallbacks_keep_at_least_three_tokens() {
+        assert_eq!(
+            wordpress_attachment_search_terms("one-two-three-four-five.jpg"),
+            Some(vec![
+                "one two three four five".to_string(),
+                "one two three four".to_string(),
+                "one two three".to_string(),
+            ])
+        );
+        assert_eq!(
+            wordpress_attachment_search_terms("one-two.jpg"),
+            Some(vec!["one two".to_string()])
         );
     }
 
@@ -2073,10 +2288,59 @@ mod tests {
                 &response,
                 "example.com/wp-content/uploads/2026/07/Temple-Entrance-1024x683.jpg"
             ),
-            Some("Temple entrance & courtyard.".to_string())
+            Some(WordPressCaptionMatch::Caption(
+                "Temple entrance & courtyard.".to_string()
+            ))
         );
-        assert!(
-            wordpress_caption_from_media_response(&response, "example.com/missing.jpg").is_none()
+        assert_eq!(
+            wordpress_caption_from_media_response(&response, "example.com/missing.jpg"),
+            Some(WordPressCaptionMatch::NoMatch)
+        );
+    }
+
+    #[test]
+    fn wordpress_caption_response_stops_after_matching_an_empty_caption() {
+        let response = json!([{
+            "source_url": "https://example.com/wp-content/uploads/2026/07/Temple-Entrance.jpg",
+            "media_details": { "sizes": {} },
+            "caption": { "rendered": "" }
+        }]);
+
+        assert_eq!(
+            wordpress_caption_from_media_response(
+                &response,
+                "example.com/wp-content/uploads/2026/07/Temple-Entrance.jpg"
+            ),
+            Some(WordPressCaptionMatch::MatchedWithoutCaption)
+        );
+    }
+
+    #[test]
+    fn wordpress_caption_plain_text_strips_generated_more_link_suffix() {
+        assert_eq!(
+            wordpress_caption_plain_text(
+                r#"<p>Tranh lụa về Phục Hy thời nhà Tống &hellip;
+                    <a class="more-link" href="https://example.com/attachment/">
+                        More <span class="screen-reader-text">attachment filename</span>
+                    </a></p>"#,
+            ),
+            Some("Tranh lụa về Phục Hy thời nhà Tống".to_string())
+        );
+    }
+
+    #[test]
+    fn wordpress_caption_plain_text_preserves_legitimate_links_and_ellipses() {
+        assert_eq!(
+            wordpress_caption_plain_text(
+                r#"<p>A deliberate ending… <a href="https://example.com/more">More context</a></p>"#,
+            ),
+            Some("A deliberate ending… More context".to_string())
+        );
+        assert_eq!(
+            wordpress_caption_plain_text(
+                r#"<p>Read <a class="more-link" href="https://example.com/details">more details</a> before continuing.</p>"#,
+            ),
+            Some("Read more details before continuing.".to_string())
         );
     }
 
