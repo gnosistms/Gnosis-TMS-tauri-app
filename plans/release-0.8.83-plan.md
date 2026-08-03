@@ -17,9 +17,9 @@ Date: 2026-08-03
 - [x] Run pre-tag verification: JavaScript and workflow tests, JavaScript lint,
       frontend build, Cargo formatting, Rust tests, version consistency, and
       `git diff --check`.
-- [ ] Merge the release PR.
-- [ ] Tag `v0.8.83` and push the tag.
-- [ ] Confirm the release workflow succeeds on macOS arm64, macOS x64, and Windows
+- [x] Merge the release PR.
+- [x] Tag `v0.8.83` and push the tag.
+- [x] Confirm the release workflow succeeds on macOS arm64, macOS x64, and Windows
       x64, and verify the published GitHub Release assets and updater metadata.
 
 ## Pre-tag verification
@@ -36,4 +36,11 @@ Date: 2026-08-03
 
 ## Release verification
 
-Pending.
+- Release PR #236 merged as `309cdec7c052ebd83be92ae6de5a19f96f3c17da`.
+- Annotated tag `v0.8.83` points to the release commit.
+- Release workflow run 30827302342 succeeded for macOS arm64, macOS x64, and
+  Windows x64.
+- The stable GitHub Release is public, not a draft or prerelease, and contains 13
+  non-empty uploaded assets.
+- `latest.json` reports version 0.8.83 with seven signed platform entries, all
+  targeting `v0.8.83` assets.
