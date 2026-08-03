@@ -340,11 +340,9 @@ fn wordpress_attachment_slug_candidate(filename: &str) -> Option<String> {
         if ch.is_alphanumeric() || ch == '_' {
             slug.push(ch);
             last_was_dash = false;
-        } else if ch == '-' || ch.is_whitespace() {
-            if !slug.is_empty() && !last_was_dash {
-                slug.push('-');
-                last_was_dash = true;
-            }
+        } else if (ch == '-' || ch.is_whitespace()) && !slug.is_empty() && !last_was_dash {
+            slug.push('-');
+            last_was_dash = true;
         }
     }
     while slug.ends_with('-') {
