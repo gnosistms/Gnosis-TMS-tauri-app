@@ -120,3 +120,51 @@ test("direct glossary target highlights take precedence over derived target high
   assert.match(highlights.get("vi")?.html ?? "", />trung tâm lý trí<\/mark>/);
   assert.doesNotMatch(highlights.get("vi")?.html ?? "", />lý trí<\/mark>/);
 });
+
+test("Chinese target edits invalidate highlights when glossary script-code casing differs", () => {
+  const glossary = {
+    glossaryId: "glossary-zh-hant",
+    repoName: "glossary-zh-hant",
+    title: "English to Traditional Chinese",
+    sourceLanguage: { code: "en", name: "English" },
+    targetLanguage: { code: "zh-hant", name: "Chinese (Traditional)" },
+    terms: [{
+      termId: "term-zh-1",
+      sourceTerms: ["Level of Being"],
+      targetTerms: ["存在層次"],
+    }],
+  };
+  const row = {
+    rowId: "row-zh-1",
+    fields: {
+      en: "Our Level of Being can change.",
+      "zh-Hant": "我們可以改變。",
+    },
+  };
+  const chapterState = {
+    chapterId: "chapter-zh-1",
+    languages: [
+      { code: "en", name: "English" },
+      { code: "zh-Hant", name: "Chinese (Traditional)" },
+    ],
+    glossary: {
+      ...glossary,
+      matcherModel: buildEditorGlossaryModel(glossary),
+    },
+    rows: [row],
+    derivedGlossariesByRowId: {},
+  };
+
+  const missingTargetHighlights = buildCachedEditorRowGlossaryHighlights(row, chapterState);
+  assert.match(missingTargetHighlights.get("en")?.html ?? "", /glossary-match-error/);
+  assert.equal(missingTargetHighlights.has("zh-Hant"), false);
+
+  row.fields["zh-Hant"] = "我們的存在層次可以改變。";
+  const matchingTargetHighlights = buildCachedEditorRowGlossaryHighlights(row, chapterState);
+
+  assert.doesNotMatch(matchingTargetHighlights.get("en")?.html ?? "", /glossary-match-error/);
+  assert.match(
+    matchingTargetHighlights.get("zh-Hant")?.html ?? "",
+    /<mark[^>]*>存在層次<\/mark>/,
+  );
+});

@@ -1,6 +1,10 @@
 import { buildEditorRowGlossaryHighlights } from "./editor-glossary-highlighting.js";
 import { resolveHighlightableEditorDerivedGlossaryEntry } from "./editor-derived-glossary-state.js";
-import { languageBaseCode } from "./editor-language-utils.js";
+import {
+  languageBaseCode,
+  languageBaseCodesMatch,
+  languageMatchesBaseCode,
+} from "./editor-language-utils.js";
 import { state } from "./state.js";
 
 const EDITOR_GLOSSARY_HIGHLIGHT_CACHE_LIMIT = 400;
@@ -51,8 +55,8 @@ function buildEditorRowGlossaryHighlightCacheKey(row, chapterState = state.edito
     const targetCode = glossaryModel.targetLanguage?.code ?? "";
     const languageTexts = (Array.isArray(chapterState?.languages) ? chapterState.languages : [])
       .filter((language) => {
-        const baseCode = languageBaseCode(language);
-        return baseCode === sourceCode || baseCode === targetCode;
+        return languageMatchesBaseCode(language, sourceCode)
+          || languageMatchesBaseCode(language, targetCode);
       })
       .map((language) => `${language.code}:${String(row?.fields?.[language.code] ?? "")}`)
       .join("::");
@@ -128,7 +132,10 @@ export function buildCachedEditorRowGlossaryHighlights(row, chapterState = state
       sections,
       derivedGlossaryEntry.matcherModel,
     )) {
-      if (languageCode === directTargetLanguageCode && highlightMap.has(languageCode)) {
+      if (
+        languageBaseCodesMatch({ code: languageCode }, { code: directTargetLanguageCode })
+        && highlightMap.has(languageCode)
+      ) {
         continue;
       }
       highlightMap.set(languageCode, nextHighlight);

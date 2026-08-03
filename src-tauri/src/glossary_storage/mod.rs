@@ -632,7 +632,7 @@ fn initialize_gtms_glossary_repo_sync(
         return Err("Enter a glossary name.".to_string());
     }
 
-    let source_language_code = input.source_language_code.trim().to_lowercase();
+    let source_language_code = normalize_glossary_language_code(&input.source_language_code);
     if source_language_code.is_empty() {
         return Err("Enter a source language code.".to_string());
     }
@@ -642,7 +642,7 @@ fn initialize_gtms_glossary_repo_sync(
         return Err("Enter a source language name.".to_string());
     }
 
-    let target_language_code = input.target_language_code.trim().to_lowercase();
+    let target_language_code = normalize_glossary_language_code(&input.target_language_code);
     if target_language_code.is_empty() {
         return Err("Enter a target language code.".to_string());
     }
@@ -743,6 +743,42 @@ fn initialize_gtms_glossary_repo_sync(
         lifecycle_state: "active".to_string(),
         term_count: 0,
     })
+}
+
+fn normalize_glossary_language_code(value: &str) -> String {
+    value
+        .trim()
+        .replace('_', "-")
+        .split('-')
+        .enumerate()
+        .map(|(index, subtag)| {
+            if index == 0 {
+                return subtag.to_ascii_lowercase();
+            }
+            if subtag.len() == 4
+                && subtag
+                    .chars()
+                    .all(|character| character.is_ascii_alphabetic())
+            {
+                let mut characters = subtag.chars();
+                let first = characters
+                    .next()
+                    .map(|character| character.to_ascii_uppercase())
+                    .unwrap_or_default();
+                return format!("{first}{}", characters.as_str().to_ascii_lowercase());
+            }
+            if (subtag.len() == 2
+                && subtag
+                    .chars()
+                    .all(|character| character.is_ascii_alphabetic()))
+                || (subtag.len() == 3 && subtag.chars().all(|character| character.is_ascii_digit()))
+            {
+                return subtag.to_ascii_uppercase();
+            }
+            subtag.to_ascii_lowercase()
+        })
+        .collect::<Vec<_>>()
+        .join("-")
 }
 
 fn import_tmx_to_gtms_glossary_repo_sync(
@@ -1298,6 +1334,13 @@ mod tests {
     use super::*;
 
     const GNOSIS_ES_VI_TMX: &str = include_str!("../../tests/fixtures/gnosis-es-vi.tmx");
+
+    #[test]
+    fn canonicalizes_glossary_language_script_and_region_subtags() {
+        assert_eq!(normalize_glossary_language_code("ZH_hant"), "zh-Hant");
+        assert_eq!(normalize_glossary_language_code("zh-hans"), "zh-Hans");
+        assert_eq!(normalize_glossary_language_code("pt_br"), "pt-BR");
+    }
 
     #[test]
     fn glossary_delete_response_serializes_the_previous_head_sha() {

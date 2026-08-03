@@ -190,6 +190,74 @@ test("Japanese target highlights match terms embedded without spaces", () => {
   assert.match(targetHtml, /<mark[^>]*>祈り<\/mark>/);
 });
 
+test("Traditional Chinese target highlights accept lowercase glossary script codes", () => {
+  const model = buildEditorGlossaryModel(glossaryPayload({
+    sourceLanguage: {
+      code: "en",
+      name: "English",
+    },
+    targetLanguage: {
+      code: "zh-hant",
+      name: "Chinese (Traditional)",
+    },
+    terms: [
+      {
+        termId: "t1",
+        sourceTerms: ["Level of Being"],
+        targetTerms: ["存在層次"],
+      },
+    ],
+  }));
+
+  const highlights = buildEditorRowGlossaryHighlights([
+    {
+      code: "en",
+      text: "Our Level of Being can change.",
+    },
+    {
+      code: "zh-Hant",
+      text: "我們的存在層次可以改變。",
+    },
+  ], model);
+
+  assert.doesNotMatch(highlights.get("en")?.html ?? "", /glossary-match-error/);
+  assert.match(highlights.get("zh-Hant")?.html ?? "", /<mark[^>]*>存在層次<\/mark>/);
+});
+
+test("Simplified Chinese target highlights accept lowercase glossary script codes", () => {
+  const model = buildEditorGlossaryModel(glossaryPayload({
+    sourceLanguage: {
+      code: "en",
+      name: "English",
+    },
+    targetLanguage: {
+      code: "zh-hans",
+      name: "Chinese (Simplified)",
+    },
+    terms: [
+      {
+        termId: "t1",
+        sourceTerms: ["consciousness"],
+        targetTerms: ["意识"],
+      },
+    ],
+  }));
+
+  const highlights = buildEditorRowGlossaryHighlights([
+    {
+      code: "en",
+      text: "Awaken consciousness.",
+    },
+    {
+      code: "zh-Hans",
+      text: "唤醒意识。",
+    },
+  ], model);
+
+  assert.doesNotMatch(highlights.get("en")?.html ?? "", /glossary-match-error/);
+  assert.match(highlights.get("zh-Hans")?.html ?? "", /<mark[^>]*>意识<\/mark>/);
+});
+
 test("Japanese target highlights prefer the longest embedded glossary term", () => {
   const model = buildEditorGlossaryModel(glossaryPayload({
     targetLanguage: {

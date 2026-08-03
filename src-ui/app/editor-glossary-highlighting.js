@@ -39,9 +39,17 @@ function sectionSemanticLanguageCode(section) {
   return baseCode || resolveLanguageCode(section);
 }
 
+function normalizedLanguageCodeForComparison(languageCode) {
+  return String(languageCode ?? "").trim().replaceAll("_", "-").toLowerCase();
+}
+
 function sectionMatchesLanguage(section, languageCode) {
-  return Boolean(languageCode)
-    && (resolveLanguageCode(section) === languageCode || sectionSemanticLanguageCode(section) === languageCode);
+  const normalizedLanguageCode = normalizedLanguageCodeForComparison(languageCode);
+  return Boolean(normalizedLanguageCode)
+    && (
+      normalizedLanguageCodeForComparison(resolveLanguageCode(section)) === normalizedLanguageCode
+      || normalizedLanguageCodeForComparison(sectionSemanticLanguageCode(section)) === normalizedLanguageCode
+    );
 }
 
 function escapeHtml(value) {
