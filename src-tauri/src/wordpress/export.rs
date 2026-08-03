@@ -409,14 +409,39 @@ fn run_wordpress_export(
                 continue;
             }
 
-            // Remote URL image: nothing to upload, but tall images still get a
-            // display size. A failed fetch only skips the sizing.
+            // A URL that points back into the connected site's Media Library is
+            // still an attachment, even though there is nothing to upload. Keep
+            // its attachment ID in the block so WordPress can generate srcset and
+            // sizes attributes (including Retina-resolution candidates).
+            if let Some(lookup) =
+                wordpress_media_lookup_for_site_source(source, &connection.blog_url)
+            {
+                let media = find_site_media_by_source(&site, &client, &lookup, source).map_err(
+                    |error| {
+                        format!(
+                            "Could not verify the WordPress Media Library image '{source}' before export: {error}"
+                        )
+                    },
+                )?;
+                if let Some(media) = media {
+                    wordpress_debug_log(&format!(
+                        "resolved remote media attachment for {source}: id={:?}",
+                        media.attachment_id,
+                    ));
+                    content = apply_uploaded_image_to_content(&content, source, &media);
+                    continue;
+                }
+            }
+
+            // Unrelated remote URL image: nothing to upload, but tall images
+            // still get a display size. A failed fetch only skips the sizing.
             let dimensions = fetch_public_image_dimensions(&decode_html_entities(source));
             wordpress_debug_log(&format!("remote image {source} natural={dimensions:?}"));
             if let Some((natural_width, natural_height)) = dimensions {
                 let natural = (natural_width as u64, natural_height as u64);
                 if let Some((display_width, _)) = wordpress_display_size(natural.0, natural.1) {
-                    content = resize_image_block(&content, source, source, display_width, natural);
+                    content =
+                        resize_image_block(&content, source, source, display_width, natural, None);
                 }
             }
         }
@@ -618,6 +643,7 @@ fn replace_image_source(content: &str, source: &str, uploaded_url: &str) -> Stri
 }
 
 struct UploadedWordPressImage {
+    attachment_id: Option<u64>,
     source_url: String,
     natural_width: Option<u64>,
     natural_height: Option<u64>,
@@ -656,6 +682,7 @@ fn resize_image_block(
     new_src_attr: &str,
     display_width: u64,
     (natural_width, natural_height): (u64, u64),
+    attachment_id: Option<u64>,
 ) -> String {
     // (plain block attrs, resized leading attrs, plain figure class, resized figure class)
     const BLOCK_VARIANTS: [(&str, &str, &str, &str); 2] = [
@@ -681,11 +708,57 @@ fn resize_image_block(
                 continue;
             }
 
+            let attachment_block_attr = attachment_id
+                .map(|id| format!("\"id\":{id},"))
+                .unwrap_or_default();
+            let attachment_img_class = attachment_id
+                .map(|id| format!(" class=\"wp-image-{id}\""))
+                .unwrap_or_default();
             let resized_block = format!(
-                "<!-- wp:image {{{resized_leading_attrs}\"width\":\"{display_width}px\",\"aspectRatio\":\"{natural_width}/{natural_height}\"}} -->\n\
-                 <figure class=\"{resized_class}\"><img src=\"{new_src_attr}\" alt=\"\" style=\"aspect-ratio:{natural_width}/{natural_height};width:{display_width}px\"/>"
+                "<!-- wp:image {{{attachment_block_attr}{resized_leading_attrs}\"width\":\"{display_width}px\",\"aspectRatio\":\"{natural_width}/{natural_height}\"}} -->\n\
+                 <figure class=\"{resized_class}\"><img src=\"{new_src_attr}\" alt=\"\"{attachment_img_class} style=\"aspect-ratio:{natural_width}/{natural_height};width:{display_width}px\"/>"
             );
             return content.replace(&plain_block, &resized_block);
+        }
+    }
+
+    content.to_string()
+}
+
+/// Associates an otherwise plain serialized image block with a WordPress
+/// attachment without changing its display size. Core's responsive-image filter
+/// recognizes the `wp-image-{id}` class and can then add the attachment's srcset.
+fn attach_image_block(
+    content: &str,
+    source_attr: &str,
+    new_src_attr: &str,
+    attachment_id: u64,
+) -> String {
+    const BLOCK_VARIANTS: [(&str, &str, &str); 2] = [
+        (
+            " {\"align\":\"center\"}",
+            "{\"id\":ATTACHMENT_ID,\"align\":\"center\"}",
+            "wp-block-image aligncenter",
+        ),
+        ("", "{\"id\":ATTACHMENT_ID}", "wp-block-image"),
+    ];
+    const IMG_TAIL_VARIANTS: [&str; 2] = ["alt=\"\"/>", "alt=\"\" />"];
+
+    for (plain_attrs, attached_attrs_template, figure_class) in BLOCK_VARIANTS {
+        for img_tail in IMG_TAIL_VARIANTS {
+            let plain_block = format!(
+                "<!-- wp:image{plain_attrs} -->\n<figure class=\"{figure_class}\"><img src=\"{source_attr}\" {img_tail}"
+            );
+            if !content.contains(&plain_block) {
+                continue;
+            }
+
+            let attached_attrs =
+                attached_attrs_template.replace("ATTACHMENT_ID", &attachment_id.to_string());
+            let attached_block = format!(
+                "<!-- wp:image {attached_attrs} -->\n<figure class=\"{figure_class}\"><img src=\"{new_src_attr}\" alt=\"\" class=\"wp-image-{attachment_id}\"/>"
+            );
+            return content.replace(&plain_block, &attached_block);
         }
     }
 
@@ -711,10 +784,23 @@ fn apply_uploaded_image_to_content(
                 &escape_html_attribute(&uploaded.source_url),
                 display_width,
                 (natural_width, natural_height),
+                uploaded.attachment_id,
             );
             if resized != content {
                 return resized;
             }
+        }
+    }
+
+    if let Some(attachment_id) = uploaded.attachment_id {
+        let attached = attach_image_block(
+            content,
+            source,
+            &escape_html_attribute(&uploaded.source_url),
+            attachment_id,
+        );
+        if attached != content {
+            return attached;
         }
     }
 
@@ -764,8 +850,15 @@ fn upload_repo_image(
         .filter(|value| !value.trim().is_empty())
         .map(str::to_string)
         .ok_or_else(|| "WordPress did not return a URL for the uploaded image.".to_string())?;
+    let attachment_id = response
+        .get("id")
+        .and_then(|value| value.as_u64())
+        .ok_or_else(|| {
+            "WordPress did not return an attachment ID for the uploaded image.".to_string()
+        })?;
 
     Ok(UploadedWordPressImage {
+        attachment_id: Some(attachment_id),
         source_url,
         natural_width: response
             .pointer("/media_details/width")
@@ -802,11 +895,235 @@ fn media_file_extension(mime_type: &str) -> &'static str {
     }
 }
 
+struct WordPressMediaLookup {
+    slug: String,
+    search_terms: Vec<String>,
+}
+
+/// Builds an attachment lookup only when `source` can belong to the connected
+/// site: its own uploads directory or a WordPress.com files CDN. Jetpack Image
+/// CDN URLs encode the origin host as their first path segment, so normalize
+/// those before classification. Exact URL verification after each API response
+/// prevents a files-CDN URL from another site being attached accidentally.
+fn wordpress_media_lookup_for_site_source(
+    source: &str,
+    blog_url: &str,
+) -> Option<WordPressMediaLookup> {
+    let (source_host, source_path) = wordpress_origin_image_identity(source)?;
+    let blog = Url::parse(blog_url).ok()?;
+    let blog_host = normalize_wordpress_host(blog.host_str()?);
+    let same_site_upload = source_host == blog_host
+        && source_path
+            .to_ascii_lowercase()
+            .contains("/wp-content/uploads/");
+    let wordpress_files_cdn = source_host
+        .strip_suffix(".files.wordpress.com")
+        .is_some_and(|site_prefix| !site_prefix.is_empty() && !site_prefix.contains('.'));
+    if !same_site_upload && !wordpress_files_cdn {
+        return None;
+    }
+    let filename = source_path.rsplit('/').next()?;
+    Some(WordPressMediaLookup {
+        slug: wordpress_attachment_slug_candidate(filename)?,
+        search_terms: wordpress_attachment_search_terms(filename)?,
+    })
+}
+
+fn wordpress_attachment_slug_candidate(filename: &str) -> Option<String> {
+    let decoded = percent_decode_utf8_lossy(filename);
+    let stem = decoded
+        .rsplit_once('.')
+        .map(|(stem, _)| stem)
+        .unwrap_or(decoded.as_str());
+    let stem = wordpress_original_image_stem(stem);
+    let mut slug = String::with_capacity(stem.len());
+    let mut last_was_dash = false;
+    for character in stem.chars().flat_map(char::to_lowercase) {
+        if character.is_alphanumeric() || character == '_' {
+            slug.push(character);
+            last_was_dash = false;
+        } else if (character == '-' || character.is_whitespace())
+            && !slug.is_empty()
+            && !last_was_dash
+        {
+            slug.push('-');
+            last_was_dash = true;
+        }
+    }
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+    (!slug.is_empty()).then_some(slug)
+}
+
+fn wordpress_original_image_stem(stem: &str) -> String {
+    let mut normalized = stem.trim().to_string();
+    loop {
+        let before = normalized.len();
+        let lowercase = normalized.to_ascii_lowercase();
+        if let Some((prefix, dimensions)) = lowercase.rsplit_once('-') {
+            if let Some((width, height)) = dimensions.split_once('x') {
+                if !width.is_empty()
+                    && !height.is_empty()
+                    && width.bytes().all(|byte| byte.is_ascii_digit())
+                    && height.bytes().all(|byte| byte.is_ascii_digit())
+                {
+                    normalized.truncate(prefix.len());
+                }
+            }
+        }
+        for suffix in ["-scaled", "-rotated"] {
+            if normalized.to_ascii_lowercase().ends_with(suffix) {
+                normalized.truncate(normalized.len() - suffix.len());
+            }
+        }
+        if normalized.len() == before {
+            return normalized;
+        }
+    }
+}
+
+fn wordpress_attachment_search_terms(filename: &str) -> Option<Vec<String>> {
+    let decoded = percent_decode_utf8_lossy(filename);
+    let stem = decoded
+        .rsplit_once('.')
+        .map(|(stem, _)| stem)
+        .unwrap_or(decoded.as_str());
+    let normalized = wordpress_original_image_stem(stem);
+    let tokens = normalized
+        .split(|character: char| character == '-' || character == '_' || character.is_whitespace())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    if tokens.is_empty() {
+        return None;
+    }
+
+    let mut terms = Vec::new();
+    for token_limit in [9_usize, 6, 3] {
+        let bounded_limit = token_limit.min(tokens.len());
+        if bounded_limit == 0 {
+            continue;
+        }
+        let term = tokens[..bounded_limit].join(" ");
+        if !terms.contains(&term) {
+            terms.push(term);
+        }
+    }
+    Some(terms)
+}
+
+fn normalize_wordpress_host(host: &str) -> String {
+    host.trim_start_matches("www.").to_ascii_lowercase()
+}
+
+/// Normalized host and decoded path for an origin URL or Jetpack Image CDN URL.
+/// Query parameters such as `w=748` intentionally do not participate in identity.
+fn wordpress_origin_image_identity(value: &str) -> Option<(String, String)> {
+    let image = Url::parse(value).ok()?;
+    if !matches!(image.scheme(), "http" | "https") {
+        return None;
+    }
+    let host = image.host_str()?.to_ascii_lowercase();
+    let decoded_path = percent_decode_utf8_lossy(image.path());
+    if matches!(host.as_str(), "i0.wp.com" | "i1.wp.com" | "i2.wp.com") {
+        let without_leading_slash = decoded_path.trim_start_matches('/');
+        let (origin_host, origin_path) = without_leading_slash.split_once('/')?;
+        if origin_host.is_empty() || origin_host.contains('@') || origin_host.contains(':') {
+            return None;
+        }
+        return Some((
+            normalize_wordpress_host(origin_host),
+            format!("/{origin_path}"),
+        ));
+    }
+    Some((normalize_wordpress_host(&host), decoded_path))
+}
+
+fn percent_decode_utf8_lossy(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            let decoded_byte = str::from_utf8(&bytes[index + 1..index + 3])
+                .ok()
+                .and_then(|pair| u8::from_str_radix(pair, 16).ok());
+            if let Some(decoded_byte) = decoded_byte {
+                decoded.push(decoded_byte);
+                index += 3;
+                continue;
+            }
+        }
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&decoded).to_string()
+}
+
 fn media_search_path(slug: &str) -> String {
     format!(
-        "media?slug={}&per_page=1&_fields=slug,source_url,media_details",
+        "media?slug={}&per_page=1&_fields=id,slug,source_url,media_details",
         url::form_urlencoded::byte_serialize(slug.as_bytes()).collect::<String>()
     )
+}
+
+fn media_text_search_path(search: &str) -> String {
+    format!(
+        "media?search={}&per_page=100&media_type=image&_fields=id,slug,source_url,media_details",
+        url::form_urlencoded::byte_serialize(search.as_bytes()).collect::<String>()
+    )
+}
+
+fn find_site_media_by_source(
+    site: &WordPressSite,
+    client: &Client,
+    lookup: &WordPressMediaLookup,
+    source: &str,
+) -> Result<Option<UploadedWordPressImage>, String> {
+    let exact_response = site.get_json(client, &media_search_path(&lookup.slug))?;
+    if let Some(media) = media_from_response_matching_source(&exact_response, source) {
+        return Ok(Some(media));
+    }
+
+    for search_term in &lookup.search_terms {
+        let response = site.get_json(client, &media_text_search_path(search_term))?;
+        if let Some(media) = media_from_response_matching_source(&response, source) {
+            return Ok(Some(media));
+        }
+    }
+    Ok(None)
+}
+
+fn media_from_response_matching_source(
+    response: &serde_json::Value,
+    source: &str,
+) -> Option<UploadedWordPressImage> {
+    response
+        .as_array()?
+        .iter()
+        .find(|item| wordpress_media_item_matches_source(item, source))
+        .and_then(uploaded_wordpress_image_from_media_item)
+}
+
+fn wordpress_media_item_matches_source(item: &serde_json::Value, source: &str) -> bool {
+    let Some(source_identity) = wordpress_origin_image_identity(source) else {
+        return false;
+    };
+    let original_matches = item
+        .get("source_url")
+        .and_then(|value| value.as_str())
+        .and_then(wordpress_origin_image_identity)
+        .is_some_and(|identity| identity == source_identity);
+    if original_matches {
+        return true;
+    }
+    item.pointer("/media_details/sizes")
+        .and_then(|value| value.as_object())
+        .into_iter()
+        .flat_map(|sizes| sizes.values())
+        .filter_map(|size| size.get("source_url").and_then(|value| value.as_str()))
+        .filter_map(wordpress_origin_image_identity)
+        .any(|identity| identity == source_identity)
 }
 
 /// Looks up a media item previously uploaded under `slug` and returns its public URL
@@ -831,20 +1148,27 @@ fn media_from_search_result(
         if item.get("slug").and_then(|value| value.as_str()) != Some(slug) {
             return None;
         }
-        let source_url = item
-            .get("source_url")
-            .and_then(|value| value.as_str())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())?;
-        Some(UploadedWordPressImage {
-            source_url: source_url.to_string(),
-            natural_width: item
-                .pointer("/media_details/width")
-                .and_then(|value| value.as_u64()),
-            natural_height: item
-                .pointer("/media_details/height")
-                .and_then(|value| value.as_u64()),
-        })
+        uploaded_wordpress_image_from_media_item(item)
+    })
+}
+
+fn uploaded_wordpress_image_from_media_item(
+    item: &serde_json::Value,
+) -> Option<UploadedWordPressImage> {
+    let source_url = item
+        .get("source_url")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    Some(UploadedWordPressImage {
+        attachment_id: Some(item.get("id").and_then(|value| value.as_u64())?),
+        source_url: source_url.to_string(),
+        natural_width: item
+            .pointer("/media_details/width")
+            .and_then(|value| value.as_u64()),
+        natural_height: item
+            .pointer("/media_details/height")
+            .and_then(|value| value.as_u64()),
     })
 }
 
@@ -1067,6 +1391,7 @@ mod tests {
             "https://example.com/tall.png?a=1&amp;b=2",
             300,
             (1500, 3000),
+            None,
         );
         assert_eq!(
             resized,
@@ -1087,6 +1412,7 @@ mod tests {
                 "https://example.com/tall.png",
                 300,
                 (1500, 3000),
+                None,
             ),
             unexpected,
         );
@@ -1136,6 +1462,127 @@ mod tests {
     }
 
     #[test]
+    fn wordpress_media_lookup_recognizes_site_jetpack_and_files_cdn_urls() {
+        let blog_url = "https://gnosisvn.org";
+        assert_eq!(
+            wordpress_media_lookup_for_site_source(
+                "https://gnosisvn.org/wp-content/uploads/2026/08/Hubert_van_Eyck_004.webp",
+                blog_url,
+            )
+            .map(|lookup| lookup.slug),
+            Some("hubert_van_eyck_004".to_string()),
+        );
+        assert_eq!(
+            wordpress_media_lookup_for_site_source(
+                "https://i0.wp.com/gnosisvn.org/wp-content/uploads/2026/08/Hubert_van_Eyck_004.webp?w=748&ssl=1",
+                blog_url,
+            )
+            .map(|lookup| lookup.slug),
+            Some("hubert_van_eyck_004".to_string()),
+        );
+        assert_eq!(
+            wordpress_media_lookup_for_site_source(
+                "https://gnosisvnweb.files.wordpress.com/2026/08/Temple-scaled-1024x768.webp",
+                blog_url,
+            )
+            .map(|lookup| lookup.slug),
+            Some("temple".to_string()),
+        );
+        assert!(wordpress_media_lookup_for_site_source(
+            "https://example.com/wp-content/uploads/2026/08/Hubert_van_Eyck_004.webp",
+            blog_url,
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn wordpress_media_lookup_builds_bounded_filename_search_fallbacks() {
+        let lookup = wordpress_media_lookup_for_site_source(
+            "https://gnosisvn.org/wp-content/uploads/2026/08/one-two-three-four-five-six-seven-eight-nine-ten.webp",
+            "https://gnosisvn.org",
+        )
+        .expect("same-site upload URL is searchable");
+
+        assert_eq!(lookup.search_terms.len(), 3);
+        assert_eq!(
+            lookup.search_terms[0],
+            "one two three four five six seven eight nine"
+        );
+        assert_eq!(lookup.search_terms[1], "one two three four five six");
+        assert_eq!(lookup.search_terms[2], "one two three");
+    }
+
+    #[test]
+    fn wordpress_media_match_accepts_origin_photon_and_registered_size_urls() {
+        let item = serde_json::json!({
+            "source_url": "https://gnosisvn.org/wp-content/uploads/2026/08/painting.webp",
+            "media_details": {
+                "sizes": {
+                    "large": {
+                        "source_url": "https://i0.wp.com/gnosisvn.org/wp-content/uploads/2026/08/painting.webp?fit=1024%2C768&ssl=1"
+                    }
+                }
+            }
+        });
+        assert!(wordpress_media_item_matches_source(
+            &item,
+            "https://i0.wp.com/gnosisvn.org/wp-content/uploads/2026/08/painting.webp?w=748&ssl=1",
+        ));
+        assert!(!wordpress_media_item_matches_source(
+            &item,
+            "https://gnosisvn.org/wp-content/uploads/2026/08/other.webp",
+        ));
+    }
+
+    #[test]
+    fn attachment_aware_resize_emits_id_and_responsive_image_class() {
+        let content = concat!(
+            "<!-- wp:image {\"align\":\"center\"} -->\n",
+            "<figure class=\"wp-block-image aligncenter\"><img src=\"https://gnosisvn.org/wp-content/uploads/painting.webp\" alt=\"\"/></figure>\n",
+            "<!-- /wp:image -->",
+        );
+        let media = UploadedWordPressImage {
+            attachment_id: Some(25275),
+            source_url: "https://gnosisvn.org/wp-content/uploads/painting.webp".to_string(),
+            natural_width: Some(3840),
+            natural_height: Some(2160),
+        };
+
+        let rewritten = apply_uploaded_image_to_content(
+            content,
+            "https://gnosisvn.org/wp-content/uploads/painting.webp",
+            &media,
+        );
+
+        assert!(rewritten.contains(
+            "<!-- wp:image {\"id\":25275,\"align\":\"center\",\"width\":\"1333px\",\"aspectRatio\":\"3840/2160\"} -->"
+        ));
+        assert!(rewritten.contains("class=\"wp-image-25275\""));
+        assert!(rewritten.contains("style=\"aspect-ratio:3840/2160;width:1333px\""));
+    }
+
+    #[test]
+    fn fitting_attachment_still_emits_id_and_responsive_image_class() {
+        let content = concat!(
+            "<!-- wp:image -->\n",
+            "<figure class=\"wp-block-image\"><img src=\"images/wide.png\" alt=\"\" /></figure>\n",
+            "<!-- /wp:image -->",
+        );
+        let media = UploadedWordPressImage {
+            attachment_id: Some(42),
+            source_url: "https://gnosisvn.org/wp-content/uploads/wide.png".to_string(),
+            natural_width: Some(2000),
+            natural_height: Some(500),
+        };
+
+        let rewritten = apply_uploaded_image_to_content(content, "images/wide.png", &media);
+
+        assert!(rewritten.contains("<!-- wp:image {\"id\":42} -->"));
+        assert!(rewritten.contains("class=\"wp-image-42\""));
+        assert!(rewritten.contains("src=\"https://gnosisvn.org/wp-content/uploads/wide.png\""));
+    }
+
+    #[test]
     fn apply_uploaded_image_resizes_tall_images_with_block_editor_markup() {
         // Canonical serializer markup: no space before the img tag's `/>`.
         let content = concat!(
@@ -1145,6 +1592,7 @@ mod tests {
             "<!-- /wp:image -->",
         );
         let uploaded = UploadedWordPressImage {
+            attachment_id: None,
             source_url: "https://files.example/tall.png".to_string(),
             natural_width: Some(1500),
             natural_height: Some(3000),
@@ -1172,6 +1620,7 @@ mod tests {
             "<!-- /wp:image -->",
         );
         let uploaded = UploadedWordPressImage {
+            attachment_id: None,
             source_url: "https://files.example/tall.png".to_string(),
             natural_width: Some(1500),
             natural_height: Some(3000),
@@ -1198,6 +1647,7 @@ mod tests {
             "<!-- /wp:image -->",
         );
         let uploaded = UploadedWordPressImage {
+            attachment_id: None,
             source_url: "https://files.example/wide.png".to_string(),
             natural_width: Some(2000),
             natural_height: Some(500),
@@ -1218,6 +1668,7 @@ mod tests {
     #[test]
     fn apply_uploaded_image_falls_back_to_src_swap_without_dimensions_or_pattern() {
         let uploaded_without_dimensions = UploadedWordPressImage {
+            attachment_id: None,
             source_url: "https://files.example/a.png".to_string(),
             natural_width: None,
             natural_height: None,
@@ -1231,6 +1682,7 @@ mod tests {
         // Tall image but unexpected surrounding markup: src still swapped.
         let unexpected_markup = "<figure><img src=\"images/a.png\" alt=\"\" /></figure>";
         let tall = UploadedWordPressImage {
+            attachment_id: None,
             source_url: "https://files.example/a.png".to_string(),
             natural_width: Some(1000),
             natural_height: Some(4000),
@@ -1290,14 +1742,48 @@ mod tests {
     fn media_search_path_filters_by_slug() {
         let path = media_search_path("gnosis-tms-abc123");
         assert!(path.starts_with("media?slug=gnosis-tms-abc123"));
-        assert!(path.contains("_fields=slug,source_url,media_details"));
+        assert!(path.contains("_fields=id,slug,source_url,media_details"));
         assert!(path.contains("per_page=1"));
+    }
+
+    #[test]
+    fn media_text_search_path_is_bounded_and_requests_attachment_fields() {
+        let path = media_text_search_path("Hubert van Eyck");
+        assert!(path.starts_with("media?search=Hubert+van+Eyck"));
+        assert!(path.contains("per_page=100"));
+        assert!(path.contains("media_type=image"));
+        assert!(path.contains("_fields=id,slug,source_url,media_details"));
+    }
+
+    #[test]
+    fn media_url_match_recovers_attachment_with_an_edited_slug() {
+        let source = "https://gnosisvn.org/wp-content/uploads/2026/08/Hubert_van_Eyck_004.webp";
+        let response = serde_json::json!([
+            {
+                "id": 25275,
+                "slug": "an-editor-renamed-this-attachment",
+                "source_url": source,
+                "media_details": { "width": 3840, "height": 2160 }
+            },
+            {
+                "id": 99,
+                "slug": "nearby-search-result",
+                "source_url": "https://gnosisvn.org/wp-content/uploads/2026/08/other.webp"
+            }
+        ]);
+
+        let matched = media_from_response_matching_source(&response, source)
+            .expect("URL verification recovers a renamed attachment");
+        assert_eq!(matched.attachment_id, Some(25275));
+        assert_eq!(matched.natural_width, Some(3840));
+        assert_eq!(matched.natural_height, Some(2160));
     }
 
     #[test]
     fn media_from_search_result_reuses_the_exact_slug_match() {
         let response = serde_json::json!([
             {
+                "id": 42,
                 "slug": "gnosis-tms-abc123",
                 "source_url": "https://files.example/gnosis-tms-abc123.png",
                 "media_details": { "width": 1500, "height": 3000 }
@@ -1311,6 +1797,7 @@ mod tests {
         );
         assert_eq!(reused.natural_width, Some(1500));
         assert_eq!(reused.natural_height, Some(3000));
+        assert_eq!(reused.attachment_id, Some(42));
     }
 
     #[test]
@@ -1318,14 +1805,14 @@ mod tests {
         // A different slug (e.g. a "-1" collision suffix from an older duplicate) is
         // not reused — that would point at the wrong image.
         let mismatch = serde_json::json!([
-            { "slug": "gnosis-tms-abc123-1", "source_url": "https://files.example/other.png" }
+            { "id": 43, "slug": "gnosis-tms-abc123-1", "source_url": "https://files.example/other.png" }
         ]);
         assert!(media_from_search_result(&mismatch, "gnosis-tms-abc123").is_none());
 
         // No results, or a match without a usable URL, means "upload it".
         assert!(media_from_search_result(&serde_json::json!([]), "gnosis-tms-abc123").is_none());
         let blank_url = serde_json::json!([
-            { "slug": "gnosis-tms-abc123", "source_url": "  " }
+            { "id": 42, "slug": "gnosis-tms-abc123", "source_url": "  " }
         ]);
         assert!(media_from_search_result(&blank_url, "gnosis-tms-abc123").is_none());
     }
