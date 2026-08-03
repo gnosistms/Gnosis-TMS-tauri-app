@@ -15,8 +15,7 @@ const WORDPRESS_CAPTION_USER_AGENT: &str = concat!(
     " (+https://github.com/gnosistms/Gnosis-TMS-tauri-app)"
 );
 const MAX_WORDPRESS_MEDIA_RESPONSE_BYTES: u64 = 256 * 1024;
-const MAX_WORDPRESS_MEDIA_SEARCH_ATTEMPTS: usize = 4;
-const MIN_WORDPRESS_MEDIA_SEARCH_TOKENS: usize = 3;
+const WORDPRESS_MEDIA_SEARCH_TOKEN_LIMITS: [usize; 3] = [9, 6, 3];
 pub(super) const EDITOR_IMAGE_CAPTION_ENRICHED_EVENT: &str = "editor-image-caption-enriched";
 
 #[derive(Debug, PartialEq, Eq)]
@@ -388,13 +387,28 @@ fn wordpress_attachment_search_terms(filename: &str) -> Option<Vec<String>> {
     if tokens.is_empty() {
         return None;
     }
-    let removable_tokens = tokens
-        .len()
-        .saturating_sub(MIN_WORDPRESS_MEDIA_SEARCH_TOKENS);
-    let fallback_count = removable_tokens.min(MAX_WORDPRESS_MEDIA_SEARCH_ATTEMPTS - 1);
+    let primary_limit = tokens.len().min(WORDPRESS_MEDIA_SEARCH_TOKEN_LIMITS[0]);
+    let secondary_limit = if primary_limit <= WORDPRESS_MEDIA_SEARCH_TOKEN_LIMITS[1] {
+        primary_limit
+            .saturating_sub(1)
+            .max(WORDPRESS_MEDIA_SEARCH_TOKEN_LIMITS[2])
+    } else {
+        WORDPRESS_MEDIA_SEARCH_TOKEN_LIMITS[1]
+    };
+    let mut token_limits = Vec::new();
+    for token_limit in [
+        primary_limit,
+        secondary_limit.min(primary_limit),
+        WORDPRESS_MEDIA_SEARCH_TOKEN_LIMITS[2].min(primary_limit),
+    ] {
+        if token_limit > 0 && !token_limits.contains(&token_limit) {
+            token_limits.push(token_limit);
+        }
+    }
     Some(
-        (0..=fallback_count)
-            .map(|removed| tokens[..tokens.len() - removed].join(" "))
+        token_limits
+            .into_iter()
+            .map(|token_limit| tokens[..token_limit].join(" "))
             .collect(),
     )
 }
@@ -2194,12 +2208,40 @@ mod tests {
         assert_eq!(
             searches,
             vec![
-                "Gerard van Honthorst Adoration of the Shepherds 1622 cloud wonder 3 3400w",
-                "Gerard van Honthorst Adoration of the Shepherds 1622 cloud wonder 3",
-                "Gerard van Honthorst Adoration of the Shepherds 1622 cloud wonder",
                 "Gerard van Honthorst Adoration of the Shepherds 1622 cloud",
+                "Gerard van Honthorst Adoration of the",
+                "Gerard van Honthorst",
             ]
         );
+    }
+
+    #[test]
+    fn wordpress_media_lookup_bounds_very_long_filename_searches() {
+        let lookup = wordpress_media_lookup(
+            "https://gnosisvn.org/wp-content/uploads/2025/09/Jesus_of_Nazareth-_His_life_and_teachings_founded_on_the_four_Gospels_and_illustrated_by_reference_to_the_manners_customs_religious_beliefs_and_political_institutions_of_His_times_1869_14783321292.jpg",
+        )
+        .expect("WordPress upload URL should produce a lookup");
+        let searches = lookup
+            .endpoints
+            .iter()
+            .filter_map(|endpoint| {
+                endpoint
+                    .query_pairs()
+                    .find_map(|(key, value)| (key == "search").then(|| value.into_owned()))
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            searches,
+            vec![
+                "Jesus of Nazareth His life and teachings founded on",
+                "Jesus of Nazareth His life and",
+                "Jesus of Nazareth",
+            ]
+        );
+        assert!(searches
+            .iter()
+            .all(|search| search.split_whitespace().count() <= 9));
     }
 
     #[test]
@@ -2238,7 +2280,7 @@ mod tests {
     }
 
     #[test]
-    fn wordpress_attachment_search_fallbacks_keep_at_least_three_tokens() {
+    fn wordpress_attachment_search_terms_keep_bounded_short_filename_fallbacks() {
         assert_eq!(
             wordpress_attachment_search_terms("one-two-three-four-five.jpg"),
             Some(vec![
@@ -2248,8 +2290,28 @@ mod tests {
             ])
         );
         assert_eq!(
+            wordpress_attachment_search_terms("one-two-three-four-five-six-seven-eight.jpg"),
+            Some(vec![
+                "one two three four five six seven eight".to_string(),
+                "one two three four five six".to_string(),
+                "one two three".to_string(),
+            ])
+        );
+        assert_eq!(
             wordpress_attachment_search_terms("one-two.jpg"),
             Some(vec!["one two".to_string()])
+        );
+    }
+
+    #[test]
+    fn wordpress_attachment_search_terms_remove_recognized_derivative_suffixes() {
+        assert_eq!(
+            wordpress_attachment_search_terms("Temple-scaled-1024x768.jpg"),
+            Some(vec!["Temple".to_string()])
+        );
+        assert_eq!(
+            wordpress_attachment_search_terms("Temple-scaled-rotated.jpg"),
+            Some(vec!["Temple".to_string()])
         );
     }
 
@@ -2325,6 +2387,22 @@ mod tests {
                     </a></p>"#,
             ),
             Some("Tranh lụa về Phục Hy thời nhà Tống".to_string())
+        );
+    }
+
+    #[test]
+    fn wordpress_caption_plain_text_cleans_reported_jesus_image_caption() {
+        assert_eq!(
+            wordpress_caption_plain_text(
+                r#"<p>“Chúa Giêsu bước đi trên mặt nước”, tranh khắc gỗ của Gustave Doré, năm 1869. &hellip;
+                    <a class="more-link" href="https://gnosisvn.org/attachment/">
+                        More <span class="screen-reader-text">attachment filename</span>
+                    </a></p>"#,
+            ),
+            Some(
+                "“Chúa Giêsu bước đi trên mặt nước”, tranh khắc gỗ của Gustave Doré, năm 1869."
+                    .to_string()
+            )
         );
     }
 
