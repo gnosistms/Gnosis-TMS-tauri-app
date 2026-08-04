@@ -1,5 +1,12 @@
 import { extractInlineMarkupBaseText, mapInlineMarkupBaseRangesToVisibleRanges } from "./editor-inline-markup.js";
 import {
+  GLOSSARY_MATCHER_POLICIES,
+  activeGlossaryMatcherPolicy,
+  compileGlossaryTokenMatcher,
+  discoverGlossaryTokenOccurrences,
+  selectGloballyLongestOccurrences,
+} from "./glossary-token-matcher.js";
+import {
   extractGlossaryRubyBaseText,
   extractGlossaryRubyVisibleText,
   glossaryRubyHasAnnotation,
@@ -425,6 +432,12 @@ function buildLanguageGlossaryMatcher(entries, matchLanguage) {
           existingCandidate.noTranslation?.position ?? null;
         existingCandidate.noTranslationNote =
           existingCandidate.noTranslation?.note ?? "";
+        // Duplicate normalized variants keep the greatest scalar length as
+        // the selection priority length; metadata stays first-seen ordered.
+        existingCandidate.priorityLength = Math.max(
+          existingCandidate.priorityLength,
+          Array.from(extractGlossaryRubyBaseText(matchTerm)).length,
+        );
         continue;
       }
 
@@ -472,6 +485,10 @@ function buildLanguageGlossaryMatcher(entries, matchLanguage) {
         originTerms,
         originTermsOrdered,
         characterLength: extractGlossaryRubyBaseText(matchTerm).length,
+        // Unicode scalar count of the base variant — the global selector's
+        // length tie-break. characterLength above stays UTF-16 for the legacy
+        // first-token bucket sort only.
+        priorityLength: Array.from(extractGlossaryRubyBaseText(matchTerm)).length,
         matchLanguage,
         noTranslation,
         noTranslationPosition: noTranslation?.position ?? null,
@@ -493,9 +510,18 @@ function buildLanguageGlossaryMatcher(entries, matchLanguage) {
     });
   }
 
+  // termMap preserves first-seen insertion order, which fixes each merged
+  // candidate's defensive ordinal tie-break in the compiled trie.
   return {
     languageCode: matchLanguage,
     byFirstToken,
+    compiled: compileGlossaryTokenMatcher(
+      Array.from(termMap.values(), (candidate) => ({
+        tokens: candidate.tokens,
+        priorityLength: candidate.priorityLength,
+        payload: candidate,
+      })),
+    ),
   };
 }
 
@@ -731,7 +757,14 @@ function tokenizeNonSpaceDelimitedTextForHighlighting(sourceText, languageCode) 
   return { tokens, wordEntries };
 }
 
+// Every highlight and AI-hint consumer resolves matches through this wrapper;
+// no consumer implements its own overlap selection. The active policy decides
+// between the historical left-to-right scan and global selection.
 export function findLongestGlossaryMatches(text, matcher) {
+  return findGlossaryMatchesForPolicy(text, matcher, activeGlossaryMatcherPolicy());
+}
+
+export function findGlossaryMatchesForPolicy(text, matcher, policy) {
   if (!matcher) {
     return {
       tokens: [],
@@ -741,6 +774,25 @@ export function findLongestGlossaryMatches(text, matcher) {
 
   const tokenizedText = tokenizeTextForHighlighting(text, matcher.languageCode);
   const { tokens, wordEntries } = tokenizedText;
+
+  if (policy === GLOSSARY_MATCHER_POLICIES.globalTrie && matcher.compiled) {
+    const normalizedWords = wordEntries.map((word) => word.normalized);
+    const occurrences = discoverGlossaryTokenOccurrences(matcher.compiled, normalizedWords);
+    const accepted = selectGloballyLongestOccurrences(
+      matcher.compiled,
+      occurrences,
+      normalizedWords.length,
+    );
+    return {
+      tokens,
+      matches: accepted.map((occurrence) => ({
+        startTokenIndex: wordEntries[occurrence.startWord].tokenIndex,
+        endTokenIndex: wordEntries[occurrence.endWord - 1].tokenIndex,
+        candidate: matcher.compiled.candidates[occurrence.candidateIndex].payload,
+      })),
+    };
+  }
+
   const matches = [];
 
   for (let wordIndex = 0; wordIndex < wordEntries.length;) {
@@ -776,6 +828,29 @@ export function findLongestGlossaryMatches(text, matcher) {
   }
 
   return { tokens, matches };
+}
+
+// Token-sequence containment for redistribution-style checks (e.g. assigning
+// batch-derived entries to rows). True when the term's normalized token
+// sequence appears as consecutive matchable tokens in the text — the same
+// boundary semantics as the matcher, so "he" never matches inside "theme" and
+// hyphen/em-dash separated forms still match.
+export function glossaryTermMatchesTokenSequence(text, term, languageCode) {
+  const termTokens = tokenizeGlossaryTerm(term, languageCode);
+  if (termTokens.length === 0) {
+    return false;
+  }
+
+  const { wordEntries } = tokenizeTextForHighlighting(text, languageCode);
+  for (let start = 0; start + termTokens.length <= wordEntries.length; start += 1) {
+    const matchesHere = termTokens.every(
+      (token, offset) => wordEntries[start + offset].normalized === token,
+    );
+    if (matchesHere) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function buildGlossaryTooltipText(candidate, glossaryModel) {

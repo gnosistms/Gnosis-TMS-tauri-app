@@ -195,6 +195,18 @@ events MUST document which event names they emit.
 - Prefer `serde_json::Value` for dynamic git file content; use typed structs for
   SQLite rows and API responses.
 
+## Glossary Matching (Derived Alignment)
+
+Glossary-source matching for derived glossary preparation goes through
+`find_matched_glossary_terms` / `find_matched_glossary_terms_in_texts` in
+`ai/mod.rs`; the generic compiled trie and global selector live in
+`ai/glossary_matcher.rs`. Batch preparation matches each pivot row
+independently — a term must never match across a row boundary. The two-way
+policy constant in `glossary_matcher.rs` must only be flipped together with the
+frontend constant and the shared fixture's `defaultPolicy`
+(`tests/fixtures/glossary-matching/golden.json`). Semantics reference:
+`plans/glossary-matching-semantics.md`.
+
 ## Common Mistakes
 
 ### GitHub API

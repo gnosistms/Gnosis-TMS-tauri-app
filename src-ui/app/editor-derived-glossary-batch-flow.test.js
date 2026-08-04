@@ -132,6 +132,45 @@ test("ensureBatchDerivedGlossaries derives once per chunk and redistributes entr
   assert.deepEqual(entriesByRow["row-2"].entries.map((entry) => entry.sourceTerm), ["Luz"]);
 });
 
+test("ensureBatchDerivedGlossaries sends per-row pivot texts and redistributes on token boundaries", async () => {
+  resetSessionState();
+  state.editorChapter = chapter({
+    rows: [
+      { rowId: "row-1", lifecycleState: "active", fields: { es: "Luzbel aparece", en: "Lucifer appears", vi: "" } },
+      { rowId: "row-2", lifecycleState: "active", fields: { es: "Luz clara", en: "clear light", vi: "" } },
+    ],
+  });
+  const prepareCalls = [];
+
+  const { results } = await ensureBatchDerivedGlossaries({
+    chapterState: state.editorChapter,
+    items: items(state.editorChapter),
+    providerId: "openai",
+    modelId: "test-model",
+    operations: {
+      prepareEditorAiTranslatedGlossaryBatch: async (request) => {
+        prepareCalls.push(request);
+        return {
+          glossarySourceText: request.glossarySourceText,
+          entries: [
+            { sourceTerm: "Luz", glossarySourceTerm: "light", targetVariants: ["anh sang"] },
+          ],
+        };
+      },
+    },
+  });
+
+  assert.equal(prepareCalls.length, 1);
+  // Ordered per-row pivot texts ride along so backend matching is row-bounded.
+  assert.deepEqual(prepareCalls[0].glossarySourceTexts, ["Lucifer appears", "clear light"]);
+  assert.deepEqual(results.map((result) => result.status), ["derived", "derived"]);
+  const entriesByRow = state.editorChapter.derivedGlossariesByRowId;
+  // "Luz" is a substring of "Luzbel" but not a token match — row-1 must not
+  // receive the entry; row-2 contains the standalone token and must.
+  assert.deepEqual(entriesByRow["row-1"].entries, []);
+  assert.deepEqual(entriesByRow["row-2"].entries.map((entry) => entry.sourceTerm), ["Luz"]);
+});
+
 test("ensureBatchDerivedGlossaries reuses fresh cached entries and reports rows missing pivot text", async () => {
   resetSessionState();
   state.editorChapter = chapter();
