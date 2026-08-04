@@ -113,6 +113,7 @@ pub(crate) use self::row_fields::{
     update_gtms_editor_row_text_style_sync,
 };
 pub(crate) use self::row_merge::merge_gtms_editor_rows_sync;
+pub(crate) use self::row_merge::unescaped_footnote_marker_sequence;
 #[cfg(test)]
 use self::row_structure::create_inserted_editor_row;
 #[cfg(test)]
@@ -369,6 +370,14 @@ pub(crate) struct UpdateEditorRowFieldFlagInput {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct EditorAiReviewFootnoteCorrection {
+    marker: usize,
+    #[serde(default)]
+    text: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct ApplyEditorAiReviewResultInput {
     pub(crate) installation_id: i64,
     repo_name: String,
@@ -379,7 +388,7 @@ pub(crate) struct ApplyEditorAiReviewResultInput {
     #[serde(default)]
     suggested_text: String,
     #[serde(default)]
-    suggested_footnote: String,
+    suggested_footnotes: Vec<EditorAiReviewFootnoteCorrection>,
     #[serde(default)]
     suggested_image_caption: String,
     reviewed: bool,
@@ -395,7 +404,7 @@ pub(crate) struct ApplyEditorAiReviewResultsBatchRowInput {
     #[serde(default)]
     suggested_text: String,
     #[serde(default)]
-    suggested_footnote: String,
+    suggested_footnotes: Vec<EditorAiReviewFootnoteCorrection>,
     #[serde(default)]
     suggested_image_caption: String,
     reviewed: bool,
@@ -586,6 +595,7 @@ pub(crate) struct ApplyEditorAiReviewResultResponse {
     image_caption: String,
     reviewed: bool,
     please_check: bool,
+    marker_integrity_rejected: bool,
     last_update: Option<EditorRowVersionMetadata>,
     chapter_base_commit_sha: Option<String>,
 }
@@ -599,6 +609,7 @@ pub(crate) struct ApplyEditorAiReviewResultsBatchRowResult {
     image_caption: String,
     reviewed: bool,
     please_check: bool,
+    marker_integrity_rejected: bool,
     last_update: Option<EditorRowVersionMetadata>,
 }
 

@@ -4,6 +4,7 @@ import {
   buildRowSourceContextWindow,
 } from "./editor-ai-context-window.js";
 import { buildBatchGlossaryHints } from "./editor-ai-batch-request.js";
+import { editorFootnotesForAiReview } from "./editor-footnotes.js";
 import { editorFootnotesPlainText } from "./editor-utils.js";
 import { languageBaseCode } from "./editor-language-utils.js";
 
@@ -25,6 +26,13 @@ export function readEditorReviewRowFootnote(row, languageCode) {
     return "";
   }
   return editorFootnotesPlainText(row?.footnotes?.[languageCode]);
+}
+
+export function readEditorReviewRowFootnotes(row, languageCode) {
+  if (!languageCode) {
+    return [];
+  }
+  return editorFootnotesForAiReview(row?.footnotes?.[languageCode]);
 }
 
 export function readEditorReviewRowImageCaption(row, languageCode) {
@@ -150,12 +158,12 @@ export function buildEditorAiReviewRequest({
     reviewMode: normalizedReviewMode,
     text: latestTranslation,
     latestTranslation,
-    footnote: readEditorReviewRowFootnote(row, targetLanguageCode),
+    footnotes: readEditorReviewRowFootnotes(row, targetLanguageCode),
     imageCaption: readEditorReviewRowImageCaption(row, targetLanguageCode),
     sourceText: readEditorReviewRowFieldText(row, sourceLanguageCode),
-    sourceFootnote: normalizedReviewMode === "meaning"
-      ? readEditorReviewRowFootnote(row, sourceLanguageCode)
-      : "",
+    sourceFootnotes: normalizedReviewMode === "meaning"
+      ? readEditorReviewRowFootnotes(row, sourceLanguageCode)
+      : [],
     sourceImageCaption: normalizedReviewMode === "meaning"
       ? readEditorReviewRowImageCaption(row, sourceLanguageCode)
       : "",
@@ -206,10 +214,10 @@ export function buildEditorAiReviewBatchRequest({
     return {
       rowId,
       latestTranslation: readEditorReviewRowFieldText(row, targetLanguageCode),
-      footnote: readEditorReviewRowFootnote(row, targetLanguageCode),
+      footnotes: readEditorReviewRowFootnotes(row, targetLanguageCode),
       imageCaption: readEditorReviewRowImageCaption(row, targetLanguageCode),
       sourceText: meaning ? readEditorReviewRowFieldText(row, sourceLanguageCode) : "",
-      sourceFootnote: meaning ? readEditorReviewRowFootnote(row, sourceLanguageCode) : "",
+      sourceFootnotes: meaning ? readEditorReviewRowFootnotes(row, sourceLanguageCode) : [],
       sourceImageCaption: meaning ? readEditorReviewRowImageCaption(row, sourceLanguageCode) : "",
       alternateLanguageTexts: meaning
         ? buildEditorAiReviewAlternateLanguageTexts(chapterState, row, sourceLanguageCode, targetLanguageCode)

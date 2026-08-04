@@ -40,7 +40,11 @@ import {
   findEditorRowById,
   normalizeFieldState,
 } from "./editor-utils.js";
-import { applyEditorFootnoteText } from "./editor-footnotes.js";
+import {
+  editorFootnoteMarkerSequencesEqual,
+  mergeEditorFootnoteCorrections,
+  normalizeEditorFootnotes,
+} from "./editor-footnotes.js";
 import { reconcileDirtyTrackedEditorRows } from "./editor-dirty-row-state.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import { invoke } from "./runtime.js";
@@ -146,8 +150,11 @@ function applyReviewResultToRow(row, languageCode, payload) {
   const fields = cloneRowFields(row.fields);
   fields[languageCode] = nextText;
   const footnotes = cloneRowFootnotes(row.footnotes);
-  if (nextFootnote.trim()) {
-    footnotes[languageCode] = applyEditorFootnoteText(footnotes[languageCode], 1, nextFootnote);
+  if (
+    Object.hasOwn(payload ?? {}, "footnote")
+    && (nextFootnote.trim() || footnotes[languageCode] !== undefined)
+  ) {
+    footnotes[languageCode] = normalizeEditorFootnotes(nextFootnote);
   }
   const imageCaptions = cloneRowFields(row.imageCaptions);
   imageCaptions[languageCode] = nextImageCaption;
@@ -177,6 +184,40 @@ function applyReviewResultToRow(row, languageCode, payload) {
       kind: null,
       error: "",
     },
+  };
+}
+
+function safeReviewSuggestionsForRow(row, languageCode, reviewPayload) {
+  const reviewed = reviewPayload?.reviewed === true;
+  if (reviewed) {
+    return {
+      suggestedText: "",
+      suggestedFootnotes: [],
+      suggestedImageCaption: "",
+      reviewed: true,
+      pleaseCheck: false,
+      markerIntegrityRejected: false,
+    };
+  }
+
+  const suggestedText = String(reviewPayload?.suggestedText ?? "");
+  const suggestedFootnotes = Array.isArray(reviewPayload?.suggestedFootnotes)
+    ? reviewPayload.suggestedFootnotes
+    : [];
+  const currentText = readEditorReviewRowFieldText(row, languageCode);
+  const merged = mergeEditorFootnoteCorrections(row?.footnotes?.[languageCode], suggestedFootnotes);
+  const markerIntegrityRejected =
+    (suggestedText.trim() && !editorFootnoteMarkerSequencesEqual(currentText, suggestedText))
+    || !merged.ok;
+  return {
+    suggestedText: markerIntegrityRejected ? "" : suggestedText,
+    suggestedFootnotes: markerIntegrityRejected ? [] : suggestedFootnotes,
+    suggestedImageCaption: markerIntegrityRejected
+      ? ""
+      : String(reviewPayload?.suggestedImageCaption ?? ""),
+    reviewed: false,
+    pleaseCheck: true,
+    markerIntegrityRejected,
   };
 }
 
@@ -454,10 +495,14 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
   // Writes one review result (from a batch row or a single-row call). Returns
   // "chapter-changed" (caller must stop the run) or "ok".
   const applyReviewOutcome = async (item, reviewPayload) => {
-    const reviewed = reviewPayload?.reviewed === true;
-    const suggestedText = reviewed ? "" : String(reviewPayload?.suggestedText ?? "");
-    const suggestedFootnote = reviewed ? "" : String(reviewPayload?.suggestedFootnote ?? "");
-    const suggestedImageCaption = reviewed ? "" : String(reviewPayload?.suggestedImageCaption ?? "");
+    const currentRow = findEditorRowById(item.rowId, state.editorChapter);
+    const suggestions = safeReviewSuggestionsForRow(currentRow, targetLanguageCode, reviewPayload);
+    if (suggestions.markerIntegrityRejected) {
+      reportBackendNonfatalError({
+        operation: "ai-review",
+        reason: "footnote-marker-integrity",
+      });
+    }
     const savePayload = await invokeEditorWriteCommand("apply_gtms_editor_ai_review_result", {
       input: {
         installationId: team.installationId,
@@ -466,14 +511,20 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
         chapterId: editorChapter.chapterId,
         rowId: item.rowId,
         languageCode: targetLanguageCode,
-        suggestedText,
-        suggestedFootnote,
-        suggestedImageCaption,
-        reviewed,
-        pleaseCheck: !reviewed,
+        suggestedText: suggestions.suggestedText,
+        suggestedFootnotes: suggestions.suggestedFootnotes,
+        suggestedImageCaption: suggestions.suggestedImageCaption,
+        reviewed: suggestions.reviewed,
+        pleaseCheck: suggestions.pleaseCheck,
         aiModel: modelId,
       },
     }, { render, actionKind: "sharedWrite", rowId: item.rowId });
+    if (savePayload?.markerIntegrityRejected === true) {
+      reportBackendNonfatalError({
+        operation: "ai-review-write",
+        reason: "footnote-marker-integrity",
+      });
+    }
     if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
       return "chapter-changed";
     }
@@ -516,17 +567,26 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
     if (entries.length === 0) {
       return "ok";
     }
+    let markerIntegrityRejected = false;
     const rows = entries.map(({ item, reviewPayload }) => {
-      const reviewed = reviewPayload?.reviewed === true;
+      const currentRow = findEditorRowById(item.rowId, state.editorChapter);
+      const suggestions = safeReviewSuggestionsForRow(currentRow, targetLanguageCode, reviewPayload);
+      markerIntegrityRejected ||= suggestions.markerIntegrityRejected;
       return {
         rowId: item.rowId,
-        suggestedText: reviewed ? "" : String(reviewPayload?.suggestedText ?? ""),
-        suggestedFootnote: reviewed ? "" : String(reviewPayload?.suggestedFootnote ?? ""),
-        suggestedImageCaption: reviewed ? "" : String(reviewPayload?.suggestedImageCaption ?? ""),
-        reviewed,
-        pleaseCheck: !reviewed,
+        suggestedText: suggestions.suggestedText,
+        suggestedFootnotes: suggestions.suggestedFootnotes,
+        suggestedImageCaption: suggestions.suggestedImageCaption,
+        reviewed: suggestions.reviewed,
+        pleaseCheck: suggestions.pleaseCheck,
       };
     });
+    if (markerIntegrityRejected) {
+      reportBackendNonfatalError({
+        operation: "ai-review-batch",
+        reason: "footnote-marker-integrity",
+      });
+    }
     const applyBatch =
       typeof operations.applyAiReviewResultsBatch === "function"
         ? operations.applyAiReviewResultsBatch
@@ -550,6 +610,12 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
     const resultsByRowId = new Map(
       (Array.isArray(savePayload?.rows) ? savePayload.rows : []).map((row) => [row.rowId, row]),
     );
+    if ([...resultsByRowId.values()].some((row) => row?.markerIntegrityRejected === true)) {
+      reportBackendNonfatalError({
+        operation: "ai-review-batch-write",
+        reason: "footnote-marker-integrity",
+      });
+    }
     const appliedRowIds = [];
     for (const { item } of entries) {
       const rowPayload = resultsByRowId.get(item.rowId);
@@ -928,4 +994,5 @@ export const editorAiReviewAllTestApi = {
     activeReviewAllRunId = 0;
   },
   reviewableTranslationRows,
+  safeReviewSuggestionsForRow,
 };

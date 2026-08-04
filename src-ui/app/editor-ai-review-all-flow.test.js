@@ -156,6 +156,92 @@ test("AI Review All applies a non-empty footnote suggestion", () => {
   assert.deepEqual(result.persistedFootnotes.vi, [{ marker: 1, text: "Ghi chu" }]);
 });
 
+test("AI Review All preserves HNHH multi-footnote and non-default marker identity", () => {
+  const reviewedRow = {
+    ...row(
+      "row-1",
+      { es: "Source", vi: "Hồn[1], Chiên Con[2], Đấng Đáng Kính[3]." },
+      { vi: { reviewed: false, pleaseCheck: false } },
+    ),
+    footnotes: {
+      vi: [
+        { marker: 1, text: "Hồn" },
+        { marker: 2, text: "Chiên Con" },
+        { marker: 3, text: "Đấng Đáng Kính" },
+      ],
+    },
+  };
+
+  const safe = editorAiReviewAllTestApi.safeReviewSuggestionsForRow(reviewedRow, "vi", {
+    suggestedText: "Hồn[1], Chiên Con[2], Đấng Đáng Kính Yêu[3].",
+    suggestedFootnotes: [{ marker: 3, text: "Đấng Đáng Kính Yêu" }],
+    reviewed: false,
+  });
+  assert.equal(safe.markerIntegrityRejected, false);
+  assert.deepEqual(safe.suggestedFootnotes, [
+    { marker: 3, text: "Đấng Đáng Kính Yêu" },
+  ]);
+
+  const persisted = editorAiReviewAllTestApi.applyReviewResultToRow(reviewedRow, "vi", {
+    text: safe.suggestedText,
+    footnote: "[1] Hồn\n\n[2] Chiên Con\n\n[3] Đấng Đáng Kính Yêu",
+    reviewed: false,
+    pleaseCheck: true,
+  });
+  assert.deepEqual(persisted.footnotes.vi, [
+    { marker: 1, text: "Hồn" },
+    { marker: 2, text: "Chiên Con" },
+    { marker: 3, text: "Đấng Đáng Kính Yêu" },
+  ]);
+
+  const markerNineRow = {
+    ...reviewedRow,
+    fields: { es: "Source", vi: "Con Người[9]" },
+    footnotes: { vi: [{ marker: 9, text: "Con Người" }] },
+  };
+  assert.equal(
+    editorAiReviewAllTestApi.safeReviewSuggestionsForRow(markerNineRow, "vi", {
+      suggestedFootnotes: [{ marker: 9, text: "Con Người corrected" }],
+      reviewed: false,
+    }).markerIntegrityRejected,
+    false,
+  );
+});
+
+test("AI Review All rejects missing, reordered, unknown, and duplicate markers", () => {
+  const reviewedRow = {
+    ...row(
+      "row-1",
+      { es: "Source", vi: "One[1] Two[2]" },
+      { vi: { reviewed: false, pleaseCheck: false } },
+    ),
+    footnotes: {
+      vi: [
+        { marker: 1, text: "One" },
+        { marker: 2, text: "Two" },
+      ],
+    },
+  };
+  const malformed = [
+    { suggestedText: "One Two[2]" },
+    { suggestedText: "Two[2] One[1]" },
+    { suggestedFootnotes: [{ marker: 3, text: "Unknown" }] },
+    { suggestedFootnotes: [{ marker: 1, text: "First" }, { marker: 1, text: "Again" }] },
+  ];
+
+  for (const payload of malformed) {
+    const safe = editorAiReviewAllTestApi.safeReviewSuggestionsForRow(reviewedRow, "vi", {
+      ...payload,
+      reviewed: false,
+    });
+    assert.equal(safe.markerIntegrityRejected, true);
+    assert.equal(safe.suggestedText, "");
+    assert.deepEqual(safe.suggestedFootnotes, []);
+    assert.equal(safe.reviewed, false);
+    assert.equal(safe.pleaseCheck, true);
+  }
+});
+
 test("AI Review All opens preflight when reviewed translations exist", () => {
   resetSessionState();
   state.editorChapter = chapter();
@@ -312,7 +398,7 @@ test("AI Review All applies each batch response through one batched save, not pe
     {
       rowId: "row-a",
       suggestedText: "fix:row-a",
-      suggestedFootnote: "",
+      suggestedFootnotes: [],
       suggestedImageCaption: "",
       reviewed: false,
       pleaseCheck: true,
@@ -320,7 +406,7 @@ test("AI Review All applies each batch response through one batched save, not pe
     {
       rowId: "row-b",
       suggestedText: "",
-      suggestedFootnote: "",
+      suggestedFootnotes: [],
       suggestedImageCaption: "",
       reviewed: true,
       pleaseCheck: false,
@@ -328,7 +414,7 @@ test("AI Review All applies each batch response through one batched save, not pe
     {
       rowId: "row-c",
       suggestedText: "fix:row-c",
-      suggestedFootnote: "",
+      suggestedFootnotes: [],
       suggestedImageCaption: "",
       reviewed: false,
       pleaseCheck: true,

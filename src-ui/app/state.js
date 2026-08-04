@@ -608,6 +608,7 @@ export function createEditorAiReviewState() {
     sourceImageCaption: "",
     suggestedText: "",
     suggestedFootnote: "",
+    suggestedFootnotes: [],
     suggestedImageCaption: "",
     promptText: "",
     reviewMode: "grammar",

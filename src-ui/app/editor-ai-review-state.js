@@ -16,6 +16,12 @@ export function normalizeEditorAiReviewState(aiReview) {
     sourceImageCaption: typeof aiReview?.sourceImageCaption === "string" ? aiReview.sourceImageCaption : "",
     suggestedText: typeof aiReview?.suggestedText === "string" ? aiReview.suggestedText : "",
     suggestedFootnote: typeof aiReview?.suggestedFootnote === "string" ? aiReview.suggestedFootnote : "",
+    suggestedFootnotes: Array.isArray(aiReview?.suggestedFootnotes)
+      ? aiReview.suggestedFootnotes.map((entry) => ({
+        marker: Number.parseInt(String(entry?.marker ?? ""), 10),
+        text: typeof entry?.text === "string" ? entry.text : String(entry?.text ?? ""),
+      }))
+      : [],
     suggestedImageCaption: typeof aiReview?.suggestedImageCaption === "string" ? aiReview.suggestedImageCaption : "",
     promptText: typeof aiReview?.promptText === "string" ? aiReview.promptText : "",
     reviewMode: aiReview?.reviewMode === "meaning" ? "meaning" : "grammar",
@@ -88,6 +94,7 @@ export function applyEditorAiReviewLoaded(
   sourceImageCaption = "",
   suggestedText,
   suggestedFootnote = "",
+  suggestedFootnotes = [],
   suggestedImageCaption = "",
   promptText = "",
   reviewMode = "grammar",
@@ -110,6 +117,9 @@ export function applyEditorAiReviewLoaded(
       sourceImageCaption: typeof sourceImageCaption === "string" ? sourceImageCaption : "",
       suggestedText: typeof suggestedText === "string" ? suggestedText : "",
       suggestedFootnote: typeof suggestedFootnote === "string" ? suggestedFootnote : "",
+      suggestedFootnotes: Array.isArray(suggestedFootnotes)
+        ? suggestedFootnotes.map((entry) => ({ ...entry }))
+        : [],
       suggestedImageCaption: typeof suggestedImageCaption === "string" ? suggestedImageCaption : "",
       promptText: typeof promptText === "string" ? promptText : "",
       reviewMode: reviewMode === "meaning" ? "meaning" : "grammar",
@@ -125,6 +135,8 @@ export function applyEditorAiReviewFailed(
   requestKey,
   sourceText,
   error,
+  sourceFootnote = "",
+  sourceImageCaption = "",
 ) {
   if (!chapterState?.chapterId || !rowId || !languageCode) {
     return chapterState;
@@ -140,6 +152,8 @@ export function applyEditorAiReviewFailed(
       languageCode,
       requestKey,
       sourceText: typeof sourceText === "string" ? sourceText : "",
+      sourceFootnote: typeof sourceFootnote === "string" ? sourceFootnote : "",
+      sourceImageCaption: typeof sourceImageCaption === "string" ? sourceImageCaption : "",
     },
   };
 }
@@ -192,6 +206,7 @@ export function resolveVisibleEditorAiReview(
     && (
       aiReview.suggestedText.trim().length > 0
       || aiReview.suggestedFootnote.trim().length > 0
+      || aiReview.suggestedFootnotes.length > 0
       || aiReview.suggestedImageCaption.trim().length > 0
     );
   const hasReviewResult =

@@ -309,13 +309,22 @@ fn openai_text_format(output_format: AiPromptOutputFormat) -> Value {
             "schema": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["suggestedText", "suggestedFootnote", "suggestedImageCaption", "reviewed"],
+                "required": ["suggestedText", "suggestedFootnotes", "suggestedImageCaption", "reviewed"],
                 "properties": {
                     "suggestedText": {
                         "type": "string"
                     },
-                    "suggestedFootnote": {
-                        "type": "string"
+                    "suggestedFootnotes": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": ["marker", "text"],
+                            "properties": {
+                                "marker": { "type": "integer", "minimum": 1 },
+                                "text": { "type": "string" }
+                            }
+                        }
                     },
                     "suggestedImageCaption": {
                         "type": "string"
@@ -374,14 +383,25 @@ fn openai_text_format(output_format: AiPromptOutputFormat) -> Value {
                             "required": [
                                 "rowId",
                                 "suggestedText",
-                                "suggestedFootnote",
+                                "suggestedFootnotes",
                                 "suggestedImageCaption",
                                 "reviewed"
                             ],
                             "properties": {
                                 "rowId": { "type": "string" },
                                 "suggestedText": { "type": "string" },
-                                "suggestedFootnote": { "type": "string" },
+                                "suggestedFootnotes": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "required": ["marker", "text"],
+                                        "properties": {
+                                            "marker": { "type": "integer", "minimum": 1 },
+                                            "text": { "type": "string" }
+                                        }
+                                    }
+                                },
                                 "suggestedImageCaption": { "type": "string" },
                                 "reviewed": { "type": "boolean" }
                             }
@@ -644,7 +664,7 @@ pub(crate) fn normalize_review_response(body: &str) -> Result<AiReviewResponse, 
 
     Ok(AiReviewResponse {
         suggested_text,
-        suggested_footnote: String::new(),
+        suggested_footnotes: Vec::new(),
         suggested_image_caption: String::new(),
         reviewed: None,
         prompt_text: String::new(),
@@ -970,6 +990,12 @@ mod tests {
                 .pointer("/text/format/schema/properties/rows/items/properties/reviewed/type")
                 .and_then(serde_json::Value::as_str),
             Some("boolean")
+        );
+        assert_eq!(
+            payload
+                .pointer("/text/format/schema/properties/rows/items/properties/suggestedFootnotes/items/properties/marker/minimum")
+                .and_then(serde_json::Value::as_i64),
+            Some(1)
         );
     }
 

@@ -45,6 +45,63 @@ export function editorFootnotesPlainText(footnotes) {
     .join("\n\n");
 }
 
+export function editorFootnotesForAiReview(footnotes) {
+  return normalizeEditorFootnotes(footnotes).map((entry) => ({ ...entry }));
+}
+
+export function editorFootnoteMarkerSequence(text) {
+  return parseUnescapedFootnoteMarkers(text).map((entry) => entry.marker);
+}
+
+export function editorFootnoteMarkerSequencesEqual(leftText, rightText) {
+  const left = editorFootnoteMarkerSequence(leftText);
+  const right = editorFootnoteMarkerSequence(rightText);
+  return left.length === right.length
+    && left.every((marker, index) => marker === right[index]);
+}
+
+export function mergeEditorFootnoteCorrections(footnotes, corrections) {
+  const original = normalizeEditorFootnotes(footnotes);
+  const proposed = Array.isArray(corrections) ? corrections : [];
+  const originalMarkers = new Set(original.map((entry) => entry.marker));
+  const seenMarkers = new Set();
+  const correctionTextByMarker = new Map();
+
+  for (const correction of proposed) {
+    const marker = Number.parseInt(String(correction?.marker ?? ""), 10);
+    if (!Number.isInteger(marker) || marker <= 0) {
+      return { ok: false, footnotes: original, reason: "invalid-marker" };
+    }
+    if (!originalMarkers.has(marker)) {
+      return { ok: false, footnotes: original, reason: "unknown-marker" };
+    }
+    if (seenMarkers.has(marker)) {
+      return { ok: false, footnotes: original, reason: "duplicate-marker" };
+    }
+    seenMarkers.add(marker);
+    correctionTextByMarker.set(marker, normalizeFootnoteText(correction?.text));
+  }
+
+  const merged = original.map((entry) => correctionTextByMarker.has(entry.marker)
+      ? { marker: entry.marker, text: correctionTextByMarker.get(entry.marker) }
+      : entry);
+  const reparsed = normalizeEditorFootnotes(serializeEditorFootnotesForLegacy(merged));
+  const originalSequence = original.map((entry) => entry.marker);
+  const reparsedSequence = reparsed.map((entry) => entry.marker);
+  if (
+    originalSequence.length !== reparsedSequence.length
+    || originalSequence.some((marker, index) => marker !== reparsedSequence[index])
+  ) {
+    return { ok: false, footnotes: original, reason: "serialization-marker-change" };
+  }
+
+  return {
+    ok: true,
+    footnotes: merged,
+    reason: "",
+  };
+}
+
 export function unescapeLiteralFootnoteMarkers(text) {
   return String(text ?? "")
     .replaceAll(/\\\[(\d+)\\\]/g, "[$1]")

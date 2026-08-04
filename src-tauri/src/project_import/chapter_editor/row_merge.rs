@@ -1,6 +1,7 @@
 use super::row_fields::{
     apply_editor_footnote_updates, apply_editor_image_caption_updates,
-    apply_editor_plain_text_updates, parse_labeled_footnote_text_for_merge, ParsedFootnoteEntry,
+    apply_editor_plain_text_updates, parse_editor_footnote_entries,
+    serialize_editor_footnote_entries, ParsedFootnoteEntry,
 };
 use super::*;
 
@@ -280,37 +281,13 @@ fn join_paragraphs(previous: &str, next: &str) -> String {
 }
 
 fn parse_footnote_entries(value: &str) -> Vec<ParsedFootnoteEntry> {
-    if value.trim().is_empty() {
-        return Vec::new();
-    }
-    let parsed = parse_labeled_footnote_text_for_merge(value);
-    if parsed.is_empty() {
-        return vec![ParsedFootnoteEntry {
-            marker: 1,
-            text: value.trim().to_string(),
-        }];
-    }
-    parsed
+    parse_editor_footnote_entries(value)
 }
 
 /// Serializes footnote entries in the stored legacy format: a single marker-1 entry
 /// stays bare text; anything else is labeled `[n] text` joined by blank lines.
 fn serialize_footnote_entries(entries: &[ParsedFootnoteEntry]) -> String {
-    match entries {
-        [] => String::new(),
-        [single] if single.marker == 1 => single.text.clone(),
-        _ => entries
-            .iter()
-            .map(|entry| {
-                if entry.text.is_empty() {
-                    format!("[{}]", entry.marker)
-                } else {
-                    format!("[{}] {}", entry.marker, entry.text)
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n\n"),
-    }
+    serialize_editor_footnote_entries(entries)
 }
 
 fn max_footnote_marker(text: &str, entries: &[ParsedFootnoteEntry]) -> usize {
@@ -374,6 +351,13 @@ fn unescaped_marker_spans(text: &str) -> Vec<MarkerSpan> {
     }
 
     spans
+}
+
+pub(crate) fn unescaped_footnote_marker_sequence(text: &str) -> Vec<usize> {
+    unescaped_marker_spans(text)
+        .into_iter()
+        .map(|span| span.marker)
+        .collect()
 }
 
 fn shift_unescaped_footnote_markers(text: &str, offset: usize) -> String {
