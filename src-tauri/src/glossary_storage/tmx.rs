@@ -473,13 +473,7 @@ fn clean_tmx_text(value: &str) -> String {
 }
 
 fn normalize_tmx_language_code(value: &str) -> String {
-    value
-        .trim()
-        .split(['-', '_'])
-        .next()
-        .unwrap_or_default()
-        .trim()
-        .to_lowercase()
+    super::normalize_glossary_language_code(value)
 }
 
 fn read_tmx_language_attr(
@@ -589,5 +583,17 @@ mod tests {
             .expect("duplicate ids must fail");
 
         assert!(error.contains("duplicate translation-unit id 'duplicate-id'"));
+    }
+
+    #[test]
+    fn preserves_traditional_chinese_script_subtag_and_name() {
+        let xml = r#"<tmx version="1.4"><header srclang="es"/><body>
+<tu tuid="term-1"><tuv xml:lang="es"><seg>mundo</seg></tuv><tuv xml:lang="zh-Hant"><seg>世界</seg></tuv></tu>
+</body></tmx>"#;
+        let parsed = parse_tmx_glossary("Gnosis ES-CNT.tmx", xml.as_bytes())
+            .expect("parse Traditional Chinese TMX");
+
+        assert_eq!(parsed.target_language.code, "zh-Hant");
+        assert_eq!(parsed.target_language.name, "Chinese (Traditional)");
     }
 }

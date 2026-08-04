@@ -372,9 +372,35 @@ fn normalize_language_code(value: &str) -> String {
         .trim()
         .replace('_', "-")
         .split('-')
-        .next()
-        .unwrap_or_default()
-        .to_lowercase()
+        .enumerate()
+        .map(|(index, subtag)| {
+            if index == 0 {
+                return subtag.to_ascii_lowercase();
+            }
+            if subtag.len() == 4
+                && subtag
+                    .chars()
+                    .all(|character| character.is_ascii_alphabetic())
+            {
+                let mut characters = subtag.chars();
+                let first = characters
+                    .next()
+                    .map(|character| character.to_ascii_uppercase())
+                    .unwrap_or_default();
+                return format!("{first}{}", characters.as_str().to_ascii_lowercase());
+            }
+            if (subtag.len() == 2
+                && subtag
+                    .chars()
+                    .all(|character| character.is_ascii_alphabetic()))
+                || (subtag.len() == 3 && subtag.chars().all(|character| character.is_ascii_digit()))
+            {
+                return subtag.to_ascii_uppercase();
+            }
+            subtag.to_ascii_lowercase()
+        })
+        .collect::<Vec<_>>()
+        .join("-")
 }
 
 fn language_info_for_code(code: &str) -> QaListLanguageInfo {
@@ -396,25 +422,20 @@ fn language_name_map() -> &'static std::collections::BTreeMap<String, String> {
         let mut map = std::collections::BTreeMap::new();
         for line in ISO_LANGUAGE_OPTIONS_SOURCE.lines() {
             let trimmed = line.trim();
-            if !trimmed.starts_with("{ code:") {
+            if !trimmed.starts_with("[\"") {
                 continue;
             }
-            let code = extract_js_string_property(trimmed, "code");
-            let name = extract_js_string_property(trimmed, "name");
-            if let (Some(code), Some(name)) = (code, name) {
-                map.insert(normalize_language_code(&code), name);
+            let parts = trimmed.split('"').collect::<Vec<_>>();
+            if parts.len() >= 4 {
+                let code = normalize_language_code(parts[1]);
+                let name = parts[3].trim().to_string();
+                if !code.is_empty() && !name.is_empty() {
+                    map.insert(code, name);
+                }
             }
         }
         map
     })
-}
-
-fn extract_js_string_property(line: &str, property: &str) -> Option<String> {
-    let marker = format!("{property}: \"");
-    let start = line.find(&marker)? + marker.len();
-    let rest = &line[start..];
-    let end = rest.find('"')?;
-    Some(rest[..end].to_string())
 }
 
 fn escape_xml_text(value: &str) -> String {
@@ -460,5 +481,17 @@ mod tests {
             .expect("duplicate ids must fail");
 
         assert!(error.contains("duplicate translation-unit id 'duplicate-id'"));
+    }
+
+    #[test]
+    fn preserves_traditional_chinese_script_subtag_and_name() {
+        let xml = r#"<tmx version="1.4"><header srclang="zh-Hant"/><body>
+<tu tuid="term-1"><tuv xml:lang="zh-Hant"><seg>第一項檢查</seg></tuv></tu>
+</body></tmx>"#;
+        let parsed = parse_tmx_qa_list("traditional-chinese.tmx", xml.as_bytes())
+            .expect("parse Traditional Chinese QA TMX");
+
+        assert_eq!(parsed.language.code, "zh-Hant");
+        assert_eq!(parsed.language.name, "Chinese (Traditional)");
     }
 }
