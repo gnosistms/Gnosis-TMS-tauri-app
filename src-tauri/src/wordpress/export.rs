@@ -28,7 +28,7 @@ const MAX_WORDPRESS_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
 const MAX_WORDPRESS_IMAGE_DISPLAY_HEIGHT_PX: u64 = 750;
 const WORDPRESS_POST_LIST_BASE_PATH: &str = concat!(
     "posts?per_page=20&context=edit&status=publish,future,draft,pending,private",
-    "&_fields=id,title,status,link,modified&orderby=modified&order=desc",
+    "&_fields=id,title,status,link,modified",
 );
 
 #[derive(serde::Deserialize)]
@@ -129,16 +129,31 @@ fn wordpress_post_search_path(search: &str, connection: &WordPressConnection) ->
     match wordpress_post_search_target_from_url(trimmed, connection) {
         Some(WordPressPostSearchTarget::PostId(post_id)) => {
             append_encoded_query_param(&mut path, "include", &post_id.to_string());
+            append_wordpress_recent_order(&mut path);
         }
         Some(WordPressPostSearchTarget::Slug(slug)) => {
             append_encoded_query_param(&mut path, "slug", &slug);
+            append_wordpress_recent_order(&mut path);
         }
         None if !trimmed.is_empty() => {
-            append_encoded_query_param(&mut path, "search", trimmed);
+            // Some WordPress/MySQL collations do not case-fold Vietnamese
+            // characters such as Ư/ư and Ơ/ơ. WordPress can therefore return
+            // no results for an uppercase title even though the same lowercase
+            // query finds it. Normalize plain-text searches before sending them;
+            // URL-derived ID and slug lookups above must remain unchanged.
+            append_encoded_query_param(&mut path, "search", &trimmed.to_lowercase());
+            // Explicit modified-date ordering hides relevant older posts when
+            // more than 20 newer post bodies contain a common search term.
+            append_encoded_query_param(&mut path, "orderby", "relevance");
         }
-        None => {}
+        None => append_wordpress_recent_order(&mut path),
     }
     path
+}
+
+fn append_wordpress_recent_order(path: &mut String) {
+    append_encoded_query_param(path, "orderby", "modified");
+    append_encoded_query_param(path, "order", "desc");
 }
 
 fn append_encoded_query_param(path: &mut String, key: &str, value: &str) {
@@ -1292,8 +1307,18 @@ mod tests {
         let path = wordpress_post_search_path("hello world", &test_connection());
 
         assert!(path.contains("&search=hello+world"));
+        assert!(path.contains("&orderby=relevance"));
+        assert!(!path.contains("&orderby=modified"));
         assert!(!path.contains("&slug="));
         assert!(!path.contains("&include="));
+    }
+
+    #[test]
+    fn wordpress_post_search_path_lowercases_unicode_text_search() {
+        let path = wordpress_post_search_path("CHƯƠNG 2 – CON NGƯỜI", &test_connection());
+
+        assert!(path.contains("&search=ch%C6%B0%C6%A1ng+2+%E2%80%93+con+ng%C6%B0%E1%BB%9Di"));
+        assert!(!path.contains("CH%C6%AF%C6%A0NG"));
     }
 
     #[test]
@@ -1304,8 +1329,17 @@ mod tests {
         );
 
         assert!(path.contains("&slug=hn"));
+        assert!(path.contains("&orderby=modified&order=desc"));
         assert!(!path.contains("&search="));
         assert!(!path.contains("&include="));
+    }
+
+    #[test]
+    fn wordpress_post_search_path_lists_recent_posts_without_a_query() {
+        let path = wordpress_post_search_path("  ", &test_connection());
+
+        assert!(path.contains("&orderby=modified&order=desc"));
+        assert!(!path.contains("&orderby=relevance"));
     }
 
     #[test]
