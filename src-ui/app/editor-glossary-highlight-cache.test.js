@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { buildEditorDerivedGlossaryModel, buildEditorGlossaryModel } from "./editor-glossary-highlighting.js";
 import { buildCachedEditorRowGlossaryHighlights } from "./editor-glossary-highlight-cache.js";
+import { buildEditorGlossaryRevisionKey } from "./editor-derived-glossary-state.js";
 
 function buildDirectGlossaryState() {
   const glossary = {
@@ -66,26 +67,7 @@ test("direct glossary target highlights take precedence over derived target high
         translationSourceText: "The intellectual.",
         glossarySourceText: "El intelectual.",
         glossarySourceTextOrigin: "row",
-        glossaryRevisionKey: JSON.stringify({
-          glossaryId: "glossary-1",
-          repoName: "glossary-1",
-          sourceLanguageCode: "es",
-          targetLanguageCode: "vi",
-          terms: [
-            {
-              termId: "term-1",
-              sourceTerms: ["intelectual"],
-              targetTerms: ["lý trí"],
-              notes: [],
-            },
-            {
-              termId: "term-2",
-              sourceTerms: ["el intelectual"],
-              targetTerms: ["trung tâm lý trí"],
-              notes: [],
-            },
-          ],
-        }),
+        glossaryRevisionKey: buildEditorGlossaryRevisionKey(buildDirectGlossaryState()),
         entries: [
           {
             sourceTerm: "intellectual",
