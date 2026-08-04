@@ -1,3 +1,4 @@
+pub(crate) mod glossary_matcher;
 pub mod providers;
 pub mod types;
 
@@ -1584,10 +1585,28 @@ enum AiAssistantResponseKind {
 struct PreparedGlossaryCandidate {
     match_term: String,
     tokens: Vec<String>,
+    // Greatest Unicode scalar count among merged duplicate variants — the
+    // global selector's length tie-break. match_term keeps the byte-longest
+    // variant for the legacy bucket sort only.
+    priority_scalar_length: usize,
     target_variants: Vec<AiTranslationGlossaryTargetVariant>,
     no_translation: Option<AiTranslationNoTranslationHint>,
     notes: Vec<String>,
     footnotes: Vec<String>,
+}
+
+/// Merged candidates in first-seen order plus the two match indexes built
+/// from them: legacy first-token buckets and the compiled global trie.
+struct PreparedGlossaryCandidates {
+    ordered: Vec<PreparedGlossaryCandidate>,
+    by_first_token: HashMap<String, Vec<usize>>,
+    compiled: glossary_matcher::CompiledGlossaryMatcher,
+}
+
+impl PreparedGlossaryCandidates {
+    fn is_empty(&self) -> bool {
+        self.ordered.is_empty()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1766,8 +1785,11 @@ fn tokenize_text_words(text: &str) -> Vec<TokenizedWord> {
 
 fn build_glossary_match_candidates(
     glossary_terms: &[AiTranslatedGlossaryTermInput],
-) -> HashMap<String, Vec<PreparedGlossaryCandidate>> {
-    let mut merged_candidates_by_key = HashMap::<String, PreparedGlossaryCandidate>::new();
+) -> PreparedGlossaryCandidates {
+    // First-seen order is preserved so each merged candidate's defensive
+    // ordinal tie-break in the compiled trie is deterministic.
+    let mut ordered = Vec::<PreparedGlossaryCandidate>::new();
+    let mut index_by_key = HashMap::<String, usize>::new();
 
     for term in glossary_terms {
         let target_variants = sanitize_glossary_target_variants(&term.target_variants);
@@ -1782,7 +1804,11 @@ fn build_glossary_match_candidates(
             }
 
             let candidate_key = tokens.join(" ");
-            if let Some(existing_candidate) = merged_candidates_by_key.get_mut(&candidate_key) {
+            if let Some(&existing_index) = index_by_key.get(&candidate_key) {
+                let existing_candidate = &mut ordered[existing_index];
+                existing_candidate.priority_scalar_length = existing_candidate
+                    .priority_scalar_length
+                    .max(source_term.chars().count());
                 if source_term.len() > existing_candidate.match_term.len() {
                     existing_candidate.match_term = source_term;
                 }
@@ -1799,40 +1825,57 @@ fn build_glossary_match_candidates(
                 continue;
             }
 
-            merged_candidates_by_key.insert(
-                candidate_key,
-                PreparedGlossaryCandidate {
-                    match_term: source_term,
-                    tokens,
-                    target_variants: target_variants.clone(),
-                    no_translation: no_translation.clone(),
-                    notes: notes.clone(),
-                    footnotes: footnotes.clone(),
-                },
-            );
+            index_by_key.insert(candidate_key, ordered.len());
+            let priority_scalar_length = source_term.chars().count();
+            ordered.push(PreparedGlossaryCandidate {
+                match_term: source_term,
+                tokens,
+                priority_scalar_length,
+                target_variants: target_variants.clone(),
+                no_translation: no_translation.clone(),
+                notes: notes.clone(),
+                footnotes: footnotes.clone(),
+            });
         }
     }
 
-    let mut candidates_by_first_token = HashMap::<String, Vec<PreparedGlossaryCandidate>>::new();
-
-    for candidate in merged_candidates_by_key.into_values() {
-        candidates_by_first_token
+    let mut by_first_token = HashMap::<String, Vec<usize>>::new();
+    for (index, candidate) in ordered.iter().enumerate() {
+        by_first_token
             .entry(candidate.tokens[0].clone())
             .or_default()
-            .push(candidate);
+            .push(index);
     }
-
-    for candidates in candidates_by_first_token.values_mut() {
-        candidates.sort_by(|left, right| {
-            right
+    for bucket in by_first_token.values_mut() {
+        bucket.sort_by(|&left, &right| {
+            ordered[right]
                 .tokens
                 .len()
-                .cmp(&left.tokens.len())
-                .then_with(|| right.match_term.len().cmp(&left.match_term.len()))
+                .cmp(&ordered[left].tokens.len())
+                .then_with(|| {
+                    ordered[right]
+                        .match_term
+                        .len()
+                        .cmp(&ordered[left].match_term.len())
+                })
         });
     }
 
-    candidates_by_first_token
+    let compiled = glossary_matcher::compile_glossary_token_matcher(
+        &ordered
+            .iter()
+            .map(|candidate| glossary_matcher::GlossaryMatcherCandidate {
+                tokens: candidate.tokens.clone(),
+                priority_length: candidate.priority_scalar_length,
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    PreparedGlossaryCandidates {
+        ordered,
+        by_first_token,
+        compiled,
+    }
 }
 
 fn clamp_to_char_boundary_left(text: &str, mut index: usize) -> usize {
@@ -1866,35 +1909,125 @@ fn find_matched_glossary_terms(
     glossary_source_text: &str,
     glossary_terms: &[AiTranslatedGlossaryTermInput],
 ) -> Vec<PreparedGlossaryMatch> {
-    let candidates_by_first_token = build_glossary_match_candidates(glossary_terms);
-    if candidates_by_first_token.is_empty() {
+    find_matched_glossary_terms_in_texts(&[glossary_source_text], glossary_terms)
+}
+
+/// Matches each text independently, so a glossary term can never match across
+/// a text (row) boundary. Surface-term dedupe spans all texts: the first
+/// occurrence in text order wins, matching the single-text dedupe rule.
+fn find_matched_glossary_terms_in_texts(
+    glossary_source_texts: &[&str],
+    glossary_terms: &[AiTranslatedGlossaryTermInput],
+) -> Vec<PreparedGlossaryMatch> {
+    find_matched_glossary_terms_in_texts_with_policy(
+        glossary_source_texts,
+        glossary_terms,
+        glossary_matcher::GLOSSARY_MATCHER_POLICY,
+    )
+}
+
+fn find_matched_glossary_terms_in_texts_with_policy(
+    glossary_source_texts: &[&str],
+    glossary_terms: &[AiTranslatedGlossaryTermInput],
+    policy: glossary_matcher::GlossaryMatcherPolicy,
+) -> Vec<PreparedGlossaryMatch> {
+    let candidates = build_glossary_match_candidates(glossary_terms);
+    if candidates.is_empty() {
         return vec![];
     }
 
-    let words = tokenize_text_words(glossary_source_text);
     let mut matched_terms = Vec::new();
     let mut seen_surface_terms = HashSet::new();
+    for glossary_source_text in glossary_source_texts {
+        collect_matched_glossary_terms_in_text(
+            glossary_source_text,
+            &candidates,
+            policy,
+            &mut seen_surface_terms,
+            &mut matched_terms,
+        );
+    }
+    matched_terms
+}
+
+fn push_prepared_glossary_match(
+    glossary_source_text: &str,
+    candidate: &PreparedGlossaryCandidate,
+    start: usize,
+    end: usize,
+    seen_surface_terms: &mut HashSet<String>,
+    matched_terms: &mut Vec<PreparedGlossaryMatch>,
+) {
+    let glossary_source_term = glossary_source_text[start..end].trim().to_string();
+    let dedupe_key = normalize_glossary_token(&glossary_source_term);
+    if seen_surface_terms.insert(dedupe_key) {
+        matched_terms.push(PreparedGlossaryMatch {
+            glossary_source_term,
+            glossary_source_context: build_glossary_match_context(glossary_source_text, start, end),
+            target_variants: candidate.target_variants.clone(),
+            no_translation: candidate.no_translation.clone(),
+            notes: candidate.notes.clone(),
+            footnotes: candidate.footnotes.clone(),
+        });
+    }
+}
+
+fn collect_matched_glossary_terms_in_text(
+    glossary_source_text: &str,
+    candidates: &PreparedGlossaryCandidates,
+    policy: glossary_matcher::GlossaryMatcherPolicy,
+    seen_surface_terms: &mut HashSet<String>,
+    matched_terms: &mut Vec<PreparedGlossaryMatch>,
+) {
+    let words = tokenize_text_words(glossary_source_text);
+
+    if policy == glossary_matcher::GlossaryMatcherPolicy::GlobalTrie {
+        let normalized_words: Vec<&str> =
+            words.iter().map(|word| word.normalized.as_str()).collect();
+        let occurrences = glossary_matcher::discover_glossary_token_occurrences(
+            &candidates.compiled,
+            &normalized_words,
+        );
+        // Surface dedupe runs after selection, in source order: the first
+        // accepted occurrence of a surface form supplies term and context.
+        for occurrence in glossary_matcher::select_globally_longest_occurrences(
+            &candidates.compiled,
+            &occurrences,
+            normalized_words.len(),
+        ) {
+            push_prepared_glossary_match(
+                glossary_source_text,
+                &candidates.ordered[occurrence.candidate],
+                words[occurrence.start_word].start,
+                words[occurrence.end_word - 1].end,
+                seen_surface_terms,
+                matched_terms,
+            );
+        }
+        return;
+    }
+
     let mut word_index = 0usize;
 
     while word_index < words.len() {
         let current_word = &words[word_index];
         let mut matched_candidate = None;
-        if let Some(candidates) = candidates_by_first_token.get(&current_word.normalized) {
-            for candidate in candidates {
+        if let Some(bucket) = candidates.by_first_token.get(&current_word.normalized) {
+            for &candidate_index in bucket {
+                let candidate = &candidates.ordered[candidate_index];
                 if word_index + candidate.tokens.len() > words.len() {
                     continue;
                 }
 
-                let is_match =
-                    candidate
-                        .tokens
-                        .iter()
-                        .enumerate()
-                        .all(|(candidate_index, token)| {
-                            words[word_index + candidate_index].normalized == *token
-                        });
+                let is_match = candidate
+                    .tokens
+                    .iter()
+                    .enumerate()
+                    .all(|(token_index, token)| {
+                        words[word_index + token_index].normalized == *token
+                    });
                 if is_match {
-                    matched_candidate = Some(candidate.clone());
+                    matched_candidate = Some(candidate);
                     break;
                 }
             }
@@ -1905,29 +2038,17 @@ fn find_matched_glossary_terms(
             continue;
         };
 
-        let start = words[word_index].start;
-        let end = words[word_index + candidate.tokens.len() - 1].end;
-        let glossary_source_term = glossary_source_text[start..end].trim().to_string();
-        let dedupe_key = normalize_glossary_token(&glossary_source_term);
-        if seen_surface_terms.insert(dedupe_key) {
-            matched_terms.push(PreparedGlossaryMatch {
-                glossary_source_term,
-                glossary_source_context: build_glossary_match_context(
-                    glossary_source_text,
-                    start,
-                    end,
-                ),
-                target_variants: candidate.target_variants,
-                no_translation: candidate.no_translation,
-                notes: candidate.notes,
-                footnotes: candidate.footnotes,
-            });
-        }
+        push_prepared_glossary_match(
+            glossary_source_text,
+            candidate,
+            words[word_index].start,
+            words[word_index + candidate.tokens.len() - 1].end,
+            seen_surface_terms,
+            matched_terms,
+        );
 
         word_index += candidate.tokens.len();
     }
-
-    matched_terms
 }
 
 fn build_glossary_alignment_prompt(
@@ -2113,6 +2234,17 @@ pub(crate) fn prepare_ai_translated_glossary(
     app: &AppHandle,
     request: AiTranslatedGlossaryPreparationRequest,
 ) -> Result<AiTranslatedGlossaryPreparationResponse, String> {
+    prepare_ai_translated_glossary_with_rows(app, request, None)
+}
+
+/// When `glossary_source_rows` is provided, glossary matching runs per row so
+/// no term can match across a row boundary; otherwise the request's single
+/// `glossary_source_text` (or its pivot translation) is matched as one text.
+fn prepare_ai_translated_glossary_with_rows(
+    app: &AppHandle,
+    request: AiTranslatedGlossaryPreparationRequest,
+    glossary_source_rows: Option<Vec<String>>,
+) -> Result<AiTranslatedGlossaryPreparationResponse, String> {
     if request.translation_source_text.trim().is_empty() {
         return Err("There is no source text to translate yet.".to_string());
     }
@@ -2153,7 +2285,13 @@ pub(crate) fn prepare_ai_translated_glossary(
         request.glossary_source_text.trim().to_string()
     };
 
-    let matched_terms = find_matched_glossary_terms(&glossary_source_text, &glossary_terms);
+    let matched_terms = match &glossary_source_rows {
+        Some(rows) => find_matched_glossary_terms_in_texts(
+            &rows.iter().map(String::as_str).collect::<Vec<_>>(),
+            &glossary_terms,
+        ),
+        None => find_matched_glossary_terms(&glossary_source_text, &glossary_terms),
+    };
     if matched_terms.is_empty() {
         return Ok(AiTranslatedGlossaryPreparationResponse {
             glossary_source_text,
@@ -2218,10 +2356,12 @@ pub(crate) fn prepare_ai_translated_glossary(
 }
 
 /// Batch-wide derived glossary preparation. Instead of pivot-translating,
-/// matching, and aligning per translation row, this concatenates the batch's
-/// source rows into one combined text and derives the glossary once over the
-/// whole span — reusing `prepare_ai_translated_glossary`. The resulting entries
-/// cover every glossary term that appears anywhere in the batch.
+/// matching, and aligning per translation row, this derives the glossary once
+/// for the whole batch — reusing the single-request preparation flow. Glossary
+/// matching is row-bounded: when the request carries per-row glossary source
+/// texts, each row is matched independently so no term can match across a row
+/// boundary. The concatenated texts exist only for the alignment prompt and
+/// the response payload.
 pub(crate) fn prepare_ai_translated_glossary_batch(
     app: &AppHandle,
     request: AiTranslatedGlossaryBatchPreparationRequest,
@@ -2237,7 +2377,19 @@ pub(crate) fn prepare_ai_translated_glossary_batch(
         return Err("There is no source text to translate yet.".to_string());
     }
 
-    prepare_ai_translated_glossary(
+    let glossary_source_rows = request
+        .glossary_source_texts
+        .iter()
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>();
+    let glossary_source_text = if glossary_source_rows.is_empty() {
+        request.glossary_source_text
+    } else {
+        glossary_source_rows.join("\n\n")
+    };
+
+    prepare_ai_translated_glossary_with_rows(
         app,
         AiTranslatedGlossaryPreparationRequest {
             provider_id: request.provider_id,
@@ -2246,9 +2398,14 @@ pub(crate) fn prepare_ai_translated_glossary_batch(
             translation_source_language: request.translation_source_language,
             glossary_source_language: request.glossary_source_language,
             target_language: request.target_language,
-            glossary_source_text: request.glossary_source_text,
+            glossary_source_text,
             glossary_terms: request.glossary_terms,
             installation_id: request.installation_id,
+        },
+        if glossary_source_rows.is_empty() {
+            None
+        } else {
+            Some(glossary_source_rows)
         },
     )
 }
@@ -2409,7 +2566,8 @@ mod tests {
     use super::{
         build_assistant_chat_prompt, build_glossary_alignment_prompt_request,
         build_review_batch_prompt, build_review_prompt, build_translation_batch_prompt,
-        build_translation_prompt, find_matched_glossary_terms, parse_assistant_structured_response,
+        build_translation_prompt, find_matched_glossary_terms,
+        find_matched_glossary_terms_in_texts, parse_assistant_structured_response,
         parse_review_batch_response, parse_review_structured_response,
         parse_translation_batch_response, parse_translation_sections_response,
         retain_known_unique_rows, PreparedGlossaryMatch,
@@ -3022,6 +3180,57 @@ mod tests {
             matches[0].footnotes,
             vec!["Footnote 1".to_string(), "Footnote 2".to_string()]
         );
+    }
+
+    #[test]
+    fn glossary_matching_does_not_bridge_row_boundaries() {
+        let terms = [AiTranslatedGlossaryTermInput {
+            glossary_source_terms: vec!["astral plane".to_string()],
+            target_variants: vec![target_variant("coi trung gioi")],
+            no_translation: None,
+            notes: vec![],
+            global_notes: vec![],
+            footnotes: vec![],
+        }];
+
+        // The old combined-text path bridged the boundary because the
+        // tokenizer treats the "\n\n" join like any other separator.
+        let bridged =
+            find_matched_glossary_terms("We reach the astral\n\nplane of dreams.", &terms);
+        assert_eq!(bridged.len(), 1);
+
+        // Row-bounded matching must not: the same words split across two rows
+        // are not an occurrence of the term.
+        let row_bounded = find_matched_glossary_terms_in_texts(
+            &["We reach the astral", "plane of dreams."],
+            &terms,
+        );
+        assert!(row_bounded.is_empty());
+    }
+
+    #[test]
+    fn glossary_matching_dedupes_surface_terms_across_rows() {
+        let terms = [AiTranslatedGlossaryTermInput {
+            glossary_source_terms: vec!["camara interior".to_string()],
+            target_variants: vec![target_variant("buong noi tam")],
+            no_translation: None,
+            notes: vec![],
+            global_notes: vec![],
+            footnotes: vec![],
+        }];
+
+        let matches = find_matched_glossary_terms_in_texts(
+            &[
+                "La camara interior brilla.",
+                "Otra camara interior aparece.",
+            ],
+            &terms,
+        );
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].glossary_source_term, "camara interior");
+        // First row in order supplies the surviving occurrence and context.
+        assert!(matches[0].glossary_source_context.contains("brilla"));
     }
 
     fn assistant_request_for_prompt() -> AiAssistantTurnRequest {

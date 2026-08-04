@@ -8,6 +8,7 @@ import {
   buildEditorRowGlossaryHighlights,
   buildEditorRowSourceGlossaryHighlights,
   findLongestGlossaryMatches,
+  glossaryTermMatchesTokenSequence,
 } from "./editor-glossary-highlighting.js";
 
 function glossaryPayload(overrides = {}) {
@@ -862,4 +863,100 @@ test("derived glossary marks carry no term id", () => {
   const sourceHtml = highlights.get("en")?.html ?? "";
   assert.match(sourceHtml, /data-editor-glossary-mark/);
   assert.doesNotMatch(sourceHtml, /data-editor-glossary-term-id/);
+});
+
+test("glossaryTermMatchesTokenSequence enforces token boundaries", () => {
+  // A term never matches inside a longer token.
+  assert.equal(glossaryTermMatchesTokenSequence("the theme", "he", "en"), false);
+  assert.equal(glossaryTermMatchesTokenSequence("astrally projected", "astral", "en"), false);
+  assert.equal(glossaryTermMatchesTokenSequence("he said", "he", "en"), true);
+
+  // Punctuation and hyphens are separators, not match characters.
+  assert.equal(glossaryTermMatchesTokenSequence("the astral-plane rises", "astral plane", "en"), true);
+  assert.equal(glossaryTermMatchesTokenSequence("the astral—plane rises", "astral plane", "en"), true);
+  assert.equal(glossaryTermMatchesTokenSequence("an astral plane appears", "astral-plane", "en"), true);
+
+  // Case-insensitive under the language's case rules.
+  assert.equal(glossaryTermMatchesTokenSequence("The Astral Plane", "astral plane", "en"), true);
+
+  // Tokens must be consecutive.
+  assert.equal(glossaryTermMatchesTokenSequence("astral empty plane", "astral plane", "en"), false);
+
+  // Empty inputs never match.
+  assert.equal(glossaryTermMatchesTokenSequence("some text", "", "en"), false);
+  assert.equal(glossaryTermMatchesTokenSequence("some text", "...", "en"), false);
+  assert.equal(glossaryTermMatchesTokenSequence("", "astral", "en"), false);
+});
+
+test("glossaryTermMatchesTokenSequence matches grapheme units for non-space-delimited languages", () => {
+  assert.equal(glossaryTermMatchesTokenSequence("彼は祈りを捧げた", "祈り", "ja"), true);
+  assert.equal(glossaryTermMatchesTokenSequence("彼は祈った", "祈り", "ja"), false);
+  // Mixed-case BCP-47 codes select the same grapheme mode.
+  assert.equal(glossaryTermMatchesTokenSequence("這是存在層次的教義", "存在層次", "zh-Hant"), true);
+  assert.equal(glossaryTermMatchesTokenSequence("這是存在層次的教義", "存在層次", "zh-hant"), true);
+});
+
+test("globalTrie policy: crossing longer candidate wins highlights and hints over the leftmost match", async (t) => {
+  const { setGlossaryMatcherPolicy, resetGlossaryMatcherPolicy } = await import(
+    "./glossary-token-matcher.js"
+  );
+  t.after(() => resetGlossaryMatcherPolicy());
+
+  const model = buildEditorGlossaryModel(glossaryPayload({
+    sourceLanguage: { code: "en", name: "English" },
+    terms: [
+      { termId: "t1", sourceTerms: ["The Astral"], targetTerms: ["the astral vi"] },
+      { termId: "t2", sourceTerms: ["astral plane"], targetTerms: ["coi trung gioi"] },
+    ],
+  }));
+  const sections = [
+    { code: "en", text: "The Astral Plane is vast." },
+    { code: "vi", text: "Coi trung gioi rong lon." },
+  ];
+
+  // Legacy: leftmost "The Astral" wins and its target is missing -> error.
+  setGlossaryMatcherPolicy("legacy");
+  const legacyHtml = buildEditorRowGlossaryHighlights(sections, model).get("en")?.html ?? "";
+  assert.match(legacyHtml, /<mark[^>]*>The Astral<\/mark>/);
+  assert.match(legacyHtml, /glossary-match-error/);
+
+  // Global: "astral plane" wins the crossing overlap; its target is present.
+  setGlossaryMatcherPolicy("globalTrie");
+  const globalHtml = buildEditorRowGlossaryHighlights(sections, model).get("en")?.html ?? "";
+  assert.match(globalHtml, /<mark[^>]*>Astral Plane<\/mark>/);
+  assert.doesNotMatch(globalHtml, /glossary-match-error/);
+
+  const hints = buildEditorAiTranslationGlossaryHints(
+    "The Astral Plane is vast.",
+    "en",
+    "vi",
+    model,
+  );
+  // Hints surface the row's text form of the accepted candidate.
+  assert.deepEqual(hints.map((hint) => hint.sourceTerm), ["Astral Plane"]);
+});
+
+test("globalTrie policy: shorter same-start candidate survives a crossing winner in rendered highlights", async (t) => {
+  const { setGlossaryMatcherPolicy, resetGlossaryMatcherPolicy } = await import(
+    "./glossary-token-matcher.js"
+  );
+  t.after(() => resetGlossaryMatcherPolicy());
+  setGlossaryMatcherPolicy("globalTrie");
+
+  const model = buildEditorGlossaryModel(glossaryPayload({
+    sourceLanguage: { code: "en", name: "English" },
+    terms: [
+      { termId: "t1", sourceTerms: ["alpha beta gamma delta"], targetTerms: [""] },
+      { termId: "t2", sourceTerms: ["alpha beta"], targetTerms: [""] },
+      { termId: "t3", sourceTerms: ["gamma delta epsilon zeta eta"], targetTerms: [""] },
+    ],
+  }));
+
+  const highlights = buildEditorRowGlossaryHighlights([
+    { code: "en", text: "alpha beta gamma delta epsilon zeta eta." },
+  ], model);
+  const html = highlights.get("en")?.html ?? "";
+  assert.match(html, /<mark[^>]*>alpha beta<\/mark>/);
+  assert.match(html, /<mark[^>]*>gamma delta epsilon zeta eta<\/mark>/);
+  assert.equal((html.match(/<mark/g) ?? []).length, 2);
 });

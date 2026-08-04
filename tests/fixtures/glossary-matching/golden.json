@@ -1,0 +1,698 @@
+{
+  "version": 1,
+  "policyVersion": 1,
+  "defaultPolicy": "legacy",
+  "comment": "Shared golden cases for globally longest glossary matching. Consumed by src-ui/app/glossary-token-matcher.test.js and src-tauri/src/ai/glossary_matcher.rs tests. Indexes are matchable word/unit indexes (end exclusive). 'discovered' is every trie terminal occurrence sorted by (start, end, id); 'accepted' is the globally selected set in source order; 'legacyAccepted' is present only where the historical left-to-right scan differs. Candidate ids in expectations are the first-seen id of a merged normalized token sequence.",
+  "cases": [
+    {
+      "id": "crossing-scalar-length-priority",
+      "description": "Equal token counts crossing: the greater Unicode-scalar-length variant wins; casing is normalized.",
+      "profile": "word",
+      "languageCode": "en",
+      "runtimes": "both",
+      "candidates": [
+        {
+          "id": "A",
+          "term": "The Astral"
+        },
+        {
+          "id": "P",
+          "term": "astral plane"
+        },
+        {
+          "id": "N",
+          "term": "astral nodes"
+        },
+        {
+          "id": "S",
+          "term": "astral sheath"
+        }
+      ],
+      "text": "The Astral Plane is vast.",
+      "discovered": [
+        {
+          "id": "A",
+          "start": 0,
+          "end": 2
+        },
+        {
+          "id": "P",
+          "start": 1,
+          "end": 3
+        }
+      ],
+      "accepted": [
+        {
+          "id": "P",
+          "start": 1,
+          "end": 3
+        }
+      ],
+      "legacyAccepted": [
+        {
+          "id": "A",
+          "start": 0,
+          "end": 2
+        }
+      ]
+    },
+    {
+      "id": "component-terms-both-orders",
+      "description": "Component terms around a longer phrase, occurrences in both orders; repeated shorter terms survive where disjoint.",
+      "profile": "word",
+      "languageCode": "en",
+      "runtimes": "both",
+      "candidates": [
+        {
+          "id": "AA",
+          "term": "aspiring atoms"
+        },
+        {
+          "id": "A1",
+          "term": "aspiring"
+        },
+        {
+          "id": "A2",
+          "term": "atoms"
+        }
+      ],
+      "text": "Atoms rise while aspiring atoms fall, aspiring higher.",
+      "discovered": [
+        {
+          "id": "A2",
+          "start": 0,
+          "end": 1
+        },
+        {
+          "id": "A1",
+          "start": 3,
+          "end": 4
+        },
+        {
+          "id": "AA",
+          "start": 3,
+          "end": 5
+        },
+        {
+          "id": "A2",
+          "start": 4,
+          "end": 5
+        },
+        {
+          "id": "A1",
+          "start": 6,
+          "end": 7
+        }
+      ],
+      "accepted": [
+        {
+          "id": "A2",
+          "start": 0,
+          "end": 1
+        },
+        {
+          "id": "AA",
+          "start": 3,
+          "end": 5
+        },
+        {
+          "id": "A1",
+          "start": 6,
+          "end": 7
+        }
+      ]
+    },
+    {
+      "id": "shorter-same-start-survives-crossing",
+      "description": "A crossing longer candidate rejects the longer same-start candidate, but the shorter same-start candidate is disjoint and must still be accepted.",
+      "profile": "word",
+      "languageCode": "en",
+      "runtimes": "both",
+      "candidates": [
+        {
+          "id": "C1",
+          "term": "alpha beta gamma delta"
+        },
+        {
+          "id": "C2",
+          "term": "alpha beta"
+        },
+        {
+          "id": "C3",
+          "term": "gamma delta epsilon zeta eta"
+        }
+      ],
+      "text": "alpha beta gamma delta epsilon zeta eta.",
+      "discovered": [
+        {
+          "id": "C2",
+          "start": 0,
+          "end": 2
+        },
+        {
+          "id": "C1",
+          "start": 0,
+          "end": 4
+        },
+        {
+          "id": "C3",
+          "start": 2,
+          "end": 7
+        }
+      ],
+      "accepted": [
+        {
+          "id": "C2",
+          "start": 0,
+          "end": 2
+        },
+        {
+          "id": "C3",
+          "start": 2,
+          "end": 7
+        }
+      ],
+      "legacyAccepted": [
+        {
+          "id": "C1",
+          "start": 0,
+          "end": 4
+        }
+      ]
+    },
+    {
+      "id": "equal-priority-leftmost-wins",
+      "description": "Complete tie on token count and scalar length: the leftmost occurrence wins the crossing overlap.",
+      "profile": "word",
+      "languageCode": "en",
+      "runtimes": "both",
+      "candidates": [
+        {
+          "id": "L",
+          "term": "alpha beta"
+        },
+        {
+          "id": "R",
+          "term": "beta gamma"
+        }
+      ],
+      "text": "alpha beta gamma.",
+      "discovered": [
+        {
+          "id": "L",
+          "start": 0,
+          "end": 2
+        },
+        {
+          "id": "R",
+          "start": 1,
+          "end": 3
+        }
+      ],
+      "accepted": [
+        {
+          "id": "L",
+          "start": 0,
+          "end": 2
+        }
+      ]
+    },
+    {
+      "id": "duplicate-normalized-terms-merge",
+      "description": "Exact duplicate normalized token sequences compile to one candidate; the first-seen id owns the occurrence.",
+      "profile": "word",
+      "languageCode": "en",
+      "runtimes": "both",
+      "candidates": [
+        {
+          "id": "D1",
+          "term": "inner chamber"
+        },
+        {
+          "id": "D2",
+          "term": "inner chamber"
+        }
+      ],
+      "text": "the inner chamber",
+      "discovered": [
+        {
+          "id": "D1",
+          "start": 1,
+          "end": 3
+        }
+      ],
+      "accepted": [
+        {
+          "id": "D1",
+          "start": 1,
+          "end": 3
+        }
+      ]
+    },
+    {
+      "id": "punctuation-and-hyphen-separators",
+      "description": "Hyphen, em dash, comma, parentheses, and periods are separators: every punctuation-separated occurrence still matches.",
+      "profile": "word",
+      "languageCode": "en",
+      "runtimes": "both",
+      "candidates": [
+        {
+          "id": "H",
+          "term": "astral plane"
+        }
+      ],
+      "text": "astral-plane, (astral—plane) astral. plane",
+      "discovered": [
+        {
+          "id": "H",
+          "start": 0,
+          "end": 2
+        },
+        {
+          "id": "H",
+          "start": 2,
+          "end": 4
+        },
+        {
+          "id": "H",
+          "start": 4,
+          "end": 6
+        }
+      ],
+      "accepted": [
+        {
+          "id": "H",
+          "start": 0,
+          "end": 2
+        },
+        {
+          "id": "H",
+          "start": 2,
+          "end": 4
+        },
+        {
+          "id": "H",
+          "start": 4,
+          "end": 6
+        }
+      ]
+    },
+    {
+      "id": "hyphen-inside-glossary-variant",
+      "description": "A hyphen inside the glossary variant produces the same token sequence; fused single tokens never match it.",
+      "profile": "word",
+      "languageCode": "en",
+      "runtimes": "both",
+      "candidates": [
+        {
+          "id": "H2",
+          "term": "self-remembering"
+        }
+      ],
+      "text": "true self remembering begins, not selfremembering",
+      "discovered": [
+        {
+          "id": "H2",
+          "start": 1,
+          "end": 3
+        }
+      ],
+      "accepted": [
+        {
+          "id": "H2",
+          "start": 1,
+          "end": 3
+        }
+      ]
+    },
+    {
+      "id": "no-unicode-normalization",
+      "description": "Composed and decomposed forms are distinct: the matcher performs no Unicode normalization, pinned deliberately.",
+      "profile": "word",
+      "languageCode": "en",
+      "runtimes": "both",
+      "candidates": [
+        {
+          "id": "C",
+          "term": "café"
+        }
+      ],
+      "text": "café and café",
+      "discovered": [
+        {
+          "id": "C",
+          "start": 2,
+          "end": 3
+        }
+      ],
+      "accepted": [
+        {
+          "id": "C",
+          "start": 2,
+          "end": 3
+        }
+      ]
+    },
+    {
+      "id": "turkish-locale-case-frontend",
+      "description": "Frontend-only: toLocaleLowerCase('tr') folds dotted capital I to plain i, so the match succeeds.",
+      "profile": "word",
+      "languageCode": "tr",
+      "runtimes": "js",
+      "candidates": [
+        {
+          "id": "T",
+          "term": "istanbul"
+        }
+      ],
+      "text": "İSTANBUL beckons",
+      "discovered": [
+        {
+          "id": "T",
+          "start": 0,
+          "end": 1
+        }
+      ],
+      "accepted": [
+        {
+          "id": "T",
+          "start": 0,
+          "end": 1
+        }
+      ]
+    },
+    {
+      "id": "default-unicode-case-backend",
+      "description": "Rust-only: char::to_lowercase maps dotted capital I to i plus combining dot above, so the same input does not match. Pins the documented runtime difference.",
+      "profile": "word",
+      "languageCode": "tr",
+      "runtimes": "rust",
+      "candidates": [
+        {
+          "id": "T",
+          "term": "istanbul"
+        }
+      ],
+      "text": "İSTANBUL beckons",
+      "discovered": [],
+      "accepted": []
+    },
+    {
+      "id": "cjk-grapheme-nesting",
+      "description": "Frontend-only grapheme mode: nested CJK terms; the longer term wins its span and the shorter term survives elsewhere.",
+      "profile": "grapheme",
+      "languageCode": "zh-Hant",
+      "runtimes": "js",
+      "candidates": [
+        {
+          "id": "Z1",
+          "term": "存在層次"
+        },
+        {
+          "id": "Z2",
+          "term": "存在"
+        }
+      ],
+      "text": "談存在層次與存在",
+      "discovered": [
+        {
+          "id": "Z2",
+          "start": 1,
+          "end": 3
+        },
+        {
+          "id": "Z1",
+          "start": 1,
+          "end": 5
+        },
+        {
+          "id": "Z2",
+          "start": 6,
+          "end": 8
+        }
+      ],
+      "accepted": [
+        {
+          "id": "Z1",
+          "start": 1,
+          "end": 5
+        },
+        {
+          "id": "Z2",
+          "start": 6,
+          "end": 8
+        }
+      ]
+    },
+    {
+      "id": "cjk-lowercase-language-code",
+      "description": "Frontend-only: a lowercase BCP-47 script subtag selects the same grapheme mode (legacy stored data uses zh-hant).",
+      "profile": "grapheme",
+      "languageCode": "zh-hant",
+      "runtimes": "js",
+      "candidates": [
+        {
+          "id": "Z1",
+          "term": "存在層次"
+        },
+        {
+          "id": "Z2",
+          "term": "存在"
+        }
+      ],
+      "text": "談存在層次與存在",
+      "discovered": [
+        {
+          "id": "Z2",
+          "start": 1,
+          "end": 3
+        },
+        {
+          "id": "Z1",
+          "start": 1,
+          "end": 5
+        },
+        {
+          "id": "Z2",
+          "start": 6,
+          "end": 8
+        }
+      ],
+      "accepted": [
+        {
+          "id": "Z1",
+          "start": 1,
+          "end": 5
+        },
+        {
+          "id": "Z2",
+          "start": 6,
+          "end": 8
+        }
+      ]
+    },
+    {
+      "id": "repeated-adjacent-occurrences",
+      "description": "Repeated and adjacent occurrences separated only by spaces or punctuation are all accepted.",
+      "profile": "word",
+      "languageCode": "en",
+      "runtimes": "both",
+      "candidates": [
+        {
+          "id": "R",
+          "term": "aum"
+        }
+      ],
+      "text": "aum aum, aum",
+      "discovered": [
+        {
+          "id": "R",
+          "start": 0,
+          "end": 1
+        },
+        {
+          "id": "R",
+          "start": 1,
+          "end": 2
+        },
+        {
+          "id": "R",
+          "start": 2,
+          "end": 3
+        }
+      ],
+      "accepted": [
+        {
+          "id": "R",
+          "start": 0,
+          "end": 1
+        },
+        {
+          "id": "R",
+          "start": 1,
+          "end": 2
+        },
+        {
+          "id": "R",
+          "start": 2,
+          "end": 3
+        }
+      ]
+    },
+    {
+      "id": "no-substring-inside-longer-token",
+      "description": "A candidate never matches inside a longer token: 'he' does not match in 'the' or 'theme'.",
+      "profile": "word",
+      "languageCode": "en",
+      "runtimes": "both",
+      "candidates": [
+        {
+          "id": "C",
+          "term": "he"
+        }
+      ],
+      "text": "the theme he likes",
+      "discovered": [
+        {
+          "id": "C",
+          "start": 2,
+          "end": 3
+        }
+      ],
+      "accepted": [
+        {
+          "id": "C",
+          "start": 2,
+          "end": 3
+        }
+      ]
+    },
+    {
+      "id": "greedy-not-maximum-coverage",
+      "description": "Greedy longest-first accepts the 3-token phrase and rejects both 2-token phrases, even though the two shorter phrases together would cover more tokens. Pins greedy selection against a future interval-scheduling refactor.",
+      "profile": "word",
+      "languageCode": "en",
+      "runtimes": "both",
+      "candidates": [
+        {
+          "id": "M",
+          "term": "alpha beta gamma"
+        },
+        {
+          "id": "X",
+          "term": "alpha beta"
+        },
+        {
+          "id": "Y",
+          "term": "gamma delta"
+        }
+      ],
+      "text": "alpha beta gamma delta",
+      "discovered": [
+        {
+          "id": "X",
+          "start": 0,
+          "end": 2
+        },
+        {
+          "id": "M",
+          "start": 0,
+          "end": 3
+        },
+        {
+          "id": "Y",
+          "start": 2,
+          "end": 4
+        }
+      ],
+      "accepted": [
+        {
+          "id": "M",
+          "start": 0,
+          "end": 3
+        }
+      ]
+    },
+    {
+      "id": "duplicate-variant-scalar-length",
+      "description": "Duplicate normalized variants keep the greatest scalar length as the priority length: the punctuation-widened duplicate outranks the crossing 12-scalar candidate.",
+      "profile": "word",
+      "languageCode": "en",
+      "runtimes": "both",
+      "candidates": [
+        {
+          "id": "V1",
+          "term": "the astral"
+        },
+        {
+          "id": "V2",
+          "term": "the... astral"
+        },
+        {
+          "id": "P",
+          "term": "astral plane"
+        }
+      ],
+      "text": "the astral plane",
+      "discovered": [
+        {
+          "id": "V1",
+          "start": 0,
+          "end": 2
+        },
+        {
+          "id": "P",
+          "start": 1,
+          "end": 3
+        }
+      ],
+      "accepted": [
+        {
+          "id": "V1",
+          "start": 0,
+          "end": 2
+        }
+      ]
+    },
+    {
+      "id": "empty-terms-and-punctuation-text",
+      "description": "Empty and all-punctuation terms compile to nothing; all-punctuation text has no matchable tokens.",
+      "profile": "word",
+      "languageCode": "en",
+      "runtimes": "both",
+      "candidates": [
+        {
+          "id": "E1",
+          "term": ""
+        },
+        {
+          "id": "E2",
+          "term": "..."
+        },
+        {
+          "id": "W",
+          "term": "light"
+        }
+      ],
+      "text": "!!! ???",
+      "discovered": [],
+      "accepted": []
+    },
+    {
+      "id": "no-match-text",
+      "description": "Text with tokens but no candidate occurrences returns empty results.",
+      "profile": "word",
+      "languageCode": "en",
+      "runtimes": "both",
+      "candidates": [
+        {
+          "id": "W",
+          "term": "light"
+        }
+      ],
+      "text": "darkness everywhere",
+      "discovered": [],
+      "accepted": []
+    }
+  ]
+}

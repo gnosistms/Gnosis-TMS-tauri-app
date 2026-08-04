@@ -243,6 +243,20 @@ if (snapshot.teamId === state.selectedTeam?.id) {
 }
 ```
 
+### Glossary Matching
+
+All glossary highlight and AI-hint consumers resolve matches through
+`findLongestGlossaryMatches` in `editor-glossary-highlighting.js`; no consumer
+implements its own overlap selection. The generic compiled trie and global
+selector live in `glossary-token-matcher.js`. Occurrence discovery retains
+nested/crossing overlaps; selection is greedy longest-first, not
+maximum-coverage scheduling. The two-way policy constant there must only be
+flipped together with the backend constant and the shared fixture's
+`defaultPolicy` (`tests/fixtures/glossary-matching/golden.json`). Semantics
+reference: `plans/glossary-matching-semantics.md`. Containment-style checks
+(assigning derived entries to rows) must use `glossaryTermMatchesTokenSequence`,
+never `String.includes`.
+
 ### Module Naming
 
 Test files mirror their subject: `project-flow.test.js` tests `project-flow.js`.

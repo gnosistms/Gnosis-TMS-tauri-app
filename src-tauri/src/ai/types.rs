@@ -226,6 +226,11 @@ pub struct AiTranslatedGlossaryBatchPreparationRequest {
     pub target_language: String,
     #[serde(default)]
     pub glossary_source_text: String,
+    /// Ordered per-row glossary-source (pivot) texts. When present, glossary
+    /// matching runs row by row so a term can never match across a row
+    /// boundary; `glossary_source_text` is then only a joined display value.
+    #[serde(default)]
+    pub glossary_source_texts: Vec<String>,
     #[serde(default)]
     pub glossary_terms: Vec<AiTranslatedGlossaryTermInput>,
     #[serde(default)]

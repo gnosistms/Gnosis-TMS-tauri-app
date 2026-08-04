@@ -22,6 +22,7 @@ import {
   normalizeEditorDerivedGlossariesByRowId,
 } from "./editor-derived-glossary-state.js";
 import { saveStoredEditorDerivedGlossaryEntriesForChapter } from "./editor-derived-glossary-cache.js";
+import { glossaryTermMatchesTokenSequence } from "./editor-glossary-highlighting.js";
 import { findEditorRowById } from "./editor-utils.js";
 import { languageBaseCode, languageSemanticLabel } from "./editor-language-utils.js";
 import { selectedProjectsTeam, selectedProjectsTeamInstallationId } from "./project-context.js";
@@ -357,6 +358,11 @@ export async function ensureBatchDerivedGlossaries({
         glossarySourceText: chunk
           .map((entry) => entry.usage.preparationGlossarySourceText.trim())
           .join("\n\n"),
+        // Ordered per-row pivot texts: the backend matches each row
+        // independently so a glossary term cannot match across row boundaries.
+        glossarySourceTexts: chunk.map((entry) =>
+          entry.usage.preparationGlossarySourceText.trim(),
+        ),
         glossaryTerms: first.usage.glossaryTerms,
         ...(installationId === null ? {} : { installationId }),
       });
@@ -393,10 +399,17 @@ export async function ensureBatchDerivedGlossaries({
         continue;
       }
 
+      // Token-aware containment, not String.includes: a plain substring check
+      // matches "he" inside "theme" and would assign entries to rows that do
+      // not actually contain the term under matcher boundary semantics.
       const rowEntries = preparedEntries.filter((prepared) =>
         typeof prepared?.sourceTerm === "string"
         && prepared.sourceTerm
-        && entry.context.sourceText.includes(prepared.sourceTerm),
+        && glossaryTermMatchesTokenSequence(
+          entry.context.sourceText,
+          prepared.sourceTerm,
+          entry.item.sourceLanguageCode,
+        ),
       );
       const derivedEntry = buildDerivedGlossaryState({
         glossaryState: entry.usage.glossaryState,
