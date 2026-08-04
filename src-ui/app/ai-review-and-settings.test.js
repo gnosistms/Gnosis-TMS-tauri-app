@@ -210,6 +210,9 @@ const {
 const {
   ensureBatchDerivedGlossaries,
 } = await import("./editor-derived-glossary-batch-flow.js");
+const {
+  buildEditorGlossaryRevisionKey,
+} = await import("./editor-derived-glossary-state.js");
 const { normalizeEditorAiReviewMode } = await import("./editor-ai-review-request.js");
 const { resolveVisibleEditorAiReview } = await import("./editor-ai-review-state.js");
 const { resolveVisibleEditorAiTranslateAction } = await import("./editor-ai-translate-state.js");
@@ -2074,18 +2077,7 @@ test("runEditorAiTranslate preserves a ready derived glossary cache when final t
         translationSourceText: "The inner chamber glows.",
         glossarySourceText: "La camara interior brilla.",
         glossarySourceTextOrigin: "generated",
-        glossaryRevisionKey: JSON.stringify({
-          glossaryId: "glossary-1",
-          repoName: "glossary-1",
-          sourceLanguageCode: "es",
-          targetLanguageCode: "vi",
-          terms: [{
-            termId: "t1",
-            sourceTerms: ["camara interior"],
-            targetTerms: ["buong noi tam"],
-            notes: ["Dung thuat ngu cua glossary"],
-          }],
-        }),
+        glossaryRevisionKey: buildEditorGlossaryRevisionKey(glossary),
         entries: [{
           sourceTerm: "inner chamber",
           glossarySourceTerm: "camara interior",

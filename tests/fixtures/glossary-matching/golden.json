@@ -1,7 +1,7 @@
 {
   "version": 1,
   "policyVersion": 1,
-  "defaultPolicy": "legacy",
+  "defaultPolicy": "globalTrie",
   "comment": "Shared golden cases for globally longest glossary matching. Consumed by src-ui/app/glossary-token-matcher.test.js and src-tauri/src/ai/glossary_matcher.rs tests. Indexes are matchable word/unit indexes (end exclusive). 'discovered' is every trie terminal occurrence sorted by (start, end, id); 'accepted' is the globally selected set in source order; 'legacyAccepted' is present only where the historical left-to-right scan differs. Candidate ids in expectations are the first-seen id of a merged normalized token sequence.",
   "cases": [
     {

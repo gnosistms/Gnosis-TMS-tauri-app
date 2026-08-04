@@ -24,12 +24,12 @@ export const GLOSSARY_MATCHER_POLICIES = Object.freeze({
   globalTrie: "globalTrie",
 });
 
-// Two-way rollout switch. The default ships as "legacy" and is flipped to
-// "globalTrie" in its own commit once the full checklist passes on macOS and
-// Windows. The shared fixture's defaultPolicy field must be flipped in the
-// same commit — both runtimes assert their default against it, which is what
-// prevents frontend and backend from straddling algorithms.
-const DEFAULT_GLOSSARY_MATCHER_POLICY = GLOSSARY_MATCHER_POLICIES.legacy;
+// Two-way rollout switch, flipped to globalTrie after the full checklist
+// passed on macOS and Windows (v0.8.85 bake). "legacy" remains available for
+// rollback during the bake period. The shared fixture's defaultPolicy field
+// must move with this constant — both runtimes assert their default against
+// it, which is what prevents frontend and backend from straddling algorithms.
+const DEFAULT_GLOSSARY_MATCHER_POLICY = GLOSSARY_MATCHER_POLICIES.globalTrie;
 
 let activePolicy = DEFAULT_GLOSSARY_MATCHER_POLICY;
 

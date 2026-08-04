@@ -24,16 +24,19 @@ pub(crate) const GLOSSARY_MATCHER_POLICY_VERSION: u64 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum GlossaryMatcherPolicy {
+    // Rollback path while globalTrie bakes; constructed only by tests today.
+    #[cfg_attr(not(test), allow(dead_code))]
     Legacy,
     GlobalTrie,
 }
 
-/// Two-way rollout switch. Ships as `Legacy` and flips to `GlobalTrie` in its
-/// own commit once the full checklist passes on macOS and Windows. The shared
-/// fixture's `defaultPolicy` field must flip in the same commit — both
-/// runtimes assert their default against it, which is what prevents frontend
-/// and backend from straddling algorithms.
-pub(crate) const GLOSSARY_MATCHER_POLICY: GlossaryMatcherPolicy = GlossaryMatcherPolicy::Legacy;
+/// Two-way rollout switch, flipped to `GlobalTrie` after the full checklist
+/// passed on macOS and Windows (v0.8.85 bake). `Legacy` remains available for
+/// rollback during the bake period. The shared fixture's `defaultPolicy`
+/// field must move with this constant — both runtimes assert their default
+/// against it, which is what prevents frontend and backend from straddling
+/// algorithms.
+pub(crate) const GLOSSARY_MATCHER_POLICY: GlossaryMatcherPolicy = GlossaryMatcherPolicy::GlobalTrie;
 
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn glossary_matcher_policy_name(policy: GlossaryMatcherPolicy) -> &'static str {
