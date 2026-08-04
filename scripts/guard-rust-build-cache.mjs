@@ -1,9 +1,16 @@
 #!/usr/bin/env node
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, statfsSync, statSync } from "node:fs";
+import {
+  existsSync,
+  readdirSync,
+  readlinkSync,
+  statfsSync,
+  statSync,
+} from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { pathToFileURL } from "node:url";
 
 const GIB = 1024 ** 3;
 const dryRun = process.argv.includes("--dry-run");
@@ -41,7 +48,84 @@ function commandOutput(command, args, cwd) {
     cwd,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+    maxBuffer: 16 * 1024 * 1024,
   }).trim();
+}
+
+export function pathIsWithin(
+  directory,
+  candidatePath,
+  platform = process.platform,
+) {
+  const pathApi = platform === "win32" ? path.win32 : path;
+  const normalize = (value) => {
+    const resolved = pathApi.resolve(value);
+    return platform === "win32" ? resolved.toLowerCase() : resolved;
+  };
+  const root = normalize(directory);
+  const candidate = normalize(candidatePath);
+  const relative = pathApi.relative(root, candidate);
+  return relative === "" || (
+    !relative.startsWith("..") && !pathApi.isAbsolute(relative)
+  );
+}
+
+export function targetUsedByLiveProcess(
+  targetPath,
+  executablePaths,
+  platform = process.platform,
+) {
+  return executablePaths.some((executablePath) =>
+    pathIsWithin(targetPath, executablePath, platform),
+  );
+}
+
+export function parseLsofPaths(output) {
+  return String(output)
+    .split("\n")
+    .filter((line) => line.startsWith("n"))
+    .map((line) => line.slice(1))
+    .filter(Boolean);
+}
+
+function linuxExecutablePaths() {
+  return readdirSync("/proc", { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && /^\d+$/.test(entry.name))
+    .flatMap((entry) => {
+      try {
+        return [readlinkSync(`/proc/${entry.name}/exe`)];
+      } catch {
+        // Processes can exit or become inaccessible while /proc is scanned.
+        return [];
+      }
+    });
+}
+
+function macExecutablePaths() {
+  const userId = typeof process.getuid === "function" ? process.getuid() : null;
+  if (userId === null) {
+    throw new Error("Could not determine the current user for process inspection");
+  }
+  return parseLsofPaths(
+    commandOutput("lsof", ["-Fn", "-a", "-u", String(userId), "-d", "txt"]),
+  );
+}
+
+function windowsExecutablePaths() {
+  const output = commandOutput("powershell.exe", [
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+    "Get-Process | ForEach-Object { try { $_.Path } catch {} }",
+  ]);
+  return output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+
+export function liveExecutablePaths(platform = process.platform) {
+  if (platform === "darwin") return macExecutablePaths();
+  if (platform === "linux") return linuxExecutablePaths();
+  if (platform === "win32") return windowsExecutablePaths();
+  throw new Error(`Live-process inspection is unsupported on ${platform}`);
 }
 
 function formatGiB(bytes) {
@@ -128,11 +212,11 @@ function thresholdsSatisfied(cacheBytes, freeBytes) {
   return cacheBytes <= maxCacheBytes && freeBytes >= minFreeBytes;
 }
 
-try {
+export function runRustBuildCacheGuard(cwd = process.cwd()) {
   const repositoryRoot = commandOutput(
     "git",
     ["rev-parse", "--show-toplevel"],
-    process.cwd(),
+    cwd,
   );
   const worktrees = worktreePaths(repositoryRoot);
   const candidates = [];
@@ -165,11 +249,34 @@ try {
   );
 
   if (thresholdsSatisfied(totalCacheBytes, freeBytes)) {
-    process.exit(0);
+    return 0;
   }
 
-  const recentCandidates = candidates.filter((candidate) => candidate.recent);
-  const cleanupCandidates = candidates.filter((candidate) => !candidate.recent);
+  const executablePaths = liveExecutablePaths();
+  for (const candidate of candidates) {
+    candidate.inUse = targetUsedByLiveProcess(
+      candidate.targetPath,
+      executablePaths,
+    );
+  }
+
+  const inUseCandidates = candidates.filter((candidate) => candidate.inUse);
+  if (inUseCandidates.length > 0) {
+    const inUseSizeBytes = inUseCandidates.reduce(
+      (total, candidate) => total + candidate.sizeBytes,
+      0,
+    );
+    console.log(
+      `Protecting ${formatGiB(inUseSizeBytes)} used by running Rust binaries`,
+    );
+  }
+
+  const recentCandidates = candidates.filter(
+    (candidate) => candidate.recent && !candidate.inUse,
+  );
+  const cleanupCandidates = candidates.filter(
+    (candidate) => !candidate.recent && !candidate.inUse,
+  );
 
   if (recentCandidates.length > 0) {
     const recentSizeBytes = recentCandidates.reduce(
@@ -210,9 +317,19 @@ try {
       `Cannot satisfy the ${minFreeGiB} GiB free-space floor. ` +
         "Free additional disk space before starting a Rust build.",
     );
-    process.exit(1);
+    return 1;
   }
-} catch (error) {
-  console.error(`Rust build-cache guard failed: ${error.message}`);
-  process.exit(1);
+  return 0;
+}
+
+const isMain =
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
+if (isMain) {
+  try {
+    process.exitCode = runRustBuildCacheGuard();
+  } catch (error) {
+    console.error(`Rust build-cache guard failed: ${error.message}`);
+    process.exitCode = 1;
+  }
 }
