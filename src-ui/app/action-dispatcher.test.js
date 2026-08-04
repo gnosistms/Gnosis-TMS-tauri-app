@@ -107,6 +107,7 @@ globalThis.window = {
 };
 
 const { createActionDispatcher } = await import("./action-dispatcher.js");
+const { getNoticeBadgeText } = await import("./status-feedback.js");
 const { resetSessionState, state } = await import("./state.js");
 
 test.afterEach(() => {
@@ -179,4 +180,60 @@ test("required updates still allow explicit update checks", async () => {
   assert.equal(state.appUpdate.version, "0.1.36");
   assert.equal(state.appUpdate.currentVersion, "0.1.35");
   assert.equal(state.appUpdate.message, "A newer version is required.");
+});
+
+test("glossary permanent-delete confirmation bypasses deleted-resource read-only policy", async () => {
+  state.teams = [{ id: "team-1", membershipRole: "viewer", installationId: 1 }];
+  state.selectedTeamId = "team-1";
+  state.glossaries = [{
+    id: "glossary-1",
+    title: "Deleted Glossary",
+    repoName: "deleted-glossary",
+    lifecycleState: "deleted",
+  }];
+  state.glossaryPermanentDeletion = {
+    ...state.glossaryPermanentDeletion,
+    isOpen: true,
+    glossaryId: "glossary-1",
+    glossaryName: "Deleted Glossary",
+    confirmationText: "not a match",
+  };
+
+  const dispatchAction = createActionDispatcher(() => {});
+  const handled = await dispatchAction("confirm-glossary-permanent-deletion");
+
+  assert.equal(handled, true);
+  assert.equal(getNoticeBadgeText(), "");
+  assert.equal(
+    state.glossaryPermanentDeletion.error,
+    "Enter the glossary name exactly to delete it.",
+  );
+});
+
+test("QA-list permanent-delete confirmation bypasses deleted-resource read-only policy", async () => {
+  state.teams = [{ id: "team-1", membershipRole: "viewer", installationId: 1 }];
+  state.selectedTeamId = "team-1";
+  state.qaLists = [{
+    id: "qa-list-1",
+    title: "Deleted QA List",
+    repoName: "deleted-qa-list",
+    lifecycleState: "deleted",
+  }];
+  state.qaListPermanentDeletion = {
+    ...state.qaListPermanentDeletion,
+    isOpen: true,
+    qaListId: "qa-list-1",
+    qaListName: "Deleted QA List",
+    confirmationText: "not a match",
+  };
+
+  const dispatchAction = createActionDispatcher(() => {});
+  const handled = await dispatchAction("confirm-qa-list-permanent-deletion");
+
+  assert.equal(handled, true);
+  assert.equal(getNoticeBadgeText(), "");
+  assert.equal(
+    state.qaListPermanentDeletion.error,
+    "Enter the QA list name exactly to delete it.",
+  );
 });
