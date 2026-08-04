@@ -57,13 +57,21 @@ pub struct AiReviewQaHint {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct AiReviewFootnote {
+    pub marker: usize,
+    #[serde(default)]
+    pub text: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct AiReviewRequest {
     pub provider_id: AiProviderId,
     pub model_id: String,
     pub text: String,
     pub language_code: String,
     #[serde(default)]
-    pub footnote: String,
+    pub footnotes: Vec<AiReviewFootnote>,
     #[serde(default)]
     pub image_caption: String,
     #[serde(default)]
@@ -73,7 +81,7 @@ pub struct AiReviewRequest {
     #[serde(default)]
     pub source_text: Option<String>,
     #[serde(default)]
-    pub source_footnote: String,
+    pub source_footnotes: Vec<AiReviewFootnote>,
     #[serde(default)]
     pub source_image_caption: String,
     #[serde(default)]
@@ -103,7 +111,7 @@ pub struct AiReviewRequest {
 pub struct AiReviewResponse {
     pub suggested_text: String,
     #[serde(default)]
-    pub suggested_footnote: String,
+    pub suggested_footnotes: Vec<AiReviewFootnote>,
     #[serde(default)]
     pub suggested_image_caption: String,
     #[serde(default)]
@@ -349,13 +357,13 @@ pub struct AiReviewBatchRowInput {
     #[serde(default)]
     pub latest_translation: String,
     #[serde(default)]
-    pub footnote: String,
+    pub footnotes: Vec<AiReviewFootnote>,
     #[serde(default)]
     pub image_caption: String,
     #[serde(default)]
     pub source_text: String,
     #[serde(default)]
-    pub source_footnote: String,
+    pub source_footnotes: Vec<AiReviewFootnote>,
     #[serde(default)]
     pub source_image_caption: String,
     #[serde(default)]
@@ -402,7 +410,7 @@ pub struct AiReviewBatchRowResult {
     #[serde(default)]
     pub suggested_text: String,
     #[serde(default)]
-    pub suggested_footnote: String,
+    pub suggested_footnotes: Vec<AiReviewFootnote>,
     #[serde(default)]
     pub suggested_image_caption: String,
     pub reviewed: bool,

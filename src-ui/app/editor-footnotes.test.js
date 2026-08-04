@@ -2,10 +2,84 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  editorFootnoteMarkerSequence,
+  editorFootnoteMarkerSequencesEqual,
+  editorFootnotesForAiReview,
+  mergeEditorFootnoteCorrections,
   normalizeEditorFootnotes,
   normalizeEditorRowFootnotesForSave,
   serializeEditorFootnotesForLegacy,
 } from "./editor-footnotes.js";
+
+test("AI Review footnote helpers preserve markers and merge text by marker", () => {
+  const original = [
+    { marker: 1, text: "One" },
+    { marker: 2, text: "Two" },
+    { marker: 3, text: "Three" },
+  ];
+
+  assert.deepEqual(editorFootnotesForAiReview(original), original);
+  assert.deepEqual(
+    mergeEditorFootnoteCorrections(original, [
+      { marker: 3, text: "Three corrected" },
+      { marker: 1, text: "One corrected" },
+    ]),
+    {
+      ok: true,
+      footnotes: [
+        { marker: 1, text: "One corrected" },
+        { marker: 2, text: "Two" },
+        { marker: 3, text: "Three corrected" },
+      ],
+      reason: "",
+    },
+  );
+});
+
+test("AI Review footnote helpers reject invalid, unknown, and duplicate markers", () => {
+  const original = [{ marker: 9, text: "Nine" }];
+
+  assert.equal(mergeEditorFootnoteCorrections(original, [{ marker: 0, text: "Zero" }]).reason, "invalid-marker");
+  assert.equal(mergeEditorFootnoteCorrections(original, [{ marker: 1, text: "One" }]).reason, "unknown-marker");
+  assert.equal(
+    mergeEditorFootnoteCorrections(original, [
+      { marker: 9, text: "First" },
+      { marker: 9, text: "Second" },
+    ]).reason,
+    "duplicate-marker",
+  );
+});
+
+test("AI Review footnote helpers reject corrections that change markers after legacy serialization", () => {
+  assert.equal(
+    mergeEditorFootnoteCorrections(
+      [{ marker: 1, text: "One" }],
+      [{ marker: 1, text: "" }],
+    ).reason,
+    "serialization-marker-change",
+  );
+  assert.equal(
+    mergeEditorFootnoteCorrections(
+      [{ marker: 1, text: "One" }],
+      [{ marker: 1, text: "[9] Invented" }],
+    ).reason,
+    "serialization-marker-change",
+  );
+  assert.equal(
+    mergeEditorFootnoteCorrections(
+      [{ marker: 1, text: "One" }, { marker: 2, text: "Two" }],
+      [{ marker: 1, text: "Corrected\n\n[9] Invented" }],
+    ).reason,
+    "serialization-marker-change",
+  );
+});
+
+test("AI Review marker sequence ignores escaped literals and preserves ordered identity", () => {
+  assert.deepEqual(editorFootnoteMarkerSequence("A[1] B\\[99\\] C[2]"), [1, 2]);
+  assert.equal(editorFootnoteMarkerSequencesEqual("A[1] B[2]", "A changed [1] B changed [2]"), true);
+  assert.equal(editorFootnoteMarkerSequencesEqual("A[1] B[2]", "A[2] B[1]"), false);
+  assert.equal(editorFootnoteMarkerSequencesEqual("A[1] B[2]", "A[1]"), false);
+});
 
 test("normalizeEditorFootnotes reads legacy single and labeled multi-footnote text", () => {
   assert.deepEqual(normalizeEditorFootnotes("Legacy note"), [

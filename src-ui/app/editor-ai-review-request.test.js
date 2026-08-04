@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildEditorAiReviewBatchRequest } from "./editor-ai-review-request.js";
+import {
+  buildEditorAiReviewBatchRequest,
+  buildEditorAiReviewRequest,
+} from "./editor-ai-review-request.js";
 
 function row(id, es, vi) {
   return { rowId: id, fields: { es, vi }, footnotes: {}, imageCaptions: {}, fieldStates: {} };
@@ -93,4 +96,47 @@ test("buildEditorAiReviewBatchRequest meaning mode includes source, history, and
   assert.deepEqual(request.contextBefore.map((c) => c.rowId), ["r0"]);
   assert.deepEqual(request.contextAfter.map((c) => c.rowId), ["r3"]);
   assert.equal(request.installationId, 42);
+});
+
+test("AI Review requests preserve structured target and source footnote markers", () => {
+  const state = chapterState();
+  state.rows[1].footnotes = {
+    es: [{ marker: 9, text: "Nota fuente" }],
+    vi: [
+      { marker: 1, text: "Ghi chu mot" },
+      { marker: 2, text: "Ghi chu hai" },
+      { marker: 3, text: "Ghi chu ba" },
+    ],
+  };
+
+  const request = buildEditorAiReviewRequest({
+    chapterState: state,
+    row: state.rows[1],
+    sourceLanguageCode: "es",
+    targetLanguageCode: "vi",
+    providerId: "openai",
+    modelId: "gpt-5.5",
+    reviewMode: "meaning",
+  });
+
+  assert.deepEqual(request.footnotes, [
+    { marker: 1, text: "Ghi chu mot" },
+    { marker: 2, text: "Ghi chu hai" },
+    { marker: 3, text: "Ghi chu ba" },
+  ]);
+  assert.deepEqual(request.sourceFootnotes, [{ marker: 9, text: "Nota fuente" }]);
+  assert.equal("footnote" in request, false);
+  assert.equal("sourceFootnote" in request, false);
+
+  const grammar = buildEditorAiReviewBatchRequest({
+    chapterState: state,
+    rows: [state.rows[1]],
+    sourceLanguageCode: "es",
+    targetLanguageCode: "vi",
+    providerId: "openai",
+    modelId: "gpt-5.5",
+    reviewMode: "grammar",
+  });
+  assert.deepEqual(grammar.rows[0].footnotes, request.footnotes);
+  assert.deepEqual(grammar.rows[0].sourceFootnotes, []);
 });

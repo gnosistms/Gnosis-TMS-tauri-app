@@ -383,10 +383,10 @@ test("runEditorAiReview uses the configured provider and model", async () => {
           reviewMode: "grammar",
           text: "Texto original",
           latestTranslation: "Texto original",
-          footnote: "",
+          footnotes: [],
           imageCaption: "",
           sourceText: "Hola",
-          sourceFootnote: "",
+          sourceFootnotes: [],
           sourceImageCaption: "",
           sourceLanguageCode: "es",
           targetLanguageCode: "vi",
@@ -414,6 +414,38 @@ test("runEditorAiReview uses the configured provider and model", async () => {
   assert.equal(state.editorChapter.aiReview.status, "ready");
   assert.equal(state.editorChapter.aiReview.suggestedText, "Texto revisado");
   assert.equal(state.editorChapter.aiReview.promptText, "Review prompt for Texto original");
+});
+
+test("runEditorAiReview keeps provider errors visible on rows with marked footnotes", async () => {
+  installTranslateFixture({
+    footnotes: { vi: "[9] Note" },
+    imageCaptions: { vi: "Caption" },
+  });
+  invokeHandler = async (command) => {
+    if (command === "load_ai_provider_secret") {
+      return "provider-key";
+    }
+    if (command === "run_ai_review") {
+      throw new Error("The AI review changed footnote markers.");
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await runEditorAiReview(() => {});
+
+  assert.equal(state.editorChapter.aiReview.status, "error");
+  assert.equal(state.editorChapter.aiReview.sourceFootnote, "[9] Note");
+  assert.equal(state.editorChapter.aiReview.sourceImageCaption, "Caption");
+  const visible = resolveVisibleEditorAiReview(
+    state.editorChapter,
+    "row-1",
+    "vi",
+    "Texto original",
+    "[9] Note",
+    "Caption",
+  );
+  assert.equal(visible.isStale, false);
+  assert.match(visible.error, /changed footnote markers/i);
 });
 
 test("runEditorAiReview matches the default QA list and sends advisory QA hints", async () => {
@@ -3072,6 +3104,7 @@ test("applyEditorAiReview applies footnote and image caption suggestions separat
       sourceImageCaption: "Chu thich anh cu",
       suggestedText: "",
       suggestedFootnote: "Chu thich moi",
+      suggestedFootnotes: [{ marker: 1, text: "Chu thich moi" }],
       suggestedImageCaption: "Chu thich anh moi",
     },
   };
@@ -3105,6 +3138,40 @@ test("applyEditorAiReview applies footnote and image caption suggestions separat
   assert.equal(state.editorChapter.rows[0].fields.vi, "Texto original");
   assert.equal(state.editorChapter.rows[0].footnotes.vi, "Chu thich moi");
   assert.equal(state.editorChapter.rows[0].imageCaptions.vi, "Chu thich anh moi");
+});
+
+test("applyEditorAiReview rejects a suggestion after a marker-only footnote change", async () => {
+  installTranslateFixture({
+    footnotes: { vi: [{ marker: 9, text: "Same note" }] },
+  });
+  state.editorChapter = {
+    ...state.editorChapter,
+    aiReview: {
+      status: "ready",
+      error: "",
+      rowId: "row-1",
+      languageCode: "vi",
+      requestKey: "req-marker-change",
+      sourceText: "Texto original",
+      sourceFootnote: "[1] Same note",
+      suggestedText: "",
+      suggestedFootnote: "[1] Corrected note",
+      suggestedFootnotes: [{ marker: 1, text: "Corrected note" }],
+    },
+  };
+  let updateCount = 0;
+
+  await applyEditorAiReview(() => {}, {
+    updateEditorRowFieldValue() {
+      updateCount += 1;
+    },
+    async persistEditorRowOnBlur() {
+      throw new Error("A stale suggestion must not be persisted.");
+    },
+  });
+
+  assert.equal(updateCount, 0);
+  assert.deepEqual(state.editorChapter.rows[0].footnotes.vi, [{ marker: 9, text: "Same note" }]);
 });
 
 test("applyEditorAiReview does nothing when the suggestion matches the current translation", async () => {
@@ -4858,10 +4925,10 @@ test("runEditorAiReview loads shared team action preferences before choosing the
           reviewMode: "grammar",
           text: "Texto original",
           latestTranslation: "Texto original",
-          footnote: "",
+          footnotes: [],
           imageCaption: "",
           sourceText: "Hola",
-          sourceFootnote: "",
+          sourceFootnotes: [],
           sourceImageCaption: "",
           sourceLanguageCode: "es",
           targetLanguageCode: "vi",
@@ -5392,6 +5459,32 @@ test("AI review visibility suppresses stale suggestions and same-chapter UI keep
   assert.deepEqual([...nextState.reviewExpandedSectionKeys], ["ai-review"]);
   assert.equal(nextState.aiReview.status, "ready");
   assert.equal(nextState.aiReview.suggestedText, "Texto revisado");
+});
+
+test("AI review visibility treats marker-only footnote changes as stale", () => {
+  const visible = resolveVisibleEditorAiReview(
+    {
+      ...createEditorChapterState(),
+      chapterId: "chapter-1",
+      aiReview: {
+        status: "ready",
+        rowId: "row-1",
+        languageCode: "vi",
+        requestKey: "req-markers",
+        sourceText: "Texto original",
+        sourceFootnote: "[1] Same note",
+        suggestedFootnote: "[1] Corrected note",
+        suggestedFootnotes: [{ marker: 1, text: "Corrected note" }],
+      },
+    },
+    "row-1",
+    "vi",
+    "Texto original",
+    "[9] Same note",
+  );
+
+  assert.equal(visible.isStale, true);
+  assert.equal(visible.showSuggestion, false);
 });
 
 test("AI review visibility treats unchanged suggestions as looks good instead of actionable", () => {

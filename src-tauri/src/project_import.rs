@@ -16,7 +16,8 @@ pub(crate) use self::chapter_editor::{
     normalize_chapter_settings_value, persist_imported_editor_conflict_entries,
     repo_has_imported_editor_conflicts, resolve_chapter_json_git_conflict_from_stage_texts,
     resolve_project_json_git_conflict_from_stage_texts, resolve_row_git_conflict_from_stage_texts,
-    ImportedEditorConflictRef, PendingImportedEditorConflictEntry, ResolvedEditorConflictAction,
+    unescaped_footnote_marker_sequence, ImportedEditorConflictRef,
+    PendingImportedEditorConflictEntry, ResolvedEditorConflictAction,
 };
 
 use self::{

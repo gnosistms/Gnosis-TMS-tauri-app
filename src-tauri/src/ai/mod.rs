@@ -13,7 +13,7 @@ use crate::ai::types::{
     AiAssistantTurnKind, AiAssistantTurnRequest, AiAssistantTurnResponse, AiModelProbeRequest,
     AiPromptOutputFormat, AiPromptRequest, AiProviderContinuationMetadata, AiProviderId,
     AiProviderModel, AiReviewBatchRequest, AiReviewBatchResponse, AiReviewBatchRowInput,
-    AiReviewBatchRowResult, AiReviewQaHint, AiReviewRequest, AiReviewResponse,
+    AiReviewBatchRowResult, AiReviewFootnote, AiReviewQaHint, AiReviewRequest, AiReviewResponse,
     AiTranslatedGlossaryBatchPreparationRequest, AiTranslatedGlossaryEntry,
     AiTranslatedGlossaryPreparationRequest, AiTranslatedGlossaryPreparationResponse,
     AiTranslatedGlossaryTermInput, AiTranslationBatchRequest, AiTranslationBatchResponse,
@@ -22,6 +22,7 @@ use crate::ai::types::{
     AiTranslationNoTranslationHint, AiTranslationRequest, AiTranslationResponse,
 };
 use crate::ai_secret_storage::load_ai_provider_secret;
+use crate::project_import::unescaped_footnote_marker_sequence;
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -29,7 +30,7 @@ struct AiReviewStructuredResponse {
     #[serde(default)]
     suggested_text: String,
     #[serde(default)]
-    suggested_footnote: String,
+    suggested_footnotes: Vec<AiReviewFootnote>,
     #[serde(default)]
     suggested_image_caption: String,
     reviewed: bool,
@@ -55,7 +56,7 @@ fn normalize_review_mode(request: &AiReviewRequest) -> Option<&str> {
 }
 
 fn review_response_contract() -> &'static str {
-    "Return only valid JSON:\n{\"suggestedText\":\"\",\"suggestedFootnote\":\"\",\"suggestedImageCaption\":\"\",\"reviewed\":true}"
+    "Return only valid JSON:\n{\"suggestedText\":\"\",\"suggestedFootnotes\":[],\"suggestedImageCaption\":\"\",\"reviewed\":true}"
 }
 
 fn format_optional_tagged_section(tag: &str, value: &str) -> Option<String> {
@@ -69,15 +70,18 @@ fn format_optional_tagged_section(tag: &str, value: &str) -> Option<String> {
 
 fn format_review_target_sections(
     latest_translation: &str,
-    footnote: &str,
+    footnotes: &[AiReviewFootnote],
     image_caption: &str,
 ) -> String {
     let mut sections = Vec::new();
     sections.push(format!(
         "<latest_translation>\n{latest_translation}\n</latest_translation>"
     ));
-    if let Some(section) = format_optional_tagged_section("latest_footnote", footnote) {
-        sections.push(section);
+    if !footnotes.is_empty() {
+        sections.push(format!(
+            "<latest_footnotes format=\"json\">\n{}\n</latest_footnotes>",
+            serde_json::to_string(footnotes).unwrap_or_default()
+        ));
     }
     if let Some(section) = format_optional_tagged_section("latest_image_caption", image_caption) {
         sections.push(section);
@@ -87,13 +91,16 @@ fn format_review_target_sections(
 
 fn format_review_source_sections(
     source_text: &str,
-    source_footnote: &str,
+    source_footnotes: &[AiReviewFootnote],
     source_image_caption: &str,
 ) -> String {
     let mut sections = Vec::new();
     sections.push(format!("<source_text>\n{source_text}\n</source_text>"));
-    if let Some(section) = format_optional_tagged_section("source_footnote", source_footnote) {
-        sections.push(section);
+    if !source_footnotes.is_empty() {
+        sections.push(format!(
+            "<source_footnotes format=\"json\">\n{}\n</source_footnotes>",
+            serde_json::to_string(source_footnotes).unwrap_or_default()
+        ));
     }
     if let Some(section) =
         format_optional_tagged_section("source_image_caption", source_image_caption)
@@ -123,6 +130,42 @@ fn meaning_review_guidance() -> &'static str {
     "Translation accuracy is about preserving meaning, not mirroring the source's structure. Treat differences in word order, clause order, or the order of items in a list as correct when the relationships and meaning are preserved and the target-language text is grammatical. Do not suggest a change merely to match the source's order, syntax, phrasing, or style, or to substitute equally valid wording. For translation-accuracy reasons, suggest a correction only when the target adds, omits, contradicts, or otherwise misrepresents meaning."
 }
 
+fn review_footnote_marker_guidance() -> &'static str {
+    "Footnote markers are immutable identifiers owned by the application. Never add, remove, duplicate, renumber, or reorder bracketed footnote markers in suggestedText. Return only changed existing footnote bodies in suggestedFootnotes as {marker,text} objects; never invent a marker."
+}
+
+fn validate_review_suggestions(
+    latest_translation: &str,
+    footnotes: &[AiReviewFootnote],
+    suggested_text: &str,
+    suggested_footnotes: &[AiReviewFootnote],
+) -> Result<(), String> {
+    if !suggested_text.trim().is_empty()
+        && unescaped_footnote_marker_sequence(latest_translation)
+            != unescaped_footnote_marker_sequence(suggested_text)
+    {
+        return Err(
+            "The AI review changed footnote markers, so its suggestion was not applied."
+                .to_string(),
+        );
+    }
+
+    let known_markers: HashSet<usize> = footnotes.iter().map(|entry| entry.marker).collect();
+    let mut seen = HashSet::new();
+    for correction in suggested_footnotes {
+        if correction.marker == 0
+            || !known_markers.contains(&correction.marker)
+            || !seen.insert(correction.marker)
+        {
+            return Err(
+                "The AI review returned invalid footnote markers, so its suggestion was not applied."
+                    .to_string(),
+            );
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn build_review_prompt(request: &AiReviewRequest) -> String {
     if let Some(review_mode) = normalize_review_mode(request) {
         let latest_translation = request
@@ -140,12 +183,12 @@ pub(crate) fn build_review_prompt(request: &AiReviewRequest) -> String {
             let source_text = request.source_text.as_deref().unwrap_or("").trim();
             let source_sections = format_review_source_sections(
                 source_text,
-                &request.source_footnote,
+                &request.source_footnotes,
                 &request.source_image_caption,
             );
             let target_sections = format_review_target_sections(
                 latest_translation,
-                &request.footnote,
+                &request.footnotes,
                 &request.image_caption,
             );
             let row = AiAssistantRowContext {
@@ -160,7 +203,12 @@ pub(crate) fn build_review_prompt(request: &AiReviewRequest) -> String {
                 },
                 target_language_label: request.target_language.clone(),
                 target_text: latest_translation.to_string(),
-                source_footnote: request.source_footnote.clone(),
+                source_footnote: request
+                    .source_footnotes
+                    .iter()
+                    .map(|entry| entry.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n\n"),
                 source_image_caption: request.source_image_caption.clone(),
                 updated_source_text: None,
                 updated_target_text: None,
@@ -196,6 +244,7 @@ pub(crate) fn build_review_prompt(request: &AiReviewRequest) -> String {
             );
             sections.push(review_target_language_punctuation_guidance().to_string());
             sections.push(meaning_review_guidance().to_string());
+            sections.push(review_footnote_marker_guidance().to_string());
             sections.push(
                 "Use supporting context when relevant. Do not treat reference translations or edit history as more authoritative than the source-language sections. Keep main text, footnotes, and image captions separate."
                     .to_string(),
@@ -228,7 +277,7 @@ pub(crate) fn build_review_prompt(request: &AiReviewRequest) -> String {
 
         let target_sections = format_review_target_sections(
             latest_translation,
-            &request.footnote,
+            &request.footnotes,
             &request.image_caption,
         );
         let qa_info = format_review_qa_hints(&request.qa_hints);
@@ -237,6 +286,7 @@ pub(crate) fn build_review_prompt(request: &AiReviewRequest) -> String {
             "Task:\nReview the target-language sections for spelling and grammar errors and apply any relevant matched QA-entry notes. Do not otherwise review translation accuracy or compare against source text.".to_string(),
             "Decision rule:\n- If every reviewed section is correct and complies with relevant QA notes: set all suggested fields to empty strings and reviewed to true.\n- If any section has errors or violates a relevant QA note: set reviewed to false and put corrected content only in the matching suggested field. Keep unchanged sections as empty strings.".to_string(),
             review_target_language_punctuation_guidance().to_string(),
+            review_footnote_marker_guidance().to_string(),
             "Preserve the meaning, terminology, tone, and style unless a change is needed to correct spelling or grammar or to follow a relevant QA note. Keep main text, footnotes, and image captions separate.".to_string(),
         ];
         if !qa_info.is_empty() {
@@ -264,7 +314,11 @@ pub(crate) fn build_review_prompt(request: &AiReviewRequest) -> String {
     }
 }
 
-fn parse_review_structured_response(text: &str) -> Result<AiReviewResponse, String> {
+fn parse_review_structured_response(
+    text: &str,
+    latest_translation: &str,
+    footnotes: &[AiReviewFootnote],
+) -> Result<AiReviewResponse, String> {
     let trimmed = text.trim();
     let stripped = strip_markdown_code_fence(trimmed);
     let object_slice = trimmed
@@ -275,12 +329,18 @@ fn parse_review_structured_response(text: &str) -> Result<AiReviewResponse, Stri
         if let Ok(mut parsed) = serde_json::from_str::<AiReviewStructuredResponse>(candidate) {
             if parsed.reviewed {
                 parsed.suggested_text.clear();
-                parsed.suggested_footnote.clear();
+                parsed.suggested_footnotes.clear();
                 parsed.suggested_image_caption.clear();
             }
+            validate_review_suggestions(
+                latest_translation,
+                footnotes,
+                &parsed.suggested_text,
+                &parsed.suggested_footnotes,
+            )?;
             return Ok(AiReviewResponse {
                 suggested_text: parsed.suggested_text,
-                suggested_footnote: parsed.suggested_footnote,
+                suggested_footnotes: parsed.suggested_footnotes,
                 suggested_image_caption: parsed.suggested_image_caption,
                 reviewed: Some(parsed.reviewed),
                 prompt_text: String::new(),
@@ -429,7 +489,7 @@ fn translation_batch_response_contract() -> &'static str {
 }
 
 fn review_batch_response_contract() -> &'static str {
-    "Return only valid JSON:\n{\"rows\":[{\"rowId\":\"\",\"suggestedText\":\"\",\"suggestedFootnote\":\"\",\"suggestedImageCaption\":\"\",\"reviewed\":true}]}\nReturn exactly one entry per row in <rows_to_review>, in the same order, each with its matching rowId."
+    "Return only valid JSON:\n{\"rows\":[{\"rowId\":\"\",\"suggestedText\":\"\",\"suggestedFootnotes\":[],\"suggestedImageCaption\":\"\",\"reviewed\":true}]}\nReturn exactly one entry per row in <rows_to_review>, in the same order, each with its matching rowId."
 }
 
 fn format_batch_context(entries: &[AiAssistantRowWindowEntry]) -> String {
@@ -554,7 +614,7 @@ fn format_review_batch_row(
 ) -> String {
     let latest_translation = row.latest_translation.trim();
     let target_sections =
-        format_review_target_sections(latest_translation, &row.footnote, &row.image_caption);
+        format_review_target_sections(latest_translation, &row.footnotes, &row.image_caption);
     let qa_info = format_review_qa_hints(&row.qa_hints);
 
     if review_mode != "meaning" {
@@ -573,7 +633,7 @@ fn format_review_batch_row(
     let source_text = row.source_text.trim();
     sections.push(format_review_source_sections(
         source_text,
-        &row.source_footnote,
+        &row.source_footnotes,
         &row.source_image_caption,
     ));
     sections.push(target_sections);
@@ -628,6 +688,7 @@ pub(crate) fn build_review_batch_prompt(request: &AiReviewBatchRequest) -> Strin
             "Task:\nReview each row's target-language sections for spelling and grammar errors and apply any relevant matched QA-entry notes. Do not otherwise review translation accuracy or compare against source text.".to_string(),
             "Decision rule (per row):\n- If every section is correct and complies with relevant QA notes: set that row's suggested fields to empty strings and reviewed to true.\n- If any section has errors or violates a relevant QA note: set reviewed to false and put corrected content only in the matching suggested field; keep unchanged sections as empty strings.".to_string(),
             review_target_language_punctuation_guidance().to_string(),
+            review_footnote_marker_guidance().to_string(),
             "Preserve meaning, terminology, tone, and style unless a change is needed to correct spelling or grammar or to follow a relevant QA note. Keep main text, footnotes, and image captions separate.".to_string(),
         ];
         if has_qa_hints {
@@ -663,6 +724,7 @@ pub(crate) fn build_review_batch_prompt(request: &AiReviewBatchRequest) -> Strin
             .to_string(),
         review_target_language_punctuation_guidance().to_string(),
         meaning_review_guidance().to_string(),
+        review_footnote_marker_guidance().to_string(),
         "Use supporting context when relevant. Do not treat reference translations or edit history as more authoritative than the source-language sections. Keep main text, footnotes, and image captions separate."
             .to_string(),
     ];
@@ -739,7 +801,7 @@ struct AiReviewBatchStructuredRow {
     #[serde(default)]
     suggested_text: String,
     #[serde(default)]
-    suggested_footnote: String,
+    suggested_footnotes: Vec<AiReviewFootnote>,
     #[serde(default)]
     suggested_image_caption: String,
     // Option, not defaulted bool: only OpenAI enforces the strict schema, and a
@@ -792,13 +854,13 @@ fn parse_review_batch_response(text: &str) -> Result<Vec<AiReviewBatchRowResult>
                     let reviewed = row.reviewed?;
                     if reviewed {
                         row.suggested_text.clear();
-                        row.suggested_footnote.clear();
+                        row.suggested_footnotes.clear();
                         row.suggested_image_caption.clear();
                     }
                     Some(AiReviewBatchRowResult {
                         row_id: row.row_id.trim().to_string(),
                         suggested_text: row.suggested_text,
-                        suggested_footnote: row.suggested_footnote,
+                        suggested_footnotes: row.suggested_footnotes,
                         suggested_image_caption: row.suggested_image_caption,
                         reviewed,
                     })
@@ -908,6 +970,34 @@ pub(crate) fn run_ai_review_batch(
         &allowed,
         |row| row.row_id.trim().to_string(),
     );
+    let requested_by_id: HashMap<&str, &AiReviewBatchRowInput> = request
+        .rows
+        .iter()
+        .map(|row| (row.row_id.trim(), row))
+        .collect();
+    let rows = rows
+        .into_iter()
+        .map(|mut row| {
+            let valid = requested_by_id
+                .get(row.row_id.as_str())
+                .is_some_and(|requested| {
+                    validate_review_suggestions(
+                        &requested.latest_translation,
+                        &requested.footnotes,
+                        &row.suggested_text,
+                        &row.suggested_footnotes,
+                    )
+                    .is_ok()
+                });
+            if !valid {
+                row.suggested_text.clear();
+                row.suggested_footnotes.clear();
+                row.suggested_image_caption.clear();
+                row.reviewed = false;
+            }
+            row
+        })
+        .collect();
 
     Ok(AiReviewBatchResponse {
         rows,
@@ -2185,7 +2275,7 @@ pub(crate) fn run_ai_review(
         .unwrap_or(&request.text);
 
     if text_to_review.trim().is_empty()
-        && request.footnote.trim().is_empty()
+        && request.footnotes.is_empty()
         && request.image_caption.trim().is_empty()
     {
         return Err("There is no text to review yet.".to_string());
@@ -2216,14 +2306,15 @@ pub(crate) fn run_ai_review(
     )?;
 
     if structured_review_mode.is_some() {
-        let mut parsed = parse_review_structured_response(&response.text)?;
+        let mut parsed =
+            parse_review_structured_response(&response.text, text_to_review, &request.footnotes)?;
         parsed.prompt_text = prompt;
         return Ok(parsed);
     }
 
     Ok(AiReviewResponse {
         suggested_text: response.text,
-        suggested_footnote: String::new(),
+        suggested_footnotes: Vec::new(),
         suggested_image_caption: String::new(),
         reviewed: None,
         prompt_text: prompt,
@@ -2576,7 +2667,7 @@ mod tests {
         AiAssistantRowContext, AiAssistantRowLanguageText, AiAssistantRowWindowEntry,
         AiAssistantTargetLanguageHistoryEntry, AiAssistantTranscriptEntry, AiAssistantTurnKind,
         AiAssistantTurnRequest, AiPromptOutputFormat, AiProviderId, AiReviewBatchRequest,
-        AiReviewBatchRowInput, AiReviewQaHint, AiReviewQaMatch, AiReviewRequest,
+        AiReviewBatchRowInput, AiReviewFootnote, AiReviewQaHint, AiReviewQaMatch, AiReviewRequest,
         AiTranslatedGlossaryPreparationRequest, AiTranslatedGlossaryTermInput,
         AiTranslationBatchRequest, AiTranslationBatchRowInput, AiTranslationGlossaryHint,
         AiTranslationGlossaryTargetVariant, AiTranslationNoTranslationHint, AiTranslationRequest,
@@ -2606,12 +2697,12 @@ mod tests {
             model_id: "gpt-5.4".to_string(),
             text: "Ban dich hien tai".to_string(),
             language_code: "vi".to_string(),
-            footnote: String::new(),
+            footnotes: vec![],
             image_caption: String::new(),
             review_mode: None,
             latest_translation: None,
             source_text: None,
-            source_footnote: String::new(),
+            source_footnotes: vec![],
             source_image_caption: String::new(),
             source_language_code: String::new(),
             target_language_code: String::new(),
@@ -2640,7 +2731,11 @@ mod tests {
     fn build_review_prompt_uses_grammar_structured_prompt() {
         let mut request = review_request();
         request.review_mode = Some("grammar".to_string());
-        request.latest_translation = Some("Ban dich hien tai".to_string());
+        request.latest_translation = Some("Ban dich hien tai[9]".to_string());
+        request.footnotes = vec![AiReviewFootnote {
+            marker: 9,
+            text: "Ghi chu".to_string(),
+        }];
 
         let prompt = build_review_prompt(&request);
 
@@ -2658,10 +2753,15 @@ mod tests {
         assert!(prompt.contains("Keep main text, footnotes, and image captions separate."));
         assert!(prompt.contains("<review_item>"));
         assert!(prompt.contains("These are the only sections you are reviewing."));
-        assert!(prompt.contains("<latest_translation>\nBan dich hien tai\n</latest_translation>"));
+        assert!(
+            prompt.contains("<latest_translation>\nBan dich hien tai[9]\n</latest_translation>")
+        );
+        assert!(prompt.contains("<latest_footnotes format=\"json\">"));
+        assert!(prompt.contains(r#"[{"marker":9,"text":"Ghi chu"}]"#));
+        assert!(prompt.contains("Footnote markers are immutable identifiers"));
         assert!(!prompt.contains("source_text"));
         assert!(
-            prompt.ends_with("Return only valid JSON:\n{\"suggestedText\":\"\",\"suggestedFootnote\":\"\",\"suggestedImageCaption\":\"\",\"reviewed\":true}")
+            prompt.ends_with("Return only valid JSON:\n{\"suggestedText\":\"\",\"suggestedFootnotes\":[],\"suggestedImageCaption\":\"\",\"reviewed\":true}")
         );
         assert_eq!(
             prompt
@@ -2777,7 +2877,7 @@ mod tests {
         assert!(prompt.contains("These are the only sections you are reviewing."));
         assert!(prompt.contains("<latest_translation>\nBan dich hien tai\n</latest_translation>"));
         assert!(
-            prompt.ends_with("Return only valid JSON:\n{\"suggestedText\":\"\",\"suggestedFootnote\":\"\",\"suggestedImageCaption\":\"\",\"reviewed\":true}")
+            prompt.ends_with("Return only valid JSON:\n{\"suggestedText\":\"\",\"suggestedFootnotes\":[],\"suggestedImageCaption\":\"\",\"reviewed\":true}")
         );
         assert_eq!(
             prompt
@@ -2792,6 +2892,8 @@ mod tests {
     fn parse_review_structured_response_accepts_json_and_clears_clean_text() {
         let response = parse_review_structured_response(
             r#"{"suggestedText":"This should be ignored","reviewed":true}"#,
+            "Original",
+            &[],
         )
         .unwrap();
 
@@ -2800,11 +2902,63 @@ mod tests {
     }
 
     #[test]
+    fn parse_review_structured_response_preserves_marker_keyed_corrections() {
+        let footnotes = vec![
+            AiReviewFootnote {
+                marker: 1,
+                text: "One".to_string(),
+            },
+            AiReviewFootnote {
+                marker: 2,
+                text: "Two".to_string(),
+            },
+        ];
+        let response = parse_review_structured_response(
+            r#"{"suggestedText":"Body corrected[1] and[2]","suggestedFootnotes":[{"marker":2,"text":"Two corrected"}],"reviewed":false}"#,
+            "Body[1] and[2]",
+            &footnotes,
+        )
+        .unwrap();
+
+        assert_eq!(response.suggested_footnotes.len(), 1);
+        assert_eq!(response.suggested_footnotes[0].marker, 2);
+        assert_eq!(response.suggested_footnotes[0].text, "Two corrected");
+    }
+
+    #[test]
+    fn parse_review_structured_response_rejects_changed_or_unknown_markers() {
+        let footnotes = vec![AiReviewFootnote {
+            marker: 9,
+            text: "Nine".to_string(),
+        }];
+        assert!(parse_review_structured_response(
+            r#"{"suggestedText":"Body without marker","suggestedFootnotes":[],"reviewed":false}"#,
+            "Body[9]",
+            &footnotes,
+        )
+        .is_err());
+        assert!(parse_review_structured_response(
+            r#"{"suggestedText":"","suggestedFootnotes":[{"marker":1,"text":"Unknown"}],"reviewed":false}"#,
+            "Body[9]",
+            &footnotes,
+        )
+        .is_err());
+        assert!(parse_review_structured_response(
+            r#"{"suggestedText":"","suggestedFootnotes":[{"marker":9,"text":"First"},{"marker":9,"text":"Second"}],"reviewed":false}"#,
+            "Body[9]",
+            &footnotes,
+        )
+        .is_err());
+    }
+
+    #[test]
     fn parse_review_structured_response_accepts_corrected_json() {
         let response = parse_review_structured_response(
             r#"```json
             {"suggestedText":"Corrected text","reviewed":false}
             ```"#,
+            "Original",
+            &[],
         )
         .unwrap();
 
@@ -3783,10 +3937,10 @@ mod tests {
         AiReviewBatchRowInput {
             row_id: id.to_string(),
             latest_translation: "Bản dịch".to_string(),
-            footnote: String::new(),
+            footnotes: vec![],
             image_caption: String::new(),
             source_text: "The source.".to_string(),
-            source_footnote: String::new(),
+            source_footnotes: vec![],
             source_image_caption: String::new(),
             alternate_language_texts: vec![],
             target_language_history: vec![],

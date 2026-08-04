@@ -16,13 +16,17 @@ import {
 } from "./ai-settings-flow.js";
 import { ensureSelectedTeamAiProviderReady } from "./team-ai-flow.js";
 import { findEditorRowById, hasActiveEditorField } from "./editor-utils.js";
+import {
+  editorFootnoteMarkerSequencesEqual,
+  mergeEditorFootnoteCorrections,
+  serializeEditorFootnotesForLegacy,
+} from "./editor-footnotes.js";
 import { selectedProjectsTeam, selectedProjectsTeamInstallationId } from "./project-context.js";
 import {
   buildEditorAiReviewRequest,
   editorReviewLanguageByCode,
   normalizeEditorAiReviewMode,
   readEditorReviewRowFieldText,
-  readEditorReviewRowFootnote,
   readEditorReviewRowImageCaption,
   selectedEditorReviewSourceLanguageCode,
 } from "./editor-ai-review-request.js";
@@ -79,7 +83,7 @@ function activeEditorReviewContext(chapterState = state.editorChapter) {
     languageCode,
     language: editorReviewLanguageByCode(chapterState, languageCode),
     text: readEditorReviewRowFieldText(row, languageCode),
-    footnote: readEditorReviewRowFootnote(row, languageCode),
+    footnote: serializeEditorFootnotesForLegacy(row.footnotes?.[languageCode]),
     imageCaption: readEditorReviewRowImageCaption(row, languageCode),
   };
 }
@@ -267,6 +271,34 @@ export async function runEditorAiReview(render, reviewMode = "grammar") {
       return;
     }
 
+    const suggestedText = String(payload?.suggestedText ?? "");
+    const suggestedFootnotes = Array.isArray(payload?.suggestedFootnotes)
+      ? payload.suggestedFootnotes
+      : [];
+    const mergedFootnotes = mergeEditorFootnoteCorrections(
+      context.row?.footnotes?.[context.languageCode],
+      suggestedFootnotes,
+    );
+    if (
+      (suggestedText.trim() && !editorFootnoteMarkerSequencesEqual(context.text, suggestedText))
+      || !mergedFootnotes.ok
+    ) {
+      state.editorChapter = applyEditorAiReviewFailed(
+        state.editorChapter,
+        context.rowId,
+        context.languageCode,
+        requestKey,
+        context.text,
+        "The AI review changed footnote markers, so its suggestion was not applied.",
+        context.footnote,
+        context.imageCaption,
+      );
+      render?.({ scope: "translate-sidebar" });
+      return;
+    }
+    const suggestedFootnote = suggestedFootnotes.length > 0
+      ? serializeEditorFootnotesForLegacy(mergedFootnotes.footnotes)
+      : "";
     state.editorChapter = applyEditorAiReviewLoaded(
       state.editorChapter,
       context.rowId,
@@ -275,8 +307,9 @@ export async function runEditorAiReview(render, reviewMode = "grammar") {
       context.text,
       context.footnote,
       context.imageCaption,
-      payload?.suggestedText ?? "",
-      payload?.suggestedFootnote ?? "",
+      suggestedText,
+      suggestedFootnote,
+      suggestedFootnotes,
       payload?.suggestedImageCaption ?? "",
       payload?.promptText ?? "",
       normalizedReviewMode,
@@ -325,6 +358,8 @@ export async function runEditorAiReview(render, reviewMode = "grammar") {
       requestKey,
       context.text,
       message,
+      context.footnote,
+      context.imageCaption,
     );
   }
 
@@ -360,6 +395,29 @@ export async function applyEditorAiReview(render, operations = {}) {
     return;
   }
 
+  const mergedFootnotes = mergeEditorFootnoteCorrections(
+    context.row?.footnotes?.[context.languageCode],
+    visibleAiReview.suggestedFootnotes,
+  );
+  if (
+    (visibleAiReview.suggestedText?.trim()
+      && !editorFootnoteMarkerSequencesEqual(context.text, visibleAiReview.suggestedText))
+    || !mergedFootnotes.ok
+  ) {
+    state.editorChapter = applyEditorAiReviewFailed(
+      state.editorChapter,
+      context.rowId,
+      context.languageCode,
+      visibleAiReview.requestKey,
+      context.text,
+      "The AI review changed footnote markers, so its suggestion was not applied.",
+      context.footnote,
+      context.imageCaption,
+    );
+    render?.({ scope: "translate-sidebar" });
+    return;
+  }
+
   state.editorChapter = applyEditorAiReviewApplying(state.editorChapter);
   render?.({ scope: "translate-sidebar" });
 
@@ -371,12 +429,13 @@ export async function applyEditorAiReview(render, operations = {}) {
         visibleAiReview.suggestedText,
       );
     }
-    if (visibleAiReview.suggestedFootnote?.trim()) {
+    for (const correction of visibleAiReview.suggestedFootnotes) {
       updateEditorRowFieldValue(
         context.rowId,
         context.languageCode,
-        visibleAiReview.suggestedFootnote,
+        correction.text,
         "footnote",
+        { marker: correction.marker },
       );
     }
     if (visibleAiReview.suggestedImageCaption?.trim()) {

@@ -262,6 +262,99 @@ pub(super) fn parse_labeled_footnote_text_for_merge(value: &str) -> Vec<ParsedFo
         .collect()
 }
 
+pub(super) fn parse_editor_footnote_entries(value: &str) -> Vec<ParsedFootnoteEntry> {
+    let normalized = normalize_editor_footnote_value(value);
+    if normalized.is_empty() {
+        return Vec::new();
+    }
+    let parsed = parse_labeled_footnote_text_for_merge(&normalized);
+    if parsed.is_empty() {
+        vec![ParsedFootnoteEntry {
+            marker: 1,
+            text: normalized,
+        }]
+    } else {
+        parsed
+    }
+}
+
+pub(super) fn serialize_editor_footnote_entries(entries: &[ParsedFootnoteEntry]) -> String {
+    match entries {
+        [] => String::new(),
+        [single] if single.marker == 1 => single.text.clone(),
+        _ => entries
+            .iter()
+            .map(|entry| {
+                if entry.text.is_empty() {
+                    format!("[{}]", entry.marker)
+                } else {
+                    format!("[{}] {}", entry.marker, entry.text)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n"),
+    }
+}
+
+fn merge_ai_review_footnote_corrections(
+    current: &str,
+    corrections: &[EditorAiReviewFootnoteCorrection],
+) -> Result<Option<String>, String> {
+    if corrections.is_empty() {
+        return Ok(None);
+    }
+    let mut entries = parse_editor_footnote_entries(current);
+    let original_markers = entries.iter().map(|entry| entry.marker).collect::<Vec<_>>();
+    let mut seen = BTreeSet::new();
+    for correction in corrections {
+        if correction.marker == 0 || !seen.insert(correction.marker) {
+            return Err("invalid footnote marker".to_string());
+        }
+        let Some(entry) = entries
+            .iter_mut()
+            .find(|entry| entry.marker == correction.marker)
+        else {
+            return Err("unknown footnote marker".to_string());
+        };
+        entry.text = correction.text.trim().to_string();
+    }
+    let serialized = serialize_editor_footnote_entries(&entries);
+    let reparsed_markers = parse_editor_footnote_entries(&serialized)
+        .iter()
+        .map(|entry| entry.marker)
+        .collect::<Vec<_>>();
+    if original_markers != reparsed_markers {
+        return Err("footnote markers changed during serialization".to_string());
+    }
+    Ok(Some(serialized))
+}
+
+fn sanitize_ai_review_suggestions(
+    current_text: &str,
+    current_footnote: &str,
+    suggested_text: &mut String,
+    suggested_footnotes: &mut Vec<EditorAiReviewFootnoteCorrection>,
+    suggested_image_caption: &mut String,
+    reviewed: &mut bool,
+    please_check: &mut bool,
+) -> (Option<String>, bool) {
+    let main_markers_changed = !suggested_text.trim().is_empty()
+        && super::row_merge::unescaped_footnote_marker_sequence(current_text)
+            != super::row_merge::unescaped_footnote_marker_sequence(suggested_text);
+    let merged_footnote =
+        merge_ai_review_footnote_corrections(current_footnote, suggested_footnotes);
+    if main_markers_changed || merged_footnote.is_err() {
+        suggested_text.clear();
+        suggested_footnotes.clear();
+        suggested_image_caption.clear();
+        *reviewed = false;
+        *please_check = true;
+        (None, true)
+    } else {
+        (merged_footnote.ok().flatten(), false)
+    }
+}
+
 fn footnote_marker_starts_line(value: &str, marker_start: usize) -> bool {
     let line_start = value[..marker_start]
         .rfind('\n')
@@ -579,6 +672,140 @@ mod tests {
             .iter()
             .map(|(key, value)| (key.to_string(), value.to_string()))
             .collect()
+    }
+
+    #[test]
+    fn ai_review_footnote_corrections_preserve_marker_identity() {
+        let merged = merge_ai_review_footnote_corrections(
+            "[1] One\n\n[2] Two\n\n[3] Three",
+            &[
+                EditorAiReviewFootnoteCorrection {
+                    marker: 3,
+                    text: "Three corrected".to_string(),
+                },
+                EditorAiReviewFootnoteCorrection {
+                    marker: 1,
+                    text: "One corrected".to_string(),
+                },
+            ],
+        )
+        .expect("known marker corrections should merge");
+
+        assert_eq!(
+            merged.as_deref(),
+            Some("[1] One corrected\n\n[2] Two\n\n[3] Three corrected")
+        );
+        assert_eq!(
+            merge_ai_review_footnote_corrections(
+                "[9] Nine",
+                &[EditorAiReviewFootnoteCorrection {
+                    marker: 9,
+                    text: "Nine corrected".to_string(),
+                }],
+            )
+            .expect("non-default marker should merge")
+            .as_deref(),
+            Some("[9] Nine corrected")
+        );
+    }
+
+    #[test]
+    fn ai_review_footnote_corrections_reject_unknown_and_duplicate_markers() {
+        assert!(merge_ai_review_footnote_corrections(
+            "[9] Nine",
+            &[EditorAiReviewFootnoteCorrection {
+                marker: 1,
+                text: "Unknown".to_string(),
+            }],
+        )
+        .is_err());
+        assert!(merge_ai_review_footnote_corrections(
+            "[9] Nine",
+            &[
+                EditorAiReviewFootnoteCorrection {
+                    marker: 9,
+                    text: "First".to_string(),
+                },
+                EditorAiReviewFootnoteCorrection {
+                    marker: 9,
+                    text: "Second".to_string(),
+                },
+            ],
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn ai_review_footnote_corrections_reject_serialized_marker_changes() {
+        for text in ["", "[9] Invented"] {
+            assert!(merge_ai_review_footnote_corrections(
+                "One",
+                &[EditorAiReviewFootnoteCorrection {
+                    marker: 1,
+                    text: text.to_string(),
+                }],
+            )
+            .is_err());
+        }
+        assert!(merge_ai_review_footnote_corrections(
+            "[1] One\n\n[2] Two",
+            &[EditorAiReviewFootnoteCorrection {
+                marker: 1,
+                text: "Corrected\n\n[9] Invented".to_string(),
+            }],
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn ai_review_sanitizer_fails_closed_when_main_or_note_markers_change() {
+        let mut suggested_text = "One without marker Two[2]".to_string();
+        let mut suggested_footnotes = vec![EditorAiReviewFootnoteCorrection {
+            marker: 1,
+            text: "One corrected".to_string(),
+        }];
+        let mut suggested_image_caption = "Caption corrected".to_string();
+        let mut reviewed = true;
+        let mut please_check = false;
+
+        let merged = sanitize_ai_review_suggestions(
+            "One[1] Two[2]",
+            "[1] One\n\n[2] Two",
+            &mut suggested_text,
+            &mut suggested_footnotes,
+            &mut suggested_image_caption,
+            &mut reviewed,
+            &mut please_check,
+        );
+
+        assert_eq!(merged, (None, true));
+        assert_eq!(suggested_text, "");
+        assert!(suggested_footnotes.is_empty());
+        assert_eq!(suggested_image_caption, "");
+        assert!(!reviewed);
+        assert!(please_check);
+
+        suggested_text.clear();
+        suggested_footnotes = vec![EditorAiReviewFootnoteCorrection {
+            marker: 9,
+            text: "Unknown".to_string(),
+        }];
+        reviewed = true;
+        please_check = false;
+        assert_eq!(
+            sanitize_ai_review_suggestions(
+                "One[1] Two[2]",
+                "[1] One\n\n[2] Two",
+                &mut suggested_text,
+                &mut suggested_footnotes,
+                &mut suggested_image_caption,
+                &mut reviewed,
+                &mut please_check,
+            ),
+            (None, true)
+        );
+        assert!(!reviewed);
+        assert!(please_check);
     }
 
     #[test]
@@ -1134,7 +1361,7 @@ pub(crate) fn update_gtms_editor_row_field_flag_sync(
 
 pub(crate) fn apply_gtms_editor_ai_review_result_sync(
     app: &AppHandle,
-    input: ApplyEditorAiReviewResultInput,
+    mut input: ApplyEditorAiReviewResultInput,
 ) -> Result<ApplyEditorAiReviewResultResponse, String> {
     let repo_path = resolve_project_git_repo_path(
         app,
@@ -1169,17 +1396,32 @@ pub(crate) fn apply_gtms_editor_ai_review_result_sync(
         )
     })?;
 
+    let current_text = row_plain_text_map(&original_row_file)
+        .get(&input.language_code)
+        .cloned()
+        .unwrap_or_default();
+    let current_footnote = row_footnote_map(&original_row_file)
+        .get(&input.language_code)
+        .cloned()
+        .unwrap_or_default();
+    let (merged_footnote, marker_integrity_rejected) = sanitize_ai_review_suggestions(
+        &current_text,
+        &current_footnote,
+        &mut input.suggested_text,
+        &mut input.suggested_footnotes,
+        &mut input.suggested_image_caption,
+        &mut input.reviewed,
+        &mut input.please_check,
+    );
+
     if !input.suggested_text.trim().is_empty() {
         let mut fields = BTreeMap::new();
         fields.insert(input.language_code.clone(), input.suggested_text.clone());
         apply_editor_plain_text_updates(&mut row_value, &fields)?;
     }
-    if !input.suggested_footnote.trim().is_empty() {
+    if let Some(suggested_footnote) = merged_footnote {
         let mut footnotes = BTreeMap::new();
-        footnotes.insert(
-            input.language_code.clone(),
-            input.suggested_footnote.clone(),
-        );
+        footnotes.insert(input.language_code.clone(), suggested_footnote);
         apply_editor_footnote_updates(&mut row_value, &footnotes)?;
     }
     if !input.suggested_image_caption.trim().is_empty() {
@@ -1268,6 +1510,7 @@ pub(crate) fn apply_gtms_editor_ai_review_result_sync(
         image_caption,
         reviewed,
         please_check,
+        marker_integrity_rejected,
         last_update: load_latest_row_version_metadata(&repo_path, &relative_row_json)?,
         chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
@@ -1309,14 +1552,33 @@ pub(crate) fn apply_gtms_editor_ai_review_results_batch_sync(
         row_file: StoredRowFile,
         reviewed: bool,
         please_check: bool,
+        marker_integrity_rejected: bool,
     }
 
     let mut changed_row_ids = Vec::new();
     let mut prepared_writes = Vec::new();
     let mut pending_results = Vec::new();
 
-    for (row_id, review_row) in rows_by_id {
+    for (row_id, mut review_row) in rows_by_id {
         let mut edit = load_editable_row_file(&repo_path, &chapter_path, &row_id)?;
+
+        let current_text = row_plain_text_map(&edit.original_file)
+            .get(&input.language_code)
+            .cloned()
+            .unwrap_or_default();
+        let current_footnote = row_footnote_map(&edit.original_file)
+            .get(&input.language_code)
+            .cloned()
+            .unwrap_or_default();
+        let (merged_footnote, marker_integrity_rejected) = sanitize_ai_review_suggestions(
+            &current_text,
+            &current_footnote,
+            &mut review_row.suggested_text,
+            &mut review_row.suggested_footnotes,
+            &mut review_row.suggested_image_caption,
+            &mut review_row.reviewed,
+            &mut review_row.please_check,
+        );
 
         if !review_row.suggested_text.trim().is_empty() {
             let mut fields = BTreeMap::new();
@@ -1326,12 +1588,9 @@ pub(crate) fn apply_gtms_editor_ai_review_results_batch_sync(
             );
             apply_editor_plain_text_updates(&mut edit.value, &fields)?;
         }
-        if !review_row.suggested_footnote.trim().is_empty() {
+        if let Some(suggested_footnote) = merged_footnote {
             let mut footnotes = BTreeMap::new();
-            footnotes.insert(
-                input.language_code.clone(),
-                review_row.suggested_footnote.clone(),
-            );
+            footnotes.insert(input.language_code.clone(), suggested_footnote);
             apply_editor_footnote_updates(&mut edit.value, &footnotes)?;
         }
         if !review_row.suggested_image_caption.trim().is_empty() {
@@ -1370,6 +1629,7 @@ pub(crate) fn apply_gtms_editor_ai_review_results_batch_sync(
             row_file,
             reviewed,
             please_check,
+            marker_integrity_rejected,
         });
     }
 
@@ -1422,6 +1682,7 @@ pub(crate) fn apply_gtms_editor_ai_review_results_batch_sync(
             image_caption,
             reviewed: pending.reviewed,
             please_check: pending.please_check,
+            marker_integrity_rejected: pending.marker_integrity_rejected,
             last_update: load_latest_row_version_metadata(&repo_path, &pending.relative_path)?,
         });
     }
