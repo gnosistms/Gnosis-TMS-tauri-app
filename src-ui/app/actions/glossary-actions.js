@@ -162,9 +162,11 @@ export function createGlossaryActions(render) {
       || action === "add-glossary-term-empty-variant:target";
     if (writeAction) {
       const localHardDeleteId = actionSuffix(action, "delete-deleted-glossary:");
+      const confirmingLocalHardDelete = action === "confirm-glossary-permanent-deletion";
       const restoreId = actionSuffix(action, "restore-glossary:");
       const targetId =
         localHardDeleteId
+        || (confirmingLocalHardDelete ? state.glossaryPermanentDeletion.glossaryId : null)
         || restoreId
         || actionSuffix(action, "rename-glossary:")
         || actionSuffix(action, "make-default-glossary:")
@@ -179,7 +181,7 @@ export function createGlossaryActions(render) {
       const policy = getGlossaryWritePolicy({
         team: selectedTeam,
         glossary: targetGlossary,
-        actionKind: localHardDeleteId
+        actionKind: localHardDeleteId !== null || confirmingLocalHardDelete
           ? "localHardDelete"
           : restoreId
             ? "restoreGlossary"

@@ -114,9 +114,11 @@ export function createQaActions(render) {
       || action === "confirm-qa-list-permanent-deletion";
     if (writeAction) {
       const localHardDeleteId = actionSuffix(action, "delete-deleted-qa-list:");
+      const confirmingLocalHardDelete = action === "confirm-qa-list-permanent-deletion";
       const restoreId = actionSuffix(action, "restore-qa-list:");
       const targetId =
         localHardDeleteId
+        || (confirmingLocalHardDelete ? state.qaListPermanentDeletion.qaListId : null)
         || restoreId
         || actionSuffix(action, "rename-qa-list:")
         || actionSuffix(action, "make-default-qa-list:")
@@ -129,7 +131,7 @@ export function createQaActions(render) {
       const policy = getQaListWritePolicy({
         team: selectedTeam,
         qaList: targetQaList,
-        actionKind: localHardDeleteId
+        actionKind: localHardDeleteId !== null || confirmingLocalHardDelete
           ? "localHardDelete"
           : restoreId
             ? "restoreQaList"
