@@ -48,8 +48,7 @@ import {
   buildEditorAiTranslationGlossaryHints,
   buildEditorDerivedGlossaryModel,
 } from "./editor-glossary-highlighting.js";
-import { extractGlossaryRubyBaseText } from "./glossary-ruby.js";
-import { buildGlossaryTargetVariantGuidance } from "./glossary-shared.js";
+import { buildDerivedGlossaryTermInputs } from "./editor-derived-glossary-flow.js";
 import { saveStoredEditorDerivedGlossaryEntryForChapter } from "./editor-derived-glossary-cache.js";
 import { saveStoredEditorAssistantChapterData } from "./editor-ai-assistant-cache.js";
 import { buildRowSourceContextWindow } from "./editor-ai-context-window.js";
@@ -117,12 +116,6 @@ function errorMeansMissingAiKey(message) {
     normalizedMessage.includes("api key is saved yet")
     || normalizedMessage.includes("save one first")
   );
-}
-
-function sanitizeTermList(values) {
-  return (Array.isArray(values) ? values : [])
-    .map((value) => String(value ?? "").trim())
-    .filter(Boolean);
 }
 
 function readRowFieldText(row, languageCode) {
@@ -349,36 +342,6 @@ export async function loadAssistantTargetLanguageHistory(context) {
   } catch {
     return fallback;
   }
-}
-
-function buildDerivedGlossaryTermInputs(glossaryState) {
-  return (Array.isArray(glossaryState?.terms) ? glossaryState.terms : [])
-    .filter((term) => term?.lifecycleState !== "deleted")
-    .map((term) => {
-      const { targetVariants, noTranslation } = buildGlossaryTargetVariantGuidance(
-        term?.targetTerms,
-        term?.targetVariantNotes,
-      );
-      const globalNotes =
-        typeof term?.notesToTranslators === "string" && term.notesToTranslators.trim()
-          ? [term.notesToTranslators.trim()]
-          : [];
-      const footnotes =
-        typeof term?.footnote === "string" && term.footnote.trim()
-          ? [term.footnote.trim()]
-          : [];
-      return {
-        glossarySourceTerms: sanitizeTermList(term?.sourceTerms)
-          .map((value) => extractGlossaryRubyBaseText(value).trim())
-          .filter(Boolean),
-        targetVariants,
-        ...(noTranslation ? { noTranslation } : {}),
-        notes: globalNotes,
-        globalNotes,
-        footnotes,
-      };
-    })
-    .filter((term) => term.glossarySourceTerms.length > 0);
 }
 
 function normalizeLanguageLabel(language, fallbackCode = "") {
@@ -827,7 +790,6 @@ function resolveDocumentDigest(chapterState, sourceLanguageCode) {
 function resolveRowIndex(rows, rowId) {
   return (Array.isArray(rows) ? rows : []).findIndex((row) => row?.rowId === rowId);
 }
-
 
 function buildAssistantSummaryRowWindow(
   chapterState,
