@@ -1,4 +1,5 @@
 import { resolveVisibleEditorAiReview } from "../app/editor-ai-review-state.js";
+import { serializeEditorFootnotesForLegacy } from "../app/editor-footnotes.js";
 import {
   historyLastUpdateHeadingLabel,
   isOptimisticEditorHistoryEntry,
@@ -145,6 +146,12 @@ export function renderReviewPane(editorChapter, rows, languages, offlineMode = f
   const activeLanguage =
     languages.find((language) => language.code === editorChapter?.activeLanguageCode) ?? null;
   const activeSection = activeRow?.sections?.find((section) => section.code === activeLanguage?.code) ?? null;
+  // History entries and AI review state carry footnotes in the persisted
+  // labeled serialization; the section's plain text would falsely diff as a
+  // change whenever marker labels are present.
+  const activeSectionFootnote = serializeEditorFootnotesForLegacy(
+    activeSection?.footnotes ?? activeSection?.footnote ?? "",
+  );
   const history =
     editorChapter?.history && typeof editorChapter.history === "object"
       ? editorChapter.history
@@ -171,7 +178,7 @@ export function renderReviewPane(editorChapter, rows, languages, offlineMode = f
       : null;
   const currentEntry = {
     plainText: activeSection?.text ?? "",
-    footnote: activeSection?.footnote ?? "",
+    footnote: activeSectionFootnote,
     imageCaption: activeSection?.imageCaption ?? "",
     image: activeSection?.image ?? null,
     reviewed: activeSection?.reviewed === true,
@@ -231,7 +238,7 @@ export function renderReviewPane(editorChapter, rows, languages, offlineMode = f
     activeRow?.id ?? null,
     activeLanguage?.code ?? null,
     activeSection?.text ?? "",
-    activeSection?.footnote ?? "",
+    activeSectionFootnote,
     activeSection?.imageCaption ?? "",
   );
   const aiReviewSummaryTooltip = tooltipAttributes(

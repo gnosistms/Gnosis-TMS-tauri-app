@@ -181,6 +181,43 @@ test("current-entry matching also requires footnote equality", () => {
   );
 });
 
+test("current-entry matching serializes labeled footnotes before comparing", () => {
+  const entry = historyEntry({
+    commitSha: "c1",
+    plainText: "Hello",
+    footnote: "[1] First note\n\n[2] Second note",
+  });
+
+  assert.equal(
+    editorHistoryEntryMatchesSection(entry, {
+      text: "Hello",
+      footnote: "First note\n\nSecond note",
+      footnotes: [
+        { marker: 1, text: "First note" },
+        { marker: 2, text: "Second note" },
+      ],
+      textStyle: "paragraph",
+      reviewed: false,
+      pleaseCheck: false,
+    }),
+    true,
+  );
+  assert.equal(
+    editorHistoryEntryMatchesSection(entry, {
+      text: "Hello",
+      footnote: "First note\n\nEdited note",
+      footnotes: [
+        { marker: 1, text: "First note" },
+        { marker: 2, text: "Edited note" },
+      ],
+      textStyle: "paragraph",
+      reviewed: false,
+      pleaseCheck: false,
+    }),
+    false,
+  );
+});
+
 test("current-entry matching also requires image caption equality", () => {
   const entry = historyEntry({
     commitSha: "c1",
