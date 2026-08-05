@@ -1,9 +1,9 @@
 import { historyEntryCanUndoReplace, reconcileExpandedEditorHistoryGroupKeys } from "./editor-history.js";
+import { serializeEditorFootnotesForLegacy } from "./editor-footnotes.js";
 import {
   cloneRowFields,
   cloneRowFieldStates,
   cloneRowImages,
-  editorFootnotesPlainText,
   normalizeFieldState,
   normalizeEditorFieldImage,
 } from "./editor-utils.js";
@@ -157,7 +157,9 @@ export function createOptimisticEditorHistoryEntryFromRow(row, languageCode, opt
     statusNote: typeof options.statusNote === "string" ? options.statusNote : null,
     aiModel: typeof options.aiModel === "string" ? options.aiModel : null,
     plainText: String(row.fields?.[languageCode] ?? ""),
-    footnote: editorFootnotesPlainText(row.footnotes?.[languageCode]),
+    // Match the persisted labeled serialization so this pending entry compares
+    // and diffs cleanly against the committed entry that lands for this save.
+    footnote: serializeEditorFootnotesForLegacy(row.footnotes?.[languageCode]),
     imageCaption: String(row.imageCaptions?.[languageCode] ?? ""),
     image: normalizeEditorFieldImage(row.images?.[languageCode]),
     textStyle: normalizeEditorRowTextStyle(row.textStyle),
@@ -478,7 +480,7 @@ export function editorRowMatchesHistoryPayload(row, languageCode, payload) {
 
   return (
     String(row.fields?.[languageCode] ?? "") === String(payload?.plainText ?? "")
-    && editorFootnotesPlainText(row.footnotes?.[languageCode]) === String(payload?.footnote ?? "")
+    && serializeEditorFootnotesForLegacy(row.footnotes?.[languageCode]) === String(payload?.footnote ?? "")
     && String(row.imageCaptions?.[languageCode] ?? "") === String(payload?.imageCaption ?? "")
     && historyImageKey(row.images?.[languageCode]) === historyImageKey(payload?.image)
     && String(row.textStyle ?? "") === String(expectedTextStyle ?? "")

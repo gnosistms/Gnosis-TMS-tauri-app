@@ -189,6 +189,28 @@ test("optimistic editor history prepends current row state for the active field"
   assert.equal(updatedChapter.history.entries[1].commitSha, "c1");
 });
 
+test("optimistic editor history serializes multi-footnote rows with marker labels", () => {
+  const entry = createOptimisticEditorHistoryEntryFromRow(
+    row({
+      fields: { es: "texto nuevo" },
+      footnotes: {
+        es: [
+          { marker: 1, text: "primera nota" },
+          { marker: 2, text: "segunda nota" },
+        ],
+      },
+    }),
+    "es",
+    {
+      operationId: "op-1",
+      coalesceKey: "rowText:chapter-1:row-1",
+      operationType: "editor-update",
+    },
+  );
+
+  assert.equal(entry.footnote, "[1] primera nota\n\n[2] segunda nota");
+});
+
 test("loaded committed history preserves active optimistic entries until the queued write finishes", () => {
   const optimisticEntry = createOptimisticEditorHistoryEntryFromRow(row({ fields: { es: "pending" } }), "es", {
     operationId: "op-1",

@@ -1,5 +1,6 @@
 import { normalizeEditorRowTextStyle } from "./editor-row-text-style.js";
 import { editorFieldImageEqual } from "./editor-images.js";
+import { serializeEditorFootnotesForLegacy } from "./editor-footnotes.js";
 
 export function formatAiHistoryModelLabel(modelId) {
   const normalizedModelId = String(modelId ?? "").trim();
@@ -268,7 +269,10 @@ export function editorHistoryEntryMatchesSection(entry, section) {
 
   return (
     String(entry.plainText ?? "") === String(section.text ?? "")
-    && String(entry.footnote ?? "") === String(section.footnote ?? "")
+    // Entry footnotes use the persisted labeled serialization; the section's
+    // plain text drops the [N] labels, so serialize before comparing.
+    && String(entry.footnote ?? "")
+      === serializeEditorFootnotesForLegacy(section.footnotes ?? section.footnote ?? "")
     && String(entry.imageCaption ?? "") === String(section.imageCaption ?? "")
     && editorFieldImageEqual(entry.image, section.image)
     && (entry.reviewed === true) === (section.reviewed === true)

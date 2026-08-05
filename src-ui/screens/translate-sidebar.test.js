@@ -801,6 +801,53 @@ test("review sidebar keeps committed last update when editor text matches latest
   assert.doesNotMatch(html, /Current text/);
 });
 
+test("review sidebar treats labeled multi-footnote history as matching unchanged editor content", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter({
+      sidebarTab: "review",
+      history: {
+        status: "ready",
+        entries: [
+          {
+            commitSha: "latest",
+            authorName: "translator",
+            plainText: "Xin chao",
+            footnote: "[1] ghi chu mot\n\n[2] ghi chu hai",
+            imageCaption: "",
+            reviewed: false,
+            pleaseCheck: false,
+            textStyle: "paragraph",
+          },
+        ],
+      },
+    }),
+    [{
+      id: "row-1",
+      textStyle: "paragraph",
+      sections: [
+        { code: "es", text: "Hola" },
+        {
+          code: "vi",
+          text: "Xin chao",
+          footnote: "ghi chu mot\n\nghi chu hai",
+          footnotes: [
+            { marker: 1, text: "ghi chu mot" },
+            { marker: 2, text: "ghi chu hai" },
+          ],
+        },
+      ],
+    }],
+    languages,
+    "es",
+    "vi",
+    createAiActionConfigurationState(),
+  );
+
+  assert.match(html, /Last update - translator/);
+  assert.doesNotMatch(html, /Current text/);
+  assert.doesNotMatch(html, /history-diff__delete/);
+});
+
 test("review sidebar labels optimistic history as a pending local save", () => {
   const html = renderTranslateSidebar(
     activeEditorChapter({
@@ -1477,4 +1524,45 @@ test("review sidebar reopens both review actions when a clean review is stale", 
   assert.match(html, /The text changed since the last AI review\./);
   assert.match(html, /data-action="review-editor-text-now:meaning"/);
   assert.match(html, /data-action="review-editor-text-now:grammar"/);
+});
+
+test("review sidebar does not mark a review stale for unchanged multi-footnote rows", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter({
+      sidebarTab: "review",
+      aiReview: {
+        rowId: "row-1",
+        languageCode: "vi",
+        status: "ready",
+        sourceText: "Xin chao",
+        sourceFootnote: "[1] ghi chu mot\n\n[2] ghi chu hai",
+        suggestedText: "",
+        promptText: "Review latest_translation for spelling and grammar.",
+        reviewMode: "grammar",
+        reviewed: true,
+      },
+    }),
+    [{
+      id: "row-1",
+      sections: [
+        { code: "es", text: "Hola" },
+        {
+          code: "vi",
+          text: "Xin chao",
+          footnote: "ghi chu mot\n\nghi chu hai",
+          footnotes: [
+            { marker: 1, text: "ghi chu mot" },
+            { marker: 2, text: "ghi chu hai" },
+          ],
+        },
+      ],
+    }],
+    languages,
+    "es",
+    "vi",
+    createAiActionConfigurationState(),
+  );
+
+  assert.doesNotMatch(html, /The text changed since the last AI review\./);
+  assert.match(html, /Grammar okay/);
 });
