@@ -22,29 +22,12 @@ use std::collections::HashMap;
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) const GLOSSARY_MATCHER_POLICY_VERSION: u64 = 1;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum GlossaryMatcherPolicy {
-    // Rollback path while globalTrie bakes; constructed only by tests today.
-    #[cfg_attr(not(test), allow(dead_code))]
-    Legacy,
-    GlobalTrie,
-}
-
-/// Two-way rollout switch, flipped to `GlobalTrie` after the full checklist
-/// passed on macOS and Windows (v0.8.85 bake). `Legacy` remains available for
-/// rollback during the bake period. The shared fixture's `defaultPolicy`
-/// field must move with this constant — both runtimes assert their default
-/// against it, which is what prevents frontend and backend from straddling
-/// algorithms.
-pub(crate) const GLOSSARY_MATCHER_POLICY: GlossaryMatcherPolicy = GlossaryMatcherPolicy::GlobalTrie;
-
+/// The single active selection policy. The legacy left-to-right scan was
+/// removed after the v0.8.86 bake, so rollback is now a git revert rather
+/// than a constant flip. The shared fixture's `defaultPolicy` field must
+/// equal this constant in both runtimes.
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn glossary_matcher_policy_name(policy: GlossaryMatcherPolicy) -> &'static str {
-    match policy {
-        GlossaryMatcherPolicy::Legacy => "legacy",
-        GlossaryMatcherPolicy::GlobalTrie => "globalTrie",
-    }
-}
+pub(crate) const GLOSSARY_MATCHER_POLICY_NAME: &str = "globalTrie";
 
 /// One merged normalized token sequence. `priority_length` is the greatest
 /// Unicode scalar count among the merged variants' base texts (NOT UTF-8
@@ -218,8 +201,7 @@ pub(crate) fn select_globally_longest_occurrences(
 #[cfg(test)]
 mod tests {
     use super::super::{
-        find_matched_glossary_terms_in_texts_with_policy, tokenize_glossary_term,
-        tokenize_text_words,
+        find_matched_glossary_terms_in_texts, tokenize_glossary_term, tokenize_text_words,
     };
     use super::*;
     use crate::ai::types::AiTranslatedGlossaryTermInput;
@@ -244,8 +226,6 @@ mod tests {
         text: String,
         discovered: Vec<GoldenOccurrence>,
         accepted: Vec<GoldenOccurrence>,
-        #[serde(rename = "legacyAccepted")]
-        legacy_accepted: Option<Vec<GoldenOccurrence>>,
     }
 
     #[derive(serde::Deserialize)]
@@ -303,13 +283,9 @@ mod tests {
     fn golden_fixture_policy_metadata_matches_this_runtime() {
         let fixture = golden();
         assert_eq!(fixture.policy_version, GLOSSARY_MATCHER_POLICY_VERSION);
-        // The shipped default and the fixture's defaultPolicy flip together;
-        // this is the guard that keeps backend and frontend on the same
-        // algorithm.
-        assert_eq!(
-            fixture.default_policy,
-            glossary_matcher_policy_name(GLOSSARY_MATCHER_POLICY)
-        );
+        // The fixture's defaultPolicy and this constant move together; the
+        // guard keeps backend and frontend on the same algorithm.
+        assert_eq!(fixture.default_policy, GLOSSARY_MATCHER_POLICY_NAME);
     }
 
     #[test]
@@ -394,11 +370,10 @@ mod tests {
             }
             let terms = glossary_term_inputs(&case);
 
-            let global_matches = find_matched_glossary_terms_in_texts_with_policy(
-                &[case.text.as_str()],
-                &terms,
-                GlossaryMatcherPolicy::GlobalTrie,
-            );
+            // legacyAccepted fixture entries document the removed
+            // left-to-right scan and are no longer executed.
+            let global_matches =
+                find_matched_glossary_terms_in_texts(&[case.text.as_str()], &terms);
             assert_eq!(
                 global_matches
                     .iter()
@@ -408,23 +383,6 @@ mod tests {
                 "globalTrie pipeline mismatch in case {}",
                 case.id
             );
-
-            if let Some(legacy_expected) = &case.legacy_accepted {
-                let legacy_matches = find_matched_glossary_terms_in_texts_with_policy(
-                    &[case.text.as_str()],
-                    &terms,
-                    GlossaryMatcherPolicy::Legacy,
-                );
-                assert_eq!(
-                    legacy_matches
-                        .iter()
-                        .map(|matched| matched.glossary_source_term.clone())
-                        .collect::<Vec<_>>(),
-                    expected_surfaces(&case, legacy_expected),
-                    "legacy pipeline mismatch in case {}",
-                    case.id
-                );
-            }
         }
     }
 
@@ -739,27 +697,17 @@ mod tests {
                 ("typical 100-token row", &typical_row),
                 ("long 2000-token row", &long_row),
             ] {
-                for policy in [
-                    GlossaryMatcherPolicy::Legacy,
-                    GlossaryMatcherPolicy::GlobalTrie,
-                ] {
-                    let start = Instant::now();
-                    let mut iterations = 0u32;
-                    while iterations < 100 {
-                        let matches = find_matched_glossary_terms_in_texts_with_policy(
-                            &[text.as_str()],
-                            &terms,
-                            policy,
-                        );
-                        assert!(!matches.is_empty());
-                        iterations += 1;
-                    }
-                    println!(
-                        "{label} [{}] ({term_count} terms): {:.3} ms/iteration (includes compile)",
-                        glossary_matcher_policy_name(policy),
-                        start.elapsed().as_secs_f64() * 1000.0 / f64::from(iterations)
-                    );
+                let start = Instant::now();
+                let mut iterations = 0u32;
+                while iterations < 100 {
+                    let matches = find_matched_glossary_terms_in_texts(&[text.as_str()], &terms);
+                    assert!(!matches.is_empty());
+                    iterations += 1;
                 }
+                println!(
+                    "{label} ({term_count} terms): {:.3} ms/iteration (includes compile)",
+                    start.elapsed().as_secs_f64() * 1000.0 / f64::from(iterations)
+                );
             }
         }
     }

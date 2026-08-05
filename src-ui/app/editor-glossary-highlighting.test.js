@@ -896,12 +896,7 @@ test("glossaryTermMatchesTokenSequence matches grapheme units for non-space-deli
   assert.equal(glossaryTermMatchesTokenSequence("這是存在層次的教義", "存在層次", "zh-hant"), true);
 });
 
-test("globalTrie policy: crossing longer candidate wins highlights and hints over the leftmost match", async (t) => {
-  const { setGlossaryMatcherPolicy, resetGlossaryMatcherPolicy } = await import(
-    "./glossary-token-matcher.js"
-  );
-  t.after(() => resetGlossaryMatcherPolicy());
-
+test("crossing longer candidate wins highlights and hints over the leftmost match", () => {
   const model = buildEditorGlossaryModel(glossaryPayload({
     sourceLanguage: { code: "en", name: "English" },
     terms: [
@@ -914,14 +909,8 @@ test("globalTrie policy: crossing longer candidate wins highlights and hints ove
     { code: "vi", text: "Coi trung gioi rong lon." },
   ];
 
-  // Legacy: leftmost "The Astral" wins and its target is missing -> error.
-  setGlossaryMatcherPolicy("legacy");
-  const legacyHtml = buildEditorRowGlossaryHighlights(sections, model).get("en")?.html ?? "";
-  assert.match(legacyHtml, /<mark[^>]*>The Astral<\/mark>/);
-  assert.match(legacyHtml, /glossary-match-error/);
-
-  // Global: "astral plane" wins the crossing overlap; its target is present.
-  setGlossaryMatcherPolicy("globalTrie");
+  // "astral plane" wins the crossing overlap; its target is present, so no
+  // missing-target error (the removed left-to-right scan chose "The Astral").
   const globalHtml = buildEditorRowGlossaryHighlights(sections, model).get("en")?.html ?? "";
   assert.match(globalHtml, /<mark[^>]*>Astral Plane<\/mark>/);
   assert.doesNotMatch(globalHtml, /glossary-match-error/);
@@ -936,13 +925,7 @@ test("globalTrie policy: crossing longer candidate wins highlights and hints ove
   assert.deepEqual(hints.map((hint) => hint.sourceTerm), ["Astral Plane"]);
 });
 
-test("globalTrie policy: shorter same-start candidate survives a crossing winner in rendered highlights", async (t) => {
-  const { setGlossaryMatcherPolicy, resetGlossaryMatcherPolicy } = await import(
-    "./glossary-token-matcher.js"
-  );
-  t.after(() => resetGlossaryMatcherPolicy());
-  setGlossaryMatcherPolicy("globalTrie");
-
+test("shorter same-start candidate survives a crossing winner in rendered highlights", () => {
   const model = buildEditorGlossaryModel(glossaryPayload({
     sourceLanguage: { code: "en", name: "English" },
     terms: [
