@@ -19,34 +19,12 @@
 // against the shared golden fixture so JS and Rust stay in lockstep.
 export const GLOSSARY_MATCHER_POLICY_VERSION = 1;
 
-export const GLOSSARY_MATCHER_POLICIES = Object.freeze({
-  legacy: "legacy",
-  globalTrie: "globalTrie",
-});
-
-// Two-way rollout switch, flipped to globalTrie after the full checklist
-// passed on macOS and Windows (v0.8.85 bake). "legacy" remains available for
-// rollback during the bake period. The shared fixture's defaultPolicy field
-// must move with this constant — both runtimes assert their default against
-// it, which is what prevents frontend and backend from straddling algorithms.
-const DEFAULT_GLOSSARY_MATCHER_POLICY = GLOSSARY_MATCHER_POLICIES.globalTrie;
-
-let activePolicy = DEFAULT_GLOSSARY_MATCHER_POLICY;
-
-export function activeGlossaryMatcherPolicy() {
-  return activePolicy;
-}
-
-// Test and rollback seam; production code never calls this.
-export function setGlossaryMatcherPolicy(policy) {
-  activePolicy = policy === GLOSSARY_MATCHER_POLICIES.globalTrie
-    ? GLOSSARY_MATCHER_POLICIES.globalTrie
-    : GLOSSARY_MATCHER_POLICIES.legacy;
-}
-
-export function resetGlossaryMatcherPolicy() {
-  activePolicy = DEFAULT_GLOSSARY_MATCHER_POLICY;
-}
+// The single active selection policy. The legacy left-to-right scan was
+// removed after the v0.8.86 bake, so rollback is now a git revert rather than
+// a constant flip. The shared fixture's defaultPolicy field must equal this
+// constant in both runtimes, and the value stays in the derived-glossary
+// revision key so cached derived entries remain valid across the cleanup.
+export const GLOSSARY_MATCHER_POLICY = "globalTrie";
 
 // candidates: [{ tokens: [normalized...], priorityLength, payload }] in
 // first-seen order, one entry per merged normalized token sequence.

@@ -1,7 +1,7 @@
 import { buildEditorDerivedGlossaryModel } from "./editor-glossary-highlighting.js";
 import {
+  GLOSSARY_MATCHER_POLICY,
   GLOSSARY_MATCHER_POLICY_VERSION,
-  activeGlossaryMatcherPolicy,
 } from "./glossary-token-matcher.js";
 
 function sanitizeString(value) {
@@ -285,7 +285,7 @@ export function buildEditorGlossaryRevisionKey(glossaryState) {
     // Cached derived entries were selected under a specific matcher policy;
     // including it here makes them regenerate on a policy change instead of
     // mixing selection algorithms.
-    matcherPolicy: activeGlossaryMatcherPolicy(),
+    matcherPolicy: GLOSSARY_MATCHER_POLICY,
     matcherPolicyVersion: GLOSSARY_MATCHER_POLICY_VERSION,
     glossaryId:
       typeof glossaryState.glossaryId === "string" ? glossaryState.glossaryId.trim() : "",

@@ -1673,11 +1673,9 @@ enum AiAssistantResponseKind {
 
 #[derive(Clone, Debug)]
 struct PreparedGlossaryCandidate {
-    match_term: String,
     tokens: Vec<String>,
     // Greatest Unicode scalar count among merged duplicate variants — the
-    // global selector's length tie-break. match_term keeps the byte-longest
-    // variant for the legacy bucket sort only.
+    // global selector's length tie-break.
     priority_scalar_length: usize,
     target_variants: Vec<AiTranslationGlossaryTargetVariant>,
     no_translation: Option<AiTranslationNoTranslationHint>,
@@ -1685,11 +1683,10 @@ struct PreparedGlossaryCandidate {
     footnotes: Vec<String>,
 }
 
-/// Merged candidates in first-seen order plus the two match indexes built
-/// from them: legacy first-token buckets and the compiled global trie.
+/// Merged candidates in first-seen order plus the compiled global trie
+/// built from them.
 struct PreparedGlossaryCandidates {
     ordered: Vec<PreparedGlossaryCandidate>,
-    by_first_token: HashMap<String, Vec<usize>>,
     compiled: glossary_matcher::CompiledGlossaryMatcher,
 }
 
@@ -1899,9 +1896,6 @@ fn build_glossary_match_candidates(
                 existing_candidate.priority_scalar_length = existing_candidate
                     .priority_scalar_length
                     .max(source_term.chars().count());
-                if source_term.len() > existing_candidate.match_term.len() {
-                    existing_candidate.match_term = source_term;
-                }
                 append_unique_target_variants(
                     &mut existing_candidate.target_variants,
                     &target_variants,
@@ -1918,7 +1912,6 @@ fn build_glossary_match_candidates(
             index_by_key.insert(candidate_key, ordered.len());
             let priority_scalar_length = source_term.chars().count();
             ordered.push(PreparedGlossaryCandidate {
-                match_term: source_term,
                 tokens,
                 priority_scalar_length,
                 target_variants: target_variants.clone(),
@@ -1927,28 +1920,6 @@ fn build_glossary_match_candidates(
                 footnotes: footnotes.clone(),
             });
         }
-    }
-
-    let mut by_first_token = HashMap::<String, Vec<usize>>::new();
-    for (index, candidate) in ordered.iter().enumerate() {
-        by_first_token
-            .entry(candidate.tokens[0].clone())
-            .or_default()
-            .push(index);
-    }
-    for bucket in by_first_token.values_mut() {
-        bucket.sort_by(|&left, &right| {
-            ordered[right]
-                .tokens
-                .len()
-                .cmp(&ordered[left].tokens.len())
-                .then_with(|| {
-                    ordered[right]
-                        .match_term
-                        .len()
-                        .cmp(&ordered[left].match_term.len())
-                })
-        });
     }
 
     let compiled = glossary_matcher::compile_glossary_token_matcher(
@@ -1961,11 +1932,7 @@ fn build_glossary_match_candidates(
             .collect::<Vec<_>>(),
     );
 
-    PreparedGlossaryCandidates {
-        ordered,
-        by_first_token,
-        compiled,
-    }
+    PreparedGlossaryCandidates { ordered, compiled }
 }
 
 fn clamp_to_char_boundary_left(text: &str, mut index: usize) -> usize {
@@ -2009,18 +1976,6 @@ fn find_matched_glossary_terms_in_texts(
     glossary_source_texts: &[&str],
     glossary_terms: &[AiTranslatedGlossaryTermInput],
 ) -> Vec<PreparedGlossaryMatch> {
-    find_matched_glossary_terms_in_texts_with_policy(
-        glossary_source_texts,
-        glossary_terms,
-        glossary_matcher::GLOSSARY_MATCHER_POLICY,
-    )
-}
-
-fn find_matched_glossary_terms_in_texts_with_policy(
-    glossary_source_texts: &[&str],
-    glossary_terms: &[AiTranslatedGlossaryTermInput],
-    policy: glossary_matcher::GlossaryMatcherPolicy,
-) -> Vec<PreparedGlossaryMatch> {
     let candidates = build_glossary_match_candidates(glossary_terms);
     if candidates.is_empty() {
         return vec![];
@@ -2032,7 +1987,6 @@ fn find_matched_glossary_terms_in_texts_with_policy(
         collect_matched_glossary_terms_in_text(
             glossary_source_text,
             &candidates,
-            policy,
             &mut seen_surface_terms,
             &mut matched_terms,
         );
@@ -2065,79 +2019,30 @@ fn push_prepared_glossary_match(
 fn collect_matched_glossary_terms_in_text(
     glossary_source_text: &str,
     candidates: &PreparedGlossaryCandidates,
-    policy: glossary_matcher::GlossaryMatcherPolicy,
     seen_surface_terms: &mut HashSet<String>,
     matched_terms: &mut Vec<PreparedGlossaryMatch>,
 ) {
     let words = tokenize_text_words(glossary_source_text);
-
-    if policy == glossary_matcher::GlossaryMatcherPolicy::GlobalTrie {
-        let normalized_words: Vec<&str> =
-            words.iter().map(|word| word.normalized.as_str()).collect();
-        let occurrences = glossary_matcher::discover_glossary_token_occurrences(
-            &candidates.compiled,
-            &normalized_words,
-        );
-        // Surface dedupe runs after selection, in source order: the first
-        // accepted occurrence of a surface form supplies term and context.
-        for occurrence in glossary_matcher::select_globally_longest_occurrences(
-            &candidates.compiled,
-            &occurrences,
-            normalized_words.len(),
-        ) {
-            push_prepared_glossary_match(
-                glossary_source_text,
-                &candidates.ordered[occurrence.candidate],
-                words[occurrence.start_word].start,
-                words[occurrence.end_word - 1].end,
-                seen_surface_terms,
-                matched_terms,
-            );
-        }
-        return;
-    }
-
-    let mut word_index = 0usize;
-
-    while word_index < words.len() {
-        let current_word = &words[word_index];
-        let mut matched_candidate = None;
-        if let Some(bucket) = candidates.by_first_token.get(&current_word.normalized) {
-            for &candidate_index in bucket {
-                let candidate = &candidates.ordered[candidate_index];
-                if word_index + candidate.tokens.len() > words.len() {
-                    continue;
-                }
-
-                let is_match = candidate
-                    .tokens
-                    .iter()
-                    .enumerate()
-                    .all(|(token_index, token)| {
-                        words[word_index + token_index].normalized == *token
-                    });
-                if is_match {
-                    matched_candidate = Some(candidate);
-                    break;
-                }
-            }
-        }
-
-        let Some(candidate) = matched_candidate else {
-            word_index += 1;
-            continue;
-        };
-
+    let normalized_words: Vec<&str> = words.iter().map(|word| word.normalized.as_str()).collect();
+    let occurrences = glossary_matcher::discover_glossary_token_occurrences(
+        &candidates.compiled,
+        &normalized_words,
+    );
+    // Surface dedupe runs after selection, in source order: the first
+    // accepted occurrence of a surface form supplies term and context.
+    for occurrence in glossary_matcher::select_globally_longest_occurrences(
+        &candidates.compiled,
+        &occurrences,
+        normalized_words.len(),
+    ) {
         push_prepared_glossary_match(
             glossary_source_text,
-            candidate,
-            words[word_index].start,
-            words[word_index + candidate.tokens.len() - 1].end,
+            &candidates.ordered[occurrence.candidate],
+            words[occurrence.start_word].start,
+            words[occurrence.end_word - 1].end,
             seen_surface_terms,
             matched_terms,
         );
-
-        word_index += candidate.tokens.len();
     }
 }
 

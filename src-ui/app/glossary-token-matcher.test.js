@@ -4,17 +4,15 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import {
-  GLOSSARY_MATCHER_POLICIES,
+  GLOSSARY_MATCHER_POLICY,
   GLOSSARY_MATCHER_POLICY_VERSION,
-  activeGlossaryMatcherPolicy,
   compileGlossaryTokenMatcher,
   discoverGlossaryTokenOccurrences,
-  resetGlossaryMatcherPolicy,
   selectGloballyLongestOccurrences,
 } from "./glossary-token-matcher.js";
 import {
   buildEditorGlossaryModel,
-  findGlossaryMatchesForPolicy,
+  findLongestGlossaryMatches,
   tokenizeGlossaryTerm,
 } from "./editor-glossary-highlighting.js";
 
@@ -60,10 +58,9 @@ function sortRecords(records) {
 
 test("golden fixture policy metadata matches this runtime", () => {
   assert.equal(golden.policyVersion, GLOSSARY_MATCHER_POLICY_VERSION);
-  resetGlossaryMatcherPolicy();
-  // The shipped default and the fixture's defaultPolicy flip together; this is
-  // the guard that keeps frontend and backend on the same algorithm.
-  assert.equal(activeGlossaryMatcherPolicy(), golden.defaultPolicy);
+  // The fixture's defaultPolicy and this constant move together; the guard
+  // keeps frontend and backend on the same algorithm.
+  assert.equal(GLOSSARY_MATCHER_POLICY, golden.defaultPolicy);
 });
 
 for (const goldenCase of golden.cases) {
@@ -97,28 +94,13 @@ for (const goldenCase of golden.cases) {
     );
 
     // The consumer wrapper must surface the same accepted candidates in the
-    // same order under the globalTrie policy.
-    const wrapped = findGlossaryMatchesForPolicy(
-      goldenCase.text,
-      matcher,
-      GLOSSARY_MATCHER_POLICIES.globalTrie,
-    );
+    // same order. (legacyAccepted fixture entries document the removed
+    // left-to-right scan and are no longer executed.)
+    const wrapped = findLongestGlossaryMatches(goldenCase.text, matcher);
     assert.deepEqual(
       wrapped.matches.map((match) => match.candidate.termIdsOrdered[0]),
       goldenCase.accepted.map((entry) => entry.id),
     );
-
-    if (goldenCase.legacyAccepted) {
-      const legacy = findGlossaryMatchesForPolicy(
-        goldenCase.text,
-        matcher,
-        GLOSSARY_MATCHER_POLICIES.legacy,
-      );
-      assert.deepEqual(
-        legacy.matches.map((match) => match.candidate.termIdsOrdered[0]),
-        goldenCase.legacyAccepted.map((entry) => entry.id),
-      );
-    }
   });
 }
 

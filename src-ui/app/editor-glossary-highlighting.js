@@ -1,7 +1,5 @@
 import { extractInlineMarkupBaseText, mapInlineMarkupBaseRangesToVisibleRanges } from "./editor-inline-markup.js";
 import {
-  GLOSSARY_MATCHER_POLICIES,
-  activeGlossaryMatcherPolicy,
   compileGlossaryTokenMatcher,
   discoverGlossaryTokenOccurrences,
   selectGloballyLongestOccurrences,
@@ -372,7 +370,6 @@ function buildLanguageGlossaryMatcher(entries, matchLanguage) {
     return null;
   }
 
-  const byFirstToken = new Map();
   const termMap = new Map();
 
   for (const entry of entries) {
@@ -441,7 +438,6 @@ function buildLanguageGlossaryMatcher(entries, matchLanguage) {
         continue;
       }
 
-      const firstToken = tokens[0];
       const termIdsOrdered = [];
       const termIds = new Set();
       appendOrderedUniqueTerms(termIdsOrdered, termIds, entry.termIds);
@@ -484,37 +480,22 @@ function buildLanguageGlossaryMatcher(entries, matchLanguage) {
         footnotesOrdered,
         originTerms,
         originTermsOrdered,
-        characterLength: extractGlossaryRubyBaseText(matchTerm).length,
         // Unicode scalar count of the base variant — the global selector's
-        // length tie-break. characterLength above stays UTF-16 for the legacy
-        // first-token bucket sort only.
+        // length tie-break.
         priorityLength: Array.from(extractGlossaryRubyBaseText(matchTerm)).length,
         matchLanguage,
         noTranslation,
         noTranslationPosition: noTranslation?.position ?? null,
         noTranslationNote: noTranslation?.note ?? "",
       };
-      const candidates = byFirstToken.get(firstToken) || [];
-      candidates.push(candidate);
-      byFirstToken.set(firstToken, candidates);
       termMap.set(key, candidate);
     }
-  }
-
-  for (const candidates of byFirstToken.values()) {
-    candidates.sort((left, right) => {
-      if (right.tokens.length !== left.tokens.length) {
-        return right.tokens.length - left.tokens.length;
-      }
-      return right.characterLength - left.characterLength;
-    });
   }
 
   // termMap preserves first-seen insertion order, which fixes each merged
   // candidate's defensive ordinal tie-break in the compiled trie.
   return {
     languageCode: matchLanguage,
-    byFirstToken,
     compiled: compileGlossaryTokenMatcher(
       Array.from(termMap.values(), (candidate) => ({
         tokens: candidate.tokens,
@@ -758,13 +739,9 @@ function tokenizeNonSpaceDelimitedTextForHighlighting(sourceText, languageCode) 
 }
 
 // Every highlight and AI-hint consumer resolves matches through this wrapper;
-// no consumer implements its own overlap selection. The active policy decides
-// between the historical left-to-right scan and global selection.
+// no consumer implements its own overlap selection. Selection is globally
+// longest greedy (see glossary-token-matcher.js).
 export function findLongestGlossaryMatches(text, matcher) {
-  return findGlossaryMatchesForPolicy(text, matcher, activeGlossaryMatcherPolicy());
-}
-
-export function findGlossaryMatchesForPolicy(text, matcher, policy) {
   if (!matcher) {
     return {
       tokens: [],
@@ -774,60 +751,21 @@ export function findGlossaryMatchesForPolicy(text, matcher, policy) {
 
   const tokenizedText = tokenizeTextForHighlighting(text, matcher.languageCode);
   const { tokens, wordEntries } = tokenizedText;
-
-  if (policy === GLOSSARY_MATCHER_POLICIES.globalTrie && matcher.compiled) {
-    const normalizedWords = wordEntries.map((word) => word.normalized);
-    const occurrences = discoverGlossaryTokenOccurrences(matcher.compiled, normalizedWords);
-    const accepted = selectGloballyLongestOccurrences(
-      matcher.compiled,
-      occurrences,
-      normalizedWords.length,
-    );
-    return {
-      tokens,
-      matches: accepted.map((occurrence) => ({
-        startTokenIndex: wordEntries[occurrence.startWord].tokenIndex,
-        endTokenIndex: wordEntries[occurrence.endWord - 1].tokenIndex,
-        candidate: matcher.compiled.candidates[occurrence.candidateIndex].payload,
-      })),
-    };
-  }
-
-  const matches = [];
-
-  for (let wordIndex = 0; wordIndex < wordEntries.length;) {
-    const word = wordEntries[wordIndex];
-    const candidates = matcher.byFirstToken.get(word.normalized) || [];
-    let matchedCandidate = null;
-
-    for (const candidate of candidates) {
-      if (wordIndex + candidate.tokens.length > wordEntries.length) {
-        continue;
-      }
-
-      const isMatch = candidate.tokens.every(
-        (token, candidateIndex) => wordEntries[wordIndex + candidateIndex].normalized === token,
-      );
-      if (isMatch) {
-        matchedCandidate = candidate;
-        break;
-      }
-    }
-
-    if (!matchedCandidate) {
-      wordIndex += 1;
-      continue;
-    }
-
-    matches.push({
-      startTokenIndex: wordEntries[wordIndex].tokenIndex,
-      endTokenIndex: wordEntries[wordIndex + matchedCandidate.tokens.length - 1].tokenIndex,
-      candidate: matchedCandidate,
-    });
-    wordIndex += matchedCandidate.tokens.length;
-  }
-
-  return { tokens, matches };
+  const normalizedWords = wordEntries.map((word) => word.normalized);
+  const occurrences = discoverGlossaryTokenOccurrences(matcher.compiled, normalizedWords);
+  const accepted = selectGloballyLongestOccurrences(
+    matcher.compiled,
+    occurrences,
+    normalizedWords.length,
+  );
+  return {
+    tokens,
+    matches: accepted.map((occurrence) => ({
+      startTokenIndex: wordEntries[occurrence.startWord].tokenIndex,
+      endTokenIndex: wordEntries[occurrence.endWord - 1].tokenIndex,
+      candidate: matcher.compiled.candidates[occurrence.candidateIndex].payload,
+    })),
+  };
 }
 
 // Token-sequence containment for redistribution-style checks (e.g. assigning
