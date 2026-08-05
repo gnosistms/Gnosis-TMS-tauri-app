@@ -24,9 +24,9 @@ Date: 2026-08-04
 - [x] Run pre-tag verification: JavaScript and workflow tests, JavaScript lint,
       frontend build, Cargo formatting, Rust tests, version consistency, and
       `git diff --check`.
-- [ ] Merge the release PR.
-- [ ] Tag `v0.8.86` and push the tag.
-- [ ] Confirm the release workflow succeeds on macOS arm64, macOS x64, and Windows
+- [x] Merge the release PR.
+- [x] Tag `v0.8.86` and push the tag.
+- [x] Confirm the release workflow succeeds on macOS arm64, macOS x64, and Windows
       x64, and verify the published GitHub Release assets and updater metadata.
 
 ## Pre-tag verification
@@ -45,4 +45,9 @@ Date: 2026-08-04
 
 ## Release verification
 
-Pending.
+- Release workflow run 30964130317 succeeded on macOS arm64, macOS x64, and
+  Windows x64.
+- GitHub Release v0.8.86 is published as the latest stable release with DMG,
+  zip, NSIS, and MSI assets plus updater signatures for all three platforms.
+- `latest.json` reports version 0.8.86 for darwin-aarch64, darwin-x86_64, and
+  windows-x86_64 (app, MSI, and NSIS variants).
