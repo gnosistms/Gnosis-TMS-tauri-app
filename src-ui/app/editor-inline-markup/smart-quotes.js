@@ -6,7 +6,9 @@
 // as a tiebreaker, the character immediately after — it never matches pairs or tracks
 // nesting depth. Both neighbours are read from the *visible* text with tags treated as
 // transparent (so `<b>He</b>'s` sees the "e", and a quote can open before a link and
-// close after it), while tag delimiters and the href inside <a …> are never rewritten.
+// close after it), while quotation marks inside HTML-like tag syntax are never
+// rewritten. This includes unsupported/raw tags, whose syntax the inline-markup parser
+// otherwise represents as text.
 // Paragraph separators (<hr>) act as boundaries, so a quote right after one opens.
 //
 //   Double quote " :
@@ -49,6 +51,7 @@ const DASHES = new Set(["-", "–", "—"]);
 // a single quote. `\b` keeps 'tis from firing inside a quoted "'tissue".
 const ELISION = /^(?:twas|tis|til|em|cause|round|bout|nuff|n)\b/i;
 const DECADE = /^\d\ds/; // '80s, '90s
+const HTML_LIKE_TAG = /^<\s*\/?\s*[A-Za-z][A-Za-z0-9:-]*(?:\s[^<>]*)?\/?\s*>$/u;
 
 function isWhitespace(char) {
   return char === null || /\s/u.test(char);
@@ -102,6 +105,12 @@ function collectVisibleCells(nodes, cells) {
     }
     if (node.type === "text") {
       const text = node.text ?? "";
+      // Unsupported tags are emitted by parseInlineMarkup as standalone text nodes.
+      // Treat their complete source tokens as transparent markup so attribute
+      // delimiters remain valid straight quotes.
+      if (HTML_LIKE_TAG.test(text)) {
+        continue;
+      }
       for (let index = 0; index < text.length; index += 1) {
         cells.push({ node, index, char: text[index] });
       }

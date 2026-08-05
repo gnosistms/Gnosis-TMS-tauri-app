@@ -54,6 +54,26 @@ test("straight quotes inside an href attribute are never converted", () => {
   assert.equal(smartenInlineMarkupQuotes(input), input);
 });
 
+test("straight quotes inside unsupported raw HTML attributes are never converted", () => {
+  const input = [
+    '<div style="white-space:normal;">',
+    '<nav aria-label="Chapter navigation" style="display:flex;justify-content:space-between;">',
+    '<a rel="prev" href="https://example.com/chapter-2/" style="font-weight:600;">Previous</a>',
+    '<hr aria-hidden="true" style="border-top:1px solid rgba(0,0,0,0.18);">',
+    '<h2 style="margin:0;">Notes</h2>',
+    "</nav></div>",
+  ].join("");
+
+  assert.equal(smartenInlineMarkupQuotes(input), input);
+});
+
+test("visible prose inside unsupported raw HTML still receives smart quotes", () => {
+  assert.equal(
+    smartenInlineMarkupQuotes('<div class="note">He said "hello".</div>'),
+    '<div class="note">He said “hello”.</div>',
+  );
+});
+
 test("a quote after a separator opens", () => {
   assert.equal(smartenInlineMarkupQuotes('a<hr>"b"'), "a<hr>“b”");
 });
