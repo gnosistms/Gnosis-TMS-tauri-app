@@ -315,6 +315,40 @@ test("renderTranslationContentRow renders valid static footnote markers as non-l
   assert.doesNotMatch(displayField, /href=/);
 });
 
+test("renderTranslationContentRow renders a footnote marker once when a search highlight ends inside it", () => {
+  const html = renderTranslationContentRow(
+    {
+      ...rowWithSection({
+        canEdit: true,
+        text: "foo[1][2]",
+        footnotes: [
+          { marker: 1, text: "First footnote" },
+          { marker: 2, text: "Second footnote" },
+        ],
+        hasVisibleFootnote: true,
+      }),
+      canEdit: true,
+      fields: { vi: "foo[1][2]" },
+    },
+    new Set(),
+    null,
+    null,
+    {
+      languages: [{ code: "vi" }],
+      // Matches "o[1", so the search range ends inside the "[1]" marker (3..6).
+      filters: { searchQuery: "o[1" },
+    },
+  );
+
+  const displayField = html.match(/<button[\s\S]*data-editor-display-field[\s\S]*?<\/button>/)?.[0] ?? "";
+
+  assert.equal((displayField.match(/aria-label="Footnote 1"/g) ?? []).length, 1);
+  assert.match(
+    displayField,
+    /fo<mark class="translation-language-panel__search-match">o<\/mark><sup class="translation-language-panel__inline-footnote" aria-label="Footnote 1">1<\/sup><sup class="translation-language-panel__inline-footnote" aria-label="Footnote 2">2<\/sup>/,
+  );
+});
+
 test("renderTranslationContentRow keeps invalid static footnote markers literal", () => {
   const html = renderTranslationContentRow({
     ...rowWithSection({

@@ -316,6 +316,30 @@ test("preview footnote refs preserve inline markup when markers are inside tags"
   assert.doesNotMatch(html, /&lt;\/strong&gt;/);
 });
 
+test("preview renders a footnote ref once when a search match ends inside its marker", () => {
+  const blocks = buildEditorPreviewDocument([{
+    rowId: "row-1",
+    lifecycleState: "active",
+    textStyle: "paragraph",
+    fields: { vi: "foo[1] body" },
+    footnotes: { vi: "Split note" },
+    imageCaptions: {},
+    images: {},
+  }], "vi");
+
+  const { html } = renderEditorPreviewDocumentHtml(blocks, {
+    searchState: {
+      // Matches "o[1", so the search range ends inside the "[1]" marker (3..6).
+      query: "o[1",
+      activeMatchIndex: 0,
+      totalMatchCount: 0,
+    },
+  });
+
+  assert.equal((html.match(/translate-preview__footnote-ref/g) ?? []).length, 1);
+  assert.match(html, /translate-preview__search-match/);
+});
+
 test("preview footnotes do not render an automatic separator", () => {
   const blocks = buildEditorPreviewDocument([{
     rowId: "row-1",
