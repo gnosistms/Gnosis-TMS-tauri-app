@@ -210,8 +210,22 @@ function sortedActiveHighlightRanges(ranges) {
   });
 }
 
-function renderHighlightedSegment(segmentHtml, activeRanges, defaultMarkRenderer) {
-  return sortedActiveHighlightRanges(activeRanges).reduce((html, range) => {
+function renderHighlightedSegment(segmentHtml, activeRanges, defaultMarkRenderer, segmentVisibleStart) {
+  const sortedRanges = sortedActiveHighlightRanges(activeRanges);
+
+  // A range marked replacesText renders its markup once, at the segment where the
+  // range begins. Segments that merely continue such a range contribute nothing:
+  // their text is already represented by the replacement, and rendering it again
+  // would duplicate the replacement whenever another range's boundary (e.g. a
+  // search match edge) falls inside this range and splits it into sub-segments.
+  const continuesReplacedRange = sortedRanges.some(
+    (range) => range?.replacesText === true && range.rangeStart !== segmentVisibleStart,
+  );
+  if (continuesReplacedRange) {
+    return "";
+  }
+
+  return sortedRanges.reduce((html, range) => {
     const renderer =
       typeof range?.markRenderer === "function"
         ? range.markRenderer
@@ -232,6 +246,10 @@ function serializeTextWithHighlights(text, visibleStart, highlightRanges, markRe
       ...range,
       start: Math.max(visibleStart, range.start),
       end: Math.min(visibleStart + value.length, range.end),
+      // The range's full (unclamped) start, so replacesText ranges can tell the
+      // segment that begins the range apart from segments that continue it —
+      // even when the range spans multiple text nodes.
+      rangeStart: range.start,
     }))
     .sort((left, right) => left.start - right.start);
 
@@ -265,7 +283,7 @@ function serializeTextWithHighlights(text, visibleStart, highlightRanges, markRe
       (range) => range.start < segmentVisibleEnd && range.end > segmentVisibleStart,
     );
     html += activeRanges.length > 0
-      ? renderHighlightedSegment(segmentHtml, activeRanges, markRenderer)
+      ? renderHighlightedSegment(segmentHtml, activeRanges, markRenderer, segmentVisibleStart)
       : segmentHtml;
   }
 

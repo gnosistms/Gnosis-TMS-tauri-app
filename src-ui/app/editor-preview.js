@@ -501,6 +501,9 @@ function renderTextWithWordPressFootnoteRefs(block, footnoteState, options = {})
         start: marker.index,
         end: marker.endIndex,
         priority: 5,
+        // The renderer replaces the whole "[n]" marker text with one reference,
+        // so the serializer must not invoke it once per sub-segment.
+        replacesText: true,
         markRenderer() {
           return referenceHtml;
         },
