@@ -253,6 +253,7 @@ function renderPreviewHighlightedText(text, searchState, matchCounter, languageC
     return renderPreviewPlainText(text);
   }
 
+  const baseMatchIndex = matchCounter.current;
   const result = renderSanitizedInlineMarkupWithHighlights(
     previewTextValue(text),
     query,
@@ -260,13 +261,13 @@ function renderPreviewHighlightedText(text, searchState, matchCounter, languageC
     {
       activeMatchIndex: normalizedState.activeMatchIndex,
       markRenderer(segmentHtml, range) {
-        const matchIndex = matchCounter.current;
-        matchCounter.current += 1;
+        const matchIndex = baseMatchIndex + range.index;
         const isActive = matchIndex === normalizedState.activeMatchIndex;
         return `<mark class="translate-preview__search-match${isActive ? " is-active" : ""}" data-preview-search-match data-preview-search-match-index="${escapeHtml(String(matchIndex))}">${segmentHtml}</mark>`;
       },
     },
   );
+  matchCounter.current = baseMatchIndex + result.totalMatchCount;
 
   return result.html;
 }

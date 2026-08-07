@@ -203,6 +203,54 @@ test("renderEditorPreviewDocumentHtml highlights visible preview text and tracks
   assert.match(html, /translate-preview__search-match is-active/);
 });
 
+test("renderEditorPreviewDocumentHtml numbers a caption match spanning a styled boundary once", () => {
+  const blocks = buildEditorPreviewDocument([
+    {
+      rowId: "row-1",
+      lifecycleState: "active",
+      textStyle: "paragraph",
+      fields: { vi: "" },
+      imageCaptions: { vi: "Al<strong>pha</strong>" },
+      images: {
+        vi: {
+          kind: "url",
+          url: "https://example.com/alpha.png",
+        },
+      },
+    },
+    {
+      rowId: "row-2",
+      lifecycleState: "active",
+      textStyle: "paragraph",
+      fields: { vi: "Alpha body" },
+    },
+  ], "vi");
+
+  const { html, searchState } = renderEditorPreviewDocumentHtml(blocks, {
+    searchState: {
+      query: "alpha",
+      activeMatchIndex: 0,
+      totalMatchCount: 0,
+    },
+    resolveImageSrc: (image) => image?.url ?? "",
+  });
+
+  assert.equal(searchState.totalMatchCount, 2);
+
+  // The caption match is split into two mark segments by <strong>, but both
+  // segments belong to the same logical match: same index, both active.
+  const captionHtml = /<figcaption[^>]*>([\s\S]*?)<\/figcaption>/.exec(html)[1];
+  const captionIndexes = [...captionHtml.matchAll(/data-preview-search-match-index="(\d+)"/g)]
+    .map((match) => match[1]);
+  assert.deepEqual(captionIndexes, ["0", "0"]);
+  assert.equal((captionHtml.match(/translate-preview__search-match is-active/g) ?? []).length, 2);
+
+  // The next match on the page continues from the logical match count, not
+  // from the number of rendered mark segments.
+  const bodyHtml = /<p[^>]*data-row-id="row-2"[^>]*>([\s\S]*?)<\/p>/.exec(html)[1];
+  assert.match(bodyHtml, /data-preview-search-match-index="1"/);
+});
+
 test("renderEditorPreviewDocumentHtml keeps row and language metadata on text blocks", () => {
   const blocks = buildEditorPreviewDocument([{
     rowId: "row-1",
