@@ -376,7 +376,113 @@ test("preview appends footnote refs with no matching marker without changing tex
   const html = serializeEditorPreviewHtml(blocks);
 
   assert.match(html, /Alpha body \[100\]<sup data-fn="[0-9a-f-]{36}" class="fn">/);
-  assert.match(html, /<\/sup> <sup data-fn="[0-9a-f-]{36}" class="fn"><a id="[0-9a-f-]{36}-link" href="#[0-9a-f-]{36}">2<\/a><\/sup>/);
+  assert.match(html, /<\/sup><sup class="fn-sep" aria-hidden="true">,<\/sup><sup data-fn="[0-9a-f-]{36}" class="fn"><a id="[0-9a-f-]{36}-link" href="#[0-9a-f-]{36}">2<\/a><\/sup>/);
+});
+
+test("adjacent inline footnote markers separate with a superscript comma", () => {
+  const blocks = buildEditorPreviewDocument([{
+    rowId: "row-1",
+    lifecycleState: "active",
+    textStyle: "paragraph",
+    fields: { vi: "Twin[1][2] end" },
+    footnotes: {
+      vi: [
+        { marker: 1, text: "First note" },
+        { marker: 2, text: "Second note" },
+      ],
+    },
+    imageCaptions: {},
+    images: {},
+  }], "vi");
+
+  const html = serializeEditorPreviewHtml(blocks);
+
+  assert.match(html, /1<\/a><\/sup><sup class="fn-sep" aria-hidden="true">,<\/sup><sup data-fn="[0-9a-f-]{36}" class="fn"><a id="[0-9a-f-]{36}-link" href="#[0-9a-f-]{36}">2<\/a><\/sup> end/);
+});
+
+test("adjacent markers across a style boundary still take the comma", () => {
+  const blocks = buildEditorPreviewDocument([{
+    rowId: "row-1",
+    lifecycleState: "active",
+    textStyle: "paragraph",
+    fields: { vi: "<strong>Twin[1]</strong>[2] end" },
+    footnotes: {
+      vi: [
+        { marker: 1, text: "First note" },
+        { marker: 2, text: "Second note" },
+      ],
+    },
+    imageCaptions: {},
+    images: {},
+  }], "vi");
+
+  const html = serializeEditorPreviewHtml(blocks);
+
+  assert.match(html, /1<\/a><\/sup><\/strong><sup class="fn-sep" aria-hidden="true">,<\/sup><sup data-fn="[0-9a-f-]{36}" class="fn"><a id="[0-9a-f-]{36}-link" href="#[0-9a-f-]{36}">2<\/a><\/sup> end/);
+});
+
+test("space-separated footnote markers keep the space and get no comma", () => {
+  const blocks = buildEditorPreviewDocument([{
+    rowId: "row-1",
+    lifecycleState: "active",
+    textStyle: "paragraph",
+    fields: { vi: "Twin[1] [2] end" },
+    footnotes: {
+      vi: [
+        { marker: 1, text: "First note" },
+        { marker: 2, text: "Second note" },
+      ],
+    },
+    imageCaptions: {},
+    images: {},
+  }], "vi");
+
+  const html = serializeEditorPreviewHtml(blocks);
+
+  assert.match(html, /1<\/a><\/sup> <sup data-fn="[0-9a-f-]{36}" class="fn">/);
+  assert.doesNotMatch(html, /fn-sep/);
+});
+
+test("an appended footnote ref directly after an inline marker takes the comma", () => {
+  const blocks = buildEditorPreviewDocument([{
+    rowId: "row-1",
+    lifecycleState: "active",
+    textStyle: "paragraph",
+    fields: { vi: "End[1]" },
+    footnotes: {
+      vi: [
+        { marker: 1, text: "Inline note" },
+        { marker: 2, text: "Row-level note" },
+      ],
+    },
+    imageCaptions: {},
+    images: {},
+  }], "vi");
+
+  const html = serializeEditorPreviewHtml(blocks);
+
+  assert.match(html, /End<sup data-fn="[0-9a-f-]{36}" class="fn"><a id="[0-9a-f-]{36}-link" href="#[0-9a-f-]{36}">1<\/a><\/sup><sup class="fn-sep" aria-hidden="true">,<\/sup><sup data-fn="[0-9a-f-]{36}" class="fn">/);
+});
+
+test("preview mode separates adjacent footnote markers with a superscript comma", () => {
+  const blocks = buildEditorPreviewDocument([{
+    rowId: "row-1",
+    lifecycleState: "active",
+    textStyle: "paragraph",
+    fields: { vi: "Twin[1][2] end" },
+    footnotes: {
+      vi: [
+        { marker: 1, text: "First note" },
+        { marker: 2, text: "Second note" },
+      ],
+    },
+    imageCaptions: {},
+    images: {},
+  }], "vi");
+
+  const { html } = renderEditorPreviewDocumentHtml(blocks);
+
+  assert.match(html, /1<\/a><\/sup><sup class="translate-preview__footnote-sep" aria-hidden="true">,<\/sup><sup class="translate-preview__footnote-ref fn"/);
 });
 
 test("preview ignores escaped literal markers before footnote refs", () => {

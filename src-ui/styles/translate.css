@@ -1779,6 +1779,10 @@
   vertical-align: super;
 }
 
+.translation-language-panel__inline-footnote--separator {
+  margin-left: 0;
+}
+
 .translation-language-panel__footnote-editor-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);

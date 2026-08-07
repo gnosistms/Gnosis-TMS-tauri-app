@@ -474,6 +474,15 @@ function renderTextWithWordPressFootnoteRefs(block, footnoteState, options = {})
       escapedLiteralMarkerRanges,
     ));
   const appendedRefs = [];
+  // Adjacent markers separate with a superscript comma (the footmisc/AMA
+  // convention), so [1][2] reads as notes 1 and 2 rather than note 12. The
+  // comma is real markup, not CSS — exported HTML and WordPress render under
+  // other stylesheets.
+  const markerSeparatorHtml = options.serialize
+    ? `<sup class="fn-sep" aria-hidden="true">,</sup>`
+    : `<sup class="translate-preview__footnote-sep" aria-hidden="true">,</sup>`;
+  let previousInlineMarkerEnd = -1;
+  let textEndsWithFootnoteMarker = false;
 
   const appendReference = (entry) => {
     usedMarkers.add(entry.marker);
@@ -496,7 +505,8 @@ function renderTextWithWordPressFootnoteRefs(block, footnoteState, options = {})
   for (const marker of markers) {
     const entry = footnoteByMarker.get(marker.marker);
     if (entry && !usedMarkers.has(marker.marker)) {
-      const referenceHtml = appendReference(entry);
+      const separator = marker.index === previousInlineMarkerEnd ? markerSeparatorHtml : "";
+      const referenceHtml = `${separator}${appendReference(entry)}`;
       ranges.push({
         start: marker.index,
         end: marker.endIndex,
@@ -508,6 +518,8 @@ function renderTextWithWordPressFootnoteRefs(block, footnoteState, options = {})
           return referenceHtml;
         },
       });
+      previousInlineMarkerEnd = marker.endIndex;
+      textEndsWithFootnoteMarker = marker.endIndex === visibleText.length;
     }
   }
 
@@ -523,9 +535,14 @@ function renderTextWithWordPressFootnoteRefs(block, footnoteState, options = {})
   const html = options.serialize
     ? renderSanitizedInlineMarkupWithRanges(renderText, ranges).replaceAll("\n", "<br>")
     : renderSanitizedInlineMarkupWithRanges(renderText, ranges).replaceAll("\n", "<br>");
-  // Auto-generated markers stick to the preceding text with no space, so an
-  // appended reference follows the text directly in the preview and all exports.
-  return `${html}${appendedRefs.join(" ")}`;
+  // Auto-generated markers stick to the preceding text with no space. An
+  // appended reference is just another adjacent marker: it takes the same
+  // superscript-comma separator when it follows an inline marker, and appended
+  // references separate from each other the same way.
+  const appendedJoiner = appendedRefs.length > 0 && textEndsWithFootnoteMarker
+    ? markerSeparatorHtml
+    : "";
+  return `${html}${appendedJoiner}${appendedRefs.join(markerSeparatorHtml)}`;
 }
 
 function renderPreviewSeparatorBlock(block) {
