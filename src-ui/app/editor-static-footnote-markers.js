@@ -11,7 +11,12 @@ function renderStaticInlineFootnoteMarker(segmentHtml, range) {
     return segmentHtml;
   }
 
-  return `<sup class="translation-language-panel__inline-footnote" aria-label="Footnote ${escapeHtml(marker)}">${escapeHtml(marker)}</sup>`;
+  // Adjacent markers separate with a superscript comma (the footmisc/AMA
+  // convention), so [1][2] reads as notes 1 and 2 rather than note 12.
+  const separator = range?.adjacentToPrevious
+    ? `<sup class="translation-language-panel__inline-footnote translation-language-panel__inline-footnote--separator" aria-hidden="true">,</sup>`
+    : "";
+  return `${separator}<sup class="translation-language-panel__inline-footnote" aria-label="Footnote ${escapeHtml(marker)}">${escapeHtml(marker)}</sup>`;
 }
 
 export function buildStaticInlineFootnoteMarkerRanges(text, footnotes) {
@@ -22,7 +27,7 @@ export function buildStaticInlineFootnoteMarkerRanges(text, footnotes) {
     return [];
   }
 
-  return parseUnescapedFootnoteMarkers(extractInlineMarkupVisibleText(text))
+  const ranges = parseUnescapedFootnoteMarkers(extractInlineMarkupVisibleText(text))
     .filter((entry) => validMarkers.has(entry.marker))
     .map((entry) => ({
       start: entry.index,
@@ -31,4 +36,10 @@ export function buildStaticInlineFootnoteMarkerRanges(text, footnotes) {
       priority: 30,
       markRenderer: renderStaticInlineFootnoteMarker,
     }));
+  for (let index = 1; index < ranges.length; index += 1) {
+    if (ranges[index].start === ranges[index - 1].end) {
+      ranges[index].adjacentToPrevious = true;
+    }
+  }
+  return ranges;
 }
