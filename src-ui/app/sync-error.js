@@ -23,6 +23,7 @@ const CONNECTION_PATTERNS = [
   "connection reset",
   "connection closed",
   "empty reply from server",
+  "http2 framing layer",
   "connection timed out",
   "operation timed out",
   "ssl connect error",
