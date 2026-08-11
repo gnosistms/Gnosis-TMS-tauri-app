@@ -39,6 +39,15 @@ test("classifySyncError treats an empty GitHub response as a connection failure"
   assert.equal(classified.source, "github");
 });
 
+test("classifySyncError treats a GitHub HTTP2 framing failure as a connection failure", () => {
+  const classified = classifySyncError(new Error(
+    "git push origin main failed: fatal: unable to access 'https://github.com/Gnosis-VN/33-lectures-of-first-chambers.git/': Error in the HTTP2 framing layer",
+  ));
+
+  assert.equal(classified.type, "connection_unavailable");
+  assert.equal(classified.source, "github");
+});
+
 test("classifySyncError treats generic network unreachable errors as internet failures", () => {
   const classified = classifySyncError(new Error("Network is unreachable"));
 
