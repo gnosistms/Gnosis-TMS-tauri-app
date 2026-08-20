@@ -1915,6 +1915,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tokio",
  "ttf-parser",
+ "unicode-normalization",
  "url",
  "uuid",
  "zeroize",

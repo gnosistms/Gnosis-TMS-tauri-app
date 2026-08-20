@@ -13,6 +13,7 @@ use std::sync::{
 use std::time::Duration;
 use tauri::{path::BaseDirectory, Emitter, Manager};
 use tauri_plugin_shell::{process::CommandEvent, ShellExt};
+use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
 use super::chapter_export::{
@@ -1182,7 +1183,7 @@ fn dropcap_block_index(
             ExportBlock::Text { text_style, text } => {
                 let first = inline_visible_text(text)
                     .chars()
-                    .find(|character| !character.is_whitespace());
+                    .find(|character| character.is_alphanumeric());
                 // Blank rows emit nothing visible — look past them, the way a
                 // reader would.
                 let Some(first) = first else { continue };
@@ -1536,6 +1537,50 @@ const CHAPTER_FLOURISH_SVG: &str = include_str!("chapter_flourish.svg");
 /// from the workspace's `--package-path` without touching the network. The
 /// version here must match the `#import "@preview/droplet:…"` in the preamble.
 const DROPLET_VERSION: &str = "0.3.1";
+
+/// Great Vibes' advance widths exclude calligraphic swashes. Typst's `measure`
+/// reports those advances, so `droplet` otherwise lets painted ink collide with
+/// every line beside the cap. These values are the base capitals' furthest
+/// right-side ink overhangs at the three-line size, measured from the pinned
+/// GreatVibes-Regular.ttf. Vietnamese letters use their bare Latin capital for
+/// sizing. Most also use it for horizontal clearance, but the right-side horns
+/// on the Ơ and Ư families receive separate clearance metrics. The original
+/// glyph is rendered afterward at the base capital's fixed size and position.
+const DROP_CAP_METRICS_RULE: &str = r#"#let gnosis-dropcap-base(letter) = (
+  "À": "A", "Á": "A", "Ả": "A", "Ã": "A", "Ạ": "A",
+  "Ă": "A", "Ằ": "A", "Ắ": "A", "Ẳ": "A", "Ẵ": "A", "Ặ": "A",
+  "Â": "A", "Ầ": "A", "Ấ": "A", "Ẩ": "A", "Ẫ": "A", "Ậ": "A",
+  "Đ": "D",
+  "È": "E", "É": "E", "Ẻ": "E", "Ẽ": "E", "Ẹ": "E",
+  "Ê": "E", "Ề": "E", "Ế": "E", "Ể": "E", "Ễ": "E", "Ệ": "E",
+  "Ì": "I", "Í": "I", "Ỉ": "I", "Ĩ": "I", "Ị": "I",
+  "Ò": "O", "Ó": "O", "Ỏ": "O", "Õ": "O", "Ọ": "O",
+  "Ô": "O", "Ồ": "O", "Ố": "O", "Ổ": "O", "Ỗ": "O", "Ộ": "O",
+  "Ơ": "O", "Ờ": "O", "Ớ": "O", "Ở": "O", "Ỡ": "O", "Ợ": "O",
+  "Ù": "U", "Ú": "U", "Ủ": "U", "Ũ": "U", "Ụ": "U",
+  "Ư": "U", "Ừ": "U", "Ứ": "U", "Ử": "U", "Ữ": "U", "Ự": "U",
+  "Ỳ": "Y", "Ý": "Y", "Ỷ": "Y", "Ỹ": "Y", "Ỵ": "Y",
+).at(letter, default: letter)
+#let gnosis-dropcap-clearance-base(letter) = (
+  "Ơ": "Ơ", "Ờ": "Ơ", "Ớ": "Ơ", "Ở": "Ơ", "Ỡ": "Ơ", "Ợ": "Ơ",
+  "Ư": "Ư", "Ừ": "Ư", "Ứ": "Ư", "Ử": "Ư", "Ữ": "Ư", "Ự": "Ư",
+).at(letter, default: gnosis-dropcap-base(letter))
+#let gnosis-dropcap-optical-gap(letter) = if gnosis-dropcap-clearance-base(letter) == "Ư" {
+  0.18em
+} else {
+  0.35em
+}
+#let gnosis-dropcap-gap(letter) = gnosis-dropcap-optical-gap(letter) + (
+  "A": 0.53em, "B": 0.17em, "C": 0.47em, "D": 0.04em,
+  "E": 0.16em, "F": 1.30em, "G": 0.24em, "H": 0.46em,
+  "I": 0.84em, "J": 0.77em, "K": 1.36em, "L": 0.57em,
+  "M": 0.41em, "N": 0.48em, "O": 0.65em, "P": 0.64em,
+  "Q": 0.23em, "R": 0.32em, "S": 0.22em, "T": 1.74em,
+  "U": 0.20em, "V": 0.24em, "W": 0.12em, "X": 0.95em,
+  "Y": 0.40em, "Z": 1.23em,
+  "Ơ": 0.65em, "Ư": 0.64em,
+).at(gnosis-dropcap-clearance-base(letter), default: 0pt)
+"#;
 const DROPLET_PACKAGE_FILES: &[(&str, &str)] = &[
     ("typst.toml", include_str!("droplet/typst.toml")),
     ("LICENSE", include_str!("droplet/LICENSE")),
@@ -1646,7 +1691,7 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
             .collect::<Vec<_>>()
             .join(", ");
         format!(
-            "#import \"@preview/droplet:{DROPLET_VERSION}\": dropcap\n#let gnosis-dropcap(body) = dropcap(height: 3, gap: 0.35em, font: ({letter_families}), body)\n"
+            "#import \"@preview/droplet:{DROPLET_VERSION}\": dropcap\n{DROP_CAP_METRICS_RULE}#let gnosis-dropcap(body) = dropcap(height: 3, gap: gnosis-dropcap-gap, sizing-transform: gnosis-dropcap-base, top-edge: \"cap-height\", bottom-edge: \"descender\", font: ({letter_families}), body)\n"
         )
     } else {
         String::new()
@@ -1695,7 +1740,8 @@ const GREEK_RUN_RULE_PREFIX: &str =
 const GNOSIS_IMAGE_RULE: &str = "#let gnosis-image(path, caption: none) = layout(region => {\n  let width = region.width\n  let reserved = if caption == none { 0pt } else {\n    measure(block(width: width, caption)).height + (0.65em).to-absolute()\n  }\n  let limit = region.height - reserved - (1.5em).to-absolute()\n  let natural = measure(image(path, width: width))\n  if natural.height > limit { align(center, image(path, height: limit)) } else { image(path, width: width) }\n})\n";
 
 fn render_inline_typst(text: &str, show_link_urls: bool) -> String {
-    inline_segments(text)
+    let normalized = text.nfc().collect::<String>();
+    inline_segments(&normalized)
         .into_iter()
         .map(|segment| render_styled_typst_text(&segment.text, &segment.style, show_link_urls))
         .collect::<Vec<_>>()
@@ -1771,13 +1817,14 @@ fn render_inline_typst_with_footnotes(
     if footnotes.is_empty() {
         return render_inline_typst(text, false);
     }
+    let normalized = text.nfc().collect::<String>();
     let notes = footnotes
         .iter()
         .map(|(marker, text)| (*marker, text.as_str()))
         .collect::<HashMap<_, _>>();
     let mut rendered = String::new();
     let mut used = HashSet::new();
-    for segment in inline_segments(text) {
+    for segment in inline_segments(&normalized) {
         let mut cursor = 0usize;
         while let Some((start, end, marker)) =
             next_unescaped_footnote_marker(&segment.text, cursor, &notes, &used)
@@ -2352,8 +2399,25 @@ mod tests {
         // families trail the letter's font list so an uncovered glyph falls back
         // to the body serif instead of tofu.
         assert!(vietnamese_preamble.contains(
-            "#let gnosis-dropcap(body) = dropcap(height: 3, gap: 0.35em, font: (\"Great Vibes\", \"Crimson Pro\", \"EB Garamond\", \"Cormorant Garamond Gnosis\"), body)"
+            "#let gnosis-dropcap(body) = dropcap(height: 3, gap: gnosis-dropcap-gap, sizing-transform: gnosis-dropcap-base, top-edge: \"cap-height\", bottom-edge: \"descender\", font: (\"Great Vibes\", \"Crimson Pro\", \"EB Garamond\", \"Cormorant Garamond Gnosis\"), body)"
         ));
+        // Vietnamese marks do not participate in sizing: the bare capital fixes
+        // the font size and baseline while the complete glyph remains visible.
+        assert!(vietnamese_preamble.contains("\"Ĩ\": \"I\""));
+        assert!(vietnamese_preamble.contains("\"Ỉ\": \"I\""));
+        assert!(vietnamese_preamble.contains("\"Ữ\": \"U\""));
+        // The gutter normally uses the bare capital's furthest right ink. The
+        // right-side horns on Ơ/Ư get their own family metrics.
+        assert!(vietnamese_preamble.contains("#let gnosis-dropcap-gap(letter)"));
+        assert!(vietnamese_preamble.contains("\"T\": 1.74em"));
+        assert!(vietnamese_preamble.contains("\"Ợ\": \"Ơ\""));
+        assert!(vietnamese_preamble.contains("\"Ự\": \"Ư\""));
+        assert!(vietnamese_preamble.contains("\"Ơ\": 0.65em, \"Ư\": 0.64em"));
+        assert!(vietnamese_preamble
+            .contains("gnosis-dropcap-clearance-base(letter) == \"Ư\" {\n  0.18em"));
+        assert!(vietnamese_preamble
+            .contains(".at(gnosis-dropcap-clearance-base(letter), default: 0pt)"));
+        assert!(!vietnamese_preamble.contains("\"Ĩ\": 1.20em"));
         assert!(vietnamese_preamble.contains("#import \"@preview/droplet:0.3.1\": dropcap"));
         // The chapter title is emitted as the first top float so a
         // `placement: auto` image can never be hoisted above it on page one.
@@ -2441,6 +2505,18 @@ mod tests {
     }
 
     #[test]
+    fn dropcap_allows_opening_punctuation_before_the_first_letter() {
+        let blocks = vec![text_block(
+            "paragraph",
+            "“Ứng dụng bắt đầu bằng dấu ngoặc kép.",
+        )];
+        assert_eq!(dropcap_block_index(&blocks, &[0], false), Some(0));
+
+        let numbered = vec![text_block("paragraph", "1. A numbered opening.")];
+        assert_eq!(dropcap_block_index(&numbered, &[0], false), None);
+    }
+
+    #[test]
     fn typst_strings_escape_code_boundaries() {
         assert_eq!(typst_string("a\\b\"c\nd"), "\"a\\\\b\\\"c\\nd\"");
     }
@@ -2517,6 +2593,15 @@ mod tests {
         let caption = render_typst_image_caption("A <b>bold</b> caption");
         assert!(caption.starts_with("#text(size: 0.85em, style: \"italic\")["));
         assert!(caption.contains("#strong["));
+    }
+
+    #[test]
+    fn typst_inline_text_is_normalized_to_nfc() {
+        let decomposed = "“U\u{031b}\u{0301}ng dụng <i>E\u{0302}\u{0301}</i>";
+        let rendered = render_inline_typst(decomposed, false);
+        assert_eq!(rendered, "#text(\"“Ứng dụng \")#emph[#text(\"Ế\")]");
+        assert!(!rendered.contains('\u{031b}'));
+        assert!(!rendered.contains('\u{0302}'));
     }
 
     #[test]
@@ -2767,12 +2852,14 @@ mod tests {
             language_code: "vi".to_string(),
             blocks: vec![
                 ExportBlock::Text {
-                    text_style: "heading_1".to_string(),
+                    text_style: "heading1".to_string(),
                     text: "Một <b>tiêu đề tiếng Việt</b>".to_string(),
                 },
                 ExportBlock::Text {
                     text_style: "paragraph".to_string(),
-                    text: "Những dấu tiếng Việt <i>ấ ề ỗ ở ữ</i>, một <a href=\"https://example.com\">liên kết</a> và chú thích giữa đoạn [1]."
+                    // Starts with an opening quote and decomposed Ứ. The export
+                    // must normalize it and pass only Ứ—not “Ứ—to metric callbacks.
+                    text: "“U\u{031b}\u{0301}ng dụng tiếng Việt <i>ấ ề ỗ ở ữ</i>, một <a href=\"https://example.com\">liên kết</a> và chú thích giữa đoạn [1]."
                         .to_string(),
                 },
                 ExportBlock::Text {
@@ -2834,6 +2921,35 @@ mod tests {
             &AtomicBool::new(false),
         )
         .expect("render Typst source");
+        let chapter_path = workspace.join("chapter.typ");
+        let mut source = fs::read_to_string(&chapter_path).expect("read generated Typst");
+        let generated_dropcap = source
+            .lines()
+            .find(|line| line.starts_with("#gnosis-dropcap["))
+            .expect("generated drop cap");
+        assert!(generated_dropcap.contains("“Ứng dụng"));
+        assert!(!source.contains("U\u{031b}\u{0301}"));
+        // Exercise the vendored helper directly: punctuation stays in the
+        // rendered cap, while both callbacks must receive the core grapheme.
+        source.push_str(
+            r#"
+#let gnosis-test-base(letter) = {
+  assert(letter == "Ứ")
+  "U"
+}
+#let gnosis-test-gap(letter) = {
+  assert(letter == "Ứ")
+  0.35em
+}
+#dropcap(
+  height: 3,
+  gap: gnosis-test-gap,
+  sizing-transform: gnosis-test-base,
+  font: ("Great Vibes", "Crimson Pro"),
+)[“Ứng dụng kiểm tra dấu câu.]
+"#,
+        );
+        fs::write(&chapter_path, source).expect("extend Typst smoke source");
         let output = std::process::Command::new(typst_binary)
             .args([
                 "compile",
