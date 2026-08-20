@@ -313,6 +313,29 @@ test("renderTranslationContentRow renders valid static footnote markers as non-l
   );
   assert.doesNotMatch(displayField, /\[1\]|\[2\]/);
   assert.doesNotMatch(displayField, /href=/);
+  assert.doesNotMatch(displayField, /--separator/);
+});
+
+test("renderTranslationContentRow separates adjacent static footnote markers with a comma", () => {
+  const html = renderTranslationContentRow({
+    ...rowWithSection({
+      canEdit: true,
+      text: "foo[1][2]",
+      footnotes: [
+        { marker: 1, text: "First footnote" },
+        { marker: 2, text: "Second footnote" },
+      ],
+      hasVisibleFootnote: true,
+    }),
+    canEdit: true,
+  });
+
+  const displayField = html.match(/<button[\s\S]*data-editor-display-field[\s\S]*?<\/button>/)?.[0] ?? "";
+
+  assert.match(
+    displayField,
+    /foo<sup class="translation-language-panel__inline-footnote" aria-label="Footnote 1">1<\/sup><sup class="translation-language-panel__inline-footnote translation-language-panel__inline-footnote--separator" aria-hidden="true">,<\/sup><sup class="translation-language-panel__inline-footnote" aria-label="Footnote 2">2<\/sup>/,
+  );
 });
 
 test("renderTranslationContentRow renders a footnote marker once when a search highlight ends inside it", () => {

@@ -1777,46 +1777,62 @@ fn render_inline_typst_with_footnotes(
         .collect::<HashMap<_, _>>();
     let mut rendered = String::new();
     let mut used = HashSet::new();
+    // Adjacent markers separate with a superscript comma (the footmisc/AMA
+    // convention), so [1][2] renders as ¹,² rather than ¹² (which reads as
+    // note 12). Typst has no automatic separator yet — if a future Typst
+    // release groups adjacent footnotes itself (typst/typst#7627), drop this.
+    let mut last_emitted_footnote = false;
     for segment in inline_segments(text) {
         let mut cursor = 0usize;
         while let Some((start, end, marker)) =
             next_unescaped_footnote_marker(&segment.text, cursor, &notes, &used)
         {
-            rendered.push_str(&render_styled_typst_text(
-                &segment.text[cursor..start],
-                &segment.style,
-                false,
-            ));
+            let leading =
+                render_styled_typst_text(&segment.text[cursor..start], &segment.style, false);
+            if !leading.is_empty() {
+                last_emitted_footnote = false;
+            }
+            rendered.push_str(&leading);
             if let Some(note) = notes.get(&marker) {
+                if last_emitted_footnote {
+                    rendered.push_str("#super[,]");
+                }
                 rendered.push_str(&format!(
                     "#footnote[{}]",
                     render_inline_typst(note, footnote_links_as_plain_text)
                 ));
                 used.insert(marker);
+                last_emitted_footnote = true;
             }
             cursor = end;
         }
-        rendered.push_str(&render_styled_typst_text(
-            &segment.text[cursor..],
-            &segment.style,
-            false,
-        ));
+        let trailing = render_styled_typst_text(&segment.text[cursor..], &segment.style, false);
+        if !trailing.is_empty() {
+            last_emitted_footnote = false;
+        }
+        rendered.push_str(&trailing);
     }
     // Footnotes anchored to this block whose markers never appeared inline are
     // row-level footnotes: attach their references to the end of the block, matching
     // the editor preview's append-remaining rule. This keeps a footnote stuck to the
-    // end of its own paragraph instead of floating onto the next one.
+    // end of its own paragraph instead of floating onto the next one. An appended
+    // reference is just another adjacent marker, so it takes the same superscript
+    // comma when it directly follows one.
     let mut appended = footnotes
         .iter()
         .filter(|(marker, _)| !used.contains(marker))
         .collect::<Vec<_>>();
     appended.sort_by_key(|(marker, _)| *marker);
     for (marker, note) in appended {
+        if last_emitted_footnote {
+            rendered.push_str("#super[,]");
+        }
         rendered.push_str(&format!(
             "#footnote[{}]",
             render_inline_typst(note, footnote_links_as_plain_text)
         ));
         used.insert(*marker);
+        last_emitted_footnote = true;
     }
     rendered
 }
@@ -2486,6 +2502,73 @@ mod tests {
         assert_eq!(
             rendered,
             "#text(\"The Tarot of the Bohemians.\")#footnote[#text(\"Astral Light note\")]"
+        );
+    }
+
+    #[test]
+    fn adjacent_inline_footnote_markers_separate_with_a_superscript_comma() {
+        let rendered = render_inline_typst_with_footnotes(
+            "Twin[1][2] notes.",
+            &[(1, "First".to_string()), (2, "Second".to_string())],
+            false,
+        );
+        assert_eq!(
+            rendered,
+            "#text(\"Twin\")#footnote[#text(\"First\")]#super[,]#footnote[#text(\"Second\")]#text(\" notes.\")"
+        );
+    }
+
+    #[test]
+    fn adjacent_markers_across_a_style_boundary_still_take_the_comma() {
+        // The two markers sit in different styled segments ([1] inside bold,
+        // [2] outside), so the adjacency flag must survive the segment change.
+        let rendered = render_inline_typst_with_footnotes(
+            "<b>Twin[1]</b>[2] notes.",
+            &[(1, "First".to_string()), (2, "Second".to_string())],
+            false,
+        );
+        assert_eq!(
+            rendered,
+            "#strong[#text(\"Twin\")]#footnote[#text(\"First\")]#super[,]#footnote[#text(\"Second\")]#text(\" notes.\")"
+        );
+    }
+
+    #[test]
+    fn space_separated_footnote_markers_keep_the_space_and_get_no_comma() {
+        let rendered = render_inline_typst_with_footnotes(
+            "Twin[1] [2] notes.",
+            &[(1, "First".to_string()), (2, "Second".to_string())],
+            false,
+        );
+        assert_eq!(
+            rendered,
+            "#text(\"Twin\")#footnote[#text(\"First\")]#text(\" \")#footnote[#text(\"Second\")]#text(\" notes.\")"
+        );
+    }
+
+    #[test]
+    fn appended_row_level_footnote_after_an_inline_marker_takes_the_comma() {
+        let rendered = render_inline_typst_with_footnotes(
+            "End[1]",
+            &[(1, "Inline".to_string()), (2, "Row-level".to_string())],
+            false,
+        );
+        assert_eq!(
+            rendered,
+            "#text(\"End\")#footnote[#text(\"Inline\")]#super[,]#footnote[#text(\"Row-level\")]"
+        );
+    }
+
+    #[test]
+    fn multiple_appended_row_level_footnotes_separate_with_commas() {
+        let rendered = render_inline_typst_with_footnotes(
+            "Plain text.",
+            &[(1, "First".to_string()), (2, "Second".to_string())],
+            false,
+        );
+        assert_eq!(
+            rendered,
+            "#text(\"Plain text.\")#footnote[#text(\"First\")]#super[,]#footnote[#text(\"Second\")]"
         );
     }
 
