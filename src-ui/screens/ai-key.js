@@ -325,18 +325,20 @@ function renderAiModelErrorModal(state) {
     return "";
   }
 
-  const bannerMarkup = renderInlineStateBox({
-    tone: "error",
-    message: modal.banner,
-    className: "ai-model-error-modal__banner",
-  });
+  const bannerMarkup = modal.banner
+    ? renderInlineStateBox({
+      tone: "error",
+      message: modal.banner,
+      className: "ai-model-error-modal__banner",
+    })
+    : "";
 
   return `
     <div class="modal-backdrop">
       <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="ai-model-error-modal-title" data-modal-dialog="ai-model-error" tabindex="-1">
         <div class="card__body modal-card__body">
-          <p class="card__eyebrow">AI MODEL ERROR</p>
-          <h2 class="modal__title" id="ai-model-error-modal-title">The AI model you selected is not working</h2>
+          <p class="card__eyebrow">${escapeHtml(modal.eyebrow || "AI MODEL ERROR")}</p>
+          <h2 class="modal__title" id="ai-model-error-modal-title">${escapeHtml(modal.title || "The AI model you selected is not working")}</h2>
           ${bannerMarkup}
           <p class="modal__supporting">${escapeHtml(modal.message)}</p>
           <div class="modal__actions">

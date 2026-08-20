@@ -39,11 +39,13 @@ use crate::{
 
 const TEAM_METADATA_REPO_NAME: &str = "team-metadata";
 
+mod ai;
 mod mutations;
 mod records;
 mod repair;
 mod repo;
 
+use self::ai::load_local_team_ai_metadata_snapshot as load_local_team_ai_metadata_snapshot_value;
 use self::mutations::{
     actor_login, build_glossary_record_value, build_project_record_value,
     build_qa_list_record_value, delete_local_record, upsert_local_record,
@@ -161,6 +163,19 @@ pub(crate) async fn sync_local_team_metadata_repo(
     })
     .await
     .map_err(|error| format!("Could not run the local team-metadata sync task: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn load_local_team_ai_metadata_snapshot(
+    app: AppHandle,
+    installation_id: i64,
+) -> Result<ai::LocalTeamAiMetadataSnapshot, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let repo_path = require_local_metadata_repo(&app, installation_id)?;
+        load_local_team_ai_metadata_snapshot_value(&repo_path)
+    })
+    .await
+    .map_err(|error| format!("Could not run the local team AI metadata task: {error}"))?
 }
 
 #[tauri::command]

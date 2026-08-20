@@ -4,6 +4,7 @@ import {
   openAiMissingKeyModal,
   resolveAiActionProviderAndModel,
 } from "./ai-settings-flow.js";
+import { formatAiProviderActionError } from "./ai-provider-error.js";
 import { ensureSelectedTeamAiProviderReady } from "./team-ai-flow.js";
 import { resolveEditorAiTranslateLanguages } from "./editor-ai-translate-target.js";
 import {
@@ -1469,7 +1470,10 @@ export async function runEditorAiAssistant(render) {
       baseContext.threadKey,
       [
         createAssistantErrorMessage({
-          errorText: parsedError.messageText,
+          errorText: formatAiProviderActionError(
+            providerIdForError,
+            parsedError.messageText,
+          ),
           promptText: parsedError.promptText,
           details: errorDetails,
         }, errorContext),

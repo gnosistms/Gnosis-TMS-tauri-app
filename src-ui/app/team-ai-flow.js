@@ -4,6 +4,8 @@ import { requireBrokerSession } from "./auth-flow.js";
 import { invoke } from "./runtime.js";
 import { state } from "./state.js";
 import { classifySyncError } from "./sync-error.js";
+import { saveStoredAiActionPreferences } from "./ai-action-preferences.js";
+import { isReadOnlyViewerTeam } from "./resource-capabilities.js";
 import {
   clearStoredTeamAiSnapshot,
   loadStoredTeamAiSnapshot,
@@ -17,6 +19,8 @@ import {
 } from "./team-ai-crypto.js";
 
 const brokerPublicKeyCache = new Map();
+const metadataRevisionReconciliations = new Map();
+const providerSecretIssuances = new Map();
 
 function normalizeOptionalString(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
@@ -60,6 +64,7 @@ export function createTeamAiSharedState() {
     secrets: createEmptyTeamAiSecretsMetadata(),
     settingsSaveStatus: "idle",
     settingsSaveError: "",
+    lastInspectedTeamMetadataHeadOid: null,
   };
 }
 
@@ -200,6 +205,9 @@ function loadStoredTeamAiSnapshotForContext(context) {
   return {
     settings: normalizeTeamAiSettingsRecord(snapshot.settings),
     secrets: normalizeTeamAiSecretsMetadata(snapshot.secrets),
+    lastInspectedTeamMetadataHeadOid: normalizeOptionalString(
+      snapshot.lastInspectedTeamMetadataHeadOid,
+    ),
   };
 }
 
@@ -211,6 +219,9 @@ function persistTeamAiSnapshotForContext(context, teamShared) {
   saveStoredTeamAiSnapshot(context.installationId, context.orgLogin, {
     settings: normalizeTeamAiSettingsRecord(teamShared?.settings),
     secrets: normalizeTeamAiSecretsMetadata(teamShared?.secrets),
+    lastInspectedTeamMetadataHeadOid: normalizeOptionalString(
+      teamShared?.lastInspectedTeamMetadataHeadOid,
+    ),
   }, context.login);
 }
 
@@ -256,6 +267,10 @@ function buildReadyTeamAiState(current, context, overrides = {}) {
         : createEmptyTeamAiSecretsMetadata(),
     settingsSaveStatus: current.teamId === context.team.id ? current.settingsSaveStatus : "idle",
     settingsSaveError: current.teamId === context.team.id ? current.settingsSaveError : "",
+    lastInspectedTeamMetadataHeadOid:
+      current.teamId === context.team.id
+        ? normalizeOptionalString(current.lastInspectedTeamMetadataHeadOid)
+        : null,
     ...overrides,
   };
 }
@@ -290,6 +305,18 @@ export async function loadSelectedTeamAiState(render, options = {}) {
     && !current.error
   ) {
     return current;
+  }
+
+  if (options.cacheOnly === true) {
+    const storedSnapshot = loadStoredTeamAiSnapshotForContext(context);
+    const nextState = buildReadyTeamAiState(current, context, {
+      settings: storedSnapshot?.settings ?? null,
+      secrets: storedSnapshot?.secrets ?? createEmptyTeamAiSecretsMetadata(),
+      lastInspectedTeamMetadataHeadOid:
+        storedSnapshot?.lastInspectedTeamMetadataHeadOid ?? null,
+    });
+    updateTeamAiSharedState(nextState, render);
+    return nextState;
   }
 
   if (options.suppressLoadingState !== true) {
@@ -348,6 +375,8 @@ export async function loadSelectedTeamAiState(render, options = {}) {
         error: "Could not reach the GitHub App broker. Using the last known team AI settings.",
         settings: storedSnapshot.settings,
         secrets: storedSnapshot.secrets,
+        lastInspectedTeamMetadataHeadOid:
+          storedSnapshot.lastInspectedTeamMetadataHeadOid,
       });
       if (!isTeamAiContextCurrent(context)) {
         return null;
@@ -422,6 +451,60 @@ async function ensureTeamAiMemberKeypair(context) {
   return generated;
 }
 
+async function issueAndCacheTeamAiProviderSecret(context, providerId, render) {
+  const memberKeypair = await ensureTeamAiMemberKeypair(context);
+  let issuedSecret = null;
+  try {
+    issuedSecret = await invoke("issue_team_ai_provider_secret", {
+      installationId: context.installationId,
+      orgLogin: context.orgLogin,
+      providerId,
+      memberPublicKeyPem: memberKeypair.publicKeyPem,
+      sessionToken: context.sessionToken,
+    });
+  } catch (error) {
+    const classified = classifySyncError(error);
+    if (classified.type === "resource_access_lost") {
+      await clearTeamAiLocalStateForContext(context);
+      if (isTeamAiContextCurrent(context)) {
+        updateTeamAiSharedState(
+          buildErroredTeamAiState(
+            currentTeamAiSharedState(),
+            context,
+            error instanceof Error ? error.message : String(error),
+          ),
+          render,
+        );
+      }
+    }
+    if (classified.type === "connection_unavailable") {
+      throw new Error("The team AI key could not be issued right now.");
+    }
+    throw error;
+  }
+  const apiKey = await decryptTeamAiWrappedKey(
+    issuedSecret.wrappedKey,
+    memberKeypair.privateKeyPem,
+  );
+  if (!isTeamAiContextCurrent(context)) {
+    return {
+      ok: false,
+      reason: "stale",
+    };
+  }
+  await invoke("save_team_ai_provider_cache", {
+    installationId: context.installationId,
+    providerId,
+    apiKey,
+    keyVersion: issuedSecret.keyVersion,
+  });
+  return {
+    ok: true,
+    source: "broker-issue",
+    keyVersion: issuedSecret.keyVersion,
+  };
+}
+
 export async function ensureSelectedTeamAiProviderReady(render, providerId, options = {}) {
   const normalizedProviderId = normalizeAiProviderId(providerId);
   const context = selectedTeamAiContext();
@@ -435,15 +518,23 @@ export async function ensureSelectedTeamAiProviderReady(render, providerId, opti
       ? { ok: true, source: "local" }
       : { ok: false, reason: "missing" };
   }
+  if (!isTeamAiContextCurrent(context)) {
+    return { ok: false, reason: "stale" };
+  }
 
   const teamShared = await loadSelectedTeamAiState(render, {
     suppressLoadingState: true,
+    force: options.forceTeamStateRefresh === true,
+    cacheOnly: options.forceTeamStateRefresh !== true,
   });
   if (!teamShared) {
     return {
       ok: false,
       reason: "stale",
     };
+  }
+  if (!isTeamAiContextCurrent(context)) {
+    return { ok: false, reason: "stale" };
   }
   const providerMetadata = normalizeTeamAiSecretsMetadata(teamShared?.secrets).providers[normalizedProviderId];
   if (providerMetadata?.configured) {
@@ -453,66 +544,37 @@ export async function ensureSelectedTeamAiProviderReady(render, providerId, opti
         providerId: normalizedProviderId,
       }),
     );
+    if (!isTeamAiContextCurrent(context)) {
+      return { ok: false, reason: "stale" };
+    }
     if (
-      cachedProviderSecret.apiKey
-      && cachedProviderSecret.keyVersion === providerMetadata.keyVersion
+      options.forceProviderSecretRefresh !== true
+      && cachedProviderSecret.apiKey
     ) {
       return {
         ok: true,
         source: "team-cache",
-        keyVersion: providerMetadata.keyVersion,
+        keyVersion: cachedProviderSecret.keyVersion,
       };
     }
 
-    const memberKeypair = await ensureTeamAiMemberKeypair(context);
-    let issuedSecret = null;
-    try {
-      issuedSecret = await invoke("issue_team_ai_provider_secret", {
-        installationId: context.installationId,
-        orgLogin: context.orgLogin,
-        providerId: normalizedProviderId,
-        memberPublicKeyPem: memberKeypair.publicKeyPem,
-        sessionToken: context.sessionToken,
-      });
-    } catch (error) {
-      const classified = classifySyncError(error);
-      if (classified.type === "resource_access_lost") {
-        await clearTeamAiLocalStateForContext(context);
-        updateTeamAiSharedState(
-          buildErroredTeamAiState(
-            currentTeamAiSharedState(),
-            context,
-            error instanceof Error ? error.message : String(error),
-          ),
-          render,
-        );
-      }
-      if (classified.type === "connection_unavailable") {
-        throw new Error("The team AI key could not be issued right now.");
-      }
-      throw error;
+    const issuanceKey = `${context.installationId}:${normalizedProviderId}:${providerMetadata.keyVersion}`;
+    if (providerSecretIssuances.has(issuanceKey)) {
+      return providerSecretIssuances.get(issuanceKey);
     }
-    const apiKey = await decryptTeamAiWrappedKey(
-      issuedSecret.wrappedKey,
-      memberKeypair.privateKeyPem,
+    const issuance = issueAndCacheTeamAiProviderSecret(
+      context,
+      normalizedProviderId,
+      render,
     );
-    if (!isTeamAiContextCurrent(context)) {
-      return {
-        ok: false,
-        reason: "stale",
-      };
+    providerSecretIssuances.set(issuanceKey, issuance);
+    try {
+      return await issuance;
+    } finally {
+      if (providerSecretIssuances.get(issuanceKey) === issuance) {
+        providerSecretIssuances.delete(issuanceKey);
+      }
     }
-    await invoke("save_team_ai_provider_cache", {
-      installationId: context.installationId,
-      providerId: normalizedProviderId,
-      apiKey,
-      keyVersion: issuedSecret.keyVersion,
-    });
-    return {
-      ok: true,
-      source: "broker-issue",
-      keyVersion: issuedSecret.keyVersion,
-    };
   }
 
   if (context.isOwner && typeof localApiKey === "string" && localApiKey.trim()) {
@@ -527,6 +589,211 @@ export async function ensureSelectedTeamAiProviderReady(render, providerId, opti
     reason: context.isOwner ? "owner_missing" : "member_missing",
     teamName: context.team.name ?? context.orgLogin,
   };
+}
+
+function metadataSyncMatchesContext(team, context) {
+  return (
+    Number.isFinite(team?.installationId)
+    && team.installationId === context?.installationId
+    && String(team?.githubOrg ?? "").trim().toLowerCase()
+      === String(context?.orgLogin ?? "").trim().toLowerCase()
+  );
+}
+
+async function reconcileTeamAiMetadataRevision(context, headOid) {
+  const storedSnapshot = loadStoredTeamAiSnapshotForContext(context);
+  if (storedSnapshot?.lastInspectedTeamMetadataHeadOid === headOid) {
+    return false;
+  }
+
+  const payload = await invoke("load_local_team_ai_metadata_snapshot", {
+    installationId: context.installationId,
+  });
+  if (
+    normalizeOptionalString(payload?.currentHeadOid) !== headOid
+    || !isTeamAiContextCurrent(context)
+  ) {
+    return false;
+  }
+
+  const current = currentTeamAiSharedState();
+  const settings = normalizeTeamAiSettingsRecord(payload?.settings);
+  const secrets = normalizeTeamAiSecretsMetadata(payload?.secrets);
+  const nextState = {
+    ...buildReadyTeamAiState(current, context),
+    settings,
+    secrets,
+    lastInspectedTeamMetadataHeadOid:
+      storedSnapshot?.lastInspectedTeamMetadataHeadOid ?? null,
+  };
+  persistTeamAiSnapshotForContext(context, nextState);
+  updateTeamAiSharedState(nextState, null);
+  saveStoredAiActionPreferences(
+    settings?.actionPreferences ?? null,
+    context.login,
+    context.installationId,
+  );
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      ...normalizeStoredAiActionPreferences(settings?.actionPreferences ?? null),
+    },
+  };
+
+  let reconciliationSucceeded = true;
+  const isViewer = isReadOnlyViewerTeam(context.team);
+  for (const providerId of AI_PROVIDER_IDS) {
+    const providerMetadata = secrets.providers[providerId];
+    const cached = normalizeTeamAiProviderCache(
+      await invoke("load_team_ai_provider_cache", {
+        installationId: context.installationId,
+        providerId,
+      }),
+    );
+    if (!isTeamAiContextCurrent(context)) {
+      return false;
+    }
+    if (!providerMetadata?.configured) {
+      if (cached.apiKey || cached.keyVersion !== null) {
+        try {
+          await invoke("clear_team_ai_provider_cache", {
+            installationId: context.installationId,
+            providerId,
+          });
+        } catch {
+          reconciliationSucceeded = false;
+        }
+      }
+      continue;
+    }
+    if (
+      isViewer
+      || (
+        cached.apiKey
+        && cached.keyVersion === providerMetadata.keyVersion
+      )
+    ) {
+      continue;
+    }
+    if (state.offline?.isEnabled === true) {
+      reconciliationSucceeded = false;
+      continue;
+    }
+    try {
+      const result = await ensureSelectedTeamAiProviderReady(null, providerId, {
+        forceProviderSecretRefresh: true,
+      });
+      if (!result?.ok || result.keyVersion !== providerMetadata.keyVersion) {
+        reconciliationSucceeded = false;
+      }
+    } catch {
+      reconciliationSucceeded = false;
+    }
+  }
+
+  if (!reconciliationSucceeded || !isTeamAiContextCurrent(context)) {
+    return false;
+  }
+  const completedState = {
+    ...currentTeamAiSharedState(),
+    lastInspectedTeamMetadataHeadOid: headOid,
+  };
+  persistTeamAiSnapshotForContext(context, completedState);
+  updateTeamAiSharedState(completedState, null);
+  return true;
+}
+
+export function reconcileSelectedTeamAiAfterMetadataSync(team, syncInfo) {
+  const context = selectedTeamAiContext();
+  const headOid = normalizeOptionalString(syncInfo?.currentHeadOid);
+  if (!context || !headOid || !metadataSyncMatchesContext(team, context)) {
+    return Promise.resolve(false);
+  }
+  const storedSnapshot = loadStoredTeamAiSnapshotForContext(context);
+  if (storedSnapshot?.lastInspectedTeamMetadataHeadOid === headOid) {
+    return Promise.resolve(false);
+  }
+  const key = `${context.login}:${context.installationId}:${headOid}`;
+  if (metadataRevisionReconciliations.has(key)) {
+    return metadataRevisionReconciliations.get(key);
+  }
+  const reconciliation = reconcileTeamAiMetadataRevision(context, headOid);
+  metadataRevisionReconciliations.set(key, reconciliation);
+  const clearReconciliation = () => {
+    if (metadataRevisionReconciliations.get(key) === reconciliation) {
+      metadataRevisionReconciliations.delete(key);
+    }
+  };
+  void reconciliation.then(clearReconciliation, clearReconciliation);
+  return reconciliation;
+}
+
+const rejectedProviderKeyRefreshes = new Map();
+
+export async function refreshSelectedTeamAiProviderAfterAuthenticationError(
+  providerId,
+  options = {},
+) {
+  const normalizedProviderId = normalizeAiProviderId(providerId);
+  const context = selectedTeamAiContext();
+  if (!context) {
+    return false;
+  }
+  if (
+    Number.isFinite(options.installationId)
+    && options.installationId !== context.installationId
+  ) {
+    return false;
+  }
+
+  const refreshKey = `${context.installationId}:${normalizedProviderId}`;
+  if (rejectedProviderKeyRefreshes.has(refreshKey)) {
+    return rejectedProviderKeyRefreshes.get(refreshKey);
+  }
+
+  const refresh = (async () => {
+    const rejectedCache = normalizeTeamAiProviderCache(
+      await invoke("load_team_ai_provider_cache", {
+        installationId: context.installationId,
+        providerId: normalizedProviderId,
+      }),
+    );
+    const secretsPayload = await invoke("load_team_ai_secrets_metadata", {
+      installationId: context.installationId,
+      orgLogin: context.orgLogin,
+      sessionToken: context.sessionToken,
+    });
+    const secrets = normalizeTeamAiSecretsMetadata(secretsPayload);
+    const providerMetadata = secrets.providers[normalizedProviderId];
+    const nextState = {
+      ...buildReadyTeamAiState(currentTeamAiSharedState(), context),
+      secrets,
+    };
+    persistTeamAiSnapshotForContext(context, nextState);
+    if (!isTeamAiContextCurrent(context)) {
+      return false;
+    }
+    updateTeamAiSharedState(nextState, null);
+    if (
+      !providerMetadata?.configured
+      || providerMetadata.keyVersion === rejectedCache.keyVersion
+    ) {
+      return false;
+    }
+    const result = await ensureSelectedTeamAiProviderReady(null, normalizedProviderId, {
+      forceProviderSecretRefresh: true,
+    });
+    return result?.ok === true;
+  })();
+  rejectedProviderKeyRefreshes.set(refreshKey, refresh);
+  try {
+    return await refresh;
+  } finally {
+    if (rejectedProviderKeyRefreshes.get(refreshKey) === refresh) {
+      rejectedProviderKeyRefreshes.delete(refreshKey);
+    }
+  }
 }
 
 export async function saveSelectedTeamAiProviderSecret(render, providerId, apiKey) {

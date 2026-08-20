@@ -2,6 +2,7 @@ import { state } from "./state.js";
 import { classifySyncError } from "./sync-error.js";
 import { readDevRuntimeFlags } from "./dev-runtime-flags.js";
 import { reportCommandFailure } from "./telemetry.js";
+import { isAiProviderAuthenticationError } from "./ai-provider-error.js";
 
 const runtimeDocument = typeof document !== "undefined" ? document : null;
 const runtimeWindow = typeof window !== "undefined" ? window : {};
@@ -68,11 +69,68 @@ export async function onCurrentWebviewDragDrop(handler) {
 
 let pendingBrokerSessionRefresh = null;
 
+const TEAM_AI_CREDENTIAL_COMMANDS = new Set([
+  "list_ai_provider_models",
+  "probe_ai_provider_model",
+  "run_ai_assistant_turn",
+  "run_ai_review",
+  "run_ai_review_batch",
+  "run_ai_translation",
+  "run_ai_translation_batch",
+]);
+
+export function resolveTeamAiCredentialRecovery(command, payload, error) {
+  if (
+    !TEAM_AI_CREDENTIAL_COMMANDS.has(command)
+    || !isAiProviderAuthenticationError(error?.message ?? error)
+  ) {
+    return null;
+  }
+  const request = payload?.request && typeof payload.request === "object"
+    ? payload.request
+    : null;
+  const providerId = String(payload?.providerId ?? request?.providerId ?? "").trim();
+  if (!providerId) {
+    return null;
+  }
+  const installationId = Number(payload?.installationId ?? request?.installationId);
+  return {
+    providerId,
+    installationId: Number.isFinite(installationId) ? installationId : null,
+  };
+}
+
+async function attemptTeamAiCredentialRecovery(command, payload, error) {
+  const recovery = resolveTeamAiCredentialRecovery(command, payload, error);
+  if (!recovery) {
+    return false;
+  }
+  try {
+    const { refreshSelectedTeamAiProviderAfterAuthenticationError } = await import(
+      "./team-ai-flow.js"
+    );
+    return await refreshSelectedTeamAiProviderAfterAuthenticationError(
+      recovery.providerId,
+      { installationId: recovery.installationId },
+    );
+  } catch {
+    return false;
+  }
+}
+
 export const invoke = rawInvoke
   ? async function invoke(command, payload = {}) {
       try {
         return await rawInvoke(command, payload);
       } catch (error) {
+        if (await attemptTeamAiCredentialRecovery(command, payload, error)) {
+          try {
+            return await rawInvoke(command, payload);
+          } catch (retryError) {
+            maybeReportCommandFailure(command, retryError);
+            throw retryError;
+          }
+        }
         if (!shouldAttemptBrokerSessionRefresh(command, payload, error)) {
           maybeReportCommandFailure(command, error);
           throw error;
