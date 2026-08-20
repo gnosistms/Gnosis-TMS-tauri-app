@@ -32,7 +32,13 @@ export function serializeEditorFootnotesForLegacy(footnotes) {
     return "";
   }
   if (normalized.length === 1) {
-    return normalized[0].marker === 1 ? normalized[0].text : serializeLabeledFootnoteEntry(normalized[0]);
+    const [entry] = normalized;
+    // A non-empty marker-1 note keeps the compact legacy representation. An
+    // empty note needs its label, otherwise serializing it as an empty string
+    // loses the entry and leaves its body marker orphaned after a row reload.
+    return entry.marker === 1 && entry.text
+      ? entry.text
+      : serializeLabeledFootnoteEntry(entry);
   }
   return normalized
     .map(serializeLabeledFootnoteEntry)

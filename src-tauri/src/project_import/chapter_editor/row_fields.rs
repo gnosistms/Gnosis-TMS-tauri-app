@@ -281,7 +281,7 @@ pub(super) fn parse_editor_footnote_entries(value: &str) -> Vec<ParsedFootnoteEn
 pub(super) fn serialize_editor_footnote_entries(entries: &[ParsedFootnoteEntry]) -> String {
     match entries {
         [] => String::new(),
-        [single] if single.marker == 1 => single.text.clone(),
+        [single] if single.marker == 1 && !single.text.is_empty() => single.text.clone(),
         _ => entries
             .iter()
             .map(|entry| {
@@ -736,17 +736,29 @@ mod tests {
     }
 
     #[test]
+    fn ai_review_footnote_corrections_preserve_empty_first_marker() {
+        let merged = merge_ai_review_footnote_corrections(
+            "One",
+            &[EditorAiReviewFootnoteCorrection {
+                marker: 1,
+                text: String::new(),
+            }],
+        )
+        .expect("empty correction should preserve its marker");
+
+        assert_eq!(merged.as_deref(), Some("[1]"));
+    }
+
+    #[test]
     fn ai_review_footnote_corrections_reject_serialized_marker_changes() {
-        for text in ["", "[9] Invented"] {
-            assert!(merge_ai_review_footnote_corrections(
-                "One",
-                &[EditorAiReviewFootnoteCorrection {
-                    marker: 1,
-                    text: text.to_string(),
-                }],
-            )
-            .is_err());
-        }
+        assert!(merge_ai_review_footnote_corrections(
+            "One",
+            &[EditorAiReviewFootnoteCorrection {
+                marker: 1,
+                text: "[9] Invented".to_string(),
+            }],
+        )
+        .is_err());
         assert!(merge_ai_review_footnote_corrections(
             "[1] One\n\n[2] Two",
             &[EditorAiReviewFootnoteCorrection {

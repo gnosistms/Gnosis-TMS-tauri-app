@@ -50,13 +50,17 @@ test("AI Review footnote helpers reject invalid, unknown, and duplicate markers"
   );
 });
 
-test("AI Review footnote helpers reject corrections that change markers after legacy serialization", () => {
-  assert.equal(
+test("AI Review footnote helpers preserve empty corrections and reject invented serialized markers", () => {
+  assert.deepEqual(
     mergeEditorFootnoteCorrections(
       [{ marker: 1, text: "One" }],
       [{ marker: 1, text: "" }],
-    ).reason,
-    "serialization-marker-change",
+    ),
+    {
+      ok: true,
+      footnotes: [{ marker: 1, text: "" }],
+      reason: "",
+    },
   );
   assert.equal(
     mergeEditorFootnoteCorrections(
@@ -160,6 +164,7 @@ test("serializeEditorFootnotesForLegacy canonicalizes adjacent blank legacy mark
 
 test("serializeEditorFootnotesForLegacy keeps single notes readable and labels multiple notes", () => {
   assert.equal(serializeEditorFootnotesForLegacy([{ marker: 1, text: "One" }]), "One");
+  assert.equal(serializeEditorFootnotesForLegacy([{ marker: 1, text: "" }]), "[1]");
   assert.equal(serializeEditorFootnotesForLegacy([{ marker: 2, text: "Two" }]), "[2] Two");
   assert.equal(
     serializeEditorFootnotesForLegacy([
@@ -168,4 +173,10 @@ test("serializeEditorFootnotesForLegacy keeps single notes readable and labels m
     ]),
     "[1] One\n\n[2] Two",
   );
+});
+
+test("serializeEditorFootnotesForLegacy round trips a referenced empty first footnote", () => {
+  const serialized = serializeEditorFootnotesForLegacy([{ marker: 1, text: "" }]);
+
+  assert.deepEqual(normalizeEditorFootnotes(serialized), [{ marker: 1, text: "" }]);
 });
