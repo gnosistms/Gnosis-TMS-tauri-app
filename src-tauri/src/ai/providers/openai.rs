@@ -82,6 +82,10 @@ struct OpenAiErrorEnvelope {
 struct OpenAiErrorBody {
     #[serde(default)]
     message: String,
+    #[serde(rename = "type", default)]
+    kind: Option<String>,
+    #[serde(default)]
+    code: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -615,9 +619,7 @@ fn normalize_http_error(status: StatusCode, body: &str) -> String {
             "The saved OpenAI API key was rejected. Update it in AI Settings and try again."
                 .to_string()
         }
-        StatusCode::TOO_MANY_REQUESTS => {
-            "OpenAI rate limited this request. Wait a moment and try again.".to_string()
-        }
+        StatusCode::TOO_MANY_REQUESTS => normalize_rate_limit_error(body),
         StatusCode::BAD_REQUEST => extract_api_error_message(body)
             .map(|message| format!("OpenAI rejected the request: {message}"))
             .unwrap_or_else(|| "OpenAI rejected the request.".to_string()),
@@ -630,10 +632,57 @@ fn normalize_http_error(status: StatusCode, body: &str) -> String {
     }
 }
 
-fn extract_api_error_message(body: &str) -> Option<String> {
+fn normalize_rate_limit_error(body: &str) -> String {
+    let Some(error) = extract_api_error(body) else {
+        return "OpenAI temporarily rate limited this request. Wait a moment and try again."
+            .to_string();
+    };
+    let message = error.message.trim();
+    let classification = format!(
+        "{} {} {}",
+        error.kind.as_deref().unwrap_or_default(),
+        error.code.as_deref().unwrap_or_default(),
+        message,
+    )
+    .to_lowercase();
+    let is_no_credits_error = classification.contains("no credits remaining")
+        || classification.contains("run out of credits")
+        || classification.contains("add credits to continue");
+    let is_quota_or_billing_error = classification.contains("insufficient_quota")
+        || classification.contains("billing_hard_limit")
+        || classification.contains("current quota")
+        || classification.contains("exceeded your quota");
+
+    if is_no_credits_error {
+        return "Your OpenAI account has run out of credits. Add credits at https://platform.openai.com/settings/organization/billing/ and try again."
+            .to_string();
+    }
+
+    if is_quota_or_billing_error {
+        if message.is_empty() {
+            return "OpenAI reported that this API account has no available quota or billing capacity. Check its OpenAI Platform billing and usage settings."
+                .to_string();
+        }
+        return format!("OpenAI reported an API quota or billing problem: {message}");
+    }
+
+    if message.is_empty() {
+        "OpenAI temporarily rate limited this request. Wait a moment and try again.".to_string()
+    } else {
+        format!(
+            "OpenAI temporarily rate limited this request: {message} Wait a moment and try again."
+        )
+    }
+}
+
+fn extract_api_error(body: &str) -> Option<OpenAiErrorBody> {
     serde_json::from_str::<OpenAiErrorEnvelope>(body)
         .ok()
         .and_then(|payload| payload.error)
+}
+
+fn extract_api_error_message(body: &str) -> Option<String> {
+    extract_api_error(body)
         .map(|error| error.message.trim().to_string())
         .filter(|message| !message.is_empty())
 }
@@ -710,10 +759,11 @@ fn extract_suggested_text(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_probe_request, build_prompt_request, is_hidden_gpt_pro_model,
+        build_probe_request, build_prompt_request, is_hidden_gpt_pro_model, normalize_http_error,
         normalize_review_response, shortlist_recommended_models, OPENAI_PROBE_MAX_OUTPUT_TOKENS,
     };
     use crate::ai::types::{AiPromptOutputFormat, AiPromptRequest, AiProviderId, AiProviderModel};
+    use reqwest::StatusCode;
 
     #[test]
     fn normalize_review_response_prefers_top_level_output_text() {
@@ -774,6 +824,73 @@ mod tests {
         let error = normalize_review_response(body).unwrap_err();
 
         assert_eq!(error, "OpenAI refused this request.");
+    }
+
+    #[test]
+    fn openai_429_reports_quota_and_billing_errors_without_calling_them_transient() {
+        let body = r#"{
+            "error": {
+                "message": "You exceeded your current quota, please check your plan and billing details.",
+                "type": "insufficient_quota",
+                "code": "insufficient_quota"
+            }
+        }"#;
+
+        let error = normalize_http_error(StatusCode::TOO_MANY_REQUESTS, body);
+
+        assert_eq!(
+            error,
+            "OpenAI reported an API quota or billing problem: You exceeded your current quota, please check your plan and billing details."
+        );
+        assert!(!error.to_lowercase().contains("rate limit"));
+    }
+
+    #[test]
+    fn openai_429_reports_no_credits_with_direct_billing_guidance() {
+        let body = r#"{
+            "error": {
+                "message": "You have no credits remaining. Add credits to continue using the API.",
+                "type": "insufficient_quota",
+                "code": "insufficient_quota"
+            }
+        }"#;
+
+        let error = normalize_http_error(StatusCode::TOO_MANY_REQUESTS, body);
+
+        assert_eq!(
+            error,
+            "Your OpenAI account has run out of credits. Add credits at https://platform.openai.com/settings/organization/billing/ and try again."
+        );
+        assert!(!error.to_lowercase().contains("rate limit"));
+        assert!(!error.to_lowercase().contains("different model"));
+    }
+
+    #[test]
+    fn openai_429_preserves_temporary_rate_limit_details() {
+        let body = r#"{
+            "error": {
+                "message": "Rate limit reached for tokens per minute. Limit 30000, Used 29000, Requested 4000.",
+                "type": "tokens",
+                "code": "rate_limit_exceeded"
+            }
+        }"#;
+
+        let error = normalize_http_error(StatusCode::TOO_MANY_REQUESTS, body);
+
+        assert_eq!(
+            error,
+            "OpenAI temporarily rate limited this request: Rate limit reached for tokens per minute. Limit 30000, Used 29000, Requested 4000. Wait a moment and try again."
+        );
+    }
+
+    #[test]
+    fn openai_429_without_a_valid_error_body_keeps_safe_fallback_message() {
+        let error = normalize_http_error(StatusCode::TOO_MANY_REQUESTS, "not json");
+
+        assert_eq!(
+            error,
+            "OpenAI temporarily rate limited this request. Wait a moment and try again."
+        );
     }
 
     #[test]

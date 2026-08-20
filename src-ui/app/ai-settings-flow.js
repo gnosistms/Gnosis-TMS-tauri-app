@@ -29,6 +29,10 @@ import {
   normalizeAiProviderId,
 } from "./ai-provider-config.js";
 import {
+  formatAiProviderActionError,
+  isOpenAiNoCreditsError,
+} from "./ai-provider-error.js";
+import {
   ensureSelectedTeamAiProviderReady,
   loadSelectedTeamAiSavedProviderIds,
   loadSelectedTeamAiState,
@@ -385,6 +389,9 @@ function aiProbeErrorLooksModelAccessRelated(message) {
 
 export function explainAiModelProbeError(providerId, errorMessage) {
   const normalizedProviderId = normalizeAiProviderId(providerId);
+  if (isOpenAiNoCreditsError(normalizedProviderId, errorMessage)) {
+    return "Add credits at https://platform.openai.com/settings/organization/billing/ and try again.";
+  }
   if (normalizedProviderId === "gemini" && aiProbeErrorLooksRateLimited(errorMessage)) {
     return "A rate limit on Gemini indicates that either you have not set up billing for your Google AI account or you have set up billing but you used up all the tokens that your usage plan allows in a given time period.";
   }
@@ -405,13 +412,22 @@ export function explainAiModelProbeError(providerId, errorMessage) {
 }
 
 function openAiModelErrorModal(providerId, bannerMessage) {
+  const normalizedProviderId = normalizeAiProviderId(providerId);
+  const noCredits = isOpenAiNoCreditsError(normalizedProviderId, bannerMessage);
+  const displayBanner = noCredits
+    ? ""
+    : formatAiProviderActionError(normalizedProviderId, bannerMessage);
   state.aiSettings = {
     ...state.aiSettings,
     modelErrorModal: {
       ...createAiModelErrorModalState(),
       isOpen: true,
-      banner: bannerMessage,
-      message: explainAiModelProbeError(providerId, bannerMessage),
+      eyebrow: noCredits ? "OPENAI BILLING" : "AI MODEL ERROR",
+      title: noCredits
+        ? "Your OpenAI account has run out of credits."
+        : "The AI model you selected is not working",
+      banner: displayBanner,
+      message: explainAiModelProbeError(normalizedProviderId, bannerMessage),
     },
   };
 }
@@ -751,7 +767,7 @@ export async function ensureSharedAiActionConfigurationLoaded(render) {
   applyStoredSelectedTeamAiActionPreferences(render);
   const teamShared = await loadSelectedTeamAiState(render, {
     suppressLoadingState: true,
-    force: true,
+    cacheOnly: true,
   });
   if (!teamShared || !isAiSettingsScopeCurrent(scope)) {
     return;
@@ -762,9 +778,6 @@ export async function ensureSharedAiActionConfigurationLoaded(render) {
     return;
   }
 
-  await refreshAiSavedProviders(render, {
-    suppressLoadingState: true,
-  });
 }
 
 export async function loadAiSettingsPage(render, options = {}) {

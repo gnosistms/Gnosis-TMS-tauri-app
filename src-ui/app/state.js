@@ -766,6 +766,8 @@ export function createAiSettingsAboutModalState() {
 
 export function createAiModelErrorModalState() {
   return createEntityModalState({
+    eyebrow: "AI MODEL ERROR",
+    title: "The AI model you selected is not working",
     banner: "",
     message: "",
   });

@@ -2,6 +2,7 @@ import { requireBrokerSession } from "./auth-flow.js";
 import { invoke } from "./runtime.js";
 import { queryClient, teamMetadataSyncKeys } from "./query-client.js";
 import { reportBackendNonfatalError } from "./telemetry.js";
+import { reconcileSelectedTeamAiAfterMetadataSync } from "./team-ai-flow.js";
 
 const METADATA_WRITE_RETRY_DELAYS_MS = [180, 420];
 const teamMetadataWriteQueues = new Map();
@@ -295,7 +296,11 @@ const TEAM_METADATA_SYNC_STALE_MS = 30_000;
 function syncTeamMetadataRepoShared(team) {
   return queryClient.fetchQuery({
     queryKey: teamMetadataSyncKeys.byInstallation(team.installationId),
-    queryFn: () => syncLocalTeamMetadataRepo(team),
+    queryFn: async () => {
+      const syncInfo = await syncLocalTeamMetadataRepo(team);
+      void reconcileSelectedTeamAiAfterMetadataSync(team, syncInfo).catch(() => null);
+      return syncInfo;
+    },
     staleTime: TEAM_METADATA_SYNC_STALE_MS,
   });
 }

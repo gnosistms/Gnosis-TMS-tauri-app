@@ -11,7 +11,42 @@ globalThis.window = globalThis.window ?? {
   clearTimeout,
 };
 
-const { resolveCommandFailureReport } = await import("./runtime.js");
+const {
+  resolveCommandFailureReport,
+  resolveTeamAiCredentialRecovery,
+} = await import("./runtime.js");
+
+test("recognizes provider-key rejection failures from team AI commands", () => {
+  assert.deepEqual(
+    resolveTeamAiCredentialRecovery(
+      "run_ai_translation",
+      {
+        request: {
+          providerId: "openai",
+          installationId: 42,
+        },
+      },
+      new Error("The saved OpenAI API key was rejected. Update it in AI Settings and try again."),
+    ),
+    { providerId: "openai", installationId: 42 },
+  );
+  assert.equal(
+    resolveTeamAiCredentialRecovery(
+      "run_ai_translation",
+      { request: { providerId: "openai", installationId: 42 } },
+      new Error("OpenAI temporarily rate limited this request."),
+    ),
+    null,
+  );
+  assert.equal(
+    resolveTeamAiCredentialRecovery(
+      "load_team_ai_settings",
+      { providerId: "openai", installationId: 42 },
+      new Error("The saved OpenAI API key was rejected."),
+    ),
+    null,
+  );
+});
 
 test("skips the expected session-expired path", () => {
   assert.equal(

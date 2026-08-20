@@ -1,8 +1,5 @@
 import { loadActiveEditorRowComments, loadEditorCommentSeenRevisionsForChapter } from "./editor-comments-flow.js";
-import {
-  applyStoredSelectedTeamAiActionPreferences,
-  ensureSharedAiActionConfigurationLoaded,
-} from "./ai-settings-flow.js";
+import { applyStoredSelectedTeamAiActionPreferences } from "./ai-settings-flow.js";
 import { loadStoredEditorAssistantChapterData } from "./editor-ai-assistant-cache.js";
 import { loadStoredEditorDerivedGlossariesForChapter, saveStoredEditorDerivedGlossariesForChapter } from "./editor-derived-glossary-cache.js";
 import { hydrateEditorDerivedGlossariesByRowId } from "./editor-derived-glossary-state.js";
@@ -350,9 +347,6 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
   const linkedGlossary = normalizeEditorGlossaryLink(context.chapter.linkedGlossary);
   const aiActionConfigRender = editorAiActionConfigRender(render);
   applyStoredSelectedTeamAiActionPreferences(aiActionConfigRender);
-  if (state.offline?.isEnabled !== true) {
-    void ensureSharedAiActionConfigurationLoaded(aiActionConfigRender).catch(() => {});
-  }
   const nextGlossaryState =
     preserveVisibleRows && editorGlossaryStateMatchesLink(state.editorChapter?.glossary, linkedGlossary)
       ? state.editorChapter.glossary

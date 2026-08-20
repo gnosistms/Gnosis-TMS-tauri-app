@@ -185,8 +185,12 @@ const {
   ensureSelectedTeamAiProviderReady,
   loadSelectedTeamAiState,
   persistSelectedTeamAiActionPreferences,
+  reconcileSelectedTeamAiAfterMetadataSync,
+  refreshSelectedTeamAiProviderAfterAuthenticationError,
   saveSelectedTeamAiProviderSecret,
 } = await import("./team-ai-flow.js");
+const { saveStoredTeamAiSnapshot } = await import("./team-ai-storage.js");
+const { invoke } = await import("./runtime.js");
 const {
   loadSelectedChapterEditorData: loadSelectedChapterEditorDataFlow,
 } = await import("./editor-chapter-load-flow.js");
@@ -321,6 +325,53 @@ function installSelectedTeam(options = {}) {
     },
   };
   setActiveStorageLogin(login);
+}
+
+function createTeamAiSettings(providerId = "openai", modelId = "gpt-5.4-mini") {
+  return {
+    schemaVersion: 1,
+    updatedAt: "2026-04-16T12:00:00.000Z",
+    updatedBy: "owner",
+    actionPreferences: {
+      detailedConfiguration: false,
+      unified: { providerId, modelId },
+      actions: {},
+    },
+  };
+}
+
+function createTeamAiSecrets(providerId = "openai", keyVersion = 5) {
+  return {
+    schemaVersion: 1,
+    updatedAt: "2026-04-16T12:00:00.000Z",
+    updatedBy: "owner",
+    providers: {
+      openai: null,
+      gemini: null,
+      claude: null,
+      deepseek: null,
+      [providerId]: {
+        configured: true,
+        keyVersion,
+        algorithm: "rsa-oaep-sha256-v1",
+      },
+    },
+  };
+}
+
+function installReadyTeamAiState(options = {}) {
+  state.aiSettings = {
+    ...state.aiSettings,
+    teamShared: {
+      ...createTeamAiSharedState(),
+      teamId: options.teamId ?? "team-1",
+      status: "ready",
+      isOwner: options.isOwner === true,
+      settings: options.settings ?? createTeamAiSettings(),
+      secrets: options.secrets ?? createTeamAiSecrets(),
+      lastInspectedTeamMetadataHeadOid: options.headOid ?? null,
+    },
+  };
 }
 
 test.afterEach(() => {
@@ -2328,6 +2379,7 @@ test("runEditorAiTranslate issues and caches a shared team key before translatin
       },
     },
   };
+  installReadyTeamAiState({ secrets: createTeamAiSecrets("openai", 7) });
 
   const memberKeypair = await generateTeamAiMemberKeypair();
   const issuedWrappedKey = await encryptTeamAiPlaintext("sk-shared-issued", memberKeypair.publicKeyPem);
@@ -2934,6 +2986,50 @@ test("runEditorAiAssistant sends loaded target-language history with the assista
   assert.equal(
     state.editorChapter.assistant.threadsByKey["row-1::es::vi"].items.at(-1)?.text,
     "The human edit changes the tone.",
+  );
+});
+
+test("runEditorAiAssistant shows direct OpenAI billing guidance when credits are exhausted", async () => {
+  installTranslateFixture();
+  state.editorChapter = {
+    ...state.editorChapter,
+    assistant: {
+      ...state.editorChapter.assistant,
+      composerDraft: "Please explain this translation.",
+    },
+  };
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      detailedConfiguration: true,
+      actions: {
+        ...state.aiSettings.actionConfig.actions,
+        discuss: {
+          providerId: "openai",
+          modelId: "gpt-5.4-mini",
+        },
+      },
+    },
+  };
+
+  invokeHandler = async (command) => {
+    if (command === "load_ai_provider_secret") {
+      return "oa-key";
+    }
+    if (command === "run_ai_assistant_turn") {
+      throw new Error(
+        "You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.",
+      );
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await runEditorAiAssistant(() => {});
+
+  assert.equal(
+    latestAssistantError()?.text,
+    "Your OpenAI account has run out of credits. Add credits at https://platform.openai.com/settings/organization/billing/ and try again.",
   );
 });
 
@@ -3589,6 +3685,323 @@ test("ensureSelectedTeamAiProviderReady reports a clear issue error when the bro
   );
 });
 
+test("ensureSelectedTeamAiProviderReady uses an existing cached key without fetching a newer version", async () => {
+  resetSessionState();
+  installSelectedTeam({ canDelete: false });
+  installReadyTeamAiState({ secrets: createTeamAiSecrets("openai", 6) });
+  let issueCount = 0;
+
+  invokeHandler = async (command) => {
+    if (command === "load_ai_provider_secret") {
+      return "sk-still-accepted";
+    }
+    if (command === "load_team_ai_provider_cache") {
+      return { apiKey: "sk-still-accepted", keyVersion: 5 };
+    }
+    if (command === "issue_team_ai_provider_secret") {
+      issueCount += 1;
+      throw new Error("Ordinary actions must not fetch a newer key");
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const result = await ensureSelectedTeamAiProviderReady(() => {}, "openai");
+
+  assert.deepEqual(result, {
+    ok: true,
+    source: "team-cache",
+    keyVersion: 5,
+  });
+  assert.equal(issueCount, 0);
+  assert.equal(
+    invokeLog.some((entry) => entry.command === "load_team_ai_secrets_metadata"),
+    false,
+  );
+});
+
+test("ensureSelectedTeamAiProviderReady stops when the selected team changes during local key loading", async () => {
+  resetSessionState();
+  installSelectedTeam({ canDelete: false });
+  installReadyTeamAiState({ secrets: createTeamAiSecrets("openai", 6) });
+  const localKey = createDeferred();
+
+  invokeHandler = async (command) => {
+    if (command === "load_ai_provider_secret") {
+      return localKey.promise;
+    }
+    throw new Error(`Stale provider readiness must not invoke ${command}`);
+  };
+
+  const resultPromise = ensureSelectedTeamAiProviderReady(() => {}, "openai");
+  state.teams = [createTeamRecord({
+    teamId: "team-2",
+    teamName: "Team Two",
+    githubOrg: "team-two",
+    installationId: 84,
+  })];
+  state.selectedTeamId = "team-2";
+  installReadyTeamAiState({
+    teamId: "team-2",
+    settings: createTeamAiSettings("gemini", "gemini-3-flash-preview"),
+    secrets: createTeamAiSecrets("gemini", 3),
+  });
+  localKey.resolve("sk-old-team-key");
+
+  assert.deepEqual(await resultPromise, { ok: false, reason: "stale" });
+  assert.deepEqual(
+    invokeLog.map((entry) => entry.command),
+    ["load_ai_provider_secret"],
+  );
+  assert.equal(state.aiSettings.teamShared.teamId, "team-2");
+});
+
+test("an access-loss response from stale key issuance does not overwrite the newly selected team", async () => {
+  resetSessionState();
+  installSelectedTeam({ canDelete: false });
+  installReadyTeamAiState({ secrets: createTeamAiSecrets("openai", 7) });
+  const memberKeypair = await generateTeamAiMemberKeypair();
+  const issuance = createDeferred();
+  let issueStarted = false;
+
+  invokeHandler = async (command) => {
+    if (command === "load_ai_provider_secret") {
+      return null;
+    }
+    if (command === "load_team_ai_provider_cache") {
+      return { apiKey: null, keyVersion: null };
+    }
+    if (command === "load_team_ai_member_keypair") {
+      return memberKeypair;
+    }
+    if (command === "issue_team_ai_provider_secret") {
+      issueStarted = true;
+      return issuance.promise;
+    }
+    if (command === "clear_team_ai_provider_cache") {
+      return null;
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const resultPromise = assert.rejects(
+    () => ensureSelectedTeamAiProviderReady(() => {}, "openai"),
+    /no longer have access to this team/i,
+  );
+  for (let index = 0; index < 10 && !issueStarted; index += 1) {
+    await Promise.resolve();
+  }
+  assert.equal(issueStarted, true);
+
+  state.teams = [createTeamRecord({
+    teamId: "team-2",
+    teamName: "Team Two",
+    githubOrg: "team-two",
+    installationId: 84,
+  })];
+  state.selectedTeamId = "team-2";
+  installReadyTeamAiState({
+    teamId: "team-2",
+    settings: createTeamAiSettings("gemini", "gemini-3-flash-preview"),
+    secrets: createTeamAiSecrets("gemini", 3),
+  });
+  issuance.reject(Object.assign(new Error("You no longer have access to this team."), {
+    status: 403,
+  }));
+
+  await resultPromise;
+  assert.equal(state.aiSettings.teamShared.teamId, "team-2");
+  assert.equal(state.aiSettings.teamShared.status, "ready");
+  assert.equal(
+    state.aiSettings.teamShared.settings.actionPreferences.unified.providerId,
+    "gemini",
+  );
+});
+
+test("an AI command rejected for an invalid team key refreshes the key and retries once", async () => {
+  resetSessionState();
+  installSelectedTeam({ canDelete: false });
+
+  const memberKeypair = await generateTeamAiMemberKeypair();
+  const issuedWrappedKey = await encryptTeamAiPlaintext(
+    "sk-current-team-key",
+    memberKeypair.publicKeyPem,
+  );
+  let aiCallCount = 0;
+  let issueCount = 0;
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "run_ai_translation") {
+      aiCallCount += 1;
+      if (aiCallCount === 1) {
+        throw new Error(
+          "The saved OpenAI API key was rejected. Update it in AI Settings and try again.",
+        );
+      }
+      return { translatedText: "Recovered translation" };
+    }
+    if (command === "load_ai_provider_secret") {
+      return null;
+    }
+    if (command === "load_team_ai_settings") {
+      return null;
+    }
+    if (command === "load_team_ai_secrets_metadata") {
+      return {
+        schemaVersion: 1,
+        providers: {
+          openai: {
+            configured: true,
+            keyVersion: 8,
+            algorithm: "rsa-oaep-sha256-v1",
+          },
+          gemini: null,
+          claude: null,
+          deepseek: null,
+        },
+      };
+    }
+    if (command === "load_team_ai_provider_cache") {
+      return { apiKey: "sk-rejected-team-key", keyVersion: 7 };
+    }
+    if (command === "load_team_ai_member_keypair") {
+      return memberKeypair;
+    }
+    if (command === "issue_team_ai_provider_secret") {
+      issueCount += 1;
+      return {
+        providerId: "openai",
+        keyVersion: 8,
+        wrappedKey: issuedWrappedKey,
+      };
+    }
+    if (command === "save_team_ai_provider_cache") {
+      assert.deepEqual(payload, {
+        installationId: 42,
+        providerId: "openai",
+        apiKey: "sk-current-team-key",
+        keyVersion: 8,
+      });
+      return null;
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const result = await invoke("run_ai_translation", {
+    request: {
+      providerId: "openai",
+      modelId: "gpt-5.4-mini",
+      installationId: 42,
+    },
+  });
+
+  assert.equal(result.translatedText, "Recovered translation");
+  assert.equal(aiCallCount, 2);
+  assert.equal(issueCount, 1);
+});
+
+test("an invalid team key is not reissued when team metadata has the same key version", async () => {
+  resetSessionState();
+  installSelectedTeam({ canDelete: false });
+  let aiCallCount = 0;
+  let issueCount = 0;
+
+  invokeHandler = async (command) => {
+    if (command === "run_ai_translation") {
+      aiCallCount += 1;
+      throw new Error(
+        "The saved OpenAI API key was rejected. Update it in AI Settings and try again.",
+      );
+    }
+    if (command === "load_team_ai_provider_cache") {
+      return { apiKey: "sk-rejected-team-key", keyVersion: 8 };
+    }
+    if (command === "load_team_ai_secrets_metadata") {
+      return createTeamAiSecrets("openai", 8);
+    }
+    if (command === "issue_team_ai_provider_secret") {
+      issueCount += 1;
+      throw new Error("The unchanged key must not be fetched");
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await assert.rejects(
+    () => invoke("run_ai_translation", {
+      request: {
+        providerId: "openai",
+        modelId: "gpt-5.4-mini",
+        installationId: 42,
+      },
+    }),
+    /saved OpenAI API key was rejected/i,
+  );
+
+  assert.equal(aiCallCount, 1);
+  assert.equal(issueCount, 0);
+  assert.equal(
+    invokeLog.some((entry) => entry.command === "load_team_ai_settings"),
+    false,
+  );
+});
+
+test("concurrent invalid-key recoveries share one team key refresh", async () => {
+  resetSessionState();
+  installSelectedTeam({ canDelete: false });
+
+  const memberKeypair = await generateTeamAiMemberKeypair();
+  const issuedWrappedKey = await encryptTeamAiPlaintext(
+    "sk-current-team-key",
+    memberKeypair.publicKeyPem,
+  );
+  let issueCount = 0;
+
+  invokeHandler = async (command) => {
+    if (command === "load_ai_provider_secret") {
+      return null;
+    }
+    if (command === "load_team_ai_settings") {
+      return null;
+    }
+    if (command === "load_team_ai_secrets_metadata") {
+      return {
+        providers: {
+          openai: {
+            configured: true,
+            keyVersion: 9,
+            algorithm: "rsa-oaep-sha256-v1",
+          },
+        },
+      };
+    }
+    if (command === "load_team_ai_provider_cache") {
+      return { apiKey: "sk-rejected-team-key", keyVersion: 8 };
+    }
+    if (command === "load_team_ai_member_keypair") {
+      return memberKeypair;
+    }
+    if (command === "issue_team_ai_provider_secret") {
+      issueCount += 1;
+      return {
+        providerId: "openai",
+        keyVersion: 9,
+        wrappedKey: issuedWrappedKey,
+      };
+    }
+    if (command === "save_team_ai_provider_cache") {
+      return null;
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const results = await Promise.all([
+    refreshSelectedTeamAiProviderAfterAuthenticationError("openai", { installationId: 42 }),
+    refreshSelectedTeamAiProviderAfterAuthenticationError("openai", { installationId: 42 }),
+  ]);
+
+  assert.deepEqual(results, [true, true]);
+  assert.equal(issueCount, 1);
+});
+
 test("persistSelectedTeamAiActionPreferences does not overwrite the current team after switching teams", async () => {
   resetSessionState();
   state.teams = [
@@ -3737,6 +4150,7 @@ test("persistSelectedTeamAiActionPreferences clears the saving state after a suc
 test("ensureSelectedTeamAiProviderReady clears team AI caches when team access is lost", async () => {
   resetSessionState();
   installSelectedTeam({ canDelete: false });
+  installReadyTeamAiState({ secrets: createTeamAiSecrets("openai", 7) });
 
   const memberKeypair = await generateTeamAiMemberKeypair();
   const clearedProviderIds = [];
@@ -4154,42 +4568,13 @@ test("ensureSharedAiActionConfigurationLoaded applies the saved team action pref
       },
     },
   };
-
+  saveStoredTeamAiSnapshot(42, "team-one", {
+    settings: createTeamAiSettings(),
+    secrets: createTeamAiSecrets(),
+    lastInspectedTeamMetadataHeadOid: "head-1",
+  }, "tester");
   invokeHandler = async (command) => {
-    if (command === "load_team_ai_settings") {
-      return {
-        schemaVersion: 1,
-        updatedAt: "2026-04-16T12:00:00.000Z",
-        updatedBy: "owner",
-        actionPreferences: {
-          detailedConfiguration: false,
-          unified: {
-            providerId: "openai",
-            modelId: "gpt-5.4-mini",
-          },
-          actions: {},
-        },
-      };
-    }
-    if (command === "load_team_ai_secrets_metadata") {
-      return {
-        schemaVersion: 1,
-        updatedAt: "2026-04-16T12:00:00.000Z",
-        updatedBy: "owner",
-        providers: {
-          openai: {
-            configured: true,
-            keyVersion: 5,
-            algorithm: "rsa-oaep-sha256-v1",
-          },
-          gemini: null,
-          claude: null,
-          deepseek: null,
-        },
-      };
-    }
-
-    throw new Error(`Unexpected command: ${command}`);
+    throw new Error(`Ordinary action configuration load must not invoke ${command}`);
   };
 
   await ensureSharedAiActionConfigurationLoaded(() => {});
@@ -4198,7 +4583,7 @@ test("ensureSharedAiActionConfigurationLoaded applies the saved team action pref
   assert.equal(state.aiSettings.actionConfig.unified.modelId, "gpt-5.4-mini");
 });
 
-test("ensureSharedAiActionConfigurationLoaded refreshes a stale ready team state", async () => {
+test("ensureSharedAiActionConfigurationLoaded leaves a ready team state alone", async () => {
   resetSessionState();
   installSelectedTeam({ canDelete: false });
   state.aiSettings = {
@@ -4246,54 +4631,18 @@ test("ensureSharedAiActionConfigurationLoaded refreshes a stale ready team state
     },
   };
 
-  let loadSettingsCalls = 0;
   invokeHandler = async (command) => {
-    if (command === "load_team_ai_settings") {
-      loadSettingsCalls += 1;
-      return {
-        schemaVersion: 1,
-        updatedAt: "2026-04-16T12:00:00.000Z",
-        updatedBy: "owner",
-        actionPreferences: {
-          detailedConfiguration: false,
-          unified: {
-            providerId: "openai",
-            modelId: "gpt-5.4-mini",
-          },
-          actions: {},
-        },
-      };
-    }
-    if (command === "load_team_ai_secrets_metadata") {
-      return {
-        schemaVersion: 1,
-        updatedAt: "2026-04-16T12:00:00.000Z",
-        updatedBy: "owner",
-        providers: {
-          openai: {
-            configured: true,
-            keyVersion: 5,
-            algorithm: "rsa-oaep-sha256-v1",
-          },
-          gemini: null,
-          claude: null,
-          deepseek: null,
-        },
-      };
-    }
-
-    throw new Error(`Unexpected command: ${command}`);
+    throw new Error(`Ordinary action configuration load must not invoke ${command}`);
   };
 
   await ensureSharedAiActionConfigurationLoaded(() => {});
 
-  assert.equal(loadSettingsCalls, 1);
-  assert.equal(state.aiSettings.actionConfig.unified.providerId, "openai");
-  assert.equal(state.aiSettings.actionConfig.unified.modelId, "gpt-5.4-mini");
-  assert.equal(state.aiSettings.teamShared.settings.actionPreferences.unified.providerId, "openai");
+  assert.equal(state.aiSettings.actionConfig.unified.providerId, "gemini");
+  assert.equal(state.aiSettings.actionConfig.unified.modelId, "gemini-3-flash-preview");
+  assert.equal(invokeLog.length, 0);
 });
 
-test("ensureSharedAiActionConfigurationLoaded persists the loaded team action preferences", async () => {
+test("team metadata reconciliation persists the locally loaded action preferences", async () => {
   resetSessionState();
   installSelectedTeam({ canDelete: false, login: "tester" });
   state.aiSettings = {
@@ -4308,47 +4657,134 @@ test("ensureSharedAiActionConfigurationLoaded persists the loaded team action pr
   };
 
   invokeHandler = async (command) => {
-    if (command === "load_team_ai_settings") {
+    if (command === "load_local_team_ai_metadata_snapshot") {
       return {
-        schemaVersion: 1,
-        updatedAt: "2026-04-16T12:00:00.000Z",
-        updatedBy: "owner",
-        actionPreferences: {
-          detailedConfiguration: false,
-          unified: {
-            providerId: "openai",
-            modelId: "gpt-5.4-mini",
-          },
-          actions: {},
-        },
+        currentHeadOid: "head-2",
+        settings: createTeamAiSettings(),
+        secrets: { providers: {} },
       };
     }
-    if (command === "load_team_ai_secrets_metadata") {
-      return {
-        schemaVersion: 1,
-        updatedAt: "2026-04-16T12:00:00.000Z",
-        updatedBy: "owner",
-        providers: {
-          openai: {
-            configured: true,
-            keyVersion: 5,
-            algorithm: "rsa-oaep-sha256-v1",
-          },
-          gemini: null,
-          claude: null,
-          deepseek: null,
-        },
-      };
+    if (command === "load_team_ai_provider_cache") {
+      return { apiKey: null, keyVersion: null };
     }
 
     throw new Error(`Unexpected command: ${command}`);
   };
 
-  await ensureSharedAiActionConfigurationLoaded(() => {});
+  await reconcileSelectedTeamAiAfterMetadataSync(state.teams[0], {
+    currentHeadOid: "head-2",
+  });
 
   const storedTeamPreferences = loadStoredTeamAiActionPreferences("tester", 42);
   assert.equal(storedTeamPreferences.unified.providerId, "openai");
   assert.equal(storedTeamPreferences.unified.modelId, "gpt-5.4-mini");
+  assert.equal(state.aiSettings.actionConfig.unified.providerId, "openai");
+  assert.equal(state.aiSettings.actionConfig.unified.modelId, "gpt-5.4-mini");
+});
+
+test("team metadata reconciliation skips key issuance when versions match and ignores the same head", async () => {
+  resetSessionState();
+  installSelectedTeam({ canDelete: false });
+  let localSnapshotLoads = 0;
+  let issueCount = 0;
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_local_team_ai_metadata_snapshot") {
+      localSnapshotLoads += 1;
+      return {
+        currentHeadOid: "head-matching-key",
+        settings: createTeamAiSettings(),
+        secrets: createTeamAiSecrets("openai", 5),
+      };
+    }
+    if (command === "load_team_ai_provider_cache") {
+      return payload.providerId === "openai"
+        ? { apiKey: "sk-current-team-key", keyVersion: 5 }
+        : { apiKey: null, keyVersion: null };
+    }
+    if (command === "issue_team_ai_provider_secret") {
+      issueCount += 1;
+      throw new Error("A matching key must not be fetched");
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const firstResult = await reconcileSelectedTeamAiAfterMetadataSync(state.teams[0], {
+    currentHeadOid: "head-matching-key",
+  });
+  const secondResult = await reconcileSelectedTeamAiAfterMetadataSync(state.teams[0], {
+    currentHeadOid: "head-matching-key",
+  });
+
+  assert.equal(firstResult, true);
+  assert.equal(secondResult, false);
+  assert.equal(localSnapshotLoads, 1);
+  assert.equal(issueCount, 0);
+  assert.equal(
+    state.aiSettings.teamShared.lastInspectedTeamMetadataHeadOid,
+    "head-matching-key",
+  );
+});
+
+test("team metadata reconciliation fetches a key in the background when its version changes", async () => {
+  resetSessionState();
+  installSelectedTeam({ canDelete: false });
+  const memberKeypair = await generateTeamAiMemberKeypair();
+  const issuedWrappedKey = await encryptTeamAiPlaintext(
+    "sk-new-team-key",
+    memberKeypair.publicKeyPem,
+  );
+  let issueCount = 0;
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_local_team_ai_metadata_snapshot") {
+      return {
+        currentHeadOid: "head-new-key",
+        settings: createTeamAiSettings(),
+        secrets: createTeamAiSecrets("openai", 6),
+      };
+    }
+    if (command === "load_ai_provider_secret") {
+      return null;
+    }
+    if (command === "load_team_ai_provider_cache") {
+      return payload.providerId === "openai"
+        ? { apiKey: "sk-old-team-key", keyVersion: 5 }
+        : { apiKey: null, keyVersion: null };
+    }
+    if (command === "load_team_ai_member_keypair") {
+      return memberKeypair;
+    }
+    if (command === "issue_team_ai_provider_secret") {
+      issueCount += 1;
+      return {
+        providerId: "openai",
+        keyVersion: 6,
+        wrappedKey: issuedWrappedKey,
+      };
+    }
+    if (command === "save_team_ai_provider_cache") {
+      assert.deepEqual(payload, {
+        installationId: 42,
+        providerId: "openai",
+        apiKey: "sk-new-team-key",
+        keyVersion: 6,
+      });
+      return null;
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const result = await reconcileSelectedTeamAiAfterMetadataSync(state.teams[0], {
+    currentHeadOid: "head-new-key",
+  });
+
+  assert.equal(result, true);
+  assert.equal(issueCount, 1);
+  assert.equal(
+    state.aiSettings.teamShared.lastInspectedTeamMetadataHeadOid,
+    "head-new-key",
+  );
 });
 
 test("applyStoredSelectedTeamAiActionPreferences prefers the team-scoped selection over the generic selection", () => {
@@ -4389,7 +4825,7 @@ test("applyStoredSelectedTeamAiActionPreferences prefers the team-scoped selecti
   assert.equal(state.aiSettings.actionConfig.unified.modelId, "gpt-5.4-mini");
 });
 
-test("loadSelectedChapterEditorData refreshes shared team action preferences while opening the editor", async () => {
+test("loadSelectedChapterEditorData applies cached team action preferences without a broker refresh", async () => {
   resetSessionState();
   installSelectedTeam({ canDelete: false, login: "tester" });
   state.screen = "translate";
@@ -4420,6 +4856,11 @@ test("loadSelectedChapterEditorData refreshes shared team action preferences whi
       },
     },
   };
+  saveStoredAiActionPreferences(
+    createTeamAiSettings().actionPreferences,
+    "tester",
+    42,
+  );
 
   invokeHandler = async (command) => {
     if (command === "load_gtms_chapter_editor_data") {
@@ -4495,7 +4936,7 @@ test("loadSelectedChapterEditorData refreshes shared team action preferences whi
   assert.equal(state.aiSettings.actionConfig.unified.modelId, "gpt-5.4-mini");
   assert.equal(
     invokeLog.some((entry) => entry.command === "load_team_ai_settings"),
-    true,
+    false,
   );
 });
 
@@ -4950,7 +5391,7 @@ test("runEditorAiReview loads shared team action preferences before choosing the
   assert.equal(state.editorChapter.aiReview.status, "ready");
 });
 
-test("runEditorAiTranslate does not silently keep a stale local provider when member shared settings fail to load", async () => {
+test("runEditorAiTranslate does not refresh team metadata before an ordinary action", async () => {
   localStorageState.clear();
   installTranslateFixture();
   installSelectedTeam({
@@ -4970,31 +5411,14 @@ test("runEditorAiTranslate does not silently keep a stale local provider when me
   };
 
   invokeHandler = async (command) => {
-    if (command === "load_team_ai_settings") {
-      throw new Error("Could not load the team AI settings.");
-    }
-    if (command === "load_team_ai_secrets_metadata") {
-      return {
-        schemaVersion: 1,
-        updatedAt: "2026-04-16T12:00:00.000Z",
-        updatedBy: "owner",
-        providers: {
-          openai: {
-            configured: true,
-            keyVersion: 5,
-            algorithm: "rsa-oaep-sha256-v1",
-          },
-          gemini: null,
-          claude: null,
-          deepseek: null,
-        },
-      };
-    }
     if (command === "run_ai_translation") {
       throw new Error("run_ai_translation should not be called");
     }
-    if (command === "load_ai_provider_secret" || command === "load_team_ai_provider_cache") {
-      throw new Error(`${command} should not be called`);
+    if (command === "load_ai_provider_secret") {
+      return null;
+    }
+    if (command === "load_team_ai_provider_cache") {
+      return { apiKey: null, keyVersion: null };
     }
 
     throw new Error(`Unexpected command: ${command}`);
@@ -5005,13 +5429,17 @@ test("runEditorAiTranslate does not silently keep a stale local provider when me
     async persistEditorRowOnBlur() {},
   });
 
-  assert.equal(state.editorChapter.aiTranslate.translate1.status, "error");
-  assert.match(
-    state.editorChapter.aiTranslate.translate1.error,
-    /could not load the team ai settings/i,
-  );
+  assert.equal(state.aiReviewMissingKeyModal.isOpen, true);
   assert.equal(
     invokeLog.some((entry) => entry.command === "run_ai_translation"),
+    false,
+  );
+  assert.equal(
+    invokeLog.some((entry) => entry.command === "load_team_ai_settings"),
+    false,
+  );
+  assert.equal(
+    invokeLog.some((entry) => entry.command === "load_team_ai_secrets_metadata"),
     false,
   );
 });
@@ -5185,6 +5613,53 @@ test("updateAiActionModel redirects Gemini Pro selections to the newest flash mo
   );
 });
 
+test("OpenAI no-credit model probes show billing guidance instead of model advice", async () => {
+  resetSessionState();
+  state.screen = "aiKey";
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      savedProviderIds: ["openai"],
+      unified: {
+        providerId: "openai",
+        modelId: "gpt-5.4",
+      },
+      modelOptionsByProvider: {
+        ...state.aiSettings.actionConfig.modelOptionsByProvider,
+        openai: {
+          status: "ready",
+          error: "",
+          options: [{ id: "gpt-5.4", label: "gpt-5.4" }],
+          hasLoaded: true,
+        },
+      },
+    },
+  };
+
+  invokeHandler = async (command) => {
+    if (command === "probe_ai_provider_model") {
+      throw new Error(
+        "You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.",
+      );
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await updateAiActionModel(() => {}, "unified", "gpt-5.4");
+
+  assert.equal(state.aiSettings.modelErrorModal.eyebrow, "OPENAI BILLING");
+  assert.equal(
+    state.aiSettings.modelErrorModal.title,
+    "Your OpenAI account has run out of credits.",
+  );
+  assert.equal(state.aiSettings.modelErrorModal.banner, "");
+  assert.equal(
+    state.aiSettings.modelErrorModal.message,
+    "Add credits at https://platform.openai.com/settings/organization/billing/ and try again.",
+  );
+});
+
 test("AI action controls stay disabled with a badge while model validation is running", async () => {
   resetSessionState();
   state.screen = "aiKey";
@@ -5298,7 +5773,9 @@ test("AI action controls stay disabled with a badge while provider models are lo
 
   resolveModels?.([{ id: "gemini-3-flash-preview", label: "gemini-3-flash-preview" }]);
   await modelsPromise;
-  await Promise.resolve();
+  for (let index = 0; index < 5 && state.aiSettings.actionMenuLoadingProviderIds.length > 0; index += 1) {
+    await Promise.resolve();
+  }
 
   assert.equal(state.aiSettings.actionMenuLoadingProviderIds.length, 0);
 });
