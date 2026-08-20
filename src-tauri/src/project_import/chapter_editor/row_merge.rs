@@ -284,8 +284,9 @@ fn parse_footnote_entries(value: &str) -> Vec<ParsedFootnoteEntry> {
     parse_editor_footnote_entries(value)
 }
 
-/// Serializes footnote entries in the stored legacy format: a single marker-1 entry
-/// stays bare text; anything else is labeled `[n] text` joined by blank lines.
+/// Serializes footnote entries in the stored legacy format: a single non-empty
+/// marker-1 entry stays bare text; anything else is labeled `[n] text` joined by
+/// blank lines.
 fn serialize_footnote_entries(entries: &[ParsedFootnoteEntry]) -> String {
     serialize_editor_footnote_entries(entries)
 }
@@ -467,6 +468,22 @@ mod tests {
         let merged = merge_editor_row_content(&previous, &next);
 
         assert_eq!(merged.footnotes.get("vi"), Some(&"only note".to_string()));
+    }
+
+    #[test]
+    fn merge_editor_row_content_keeps_a_single_empty_footnote_labeled() {
+        let previous = stored_row(json!({
+            "vi": { "plain_text": "first[1]", "footnote": "[1]" },
+        }));
+        let next = stored_row(json!({ "vi": { "plain_text": "second" } }));
+
+        let merged = merge_editor_row_content(&previous, &next);
+
+        assert_eq!(
+            merged.fields.get("vi"),
+            Some(&"first[1]\nsecond".to_string())
+        );
+        assert_eq!(merged.footnotes.get("vi"), Some(&"[1]".to_string()));
     }
 
     #[test]

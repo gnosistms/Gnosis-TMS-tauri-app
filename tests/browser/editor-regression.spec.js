@@ -5396,6 +5396,41 @@ test.describe("editor regressions", () => {
     await expect(historyFootnoteContent).toHaveCSS("font-style", "italic");
   });
 
+  test("a referenced empty footnote survives blur, save, and reopen", async ({ page }) => {
+    const rowId = "fixture-row-0001";
+    const languageCode = "vi";
+    await mountEditorFixture(page, { rowCount: 18 }, { mockTauri: true });
+
+    await activateMainEditorField(page, rowId, languageCode);
+    await page.locator(
+      `[data-editor-footnote-button][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    ).click();
+
+    const footnoteField = page.locator(
+      `[data-editor-row-field][data-row-id="${rowId}"][data-language-code="${languageCode}"][data-content-kind="footnote"][data-footnote-marker="1"]`,
+    );
+    await expect(footnoteField).toBeFocused();
+    await expect(footnoteField).toHaveValue("");
+
+    await page.locator("[data-editor-search-input]").click();
+    await expect.poll(async () => {
+      const mockState = await readMockTauriState(page);
+      return mockState?.footnotes?.["fixture-chapter"]?.[rowId]?.[languageCode] ?? null;
+    }).toBe("[1]");
+
+    await setTranslateScrollTop(page, 0);
+    await expect(page.locator(`[data-editor-row-card][data-row-id="${rowId}"]`)).toBeVisible();
+    await activateMainEditorField(page, rowId, languageCode);
+
+    const closedFootnote = page.locator(
+      `[data-editor-footnote-display][data-row-id="${rowId}"][data-language-code="${languageCode}"][data-footnote-marker="1"]`,
+    );
+    await expect(closedFootnote).toBeVisible();
+    await closedFootnote.locator(".translation-language-panel__footnote-marker").click();
+    await expect(footnoteField).toBeFocused();
+    await expect(footnoteField).toHaveValue("");
+  });
+
   test("footnote controls hide on blur even if row activation finishes later", async ({ page }) => {
     await page.addInitScript(() => {
       let releaseRowLoad = () => {};
