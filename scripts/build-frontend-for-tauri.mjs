@@ -57,6 +57,7 @@ const buildEnv = {
   ...(sentryReady ? { GNOSIS_EMIT_SOURCEMAPS: "1" } : {}),
 };
 
+run("node", ["scripts/guard-macos-git-runtime.mjs"]);
 run("node", ["scripts/prepare-typst-sidecar.mjs"]);
 
 if (uploadRequested && !sentryReady) {
