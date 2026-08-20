@@ -124,12 +124,15 @@
 // For example, the dropped capital of "Hello, world!" is "H", and the
 // dropped capital of "1. Hello, world!" is "1." including the dot.
 //
-// Returns: A tuple of the dropped capital and the rest.
+// Returns: The rendered drop cap, the rest, and the core grapheme used for
+// metric lookup. The rendered cap may also contain opening/closing punctuation.
 #let extract(body) = {
   let (letter, rest) = extract-first-letter(body)
   if letter == none {
-    return (none, body)
+    return (none, body, none)
   }
+
+  let metric-letter = letter
 
   // We can only append punctuation characters if the first letter can be
   // converted to a string, but not if it's e.g. a 'box' or 'image'.
@@ -139,6 +142,7 @@
       let (next-letter, new-rest) = extract-first-letter(rest)
       if next-letter == none { break }
       letter += next-letter
+      metric-letter = next-letter
       rest = new-rest
     }
 
@@ -151,5 +155,5 @@
     }
   }
 
-  return (letter, rest)
+  return (letter, rest, metric-letter)
 }
