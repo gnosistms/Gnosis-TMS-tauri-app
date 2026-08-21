@@ -3,7 +3,8 @@ import {
   editorChapterFiltersAreActive,
   normalizeEditorChapterFilterState,
 } from "./editor-filters.js";
-import { rowFieldsEqual } from "./editor-row-persistence-model.js";
+import { rowFieldsEqual, rowFootnotesEqual } from "./editor-row-persistence-model.js";
+import { serializeEditorFootnotesForLegacy } from "./editor-footnotes.js";
 import {
   buildEditorBatchReplaceUpdates,
   buildEditorReplaceCommitMessage,
@@ -68,6 +69,19 @@ function hasEditorSearchOperations(operations) {
     typeof operations?.markEditorRowsPersisted === "function"
     && typeof operations?.loadActiveEditorFieldHistory === "function"
   );
+}
+
+function serializeBatchReplaceRowsForWire(rows) {
+  return (Array.isArray(rows) ? rows : []).map((row) => ({
+    ...row,
+    footnotes: Object.fromEntries(
+      Object.entries(row?.footnotes && typeof row.footnotes === "object" ? row.footnotes : {})
+        .map(([languageCode, footnotes]) => [
+          languageCode,
+          serializeEditorFootnotesForLegacy(footnotes),
+        ]),
+    ),
+  }));
 }
 
 function buildEditorRowSections(row, chapterState = state.editorChapter) {
@@ -501,7 +515,7 @@ export async function replaceSelectedEditorRows(render, operations = {}) {
     .filter((row) => affectedRowIds.has(row.rowId))
     .filter((row) =>
       !rowFieldsEqual(row.fields, row.persistedFields)
-      || !rowFieldsEqual(row.footnotes, row.persistedFootnotes)
+      || !rowFootnotesEqual(row.footnotes, row.persistedFootnotes)
       || !rowFieldsEqual(row.imageCaptions, row.persistedImageCaptions)
     )
     .map((row) => ({
@@ -580,7 +594,7 @@ export async function replaceSelectedEditorRows(render, operations = {}) {
         resetPayload = await invokeQueuedEditorWriteCommand("update_gtms_editor_row_fields_batch", {
           input: {
             ...value.inputBase,
-            rows: value.resetRows,
+            rows: serializeBatchReplaceRowsForWire(value.resetRows),
             commitMessage: buildEditorReplaceResetCommitMessage(value.resetRows.length),
             operation: "editor-replace-reset",
           },
@@ -590,7 +604,7 @@ export async function replaceSelectedEditorRows(render, operations = {}) {
       const replacePayload = await invokeQueuedEditorWriteCommand("update_gtms_editor_row_fields_batch", {
         input: {
           ...value.inputBase,
-          rows: value.replaceRows,
+          rows: serializeBatchReplaceRowsForWire(value.replaceRows),
           commitMessage: buildEditorReplaceCommitMessage(value.searchQuery, value.replaceRows.length),
           operation: "editor-replace",
         },

@@ -1,3 +1,4 @@
+import { syncEditorRowTextareaHeights } from "./autosize.js";
 import { logEditorScrollDebug } from "./editor-scroll-debug.js";
 import {
   captureRenderedEditorImageDebugState,
@@ -185,6 +186,7 @@ export function initializeEditorVirtualization(root, appState) {
   };
 
   const handleResize = () => {
+    syncEditorRowTextareaHeights(root);
     scheduleNonVirtualizedSync("resize");
   };
 

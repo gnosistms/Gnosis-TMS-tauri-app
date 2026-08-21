@@ -1528,6 +1528,7 @@
   pointer-events: none;
   position: absolute;
   inset: 0;
+  border: 1px solid transparent;
   overflow: hidden;
 }
 

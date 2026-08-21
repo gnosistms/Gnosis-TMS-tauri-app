@@ -1512,6 +1512,7 @@ test("replace selected queues behind active repo writes and captures the selecte
         rowId: "row-1",
         textStyle: "paragraph",
         fields: { es: "hola uno" },
+        footnotes: { es: [{ marker: 1, text: "nota hola" }] },
         fieldStates: { es: { reviewed: false, pleaseCheck: false } },
       },
       {
@@ -1561,7 +1562,9 @@ test("replace selected queues behind active repo writes and captures the selecte
 
   assert.deepEqual(invokeLog.map((entry) => entry.command), ["update_gtms_editor_row_fields_batch"]);
   assert.deepEqual(invokeLog[0].payload.input.rows.map((row) => row.rowId), ["row-1"]);
+  assert.equal(invokeLog[0].payload.input.rows[0].footnotes.es, "nota ciao");
   assert.equal(state.editorChapter.rows[0].fields.es, "ciao uno");
+  assert.deepEqual(state.editorChapter.rows[0].footnotes.es, [{ marker: 1, text: "nota ciao" }]);
   assert.equal(state.editorChapter.rows[1].fields.es, "hola dos");
   assert.equal(state.editorChapter.replace.status, "idle");
 });
