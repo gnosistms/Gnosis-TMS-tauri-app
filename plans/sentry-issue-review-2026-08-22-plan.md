@@ -20,7 +20,9 @@ are errors and one is a warning.
 - W2: the Rust repository probe now distinguishes a non-repository from a folder that
   contains `.git` but cannot be inspected by Git. Consequential project, glossary, and
   QA-list reader failures are filtered while the root ensure/sync failure remains
-  reportable. Rust coverage passes. The existing macOS release bundle contains the
+  reportable. The shared sync promise also observes rejection immediately, preventing
+  the root string from surfacing a second time as a bare unhandled rejection. Rust and
+  frontend coverage pass. The existing macOS release bundle contains the
   packaged Git runtime and passes strict code-sign verification; a fresh packaged
   build and the Windows release path remain release gates.
 - W3: rate-limit, quota, authentication, and temporary team-access outcomes now have
