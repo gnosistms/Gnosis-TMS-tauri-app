@@ -294,7 +294,7 @@ async function syncLocalTeamMetadataRepo(team) {
 const TEAM_METADATA_SYNC_STALE_MS = 30_000;
 
 function syncTeamMetadataRepoShared(team) {
-  return queryClient.fetchQuery({
+  const syncPromise = queryClient.fetchQuery({
     queryKey: teamMetadataSyncKeys.byInstallation(team.installationId),
     queryFn: async () => {
       const syncInfo = await syncLocalTeamMetadataRepo(team);
@@ -303,6 +303,12 @@ function syncTeamMetadataRepoShared(team) {
     },
     staleTime: TEAM_METADATA_SYNC_STALE_MS,
   });
+  // Local record reads deliberately run in parallel with this sync. Attach a
+  // rejection observer immediately so a fast sync failure cannot become a global
+  // unhandled rejection while the local read is still pending. Callers still await
+  // the original promise and receive its rejection when it is relevant.
+  void syncPromise.catch(() => null);
+  return syncPromise;
 }
 
 export async function invalidateTeamMetadataSyncForTeam(team) {

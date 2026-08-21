@@ -27,6 +27,30 @@ export function isAiProviderAuthenticationError(message) {
   );
 }
 
+export function classifyAiProviderOperationalError(message) {
+  const normalized = normalizedErrorText(message);
+  if (isAiProviderAuthenticationError(normalized)) {
+    return "authentication_failed";
+  }
+  if (normalized.includes("could not verify active access for this team")) {
+    return "team_access_unverified";
+  }
+  if (
+    normalized.includes("rate limited this request")
+    || normalized.includes("temporarily rate limited")
+  ) {
+    return "rate_limited";
+  }
+  if (
+    normalized.includes("no credits remaining")
+    || normalized.includes("run out of credits")
+    || normalized.includes("add credits to continue")
+  ) {
+    return "quota_exhausted";
+  }
+  return null;
+}
+
 export function formatAiProviderActionError(providerId, message) {
   const fallback = String(message ?? "").trim();
   if (!isOpenAiNoCreditsError(providerId, fallback)) {
