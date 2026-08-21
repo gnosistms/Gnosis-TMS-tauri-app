@@ -116,6 +116,7 @@ test("skips expected remote permission denials", () => {
     "Your account type cannot manage shared resources.",
     "Your account type cannot edit shared content.",
     "You need admin access in @Gnosis-VN for this action.",
+    "Could not verify active access for this team. Refresh team access and try again.",
   ]) {
     assert.equal(
       resolveCommandFailureReport("push_command", new Error(message)),
@@ -123,6 +124,40 @@ test("skips expected remote permission denials", () => {
       `expected skip for: ${message}`,
     );
   }
+});
+
+test("skips expected AI provider throttling and quota failures", () => {
+  for (const message of [
+    "OpenAI rate limited this request. Wait a moment and try again.",
+    "OpenAI temporarily rate limited this request.",
+    "You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.",
+  ]) {
+    assert.equal(
+      resolveCommandFailureReport("run_ai_translation", new Error(message)),
+      null,
+      `expected skip for: ${message}`,
+    );
+  }
+
+  const unexpected = new Error("OpenAI returned malformed structured output.");
+  assert.equal(
+    resolveCommandFailureReport("run_ai_translation", unexpected).error,
+    unexpected,
+  );
+});
+
+test("skips secondary local team-metadata listing failures only", () => {
+  const error = new Error(
+    "The local team-metadata repo for installation 42 is not available yet.",
+  );
+  for (const command of [
+    "list_local_gnosis_project_metadata_records",
+    "list_local_gnosis_glossary_metadata_records",
+    "list_local_gnosis_qa_list_metadata_records",
+  ]) {
+    assert.equal(resolveCommandFailureReport(command, error), null, command);
+  }
+  assert.equal(resolveCommandFailureReport("ensure_local_team_metadata_repo", error).error, error);
 });
 
 test("replaces malformed AI assistant payloads with a fixed message", () => {
@@ -153,18 +188,28 @@ test("skips expected user-input / validation failures", () => {
 });
 
 test("skips expected repository creation validation", () => {
-  assert.equal(
-    resolveCommandFailureReport(
-      "create_gnosis_project_repo",
-      new Error("GitHub API 422: name already exists on this account"),
-    ),
-    null,
-  );
+  for (const command of [
+    "create_gnosis_project_repo",
+    "create_gnosis_glossary_repo",
+    "create_gnosis_qa_list_repo",
+  ]) {
+    assert.equal(
+      resolveCommandFailureReport(
+        command,
+        new Error("GitHub API 422: name already exists on this account"),
+      ),
+      null,
+      command,
+    );
+  }
   const unexpected = new Error('GitHub API 422: {"message":"Malformed repository payload."}');
-  assert.equal(
-    resolveCommandFailureReport("create_gnosis_project_repo", unexpected).error,
-    unexpected,
-  );
+  for (const command of [
+    "create_gnosis_project_repo",
+    "create_gnosis_glossary_repo",
+    "create_gnosis_qa_list_repo",
+  ]) {
+    assert.equal(resolveCommandFailureReport(command, unexpected).error, unexpected, command);
+  }
 });
 
 test("reports ordinary failures unchanged at the default level", () => {

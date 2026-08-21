@@ -48,6 +48,21 @@ test("classifySyncError treats a GitHub HTTP2 framing failure as a connection fa
   assert.equal(classified.source, "github");
 });
 
+test("classifySyncError treats OS route and socket allocation failures as GitHub connection failures", () => {
+  for (const detail of [
+    "Recv failure: No route to host",
+    "Recv failure: Can't assign requested address",
+    "Recv failure: Cannot assign requested address",
+  ]) {
+    const classified = classifySyncError(new Error(
+      `git push origin main failed: fatal: unable to access 'https://github.com/example/repo.git/': ${detail}`,
+    ));
+
+    assert.equal(classified.type, "connection_unavailable", detail);
+    assert.equal(classified.source, "github", detail);
+  }
+});
+
 test("classifySyncError treats generic network unreachable errors as internet failures", () => {
   const classified = classifySyncError(new Error("Network is unreachable"));
 

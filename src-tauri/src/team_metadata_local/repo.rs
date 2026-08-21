@@ -26,8 +26,34 @@ pub(super) fn expected_repo_url_from_full_name(full_name: &str) -> Result<String
     Ok(format!("https://github.com/{normalized}.git"))
 }
 
-fn repo_has_git_dir(repo_path: &Path) -> bool {
-    git_output(repo_path, &["rev-parse", "--git-dir"], None).is_ok()
+#[derive(Debug, PartialEq, Eq)]
+enum RepoGitProbe {
+    Repository,
+    NotRepository,
+    GitUnavailable(String),
+}
+
+fn classify_repo_git_probe(repo_path: &Path, result: Result<String, String>) -> RepoGitProbe {
+    match result {
+        Ok(_) => RepoGitProbe::Repository,
+        Err(error) if repo_path.join(".git").try_exists().unwrap_or(true) => {
+            RepoGitProbe::GitUnavailable(error)
+        }
+        Err(_) => RepoGitProbe::NotRepository,
+    }
+}
+
+fn repo_has_git_dir(repo_path: &Path) -> Result<bool, String> {
+    match classify_repo_git_probe(
+        repo_path,
+        git_output(repo_path, &["rev-parse", "--git-dir"], None),
+    ) {
+        RepoGitProbe::Repository => Ok(true),
+        RepoGitProbe::NotRepository => Ok(false),
+        RepoGitProbe::GitUnavailable(error) => Err(format!(
+            "The local team-metadata folder contains Git metadata, but Git could not inspect it: {error}"
+        )),
+    }
 }
 
 fn repo_dir_is_empty(repo_path: &Path) -> Result<bool, String> {
@@ -100,7 +126,7 @@ fn clone_team_metadata_repo(
     }
 
     let validation_result = (|| {
-        if !repo_has_git_dir(&staging_path)
+        if !repo_has_git_dir(&staging_path)?
             || read_current_head_oid(&staging_path).is_none()
             || !manifest_path(&staging_path).exists()
         {
@@ -270,7 +296,7 @@ pub(super) fn ensure_local_repo_exists(
     cleanup_stale_metadata_clone_staging(&repo_path, STALE_METADATA_CLONE_AGE);
 
     if repo_path.exists() {
-        if repo_has_git_dir(&repo_path) {
+        if repo_has_git_dir(&repo_path)? {
             // The manifest only ever comes from the remote, so a git dir without
             // manifest.json is partial-clone damage. Repair it here instead of
             // letting every later read fail "missing manifest.json".
@@ -322,7 +348,7 @@ pub(super) fn require_local_metadata_repo(
     // "not available yet" errors.
     let repo_lock = crate::repo_sync_shared::repo_sync_lock(&repo_path);
     let _repo_lock_guard = crate::repo_sync_shared::acquire_repo_sync_lock(&repo_lock);
-    if !repo_path.exists() || !repo_has_git_dir(&repo_path) {
+    if !repo_path.exists() || !repo_has_git_dir(&repo_path)? {
         return Err(format!(
             "The local team-metadata repo for installation {installation_id} is not available yet."
         ));
@@ -596,6 +622,44 @@ mod tests {
         assert_eq!(
             fs::read_to_string(repo_path.join("manifest.json")).expect("published marker"),
             "{}"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn git_probe_keeps_missing_git_distinct_from_a_non_repository() {
+        let root = test_root("git-probe");
+        let repo_path = root.join("team-metadata");
+        fs::create_dir_all(repo_path.join(".git")).expect("create git marker");
+
+        let unavailable = classify_repo_git_probe(
+            &repo_path,
+            Err("Could not run git rev-parse --git-dir: Git runtime not found.".to_string()),
+        );
+        assert!(matches!(unavailable, RepoGitProbe::GitUnavailable(_)));
+
+        fs::remove_dir_all(repo_path.join(".git")).expect("remove git marker");
+        assert_eq!(
+            classify_repo_git_probe(
+                &repo_path,
+                Err("git rev-parse --git-dir failed: not a git repository".to_string()),
+            ),
+            RepoGitProbe::NotRepository,
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn git_probe_accepts_a_successful_rev_parse() {
+        let root = test_root("git-probe-success");
+        let repo_path = root.join("team-metadata");
+        fs::create_dir_all(&repo_path).expect("create repo folder");
+
+        assert_eq!(
+            classify_repo_git_probe(&repo_path, Ok(".git".to_string())),
+            RepoGitProbe::Repository,
         );
 
         let _ = fs::remove_dir_all(root);

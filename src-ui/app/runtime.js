@@ -2,7 +2,10 @@ import { state } from "./state.js";
 import { classifySyncError } from "./sync-error.js";
 import { readDevRuntimeFlags } from "./dev-runtime-flags.js";
 import { reportCommandFailure } from "./telemetry.js";
-import { isAiProviderAuthenticationError } from "./ai-provider-error.js";
+import {
+  classifyAiProviderOperationalError,
+  isAiProviderAuthenticationError,
+} from "./ai-provider-error.js";
 
 const runtimeDocument = typeof document !== "undefined" ? document : null;
 const runtimeWindow = typeof window !== "undefined" ? window : {};
@@ -178,6 +181,18 @@ export const invoke = rawInvoke
 // document content and must never reach telemetry (telemetry-plan hard constraint).
 const AI_ASSISTANT_MALFORMED_RESPONSE_ERROR_PREFIX = "AI_ASSISTANT_MALFORMED_RESPONSE_JSON:";
 
+const RESOURCE_CREATE_COMMANDS = new Set([
+  "create_gnosis_project_repo",
+  "create_gnosis_glossary_repo",
+  "create_gnosis_qa_list_repo",
+]);
+
+const LOCAL_TEAM_METADATA_LIST_COMMANDS = new Set([
+  "list_local_gnosis_project_metadata_records",
+  "list_local_gnosis_glossary_metadata_records",
+  "list_local_gnosis_qa_list_metadata_records",
+]);
+
 /**
  * Decide whether and how a failed command is reported to telemetry. Returns `null`
  * to skip, or `{ error, options }` to forward to `reportCommandFailure`. Pure, so
@@ -203,6 +218,16 @@ export function resolveCommandFailureReport(command, error) {
   if (rawMessage.startsWith(AI_ASSISTANT_MALFORMED_RESPONSE_ERROR_PREFIX)) {
     return { error: "The AI assistant returned a malformed response." };
   }
+  // Provider throttling and exhausted user credits are actionable in the UI, not
+  // product defects. Unknown provider failures remain reportable.
+  const aiProviderErrorCategory = classifyAiProviderOperationalError(rawMessage);
+  if (
+    aiProviderErrorCategory === "rate_limited"
+    || aiProviderErrorCategory === "quota_exhausted"
+    || aiProviderErrorCategory === "team_access_unverified"
+  ) {
+    return null;
+  }
   // GitHub 5xx: transient upstream outage. Worth counting, not an app defect —
   // report as warning under one stable fingerprint per command, and drop the
   // response body (an HTML error page with no diagnostic value).
@@ -226,6 +251,16 @@ export function resolveCommandFailureReport(command, error) {
   ) {
     return null;
   }
+  // A failed team-metadata bootstrap is reported by ensure/sync. Concurrent local
+  // project/glossary/QA readers can observe the same absent checkout; suppress those
+  // consequential command groups so one root failure does not fan out into three more.
+  if (
+    LOCAL_TEAM_METADATA_LIST_COMMANDS.has(command)
+    && normalizedMessage.includes("local team-metadata repo")
+    && normalizedMessage.includes("is not available yet")
+  ) {
+    return null;
+  }
   // Expected user-input / validation failures. The UI already surfaces these and they
   // are corrected by user action, not a code fix — do not report them as defects
   // (matches the telemetry policy in src-ui/AGENTS.md; see JAVASCRIPT-13/S/T/Q).
@@ -240,7 +275,7 @@ export function resolveCommandFailureReport(command, error) {
     return null;
   }
   if (
-    command === "create_gnosis_project_repo"
+    RESOURCE_CREATE_COMMANDS.has(command)
     && normalizedMessage.includes("name already exists on this account")
   ) {
     return null;
