@@ -155,7 +155,7 @@ function renderTranslateTools(editorChapter, rows, languages, sourceCode, target
       : sourceLanguage.code === targetLanguage.code || languageBaseCodesMatch(sourceLanguage, targetLanguage)
       ? "Choose a language other than the source language before translating."
       : !sourceHasTranslatableContent
-        ? "There is no source text to translate yet."
+        ? `Warning: the selected row has no text in ${sourceLanguage.name ?? sourceLanguage.code}.`
         : "";
   const alternateTargetMarkup =
     translateLanguages.usesAlternateTarget
