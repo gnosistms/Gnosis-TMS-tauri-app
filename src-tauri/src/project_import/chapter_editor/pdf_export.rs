@@ -1712,7 +1712,7 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
         "#let gnosis-title(t) = place(top, float: true, clearance: 4.6em, block(width: 100%, align(center)[#text(font: ({heading_family_list}), size: 14.5pt, tracking: 0.12em)[#upper(t)]#v(1.2em, weak: true)#image(\"flourish.svg\", width: 0.66in)]))\n"
     );
     format!(
-        "#set page(paper: \"{paper_size}\", margin: (x: 0.85in, y: 0.8in), numbering: \"1\")\n#set text(font: ({family_list}), size: {size_pt}pt, lang: {}, dir: {direction})\n#set par(justify: true, leading: {leading_em}em)\n{greek_rule}{heading_rule}{dropcap_rule}{title_rule}#show link: set text(fill: rgb(\"245c8a\"))\n{GNOSIS_IMAGE_RULE}\n",
+        "#set page(paper: \"{paper_size}\", margin: (x: 0.85in, y: 0.8in), numbering: \"1\")\n#set text(font: ({family_list}), size: {size_pt}pt, lang: {}, dir: {direction})\n#set par(justify: true, leading: {leading_em}em)\n{GNOSIS_FOOTNOTE_RULE}{greek_rule}{heading_rule}{dropcap_rule}{title_rule}#show link: set text(fill: rgb(\"245c8a\"))\n{GNOSIS_IMAGE_RULE}\n",
         typst_string(&document.language_code)
     )
 }
@@ -1721,6 +1721,27 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
 /// across typefaces. Completed with the family name and a closing parenthesis.
 const GREEK_RUN_RULE_PREFIX: &str =
     "#show regex(\"[\\u{0370}-\\u{03FF}\\u{1F00}-\\u{1FFF}]+\"): set text(font: ";
+
+/// Knuth-style footnotes: a normal baseline number sits in a fixed, right-aligned
+/// gutter while every line of note text shares one stable left edge. Typst's native
+/// footnote callout remains untouched, so references in the body stay superscripted.
+/// The marker is rebuilt as a link to preserve navigation in exported PDFs.
+const GNOSIS_FOOTNOTE_RULE: &str = r#"#set footnote.entry(indent: 0em)
+#show footnote.entry: it => {
+  let marker-width = 12pt
+  let marker-gap = 3pt
+  let nums = counter(footnote).at(it.note.location())
+  let number = numbering(it.note.numbering, ..nums)
+  let marker = link(it.note.location(), number + [.])
+  grid(
+    columns: (marker-width, 1fr),
+    column-gutter: marker-gap,
+    align: (end + top, start + top),
+    marker,
+    it.note.body,
+  )
+}
+"#;
 
 /// Scales an image to the full text width, but never taller than the space its own
 /// caption leaves on the page. The caption content is passed in purely so it can be
@@ -2363,6 +2384,27 @@ mod tests {
         // cap silently never applies.
         assert!(preamble.contains("measure(image(path, width: width))"));
         assert!(!preamble.contains("measure(image(path, width: 90%))"));
+    }
+
+    #[test]
+    fn typst_footnotes_use_a_fixed_hanging_gutter() {
+        let document = ExportDocument {
+            title: "Footnotes".to_string(),
+            language_code: "vi".to_string(),
+            blocks: Vec::new(),
+        };
+        let preamble = typst_preamble(&document, "a4");
+
+        // The native in-text callout stays intact; only entries at the foot of the
+        // page are rebuilt with a baseline number and a stable text column.
+        assert!(preamble.contains("#set footnote.entry(indent: 0em)"));
+        assert!(preamble.contains("let marker-width = 12pt"));
+        assert!(preamble.contains("let marker-gap = 3pt"));
+        assert!(preamble.contains("number + [.]"));
+        assert!(preamble.contains("columns: (marker-width, 1fr)"));
+        assert!(preamble.contains("column-gutter: marker-gap"));
+        assert!(preamble.contains("align: (end + top, start + top)"));
+        assert!(preamble.contains("marker,\n    it.note.body"));
     }
 
     #[test]
