@@ -2435,6 +2435,57 @@ test.describe("editor regressions", () => {
     await expect(page.locator('[data-nav-target="projects"]')).toHaveCount(0);
   });
 
+  test("active search highlights keep the textarea text geometry after resize", async ({ page }) => {
+    const targetText = [
+      "Một samyama bao gồm ba bước: quán tưởng, thiền và định.[1] Đầu tiên, người yogi chú tâm vào cơ thể vật chất của mình.",
+      "Tiếp theo, người ấy thiền và tập trung vào thân thể, khiến nó dần rơi vào trạng thái ngủ.[2] Cuối cùng, trong trạng thái định,",
+      "người yogi ngồi dậy, rời khỏi giường với cơ thể vật lý trong trạng thái Jinn. Khi đó, người ấy có thể thâm nhập vào siêu không gian,",
+      "thoát khỏi luật hấp dẫn và lơ lửng trong không trung.",
+    ].join(" ");
+    await page.setViewportSize({ width: 1500, height: 900 });
+    await mountEditorFixture(page, {
+      rowCount: 1,
+      fieldsByRowId: {
+        "fixture-row-0001": { vi: targetText },
+      },
+    });
+
+    await page.locator("[data-editor-search-input]").fill("siêu không gian");
+    const textarea = await activateMainEditorField(page, "fixture-row-0001", "vi");
+    await expect(page.locator(
+      '[data-editor-row-card][data-row-id="fixture-row-0001"] [data-editor-search-highlight]',
+    )).toBeVisible();
+    await textarea.evaluate((element) => {
+      const matchStart = element.value.indexOf("siêu không gian");
+      element.focus();
+      element.setSelectionRange(matchStart, matchStart);
+    });
+    await page.setViewportSize({ width: 980, height: 900 });
+
+    await expect.poll(async () => {
+      return await textarea.evaluate((element) => element.scrollHeight - element.clientHeight);
+    }).toBeLessThanOrEqual(2);
+    const geometry = await textarea.evaluate((element) => {
+      const stack = element.closest("[data-editor-glossary-field-stack]");
+      const overlay = stack?.querySelector("[data-editor-search-highlight]");
+      return overlay instanceof HTMLElement
+        ? {
+            textareaClientWidth: element.clientWidth,
+            overlayClientWidth: overlay.clientWidth,
+            textareaScrollHeight: element.scrollHeight,
+            overlayScrollHeight: overlay.scrollHeight,
+            textareaScrollTop: element.scrollTop,
+            overlayScrollTop: overlay.scrollTop,
+          }
+        : null;
+    });
+
+    expect(geometry).not.toBeNull();
+    expect(geometry.overlayClientWidth).toBe(geometry.textareaClientWidth);
+    expect(geometry.overlayScrollHeight).toBe(geometry.textareaScrollHeight);
+    expect(geometry.overlayScrollTop).toBe(geometry.textareaScrollTop);
+  });
+
   test("inactive glossary highlights render in the display text while the search overlay stays transparent", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 1, glossary: true }, { path: "/?platform=windows" });
 
