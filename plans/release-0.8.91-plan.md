@@ -25,7 +25,7 @@ Date: 2026-08-22
       Cargo.lock, and tauri.conf.json.
 - [x] Run version consistency, frontend, workflow, lint, formatting, Rust test,
       strict Clippy, and diff checks.
-- [ ] Review the release diff and publish it through a pull request.
+- [x] Review the release diff and publish it through a pull request.
 - [ ] Require green JavaScript, Rust, license, secret, Ubuntu browser, and Windows
       browser checks before merging.
 
