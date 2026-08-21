@@ -87,6 +87,25 @@ test("assistant translate button uses provider label and relies on composer plac
   assert.doesNotMatch(html, /Chat with the AI Assistant about the selected translation\./);
 });
 
+test("assistant sidebar identifies the empty source language", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter(),
+    [{
+      id: "row-1",
+      sections: [
+        { code: "es", text: "" },
+        { code: "vi", text: "" },
+      ],
+    }],
+    languages,
+    "es",
+    "vi",
+    createAiActionConfigurationState(),
+  );
+
+  assert.match(html, /Warning: the selected row has no text in Spanish\./);
+});
+
 test("assistant translate button remains visible with spinner while translation is running", () => {
   const html = renderTranslateSidebar(
     activeEditorChapter({
