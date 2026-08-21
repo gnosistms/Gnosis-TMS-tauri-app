@@ -147,10 +147,13 @@ export function nextEditorFootnoteMarker(text, footnotes) {
 }
 
 export function applyEditorFootnoteText(footnotes, marker, text) {
+  if (typeof text !== "string") {
+    throw new TypeError("Footnote text must be a string.");
+  }
   const normalizedMarker = normalizeFootnoteMarker(marker, 1);
   const entries = normalizeEditorFootnotes(footnotes);
   const index = entries.findIndex((entry) => entry.marker === normalizedMarker);
-  const nextEntry = { marker: normalizedMarker, text: typeof text === "string" ? text : String(text ?? "") };
+  const nextEntry = { marker: normalizedMarker, text };
   if (index < 0) {
     return [...entries, nextEntry].sort((left, right) => left.marker - right.marker);
   }

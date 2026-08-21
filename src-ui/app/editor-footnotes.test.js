@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  applyEditorFootnoteText,
   editorFootnoteMarkerSequence,
   editorFootnoteMarkerSequencesEqual,
   editorFootnotesForAiReview,
@@ -10,6 +11,22 @@ import {
   normalizeEditorRowFootnotesForSave,
   serializeEditorFootnotesForLegacy,
 } from "./editor-footnotes.js";
+
+test("single-footnote updates reject structured values instead of stringifying them", () => {
+  const original = [
+    { marker: 1, text: "One" },
+    { marker: 2, text: "Two" },
+  ];
+
+  assert.throws(
+    () => applyEditorFootnoteText(original, 1, original),
+    new TypeError("Footnote text must be a string."),
+  );
+  assert.deepEqual(original, [
+    { marker: 1, text: "One" },
+    { marker: 2, text: "Two" },
+  ]);
+});
 
 test("AI Review footnote helpers preserve markers and merge text by marker", () => {
   const original = [
