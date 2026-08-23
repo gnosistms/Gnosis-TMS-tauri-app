@@ -29,6 +29,7 @@ const MAX_FONT_BYTES: u64 = 30 * 1024 * 1024;
 const TYPST_COMPILE_TIMEOUT: Duration = Duration::from_secs(120);
 const CANCELLED: &str = "__GNOSIS_PDF_EXPORT_CANCELLED__";
 const MAX_TYPST_DIAGNOSTIC_BYTES: usize = 128 * 1024;
+const PDF_IMAGE_PREPARATION_REVISION: &str = "pdf-images-v1";
 
 #[derive(Clone, Debug, PartialEq)]
 enum PreparedTypstImage {
@@ -44,6 +45,81 @@ enum PreparedTypstImage {
 enum ResolvedPdfImage {
     Bytes(Vec<u8>),
     Placeholder(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PdfImageCacheScope {
+    installation_id: i64,
+    repo_name: String,
+    project_id: Option<String>,
+    project_full_name: Option<String>,
+    chapter_id: String,
+}
+
+impl PdfImageCacheScope {
+    fn from_input(input: &PdfChapterExportInput) -> Self {
+        Self {
+            installation_id: input.installation_id,
+            repo_name: input.repo_name.clone(),
+            project_id: input.project_id.clone(),
+            project_full_name: input.project_full_name.clone(),
+            chapter_id: input.chapter_id.clone(),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct CachedPreparedPdfImage {
+    fingerprint: String,
+    bytes: Arc<Vec<u8>>,
+    aspect: Option<f64>,
+}
+
+#[derive(Default)]
+struct PdfImagePreparationCache {
+    scope: Option<PdfImageCacheScope>,
+    entries: HashMap<String, CachedPreparedPdfImage>,
+}
+
+struct PdfWorkspacePreparationOptions<'a> {
+    footnote_links_as_plain_text: bool,
+    paper_size: &'a str,
+    image_cache_scope: &'a PdfImageCacheScope,
+}
+
+impl PdfImagePreparationCache {
+    fn use_scope(&mut self, scope: &PdfImageCacheScope) {
+        if self.scope.as_ref() != Some(scope) {
+            self.scope = Some(scope.clone());
+            self.entries.clear();
+        }
+    }
+
+    fn get(
+        &self,
+        scope: &PdfImageCacheScope,
+        key: &str,
+        fingerprint: &str,
+    ) -> Option<CachedPreparedPdfImage> {
+        (self.scope.as_ref() == Some(scope))
+            .then(|| self.entries.get(key))
+            .flatten()
+            .filter(|entry| entry.fingerprint == fingerprint)
+            .cloned()
+    }
+
+    fn insert(&mut self, scope: &PdfImageCacheScope, key: String, entry: CachedPreparedPdfImage) {
+        // A slower export for the previous chapter must not repopulate the cache
+        // after a newer export has switched its single-chapter scope.
+        if self.scope.as_ref() == Some(scope) {
+            self.entries.insert(key, entry);
+        }
+    }
+}
+
+fn pdf_image_preparation_cache() -> &'static Mutex<PdfImagePreparationCache> {
+    static CACHE: OnceLock<Mutex<PdfImagePreparationCache>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(PdfImagePreparationCache::default()))
 }
 
 pub(crate) type PdfChapterExportInput = ExportChapterFileInput;
@@ -498,6 +574,7 @@ async fn run_pdf_export(
     cancelled: Arc<AtomicBool>,
 ) -> Result<(), String> {
     let paper_size = normalize_pdf_paper_size(&input.paper_size)?;
+    let image_cache_scope = PdfImageCacheScope::from_input(&input);
     emit_progress(
         app,
         job_id,
@@ -544,13 +621,17 @@ async fn run_pdf_export(
     let prep_app = app.clone();
     let prep_job_id = job_id.to_string();
     let workspace = tauri::async_runtime::spawn_blocking(move || {
+        let options = PdfWorkspacePreparationOptions {
+            footnote_links_as_plain_text,
+            paper_size,
+            image_cache_scope: &image_cache_scope,
+        };
         prepare_pdf_workspace(
             &prep_app,
             &prep_job_id,
             &prepared_document,
-            footnote_links_as_plain_text,
-            paper_size,
             &prep_font_dir,
+            &options,
             &prep_cancelled,
         )
     })
@@ -1003,12 +1084,18 @@ fn prepare_typst_workspace(
     job_id: &str,
     workspace: &Path,
     document: &ExportDocument,
-    footnote_links_as_plain_text: bool,
-    paper_size: &str,
+    options: &PdfWorkspacePreparationOptions<'_>,
     cancelled: &AtomicBool,
 ) -> Result<(), String> {
     check_cancelled(cancelled)?;
-    let image_paths = prepare_typst_images(app, job_id, workspace, document, cancelled)?;
+    let image_paths = prepare_typst_images(
+        app,
+        job_id,
+        workspace,
+        document,
+        options.image_cache_scope,
+        cancelled,
+    )?;
     let mut anchored_footnotes: HashMap<usize, Vec<(usize, String)>> = HashMap::new();
     let mut anchored_numbers = HashSet::new();
     for block in &document.blocks {
@@ -1032,7 +1119,7 @@ fn prepare_typst_workspace(
     fs::write(workspace.join("flourish.svg"), CHAPTER_FLOURISH_SVG)
         .map_err(|error| format!("Could not prepare the title ornament for the PDF: {error}"))?;
     write_droplet_package(workspace)?;
-    let mut source = typst_preamble(document, paper_size);
+    let mut source = typst_preamble(document, options.paper_size);
     // No spacer after the title: it is a top float now, and its `clearance`
     // provides the gap to whatever the page starts with.
     source.push_str(&format!("#gnosis-title({})\n", typst_string(title)));
@@ -1059,7 +1146,7 @@ fn prepare_typst_workspace(
                         .get(&block_index)
                         .map(Vec::as_slice)
                         .unwrap_or_default(),
-                    footnote_links_as_plain_text,
+                    options.footnote_links_as_plain_text,
                 );
                 match normalize_editor_text_style_value(Some(text_style)).as_str() {
                     "heading1" => source.push_str(&format!("= {inline}\n\n")),
@@ -1081,7 +1168,7 @@ fn prepare_typst_workspace(
             ExportBlock::Footnote { number, text, .. } if !anchored_numbers.contains(number) => {
                 source.push_str(&format!(
                     "#footnote[{}]\n",
-                    render_inline_typst(text, footnote_links_as_plain_text)
+                    render_inline_typst(text, options.footnote_links_as_plain_text)
                 ));
             }
             ExportBlock::Footnote { .. } => {}
@@ -1203,23 +1290,16 @@ fn prepare_pdf_workspace(
     app: &AppHandle,
     job_id: &str,
     document: &ExportDocument,
-    footnote_links_as_plain_text: bool,
-    paper_size: &str,
     font_dir: &Path,
+    options: &PdfWorkspacePreparationOptions<'_>,
     cancelled: &AtomicBool,
 ) -> Result<PathBuf, String> {
     validate_document_glyphs(document, font_dir)?;
     check_cancelled(cancelled)?;
     let workspace = pdf_workspace()?;
-    if let Err(error) = prepare_typst_workspace(
-        Some(app),
-        job_id,
-        &workspace,
-        document,
-        footnote_links_as_plain_text,
-        paper_size,
-        cancelled,
-    ) {
+    if let Err(error) =
+        prepare_typst_workspace(Some(app), job_id, &workspace, document, options, cancelled)
+    {
         let _ = fs::remove_dir_all(&workspace);
         return Err(error);
     }
@@ -1231,8 +1311,12 @@ fn prepare_typst_images(
     job_id: &str,
     workspace: &Path,
     document: &ExportDocument,
+    cache_scope: &PdfImageCacheScope,
     cancelled: &AtomicBool,
 ) -> Result<HashMap<String, PreparedTypstImage>, String> {
+    if let Ok(mut cache) = pdf_image_preparation_cache().lock() {
+        cache.use_scope(cache_scope);
+    }
     let mut unique = Vec::new();
     let mut seen = HashSet::new();
     for block in &document.blocks {
@@ -1257,25 +1341,47 @@ fn prepare_typst_images(
         return Ok(HashMap::new());
     }
 
-    let total_images = unique.len() as u64;
+    let mut cached_images = HashMap::new();
+    let mut pending_images = Vec::new();
+    for (key, image, caption) in unique {
+        check_cancelled(cancelled)?;
+        let (fingerprint, source_bytes) = pdf_image_fingerprint(&image)?;
+        let cached = pdf_image_preparation_cache()
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(cache_scope, &key, &fingerprint));
+        if let Some(cached) = cached {
+            cached_images.insert(key, cached);
+        } else {
+            pending_images.push((key, image, caption, fingerprint, source_bytes));
+        }
+    }
+
+    let total_images = (cached_images.len() + pending_images.len()) as u64;
+    let cached_count = cached_images.len() as u64;
     if let Some(app) = app {
         emit_progress(
             app,
             job_id,
             "running",
             "preparing-images",
-            &format!("Preparing images (0 of {total_images})…"),
-            PdfProgressValue::determinate(0, total_images, "items"),
+            &format!("Preparing images ({cached_count} of {total_images})…"),
+            PdfProgressValue::determinate(cached_count, total_images, "items"),
         );
     }
-    let queue = Arc::new(Mutex::new(VecDeque::from(unique.clone())));
+    let pending_order = pending_images
+        .iter()
+        .map(|(key, _, _, fingerprint, _)| (key.clone(), fingerprint.clone()))
+        .collect::<Vec<_>>();
+    let worker_count = pending_images.len().min(4);
+    let queue = Arc::new(Mutex::new(VecDeque::from(pending_images)));
     let results = Arc::new(Mutex::new(HashMap::<
         String,
         Result<ResolvedPdfImage, String>,
     >::new()));
-    let completed = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let completed = Arc::new(std::sync::atomic::AtomicU64::new(cached_count));
     std::thread::scope(|scope| {
-        for _ in 0..unique.len().min(4) {
+        for _ in 0..worker_count {
             let queue = queue.clone();
             let results = results.clone();
             let completed = completed.clone();
@@ -1286,10 +1392,14 @@ fn prepare_typst_images(
                     return;
                 }
                 let next = queue.lock().ok().and_then(|mut queue| queue.pop_front());
-                let Some((key, image, caption)) = next else {
+                let Some((key, image, caption, _, source_bytes)) = next else {
                     return;
                 };
-                let result = resolve_pdf_image(&image, &caption).map(|resolved| match resolved {
+                let resolved = match source_bytes {
+                    Some(bytes) => Ok(ResolvedPdfImage::Bytes(bytes)),
+                    None => resolve_pdf_image(&image, &caption),
+                };
+                let result = resolved.map(|resolved| match resolved {
                     ResolvedPdfImage::Bytes(bytes) => {
                         ResolvedPdfImage::Bytes(optimize_pdf_image_bytes(bytes))
                     }
@@ -1320,7 +1430,7 @@ fn prepare_typst_images(
         .lock()
         .map_err(|_| "The PDF image worker results are unavailable.".to_string())?;
     let mut prepared_images = HashMap::new();
-    for (index, (key, _, _)) in unique.into_iter().enumerate() {
+    for (index, (key, fingerprint)) in pending_order.into_iter().enumerate() {
         let resolved = results
             .remove(&key)
             .ok_or_else(|| "An image could not be prepared for the PDF.".to_string())??;
@@ -1332,9 +1442,21 @@ fn prepare_typst_images(
                 })?;
                 let relative = format!("images/image-{index}.{extension}");
                 let aspect = typst_image_aspect(&bytes);
-                fs::write(workspace.join(&relative), bytes).map_err(|error| {
+                let bytes = Arc::new(bytes);
+                fs::write(workspace.join(&relative), bytes.as_slice()).map_err(|error| {
                     format!("Could not prepare an image for PDF export: {error}")
                 })?;
+                if let Ok(mut cache) = pdf_image_preparation_cache().lock() {
+                    cache.insert(
+                        cache_scope,
+                        key.clone(),
+                        CachedPreparedPdfImage {
+                            fingerprint,
+                            bytes,
+                            aspect,
+                        },
+                    );
+                }
                 prepared_images.insert(
                     key,
                     PreparedTypstImage::File {
@@ -1348,7 +1470,47 @@ fn prepare_typst_images(
             }
         }
     }
+    let cached_offset = prepared_images.len();
+    for (index, (key, cached)) in cached_images.into_iter().enumerate() {
+        let extension = typst_image_extension(cached.bytes.as_slice()).ok_or_else(|| {
+            "A cached image uses a format that Typst cannot include in the PDF.".to_string()
+        })?;
+        let relative = format!("images/image-{}.{extension}", cached_offset + index);
+        fs::write(workspace.join(&relative), cached.bytes.as_slice())
+            .map_err(|error| format!("Could not reuse a prepared PDF image: {error}"))?;
+        prepared_images.insert(
+            key,
+            PreparedTypstImage::File {
+                path: relative,
+                aspect: cached.aspect,
+            },
+        );
+    }
     Ok(prepared_images)
+}
+
+fn pdf_image_fingerprint(image: &ExportImage) -> Result<(String, Option<Vec<u8>>), String> {
+    let mut digest = Sha256::new();
+    digest.update(PDF_IMAGE_PREPARATION_REVISION.as_bytes());
+    digest.update([0]);
+    match image {
+        ExportImage::Url(url) => {
+            // A changed URL is a changed image input. Keeping the successful bytes
+            // avoids another network request on repeated exports of the chapter.
+            digest.update(b"url\0");
+            digest.update(url.as_bytes());
+            Ok((format!("{:x}", digest.finalize()), None))
+        }
+        ExportImage::Upload { absolute_path, .. } => {
+            let bytes = fs::read(absolute_path).map_err(|_| {
+                "An uploaded image is missing from the local project. Sync the project and try again."
+                    .to_string()
+            })?;
+            digest.update(b"upload\0");
+            digest.update(&bytes);
+            Ok((format!("{:x}", digest.finalize()), Some(bytes)))
+        }
+    }
 }
 
 /// Print-resolution pixel caps: 300 DPI over the letter text area
@@ -2189,6 +2351,76 @@ fn emit_progress(
 mod tests {
     use super::*;
 
+    fn test_image_cache_scope(chapter_id: &str) -> PdfImageCacheScope {
+        PdfImageCacheScope {
+            installation_id: 7,
+            repo_name: "book".to_string(),
+            project_id: Some("project-1".to_string()),
+            project_full_name: Some("team/book".to_string()),
+            chapter_id: chapter_id.to_string(),
+        }
+    }
+
+    #[test]
+    fn pdf_image_cache_reuses_matches_invalidates_individually_and_clears_by_chapter() {
+        let chapter_a = test_image_cache_scope("chapter-a");
+        let chapter_b = test_image_cache_scope("chapter-b");
+        let mut cache = PdfImagePreparationCache::default();
+        cache.use_scope(&chapter_a);
+        cache.insert(
+            &chapter_a,
+            "file:first".to_string(),
+            CachedPreparedPdfImage {
+                fingerprint: "first-v1".to_string(),
+                bytes: Arc::new(vec![1, 2, 3]),
+                aspect: Some(0.5),
+            },
+        );
+        cache.insert(
+            &chapter_a,
+            "file:second".to_string(),
+            CachedPreparedPdfImage {
+                fingerprint: "second-v1".to_string(),
+                bytes: Arc::new(vec![4, 5, 6]),
+                aspect: Some(1.0),
+            },
+        );
+
+        assert!(cache.get(&chapter_a, "file:first", "first-v1").is_some());
+        assert!(cache.get(&chapter_a, "file:first", "first-v2").is_none());
+        assert!(cache.get(&chapter_a, "file:second", "second-v1").is_some());
+
+        cache.use_scope(&chapter_b);
+        assert!(cache.get(&chapter_b, "file:first", "first-v1").is_none());
+        assert!(cache.entries.is_empty());
+    }
+
+    #[test]
+    fn uploaded_pdf_image_fingerprint_tracks_file_content() {
+        let path = std::env::temp_dir().join(format!("gnosis-pdf-cache-{}.png", Uuid::now_v7()));
+        fs::write(&path, b"first image bytes").expect("write first image");
+        let image = ExportImage::Upload {
+            repo_relative_path: "image.png".to_string(),
+            raw_url: None,
+            absolute_path: path.clone(),
+        };
+        let (first, first_bytes) = pdf_image_fingerprint(&image).expect("fingerprint first image");
+        fs::write(&path, b"changed image bytes").expect("write changed image");
+        let (changed, changed_bytes) =
+            pdf_image_fingerprint(&image).expect("fingerprint changed image");
+        let _ = fs::remove_file(path);
+
+        assert_ne!(first, changed);
+        assert_eq!(
+            first_bytes.as_deref(),
+            Some(b"first image bytes".as_slice())
+        );
+        assert_eq!(
+            changed_bytes.as_deref(),
+            Some(b"changed image bytes".as_slice())
+        );
+    }
+
     #[test]
     fn language_font_selection_uses_the_matching_serif_family() {
         assert!(required_fonts("ja-JP", &BTreeSet::new())
@@ -2953,13 +3185,18 @@ mod tests {
                 },
             ],
         };
+        let image_cache_scope = test_image_cache_scope("smoke-chapter");
+        let options = PdfWorkspacePreparationOptions {
+            footnote_links_as_plain_text: true,
+            paper_size: "a4",
+            image_cache_scope: &image_cache_scope,
+        };
         prepare_typst_workspace(
             None,
             "",
             &workspace,
             &document,
-            true,
-            "a4",
+            &options,
             &AtomicBool::new(false),
         )
         .expect("render Typst source");
