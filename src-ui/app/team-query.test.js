@@ -74,7 +74,13 @@ const {
 } = await import("./team-query.js");
 const { queryClient, teamKeys } = await import("./query-client.js");
 const { saveStoredTeamRecords, setActiveStorageLogin } = await import("./team-storage.js");
-const { resetTeamWriteCoordinator } = await import("./team-write-coordinator.js");
+const {
+  getTeamWriteIntent,
+  requestTeamWriteIntent,
+  resetTeamWriteCoordinator,
+  teamLifecycleIntentKey,
+  teamWriteScope,
+} = await import("./team-write-coordinator.js");
 const { loadUserTeams } = await import("./team-flow/sync.js");
 const { renderTeamsScreen } = await import("../screens/teams/index.js");
 
@@ -208,6 +214,44 @@ test("createTeamsQueryOptions fetches remote installations and updates persisten
   assert.equal(invokeLog.length, 1);
   const stored = readPersistentValue("gnosis-tms-team-records:owner", []);
   assert.equal(stored[0].name, "Team One Remote");
+});
+
+test("a stale post-delete listing cannot restore a team or overwrite its deleted cache", async () => {
+  installFixture();
+  const activeTeam = team();
+  saveStoredTeamRecords([activeTeam]);
+
+  requestTeamWriteIntent({
+    key: teamLifecycleIntentKey(activeTeam.id),
+    scope: teamWriteScope(activeTeam),
+    teamId: activeTeam.id,
+    type: "teamLifecycle",
+    value: { lifecycleState: "deleted", deletedAt: "2026-08-24T00:00:00.000Z" },
+  }, {
+    run: async () => null,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  // Query observers can replay the optimistic cache before the invalidated query
+  // finishes. That cache entry is not authoritative confirmation of the write.
+  applyTeamsQuerySnapshotToState(createTeamsQuerySnapshot({
+    items: [],
+    deletedItems: [{ ...activeTeam, isDeleted: true }],
+    authLogin: "owner",
+  }));
+  assert.ok(getTeamWriteIntent(teamLifecycleIntentKey(activeTeam.id)));
+
+  // The broker may briefly return its pre-write description. Keep the intent layered
+  // over that stale result, including in the persistent cache used after navigation.
+  invokeHandler = async () => [installation({ description: "Remote description" })];
+  const snapshot = await createTeamsQueryOptions({ authLogin: "owner" }).queryFn();
+
+  assert.equal(snapshot.items.length, 0);
+  assert.equal(snapshot.deletedItems[0].id, activeTeam.id);
+  const stored = readPersistentValue("gnosis-tms-team-records:owner", []);
+  assert.equal(stored[0].isDeleted, true);
+  assert.match(stored[0].description, /^\[DELETED\]/u);
+  assert.ok(getTeamWriteIntent(teamLifecycleIntentKey(activeTeam.id)));
 });
 
 test("loadUserTeams clears team refresh state after successful remote refresh", async () => {
