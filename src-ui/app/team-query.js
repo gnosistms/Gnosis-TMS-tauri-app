@@ -3,7 +3,6 @@ import {
   upsertStoredTeamRecords,
   loadStoredTeamPendingMutations,
   replaceStoredTeamRecords,
-  saveStoredTeamRecords,
   splitStoredTeamRecords,
 } from "./team-storage.js";
 import {
@@ -104,7 +103,6 @@ export function applyTeamsQuerySnapshotToState(snapshot, {
   }
 
   if (snapshot) {
-    clearConfirmedTeamWriteIntents(snapshot);
     const visibleSnapshot = applyTeamWriteIntentsToSnapshot(snapshot);
     applyTeamSnapshotToState({
       items: Array.isArray(visibleSnapshot.items) ? visibleSnapshot.items : [],
@@ -191,12 +189,22 @@ export function createTeamsQueryOptions(options = {}) {
         .filter(([installationId]) => !respondedInstallationIds.has(installationId))
         .map(([, team]) => retainUnlistedStoredTeam(team))
         .filter(Boolean);
+      const authoritativeSnapshot = {
+        items: reconciledTeams.filter((team) => !team.isDeleted),
+        deletedItems: reconciledTeams.filter((team) => team.isDeleted),
+      };
+      for (const team of retainedMissingTeams) {
+        (team.isDeleted ? authoritativeSnapshot.deletedItems : authoritativeSnapshot.items)
+          .push(team);
+      }
+      clearConfirmedTeamWriteIntents(authoritativeSnapshot);
+      const nextSnapshot = applyTeamWriteIntentsToSnapshot(authoritativeSnapshot);
       const nextStoredTeams = replaceStoredTeamRecords([
-        ...reconciledTeams,
-        ...retainedMissingTeams,
+        ...nextSnapshot.items,
+        ...nextSnapshot.deletedItems,
       ]);
       const nextStoredSnapshot = splitStoredTeamRecords(nextStoredTeams);
-      const snapshot = createTeamsQuerySnapshot({
+      return createTeamsQuerySnapshot({
         ...applyLocalTeamHardDeleteState({
           items: nextStoredSnapshot.activeTeams,
           deletedItems: nextStoredSnapshot.deletedTeams,
@@ -204,8 +212,6 @@ export function createTeamsQueryOptions(options = {}) {
         discovery: { status: "ready", error: "" },
         authLogin,
       });
-      clearConfirmedTeamWriteIntents(snapshot);
-      return applyTeamWriteIntentsToSnapshot(snapshot);
     },
   };
 }
