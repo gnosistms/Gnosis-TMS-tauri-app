@@ -64,7 +64,7 @@ impl WordPressSite {
             let mut endpoint = self.api_base.clone();
             let (path, query) = path_and_query
                 .split_once('?')
-                .map_or((path_and_query, ""), |parts| parts);
+                .unwrap_or((path_and_query, ""));
             endpoint.set_query(None);
             endpoint
                 .query_pairs_mut()
