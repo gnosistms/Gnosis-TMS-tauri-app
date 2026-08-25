@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use reqwest::blocking::Client;
+use reqwest::header::LINK;
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter};
 use url::Url;
@@ -13,8 +14,9 @@ use crate::{
     wordpress::client::{WordPressSite, WORDPRESS_RECONNECT_MESSAGE},
     wordpress::debug::wordpress_debug_log,
     wordpress::storage::{
-        clear_wordpress_connection, load_wordpress_connection, WordPressConnection,
-        WordPressConnectionInfo,
+        forget_wordpress_connection as forget_saved_wordpress_connection,
+        list_wordpress_connections as list_saved_wordpress_connections, load_wordpress_connection,
+        save_wordpress_connection, WordPressConnection, WordPressConnectionInfo,
     },
 };
 
@@ -41,6 +43,8 @@ pub(crate) struct WordPressFootnoteInput {
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct WordPressExportInput {
+    storage_login: String,
+    site_id: String,
     installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
@@ -66,6 +70,7 @@ pub(crate) struct WordPressExportProgressPayload {
     post_title: Option<String>,
     post_status: Option<String>,
     post_edit_link: Option<String>,
+    error_code: Option<&'static str>,
 }
 
 #[derive(serde::Serialize)]
@@ -79,31 +84,249 @@ pub(crate) struct WordPressPostSummary {
 }
 
 #[tauri::command]
-pub(crate) async fn get_wordpress_connection(
+pub(crate) async fn list_wordpress_connections(
     app: AppHandle,
-) -> Result<Option<WordPressConnectionInfo>, String> {
+    storage_login: String,
+) -> Result<Vec<WordPressConnectionInfo>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        Ok(load_wordpress_connection(&app)?.map(|connection| connection.info()))
+        list_saved_wordpress_connections(&app, &storage_login)
     })
     .await
-    .map_err(|error| format!("Could not read the WordPress connection: {error}"))?
+    .map_err(|error| format!("Could not read the WordPress connections: {error}"))?
 }
 
 #[tauri::command]
-pub(crate) async fn disconnect_wordpress(app: AppHandle) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || clear_wordpress_connection(&app))
+pub(crate) async fn forget_wordpress_connection(
+    app: AppHandle,
+    storage_login: String,
+    site_id: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        forget_saved_wordpress_connection(&app, &storage_login, &site_id)
+    })
+    .await
+    .map_err(|error| format!("Could not forget the WordPress connection: {error}"))?
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WordPressSiteInspection {
+    kind: &'static str,
+    site_url: String,
+    display_name: String,
+    blog_id: Option<String>,
+    api_root: Option<String>,
+}
+
+#[tauri::command]
+pub(crate) async fn inspect_wordpress_site(
+    site_url: String,
+) -> Result<WordPressSiteInspection, String> {
+    tauri::async_runtime::spawn_blocking(move || inspect_wordpress_site_blocking(&site_url))
         .await
-        .map_err(|error| format!("Could not clear the WordPress connection: {error}"))?
+        .map_err(|error| format!("Could not inspect the WordPress site: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn save_self_hosted_wordpress_connection(
+    app: AppHandle,
+    storage_login: String,
+    site_url: String,
+    api_root: String,
+    username: String,
+    password: String,
+    allow_insecure: bool,
+) -> Result<WordPressConnectionInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let site_url_parsed = parse_http_url(&site_url)?;
+        let api_root_parsed = parse_http_url(&api_root)?;
+        if site_url_parsed.host_str() != api_root_parsed.host_str()
+            || site_url_parsed.port_or_known_default() != api_root_parsed.port_or_known_default()
+        {
+            return Err("The discovered WordPress API uses a different origin. Enter that site address directly before sending credentials.".to_string());
+        }
+        if (site_url_parsed.scheme() == "http" || api_root_parsed.scheme() == "http") && !allow_insecure {
+            return Err("Confirm that you want to send WordPress credentials over unencrypted HTTP.".to_string());
+        }
+        if username.trim().is_empty() || password.is_empty() {
+            return Err("Enter the WordPress username and password.".to_string());
+        }
+        let display_name = discover_self_hosted_name(&api_root_parsed).unwrap_or_default();
+        let connection = WordPressConnection::self_hosted(
+            site_url_parsed.to_string(), display_name, api_root_parsed.to_string(), username, password,
+        );
+        let site = WordPressSite::from_connection(&connection)?;
+        let client = wordpress_http_client()?;
+        let user = site.get_json(&client, "users/me?context=edit")
+            .map_err(|error| error.trim_start_matches("WORDPRESS_REAUTH_REQUIRED: ").to_string())?;
+        let capabilities = user.get("capabilities").and_then(|value| value.as_object());
+        let can_edit = capabilities.and_then(|items| items.get("edit_posts"))
+            .and_then(|value| value.as_bool()).unwrap_or(false);
+        let can_upload = capabilities.and_then(|items| items.get("upload_files"))
+            .and_then(|value| value.as_bool()).unwrap_or(false);
+        if !can_edit || !can_upload {
+            return Err("This WordPress user must be allowed to edit posts and upload files.".to_string());
+        }
+        save_wordpress_connection(&app, &storage_login, &connection)?;
+        Ok(connection.info())
+    })
+    .await
+    .map_err(|error| format!("Could not connect the self-hosted WordPress site: {error}"))?
+}
+
+fn parse_http_url(value: &str) -> Result<Url, String> {
+    let with_scheme = if value.trim().contains("://") {
+        value.trim().to_string()
+    } else {
+        format!("https://{}", value.trim())
+    };
+    let url = Url::parse(&with_scheme)
+        .map_err(|_| "Enter a valid WordPress site address.".to_string())?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return Err("Enter an HTTP or HTTPS WordPress site address.".to_string());
+    }
+    Ok(url)
+}
+
+fn inspect_wordpress_site_blocking(value: &str) -> Result<WordPressSiteInspection, String> {
+    let site_url = parse_http_url(value)?;
+    let client = Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|error| format!("Could not create the WordPress discovery client: {error}"))?;
+    if let Some(host) = site_url.host_str() {
+        let lookup = wordpress_com_site_lookup_url(host)?;
+        if let Ok(response) = client
+            .get(lookup)
+            .header("Accept", "application/json")
+            .send()
+        {
+            if response.status().is_success() {
+                if let Ok(payload) = response.json::<serde_json::Value>() {
+                    if let Some(blog_id) = payload.get("ID").and_then(|value| value.as_u64()) {
+                        return Ok(WordPressSiteInspection {
+                            kind: "wordpressCom",
+                            site_url: payload
+                                .get("URL")
+                                .and_then(|value| value.as_str())
+                                .unwrap_or(site_url.as_str())
+                                .trim_end_matches('/')
+                                .to_string(),
+                            display_name: payload
+                                .get("name")
+                                .and_then(|value| value.as_str())
+                                .unwrap_or_default()
+                                .to_string(),
+                            blog_id: Some(blog_id.to_string()),
+                            api_root: None,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    let api_root = discover_wordpress_api_root(&client, &site_url)?;
+    let display_name = discover_self_hosted_name(&api_root).unwrap_or_default();
+    Ok(WordPressSiteInspection {
+        kind: "selfHosted",
+        site_url: site_url.to_string().trim_end_matches('/').to_string(),
+        display_name,
+        blog_id: None,
+        api_root: Some(api_root.to_string().trim_end_matches('/').to_string()),
+    })
+}
+
+fn wordpress_com_site_lookup_url(host: &str) -> Result<Url, String> {
+    let mut lookup = Url::parse("https://public-api.wordpress.com/rest/v1.1/sites/")
+        .map_err(|error| format!("Could not build the WordPress.com discovery URL: {error}"))?;
+    lookup
+        .path_segments_mut()
+        .map_err(|_| "Could not build the WordPress.com discovery URL.".to_string())?
+        .pop_if_empty()
+        .push(host);
+    Ok(lookup)
+}
+
+fn discover_wordpress_api_root(client: &Client, site_url: &Url) -> Result<Url, String> {
+    if let Ok(response) = client.head(site_url.clone()).send() {
+        for value in response.headers().get_all(LINK) {
+            if let Ok(value) = value.to_str() {
+                for part in value.split(',') {
+                    if part.contains("rel=\"https://api.w.org/\"") {
+                        if let (Some(start), Some(end)) = (part.find('<'), part.find('>')) {
+                            if let Ok(url) = Url::parse(&part[start + 1..end]) {
+                                return Ok(url);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut base = site_url.clone();
+    if !base.path().ends_with('/') {
+        base.set_path(&format!("{}/", base.path()));
+    }
+    for candidate in [base.join("wp-json/").ok(), {
+        let mut route = base.clone();
+        route.set_query(Some("rest_route=/"));
+        Some(route)
+    }]
+    .into_iter()
+    .flatten()
+    {
+        if let Ok(response) = client
+            .get(candidate.clone())
+            .header("Accept", "application/json")
+            .send()
+        {
+            if response.status().is_success() {
+                if let Ok(payload) = response.json::<serde_json::Value>() {
+                    if payload
+                        .get("namespaces")
+                        .and_then(|value| value.as_array())
+                        .is_some_and(|items| {
+                            items.iter().any(|item| item.as_str() == Some("wp/v2"))
+                        })
+                    {
+                        return Ok(candidate);
+                    }
+                }
+            }
+        }
+    }
+    Err("Could not discover a WordPress REST API at that address.".to_string())
+}
+
+fn discover_self_hosted_name(api_root: &Url) -> Option<String> {
+    let client = Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .ok()?;
+    let payload = client
+        .get(api_root.clone())
+        .header("Accept", "application/json")
+        .send()
+        .ok()?
+        .json::<serde_json::Value>()
+        .ok()?;
+    payload
+        .get("name")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
 }
 
 #[tauri::command]
 pub(crate) async fn search_wordpress_posts(
     app: AppHandle,
+    storage_login: String,
+    site_id: String,
     search: String,
 ) -> Result<Vec<WordPressPostSummary>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let connection = require_wordpress_connection(&app)?;
-        let site = WordPressSite::wordpress_com(&connection)?;
+        let connection = require_wordpress_connection(&app, &storage_login, &site_id)?;
+        let site = WordPressSite::from_connection(&connection)?;
         let client = wordpress_http_client()?;
 
         let path = wordpress_post_search_path(&search, &connection);
@@ -191,7 +414,7 @@ fn url_host_matches_connection(url: &Url, connection: &WordPressConnection) -> b
     let Some(input_host) = url.host_str() else {
         return false;
     };
-    let Ok(site_url) = Url::parse(connection.blog_url.trim()) else {
+    let Ok(site_url) = Url::parse(connection.site_url.trim()) else {
         return false;
     };
     let Some(site_host) = site_url.host_str() else {
@@ -210,7 +433,7 @@ fn wordpress_com_editor_post_id(url: &Url, connection: &WordPressConnection) -> 
     if segments.len() < 3 || segments.first()? != &"post" {
         return None;
     }
-    if segments.get(1)?.trim() != connection.blog_id.trim() {
+    if segments.get(1)?.trim() != connection.blog_id()?.trim() {
         return None;
     }
     parse_positive_u64(segments.get(2)?)
@@ -270,6 +493,9 @@ pub(crate) async fn export_chapter_to_wordpress(
     app: AppHandle,
     input: WordPressExportInput,
 ) -> Result<(), String> {
+    if input.storage_login.trim().is_empty() || input.site_id.trim().is_empty() {
+        return Err("Choose a connected WordPress site first.".to_string());
+    }
     if input.job_id.trim().is_empty() {
         return Err("The WordPress export is missing a job id.".to_string());
     }
@@ -322,17 +548,20 @@ pub(crate) async fn export_chapter_to_wordpress(
                         post_title: outcome.post_title,
                         post_status: outcome.post_status,
                         post_edit_link: outcome.post_edit_link,
+                        error_code: None,
                     },
                 )
             }
             Err(error) => {
                 wordpress_debug_log(&format!("export failed: {error}"));
+                let reauth_required = error.contains("WORDPRESS_REAUTH_REQUIRED:");
+                let message = error.replace("WORDPRESS_REAUTH_REQUIRED: ", "");
                 emit_export_progress(
                     &app,
                     WordPressExportProgressPayload {
                         job_id,
                         status: "error",
-                        message: error,
+                        message,
                         current: None,
                         total: None,
                         post_link: None,
@@ -340,6 +569,7 @@ pub(crate) async fn export_chapter_to_wordpress(
                         post_title: None,
                         post_status: None,
                         post_edit_link: None,
+                        error_code: reauth_required.then_some("reauthRequired"),
                     },
                 )
             }
@@ -362,8 +592,8 @@ fn run_wordpress_export(
     app: &AppHandle,
     input: WordPressExportInput,
 ) -> Result<WordPressExportOutcome, String> {
-    let connection = require_wordpress_connection(app)?;
-    let site = WordPressSite::wordpress_com(&connection)?;
+    let connection = require_wordpress_connection(app, &input.storage_login, &input.site_id)?;
+    let site = WordPressSite::from_connection(&connection)?;
     let client = wordpress_http_client()?;
 
     let image_sources = collect_image_sources(&input.content);
@@ -407,6 +637,7 @@ fn run_wordpress_export(
                     post_title: None,
                     post_status: None,
                     post_edit_link: None,
+                    error_code: None,
                 },
             );
 
@@ -429,7 +660,7 @@ fn run_wordpress_export(
             // its attachment ID in the block so WordPress can generate srcset and
             // sizes attributes (including Retina-resolution candidates).
             if let Some(lookup) =
-                wordpress_media_lookup_for_site_source(source, &connection.blog_url)
+                wordpress_media_lookup_for_site_source(source, &connection.site_url)
             {
                 let media = find_site_media_by_source(&site, &client, &lookup, source).map_err(
                     |error| {
@@ -479,6 +710,7 @@ fn run_wordpress_export(
             post_title: None,
             post_status: None,
             post_edit_link: None,
+            error_code: None,
         },
     );
 
@@ -544,22 +776,42 @@ fn run_wordpress_export(
         post_id,
         post_title,
         post_status,
-        post_edit_link: post_id.map(|id| wordpress_editor_link(&connection.blog_id, id)),
+        post_edit_link: post_id.and_then(|id| wordpress_editor_link(&connection, id)),
     })
 }
 
 /// The WordPress.com editor URL for a post; works for both Simple and
 /// Jetpack-connected sites reachable through the WordPress.com API.
-fn wordpress_editor_link(blog_id: &str, post_id: u64) -> String {
-    format!("https://wordpress.com/post/{}/{post_id}", blog_id.trim())
+fn wordpress_editor_link(connection: &WordPressConnection, post_id: u64) -> Option<String> {
+    if let Some(blog_id) = connection.blog_id() {
+        return Some(format!(
+            "https://wordpress.com/post/{}/{post_id}",
+            blog_id.trim()
+        ));
+    }
+    let mut url = Url::parse(&format!(
+        "{}/wp-admin/post.php",
+        connection.site_url.trim_end_matches('/')
+    ))
+    .ok()?;
+    url.query_pairs_mut()
+        .append_pair("post", &post_id.to_string())
+        .append_pair("action", "edit");
+    Some(url.to_string())
 }
 
-fn require_wordpress_connection(app: &AppHandle) -> Result<WordPressConnection, String> {
-    load_wordpress_connection(app)?.ok_or_else(|| WORDPRESS_RECONNECT_MESSAGE.to_string())
+fn require_wordpress_connection(
+    app: &AppHandle,
+    storage_login: &str,
+    site_id: &str,
+) -> Result<WordPressConnection, String> {
+    load_wordpress_connection(app, storage_login, site_id)?
+        .ok_or_else(|| format!("WORDPRESS_REAUTH_REQUIRED: {WORDPRESS_RECONNECT_MESSAGE}"))
 }
 
 fn wordpress_http_client() -> Result<Client, String> {
     Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(120))
         .build()
         .map_err(|error| format!("Could not create the WordPress HTTP client: {error}"))
@@ -1283,22 +1535,19 @@ mod tests {
     use super::*;
 
     fn test_connection() -> WordPressConnection {
-        WordPressConnection {
-            access_token: "token".to_string(),
-            blog_id: "12345".to_string(),
-            blog_url: "https://gnosisvn.org".to_string(),
-        }
+        WordPressConnection::wordpress_com(
+            "token".to_string(),
+            "12345".to_string(),
+            "https://gnosisvn.org".to_string(),
+            String::new(),
+        )
     }
 
     #[test]
     fn wordpress_editor_link_targets_the_wordpress_com_editor() {
         assert_eq!(
-            wordpress_editor_link("12345", 678),
-            "https://wordpress.com/post/12345/678"
-        );
-        assert_eq!(
-            wordpress_editor_link(" 12345 ", 678),
-            "https://wordpress.com/post/12345/678"
+            wordpress_editor_link(&test_connection(), 678).as_deref(),
+            Some("https://wordpress.com/post/12345/678")
         );
     }
 
@@ -1862,5 +2111,15 @@ mod tests {
             Some("image/webp")
         );
         assert_eq!(image_mime_type("notes.txt", b"plain text"), None);
+    }
+
+    #[test]
+    fn wordpress_com_lookup_url_has_one_separator_before_the_site() {
+        assert_eq!(
+            wordpress_com_site_lookup_url("gnosisvn.org")
+                .unwrap()
+                .as_str(),
+            "https://public-api.wordpress.com/rest/v1.1/sites/gnosisvn.org"
+        );
     }
 }

@@ -48,9 +48,45 @@ function normalizeStoredEditorExportDefault(value) {
           ? value.wordpress.postTitle.trim()
           : "",
       };
+      const siteId = typeof value.wordpress.siteId === "string" ? value.wordpress.siteId.trim() : "";
+      if (siteId) {
+        normalized.wordpress.siteId = siteId;
+        normalized.wordpress.siteKind = typeof value.wordpress.siteKind === "string" ? value.wordpress.siteKind.trim() : "";
+        normalized.wordpress.siteUrl = typeof value.wordpress.siteUrl === "string" ? value.wordpress.siteUrl.trim() : "";
+      }
     }
   }
   return normalized;
+}
+
+function saveEditorExportDefaultsMap(defaults, login = getActiveStorageLogin()) {
+  const key = scopedEditorExportDefaultsKey(login);
+  if (!key) return;
+  if (Object.keys(defaults).length > 0) writePersistentValue(key, defaults);
+  else removePersistentValue(key);
+}
+
+export function clearStoredWordPressAssociation(chapterId, login = getActiveStorageLogin()) {
+  const defaults = loadStoredEditorExportDefaultsMap(login);
+  const current = normalizeStoredEditorExportDefault(defaults[chapterId]);
+  if (!current?.wordpress) return;
+  defaults[chapterId] = { optionId: current.optionId };
+  saveEditorExportDefaultsMap(defaults, login);
+}
+
+export function clearStoredWordPressAssociationsForSite(siteId, login = getActiveStorageLogin()) {
+  const normalizedSiteId = String(siteId ?? "").trim();
+  if (!normalizedSiteId) return;
+  const defaults = loadStoredEditorExportDefaultsMap(login);
+  let changed = false;
+  for (const [chapterId, value] of Object.entries(defaults)) {
+    const current = normalizeStoredEditorExportDefault(value);
+    if (current?.wordpress?.siteId === normalizedSiteId) {
+      defaults[chapterId] = { optionId: current.optionId };
+      changed = true;
+    }
+  }
+  if (changed) saveEditorExportDefaultsMap(defaults, login);
 }
 
 function loadStoredEditorExportDefaultsMap(login = getActiveStorageLogin()) {

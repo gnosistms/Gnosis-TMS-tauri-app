@@ -208,10 +208,6 @@
   font-size: clamp(1.8rem, 3vw, 2.4rem);
 }
 
-.editor-export-modal__close {
-  flex: 0 0 auto;
-}
-
 .editor-export-modal {
   display: grid;
   grid-template-columns: 250px minmax(0, 1fr);
@@ -362,6 +358,63 @@
   margin-left: 6px;
   padding: 0;
   text-decoration: underline;
+}
+
+.editor-export-modal__wordpress-sites {
+  display: grid;
+  gap: 8px;
+  max-height: 280px;
+  overflow: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.editor-export-modal__wordpress-sites li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.editor-export-modal__wordpress-site {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-control);
+  background: var(--panel-surface);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.editor-export-modal__wordpress-site span {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.editor-export-modal__wordpress-forget {
+  width: 34px;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 1.2rem;
+}
+
+.editor-export-modal__wordpress-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.editor-export-modal__wordpress-http-warning {
+  display: flex;
+  gap: 8px;
+  color: var(--warning-ink, var(--ink));
+  font-size: 0.9rem;
+  line-height: 1.4;
 }
 
 .editor-export-modal__wordpress-modes {

@@ -101,6 +101,7 @@ import {
 } from "./translate-flow.js";
 import {
   setWordPressExportMode,
+  updateWordPressConnectionField,
   updateWordPressSearchQuery,
   updateWordPressTitle,
 } from "./editor-export-wordpress-flow.js";
@@ -1102,6 +1103,23 @@ function handleWordPressModeInput(event, render) {
   return true;
 }
 
+function handleWordPressConnectionInput(event) {
+  const fields = [
+    ["[data-wordpress-site-url-input]", "siteUrl"],
+    ["[data-wordpress-username-input]", "username"],
+    ["[data-wordpress-password-input]", "password"],
+    ["[data-wordpress-insecure-input]", "allowInsecure"],
+  ];
+  for (const [selector, field] of fields) {
+    const input = event.target.closest(selector);
+    if (input) {
+      updateWordPressConnectionField(field, field === "allowInsecure" ? input.checked : input.value);
+      return true;
+    }
+  }
+  return false;
+}
+
 function handleTeamCopyTitleInput(event) {
   const input = event.target.closest("[data-team-copy-title-input]");
   if (!input) {
@@ -1242,6 +1260,7 @@ const inputHandlers = [
   handleWordPressTitleInput,
   handleWordPressSearchInput,
   handleWordPressModeInput,
+  handleWordPressConnectionInput,
   handleTeamCopyTitleInput,
   handleTeamCopyTeamInput,
   handleTeamCopyProjectInput,

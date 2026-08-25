@@ -80,6 +80,7 @@ test("editor export modal shows the save pane for available file formats", () =>
   assert.match(html, /Save this chapter as an HTML file\./);
   assert.match(html, /data-action="submit-editor-export"/);
   assert.match(html, /data-action="close-editor-export-options"/);
+  assert.doesNotMatch(html, /Close export options/);
   assert.match(html, /aria-pressed="true"[^>]*>HTML</);
 });
 
@@ -309,7 +310,15 @@ function wordpressState(wordpressOverrides = {}, modalOverrides = {}) {
     selectedOptionId: "link:wordpress",
     wordpress: {
       connectionStatus: "connected",
-      connection: { blogId: "12345", blogUrl: "https://example.wordpress.com" },
+      connection: { siteId: "wpcom:12345", kind: "wordpressCom", blogId: "12345", siteUrl: "https://example.wordpress.com" },
+      connections: [],
+      reauthRequired: false,
+      addStage: "idle",
+      siteUrl: "",
+      inspection: null,
+      username: "",
+      password: "",
+      allowInsecure: false,
       mode: "create",
       title: "Chapter One",
       searchQuery: "",
@@ -324,15 +333,44 @@ function wordpressState(wordpressOverrides = {}, modalOverrides = {}) {
   });
 }
 
-test("editor export modal shows the WordPress connect pane while disconnected", () => {
+test("editor export modal shows the WordPress site picker while disconnected", () => {
   const html = renderEditorExportModal(wordpressState({
     connectionStatus: "disconnected",
     connection: null,
+    connections: [{ siteId: "wpcom:2", displayName: "Second", siteUrl: "https://second.example" }],
   }));
 
-  assert.match(html, /Connect your WordPress\.com account/);
-  assert.match(html, /data-action="connect-wordpress"/);
+  assert.match(html, /Choose a connected WordPress site/);
+  assert.match(html, /data-action="show-add-wordpress-site"/);
+  assert.match(html, /data-action="select-wordpress-site:wpcom:2"/);
+  assert.match(html, /title="Forget this site" aria-label="Forget this site"/);
   assert.doesNotMatch(html, /data-action="submit-editor-export"/);
+});
+
+test("WordPress add-site address step waits to offer the WordPress.com fallback", () => {
+  const html = renderEditorExportModal(wordpressState({
+    connectionStatus: "disconnected",
+    connection: null,
+    addStage: "address",
+  }));
+  assert.doesNotMatch(html, /data-action="connect-wordpress"/);
+  assert.doesNotMatch(html, /Use WordPress\.com login instead/);
+
+  const inconclusiveHtml = renderEditorExportModal(wordpressState({
+    connectionStatus: "disconnected",
+    connection: null,
+    addStage: "inconclusive",
+  }));
+  assert.match(inconclusiveHtml, /data-action="connect-wordpress"/);
+  assert.match(inconclusiveHtml, /Use WordPress\.com login instead/);
+});
+
+test("remembered WordPress destination remains visible when login is required again", () => {
+  const html = renderEditorExportModal(wordpressState({ reauthRequired: true }));
+  assert.match(html, /Connected to/);
+  assert.match(html, /Log in again/);
+  assert.match(html, /data-action="reconnect-wordpress"/);
+  assert.match(html, /data-action="submit-editor-export"/);
 });
 
 test("editor export modal shows the WordPress create pane with a title field", () => {
@@ -345,7 +383,8 @@ test("editor export modal shows the WordPress create pane with a title field", (
   assert.match(html, /editor-export-modal__wordpress-mode-title">Create a new draft post/);
   assert.match(html, /data-wordpress-title-input/);
   assert.match(html, /value="Chapter One"/);
-  assert.match(html, /Start a new draft that you can review and publish in WordPress\.com\./);
+  assert.doesNotMatch(html, /Start a new draft that you can review and publish in WordPress\./);
+  assert.doesNotMatch(html, /Replace the content of a post you previously exported\./);
   assert.match(html, /Export draft/);
   assert.match(html, /data-action="submit-editor-export"/);
 });

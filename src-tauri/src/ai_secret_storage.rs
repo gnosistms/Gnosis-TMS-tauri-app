@@ -30,7 +30,9 @@ fn snapshot_write_lock() -> &'static Mutex<()> {
 /// Only public (`pub(crate)`) write/clear entry points take this lock. The internal
 /// `*_at_path` helpers stay lock-free so compound operations acquire it exactly once
 /// (a re-entrant acquire on `std::sync::Mutex` would deadlock).
-fn with_snapshot_write_lock<T>(operation: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+pub(crate) fn with_snapshot_write_lock<T>(
+    operation: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
     let _guard = snapshot_write_lock()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());

@@ -1,6 +1,5 @@
 import {
   escapeHtml,
-  iconAction,
   loadingPrimaryButton,
   renderCollapseChevron,
   secondaryButton,
@@ -158,30 +157,93 @@ function renderWordPressSearchResults(wordpress) {
   `;
 }
 
+function renderWordPressAddSite(wordpress) {
+  const addStage = wordpress.addStage ?? "idle";
+  if (addStage === "inspecting" || addStage === "oauth" || addStage === "connecting") {
+    return supportingText(addStage === "oauth"
+      ? "Finish connecting to WordPress.com in your browser."
+      : "Connecting to the WordPress site...");
+  }
+  if (addStage === "credentials") {
+    const insecure = String(wordpress.inspection?.siteUrl ?? "").startsWith("http://");
+    return `
+      ${supportingText(`Connect directly to ${wordpress.inspection?.siteUrl || "this WordPress site"}. Application Passwords are recommended; a normal password works only when the site supports it.`)}
+      <label class="field editor-export-modal__wordpress-field">
+        <span class="field__label">WordPress username</span>
+        <input class="field__input" type="text" value="${escapeHtml(wordpress.username ?? "")}" data-wordpress-username-input />
+      </label>
+      <label class="field editor-export-modal__wordpress-field">
+        <span class="field__label">Application password or site password</span>
+        <input class="field__input" type="password" value="${escapeHtml(wordpress.password ?? "")}" data-wordpress-password-input />
+      </label>
+      ${insecure ? `
+        <label class="editor-export-modal__wordpress-http-warning">
+          <input type="checkbox" data-wordpress-insecure-input ${wordpress.allowInsecure ? "checked" : ""} />
+          I understand that credentials will be sent to ${escapeHtml(wordpress.inspection.siteUrl)} without encryption.
+        </label>
+      ` : ""}
+      <div class="editor-export-modal__wordpress-actions">
+        ${secondaryButton("Cancel", "cancel-add-wordpress-site")}
+        ${secondaryButton("Use WordPress.com login instead", "connect-wordpress")}
+        <button class="button button--primary" data-action="save-self-hosted-wordpress-site" ${insecure && !wordpress.allowInsecure ? "disabled aria-disabled=\"true\"" : ""}>Connect site</button>
+      </div>
+    `;
+  }
+  return `
+    <label class="field editor-export-modal__wordpress-field">
+      <span class="field__label">WordPress site address</span>
+      <input class="field__input" type="url" placeholder="https://example.com" value="${escapeHtml(wordpress.siteUrl ?? "")}" data-wordpress-site-url-input data-modal-enter-action="inspect-wordpress-site" />
+    </label>
+    <div class="editor-export-modal__wordpress-actions">
+      ${secondaryButton("Cancel", "cancel-add-wordpress-site")}
+      ${addStage === "inconclusive" ? secondaryButton("Use WordPress.com login instead", "connect-wordpress") : ""}
+      <button class="button button--primary" data-action="inspect-wordpress-site">Continue</button>
+    </div>
+  `;
+}
+
+function renderWordPressSitePicker(wordpress) {
+  if ((wordpress.addStage ?? "idle") !== "idle") return renderWordPressAddSite(wordpress);
+  const sites = wordpress.connections ?? [];
+  return `
+    ${supportingText(sites.length ? "Choose a connected WordPress site for this file." : "Connect a WordPress site to export this file.")}
+    ${sites.length ? `<ul class="editor-export-modal__wordpress-sites">
+      ${sites.map((site) => `<li>
+        <button type="button" class="editor-export-modal__wordpress-site" data-action="select-wordpress-site:${escapeHtml(site.siteId)}">
+          <strong>${escapeHtml(site.displayName || site.siteUrl)}</strong>
+          ${site.displayName ? `<span>${escapeHtml(site.siteUrl)}</span>` : ""}
+        </button>
+        <button type="button" class="editor-export-modal__wordpress-forget" data-action="forget-wordpress-site:${escapeHtml(site.siteId)}" title="Forget this site" aria-label="Forget this site">&times;</button>
+      </li>`).join("")}
+    </ul>` : ""}
+    <button class="button button--primary" data-action="show-add-wordpress-site">Add a new site</button>
+  `;
+}
+
 function wordpressDetail(wordpress, isExporting) {
   if (!wordpress || wordpress.connectionStatus === "unknown" || wordpress.connectionStatus === "loading") {
     return {
-      bodyMarkup: supportingText("Checking the WordPress.com connection..."),
+      bodyMarkup: supportingText("Checking the WordPress connections..."),
       submitButton: "",
     };
   }
 
-  if (wordpress.connectionStatus === "disconnected" || wordpress.connectionStatus === "connecting") {
-    const message = wordpress.connectionStatus === "connecting"
-      ? "Finish connecting to WordPress.com in your browser. We will bring you back here automatically."
-      : "Connect your WordPress.com account to export this chapter as a post.";
+  if (wordpress.connectionStatus === "disconnected") {
     return {
-      bodyMarkup: `
-        ${supportingText(message)}
-        <button class="button button--primary" data-action="connect-wordpress">
-          <span>Connect WordPress.com</span>
-        </button>
-      `,
+      bodyMarkup: renderWordPressSitePicker(wordpress),
       submitButton: "",
     };
   }
 
-  const blogLabel = wordpress.connection?.blogUrl || "your WordPress.com site";
+  if (wordpress.connectionStatus === "connecting") {
+    return { bodyMarkup: supportingText("Finish connecting to WordPress.com in your browser. We will bring you back here automatically."), submitButton: "" };
+  }
+
+  if ((wordpress.addStage ?? "idle") !== "idle") {
+    return { bodyMarkup: renderWordPressAddSite(wordpress), submitButton: "" };
+  }
+
+  const blogLabel = wordpress.connection?.siteUrl || wordpress.connection?.blogUrl || "your WordPress site";
   const selectedPost = selectedWordPressPost(wordpress);
   const createSection = wordpress.mode === "create"
     ? `
@@ -222,19 +284,20 @@ function wordpressDetail(wordpress, isExporting) {
         Connected to <strong>${escapeHtml(blogLabel)}</strong>.
         <button type="button" class="editor-export-modal__wordpress-disconnect" data-action="disconnect-wordpress">Disconnect</button>
       </p>
+      ${wordpress.reauthRequired ? `<p class="editor-export-modal__wordpress-warning" role="alert">${wordpress.authInProgress
+        ? "Finish logging in through your browser, then return here."
+        : `Log in again to continue with this site. <button type="button" class="button button--secondary" data-action="reconnect-wordpress">Log in again</button>`}</p>` : ""}
       <div class="editor-export-modal__wordpress-modes">
         <label class="editor-export-modal__wordpress-mode${wordpress.mode === "create" ? " is-selected" : ""}">
           <input type="radio" name="wordpress-export-mode" value="create" data-wordpress-mode-input ${wordpress.mode === "create" ? "checked" : ""} />
           <span class="editor-export-modal__wordpress-mode-copy">
             <span class="editor-export-modal__wordpress-mode-title">Create a new draft post</span>
-            <span class="editor-export-modal__wordpress-mode-description">Start a new draft that you can review and publish in WordPress.com.</span>
           </span>
         </label>
         <label class="editor-export-modal__wordpress-mode${wordpress.mode === "overwrite" ? " is-selected" : ""}">
           <input type="radio" name="wordpress-export-mode" value="overwrite" data-wordpress-mode-input ${wordpress.mode === "overwrite" ? "checked" : ""} />
           <span class="editor-export-modal__wordpress-mode-copy">
             <span class="editor-export-modal__wordpress-mode-title">Overwrite an existing post</span>
-            <span class="editor-export-modal__wordpress-mode-description">Replace the content of a post you previously exported.</span>
           </span>
         </label>
       </div>
@@ -541,22 +604,12 @@ export function renderEditorExportModal(state) {
   const errorMarkup = modal.error
     ? `<p class="modal__error" role="alert">${escapeHtml(formatErrorForDisplay(modal.error))}</p>`
     : "";
-  const closeIcon = `
-    <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
-      <path d="m6 6 12 12M18 6 6 18" />
-    </svg>
-  `;
-
   return `
     <div class="modal-backdrop">
       <section class="card modal-card modal-card--editor-export" role="dialog" aria-modal="true" aria-labelledby="editor-export-modal-title" data-modal-dialog="editor-export" tabindex="-1">
         <div class="card__body modal-card__body modal-card__body--editor-export">
           <header class="editor-export-modal__header">
             <h2 class="modal__title" id="editor-export-modal-title">Export chapter</h2>
-            ${iconAction("Close export options", "close-editor-export-options", closeIcon, {
-              disabled: isCancelling || (isExporting && !canCancelPdf),
-              className: "editor-export-modal__close",
-            })}
           </header>
           <div class="editor-export-modal">
             <nav class="editor-export-modal__nav" aria-label="Export options">

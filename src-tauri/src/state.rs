@@ -29,6 +29,8 @@ pub(crate) struct PendingBrokerAuth {
 
 pub(crate) struct PendingWordPressAuth {
     pub(crate) csrf_state: String,
+    pub(crate) storage_login: String,
+    pub(crate) expected_blog_id: Option<String>,
 }
 
 impl Default for ProjectRepoSyncStore {
