@@ -191,9 +191,16 @@ import {
   closeWordPressExportSuccessModal as closeWordPressExportSuccessModalFlow,
   connectWordPress as connectWordPressFlow,
   disconnectWordPress as disconnectWordPressFlow,
+  forgetWordPressSite as forgetWordPressSiteFlow,
+  inspectWordPressSite as inspectWordPressSiteFlow,
+  reconnectWordPress as reconnectWordPressFlow,
+  saveSelfHostedWordPressSite as saveSelfHostedWordPressSiteFlow,
   searchWordPressPosts as searchWordPressPostsFlow,
+  selectWordPressSite as selectWordPressSiteFlow,
   selectWordPressPost as selectWordPressPostFlow,
   setWordPressExportMode as setWordPressExportModeFlow,
+  showAddWordPressSite as showAddWordPressSiteFlow,
+  cancelAddWordPressSite as cancelAddWordPressSiteFlow,
 } from "./editor-export-wordpress-flow.js";
 import {
   moveEditorPreviewSearch as moveEditorPreviewSearchFlow,
@@ -822,6 +829,14 @@ export async function connectWordPress(render) {
 export async function disconnectWordPress(render) {
   await disconnectWordPressFlow(render);
 }
+
+export function showAddWordPressSite(render) { showAddWordPressSiteFlow(render); }
+export function cancelAddWordPressSite(render) { cancelAddWordPressSiteFlow(render); }
+export async function inspectWordPressSite(render) { await inspectWordPressSiteFlow(render); }
+export async function saveSelfHostedWordPressSite(render) { await saveSelfHostedWordPressSiteFlow(render); }
+export function reconnectWordPress(render) { reconnectWordPressFlow(render); }
+export function selectWordPressSite(render, siteId) { selectWordPressSiteFlow(render, siteId); }
+export async function forgetWordPressSite(render, siteId) { await forgetWordPressSiteFlow(render, siteId); }
 
 export async function searchWordPressPosts(render) {
   await searchWordPressPostsFlow(render);

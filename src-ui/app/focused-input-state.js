@@ -43,6 +43,9 @@ const SUPPORTED_FOCUSED_INPUT_SELECTORS = [
   "[data-ai-settings-model-select]",
   "[data-wordpress-title-input]",
   "[data-wordpress-search-input]",
+  "[data-wordpress-site-url-input]",
+  "[data-wordpress-username-input]",
+  "[data-wordpress-password-input]",
 ];
 
 function focusSnapshotSelector(activeElement) {

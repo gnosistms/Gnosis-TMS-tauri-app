@@ -83,8 +83,15 @@ import {
   closeWordPressExportSuccessModal,
   connectWordPress,
   disconnectWordPress,
+  forgetWordPressSite,
+  inspectWordPressSite,
+  reconnectWordPress,
+  saveSelfHostedWordPressSite,
   searchWordPressPosts,
+  selectWordPressSite,
   selectWordPressPost,
+  showAddWordPressSite,
+  cancelAddWordPressSite,
   applyEditorAiReview,
   continueEditorAiReviewAllPreflight,
   dismissEditorAiReviewAllFilterModal,
@@ -781,6 +788,27 @@ export function createTranslateActions(render) {
       return true;
     }
 
+    if (action === "show-add-wordpress-site") {
+      showAddWordPressSite(render);
+      return true;
+    }
+    if (action === "cancel-add-wordpress-site") {
+      cancelAddWordPressSite(render);
+      return true;
+    }
+    if (action === "inspect-wordpress-site") {
+      await inspectWordPressSite(render);
+      return true;
+    }
+    if (action === "save-self-hosted-wordpress-site") {
+      await saveSelfHostedWordPressSite(render);
+      return true;
+    }
+    if (action === "reconnect-wordpress") {
+      reconnectWordPress(render);
+      return true;
+    }
+
     if (action === "search-wordpress-posts") {
       await searchWordPressPosts(render);
       return true;
@@ -811,6 +839,17 @@ export function createTranslateActions(render) {
     const wordpressPostId = actionSuffix(action, "select-wordpress-post:");
     if (wordpressPostId !== null) {
       selectWordPressPost(render, wordpressPostId);
+      return true;
+    }
+
+    const wordpressSiteId = actionSuffix(action, "select-wordpress-site:");
+    if (wordpressSiteId !== null) {
+      selectWordPressSite(render, wordpressSiteId);
+      return true;
+    }
+    const forgottenWordPressSiteId = actionSuffix(action, "forget-wordpress-site:");
+    if (forgottenWordPressSiteId !== null) {
+      await forgetWordPressSite(render, forgottenWordPressSiteId);
       return true;
     }
 

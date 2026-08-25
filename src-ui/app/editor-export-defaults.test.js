@@ -5,11 +5,28 @@ globalThis.window = globalThis.window ?? {};
 
 const { setActiveStorageLogin, clearActiveStorageLogin } = await import("./team-storage.js");
 const {
+  clearStoredWordPressAssociation,
+  clearStoredWordPressAssociationsForSite,
   loadStoredEditorExportDefault,
   loadStoredEditorExportPaperSize,
   saveStoredEditorExportDefault,
   saveStoredEditorExportPaperSize,
 } = await import("./editor-export-defaults.js");
+
+test("WordPress associations can be unlinked per chapter or across one site", () => {
+  setActiveStorageLogin("association-unlink-test");
+  for (const [chapterId, siteId] of [["chapter-1", "wpcom:1"], ["chapter-2", "wpcom:1"], ["chapter-3", "wpcom:2"]]) {
+    saveStoredEditorExportDefault(chapterId, {
+      optionId: "link:wordpress",
+      wordpress: { siteId, siteKind: "wordpressCom", siteUrl: `https://${siteId}.example`, postId: 7, postTitle: "Post" },
+    });
+  }
+  clearStoredWordPressAssociation("chapter-1");
+  clearStoredWordPressAssociationsForSite("wpcom:1");
+  assert.deepEqual(loadStoredEditorExportDefault("chapter-1"), { optionId: "link:wordpress" });
+  assert.deepEqual(loadStoredEditorExportDefault("chapter-2"), { optionId: "link:wordpress" });
+  assert.equal(loadStoredEditorExportDefault("chapter-3").wordpress.siteId, "wpcom:2");
+});
 
 test.afterEach(() => {
   clearActiveStorageLogin();

@@ -73,7 +73,7 @@ const BASE_EDITOR_EXPORT_CATEGORIES = [
     id: "link",
     label: "Link and transfer",
     options: [
-      { id: "link:wordpress", label: "WordPress.com", kind: "link", format: "wordpress", available: true },
+      { id: "link:wordpress", label: "WordPress", kind: "link", format: "wordpress", available: true },
       { id: "link:team", label: "Gnosis TMS team", kind: "link", format: "team", available: true },
     ],
   },

@@ -3,16 +3,17 @@ use reqwest::StatusCode;
 use url::Url;
 
 use crate::wordpress::debug::wordpress_debug_log;
-use crate::wordpress::storage::WordPressConnection;
+use crate::wordpress::storage::{WordPressConnection, WordPressConnectionAuth};
 
 pub(crate) const WORDPRESS_RECONNECT_MESSAGE: &str =
-    "Your WordPress.com connection is no longer valid. Disconnect and connect again.";
+    "Your WordPress connection is no longer valid. Log in again to continue.";
 
 /// Authentication mode for a WordPress site. Self-hosted sites (Application
 /// Passwords / Basic auth) are a planned second variant; the wp/v2 request
 /// shapes are identical, only the base URL and this header differ.
 pub(crate) enum WordPressSiteAuth {
     Bearer(String),
+    Basic { username: String, password: String },
 }
 
 /// A wp/v2 API target: base URL plus auth mode. Every WordPress HTTP request
@@ -20,22 +21,60 @@ pub(crate) enum WordPressSiteAuth {
 pub(crate) struct WordPressSite {
     api_base: Url,
     auth: WordPressSiteAuth,
+    rest_route_mode: bool,
 }
 
 impl WordPressSite {
-    pub(crate) fn wordpress_com(connection: &WordPressConnection) -> Result<Self, String> {
-        let api_base = Url::parse(&format!(
-            "https://public-api.wordpress.com/wp/v2/sites/{}/",
-            connection.blog_id.trim()
-        ))
-        .map_err(|error| format!("Could not build the WordPress API URL: {error}"))?;
+    pub(crate) fn from_connection(connection: &WordPressConnection) -> Result<Self, String> {
+        let (api_base, auth, rest_route_mode) = match &connection.auth {
+            WordPressConnectionAuth::WordPressCom {
+                access_token,
+                blog_id,
+            } => (
+                Url::parse(&format!(
+                    "https://public-api.wordpress.com/wp/v2/sites/{}/",
+                    blog_id.trim()
+                )),
+                WordPressSiteAuth::Bearer(access_token.clone()),
+                false,
+            ),
+            WordPressConnectionAuth::SelfHosted {
+                api_root,
+                username,
+                password,
+            } => (
+                Url::parse(&format!("{}/wp/v2/", api_root.trim().trim_end_matches('/'))),
+                WordPressSiteAuth::Basic {
+                    username: username.clone(),
+                    password: password.clone(),
+                },
+                api_root.contains("rest_route="),
+            ),
+        };
         Ok(Self {
-            api_base,
-            auth: WordPressSiteAuth::Bearer(connection.access_token.clone()),
+            api_base: api_base
+                .map_err(|error| format!("Could not build the WordPress API URL: {error}"))?,
+            auth,
+            rest_route_mode,
         })
     }
 
     fn endpoint(&self, path_and_query: &str) -> Result<Url, String> {
+        if self.rest_route_mode {
+            let mut endpoint = self.api_base.clone();
+            let (path, query) = path_and_query
+                .split_once('?')
+                .map_or((path_and_query, ""), |parts| parts);
+            endpoint.set_query(None);
+            endpoint
+                .query_pairs_mut()
+                .append_pair(
+                    "rest_route",
+                    &format!("/wp/v2/{}", path.trim_start_matches('/')),
+                )
+                .extend_pairs(url::form_urlencoded::parse(query.as_bytes()));
+            return Ok(endpoint);
+        }
         self.api_base
             .join(path_and_query.trim_start_matches('/'))
             .map_err(|error| format!("Could not build the WordPress API URL: {error}"))
@@ -44,6 +83,9 @@ impl WordPressSite {
     fn authorize(&self, builder: RequestBuilder) -> RequestBuilder {
         match &self.auth {
             WordPressSiteAuth::Bearer(token) => builder.bearer_auth(token),
+            WordPressSiteAuth::Basic { username, password } => {
+                builder.basic_auth(username, Some(password))
+            }
         }
     }
 
@@ -62,7 +104,7 @@ impl WordPressSite {
                 wordpress_debug_log(&format!("GET send failed: {error}"));
                 format!("Could not reach WordPress: {error}")
             })?;
-        parse_wordpress_json_response(response)
+        parse_wordpress_json_response(response, matches!(&self.auth, WordPressSiteAuth::Bearer(_)))
     }
 
     pub(crate) fn post_json(
@@ -81,7 +123,7 @@ impl WordPressSite {
                 wordpress_debug_log(&format!("POST send failed: {error}"));
                 format!("Could not reach WordPress: {error}")
             })?;
-        parse_wordpress_json_response(response)
+        parse_wordpress_json_response(response, matches!(&self.auth, WordPressSiteAuth::Bearer(_)))
     }
 
     /// Uploads a media file with the raw-body protocol the wp/v2 media
@@ -122,11 +164,14 @@ impl WordPressSite {
                 wordpress_debug_log(&format!("media upload send failed: {error}"));
                 format!("Could not reach WordPress: {error}")
             })?;
-        parse_wordpress_json_response(response)
+        parse_wordpress_json_response(response, matches!(&self.auth, WordPressSiteAuth::Bearer(_)))
     }
 }
 
-fn parse_wordpress_json_response(response: Response) -> Result<serde_json::Value, String> {
+fn parse_wordpress_json_response(
+    response: Response,
+    reauth_on_forbidden: bool,
+) -> Result<serde_json::Value, String> {
     let status = response.status();
     let body = response
         .text()
@@ -136,8 +181,12 @@ fn parse_wordpress_json_response(response: Response) -> Result<serde_json::Value
         body.chars().take(300).collect::<String>()
     ));
 
-    if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
-        return Err(WORDPRESS_RECONNECT_MESSAGE.to_string());
+    if status == StatusCode::UNAUTHORIZED
+        || (status == StatusCode::FORBIDDEN && reauth_on_forbidden)
+    {
+        return Err(format!(
+            "WORDPRESS_REAUTH_REQUIRED: {WORDPRESS_RECONNECT_MESSAGE}"
+        ));
     }
     if !status.is_success() {
         return Err(wordpress_error_string(status, &body));
@@ -172,11 +221,12 @@ mod tests {
     use super::*;
 
     fn test_site() -> WordPressSite {
-        WordPressSite::wordpress_com(&WordPressConnection {
-            access_token: "token".to_string(),
-            blog_id: "12345".to_string(),
-            blog_url: "https://example.wordpress.com".to_string(),
-        })
+        WordPressSite::from_connection(&WordPressConnection::wordpress_com(
+            "token".to_string(),
+            "12345".to_string(),
+            "https://example.wordpress.com".to_string(),
+            String::new(),
+        ))
         .unwrap()
     }
 
@@ -190,6 +240,48 @@ mod tests {
         assert_eq!(
             site.endpoint("media").unwrap().to_string(),
             "https://public-api.wordpress.com/wp/v2/sites/12345/media"
+        );
+    }
+
+    #[test]
+    fn self_hosted_site_supports_pretty_and_query_rest_roots() {
+        let pretty = WordPressConnection::self_hosted(
+            "https://example.com".into(),
+            String::new(),
+            "https://example.com/wp-json".into(),
+            "user".into(),
+            "pass".into(),
+        );
+        let pretty_site = WordPressSite::from_connection(&pretty).unwrap();
+        assert_eq!(
+            pretty_site.endpoint("posts?search=hello").unwrap().as_str(),
+            "https://example.com/wp-json/wp/v2/posts?search=hello"
+        );
+
+        let query = WordPressConnection::self_hosted(
+            "https://example.com".into(),
+            String::new(),
+            "https://example.com/?rest_route=/".into(),
+            "user".into(),
+            "pass".into(),
+        );
+        let query_site = WordPressSite::from_connection(&query).unwrap();
+        let endpoint = query_site.endpoint("posts?search=hello").unwrap();
+        assert_eq!(
+            endpoint
+                .query_pairs()
+                .find(|(key, _)| key == "rest_route")
+                .unwrap()
+                .1,
+            "/wp/v2/posts"
+        );
+        assert_eq!(
+            endpoint
+                .query_pairs()
+                .find(|(key, _)| key == "search")
+                .unwrap()
+                .1,
+            "hello"
         );
     }
 }
