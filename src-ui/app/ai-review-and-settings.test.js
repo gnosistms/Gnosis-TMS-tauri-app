@@ -307,6 +307,7 @@ function createTeamRecord(options = {}) {
     installationId: options.installationId ?? 42,
     canDelete: options.canDelete === true,
     canManageProjects: true,
+    ...(options.membershipRole ? { membershipRole: options.membershipRole } : {}),
     accountType: "Organization",
   };
 }
@@ -3719,6 +3720,27 @@ test("ensureSelectedTeamAiProviderReady uses an existing cached key without fetc
   );
 });
 
+test("ensureSelectedTeamAiProviderReady does not load shared provider caches for viewers", async () => {
+  resetSessionState();
+  installSelectedTeam({ membershipRole: "viewer" });
+  installReadyTeamAiState({ secrets: createTeamAiSecrets("openai", 6) });
+
+  invokeHandler = async (command) => {
+    if (command === "load_ai_provider_secret") {
+      return null;
+    }
+    throw new Error(`Viewer provider readiness must not invoke ${command}`);
+  };
+
+  const result = await ensureSelectedTeamAiProviderReady(() => {}, "openai");
+
+  assert.deepEqual(result, { ok: false, reason: "read_only" });
+  assert.deepEqual(
+    invokeLog.map((entry) => entry.command),
+    ["load_ai_provider_secret"],
+  );
+});
+
 test("ensureSelectedTeamAiProviderReady stops when the selected team changes during local key loading", async () => {
   resetSessionState();
   installSelectedTeam({ canDelete: false });
@@ -4000,6 +4022,22 @@ test("concurrent invalid-key recoveries share one team key refresh", async () =>
 
   assert.deepEqual(results, [true, true]);
   assert.equal(issueCount, 1);
+});
+
+test("invalid-key recovery does not refresh shared provider caches for viewers", async () => {
+  resetSessionState();
+  installSelectedTeam({ membershipRole: "read_only" });
+  invokeHandler = async (command) => {
+    throw new Error(`Viewer key recovery must not invoke ${command}`);
+  };
+
+  const result = await refreshSelectedTeamAiProviderAfterAuthenticationError(
+    "openai",
+    { installationId: 42 },
+  );
+
+  assert.equal(result, false);
+  assert.equal(invokeLog.length, 0);
 });
 
 test("persistSelectedTeamAiActionPreferences does not overwrite the current team after switching teams", async () => {
@@ -4680,6 +4718,37 @@ test("team metadata reconciliation persists the locally loaded action preference
   assert.equal(storedTeamPreferences.unified.modelId, "gpt-5.4-mini");
   assert.equal(state.aiSettings.actionConfig.unified.providerId, "openai");
   assert.equal(state.aiSettings.actionConfig.unified.modelId, "gpt-5.4-mini");
+});
+
+test("team metadata reconciliation does not load shared provider caches for viewers", async () => {
+  resetSessionState();
+  installSelectedTeam({ membershipRole: "readonly", login: "viewer" });
+
+  invokeHandler = async (command) => {
+    if (command === "load_local_team_ai_metadata_snapshot") {
+      return {
+        currentHeadOid: "head-viewer",
+        settings: createTeamAiSettings(),
+        secrets: createTeamAiSecrets("openai", 6),
+      };
+    }
+    throw new Error(`Viewer metadata reconciliation must not invoke ${command}`);
+  };
+
+  const result = await reconcileSelectedTeamAiAfterMetadataSync(state.teams[0], {
+    currentHeadOid: "head-viewer",
+  });
+
+  assert.equal(result, true);
+  assert.deepEqual(
+    invokeLog.map((entry) => entry.command),
+    ["load_local_team_ai_metadata_snapshot"],
+  );
+  assert.equal(
+    state.aiSettings.teamShared.lastInspectedTeamMetadataHeadOid,
+    "head-viewer",
+  );
+  assert.equal(state.aiSettings.actionConfig.unified.providerId, "openai");
 });
 
 test("team metadata reconciliation skips key issuance when versions match and ignores the same head", async () => {

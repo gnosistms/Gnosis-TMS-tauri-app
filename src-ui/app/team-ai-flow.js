@@ -521,6 +521,9 @@ export async function ensureSelectedTeamAiProviderReady(render, providerId, opti
   if (!isTeamAiContextCurrent(context)) {
     return { ok: false, reason: "stale" };
   }
+  if (isReadOnlyViewerTeam(context.team)) {
+    return { ok: false, reason: "read_only" };
+  }
 
   const teamShared = await loadSelectedTeamAiState(render, {
     suppressLoadingState: true,
@@ -642,8 +645,10 @@ async function reconcileTeamAiMetadataRevision(context, headOid) {
   };
 
   let reconciliationSucceeded = true;
-  const isViewer = isReadOnlyViewerTeam(context.team);
-  for (const providerId of AI_PROVIDER_IDS) {
+  const providerIdsToReconcile = isReadOnlyViewerTeam(context.team)
+    ? []
+    : AI_PROVIDER_IDS;
+  for (const providerId of providerIdsToReconcile) {
     const providerMetadata = secrets.providers[providerId];
     const cached = normalizeTeamAiProviderCache(
       await invoke("load_team_ai_provider_cache", {
@@ -668,11 +673,8 @@ async function reconcileTeamAiMetadataRevision(context, headOid) {
       continue;
     }
     if (
-      isViewer
-      || (
-        cached.apiKey
-        && cached.keyVersion === providerMetadata.keyVersion
-      )
+      cached.apiKey
+      && cached.keyVersion === providerMetadata.keyVersion
     ) {
       continue;
     }
@@ -738,6 +740,9 @@ export async function refreshSelectedTeamAiProviderAfterAuthenticationError(
   const normalizedProviderId = normalizeAiProviderId(providerId);
   const context = selectedTeamAiContext();
   if (!context) {
+    return false;
+  }
+  if (isReadOnlyViewerTeam(context.team)) {
     return false;
   }
   if (
