@@ -76,8 +76,15 @@ export function isRoutineQueryCancellation(item) {
   return String(item?.error?.message ?? item?.message ?? "") === "CancelledError";
 }
 
+export function isExpectedControlFlowRejection(item) {
+  if (item?.kind !== "unhandledrejection") {
+    return false;
+  }
+  return String(item?.error?.message ?? item?.message ?? "").startsWith("AUTH_REQUIRED:");
+}
+
 function routeCrash(item) {
-  if (isRoutineQueryCancellation(item)) {
+  if (isRoutineQueryCancellation(item) || isExpectedControlFlowRejection(item)) {
     return;
   }
   if (!emitCrash(item)) {

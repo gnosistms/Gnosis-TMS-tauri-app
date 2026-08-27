@@ -21,7 +21,7 @@ function setAuthState(nextAuth, render) {
 export function requireBrokerSession() {
   const sessionToken = state.auth.session?.sessionToken;
   if (!sessionToken) {
-    throw new Error("Sign in with GitHub to connect to the broker first.");
+    throw new Error("AUTH_REQUIRED:Sign in with GitHub to connect to the broker first.");
   }
 
   return sessionToken;
