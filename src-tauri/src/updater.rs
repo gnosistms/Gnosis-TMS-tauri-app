@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, collections::HashSet, sync::Mutex};
+use std::{cmp::Ordering, collections::HashSet, sync::Mutex, time::Duration};
 
 use reqwest::blocking::Client as BlockingClient;
 use reqwest::header::{ACCEPT as REQWEST_ACCEPT, USER_AGENT as REQWEST_USER_AGENT};
@@ -16,6 +16,8 @@ const GITHUB_RELEASE_DOWNLOADS_BASE_URL: &str =
 const GITHUB_API_USER_AGENT: &str = "gnosis-tms-updater";
 const UPDATER_PUBLIC_KEY: &str = include_str!("../updater-public-key.txt");
 const DEVELOPMENT_UPDATE_INSTALL_ERROR: &str = "Automatic updates are unavailable in development builds. Merge or rebase this branch onto current main, then restart the development app.";
+const MAX_UPDATE_DOWNLOAD_ATTEMPTS: usize = 2;
+const UPDATE_DOWNLOAD_RETRY_DELAY: Duration = Duration::from_millis(500);
 
 pub(crate) struct PendingUpdate(pub(crate) Mutex<Option<Update>>);
 
@@ -39,6 +41,12 @@ enum ResolvedUpdate {
 enum PendingUpdateDecision {
     UsePending,
     ResolveUpdate,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum DownloadFailureClass {
+    Transient,
+    Permanent,
 }
 
 #[derive(Debug)]
@@ -101,6 +109,78 @@ fn should_skip_fallback_endpoint(error: &UpdaterError) -> bool {
             | UpdaterError::TargetNotFound(_)
             | UpdaterError::TargetsNotFound(_)
     )
+}
+
+fn is_retryable_download_status(status: u16) -> bool {
+    matches!(status, 408 | 429 | 500 | 502 | 503 | 504)
+}
+
+fn network_error_status(message: &str) -> Option<u16> {
+    message
+        .strip_prefix("Download request failed with status:")?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
+}
+
+fn classify_download_failure(error: &UpdaterError) -> DownloadFailureClass {
+    match error {
+        UpdaterError::Reqwest(error)
+            if error.is_connect()
+                || error.is_timeout()
+                || error.is_body()
+                || error.is_request()
+                || error
+                    .status()
+                    .is_some_and(|status| is_retryable_download_status(status.as_u16())) =>
+        {
+            DownloadFailureClass::Transient
+        }
+        UpdaterError::Network(message)
+            if network_error_status(message).is_some_and(is_retryable_download_status) =>
+        {
+            DownloadFailureClass::Transient
+        }
+        _ => DownloadFailureClass::Permanent,
+    }
+}
+
+fn should_retry_download(error: &UpdaterError, failed_attempt: usize) -> bool {
+    failed_attempt < MAX_UPDATE_DOWNLOAD_ATTEMPTS
+        && classify_download_failure(error) == DownloadFailureClass::Transient
+}
+
+async fn download_update_with_retry(update: &Update) -> Result<Vec<u8>, String> {
+    let mut first_error = None;
+
+    for attempt in 1..=MAX_UPDATE_DOWNLOAD_ATTEMPTS {
+        match update.download(|_, _| {}, || {}).await {
+            Ok(bytes) => return Ok(bytes),
+            Err(error) if should_retry_download(&error, attempt) => {
+                first_error = Some(error.to_string());
+                tokio::time::sleep(UPDATE_DOWNLOAD_RETRY_DELAY).await;
+            }
+            Err(error) => {
+                return if let Some(first_error) = first_error {
+                    Err(format!(
+                        "Could not download and verify Gnosis TMS {} after {attempt} attempts. The retry failed: {error}. First attempt: {first_error}",
+                        update.version
+                    ))
+                } else {
+                    Err(format!(
+                        "Could not download and verify Gnosis TMS {}: {error}",
+                        update.version
+                    ))
+                };
+            }
+        }
+    }
+
+    Err(format!(
+        "Could not download and verify Gnosis TMS {}.",
+        update.version
+    ))
 }
 
 fn platform_wait_message() -> String {
@@ -549,10 +629,13 @@ pub(crate) async fn install_app_update(
         }
     };
 
-    update
-        .download_and_install(|_, _| {}, || {})
-        .await
-        .map_err(|error| format!("Could not install the update: {error}"))?;
+    let bytes = download_update_with_retry(&update).await?;
+    update.install(bytes).map_err(|error| {
+        format!(
+            "Gnosis TMS {} was downloaded and verified, but could not be installed: {error}",
+            update.version
+        )
+    })?;
 
     app.request_restart();
     Ok(())
@@ -561,12 +644,14 @@ pub(crate) async fn install_app_update(
 #[cfg(test)]
 mod tests {
     use super::{
-        compare_stable_versions, github_release_latest_json_url, parse_github_release_tags,
-        pending_update_decision, platform_wait_and_lookup_failed_message, platform_wait_message,
-        release_tag_candidates_for_version, version_satisfies_requested, PendingUpdateDecision,
-        DEVELOPMENT_UPDATE_INSTALL_ERROR,
+        classify_download_failure, compare_stable_versions, github_release_latest_json_url,
+        network_error_status, parse_github_release_tags, pending_update_decision,
+        platform_wait_and_lookup_failed_message, platform_wait_message,
+        release_tag_candidates_for_version, should_retry_download, version_satisfies_requested,
+        DownloadFailureClass, PendingUpdateDecision, DEVELOPMENT_UPDATE_INSTALL_ERROR,
     };
     use std::cmp::Ordering;
+    use tauri_plugin_updater::Error as UpdaterError;
 
     #[test]
     fn parse_github_release_tags_filters_drafts_prereleases_and_duplicates() {
@@ -661,5 +746,65 @@ mod tests {
             pending_update_decision(Some("0.3.0"), None),
             PendingUpdateDecision::UsePending,
         );
+    }
+
+    #[test]
+    fn download_failure_classification_retries_only_selected_transient_statuses() {
+        for status in [408, 429, 500, 502, 503, 504] {
+            let error = UpdaterError::Network(format!(
+                "Download request failed with status: {status} Service Unavailable"
+            ));
+            assert_eq!(
+                classify_download_failure(&error),
+                DownloadFailureClass::Transient,
+                "expected status {status} to be transient"
+            );
+        }
+
+        for status in [400, 401, 403, 404, 409, 422] {
+            let error = UpdaterError::Network(format!(
+                "Download request failed with status: {status} Client Error"
+            ));
+            assert_eq!(
+                classify_download_failure(&error),
+                DownloadFailureClass::Permanent,
+                "expected status {status} to be permanent"
+            );
+        }
+    }
+
+    #[test]
+    fn download_failure_classification_does_not_guess_from_unstructured_network_errors() {
+        let error = UpdaterError::Network("server temporarily unavailable".to_string());
+
+        assert_eq!(network_error_status("server temporarily unavailable"), None);
+        assert_eq!(
+            classify_download_failure(&error),
+            DownloadFailureClass::Permanent
+        );
+    }
+
+    #[test]
+    fn download_failure_classification_does_not_retry_signature_errors() {
+        let error = UpdaterError::Base64(base64::DecodeError::InvalidLength(1));
+
+        assert_eq!(
+            classify_download_failure(&error),
+            DownloadFailureClass::Permanent
+        );
+        assert!(!should_retry_download(&error, 1));
+    }
+
+    #[test]
+    fn download_retry_policy_allows_exactly_one_retry() {
+        let transient = UpdaterError::Network(
+            "Download request failed with status: 503 Service Unavailable".to_string(),
+        );
+        let permanent =
+            UpdaterError::Network("Download request failed with status: 404 Not Found".to_string());
+
+        assert!(should_retry_download(&transient, 1));
+        assert!(!should_retry_download(&transient, 2));
+        assert!(!should_retry_download(&permanent, 1));
     }
 }
