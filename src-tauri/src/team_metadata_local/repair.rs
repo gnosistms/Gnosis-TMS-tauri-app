@@ -1,7 +1,10 @@
 use super::*;
 
-fn is_git_repo(path: &Path) -> bool {
-    path.is_dir() && git_output(path, &["rev-parse", "--git-dir"], None).is_ok()
+fn inspect_discovery_repo(path: &Path) -> Result<Option<Option<LocalRepoSyncState>>, String> {
+    match inspect_local_repo_sync_state(path)? {
+        LocalRepoSyncStateInspection::NotRepository => Ok(None),
+        LocalRepoSyncStateInspection::Repository(sync_state) => Ok(Some(sync_state)),
+    }
 }
 
 pub(super) fn repo_folder_name(path: &Path) -> Option<String> {
@@ -283,12 +286,10 @@ pub(super) fn inspect_project_repo_repairs(
         let entry =
             entry.map_err(|error| format!("Could not read a local project repo entry: {error}"))?;
         let repo_path = entry.path();
-        if !is_git_repo(&repo_path) {
-            continue;
-        }
-
         let folder_name = repo_folder_name(&repo_path);
-        let sync_state = read_local_repo_sync_state(&repo_path)?;
+        let Some(sync_state) = inspect_discovery_repo(&repo_path)? else {
+            continue;
+        };
         let matched_record = sync_state
             .as_ref()
             .and_then(|state| state.resource_id.as_deref())
@@ -399,12 +400,10 @@ pub(super) fn inspect_glossary_repo_repairs(
         let entry = entry
             .map_err(|error| format!("Could not read a local glossary repo entry: {error}"))?;
         let repo_path = entry.path();
-        if !is_git_repo(&repo_path) {
-            continue;
-        }
-
         let folder_name = repo_folder_name(&repo_path);
-        let sync_state = read_local_repo_sync_state(&repo_path)?;
+        let Some(sync_state) = inspect_discovery_repo(&repo_path)? else {
+            continue;
+        };
         let embedded_glossary_id = read_glossary_id_from_repo(&repo_path);
         let matched_record = sync_state
             .as_ref()
@@ -525,12 +524,10 @@ pub(super) fn inspect_qa_list_repo_repairs(
         let entry =
             entry.map_err(|error| format!("Could not read a local QA list repo entry: {error}"))?;
         let repo_path = entry.path();
-        if !is_git_repo(&repo_path) {
-            continue;
-        }
-
         let folder_name = repo_folder_name(&repo_path);
-        let sync_state = read_local_repo_sync_state(&repo_path)?;
+        let Some(sync_state) = inspect_discovery_repo(&repo_path)? else {
+            continue;
+        };
         let embedded_qa_list_id = read_qa_list_id_from_repo(&repo_path);
         let matched_record = sync_state
             .as_ref()
@@ -662,11 +659,9 @@ fn scan_repo_folders(
         let entry = entry
             .map_err(|error| format!("Could not read a local {kind_label} repo entry: {error}"))?;
         let repo_path = entry.path();
-        if !is_git_repo(&repo_path) {
+        let Some(sync_state) = inspect_discovery_repo(&repo_path)? else {
             continue;
-        }
-
-        let sync_state = read_local_repo_sync_state(&repo_path)?;
+        };
         folders.push(ScannedRepoFolder {
             folder_name: repo_folder_name(&repo_path).unwrap_or_default(),
             sync_state_resource_id: sync_state

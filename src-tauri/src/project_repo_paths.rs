@@ -6,9 +6,15 @@ use std::{
 use tauri::AppHandle;
 
 use crate::{
-    local_repo_sync_state::read_local_repo_sync_state, repo_sync_shared::git_output,
-    short_path_names::allocate_short_folder_name, storage_paths::local_project_repo_root,
+    local_repo_sync_state::{
+        inspect_local_repo_sync_state, LocalRepoSyncState, LocalRepoSyncStateInspection,
+    },
+    short_path_names::allocate_short_folder_name,
+    storage_paths::local_project_repo_root,
 };
+
+#[cfg(test)]
+use crate::local_repo_sync_state::read_local_repo_sync_state;
 
 fn normalized_optional_identifier(value: Option<&str>) -> Option<String> {
     value
@@ -17,6 +23,7 @@ fn normalized_optional_identifier(value: Option<&str>) -> Option<String> {
         .map(str::to_string)
 }
 
+#[cfg(test)]
 fn project_repo_matches_identifier(
     repo_path: &Path,
     project_id: Option<&str>,
@@ -26,18 +33,32 @@ fn project_repo_matches_identifier(
     let normalized_repo_name = normalized_optional_identifier(repo_name);
     let sync_state = read_local_repo_sync_state(repo_path)?;
 
-    if let Some(project_id) = normalized_project_id.as_deref() {
+    Ok(project_sync_state_matches_identifier(
+        repo_path,
+        sync_state.as_ref(),
+        normalized_project_id.as_deref(),
+        normalized_repo_name.as_deref(),
+    ))
+}
+
+fn project_sync_state_matches_identifier(
+    repo_path: &Path,
+    sync_state: Option<&LocalRepoSyncState>,
+    project_id: Option<&str>,
+    repo_name: Option<&str>,
+) -> bool {
+    if let Some(project_id) = project_id {
         if let Some(resource_id) = sync_state
             .as_ref()
             .and_then(|state| state.resource_id.as_deref())
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
-            return Ok(resource_id == project_id);
+            return resource_id == project_id;
         }
     }
 
-    if let Some(repo_name) = normalized_repo_name.as_deref() {
+    if let Some(repo_name) = repo_name {
         if sync_state
             .as_ref()
             .and_then(|state| state.current_repo_name.as_deref())
@@ -45,7 +66,7 @@ fn project_repo_matches_identifier(
             .filter(|value| !value.is_empty())
             == Some(repo_name)
         {
-            return Ok(true);
+            return true;
         }
 
         let folder_name = repo_path
@@ -53,10 +74,10 @@ fn project_repo_matches_identifier(
             .and_then(|name| name.to_str())
             .map(str::trim)
             .unwrap_or_default();
-        return Ok(folder_name == repo_name);
+        return folder_name == repo_name;
     }
 
-    Ok(false)
+    false
 }
 
 pub(crate) fn find_project_repo_path(
@@ -75,10 +96,16 @@ pub(crate) fn find_project_repo_path(
         if !repo_path.is_dir() {
             continue;
         }
-        if git_output(&repo_path, &["rev-parse", "--git-dir"], None).is_err() {
-            continue;
-        }
-        if project_repo_matches_identifier(&repo_path, project_id, repo_name)? {
+        let sync_state = match inspect_local_repo_sync_state(&repo_path)? {
+            LocalRepoSyncStateInspection::NotRepository => continue,
+            LocalRepoSyncStateInspection::Repository(sync_state) => sync_state,
+        };
+        if project_sync_state_matches_identifier(
+            &repo_path,
+            sync_state.as_ref(),
+            normalized_optional_identifier(project_id).as_deref(),
+            normalized_optional_identifier(repo_name).as_deref(),
+        ) {
             return Ok(Some(repo_path));
         }
     }
@@ -118,10 +145,18 @@ pub(crate) fn resolve_project_git_repo_path(
         let repo_root = local_project_repo_root(app, installation_id)?;
         let repo_path = repo_root.join(&repo_name);
         if repo_path.exists() {
-            if git_output(&repo_path, &["rev-parse", "--git-dir"], None).is_err() {
-                return Err("The local project repo is missing or invalid.".to_string());
-            }
-            if project_repo_matches_identifier(&repo_path, project_id, Some(&repo_name))? {
+            let sync_state = match inspect_local_repo_sync_state(&repo_path)? {
+                LocalRepoSyncStateInspection::NotRepository => {
+                    return Err("The local project repo is missing or invalid.".to_string())
+                }
+                LocalRepoSyncStateInspection::Repository(sync_state) => sync_state,
+            };
+            if project_sync_state_matches_identifier(
+                &repo_path,
+                sync_state.as_ref(),
+                normalized_optional_identifier(project_id).as_deref(),
+                Some(&repo_name),
+            ) {
                 return Ok(repo_path);
             }
         }

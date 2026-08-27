@@ -24,8 +24,8 @@ use crate::{
         ensure_installation_allows_qa_list_management,
     },
     local_repo_sync_state::{
-        read_local_repo_sync_state, upsert_local_repo_sync_state, LocalRepoSyncState,
-        LocalRepoSyncStateUpdate,
+        inspect_local_repo_sync_state, read_local_repo_sync_state, upsert_local_repo_sync_state,
+        LocalRepoSyncState, LocalRepoSyncStateInspection, LocalRepoSyncStateUpdate,
     },
     repo_sync_shared::{
         abort_rebase_after_failed_pull, git_output, load_git_transport_token,

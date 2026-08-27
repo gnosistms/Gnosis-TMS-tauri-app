@@ -54,6 +54,33 @@ pub(crate) struct LocalRepoSyncStateUpdate {
     pub(crate) local_folder_name: Option<String>,
 }
 
+pub(crate) enum LocalRepoSyncStateInspection {
+    NotRepository,
+    Repository(Option<LocalRepoSyncState>),
+}
+
+#[derive(Debug)]
+enum GitDirResolutionError {
+    NotRepository(String),
+    GitRuntime(String),
+}
+
+impl GitDirResolutionError {
+    fn into_message(self) -> String {
+        match self {
+            Self::NotRepository(message) | Self::GitRuntime(message) => message,
+        }
+    }
+}
+
+fn classify_git_dir_resolution_failure(repo_path: &Path, message: String) -> GitDirResolutionError {
+    if repo_path.join(".git").try_exists().unwrap_or(true) {
+        GitDirResolutionError::GitRuntime(message)
+    } else {
+        GitDirResolutionError::NotRepository(message)
+    }
+}
+
 pub(crate) fn upsert_local_repo_sync_state(
     repo_path: &Path,
     update: LocalRepoSyncStateUpdate,
@@ -181,11 +208,55 @@ pub(crate) fn read_local_repo_sync_state(
     repo_path: &Path,
 ) -> Result<Option<LocalRepoSyncState>, String> {
     let state_path = local_repo_sync_state_path(repo_path)?;
+    read_local_repo_sync_state_path(&state_path)
+}
+
+/// Inspects a discovery candidate without probing it once and then resolving its git
+/// directory a second time. A folder that is not (or is no longer) a repository is
+/// expected discovery control flow; Git runtime failures and corrupt state remain
+/// actionable errors.
+pub(crate) fn inspect_local_repo_sync_state(
+    repo_path: &Path,
+) -> Result<LocalRepoSyncStateInspection, String> {
+    let git_dir = match resolve_git_dir(repo_path) {
+        Ok(git_dir) => git_dir,
+        Err(GitDirResolutionError::NotRepository(_)) => {
+            return Ok(LocalRepoSyncStateInspection::NotRepository)
+        }
+        Err(GitDirResolutionError::GitRuntime(message)) => return Err(message),
+    };
+
+    inspect_resolved_local_repo_sync_state(repo_path, &git_dir)
+}
+
+fn inspect_resolved_local_repo_sync_state(
+    repo_path: &Path,
+    git_dir: &Path,
+) -> Result<LocalRepoSyncStateInspection, String> {
+    // The checkout or its .git directory can disappear after rev-parse exits. Do
+    // not turn that benign discovery race into a failed scan.
+    if !repo_path.is_dir() || !git_dir.is_dir() {
+        return Ok(LocalRepoSyncStateInspection::NotRepository);
+    }
+
+    let state_path = git_dir.join(LOCAL_REPO_SYNC_STATE_FILE_NAME);
+    match read_local_repo_sync_state_path(&state_path) {
+        Ok(state) => Ok(LocalRepoSyncStateInspection::Repository(state)),
+        Err(_error) if !repo_path.is_dir() || !git_dir.is_dir() => {
+            Ok(LocalRepoSyncStateInspection::NotRepository)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn read_local_repo_sync_state_path(
+    state_path: &Path,
+) -> Result<Option<LocalRepoSyncState>, String> {
     if !state_path.exists() {
         return Ok(None);
     }
 
-    let bytes = fs::read(&state_path).map_err(|error| {
+    let bytes = fs::read(state_path).map_err(|error| {
         format!(
             "Could not read local repo sync state '{}': {error}",
             state_path.display()
@@ -201,26 +272,29 @@ pub(crate) fn read_local_repo_sync_state(
 }
 
 fn local_repo_sync_state_path(repo_path: &Path) -> Result<PathBuf, String> {
-    Ok(resolve_git_dir(repo_path)?.join(LOCAL_REPO_SYNC_STATE_FILE_NAME))
+    Ok(resolve_git_dir(repo_path)
+        .map_err(GitDirResolutionError::into_message)?
+        .join(LOCAL_REPO_SYNC_STATE_FILE_NAME))
 }
 
-fn resolve_git_dir(repo_path: &Path) -> Result<PathBuf, String> {
+fn resolve_git_dir(repo_path: &Path) -> Result<PathBuf, GitDirResolutionError> {
     let output = git_command()
         .map_err(|error| {
-            format!(
+            GitDirResolutionError::GitRuntime(format!(
                 "Could not inspect the git directory for '{}': {error}",
                 repo_path.display()
-            )
+            ))
         })?
         .args(["rev-parse", "--git-dir"])
         .current_dir(repo_path)
         .output()
         .map_err(|error| {
-            format!(
+            let message = format!(
                 "Could not inspect the git directory for '{}': {}",
                 repo_path.display(),
                 format_git_spawn_error(&["rev-parse", "--git-dir"], &error)
-            )
+            );
+            classify_git_dir_resolution_failure(repo_path, message)
         })?;
 
     if !output.status.success() {
@@ -233,17 +307,23 @@ fn resolve_git_dir(repo_path: &Path) -> Result<PathBuf, String> {
         } else {
             format!("exit status {}", output.status)
         };
-        return Err(format!(
-            "Could not resolve the git directory for '{}': {detail}",
-            repo_path.display()
+        return Err(classify_git_dir_resolution_failure(
+            repo_path,
+            format!(
+                "Could not resolve the git directory for '{}': {detail}",
+                repo_path.display()
+            ),
         ));
     }
 
     let git_dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if git_dir.is_empty() {
-        return Err(format!(
-            "Could not resolve the git directory for '{}': git rev-parse returned an empty path.",
-            repo_path.display()
+        return Err(classify_git_dir_resolution_failure(
+            repo_path,
+            format!(
+                "Could not resolve the git directory for '{}': git rev-parse returned an empty path.",
+                repo_path.display()
+            ),
         ));
     }
 
@@ -267,14 +347,14 @@ mod tests {
     use std::{fs, sync::Arc, thread};
 
     use super::{
-        read_local_repo_sync_state, upsert_local_repo_sync_state, LocalRepoSyncStateUpdate,
+        inspect_local_repo_sync_state, inspect_resolved_local_repo_sync_state,
+        read_local_repo_sync_state, resolve_git_dir, upsert_local_repo_sync_state,
+        LocalRepoSyncStateInspection, LocalRepoSyncStateUpdate,
     };
     use crate::{repo_sync_shared::git_command, util::random_token};
 
-    #[test]
-    fn concurrent_upserts_preserve_both_updates_and_valid_json() {
-        let repo_path =
-            std::env::temp_dir().join(format!("gnosis-local-sync-state-test-{}", random_token(16)));
+    fn init_test_repo(label: &str) -> std::path::PathBuf {
+        let repo_path = std::env::temp_dir().join(format!("gnosis-{label}-{}", random_token(16)));
         fs::create_dir_all(&repo_path).expect("create test repo directory");
         let init_status = git_command()
             .expect("resolve git")
@@ -283,6 +363,78 @@ mod tests {
             .status()
             .expect("run git init");
         assert!(init_status.success());
+        repo_path
+    }
+
+    #[test]
+    fn discovery_skips_plain_and_disappeared_folders() {
+        let plain_path =
+            std::env::temp_dir().join(format!("gnosis-plain-folder-{}", random_token(16)));
+        fs::create_dir_all(&plain_path).expect("create plain folder");
+        assert!(matches!(
+            inspect_local_repo_sync_state(&plain_path).expect("inspect plain folder"),
+            LocalRepoSyncStateInspection::NotRepository
+        ));
+
+        let disappeared_path = init_test_repo("disappeared-repo");
+        fs::remove_dir_all(&disappeared_path).expect("remove discovered repo");
+        assert!(matches!(
+            inspect_local_repo_sync_state(&disappeared_path).expect("inspect disappeared repo"),
+            LocalRepoSyncStateInspection::NotRepository
+        ));
+
+        let _ = fs::remove_dir_all(&plain_path);
+    }
+
+    #[test]
+    fn discovery_skips_repo_that_becomes_invalid_after_git_resolution() {
+        let repo_path = init_test_repo("invalidated-repo");
+        let git_dir = resolve_git_dir(&repo_path).expect("resolve git dir before invalidation");
+        fs::remove_dir_all(&git_dir).expect("remove git dir");
+
+        assert!(matches!(
+            inspect_resolved_local_repo_sync_state(&repo_path, &git_dir)
+                .expect("inspect invalidated repo"),
+            LocalRepoSyncStateInspection::NotRepository
+        ));
+
+        let _ = fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn discovery_reports_rev_parse_failure_when_git_metadata_remains() {
+        let repo_path =
+            std::env::temp_dir().join(format!("gnosis-broken-git-{}", random_token(16)));
+        fs::create_dir_all(repo_path.join(".git")).expect("create git metadata marker");
+
+        let error = match inspect_local_repo_sync_state(&repo_path) {
+            Err(error) => error,
+            Ok(_) => panic!("git metadata inspection failure must remain actionable"),
+        };
+        assert!(error.contains("Could not resolve the git directory"));
+
+        let _ = fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn discovery_still_reports_corrupt_sync_state() {
+        let repo_path = init_test_repo("corrupt-sync-state");
+        let git_dir = resolve_git_dir(&repo_path).expect("resolve git dir");
+        fs::write(git_dir.join("gnosis-sync-state.json"), b"{not valid json")
+            .expect("write corrupt sync state");
+
+        let error = match inspect_local_repo_sync_state(&repo_path) {
+            Err(error) => error,
+            Ok(_) => panic!("corrupt sync state must remain actionable"),
+        };
+        assert!(error.contains("Could not parse local repo sync state"));
+
+        let _ = fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn concurrent_upserts_preserve_both_updates_and_valid_json() {
+        let repo_path = init_test_repo("local-sync-state-test");
 
         let repo_path = Arc::new(repo_path);
         let first_repo_path = Arc::clone(&repo_path);
