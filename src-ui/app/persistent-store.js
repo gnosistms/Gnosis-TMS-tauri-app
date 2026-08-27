@@ -5,6 +5,10 @@ let store = null;
 let initialized = false;
 let initializationPromise = null;
 let memoryState = {};
+// Incremented for every in-memory mutation. A reload only publishes its replacement
+// handle after it has persisted a snapshot from the latest revision, preventing writes
+// made during recovery from racing behind an older flush.
+let memoryRevision = 0;
 // True when a Tauri store loader exists (i.e. we are in the native app, not a plain
 // browser). Distinguishes "store handle temporarily gone during a reload" from "no
 // native store at all" so writes route correctly (memory-only vs. localStorage).
@@ -143,20 +147,31 @@ async function reloadStoreHandle() {
     return;
   }
 
-  // Re-acquire a fresh handle (new resource id). Deliberately do NOT re-read the
-  // snapshot: memoryState is already authoritative and re-reading could clobber writes
-  // made during the reload window.
-  store = await loadStore(STORE_FILENAME);
+  // Re-acquire a fresh handle (new resource id), but do not publish it until the
+  // authoritative in-memory state has been flushed. Otherwise a write arriving during
+  // this loop could use the fresh handle and then be overwritten by an older snapshot.
+  const nextStore = await loadStore(STORE_FILENAME);
 
-  // Re-persist memoryState through the fresh handle. The write that hit the stale rid
-  // (and any writes made while the handle was null) only landed in memoryState; without
-  // this flush they never reach the store file and are silently lost on the next boot,
-  // which re-initializes from that file. Safe because memoryState is authoritative. A
-  // set() that itself rejects (e.g. the fresh handle also went stale) propagates to
-  // ensureStoreReloaded's catch, which reports it non-fatally and leaves the handle for
-  // a later write to re-trigger recovery.
-  for (const [key, value] of Object.entries(memoryState)) {
-    await store.set(key, value);
+  while (true) {
+    const revision = memoryRevision;
+    const snapshot = cloneValue(memoryState);
+
+    // Reconcile rather than merely setting present keys: a delete that originally hit
+    // the stale handle must also be replayed on the replacement handle.
+    const persistedEntries = (await nextStore.entries()) ?? [];
+    for (const [key] of persistedEntries) {
+      if (!Object.prototype.hasOwnProperty.call(snapshot, key)) {
+        await nextStore.delete(key);
+      }
+    }
+    for (const [key, value] of Object.entries(snapshot)) {
+      await nextStore.set(key, value);
+    }
+
+    if (memoryRevision === revision) {
+      store = nextStore;
+      return;
+    }
   }
 }
 
@@ -187,7 +202,7 @@ function ensureStoreReloaded() {
   return storeReloadPromise;
 }
 
-function handleStoreWriteFailure(operation, error) {
+function handleStoreWriteFailure(operation, error, failedStore) {
   if (!isStaleResourceError(error)) {
     // Unexpected write failure — report non-fatally but keep the handle; it is not known
     // to be stale.
@@ -199,11 +214,15 @@ function handleStoreWriteFailure(operation, error) {
     return;
   }
 
-  // Stale resource id: drop the handle so subsequent writes go memory-only (never
-  // localStorage — see writePersistentValue) until the reload reconnects a fresh handle.
-  // No immediate retry of the failed write.
-  store = null;
-  void ensureStoreReloaded();
+  // Only discard the handle that actually produced this failure. Another write against
+  // the same stale handle may reject after recovery has already published a replacement;
+  // that delayed rejection must not clear the healthy replacement or start another reload.
+  if (store === failedStore) {
+    // Subsequent writes go memory-only (never localStorage — see writePersistentValue)
+    // until the reload reconnects a fresh handle. No immediate retry of the failed write.
+    store = null;
+    void ensureStoreReloaded();
+  }
   reportStoreFailure?.(`persistent-store.${operation}`, error, {
     level: "warning",
     fingerprint: ["persistent-store", "stale-resource-id"],
@@ -221,10 +240,12 @@ export function readPersistentValue(key, fallbackValue = null) {
 
 export function writePersistentValue(key, value) {
   memoryState[key] = cloneValue(value);
+  memoryRevision += 1;
 
   if (store) {
-    void store.set(key, memoryState[key]).catch((error) => {
-      handleStoreWriteFailure("set", error);
+    const targetStore = store;
+    void targetStore.set(key, memoryState[key]).catch((error) => {
+      handleStoreWriteFailure("set", error, targetStore);
     });
     return;
   }
@@ -234,6 +255,7 @@ export function writePersistentValue(key, value) {
   // store file, not localStorage, so this value would be silently lost on the next
   // restart. Keep it in memoryState only; localStorage is the fallback for browser mode.
   if (storeLoaderAvailable) {
+    void ensureStoreReloaded();
     return;
   }
 
@@ -247,10 +269,12 @@ export function writePersistentValue(key, value) {
 
 export function removePersistentValue(key) {
   delete memoryState[key];
+  memoryRevision += 1;
 
   if (store) {
-    void store.delete(key).catch((error) => {
-      handleStoreWriteFailure("delete", error);
+    const targetStore = store;
+    void targetStore.delete(key).catch((error) => {
+      handleStoreWriteFailure("delete", error, targetStore);
     });
     return;
   }
@@ -258,6 +282,7 @@ export function removePersistentValue(key) {
   // See writePersistentValue: memory-only while the native handle is reloading, so we
   // don't strand a delete in localStorage that init will never consult.
   if (storeLoaderAvailable) {
+    void ensureStoreReloaded();
     return;
   }
 
