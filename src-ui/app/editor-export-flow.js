@@ -24,6 +24,7 @@ import {
   submitTeamChapterCopy,
 } from "./editor-export-team-copy-flow.js";
 import {
+  lastStoredWordPressDestination,
   loadStoredEditorExportDefault,
   loadStoredEditorExportPaperSize,
   saveStoredEditorExportDefault,
@@ -286,9 +287,8 @@ function openExportOptionsForChapter(render, chapterId, languageCode) {
     isOpen: true,
   });
   if (selectedOptionId === "link:wordpress" && exportChapterIsOpenInEditor()) {
-    if (storedOption?.available && stored?.wordpress) {
-      seedWordPressOverwriteDefault(stored.wordpress);
-    }
+    const destination = lastStoredWordPressDestination(stored?.wordpress);
+    if (storedOption?.available && destination) seedWordPressOverwriteDefault(destination);
     ensureWordPressPaneReady(render);
   }
   if (selectedOptionId === "link:team") {

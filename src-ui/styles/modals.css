@@ -348,7 +348,7 @@
   margin-top: auto;
 }
 
-.editor-export-modal__wordpress-disconnect {
+.editor-export-modal__wordpress-switch {
   border: none;
   background: none;
   color: var(--link);

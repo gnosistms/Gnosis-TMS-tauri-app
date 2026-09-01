@@ -190,7 +190,6 @@ import {
 import {
   closeWordPressExportSuccessModal as closeWordPressExportSuccessModalFlow,
   connectWordPress as connectWordPressFlow,
-  disconnectWordPress as disconnectWordPressFlow,
   forgetWordPressSite as forgetWordPressSiteFlow,
   inspectWordPressSite as inspectWordPressSiteFlow,
   reconnectWordPress as reconnectWordPressFlow,
@@ -200,6 +199,7 @@ import {
   selectWordPressPost as selectWordPressPostFlow,
   setWordPressExportMode as setWordPressExportModeFlow,
   showAddWordPressSite as showAddWordPressSiteFlow,
+  showWordPressSitePicker as showWordPressSitePickerFlow,
   cancelAddWordPressSite as cancelAddWordPressSiteFlow,
 } from "./editor-export-wordpress-flow.js";
 import {
@@ -826,11 +826,8 @@ export async function connectWordPress(render) {
   await connectWordPressFlow(render);
 }
 
-export async function disconnectWordPress(render) {
-  await disconnectWordPressFlow(render);
-}
-
 export function showAddWordPressSite(render) { showAddWordPressSiteFlow(render); }
+export function showWordPressSitePicker(render) { showWordPressSitePickerFlow(render); }
 export function cancelAddWordPressSite(render) { cancelAddWordPressSiteFlow(render); }
 export async function inspectWordPressSite(render) { await inspectWordPressSiteFlow(render); }
 export async function saveSelfHostedWordPressSite(render) { await saveSelfHostedWordPressSiteFlow(render); }
