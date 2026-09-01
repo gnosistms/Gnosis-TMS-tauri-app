@@ -353,7 +353,7 @@ function patchFixtureEditorRowState(rowId, updates = {}) {
 }
 
 function render(options = {}) {
-  // While a projects-page chapter select is engaged, full renders defer so
+  // While a protected projects-page select is engaged, full renders defer so
   // the open dropdown isn't destroyed mid-selection; the hold flushes on
   // commit/disengage. See projects-render-hold.js.
   if (deferProjectsRenderWhileSelectEngaged(state, () => renderWithOptions(options))) {

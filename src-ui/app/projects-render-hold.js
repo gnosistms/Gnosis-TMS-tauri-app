@@ -1,18 +1,28 @@
-// Defers full re-renders while the user is engaged with a chapter select
-// (status or glossary pill) on the projects page.
+// Defers full re-renders while the user is engaged with a protected select on
+// the projects page: a chapter status/glossary pill or a project-transfer field.
 //
 // A native <select> whose element is replaced closes its open popup, so any
 // render that lands while the user is choosing — write status badges, the
 // deferred repo sync's progress, query snapshots — interrupts rapid
 // click-through. Renders are deferred, never dropped: the newest render is
-// held and flushed when the select disengages (focusout), when the user's own
+// held and flushed when the select disengages (focusout) or when the user's own
 // selection commits (the change event runs with the hold bypassed so the
-// optimistic render lands immediately), or after a safety timeout so a
-// focused-but-idle select cannot stall background updates indefinitely.
+// optimistic render lands immediately). Chapter selects also use a safety
+// timeout so a focused-but-idle inline control cannot stall background updates.
+// Modal selects intentionally have no timeout: replacing one while its native
+// popup is open closes the menu, and leaving or committing the field always
+// provides a deterministic flush point.
 
 const PROJECTS_RENDER_HOLD_SAFETY_MS = 4000;
 const HOLD_SELECT_SELECTOR =
-  "[data-chapter-status-select], [data-chapter-glossary-select]";
+  [
+    "[data-chapter-status-select]",
+    "[data-chapter-glossary-select]",
+    "[data-project-transfer-team-select]",
+    "[data-project-transfer-glossary-select]",
+  ].join(", ");
+const MODAL_HOLD_SELECT_SELECTOR =
+  "[data-project-transfer-team-select], [data-project-transfer-glossary-select]";
 
 let pendingRender = null;
 let safetyTimerId = 0;
@@ -25,6 +35,10 @@ function isEngagedHoldSelect(element) {
     && element instanceof HTMLSelectElement
     && element.matches(HOLD_SELECT_SELECTOR)
   );
+}
+
+function isModalHoldSelect(element) {
+  return isEngagedHoldSelect(element) && element.matches(MODAL_HOLD_SELECT_SELECTOR);
 }
 
 export function isProjectsSelectCommitTarget(target) {
@@ -57,8 +71,9 @@ export function deferProjectsRenderWhileSelectEngaged(appState, performRender) {
     return false;
   }
 
+  const activeSelect = document.activeElement;
   pendingRender = performRender;
-  if (!safetyTimerId) {
+  if (!isModalHoldSelect(activeSelect) && !safetyTimerId) {
     safetyTimerId = setTimeout(() => {
       safetyTimerId = 0;
       flushProjectsHeldRender();

@@ -55,7 +55,7 @@ export function registerAppEvents(render) {
   installProjectsRenderHold();
   document.addEventListener("input", (event) => handleInputEvent(event, render));
   document.addEventListener("change", (event) => {
-    // A chapter-select commit must render its optimistic update immediately,
+    // A protected select commit must render its state update immediately,
     // so its change handling runs with the projects render hold bypassed.
     if (isProjectsSelectCommitTarget(event.target)) {
       withProjectsSelectCommit(() => handleInputEvent(event, render));

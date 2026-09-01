@@ -2,12 +2,21 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 class FakeSelectElement {
-  constructor(matchesHoldSelector) {
-    this.matchesHoldSelector = matchesHoldSelector;
+  constructor(kind) {
+    this.kind = kind;
   }
 
-  matches() {
-    return this.matchesHoldSelector;
+  matches(selector) {
+    if (this.kind === "chapter") {
+      return selector.includes("[data-chapter-status-select]");
+    }
+    if (this.kind === "transfer-team") {
+      return selector.includes("[data-project-transfer-team-select]");
+    }
+    if (this.kind === "transfer-glossary") {
+      return selector.includes("[data-project-transfer-glossary-select]");
+    }
+    return false;
   }
 }
 
@@ -25,8 +34,10 @@ const {
   withProjectsSelectCommit,
 } = await import("./projects-render-hold.js");
 
-const holdSelect = () => new FakeSelectElement(true);
-const otherSelect = () => new FakeSelectElement(false);
+const holdSelect = () => new FakeSelectElement("chapter");
+const transferTeamSelect = () => new FakeSelectElement("transfer-team");
+const transferGlossarySelect = () => new FakeSelectElement("transfer-glossary");
+const otherSelect = () => new FakeSelectElement("other");
 const projectsState = { screen: "projects" };
 
 test.beforeEach(() => {
@@ -74,6 +85,30 @@ test("renders defer while a chapter select is engaged and flush once", () => {
   assert.equal(rendered, 1);
 });
 
+test("renders defer without a safety timeout while a transfer modal select is engaged", () => {
+  const originalSetTimeout = globalThis.setTimeout;
+  let timeoutCalls = 0;
+  globalThis.setTimeout = () => {
+    timeoutCalls += 1;
+    return 1;
+  };
+  try {
+    globalThis.document.activeElement = transferTeamSelect();
+    let rendered = 0;
+    assert.equal(
+      deferProjectsRenderWhileSelectEngaged(projectsState, () => { rendered += 1; }),
+      true,
+    );
+    assert.equal(timeoutCalls, 0);
+    assert.equal(rendered, 0);
+
+    flushProjectsHeldRender();
+    assert.equal(rendered, 1);
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+  }
+});
+
 test("the newest deferred render wins", () => {
   globalThis.document.activeElement = holdSelect();
   const performed = [];
@@ -104,8 +139,10 @@ test("a select commit bypasses the hold and supersedes older held renders", () =
   assert.equal(backgroundRendered, 0);
 });
 
-test("commit target detection matches only chapter selects", () => {
+test("commit target detection matches chapter and transfer modal selects", () => {
   assert.equal(isProjectsSelectCommitTarget(holdSelect()), true);
+  assert.equal(isProjectsSelectCommitTarget(transferTeamSelect()), true);
+  assert.equal(isProjectsSelectCommitTarget(transferGlossarySelect()), true);
   assert.equal(isProjectsSelectCommitTarget(otherSelect()), false);
   assert.equal(isProjectsSelectCommitTarget(null), false);
 });
