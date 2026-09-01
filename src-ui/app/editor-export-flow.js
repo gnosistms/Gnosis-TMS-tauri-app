@@ -819,7 +819,7 @@ async function submitEditorCopyExport(render, option, operations) {
   }
 }
 
-export async function submitEditorExport(render, operations = {}) {
+export async function submitEditorExport(render, operations = {}, options = {}) {
   const modal = currentExportModal();
   if (!modal?.isOpen || exportModalIsBusy(modal)) {
     return;
@@ -850,7 +850,7 @@ export async function submitEditorExport(render, operations = {}) {
   }
 
   if (option.kind === "link" && option.format === "wordpress") {
-    await submitWordPressExport(render, operations);
+    await submitWordPressExport(render, operations, options);
     return;
   }
 

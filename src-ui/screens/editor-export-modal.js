@@ -277,6 +277,11 @@ function wordpressDetail(wordpress, isExporting) {
         : supportingText("Search for the post to overwrite, then choose it from the results.")}
     `
     : "";
+  const canRefreshImages = !isExporting
+    && !wordpress.reauthRequired
+    && (wordpress.mode === "create"
+      ? Boolean(String(wordpress.title ?? "").trim())
+      : Boolean(selectedPost));
 
   return {
     bodyMarkup: `
@@ -307,13 +312,18 @@ function wordpressDetail(wordpress, isExporting) {
         ? `<p class="modal__supporting editor-export-modal__wordpress-stage">${escapeHtml(wordpress.exportStage)}</p>`
         : ""}
     `,
-    submitButton: loadingPrimaryButton({
-      label: wordpress.mode === "overwrite" ? "Overwrite post" : "Export draft",
-      loadingLabel: "Exporting...",
-      action: "submit-editor-export",
-      isLoading: isExporting,
-      modalDefault: true,
-    }),
+    submitButton: `
+      ${canRefreshImages
+        ? secondaryButton("Refresh images and export", "refresh-wordpress-images-and-export")
+        : ""}
+      ${loadingPrimaryButton({
+        label: wordpress.mode === "overwrite" ? "Overwrite post" : "Export draft",
+        loadingLabel: "Exporting...",
+        action: "submit-editor-export",
+        isLoading: isExporting,
+        modalDefault: true,
+      })}
+    `,
   };
 }
 

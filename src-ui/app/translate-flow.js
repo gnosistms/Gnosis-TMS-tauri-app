@@ -811,11 +811,11 @@ export function selectEditorExportOption(render, optionId) {
   selectEditorExportOptionFlow(render, optionId);
 }
 
-export async function submitEditorExport(render) {
+export async function submitEditorExport(render, options = {}) {
   await submitEditorExportFlow(render, {
     flushDirtyEditorRows,
     reloadChapter: reloadSelectedChapterEditorData,
-  });
+  }, options);
 }
 
 export function closeWordPressExportSuccessModal(render) {
