@@ -688,9 +688,32 @@ test("submitWordPressExport sends content, footnotes, and a job id for create", 
   assert.match(input.content, /<!-- wp:footnotes \/-->/);
   assert.equal(input.footnotes.length, 1);
   assert.equal(input.footnotes[0].content, "footnote 1");
+  assert.equal(input.refreshWordPressImages, false);
   assert.ok(input.jobId);
   assert.equal(state.editorChapter.exportModal.status, "exporting");
   assert.equal(currentWordPressExportState().jobId, input.jobId);
+});
+
+test("submitWordPressExport can bypass and refresh cached images", async () => {
+  installWordPressFixture();
+  setWordPress({
+    connectionStatus: "connected",
+    connection: { blogId: "12345", blogUrl: "https://example.wordpress.com" },
+  });
+  updateWordPressTitle("Refresh image metadata");
+
+  const invokeCalls = [];
+  await submitWordPressExport(
+    () => {},
+    readyWordPressSubmitOperations({
+      invoke: async (command, payload) => invokeCalls.push({ command, payload }),
+    }),
+    { refreshWordPressImages: true },
+  );
+
+  assert.equal(invokeCalls.length, 1);
+  assert.equal(invokeCalls[0].command, "export_chapter_to_wordpress");
+  assert.equal(invokeCalls[0].payload.input.refreshWordPressImages, true);
 });
 
 test("submitWordPressExport refreshes after pending writes before serializing quote styles", async () => {

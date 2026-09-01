@@ -411,6 +411,7 @@ test("editor export modal shows the WordPress overwrite pane with search and war
   assert.match(html, /Hello World/);
   assert.doesNotMatch(html, /This cannot be undone\./);
   assert.match(html, /Overwrite post/);
+  assert.match(html, /data-action="refresh-wordpress-images-and-export"/);
   assert.match(html, /editor-export-modal__wordpress-mode is-selected[\s\S]*value="overwrite"/);
 });
 
@@ -424,6 +425,7 @@ test("editor export modal requires choosing a post before the overwrite warning"
 
   assert.match(html, /Search for the post to overwrite, then choose it from the results\./);
   assert.doesNotMatch(html, /This cannot be undone\./);
+  assert.doesNotMatch(html, /refresh-wordpress-images-and-export/);
 });
 
 test("editor export modal shows the WordPress export stage while exporting", () => {
@@ -434,6 +436,7 @@ test("editor export modal shows the WordPress export stage while exporting", () 
 
   assert.match(html, /Uploading image 1 of 3\.\.\./);
   assert.match(html, /Exporting\.\.\./);
+  assert.doesNotMatch(html, /refresh-wordpress-images-and-export/);
 });
 
 test("editor export modal shows errors and the busy submit state", () => {

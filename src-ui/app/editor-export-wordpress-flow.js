@@ -483,8 +483,9 @@ async function prepareWordPressExportSnapshot(render, team, context, operations 
   assertReady();
 }
 
-export async function submitWordPressExport(render, operations = {}) {
+export async function submitWordPressExport(render, operations = {}, options = {}) {
   const invokeCommand = operations.invoke ?? invoke;
+  const refreshWordPressImages = options.refreshWordPressImages === true;
   const modal = currentExportModal();
   const wordpress = currentWordPressExportState();
   if (!modal?.isOpen || modal.status === "exporting" || !wordpress) {
@@ -577,6 +578,7 @@ export async function submitWordPressExport(render, operations = {}) {
           : headingTitle ?? "",
         content,
         footnotes,
+        refreshWordPressImages,
       },
     });
   } catch (error) {
