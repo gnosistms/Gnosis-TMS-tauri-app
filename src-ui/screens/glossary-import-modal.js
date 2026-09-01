@@ -31,7 +31,14 @@ export function renderGlossaryImportModal(state) {
             >
               <span>${isImporting ? "Importing glossary; please wait." : "Drop a file here or click to open a file selector."}</span>
             </button>
-            <p class="project-import-modal__hint">Supported format: .tmx.</p>
+            <p class="project-import-modal__hint">
+              Supported format: .tmx.
+              <a
+                class="glossary-import-modal__sample-link"
+                href="/sample-glossary-es-en.tmx"
+                download="sample-glossary-es-en.tmx"
+              >download a sample glossary file</a>.
+            </p>
           </div>
           <div class="modal__actions">
             ${secondaryButton("Cancel", "cancel-glossary-import", {

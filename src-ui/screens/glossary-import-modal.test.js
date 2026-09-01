@@ -15,6 +15,9 @@ test("glossary import modal renders the shared drop target copy", () => {
   assert.match(html, /data-glossary-import-dropzone/);
   assert.match(html, /Drop a file here or click to open a file selector\./);
   assert.match(html, /Supported format: \.tmx\./);
+  assert.match(html, />download a sample glossary file<\/a>/);
+  assert.match(html, /href="\/sample-glossary-es-en\.tmx"/);
+  assert.match(html, /download="sample-glossary-es-en\.tmx"/);
 });
 
 test("glossary import modal renders centered importing copy without a drop target spinner", () => {

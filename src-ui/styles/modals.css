@@ -1764,6 +1764,15 @@
   line-height: 1.5;
 }
 
+.glossary-import-modal__sample-link {
+  color: var(--link);
+  font-weight: 650;
+}
+
+.glossary-import-modal__sample-link:hover {
+  color: var(--link-hover);
+}
+
 .project-import-modal__upload-progress {
   display: grid;
   gap: 12px;
