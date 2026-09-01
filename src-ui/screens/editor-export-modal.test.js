@@ -377,7 +377,8 @@ test("editor export modal shows the WordPress create pane with a title field", (
   const html = renderEditorExportModal(wordpressState());
 
   assert.match(html, /Connected to <strong>https:\/\/example\.wordpress\.com<\/strong>/);
-  assert.match(html, /data-action="disconnect-wordpress"/);
+  assert.match(html, /data-action="show-wordpress-site-picker"/);
+  assert.match(html, />Switch site<\/button>/);
   assert.match(html, /editor-export-modal__wordpress-mode is-selected/);
   assert.match(html, /data-wordpress-mode-input checked/);
   assert.match(html, /editor-export-modal__wordpress-mode-title">Create a new draft post/);

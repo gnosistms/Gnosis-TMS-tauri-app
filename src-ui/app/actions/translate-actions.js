@@ -82,7 +82,6 @@ import {
   insertEditorSeparator,
   closeWordPressExportSuccessModal,
   connectWordPress,
-  disconnectWordPress,
   forgetWordPressSite,
   inspectWordPressSite,
   reconnectWordPress,
@@ -91,6 +90,7 @@ import {
   selectWordPressSite,
   selectWordPressPost,
   showAddWordPressSite,
+  showWordPressSitePicker,
   cancelAddWordPressSite,
   applyEditorAiReview,
   continueEditorAiReviewAllPreflight,
@@ -783,8 +783,8 @@ export function createTranslateActions(render) {
       return true;
     }
 
-    if (action === "disconnect-wordpress") {
-      await disconnectWordPress(render);
+    if (action === "show-wordpress-site-picker") {
+      showWordPressSitePicker(render);
       return true;
     }
 

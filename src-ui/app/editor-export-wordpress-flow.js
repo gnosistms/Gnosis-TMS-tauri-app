@@ -22,10 +22,12 @@ import {
   waitForRepoWriteQueueIdle,
 } from "./repo-write-queue.js";
 import {
-  clearStoredWordPressAssociation,
   clearStoredWordPressAssociationsForSite,
+  findStoredWordPressDestination,
+  lastStoredWordPressDestination,
   loadStoredEditorExportDefault,
   saveStoredEditorExportDefault,
+  upsertStoredWordPressDestination,
 } from "./editor-export-defaults.js";
 import { getActiveStorageLogin } from "./team-storage.js";
 
@@ -71,22 +73,22 @@ function createWordPressJobId() {
 
 // Defaults the pane to overwriting the remembered post from the chapter's
 // last successful WordPress export.
-export function seedWordPressOverwriteDefault(storedWordPress) {
-  const postId = Number.parseInt(String(storedWordPress?.postId ?? ""), 10);
+export function seedWordPressOverwriteDefault(storedDestination, connection = null) {
+  const postId = Number.parseInt(String(storedDestination?.postId ?? ""), 10);
   if (!Number.isFinite(postId) || postId <= 0) {
     return;
   }
 
-  const postTitle = String(storedWordPress?.postTitle ?? "").trim();
-  const siteId = String(storedWordPress?.siteId ?? "").trim();
+  const postTitle = String(storedDestination?.postTitle ?? "").trim();
+  const siteId = String(storedDestination?.siteId ?? "").trim();
   updateWordPressState({
     connectionStatus: siteId ? "connected" : "unknown",
-    connection: siteId ? {
+    connection: connection ?? (siteId ? {
       siteId,
-      kind: String(storedWordPress?.siteKind ?? ""),
-      siteUrl: String(storedWordPress?.siteUrl ?? ""),
+      kind: String(storedDestination?.siteKind ?? ""),
+      siteUrl: String(storedDestination?.siteUrl ?? ""),
       displayName: "",
-    } : null,
+    } : null),
     mode: "overwrite",
     selectedPostId: postId,
     searchResults: [{
@@ -110,9 +112,8 @@ export function ensureWordPressPaneReady(render, operations = {}) {
 
   if (wordpress.selectedPostId == null) {
     const stored = loadStoredEditorExportDefault(currentExportModal()?.chapterId);
-    if (stored?.wordpress) {
-      seedWordPressOverwriteDefault(stored.wordpress);
-    }
+    const destination = lastStoredWordPressDestination(stored?.wordpress);
+    if (destination) seedWordPressOverwriteDefault(destination);
   }
 
   if (!wordpress.title) {
@@ -152,11 +153,27 @@ export async function loadWordPressConnection(render, operations = {}) {
       updateWordPressState({ connectionStatus: "connected", connection: selected, connections: sortedConnections });
     } else if (!current?.connection?.siteId) {
       const stored = loadStoredEditorExportDefault(currentExportModal()?.chapterId);
-      if (stored?.wordpress?.postId && sortedConnections.length === 1 && !stored.wordpress.siteId) {
+      const legacyDestination = stored?.wordpress?.legacyDestination;
+      if (legacyDestination?.postId && sortedConnections.length === 1) {
         const connection = sortedConnections[0];
-        const migrated = { ...stored.wordpress, siteId: connection.siteId, siteKind: connection.kind, siteUrl: connection.siteUrl };
-        saveStoredEditorExportDefault(currentExportModal()?.chapterId, { ...stored, wordpress: migrated });
-        seedWordPressOverwriteDefault(migrated);
+        const migrated = {
+          ...legacyDestination,
+          siteId: connection.siteId,
+          siteKind: connection.kind,
+          siteUrl: connection.siteUrl,
+        };
+        saveStoredEditorExportDefault(currentExportModal()?.chapterId, {
+          ...stored,
+          wordpress: {
+            lastSiteId: connection.siteId,
+            destinations: [
+              ...(stored.wordpress.destinations ?? [])
+                .filter((item) => item.siteId !== connection.siteId),
+              migrated,
+            ],
+          },
+        });
+        seedWordPressOverwriteDefault(migrated, connection);
         updateWordPressState({ connectionStatus: "connected", connection, connections: sortedConnections });
       } else {
         updateWordPressState({ connectionStatus: "disconnected", connection: null, connections: sortedConnections });
@@ -206,8 +223,7 @@ export async function connectWordPress(render, operations = {}) {
   }
 }
 
-export async function disconnectWordPress(render) {
-  clearStoredWordPressAssociation(currentExportModal()?.chapterId);
+export function showWordPressSitePicker(render) {
   updateWordPressState({
     connectionStatus: "disconnected", connection: null, reauthRequired: false,
     searchResults: [], searchStatus: "idle", selectedPostId: null,
@@ -220,11 +236,14 @@ export function selectWordPressSite(render, siteId) {
   const wordpress = currentWordPressExportState();
   const connection = wordpress?.connections?.find((item) => item.siteId === siteId);
   if (!connection) return;
+  const stored = loadStoredEditorExportDefault(currentExportModal()?.chapterId);
+  const destination = findStoredWordPressDestination(stored?.wordpress, siteId);
   updateWordPressState({
     connectionStatus: "connected", connection, reauthRequired: false,
     mode: "create", searchResults: [], searchStatus: "idle", selectedPostId: null,
     addStage: "idle", inspection: null, password: "",
   });
+  if (destination) seedWordPressOverwriteDefault(destination, connection);
   updateExportModal({ error: "" });
   render();
 }
@@ -615,15 +634,12 @@ export function handleWordPressExportProgressEvent(payload, render) {
     updateExportModal({ isOpen: false, status: "idle", error: "" });
     const postId = Number.parseInt(String(payload.postId ?? ""), 10);
     if (Number.isFinite(postId) && postId > 0) {
-      saveStoredEditorExportDefault(state.editorChapter?.chapterId, {
-        optionId: "link:wordpress",
-        wordpress: {
-          siteId: wordpress.connection?.siteId ?? "",
-          siteKind: wordpress.connection?.kind ?? "",
-          siteUrl: wordpress.connection?.siteUrl ?? "",
-          postId,
-          postTitle: String(payload.postTitle ?? "").trim(),
-        },
+      upsertStoredWordPressDestination(state.editorChapter?.chapterId, {
+        siteId: wordpress.connection?.siteId ?? "",
+        siteKind: wordpress.connection?.kind ?? "",
+        siteUrl: wordpress.connection?.siteUrl ?? "",
+        postId,
+        postTitle: String(payload.postTitle ?? "").trim(),
       });
     }
 

@@ -282,7 +282,7 @@ function wordpressDetail(wordpress, isExporting) {
     bodyMarkup: `
       <p class="modal__supporting">
         Connected to <strong>${escapeHtml(blogLabel)}</strong>.
-        <button type="button" class="editor-export-modal__wordpress-disconnect" data-action="disconnect-wordpress">Disconnect</button>
+        <button type="button" class="editor-export-modal__wordpress-switch" data-action="show-wordpress-site-picker">Switch site</button>
       </p>
       ${wordpress.reauthRequired ? `<p class="editor-export-modal__wordpress-warning" role="alert">${wordpress.authInProgress
         ? "Finish logging in through your browser, then return here."
