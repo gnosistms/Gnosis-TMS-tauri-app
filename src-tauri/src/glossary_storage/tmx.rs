@@ -555,6 +555,8 @@ fn language_name_for_iso_code(code: &str) -> Option<String> {
 mod tests {
     use super::parse_tmx_glossary;
 
+    const SAMPLE_ES_EN_TMX: &str = include_str!("../../../src-ui/public/sample-glossary-es-en.tmx");
+
     fn glossary_tmx(first_id: &str, second_id: &str) -> String {
         format!(
             r#"<tmx version="1.4"><header srclang="es"/><body>
@@ -595,5 +597,48 @@ mod tests {
 
         assert_eq!(parsed.target_language.code, "zh-Hant");
         assert_eq!(parsed.target_language.name, "Chinese (Traditional)");
+    }
+
+    #[test]
+    fn bundled_spanish_english_sample_demonstrates_glossary_features() {
+        let parsed = parse_tmx_glossary("sample-glossary-es-en.tmx", SAMPLE_ES_EN_TMX.as_bytes())
+            .expect("parse bundled glossary sample");
+
+        assert_eq!(parsed.source_language.code, "es");
+        assert_eq!(parsed.target_language.code, "en");
+        assert_eq!(parsed.terms.len(), 10);
+
+        let banco = &parsed.terms[0];
+        assert_eq!(banco.source_terms, vec!["banco"]);
+        assert_eq!(banco.target_terms, vec!["bank", "bench"]);
+        assert!(banco
+            .target_variant_notes
+            .iter()
+            .all(|note| !note.is_empty()));
+        assert!(!banco.notes_to_translators.is_empty());
+        assert!(!banco.footnote.is_empty());
+
+        let ir = &parsed.terms[1];
+        assert_eq!(
+            ir.source_terms,
+            vec!["voy", "vas", "va", "vamos", "vais", "van"]
+        );
+        assert_eq!(ir.target_terms, vec!["go"]);
+        assert_eq!(ir.target_variant_notes, vec![""]);
+
+        let pues = &parsed.terms[4];
+        assert_eq!(pues.target_terms, vec![""]);
+        assert!(!pues.target_variant_notes[0].is_empty());
+
+        assert!(parsed.terms.iter().any(|term| !term.footnote.is_empty()));
+        assert!(parsed.terms.iter().any(|term| term.footnote.is_empty()));
+        assert!(parsed
+            .terms
+            .iter()
+            .any(|term| !term.notes_to_translators.is_empty()));
+        assert!(parsed
+            .terms
+            .iter()
+            .any(|term| term.notes_to_translators.is_empty()));
     }
 }
