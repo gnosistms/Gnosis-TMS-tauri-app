@@ -77,6 +77,8 @@ pub(super) fn ensure_project_search_schema(connection: &Connection) -> Result<()
          ON search_documents(repo_key);
        CREATE INDEX IF NOT EXISTS search_documents_chapter_idx
          ON search_documents(chapter_id);
+       CREATE INDEX IF NOT EXISTS search_documents_row_idx
+         ON search_documents(row_id);
        CREATE INDEX IF NOT EXISTS search_documents_language_idx
          ON search_documents(language_code);
        CREATE TABLE IF NOT EXISTS search_document_tokens (

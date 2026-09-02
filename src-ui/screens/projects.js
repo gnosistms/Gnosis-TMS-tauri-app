@@ -13,6 +13,8 @@ import { formatErrorForDisplay } from "../app/error-display.js";
 import { buildProjectSearchSnippetMarkup } from "../app/project-search-highlighting.js";
 import {
   buildProjectSearchTree,
+  projectSearchVisibleResults,
+  projectSearchWeakerToggleLabel,
   projectsSearchModeIsActiveForState,
   projectsSearchResultCountLabel,
 } from "../app/project-search-state.js";
@@ -139,12 +141,19 @@ function renderProjectSearchProject(project, search, projectIndex) {
 
 function renderProjectSearchResults(state) {
   const search = state.projectsSearch ?? {};
+  const visibleResults = projectSearchVisibleResults(search);
+  const weakerToggle = Number(search.weakerTotal ?? 0) > 0
+    ? secondaryButton(projectSearchWeakerToggleLabel(search), "toggle-project-search-weaker", {
+      className: "project-search-results__weaker-button",
+    })
+    : "";
   const header = `
     <div class="project-search-results__toolbar">
       <div class="project-search-results__summary">
         <h2 class="project-search-results__title">Search results</h2>
         <p class="project-search-results__count">${escapeHtml(projectsSearchResultCountLabel(search))}</p>
       </div>
+      ${weakerToggle}
       ${secondaryButton("Clear", "clear-project-search", { className: "project-search-results__clear-button" })}
     </div>
   `;
@@ -187,7 +196,7 @@ function renderProjectSearchResults(state) {
     );
   }
 
-  if ((search.results ?? []).length === 0) {
+  if (visibleResults.length === 0) {
     return (
       header +
       renderStateCard({
@@ -198,7 +207,7 @@ function renderProjectSearchResults(state) {
     );
   }
 
-  const tree = buildProjectSearchTree(search.results);
+  const tree = buildProjectSearchTree(visibleResults);
   return `
     ${header}
     <section class="project-search-tree">

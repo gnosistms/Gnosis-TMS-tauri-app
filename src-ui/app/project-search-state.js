@@ -11,10 +11,40 @@ export function projectsSearchModeIsActiveForState(state) {
 }
 
 export function projectsSearchResultCountLabel(projectsSearch = {}) {
-  const total = Number.isFinite(projectsSearch?.total) ? projectsSearch.total : 0;
-  const count = projectsSearch?.totalCapped === true ? `${total}+` : `${total}`;
-  const suffix = total === 1 && projectsSearch?.totalCapped !== true ? "" : "s";
-  return `${count} matching row${suffix}`;
+  if (projectsSearch?.includeWeakerMatches === true) {
+    const total = Number.isFinite(projectsSearch?.total) ? projectsSearch.total : 0;
+    const suffix = total === 1 ? "" : "s";
+    const cappedSuffix = projectsSearch?.totalCapped === true ? " shown" : "";
+    return `${total} matching row${suffix}${cappedSuffix}`;
+  }
+
+  const strongTotal = Number.isFinite(projectsSearch?.strongTotal)
+    ? projectsSearch.strongTotal
+    : (projectsSearch?.results ?? []).filter((row) => row?.qualityTier !== "weaker").length;
+  const suffix = strongTotal === 1 ? "" : "s";
+  const cappedSuffix = projectsSearch?.totalCapped === true ? " shown" : "";
+  return `${strongTotal} strong matching row${suffix}${cappedSuffix}`;
+}
+
+export function projectSearchWeakerToggleLabel(projectsSearch = {}) {
+  if (projectsSearch?.includeWeakerMatches === true) {
+    return "Hide weaker matches";
+  }
+  const weakerTotal = Number.isFinite(projectsSearch?.weakerTotal)
+    ? projectsSearch.weakerTotal
+    : (projectsSearch?.results ?? []).filter((row) => row?.qualityTier === "weaker").length;
+  if (projectsSearch?.totalCapped === true) {
+    return `Include weaker matches (${weakerTotal} available)`;
+  }
+  return `Include ${weakerTotal} weaker match${weakerTotal === 1 ? "" : "es"}`;
+}
+
+export function projectSearchVisibleResults(projectsSearch = {}) {
+  const results = Array.isArray(projectsSearch?.results) ? projectsSearch.results : [];
+  if (projectsSearch?.includeWeakerMatches === true) {
+    return results;
+  }
+  return results.filter((row) => row?.qualityTier !== "weaker");
 }
 
 function compareScoreThenTitle(left, right) {

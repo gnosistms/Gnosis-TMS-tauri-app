@@ -118,6 +118,7 @@ test("project search renders collapsed compact cards and all excerpts after expa
     rowId: "row-search",
     rowOrderKey: "a0",
     score: 20,
+    qualityTier: "strong",
     excerpts: [
       {
         languageCode: "en",
@@ -138,13 +139,15 @@ test("project search renders collapsed compact cards and all excerpts after expa
     status: "ready",
     results: [row],
     total: 1,
+    strongTotal: 1,
+    weakerTotal: 0,
     totalCapped: false,
     expandedProjectIds: new Set(),
     expandedChapterIds: new Set(),
   };
 
   const collapsedHtml = renderProjectsScreen(projectsState({ projectsSearch: baseSearch }));
-  assert.match(collapsedHtml, /1 matching row/);
+  assert.match(collapsedHtml, /1 strong matching row/);
   assert.match(collapsedHtml, /Logos Mantra Theurgy/);
   assert.match(collapsedHtml, /aria-controls="project-search-project-0"/);
   assert.match(collapsedHtml, /id="project-search-project-0" hidden/);
@@ -180,6 +183,60 @@ test("project search renders collapsed compact cards and all excerpts after expa
   assert.equal((chapterExpandedHtml.match(/open-project-search-chapter:/g) ?? []).length, 1);
   assert.doesNotMatch(chapterExpandedHtml, /open-project-search-result:/);
   assert.match(chapterExpandedHtml, /<button\s+type="button"\s+class="project-search-tree__disclosure/);
+});
+
+test("project search hides weak-only branches until weaker matches are included", () => {
+  const results = [
+    {
+      projectId: "strong-project",
+      projectTitle: "Strong Project",
+      chapterId: "strong-chapter",
+      chapterTitle: "Strong Chapter",
+      rowId: "strong-row",
+      rowOrderKey: "a0",
+      score: 100,
+      qualityTier: "strong",
+      excerpts: [],
+    },
+    {
+      projectId: "weak-project",
+      projectTitle: "Weak Project",
+      chapterId: "weak-chapter",
+      chapterTitle: "Weak Chapter",
+      rowId: "weak-row",
+      rowOrderKey: "b0",
+      score: 10,
+      qualityTier: "weaker",
+      excerpts: [],
+    },
+  ];
+  const baseSearch = {
+    query: "query",
+    status: "ready",
+    results,
+    total: 2,
+    strongTotal: 1,
+    weakerTotal: 1,
+    totalCapped: true,
+    includeWeakerMatches: false,
+    expandedProjectIds: new Set(),
+    expandedChapterIds: new Set(),
+  };
+
+  const strongHtml = renderProjectsScreen(projectsState({ projectsSearch: baseSearch }));
+  assert.match(strongHtml, /1 strong matching row shown/);
+  assert.match(strongHtml, /Strong Project/);
+  assert.doesNotMatch(strongHtml, /Weak Project/);
+  assert.match(strongHtml, /data-action="toggle-project-search-weaker"/);
+  assert.match(strongHtml, /Include weaker matches \(1 available\)/);
+
+  const allHtml = renderProjectsScreen(projectsState({
+    projectsSearch: { ...baseSearch, includeWeakerMatches: true },
+  }));
+  assert.match(allHtml, /2 matching rows shown/);
+  assert.match(allHtml, /Strong Project/);
+  assert.match(allHtml, /Weak Project/);
+  assert.match(allHtml, /Hide weaker matches/);
 });
 
 test("offline banner renders inside the page header", () => {
