@@ -8,11 +8,14 @@ import {
   primaryButton,
   renderStateCard,
   secondaryButton,
-  textAction,
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { buildProjectSearchSnippetMarkup } from "../app/project-search-highlighting.js";
-import { projectsSearchModeIsActiveForState, projectsSearchResultCountLabel } from "../app/project-search-state.js";
+import {
+  buildProjectSearchTree,
+  projectsSearchModeIsActiveForState,
+  projectsSearchResultCountLabel,
+} from "../app/project-search-state.js";
 import { renderProjectCreationModal } from "./project-creation-modal.js";
 import { renderChapterPermanentDeletionModal } from "./chapter-permanent-deletion-modal.js";
 import { renderChapterRenameModal } from "./chapter-rename-modal.js";
@@ -54,28 +57,83 @@ import {
   renderProjectsVirtualList,
 } from "./project-list-flat-render.js";
 
-function renderProjectSearchResult(result, searchQuery) {
-  const matchCount = Number.isFinite(result?.matchCount) ? result.matchCount : 0;
-  const snippetLanguageCode = typeof result?.languageCode === "string" ? result.languageCode.trim() : "";
-  const snippetMarkup = buildProjectSearchSnippetMarkup(result?.snippet ?? "", searchQuery, snippetLanguageCode);
-  const snippetSourceLabel = result?.snippetSource === "footnote" ? "Footnote:" : "";
+function projectSearchExcerptSourceLabel(source) {
+  if (source === "footnote") {
+    return "Footnote";
+  }
+  if (source === "image-caption") {
+    return "Image caption";
+  }
+  return "Text";
+}
+
+function renderProjectSearchRow(row, searchQuery) {
   return `
-    <article class="card project-search-result">
-      <div class="project-search-result__header">
-        <p class="project-search-result__path">
-          ${escapeHtml(result?.projectTitle ?? "Project")}
-          <span class="project-search-result__separator">›</span>
-          ${escapeHtml(result?.chapterTitle ?? "File")}
-          <span class="project-search-result__separator">›</span>
-          ${escapeHtml(result?.languageName ?? result?.languageCode ?? "")}
-        </p>
-        ${matchCount > 0 ? `<span class="project-search-result__meta">${escapeHtml(`${matchCount} match${matchCount === 1 ? "" : "es"}`)}</span>` : ""}
-      </div>
-      <p class="project-search-result__snippet"${snippetLanguageCode ? ` lang="${escapeHtml(snippetLanguageCode)}"` : ""} dir="auto">${snippetSourceLabel ? `<span class="project-search-result__snippet-source">${escapeHtml(snippetSourceLabel)}</span> ` : ""}${snippetMarkup}</p>
-      <div class="project-search-result__footer">
-        ${textAction("Open", `open-project-search-result:${result?.resultId ?? ""}`)}
-      </div>
+    <article class="project-search-tree__row" data-project-search-row>
+      ${(Array.isArray(row?.excerpts) ? row.excerpts : []).map((excerpt) => {
+        const languageCode = typeof excerpt?.languageCode === "string" ? excerpt.languageCode.trim() : "";
+        const languageName = excerpt?.languageName ?? languageCode;
+        const snippetMarkup = buildProjectSearchSnippetMarkup(excerpt?.snippet ?? "", searchQuery, languageCode);
+        return `
+          <div class="project-search-tree__excerpt">
+            <p class="project-search-tree__excerpt-meta">${escapeHtml(languageName)} · ${escapeHtml(projectSearchExcerptSourceLabel(excerpt?.snippetSource))}</p>
+            <p class="project-search-result__snippet"${languageCode ? ` lang="${escapeHtml(languageCode)}"` : ""} dir="auto">${snippetMarkup}</p>
+          </div>
+        `;
+      }).join("")}
     </article>
+  `;
+}
+
+function renderProjectSearchChapter(chapter, search, projectIndex, chapterIndex) {
+  const expanded = search.expandedChapterIds instanceof Set
+    && search.expandedChapterIds.has(chapter.id);
+  const panelId = `project-search-chapter-${projectIndex}-${chapterIndex}`;
+  return `
+    <section class="project-search-tree__chapter">
+      <div class="project-search-tree__chapter-header">
+        <button
+          type="button"
+          class="project-search-tree__disclosure project-search-tree__disclosure--chapter"
+          data-action="toggle-project-search-chapter:${escapeHtml(chapter.id)}"
+          aria-expanded="${expanded ? "true" : "false"}"
+          aria-controls="${panelId}"
+        >
+          <span class="project-search-tree__chevron" aria-hidden="true">›</span>
+          <span>${escapeHtml(chapter.title)}</span>
+          <span class="project-search-tree__count">${escapeHtml(`${chapter.rowCount} row${chapter.rowCount === 1 ? "" : "s"}`)}</span>
+        </button>
+        <button
+          type="button"
+          class="text-action project-search-tree__open"
+          data-action="open-project-search-chapter:${escapeHtml(chapter.id)}"
+          aria-label="${escapeHtml(`Open ${chapter.title} and search for ${search.query ?? ""}`)}"
+        >Open</button>
+      </div>
+      <div class="project-search-tree__rows" id="${panelId}"${expanded ? "" : " hidden"}>${expanded ? chapter.rows.map((row) => renderProjectSearchRow(row, search.query ?? "")).join("") : ""}</div>
+    </section>
+  `;
+}
+
+function renderProjectSearchProject(project, search, projectIndex) {
+  const expanded = search.expandedProjectIds instanceof Set
+    && search.expandedProjectIds.has(project.id);
+  const panelId = `project-search-project-${projectIndex}`;
+  return `
+    <section class="card project-search-tree__project">
+      <button
+        type="button"
+        class="project-search-tree__disclosure project-search-tree__disclosure--project"
+        data-action="toggle-project-search-project:${escapeHtml(project.id)}"
+        aria-expanded="${expanded ? "true" : "false"}"
+        aria-controls="${panelId}"
+      >
+        <span class="project-search-tree__chevron" aria-hidden="true">›</span>
+        <span>${escapeHtml(project.title)}</span>
+        <span class="project-search-tree__count">${escapeHtml(`${project.rowCount} row${project.rowCount === 1 ? "" : "s"}`)}</span>
+      </button>
+      <div class="project-search-tree__chapters" id="${panelId}"${expanded ? "" : " hidden"}>${expanded ? project.chapters.map((chapter, chapterIndex) => renderProjectSearchChapter(chapter, search, projectIndex, chapterIndex)).join("") : ""}</div>
+    </section>
   `;
 }
 
@@ -140,15 +198,11 @@ function renderProjectSearchResults(state) {
     );
   }
 
+  const tree = buildProjectSearchTree(search.results);
   return `
     ${header}
-    <section class="stack project-search-results">
-      ${(search.results ?? []).map((result) => renderProjectSearchResult(result, search.query ?? "")).join("")}
-      ${
-        search.hasMore
-          ? `<div class="project-search-results__more">${secondaryButton(search.loadingMore ? "Loading..." : "Load more", "load-more-project-search-results", { disabled: search.loadingMore === true })}</div>`
-          : ""
-      }
+    <section class="project-search-tree">
+      ${tree.map((project, projectIndex) => renderProjectSearchProject(project, search, projectIndex)).join("")}
     </section>
   `;
 }

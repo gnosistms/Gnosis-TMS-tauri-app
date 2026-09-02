@@ -6,6 +6,7 @@ use std::{
 use rusqlite::Connection;
 use tauri::AppHandle;
 
+use super::PROJECT_SEARCH_CONTENT_VERSION;
 use crate::storage_paths::installation_data_dir;
 
 pub(super) fn project_search_db_path(
@@ -48,7 +49,8 @@ pub(super) fn ensure_project_search_schema(connection: &Connection) -> Result<()
          repo_name TEXT NOT NULL,
          project_title TEXT NOT NULL,
          head_sha TEXT NOT NULL,
-         last_indexed_at INTEGER NOT NULL
+         last_indexed_at INTEGER NOT NULL,
+         content_version INTEGER NOT NULL DEFAULT 2
        );
        CREATE TABLE IF NOT EXISTS search_documents (
          doc_id INTEGER PRIMARY KEY,
@@ -97,7 +99,11 @@ pub(super) fn ensure_project_search_schema(connection: &Connection) -> Result<()
          PRIMARY KEY (doc_id, trigram)
        );
        CREATE INDEX IF NOT EXISTS search_document_trigrams_trigram_idx
-         ON search_document_trigrams(trigram);",
+         ON search_document_trigrams(trigram);
+       CREATE TABLE IF NOT EXISTS search_metadata (
+         key TEXT PRIMARY KEY,
+         value TEXT NOT NULL
+       );",
         )
         .map_err(|error| format!("Could not initialize the project search schema: {error}"))?;
 
@@ -119,6 +125,14 @@ pub(super) fn ensure_project_search_schema(connection: &Connection) -> Result<()
             .map_err(|error| format!("Could not migrate the project search schema: {error}"))?;
         clear_project_search_index_tables(connection)?;
     }
+    if !table_has_column(connection, "indexed_repos", "content_version")? {
+        connection
+            .execute(
+                "ALTER TABLE indexed_repos ADD COLUMN content_version INTEGER NOT NULL DEFAULT 1",
+                [],
+            )
+            .map_err(|error| format!("Could not migrate the project search schema: {error}"))?;
+    }
 
     connection
         .execute_batch(
@@ -127,6 +141,67 @@ pub(super) fn ensure_project_search_schema(connection: &Connection) -> Result<()
         )
         .map_err(|error| format!("Could not finalize the project search schema: {error}"))?;
     Ok(())
+}
+
+pub(super) fn project_search_index_requires_refresh(
+    connection: &Connection,
+) -> Result<bool, String> {
+    let indexed_repo_count = connection
+        .query_row("SELECT COUNT(*) FROM indexed_repos", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .map_err(|error| format!("Could not inspect the project search index state: {error}"))?;
+    if indexed_repo_count == 0 {
+        return Ok(!project_search_index_refresh_completed(connection)?);
+    }
+
+    let stale_repo_count = connection
+        .query_row(
+            "SELECT COUNT(*) FROM indexed_repos WHERE content_version != ?1",
+            [PROJECT_SEARCH_CONTENT_VERSION],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| {
+            format!("Could not inspect the project search content version: {error}")
+        })?;
+    Ok(stale_repo_count > 0)
+}
+
+pub(super) fn project_search_index_has_documents(connection: &Connection) -> Result<bool, String> {
+    connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM search_documents LIMIT 1)",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(|error| format!("Could not inspect the project search documents: {error}"))
+}
+
+pub(super) fn mark_project_search_index_refresh_completed(
+    connection: &Connection,
+) -> Result<(), String> {
+    connection
+        .execute(
+            "INSERT INTO search_metadata (key, value)
+             VALUES ('last_refresh_completed', '1')
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [],
+        )
+        .map_err(|error| format!("Could not record the project search index state: {error}"))?;
+    Ok(())
+}
+
+fn project_search_index_refresh_completed(connection: &Connection) -> Result<bool, String> {
+    connection
+        .query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM search_metadata
+               WHERE key = 'last_refresh_completed' AND value = '1'
+             )",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(|error| format!("Could not inspect the project search refresh state: {error}"))
 }
 
 fn table_has_column(
@@ -158,7 +233,8 @@ fn clear_project_search_index_tables(connection: &Connection) -> Result<(), Stri
              DELETE FROM search_document_bigrams;
              DELETE FROM search_document_trigrams;
              DELETE FROM search_documents;
-             DELETE FROM indexed_repos;",
+             DELETE FROM indexed_repos;
+             DELETE FROM search_metadata WHERE key = 'last_refresh_completed';",
         )
         .map_err(|error| {
             format!("Could not reset the project search index after migration: {error}")

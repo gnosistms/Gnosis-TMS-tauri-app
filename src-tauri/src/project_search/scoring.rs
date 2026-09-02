@@ -155,14 +155,6 @@ fn query_has_prefix_match(document: &str, query_tokens: &[String]) -> bool {
     })
 }
 
-pub(super) fn resolve_match_count(candidate: &CandidateDocument, normalized_query: &str) -> usize {
-    let exact_matches = count_exact_substrings(&candidate.document.search_text, normalized_query);
-    if exact_matches > 0 {
-        return exact_matches;
-    }
-    candidate.token_hits.max(candidate.ngram_hits).max(1)
-}
-
 pub(super) fn empty_search_response(
     query_too_short: bool,
     total_capped: bool,
@@ -170,26 +162,11 @@ pub(super) fn empty_search_response(
     SearchProjectsResponse {
         results: Vec::new(),
         total: 0,
-        has_more: false,
         index_status: "ready".to_string(),
         total_capped,
         query_too_short,
         minimum_query_length: MIN_SEARCH_QUERY_LENGTH,
     }
-}
-
-fn count_exact_substrings(document: &str, needle: &str) -> usize {
-    if needle.is_empty() || document.is_empty() {
-        return 0;
-    }
-
-    let mut count = 0usize;
-    let mut from_index = 0usize;
-    while let Some(position) = document[from_index..].find(needle) {
-        count += 1;
-        from_index += position + needle.len();
-    }
-    count
 }
 
 pub(super) fn build_plain_text_snippet(plain_text: &str, normalized_query: &str) -> String {

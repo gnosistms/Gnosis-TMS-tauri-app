@@ -505,18 +505,18 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
 
 export async function openTranslateChapter(render, chapterId, operations = {}) {
   if (!hasEditorChapterLoadOperations(operations)) {
-    return;
+    return false;
   }
 
   const context = findChapterContextById(chapterId);
   if (!context) {
     showNoticeBadge("Could not determine which file to open.", render);
-    return;
+    return false;
   }
 
   if (!(await operations.flushDirtyEditorRows(render, { waitForDurable: false }))) {
     showNoticeBadge("Could not queue pending saves before opening a different file.", render);
-    return;
+    return false;
   }
 
   const team = selectedProjectsTeam();
@@ -545,7 +545,12 @@ export async function openTranslateChapter(render, chapterId, operations = {}) {
       chapterId,
     };
     render?.();
-    return;
+    return true;
   }
   await loadSelectedChapterEditorData(render, {}, operations);
+  return (
+    state.screen === "translate"
+    && state.editorChapter?.chapterId === chapterId
+    && state.editorChapter?.status === "ready"
+  );
 }

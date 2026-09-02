@@ -95,6 +95,7 @@ import {
   updateEditorAssistantComposerDraft as updateEditorAssistantComposerDraftFlow,
 } from "./editor-ai-assistant-flow.js";
 import {
+  applyProjectSearchToEditor as applyProjectSearchToEditorFlow,
   replaceSelectedEditorRows as replaceSelectedEditorRowsFlow,
   showEditorRowInContext as showEditorRowInContextFlow,
   selectAllEditorReplaceRows as selectAllEditorReplaceRowsFlow,
@@ -726,9 +727,10 @@ export async function openTranslateChapter(render, chapterId) {
     && state.editorChapter?.chapterId
     && state.editorChapter.chapterId !== chapterId
   ) {
+    let opened = false;
     try {
       await syncAndStopEditorBackgroundSyncSession(render);
-      await openTranslateChapterFlow(render, chapterId, editorChapterLoadOperations());
+      opened = await openTranslateChapterFlow(render, chapterId, editorChapterLoadOperations());
       if (state.screen === "translate" && state.editorChapter?.chapterId === chapterId && state.editorChapter.status === "ready") {
         startEditorBackgroundSyncSession(render);
       }
@@ -736,11 +738,12 @@ export async function openTranslateChapter(render, chapterId) {
       hideNavigationLoadingModal(navigationLoadingToken);
       render();
     }
-    return;
+    return opened === true;
   }
 
+  let opened = false;
   try {
-    await openTranslateChapterFlow(render, chapterId, editorChapterLoadOperations());
+    opened = await openTranslateChapterFlow(render, chapterId, editorChapterLoadOperations());
     if (state.screen === "translate" && state.editorChapter?.chapterId === chapterId && state.editorChapter.status === "ready") {
       startEditorBackgroundSyncSession(render);
     }
@@ -748,6 +751,7 @@ export async function openTranslateChapter(render, chapterId) {
     hideNavigationLoadingModal(navigationLoadingToken);
     render();
   }
+  return opened === true;
 }
 
 export function updateEditorSourceLanguage(render, nextCode) {
@@ -1269,6 +1273,10 @@ export async function updateEditorRowTextStyle(render, rowId, nextTextStyle) {
 
 export function updateEditorSearchFilterQuery(render, nextValue) {
   updateEditorSearchFilterQueryFlow(render, nextValue);
+}
+
+export function applyProjectSearchToEditor(render, nextValue) {
+  applyProjectSearchToEditorFlow(render, nextValue);
 }
 
 export function updateEditorRowFilterMode(render, nextValue) {

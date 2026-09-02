@@ -13,5 +13,5 @@ test("opening a different chapter waits for pending editor writes for that chapt
   assert.match(source, /await waitForEditorOperationQueueIdle\(matchesOpeningChapter\);/);
   assert.match(source, /const resumeCurrentChapter =[\s\S]*?canResumeCurrentEditorChapter\(chapterId\)[\s\S]*?&& hasPendingEditorWritesForChapter\(team, context\);/);
   assert.match(source, /if \(!resumeCurrentChapter\) \{[\s\S]*?await waitForPendingEditorWritesBeforeChapterOpen\(render, team, context\);[\s\S]*?\}/);
-  assert.match(source, /if \(resumeCurrentChapter\) \{[\s\S]*?status: "ready",[\s\S]*?render\?\.\(\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?await loadSelectedChapterEditorData\(render, \{\}, operations\);/);
+  assert.match(source, /if \(resumeCurrentChapter\) \{[\s\S]*?status: "ready",[\s\S]*?render\?\.\(\);[\s\S]*?return true;[\s\S]*?\}[\s\S]*?await loadSelectedChapterEditorData\(render, \{\}, operations\);[\s\S]*?return \([\s\S]*?state\.editorChapter\?\.status === "ready"/);
 });

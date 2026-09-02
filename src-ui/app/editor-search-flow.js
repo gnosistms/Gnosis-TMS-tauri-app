@@ -1,5 +1,6 @@
 import { buildEditorRowSearchHighlights } from "./editor-search-highlighting.js";
 import {
+  EDITOR_ROW_FILTER_MODE_SHOW_ALL,
   editorChapterFiltersAreActive,
   normalizeEditorChapterFilterState,
 } from "./editor-filters.js";
@@ -271,6 +272,34 @@ export function updateEditorSearchFilterQuery(render, nextValue) {
       ...currentReplaceState,
       enabled: searchIsActive ? currentReplaceState.enabled : false,
       selectedRowIds: searchChanged ? new Set() : cloneEditorReplaceSelectedRowIds(currentReplaceState.selectedRowIds),
+      status: "idle",
+      error: "",
+    },
+  };
+  renderEditorFilterChange(render, viewportTransition);
+}
+
+export function applyProjectSearchToEditor(render, nextValue) {
+  if (!state.editorChapter?.chapterId) {
+    return;
+  }
+
+  const currentFilters = normalizeEditorChapterFilters(state.editorChapter?.filters);
+  const nextFilters = normalizeEditorChapterFilters({
+    ...currentFilters,
+    searchQuery: typeof nextValue === "string" ? nextValue : String(nextValue ?? ""),
+    caseSensitive: false,
+    rowFilterMode: EDITOR_ROW_FILTER_MODE_SHOW_ALL,
+  });
+  const viewportTransition = prepareEditorFilterViewportTransition(currentFilters, nextFilters);
+  const currentReplaceState = normalizeEditorReplaceState(state.editorChapter?.replace);
+  state.editorChapter = {
+    ...state.editorChapter,
+    filters: nextFilters,
+    replace: {
+      ...currentReplaceState,
+      enabled: nextFilters.searchQuery.trim().length > 0 ? currentReplaceState.enabled : false,
+      selectedRowIds: new Set(),
       status: "idle",
       error: "",
     },

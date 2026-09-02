@@ -109,6 +109,79 @@ test.afterEach(() => {
   resetSessionState();
 });
 
+test("project search renders collapsed compact cards and all excerpts after expansion", () => {
+  const row = {
+    projectId: "project-search",
+    projectTitle: "Logos Mantra Theurgy",
+    chapterId: "chapter-search",
+    chapterTitle: "Chapter 04 · Angel Aroch",
+    rowId: "row-search",
+    rowOrderKey: "a0",
+    score: 20,
+    excerpts: [
+      {
+        languageCode: "en",
+        languageName: "English",
+        snippetSource: "field",
+        snippet: "The Drukpa lineage",
+      },
+      {
+        languageCode: "vi",
+        languageName: "Vietnamese",
+        snippetSource: "footnote",
+        snippet: "Dòng truyền thừa Drukpa",
+      },
+    ],
+  };
+  const baseSearch = {
+    query: "Drukpa",
+    status: "ready",
+    results: [row],
+    total: 1,
+    totalCapped: false,
+    expandedProjectIds: new Set(),
+    expandedChapterIds: new Set(),
+  };
+
+  const collapsedHtml = renderProjectsScreen(projectsState({ projectsSearch: baseSearch }));
+  assert.match(collapsedHtml, /1 matching row/);
+  assert.match(collapsedHtml, /Logos Mantra Theurgy/);
+  assert.match(collapsedHtml, /aria-controls="project-search-project-0"/);
+  assert.match(collapsedHtml, /id="project-search-project-0" hidden/);
+  assert.doesNotMatch(collapsedHtml, /Chapter 04 · Angel Aroch/);
+  assert.doesNotMatch(collapsedHtml, /data-project-search-row/);
+
+  const projectExpandedHtml = renderProjectsScreen(projectsState({
+    projectsSearch: {
+      ...baseSearch,
+      expandedProjectIds: new Set(["project-search"]),
+    },
+  }));
+  assert.match(projectExpandedHtml, /Chapter 04 · Angel Aroch/);
+  assert.match(projectExpandedHtml, /aria-controls="project-search-chapter-0-0"/);
+  assert.match(projectExpandedHtml, /id="project-search-chapter-0-0" hidden/);
+  assert.match(projectExpandedHtml, /data-action="open-project-search-chapter:chapter-search"/);
+  assert.doesNotMatch(projectExpandedHtml, /data-project-search-row/);
+
+  const chapterExpandedHtml = renderProjectsScreen(projectsState({
+    projectsSearch: {
+      ...baseSearch,
+      expandedProjectIds: new Set(["project-search"]),
+      expandedChapterIds: new Set(["chapter-search"]),
+    },
+  }));
+  assert.match(chapterExpandedHtml, /data-project-search-row/);
+  assert.match(chapterExpandedHtml, /id="project-search-chapter-0-0">/);
+  assert.doesNotMatch(chapterExpandedHtml, /id="project-search-chapter-0-0" hidden/);
+  assert.match(chapterExpandedHtml, /English · Text/);
+  assert.match(chapterExpandedHtml, /Vietnamese · Footnote/);
+  assert.match(chapterExpandedHtml, /lang="en" dir="auto"/);
+  assert.match(chapterExpandedHtml, /lang="vi" dir="auto"/);
+  assert.equal((chapterExpandedHtml.match(/open-project-search-chapter:/g) ?? []).length, 1);
+  assert.doesNotMatch(chapterExpandedHtml, /open-project-search-result:/);
+  assert.match(chapterExpandedHtml, /<button\s+type="button"\s+class="project-search-tree__disclosure/);
+});
+
 test("offline banner renders inside the page header", () => {
   const html = renderProjectsScreen(projectsState({
     offline: {

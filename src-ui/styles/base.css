@@ -1110,7 +1110,7 @@ a {
 
 .project-search-results__title,
 .project-search-results__count,
-.project-search-result__path,
+.project-search-tree__excerpt-meta,
 .project-search-result__snippet {
   margin: 0;
 }
@@ -1121,7 +1121,7 @@ a {
 }
 
 .project-search-results__count,
-.project-search-result__meta {
+.project-search-tree__excerpt-meta {
   color: var(--muted);
   font-size: 14px;
 }
@@ -1144,32 +1144,104 @@ a {
   box-shadow: none;
 }
 
-.project-search-results {
-  gap: 12px;
-}
-
-.project-search-result {
+.project-search-tree {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 24px 27px;
+  gap: 8px;
 }
 
-.project-search-result__header,
-.project-search-result__footer {
+.project-search-tree__project {
+  overflow: hidden;
+}
+
+.project-search-tree__disclosure {
   align-items: center;
   display: flex;
-  gap: 12px;
-  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
 }
 
-.project-search-result__path {
+.project-search-tree__disclosure--project {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.project-search-tree__chevron {
   color: var(--muted);
+  flex: 0 0 auto;
+  font-size: 18px;
+  line-height: 1;
+  transition: transform 140ms ease;
+}
+
+.project-search-tree__disclosure[aria-expanded="true"] .project-search-tree__chevron {
+  transform: rotate(90deg);
+}
+
+.project-search-tree__count {
+  color: var(--muted);
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.project-search-tree__chapters {
+  padding: 0 9px 8px 24px;
+}
+
+.project-search-tree__chapter {
+  overflow: hidden;
+  margin-top: 6px;
+  border: 1px solid var(--surface-border);
+  border-radius: calc(var(--radius-card) - 4px);
+  background: rgba(var(--surface-rgb-strong), 0.66);
+}
+
+.project-search-tree__chapter-header {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  background: var(--control-hover-surface);
+}
+
+.project-search-tree__disclosure--chapter {
+  flex: 1 1 auto;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.project-search-tree__open {
+  flex: 0 0 auto;
+  margin-right: 10px;
   font-size: 14px;
 }
 
-.project-search-result__separator {
-  margin: 0 6px;
+.project-search-tree__rows {
+  padding: 0 8px 5px 19px;
+}
+
+.project-search-tree__row {
+  padding: 8px 3px 9px;
+  border-top: 1px solid var(--surface-border);
+}
+
+.project-search-tree__row:first-child {
+  border-top: 0;
+}
+
+.project-search-tree__excerpt + .project-search-tree__excerpt {
+  margin-top: 10px;
+}
+
+.project-search-tree__excerpt-meta {
+  margin-bottom: 2px;
 }
 
 .project-search-result__snippet {
@@ -1226,11 +1298,6 @@ a {
 .project-search-result__snippet:lang(fa),
 .project-search-result__snippet:lang(ar) {
   font-weight: var(--editor-non-latin-serif-weight);
-}
-
-.project-search-results__more {
-  display: flex;
-  justify-content: center;
 }
 
 .card,

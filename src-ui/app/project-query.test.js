@@ -344,7 +344,8 @@ test("project loading prime clears stale visible projects before team render", (
     query: "old",
     status: "ready",
     results: [{ id: "old-result" }],
-    resultsById: { "old-result": {} },
+    expandedProjectIds: new Set(["old-project"]),
+    expandedChapterIds: new Set(["old-chapter"]),
   };
   state.projectRepoConflictRecovery = {
     teamId: "team-1",
@@ -364,6 +365,8 @@ test("project loading prime clears stale visible projects before team render", (
   assert.equal(state.projectRepoConflictRecovery.teamId, null);
   assert.equal(state.projectsSearch.query, "");
   assert.deepEqual(state.projectsSearch.results, []);
+  assert.deepEqual(state.projectsSearch.expandedProjectIds, new Set());
+  assert.deepEqual(state.projectsSearch.expandedChapterIds, new Set());
   assert.equal(state.projectDiscovery.status, "loading");
   assert.equal(state.projectsPage.isRefreshing, true);
 });

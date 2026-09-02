@@ -28,6 +28,7 @@ pub(super) struct IndexedRepoState {
     pub(super) repo_name: String,
     pub(super) project_title: String,
     pub(super) head_sha: String,
+    pub(super) content_version: i64,
 }
 
 pub(super) fn discover_project_repos(repo_root: &Path) -> Result<Vec<RepoRecord>, String> {
@@ -108,7 +109,7 @@ pub(super) fn load_indexed_repo_states(
     let mut indexed_repos = HashMap::<String, IndexedRepoState>::new();
     let mut statement = connection
         .prepare(
-            "SELECT repo_key, project_id, repo_name, project_title, head_sha FROM indexed_repos",
+            "SELECT repo_key, project_id, repo_name, project_title, head_sha, content_version FROM indexed_repos",
         )
         .map_err(|error| format!("Could not prepare indexed repo scan: {error}"))?;
     let rows = statement
@@ -120,6 +121,7 @@ pub(super) fn load_indexed_repo_states(
                     repo_name: row.get(2)?,
                     project_title: row.get(3)?,
                     head_sha: row.get(4)?,
+                    content_version: row.get(5)?,
                 },
             ))
         })
