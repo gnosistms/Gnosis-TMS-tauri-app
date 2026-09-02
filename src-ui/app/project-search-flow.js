@@ -112,6 +112,12 @@ async function runProjectSearch(render, query, searchVersion) {
       error: "",
       results: nextResults,
       total: Number.isFinite(response?.total) ? response.total : nextResults.length,
+      strongTotal: Number.isFinite(response?.strongTotal)
+        ? response.strongTotal
+        : nextResults.filter((row) => row?.qualityTier !== "weaker").length,
+      weakerTotal: Number.isFinite(response?.weakerTotal)
+        ? response.weakerTotal
+        : nextResults.filter((row) => row?.qualityTier === "weaker").length,
       totalCapped: response?.totalCapped === true,
       indexStatus: typeof response?.indexStatus === "string" ? response.indexStatus : "ready",
       queryTooShort: response?.queryTooShort === true,
@@ -282,6 +288,14 @@ export function toggleProjectSearchProject(render, projectId) {
 
 export function toggleProjectSearchChapter(render, chapterId) {
   toggleSearchExpansion(render, "expandedChapterIds", chapterId);
+}
+
+export function toggleProjectSearchWeakerMatches(render) {
+  state.projectsSearch = {
+    ...state.projectsSearch,
+    includeWeakerMatches: state.projectsSearch?.includeWeakerMatches !== true,
+  };
+  render();
 }
 
 export async function openProjectSearchChapter(render, chapterId, operations = {}) {

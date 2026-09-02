@@ -25,6 +25,8 @@ const readySearchResponse = () => ({
     excerpts: [],
   }],
   total: 1,
+  strongTotal: 1,
+  weakerTotal: 0,
   totalCapped: false,
   indexStatus: "ready",
   queryTooShort: false,
@@ -61,6 +63,7 @@ const {
   openProjectSearchChapter,
   toggleProjectSearchChapter,
   toggleProjectSearchProject,
+  toggleProjectSearchWeakerMatches,
   updateProjectSearchQuery,
 } = await import("./project-search-flow.js");
 const { createProjectsSearchState, state } = await import("./state.js");
@@ -97,6 +100,7 @@ test("changing the project search query resets tree expansion", () => {
       query: "old query",
       expandedProjectIds: new Set(["project-1"]),
       expandedChapterIds: new Set(["chapter-1"]),
+      includeWeakerMatches: true,
     };
 
     updateProjectSearchQuery(() => {}, "x");
@@ -105,6 +109,7 @@ test("changing the project search query resets tree expansion", () => {
     assert.equal(state.projectsSearch.status, "too-short");
     assert.deepEqual([...state.projectsSearch.expandedProjectIds], []);
     assert.deepEqual([...state.projectsSearch.expandedChapterIds], []);
+    assert.equal(state.projectsSearch.includeWeakerMatches, false);
   } finally {
     state.projectsSearch = previousSearch;
   }
@@ -128,12 +133,37 @@ test("project search stores aggregated row responses from Tauri", async () => {
     assert.deepEqual(invokedCommands, ["search_projects"]);
     assert.equal(state.projectsSearch.status, "ready");
     assert.equal(state.projectsSearch.total, 1);
+    assert.equal(state.projectsSearch.strongTotal, 1);
+    assert.equal(state.projectsSearch.weakerTotal, 0);
     assert.equal(state.projectsSearch.results.length, 1);
     assert.equal(state.projectsSearch.results[0].rowId, "row-1");
   } finally {
     state.projectsSearch = previousSearch;
     state.teams = previousTeams;
     state.selectedTeamId = previousSelectedTeamId;
+  }
+});
+
+test("weaker-match toggling preserves tree expansion and does not rerun search", () => {
+  const previousSearch = state.projectsSearch;
+  try {
+    invokedCommands.length = 0;
+    state.projectsSearch = {
+      ...createProjectsSearchState(),
+      expandedProjectIds: new Set(["project-1"]),
+      expandedChapterIds: new Set(["chapter-1"]),
+    };
+    let renderCount = 0;
+
+    toggleProjectSearchWeakerMatches(() => { renderCount += 1; });
+
+    assert.equal(state.projectsSearch.includeWeakerMatches, true);
+    assert.deepEqual([...state.projectsSearch.expandedProjectIds], ["project-1"]);
+    assert.deepEqual([...state.projectsSearch.expandedChapterIds], ["chapter-1"]);
+    assert.deepEqual(invokedCommands, []);
+    assert.equal(renderCount, 1);
+  } finally {
+    state.projectsSearch = previousSearch;
   }
 });
 

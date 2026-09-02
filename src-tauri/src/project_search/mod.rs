@@ -19,8 +19,8 @@ use schema::{
 };
 #[cfg(test)]
 use scoring::{
-    build_plain_text_snippet, collect_unique_bigrams, collect_unique_trigrams,
-    compute_search_score, normalize_search_text, score_to_number,
+    build_plain_text_snippet, collect_unique_bigrams, collect_unique_tokens,
+    collect_unique_trigrams, compute_search_score, normalize_search_text, score_to_number,
     PROJECT_SEARCH_SNIPPET_CHAR_LIMIT,
 };
 
@@ -32,7 +32,7 @@ use refresh::{
     extract_chapter_dir_from_repo_path, RepoRefreshPlan,
 };
 
-const MAX_CANDIDATES: usize = 500;
+const MAX_RESULT_ROWS: usize = 500;
 const MIN_SEARCH_QUERY_LENGTH: usize = 2;
 const PROJECT_SEARCH_CONTENT_VERSION: i64 = 2;
 
@@ -54,10 +54,28 @@ pub(crate) struct RefreshProjectSearchIndexInput {
 pub(crate) struct SearchProjectsResponse {
     results: Vec<ProjectSearchRowResult>,
     total: usize,
+    strong_total: usize,
+    weaker_total: usize,
     index_status: String,
     total_capped: bool,
     query_too_short: bool,
     minimum_query_length: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum ProjectSearchQualityTier {
+    Strong,
+    Weaker,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum ProjectSearchMatchBand {
+    Fuzzy,
+    PartialToken,
+    FullToken,
+    OrderedTokens,
+    ExactPhrase,
 }
 
 #[derive(Serialize)]
@@ -86,6 +104,7 @@ struct ProjectSearchDocumentMatch {
     snippet: String,
     exact_phrase: bool,
     score: f64,
+    match_band: ProjectSearchMatchBand,
 }
 
 #[derive(Clone, Serialize)]
@@ -114,6 +133,9 @@ pub(crate) struct ProjectSearchRowResult {
     row_order_key: String,
     excerpts: Vec<ProjectSearchExcerpt>,
     score: f64,
+    quality_tier: ProjectSearchQualityTier,
+    #[serde(skip_serializing)]
+    match_band: ProjectSearchMatchBand,
 }
 
 #[derive(Clone)]
@@ -253,17 +275,51 @@ fn read_optional_string(value: &Value, key: &str) -> Option<String> {
 mod tests {
     use super::{
         append_diff_name_status_changes, append_status_porcelain_changes, build_plain_text_snippet,
-        collect_unique_bigrams, collect_unique_trigrams, compute_search_score,
-        extract_chapter_dir_from_repo_path, normalize_search_text,
-        query::aggregate_project_search_rows,
+        collect_unique_bigrams, collect_unique_tokens, collect_unique_trigrams,
+        compute_search_score, extract_chapter_dir_from_repo_path, normalize_search_text,
+        query::{
+            aggregate_project_search_rows, classify_project_search_row_quality,
+            search_projects_in_connection, select_candidate_document_ids,
+            strong_project_search_row_count,
+        },
         row_search_documents_from_value,
         schema::{
             ensure_project_search_schema, mark_project_search_index_refresh_completed,
             project_search_index_has_documents, project_search_index_requires_refresh,
         },
         score_to_number, CandidateDocument, IndexedDocument, ProjectSearchDocumentMatch,
-        RepoRefreshPlan, PROJECT_SEARCH_CONTENT_VERSION, PROJECT_SEARCH_SNIPPET_CHAR_LIMIT,
+        ProjectSearchMatchBand, ProjectSearchQualityTier, RepoRefreshPlan, MIN_SEARCH_QUERY_LENGTH,
+        PROJECT_SEARCH_CONTENT_VERSION, PROJECT_SEARCH_SNIPPET_CHAR_LIMIT,
     };
+
+    const PROJECT_SEARCH_QUALITY_GOLDEN_JSON: &str =
+        include_str!("../../../tests/fixtures/project-search-quality/golden.json");
+
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ProjectSearchQualityGoldenFixture {
+        cases: Vec<ProjectSearchQualityGoldenCase>,
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ProjectSearchQualityGoldenCase {
+        name: String,
+        query: String,
+        excerpts: Vec<ProjectSearchQualityGoldenExcerpt>,
+        strong_row_ids: Vec<String>,
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ProjectSearchQualityGoldenExcerpt {
+        row_id: String,
+        row_order_key: String,
+        language_code: String,
+        language_name: String,
+        snippet_source: String,
+        text: String,
+    }
 
     fn candidate(
         document_text: &str,
@@ -317,6 +373,88 @@ mod tests {
             snippet: format!("{language_name} {snippet_source}"),
             exact_phrase: true,
             score,
+            match_band: ProjectSearchMatchBand::ExactPhrase,
+        }
+    }
+
+    fn scored_fixture_match(
+        query: &str,
+        excerpt: &ProjectSearchQualityGoldenExcerpt,
+    ) -> ProjectSearchDocumentMatch {
+        let normalized_query = normalize_search_text(query);
+        let normalized_document = normalize_search_text(&excerpt.text);
+        let query_tokens = collect_unique_tokens(&normalized_query);
+        let document_tokens = collect_unique_tokens(&normalized_document)
+            .into_iter()
+            .collect::<std::collections::HashSet<_>>();
+        let token_hits = query_tokens
+            .iter()
+            .filter(|token| document_tokens.contains(*token))
+            .count();
+        let use_bigrams = normalized_query.chars().count() == MIN_SEARCH_QUERY_LENGTH;
+        let query_ngrams = if use_bigrams {
+            collect_unique_bigrams(&normalized_query)
+        } else {
+            collect_unique_trigrams(&normalized_query)
+        };
+        let document_ngrams = if use_bigrams {
+            collect_unique_bigrams(&normalized_document)
+        } else {
+            collect_unique_trigrams(&normalized_document)
+        };
+        let document_ngram_set = document_ngrams
+            .iter()
+            .collect::<std::collections::HashSet<_>>();
+        let ngram_hits = query_ngrams
+            .iter()
+            .filter(|ngram| document_ngram_set.contains(ngram))
+            .count();
+        let candidate = CandidateDocument {
+            token_hits,
+            ngram_hits,
+            document_ngram_count: document_ngrams.len(),
+            document: IndexedDocument {
+                result_id: format!(
+                    "{}:{}:{}",
+                    excerpt.row_id, excerpt.language_code, excerpt.snippet_source
+                ),
+                project_id: "project-1".to_string(),
+                project_title: "Project".to_string(),
+                repo_name: "repo".to_string(),
+                chapter_id: "chapter-1".to_string(),
+                chapter_title: "Chapter".to_string(),
+                row_id: excerpt.row_id.clone(),
+                row_order_key: excerpt.row_order_key.clone(),
+                language_code: excerpt.language_code.clone(),
+                language_name: excerpt.language_name.clone(),
+                snippet_source: excerpt.snippet_source.clone(),
+                plain_text: excerpt.text.clone(),
+                search_text: normalized_document,
+                trigram_count: document_ngrams.len(),
+            },
+        };
+        let score = compute_search_score(
+            &candidate,
+            &normalized_query,
+            query_tokens.len(),
+            query_ngrams.len(),
+        );
+        ProjectSearchDocumentMatch {
+            result_id: candidate.document.result_id,
+            project_id: candidate.document.project_id,
+            project_title: candidate.document.project_title,
+            repo_name: candidate.document.repo_name,
+            chapter_id: candidate.document.chapter_id,
+            chapter_title: candidate.document.chapter_title,
+            row_id: candidate.document.row_id,
+            row_order_key: candidate.document.row_order_key,
+            language_code: candidate.document.language_code,
+            language_name: candidate.document.language_name,
+            snippet_source: candidate.document.snippet_source,
+            snippet: candidate.document.plain_text,
+            exact_phrase: score.exact_phrase,
+            score: score_to_number(score),
+            match_band: score.match_band(),
         }
     }
 
@@ -456,6 +594,161 @@ mod tests {
         assert_eq!(rows[0].excerpts[0].language_name, "English");
         assert_eq!(rows[0].excerpts[1].language_name, "Vietnamese");
         assert_eq!(rows[1].row_id, "row-2");
+    }
+
+    #[test]
+    fn project_search_quality_boundary_matches_golden_cases() {
+        let fixture: ProjectSearchQualityGoldenFixture =
+            serde_json::from_str(PROJECT_SEARCH_QUALITY_GOLDEN_JSON).unwrap();
+        for case in fixture.cases {
+            let mut matches = case
+                .excerpts
+                .iter()
+                .map(|excerpt| scored_fixture_match(&case.query, excerpt))
+                .collect::<Vec<_>>();
+            matches.sort_by(|left, right| {
+                right
+                    .score
+                    .partial_cmp(&left.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let mut rows = aggregate_project_search_rows(matches);
+            classify_project_search_row_quality(&mut rows);
+            let strong_row_ids = rows
+                .iter()
+                .filter(|row| row.quality_tier == ProjectSearchQualityTier::Strong)
+                .map(|row| row.row_id.clone())
+                .collect::<Vec<_>>();
+            assert_eq!(strong_row_ids, case.strong_row_ids, "{}", case.name);
+        }
+    }
+
+    #[test]
+    fn project_search_quality_fallback_caps_borderline_results_without_splitting_ties() {
+        let gradual_scores = (0..75)
+            .map(|index| 1000.0 - index as f64 * 0.1)
+            .collect::<Vec<_>>();
+        assert_eq!(strong_project_search_row_count(&gradual_scores), 50);
+
+        let tied_scores = vec![100.0; 55];
+        assert_eq!(strong_project_search_row_count(&tied_scores), 55);
+        assert_eq!(strong_project_search_row_count(&[100.0]), 1);
+    }
+
+    #[test]
+    fn project_search_quality_uses_a_clear_borderline_score_knee() {
+        assert_eq!(
+            strong_project_search_row_count(&[300.0, 298.0, 296.0, 120.0, 118.0]),
+            3,
+        );
+    }
+
+    #[test]
+    fn project_search_quality_is_assigned_after_row_aggregation() {
+        let mut exact_excerpt = document_match("row-1", "a0", "en", "English", "field", 100.0);
+        exact_excerpt.match_band = ProjectSearchMatchBand::ExactPhrase;
+        let mut fuzzy_excerpt = document_match("row-1", "a0", "vi", "Vietnamese", "field", 95.0);
+        fuzzy_excerpt.match_band = ProjectSearchMatchBand::Fuzzy;
+        let mut weak_row = document_match("row-2", "b0", "en", "English", "field", 90.0);
+        weak_row.match_band = ProjectSearchMatchBand::Fuzzy;
+        let mut rows = aggregate_project_search_rows(vec![exact_excerpt, fuzzy_excerpt, weak_row]);
+
+        let strong_total = classify_project_search_row_quality(&mut rows);
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(strong_total, 1);
+        assert_eq!(rows[0].quality_tier, ProjectSearchQualityTier::Strong);
+        assert_eq!(rows[1].quality_tier, ProjectSearchQualityTier::Weaker);
+    }
+
+    #[test]
+    fn project_search_candidate_cap_counts_rows_and_keeps_selected_row_excerpts() {
+        let ranked_candidates = vec![(1, 100), (2, 99), (3, 98), (4, 97)];
+        let row_keys = std::collections::HashMap::from([
+            (1, ("p".to_string(), "c".to_string(), "row-1".to_string())),
+            (2, ("p".to_string(), "c".to_string(), "row-2".to_string())),
+            (3, ("p".to_string(), "c".to_string(), "row-1".to_string())),
+            (4, ("p".to_string(), "c".to_string(), "row-3".to_string())),
+        ]);
+
+        let (document_ids, total_capped) =
+            select_candidate_document_ids(ranked_candidates, &row_keys, 2);
+
+        assert_eq!(document_ids, vec![1, 2, 3]);
+        assert!(total_capped);
+    }
+
+    #[test]
+    #[ignore = "requires GNOSIS_PROJECT_SEARCH_CALIBRATION_DB and local corpus data"]
+    fn project_search_calibration_report_for_local_corpus() {
+        let database_path = std::env::var("GNOSIS_PROJECT_SEARCH_CALIBRATION_DB")
+            .expect("GNOSIS_PROJECT_SEARCH_CALIBRATION_DB must point to a search index");
+        let queries = std::env::var("GNOSIS_PROJECT_SEARCH_CALIBRATION_QUERIES")
+            .unwrap_or_else(|_| "Drukpa|cuerpo astral|đức phật".to_string());
+        let include_details = std::env::var("GNOSIS_PROJECT_SEARCH_CALIBRATION_DETAILS")
+            .is_ok_and(|value| value == "1");
+        let database_uri = format!(
+            "file:{}?mode=ro&immutable=1",
+            database_path.replace(' ', "%20")
+        );
+        let connection = rusqlite::Connection::open_with_flags(
+            database_uri,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+                | rusqlite::OpenFlags::SQLITE_OPEN_URI
+                | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .unwrap();
+
+        for query in queries
+            .split('|')
+            .map(str::trim)
+            .filter(|query| !query.is_empty())
+        {
+            let started_at = std::time::Instant::now();
+            let normalized_query = normalize_search_text(query);
+            let response = search_projects_in_connection(
+                &connection,
+                &normalized_query,
+                normalized_query.chars().count(),
+            )
+            .unwrap();
+            let mut band_counts = std::collections::BTreeMap::<String, usize>::new();
+            for row in &response.results {
+                *band_counts
+                    .entry(format!("{:?}", row.match_band))
+                    .or_insert(0) += 1;
+            }
+            eprintln!(
+                "CALIBRATION query={query:?} elapsed_ms={} total={} strong={} weaker={} capped={} bands={band_counts:?}",
+                started_at.elapsed().as_millis(),
+                response.total,
+                response.strong_total,
+                response.weaker_total,
+                response.total_capped,
+            );
+            for (rank, row) in response
+                .results
+                .iter()
+                .take(if include_details { 12 } else { 0 })
+                .enumerate()
+            {
+                let snippet = row
+                    .excerpts
+                    .first()
+                    .map(|excerpt| excerpt.snippet.chars().take(100).collect::<String>())
+                    .unwrap_or_default();
+                eprintln!(
+                    "CALIBRATION rank={} tier={:?} band={:?} score={:.3} project={:?} chapter={:?} row={} snippet={snippet:?}",
+                    rank + 1,
+                    row.quality_tier,
+                    row.match_band,
+                    row.score,
+                    row.project_title,
+                    row.chapter_title,
+                    row.row_id,
+                );
+            }
+        }
     }
 
     #[test]

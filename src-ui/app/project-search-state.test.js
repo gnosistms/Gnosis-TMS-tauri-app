@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 
 import {
   buildProjectSearchTree,
+  projectSearchVisibleResults,
+  projectSearchWeakerToggleLabel,
   projectsSearchModeIsActive,
   projectsSearchModeIsActiveForState,
   projectsSearchResultCountLabel,
@@ -25,9 +27,43 @@ test("projectsSearchModeIsActiveForState reads state.projectsSearch", () => {
   );
 });
 
-test("projectsSearchResultCountLabel shows 500+ when the backend capped the search", () => {
-  assert.equal(projectsSearchResultCountLabel({ total: 317, totalCapped: true }), "317+ matching rows");
-  assert.equal(projectsSearchResultCountLabel({ total: 1, totalCapped: false }), "1 matching row");
+test("projectsSearchResultCountLabel distinguishes strong and revealed result counts", () => {
+  assert.equal(
+    projectsSearchResultCountLabel({ strongTotal: 42, totalCapped: true }),
+    "42 strong matching rows shown",
+  );
+  assert.equal(
+    projectsSearchResultCountLabel({ total: 317, totalCapped: true, includeWeakerMatches: true }),
+    "317 matching rows shown",
+  );
+  assert.equal(projectsSearchResultCountLabel({ strongTotal: 1 }), "1 strong matching row");
+});
+
+test("projectSearchVisibleResults hides weaker rows until requested", () => {
+  const results = [
+    { rowId: "strong", qualityTier: "strong" },
+    { rowId: "weaker", qualityTier: "weaker" },
+  ];
+  assert.deepEqual(
+    projectSearchVisibleResults({ results }).map((row) => row.rowId),
+    ["strong"],
+  );
+  assert.deepEqual(
+    projectSearchVisibleResults({ results, includeWeakerMatches: true }).map((row) => row.rowId),
+    ["strong", "weaker"],
+  );
+  assert.equal(
+    projectSearchWeakerToggleLabel({ weakerTotal: 4 }),
+    "Include 4 weaker matches",
+  );
+  assert.equal(
+    projectSearchWeakerToggleLabel({ weakerTotal: 4, totalCapped: true }),
+    "Include weaker matches (4 available)",
+  );
+  assert.equal(
+    projectSearchWeakerToggleLabel({ weakerTotal: 4, includeWeakerMatches: true }),
+    "Hide weaker matches",
+  );
 });
 
 test("buildProjectSearchTree counts rows and sorts hierarchy deterministically", () => {
@@ -75,4 +111,29 @@ test("buildProjectSearchTree counts rows and sorts hierarchy deterministically",
   assert.deepEqual(tree[0].chapters.map((chapter) => chapter.id), ["chapter-high", "chapter-low"]);
   assert.equal(tree[0].chapters[0].rowCount, 2);
   assert.deepEqual(tree[0].chapters[0].rows.map((row) => row.rowId), ["row-1", "row-4"]);
+});
+
+test("visible leaf selection controls branch presence and recursive maximum scores", () => {
+  const results = [
+    {
+      projectId: "project-a", projectTitle: "Alpha", chapterId: "chapter-a",
+      chapterTitle: "First", rowId: "row-a", rowOrderKey: "a0", score: 50,
+      qualityTier: "strong",
+    },
+    {
+      projectId: "project-b", projectTitle: "Beta", chapterId: "chapter-b",
+      chapterTitle: "Second", rowId: "row-b", rowOrderKey: "b0", score: 20,
+      qualityTier: "weaker",
+    },
+  ];
+  const strongTree = buildProjectSearchTree(projectSearchVisibleResults({ results }));
+  const allTree = buildProjectSearchTree(projectSearchVisibleResults({
+    results,
+    includeWeakerMatches: true,
+  }));
+
+  assert.deepEqual(strongTree.map((project) => project.id), ["project-a"]);
+  assert.equal(strongTree[0].score, 50);
+  assert.equal(strongTree[0].chapters[0].score, 50);
+  assert.deepEqual(allTree.map((project) => project.id), ["project-a", "project-b"]);
 });

@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 
-use super::{CandidateDocument, SearchProjectsResponse, MIN_SEARCH_QUERY_LENGTH};
+use super::{
+    CandidateDocument, ProjectSearchMatchBand, SearchProjectsResponse, MIN_SEARCH_QUERY_LENGTH,
+};
 
 pub(super) const PROJECT_SEARCH_SNIPPET_CHAR_LIMIT: usize = 350;
 
@@ -12,6 +14,22 @@ pub(super) struct SearchScore {
     ordered_tokens: bool,
     prefix_bonus: bool,
     length_penalty: f64,
+}
+
+impl SearchScore {
+    pub(super) fn match_band(self) -> ProjectSearchMatchBand {
+        if self.exact_phrase {
+            ProjectSearchMatchBand::ExactPhrase
+        } else if self.ordered_tokens && self.token_coverage >= 1.0 {
+            ProjectSearchMatchBand::OrderedTokens
+        } else if self.token_coverage >= 1.0 {
+            ProjectSearchMatchBand::FullToken
+        } else if self.token_coverage > 0.0 {
+            ProjectSearchMatchBand::PartialToken
+        } else {
+            ProjectSearchMatchBand::Fuzzy
+        }
+    }
 }
 
 pub(super) fn normalize_search_text(value: &str) -> String {
@@ -162,6 +180,8 @@ pub(super) fn empty_search_response(
     SearchProjectsResponse {
         results: Vec::new(),
         total: 0,
+        strong_total: 0,
+        weaker_total: 0,
         index_status: "ready".to_string(),
         total_capped,
         query_too_short,

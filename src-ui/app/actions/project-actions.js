@@ -8,6 +8,7 @@ import {
   openProjectSearchChapter,
   toggleProjectSearchChapter,
   toggleProjectSearchProject,
+  toggleProjectSearchWeakerMatches,
 } from "../project-search-flow.js";
 import {
   cancelProjectCreation,
@@ -251,6 +252,7 @@ export function createProjectActions(render) {
     "cancel-chapter-permanent-deletion": () => cancelChapterPermanentDeletion(render),
     "cancel-chapter-rename": () => cancelChapterRename(render),
     "clear-project-search": () => clearProjectSearch(render),
+    "toggle-project-search-weaker": () => toggleProjectSearchWeakerMatches(render),
     "cancel-project-import": () => cancelProjectImportModal(render),
     "cancel-project-add-translation": () => cancelProjectAddTranslation(render),
     "close-project-add-translation-link-error": () => closeProjectAddTranslationLinkError(render),
