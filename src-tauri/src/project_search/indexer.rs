@@ -10,6 +10,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tauri::AppHandle;
 
+use super::PROJECT_SEARCH_CONTENT_VERSION;
 use super::{
     discovery::{discover_project_repos, load_indexed_repo_states, RepoRecord},
     refresh::{plan_repo_refresh, RepoRefreshPlan},
@@ -187,7 +188,10 @@ pub(super) fn refresh_project_index_current(
             })
             .unwrap_or(false);
 
-        if indexed_state.is_none() {
+        if indexed_state
+            .map(|state| state.content_version != PROJECT_SEARCH_CONTENT_VERSION)
+            .unwrap_or(true)
+        {
             reindex_repo(connection, repo)?;
             stats.updated_repo_count += 1;
             stats.full_reindex_count += 1;
@@ -438,9 +442,24 @@ pub(super) fn row_search_documents_from_value(
         if !footnote.is_empty() {
             documents.push(RowSearchDocument {
                 language_code: language_code.clone(),
-                language_name,
+                language_name: language_name.clone(),
                 snippet_source: "footnote".to_string(),
                 plain_text: footnote,
+            });
+        }
+
+        let image_caption = field_value
+            .get("image_caption")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if !image_caption.is_empty() {
+            documents.push(RowSearchDocument {
+                language_code: language_code.clone(),
+                language_name,
+                snippet_source: "image-caption".to_string(),
+                plain_text: image_caption,
             });
         }
     }
@@ -451,14 +470,15 @@ pub(super) fn row_search_documents_from_value(
 fn upsert_indexed_repo_state_tx(connection: &Connection, repo: &RepoRecord) -> Result<(), String> {
     connection
         .execute(
-            "INSERT INTO indexed_repos (repo_key, project_id, repo_name, project_title, head_sha, last_indexed_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "INSERT INTO indexed_repos (repo_key, project_id, repo_name, project_title, head_sha, last_indexed_at, content_version)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(repo_key) DO UPDATE SET
                project_id = excluded.project_id,
                repo_name = excluded.repo_name,
                project_title = excluded.project_title,
                head_sha = excluded.head_sha,
-               last_indexed_at = excluded.last_indexed_at",
+               last_indexed_at = excluded.last_indexed_at,
+               content_version = excluded.content_version",
             params![
                 repo.repo_key,
                 repo.project_id,
@@ -466,6 +486,7 @@ fn upsert_indexed_repo_state_tx(connection: &Connection, repo: &RepoRecord) -> R
                 repo.project_title,
                 repo.head_sha,
                 current_unix_timestamp() as i64,
+                PROJECT_SEARCH_CONTENT_VERSION,
             ],
         )
         .map_err(|error| format!("Could not update indexed repo state: {error}"))?;

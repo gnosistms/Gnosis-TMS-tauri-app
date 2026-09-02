@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { buildEditorShowRowInContextChapterState } from "./editor-show-context.js";
 import {
+  applyProjectSearchToEditor,
   updateEditorRowFilterMode,
   updateEditorSearchFilterQuery,
 } from "./editor-search-flow.js";
@@ -178,6 +179,49 @@ test("buildEditorShowRowInContextChapterState clears filters and disables replac
   assert.deepEqual([...nextState.replace.selectedRowIds], []);
   assert.equal(nextState.replace.status, "idle");
   assert.equal(nextState.replace.error, "");
+});
+
+test("applyProjectSearchToEditor resets editor filters and replace selection", async () => {
+  const previousEditorChapter = state.editorChapter;
+  const dom = installTranslateScrollDom({ scrollTop: 410 });
+  try {
+    state.editorChapter = {
+      ...createEditorChapterState(),
+      chapterId: "chapter-search",
+      filters: {
+        searchQuery: "old query",
+        caseSensitive: true,
+        rowFilterMode: "reviewed",
+      },
+      replace: {
+        enabled: true,
+        replaceQuery: "replacement",
+        selectedRowIds: new Set(["row-1"]),
+        status: "saving",
+        error: "old error",
+      },
+    };
+
+    let renderCount = 0;
+    applyProjectSearchToEditor(() => {
+      renderCount += 1;
+    }, "Drukpa");
+    await flushPaintWork();
+
+    assert.equal(renderCount, 1);
+    assert.deepEqual(state.editorChapter.filters, {
+      searchQuery: "Drukpa",
+      caseSensitive: false,
+      rowFilterMode: "show-all",
+    });
+    assert.equal(state.editorChapter.replace.enabled, true);
+    assert.deepEqual([...state.editorChapter.replace.selectedRowIds], []);
+    assert.equal(state.editorChapter.replace.status, "idle");
+    assert.equal(state.editorChapter.replace.error, "");
+  } finally {
+    state.editorChapter = previousEditorChapter;
+    dom.restore();
+  }
 });
 
 test("updateEditorSearchFilterQuery restores the pre-search viewport when search is cleared", async () => {

@@ -3,14 +3,17 @@ use std::collections::HashMap;
 use tauri::AppHandle;
 
 use super::{
-    schema::{ensure_project_search_schema, open_project_search_db, project_search_db_path},
+    schema::{
+        ensure_project_search_schema, open_project_search_db, project_search_db_path,
+        project_search_index_has_documents, project_search_index_requires_refresh,
+    },
     scoring::{
         build_plain_text_snippet, collect_unique_bigrams, collect_unique_tokens,
         collect_unique_trigrams, compute_search_score, empty_search_response,
-        normalize_search_text, resolve_match_count, score_to_number,
+        normalize_search_text, score_to_number,
     },
-    CandidateDocument, IndexedDocument, ProjectSearchResult, SearchProjectsInput,
-    SearchProjectsResponse, DEFAULT_SEARCH_LIMIT, MAX_CANDIDATES, MAX_SEARCH_LIMIT,
+    CandidateDocument, IndexedDocument, ProjectSearchDocumentMatch, ProjectSearchExcerpt,
+    ProjectSearchRowResult, SearchProjectsInput, SearchProjectsResponse, MAX_CANDIDATES,
     MIN_SEARCH_QUERY_LENGTH,
 };
 
@@ -24,11 +27,6 @@ pub(super) fn search_projects_sync(
 
     let normalized_query = normalize_search_text(&input.query);
     let query_character_count = normalized_query.chars().count();
-    let limit = input
-        .limit
-        .unwrap_or(DEFAULT_SEARCH_LIMIT)
-        .clamp(1, MAX_SEARCH_LIMIT);
-    let offset = input.offset.unwrap_or(0);
     if query_character_count < MIN_SEARCH_QUERY_LENGTH {
         return Ok(empty_search_response(true, false));
     }
@@ -36,17 +34,37 @@ pub(super) fn search_projects_sync(
     let db_path = project_search_db_path(app, input.installation_id)?;
     let connection = open_project_search_db(&db_path)?;
     ensure_project_search_schema(&connection)?;
+    let requires_refresh = project_search_index_requires_refresh(&connection)?;
+    let has_documents = project_search_index_has_documents(&connection)?;
+    if requires_refresh && !has_documents {
+        let mut response = empty_search_response(false, false);
+        response.index_status = "indexing".to_string();
+        return Ok(response);
+    }
 
+    let mut response =
+        search_projects_in_connection(&connection, &normalized_query, query_character_count)?;
+    if requires_refresh {
+        response.index_status = "stale".to_string();
+    }
+    Ok(response)
+}
+
+pub(super) fn search_projects_in_connection(
+    connection: &rusqlite::Connection,
+    normalized_query: &str,
+    query_character_count: usize,
+) -> Result<SearchProjectsResponse, String> {
     let use_bigram_index = query_character_count == MIN_SEARCH_QUERY_LENGTH;
     let query_tokens = if use_bigram_index {
         Vec::new()
     } else {
-        collect_unique_tokens(&normalized_query)
+        collect_unique_tokens(normalized_query)
     };
     let query_ngrams = if use_bigram_index {
-        collect_unique_bigrams(&normalized_query)
+        collect_unique_bigrams(normalized_query)
     } else {
-        collect_unique_trigrams(&normalized_query)
+        collect_unique_trigrams(normalized_query)
     };
     let query_ngram_count = query_ngrams.len();
     let query_token_count = query_tokens.len();
@@ -132,7 +150,7 @@ pub(super) fn search_projects_sync(
     )
     .map_err(|error| format!("Could not prepare project search document lookup: {error}"))?;
 
-    let mut ranked_results = Vec::<ProjectSearchResult>::new();
+    let mut ranked_results = Vec::<ProjectSearchDocumentMatch>::new();
     for (doc_id, _) in candidate_ids {
         let Some(document) = by_id_statement
             .query_row([doc_id], |row| {
@@ -173,12 +191,12 @@ pub(super) fn search_projects_sync(
         };
         let score = compute_search_score(
             &candidate,
-            &normalized_query,
+            normalized_query,
             query_token_count,
             query_ngram_count,
         );
         if score.exact_phrase || score.token_coverage > 0.0 || score.ngram_dice > 0.0 {
-            ranked_results.push(ProjectSearchResult {
+            ranked_results.push(ProjectSearchDocumentMatch {
                 result_id: candidate.document.result_id.clone(),
                 project_id: candidate.document.project_id.clone(),
                 project_title: candidate.document.project_title.clone(),
@@ -190,11 +208,7 @@ pub(super) fn search_projects_sync(
                 language_code: candidate.document.language_code.clone(),
                 language_name: candidate.document.language_name.clone(),
                 snippet_source: candidate.document.snippet_source.clone(),
-                snippet: build_plain_text_snippet(
-                    &candidate.document.plain_text,
-                    &normalized_query,
-                ),
-                match_count: resolve_match_count(&candidate, &normalized_query),
+                snippet: build_plain_text_snippet(&candidate.document.plain_text, normalized_query),
                 exact_phrase: score.exact_phrase,
                 score: score_to_number(score),
             });
@@ -213,18 +227,9 @@ pub(super) fn search_projects_sync(
             .then_with(|| left.language_name.cmp(&right.language_name))
     });
 
-    let total = if total_capped {
-        MAX_CANDIDATES
-    } else {
-        ranked_results.len()
-    };
-    let results = ranked_results
-        .into_iter()
-        .skip(offset)
-        .take(limit)
-        .collect::<Vec<_>>();
+    let results = aggregate_project_search_rows(ranked_results);
+    let total = results.len();
     Ok(SearchProjectsResponse {
-        has_more: offset.saturating_add(results.len()) < total,
         results,
         total,
         index_status: "ready".to_string(),
@@ -232,6 +237,74 @@ pub(super) fn search_projects_sync(
         query_too_short: false,
         minimum_query_length: MIN_SEARCH_QUERY_LENGTH,
     })
+}
+
+pub(super) fn aggregate_project_search_rows(
+    ranked_results: Vec<ProjectSearchDocumentMatch>,
+) -> Vec<ProjectSearchRowResult> {
+    let mut row_indexes = HashMap::<(String, String, String), usize>::new();
+    let mut rows = Vec::<ProjectSearchRowResult>::new();
+
+    for result in ranked_results {
+        let row_key = (
+            result.project_id.clone(),
+            result.chapter_id.clone(),
+            result.row_id.clone(),
+        );
+        let excerpt = ProjectSearchExcerpt {
+            result_id: result.result_id,
+            language_code: result.language_code,
+            language_name: result.language_name,
+            snippet_source: result.snippet_source,
+            snippet: result.snippet,
+            exact_phrase: result.exact_phrase,
+            score: result.score,
+        };
+
+        if let Some(row_index) = row_indexes.get(&row_key).copied() {
+            let row = &mut rows[row_index];
+            row.score = row.score.max(result.score);
+            row.excerpts.push(excerpt);
+            continue;
+        }
+
+        row_indexes.insert(row_key, rows.len());
+        rows.push(ProjectSearchRowResult {
+            project_id: result.project_id,
+            project_title: result.project_title,
+            repo_name: result.repo_name,
+            chapter_id: result.chapter_id,
+            chapter_title: result.chapter_title,
+            row_id: result.row_id,
+            row_order_key: result.row_order_key,
+            excerpts: vec![excerpt],
+            score: result.score,
+        });
+    }
+
+    for row in &mut rows {
+        row.excerpts.sort_by(|left, right| {
+            right
+                .score
+                .partial_cmp(&left.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| left.language_name.cmp(&right.language_name))
+                .then_with(|| left.snippet_source.cmp(&right.snippet_source))
+                .then_with(|| left.result_id.cmp(&right.result_id))
+        });
+    }
+
+    rows.sort_by(|left, right| {
+        right
+            .score
+            .partial_cmp(&left.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.project_title.cmp(&right.project_title))
+            .then_with(|| left.chapter_title.cmp(&right.chapter_title))
+            .then_with(|| left.row_order_key.cmp(&right.row_order_key))
+            .then_with(|| left.row_id.cmp(&right.row_id))
+    });
+    rows
 }
 
 trait OptionalRow<T> {

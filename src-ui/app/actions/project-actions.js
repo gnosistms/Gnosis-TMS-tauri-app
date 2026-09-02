@@ -5,8 +5,9 @@ import { showNoticeBadge } from "../status-feedback.js";
 import { getProjectWritePolicy } from "../resource-write-policy.js";
 import {
   clearProjectSearch,
-  loadMoreProjectSearchResults,
-  openProjectSearchResult,
+  openProjectSearchChapter,
+  toggleProjectSearchChapter,
+  toggleProjectSearchProject,
 } from "../project-search-flow.js";
 import {
   cancelProjectCreation,
@@ -265,7 +266,6 @@ export function createProjectActions(render) {
     "submit-project-import-link": () => submitProjectImportLink(render),
     "submit-project-add-translation-link": () => submitProjectAddTranslationLink(render),
     "submit-project-import-pasted-text": () => submitProjectImportPastedText(render),
-    "load-more-project-search-results": () => loadMoreProjectSearchResults(render),
     "overwrite-conflicted-project-repos": () => overwriteConflictedProjectRepos(render),
     "toggle-deleted-projects": () => toggleDeletedProjects(render),
     "submit-project-transfer": () => submitProjectTransfer(render),
@@ -281,8 +281,16 @@ export function createProjectActions(render) {
       handler: (mode) => selectProjectAddTranslationInputMode(render, mode),
     },
     {
-      prefix: "open-project-search-result:",
-      handler: async (resultId) => openProjectSearchResult(render, resultId),
+      prefix: "open-project-search-chapter:",
+      handler: async (chapterId) => openProjectSearchChapter(render, chapterId),
+    },
+    {
+      prefix: "toggle-project-search-project:",
+      handler: (projectId) => toggleProjectSearchProject(render, projectId),
+    },
+    {
+      prefix: "toggle-project-search-chapter:",
+      handler: (chapterId) => toggleProjectSearchChapter(render, chapterId),
     },
     {
       prefix: "toggle-project:",

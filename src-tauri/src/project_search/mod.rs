@@ -13,7 +13,10 @@ mod scoring;
 
 use indexer::refresh_project_index_current;
 use query::search_projects_sync;
-use schema::{ensure_project_search_schema, open_project_search_db, project_search_db_path};
+use schema::{
+    ensure_project_search_schema, mark_project_search_index_refresh_completed,
+    open_project_search_db, project_search_db_path,
+};
 #[cfg(test)]
 use scoring::{
     build_plain_text_snippet, collect_unique_bigrams, collect_unique_trigrams,
@@ -29,20 +32,15 @@ use refresh::{
     extract_chapter_dir_from_repo_path, RepoRefreshPlan,
 };
 
-const DEFAULT_SEARCH_LIMIT: usize = 50;
-const MAX_SEARCH_LIMIT: usize = 200;
 const MAX_CANDIDATES: usize = 500;
 const MIN_SEARCH_QUERY_LENGTH: usize = 2;
+const PROJECT_SEARCH_CONTENT_VERSION: i64 = 2;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SearchProjectsInput {
     installation_id: i64,
     query: String,
-    #[serde(default)]
-    limit: Option<usize>,
-    #[serde(default)]
-    offset: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -54,9 +52,8 @@ pub(crate) struct RefreshProjectSearchIndexInput {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SearchProjectsResponse {
-    results: Vec<ProjectSearchResult>,
+    results: Vec<ProjectSearchRowResult>,
     total: usize,
-    has_more: bool,
     index_status: String,
     total_capped: bool,
     query_too_short: bool,
@@ -73,9 +70,8 @@ pub(crate) struct RefreshProjectSearchIndexResponse {
     index_status: String,
 }
 
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ProjectSearchResult {
+#[derive(Clone)]
+struct ProjectSearchDocumentMatch {
     result_id: String,
     project_id: String,
     project_title: String,
@@ -83,14 +79,40 @@ pub(crate) struct ProjectSearchResult {
     chapter_id: String,
     chapter_title: String,
     row_id: String,
-    #[serde(skip_serializing)]
     row_order_key: String,
     language_code: String,
     language_name: String,
     snippet_source: String,
     snippet: String,
-    match_count: usize,
     exact_phrase: bool,
+    score: f64,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProjectSearchExcerpt {
+    #[serde(skip_serializing)]
+    result_id: String,
+    language_code: String,
+    language_name: String,
+    snippet_source: String,
+    snippet: String,
+    exact_phrase: bool,
+    #[serde(skip_serializing)]
+    score: f64,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProjectSearchRowResult {
+    project_id: String,
+    project_title: String,
+    repo_name: String,
+    chapter_id: String,
+    chapter_title: String,
+    row_id: String,
+    row_order_key: String,
+    excerpts: Vec<ProjectSearchExcerpt>,
     score: f64,
 }
 
@@ -148,6 +170,7 @@ fn refresh_project_search_index_sync(
     let mut connection = open_project_search_db(&db_path)?;
     ensure_project_search_schema(&connection)?;
     let stats = refresh_project_index_current(app, input.installation_id, &mut connection)?;
+    mark_project_search_index_refresh_completed(&connection)?;
     Ok(RefreshProjectSearchIndexResponse {
         repo_count: stats.repo_count,
         updated_repo_count: stats.updated_repo_count,
@@ -231,9 +254,15 @@ mod tests {
     use super::{
         append_diff_name_status_changes, append_status_porcelain_changes, build_plain_text_snippet,
         collect_unique_bigrams, collect_unique_trigrams, compute_search_score,
-        extract_chapter_dir_from_repo_path, normalize_search_text, row_search_documents_from_value,
-        score_to_number, CandidateDocument, IndexedDocument, RepoRefreshPlan,
-        PROJECT_SEARCH_SNIPPET_CHAR_LIMIT,
+        extract_chapter_dir_from_repo_path, normalize_search_text,
+        query::aggregate_project_search_rows,
+        row_search_documents_from_value,
+        schema::{
+            ensure_project_search_schema, mark_project_search_index_refresh_completed,
+            project_search_index_has_documents, project_search_index_requires_refresh,
+        },
+        score_to_number, CandidateDocument, IndexedDocument, ProjectSearchDocumentMatch,
+        RepoRefreshPlan, PROJECT_SEARCH_CONTENT_VERSION, PROJECT_SEARCH_SNIPPET_CHAR_LIMIT,
     };
 
     fn candidate(
@@ -265,6 +294,32 @@ mod tests {
         }
     }
 
+    fn document_match(
+        row_id: &str,
+        row_order_key: &str,
+        language_code: &str,
+        language_name: &str,
+        snippet_source: &str,
+        score: f64,
+    ) -> ProjectSearchDocumentMatch {
+        ProjectSearchDocumentMatch {
+            result_id: format!("{row_id}:{language_code}:{snippet_source}"),
+            project_id: "project-1".to_string(),
+            project_title: "Project".to_string(),
+            repo_name: "repo".to_string(),
+            chapter_id: "chapter-1".to_string(),
+            chapter_title: "Chapter".to_string(),
+            row_id: row_id.to_string(),
+            row_order_key: row_order_key.to_string(),
+            language_code: language_code.to_string(),
+            language_name: language_name.to_string(),
+            snippet_source: snippet_source.to_string(),
+            snippet: format!("{language_name} {snippet_source}"),
+            exact_phrase: true,
+            score,
+        }
+    }
+
     #[test]
     fn normalize_search_text_collapses_punctuation_and_spacing() {
         assert_eq!(normalize_search_text("  Hello,\nWorld!  "), "hello world");
@@ -292,6 +347,81 @@ mod tests {
     }
 
     #[test]
+    fn schema_upgrade_preserves_existing_index_and_marks_it_for_refresh() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE indexed_repos (
+                   repo_key TEXT PRIMARY KEY,
+                   project_id TEXT NOT NULL,
+                   repo_name TEXT NOT NULL,
+                   project_title TEXT NOT NULL,
+                   head_sha TEXT NOT NULL,
+                   last_indexed_at INTEGER NOT NULL
+                 );
+                 INSERT INTO indexed_repos VALUES (
+                   'repo-1', 'project-1', 'repo-1', 'Project', 'head', 1
+                 );",
+            )
+            .unwrap();
+
+        ensure_project_search_schema(&connection).unwrap();
+
+        let repo_count = connection
+            .query_row("SELECT COUNT(*) FROM indexed_repos", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        let content_version = connection
+            .query_row(
+                "SELECT content_version FROM indexed_repos WHERE repo_key = 'repo-1'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        assert_eq!(repo_count, 1);
+        assert_eq!(content_version, 1);
+        assert!(project_search_index_requires_refresh(&connection).unwrap());
+    }
+
+    #[test]
+    fn current_index_version_does_not_require_refresh() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        ensure_project_search_schema(&connection).unwrap();
+        connection
+            .execute(
+                "INSERT INTO indexed_repos (
+                   repo_key, project_id, repo_name, project_title, head_sha,
+                   last_indexed_at, content_version
+                 ) VALUES ('repo-1', 'project-1', 'repo-1', 'Project', 'head', 1, ?1)",
+                [PROJECT_SEARCH_CONTENT_VERSION],
+            )
+            .unwrap();
+
+        assert!(!project_search_index_requires_refresh(&connection).unwrap());
+    }
+
+    #[test]
+    fn empty_index_requires_refresh() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        ensure_project_search_schema(&connection).unwrap();
+
+        assert!(project_search_index_requires_refresh(&connection).unwrap());
+        assert!(!project_search_index_has_documents(&connection).unwrap());
+    }
+
+    #[test]
+    fn completed_empty_index_is_ready() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        ensure_project_search_schema(&connection).unwrap();
+
+        mark_project_search_index_refresh_completed(&connection).unwrap();
+
+        assert!(!project_search_index_requires_refresh(&connection).unwrap());
+        assert!(!project_search_index_has_documents(&connection).unwrap());
+    }
+
+    #[test]
     fn exact_phrase_scores_higher_than_near_match() {
         let query = normalize_search_text("I like to eat dogs");
         let exact = candidate(
@@ -309,6 +439,23 @@ mod tests {
         let exact_score = score_to_number(compute_search_score(&exact, &query, 5, 12));
         let near_score = score_to_number(compute_search_score(&near, &query, 5, 12));
         assert!(exact_score > near_score);
+    }
+
+    #[test]
+    fn aggregate_project_search_rows_keeps_all_excerpts_and_orders_rows() {
+        let rows = aggregate_project_search_rows(vec![
+            document_match("row-2", "b0", "vi", "Vietnamese", "field", 15.0),
+            document_match("row-1", "a0", "vi", "Vietnamese", "footnote", 20.0),
+            document_match("row-1", "a0", "en", "English", "field", 25.0),
+        ]);
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].row_id, "row-1");
+        assert_eq!(rows[0].score, 25.0);
+        assert_eq!(rows[0].excerpts.len(), 2);
+        assert_eq!(rows[0].excerpts[0].language_name, "English");
+        assert_eq!(rows[0].excerpts[1].language_name, "Vietnamese");
+        assert_eq!(rows[1].row_id, "row-2");
     }
 
     #[test]
@@ -345,7 +492,8 @@ mod tests {
             "fields": {
                 "es": {
                     "plain_text": "Texto principal",
-                    "footnote": "Nota visible"
+                    "footnote": "Nota visible",
+                    "image_caption": "Pie de foto"
                 },
                 "en": {
                     "plain_text": "Reference",
@@ -360,7 +508,7 @@ mod tests {
 
         let documents = row_search_documents_from_value(&row_value, &language_names);
 
-        assert_eq!(documents.len(), 3);
+        assert_eq!(documents.len(), 4);
         assert_eq!(
             documents
                 .iter()
@@ -370,6 +518,9 @@ mod tests {
         );
         assert!(documents.iter().any(|document| {
             document.snippet_source == "footnote" && document.plain_text == "Nota visible"
+        }));
+        assert!(documents.iter().any(|document| {
+            document.snippet_source == "image-caption" && document.plain_text == "Pie de foto"
         }));
     }
 
