@@ -1,8 +1,8 @@
 {
-  "version": 1,
-  "policyVersion": 1,
+  "version": 2,
+  "policyVersion": 2,
   "defaultPolicy": "globalTrie",
-  "comment": "Shared golden cases for globally longest glossary matching. Consumed by src-ui/app/glossary-token-matcher.test.js and src-tauri/src/ai/glossary_matcher.rs tests. Indexes are matchable word/unit indexes (end exclusive). 'discovered' is every trie terminal occurrence sorted by (start, end, id); 'accepted' is the globally selected set in source order; 'legacyAccepted' is present only where the historical left-to-right scan differs. Candidate ids in expectations are the first-seen id of a merged normalized token sequence.",
+  "comment": "Shared golden cases for globally longest glossary matching under matcher policy v2 (quotes including CJK corner brackets, dots, and hyphens are match tokens; em dash, comma, parentheses, and whitespace are separators). Consumed by src-ui/app/glossary-token-matcher.test.js and src-tauri/src/ai/glossary_matcher.rs tests. Indexes are matchable token/unit indexes (end exclusive) — punctuation-class runs count as tokens. 'discovered' is every trie terminal occurrence sorted by (start, end, id); 'accepted' is the globally selected set in source order; 'legacyAccepted' is present only where the historical left-to-right scan differs. Candidate ids in expectations are the first-seen id of a merged normalized token sequence.",
   "cases": [
     {
       "id": "crossing-scalar-length-priority",
@@ -250,8 +250,8 @@
       ]
     },
     {
-      "id": "punctuation-and-hyphen-separators",
-      "description": "Hyphen, em dash, comma, parentheses, and periods are separators: every punctuation-separated occurrence still matches.",
+      "id": "hyphen-and-dot-are-tokens",
+      "description": "Hyphen and dot are tokens (policy v2): a plain two-word term matches only across true separators — here the em dash. Comma and parentheses remain separators; 'astral-plane' and 'astral. plane' carry an extra token between the words.",
       "profile": "word",
       "languageCode": "en",
       "runtimes": "both",
@@ -265,41 +265,21 @@
       "discovered": [
         {
           "id": "H",
-          "start": 0,
-          "end": 2
-        },
-        {
-          "id": "H",
-          "start": 2,
-          "end": 4
-        },
-        {
-          "id": "H",
-          "start": 4,
-          "end": 6
+          "start": 3,
+          "end": 5
         }
       ],
       "accepted": [
         {
           "id": "H",
-          "start": 0,
-          "end": 2
-        },
-        {
-          "id": "H",
-          "start": 2,
-          "end": 4
-        },
-        {
-          "id": "H",
-          "start": 4,
-          "end": 6
+          "start": 3,
+          "end": 5
         }
       ]
     },
     {
       "id": "hyphen-inside-glossary-variant",
-      "description": "A hyphen inside the glossary variant produces the same token sequence; fused single tokens never match it.",
+      "description": "A hyphen inside the glossary variant is a token: the hyphen and en-dash forms match (en dash normalizes to hyphen); the spaced and fused forms do not.",
       "profile": "word",
       "languageCode": "en",
       "runtimes": "both",
@@ -309,19 +289,159 @@
           "term": "self-remembering"
         }
       ],
-      "text": "true self remembering begins, not selfremembering",
+      "text": "true self-remembering begins, not self remembering, self – remembering, selfremembering",
       "discovered": [
         {
           "id": "H2",
           "start": 1,
-          "end": 3
+          "end": 4
+        },
+        {
+          "id": "H2",
+          "start": 8,
+          "end": 11
         }
       ],
       "accepted": [
         {
           "id": "H2",
           "start": 1,
+          "end": 4
+        },
+        {
+          "id": "H2",
+          "start": 8,
+          "end": 11
+        }
+      ]
+    },
+    {
+      "id": "quoted-surface-distinct-from-bare-word",
+      "description": "Quotes are tokens and all quote styles normalize to one token: the quoted surface 'el \"Yo\"' matches the guillemet form and wins its span over the bare 'yo', which still matches unquoted and inside a longer quoted phrase.",
+      "profile": "word",
+      "languageCode": "es",
+      "runtimes": "both",
+      "candidates": [
+        {
+          "id": "Q",
+          "term": "el \"Yo\""
+        },
+        {
+          "id": "B",
+          "term": "yo"
+        }
+      ],
+      "text": "el \"Yo\" y el yo y el «Yo» y “Yo soy”",
+      "discovered": [
+        {
+          "id": "Q",
+          "start": 0,
+          "end": 4
+        },
+        {
+          "id": "B",
+          "start": 2,
           "end": 3
+        },
+        {
+          "id": "B",
+          "start": 6,
+          "end": 7
+        },
+        {
+          "id": "Q",
+          "start": 8,
+          "end": 12
+        },
+        {
+          "id": "B",
+          "start": 10,
+          "end": 11
+        },
+        {
+          "id": "B",
+          "start": 14,
+          "end": 15
+        }
+      ],
+      "accepted": [
+        {
+          "id": "Q",
+          "start": 0,
+          "end": 4
+        },
+        {
+          "id": "B",
+          "start": 6,
+          "end": 7
+        },
+        {
+          "id": "Q",
+          "start": 8,
+          "end": 12
+        },
+        {
+          "id": "B",
+          "start": 14,
+          "end": 15
+        }
+      ]
+    },
+    {
+      "id": "dotted-abbreviation-distinct-from-bare-letters",
+      "description": "Dots are tokens and a run of dots or an ellipsis is one dot token: 'I.A.O.' matches the spaced, three-dot, and ellipsis forms but not the bare letters 'I A O'.",
+      "profile": "word",
+      "languageCode": "es",
+      "runtimes": "both",
+      "candidates": [
+        {
+          "id": "D",
+          "term": "I.A.O."
+        }
+      ],
+      "text": "I.A.O. e I. A. O. e I... A... O... e I… A… O… e I A O",
+      "discovered": [
+        {
+          "id": "D",
+          "start": 0,
+          "end": 6
+        },
+        {
+          "id": "D",
+          "start": 7,
+          "end": 13
+        },
+        {
+          "id": "D",
+          "start": 14,
+          "end": 20
+        },
+        {
+          "id": "D",
+          "start": 21,
+          "end": 27
+        }
+      ],
+      "accepted": [
+        {
+          "id": "D",
+          "start": 0,
+          "end": 6
+        },
+        {
+          "id": "D",
+          "start": 7,
+          "end": 13
+        },
+        {
+          "id": "D",
+          "start": 14,
+          "end": 20
+        },
+        {
+          "id": "D",
+          "start": 21,
+          "end": 27
         }
       ]
     },
@@ -492,6 +612,68 @@
       ]
     },
     {
+      "id": "cjk-grapheme-quoted-term",
+      "description": "Frontend-only grapheme mode: quote units are tokens too (curly quotes and CJK corner brackets normalize to one quote token), so the quoted term wins its span and the bare term survives only where it is unquoted.",
+      "profile": "grapheme",
+      "languageCode": "zh-Hant",
+      "runtimes": "js",
+      "candidates": [
+        {
+          "id": "Z1",
+          "term": "“存在”"
+        },
+        {
+          "id": "Z2",
+          "term": "存在"
+        }
+      ],
+      "text": "談“存在”與存在與「存在」",
+      "discovered": [
+        {
+          "id": "Z1",
+          "start": 1,
+          "end": 5
+        },
+        {
+          "id": "Z2",
+          "start": 2,
+          "end": 4
+        },
+        {
+          "id": "Z2",
+          "start": 6,
+          "end": 8
+        },
+        {
+          "id": "Z1",
+          "start": 9,
+          "end": 13
+        },
+        {
+          "id": "Z2",
+          "start": 10,
+          "end": 12
+        }
+      ],
+      "accepted": [
+        {
+          "id": "Z1",
+          "start": 1,
+          "end": 5
+        },
+        {
+          "id": "Z2",
+          "start": 6,
+          "end": 8
+        },
+        {
+          "id": "Z1",
+          "start": 9,
+          "end": 13
+        }
+      ]
+    },
+    {
       "id": "repeated-adjacent-occurrences",
       "description": "Repeated and adjacent occurrences separated only by spaces or punctuation are all accepted.",
       "profile": "word",
@@ -615,7 +797,7 @@
     },
     {
       "id": "duplicate-variant-scalar-length",
-      "description": "Duplicate normalized variants keep the greatest scalar length as the priority length: the punctuation-widened duplicate outranks the crossing 12-scalar candidate.",
+      "description": "Duplicate normalized variants keep the greatest scalar length as the priority length: the separator-widened duplicate '(the) (astral)' (parentheses are separators under policy v2, so it still merges with 'the astral') outranks the crossing 12-scalar candidate.",
       "profile": "word",
       "languageCode": "en",
       "runtimes": "both",
@@ -626,7 +808,7 @@
         },
         {
           "id": "V2",
-          "term": "the... astral"
+          "term": "(the) (astral)"
         },
         {
           "id": "P",
@@ -656,7 +838,7 @@
     },
     {
       "id": "empty-terms-and-punctuation-text",
-      "description": "Empty and all-punctuation terms compile to nothing; all-punctuation text has no matchable tokens.",
+      "description": "Empty and punctuation-only terms compile to nothing (a term needs at least one word token), so '...' never matches the dot token in the text; punctuation-only text tokenizes but can never match.",
       "profile": "word",
       "languageCode": "en",
       "runtimes": "both",
@@ -670,11 +852,19 @@
           "term": "..."
         },
         {
+          "id": "E3",
+          "term": "\""
+        },
+        {
+          "id": "E4",
+          "term": "-"
+        },
+        {
           "id": "W",
           "term": "light"
         }
       ],
-      "text": "!!! ???",
+      "text": "!!! ??? ... --- \"\"",
       "discovered": [],
       "accepted": []
     },

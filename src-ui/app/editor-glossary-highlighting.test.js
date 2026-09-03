@@ -871,10 +871,21 @@ test("glossaryTermMatchesTokenSequence enforces token boundaries", () => {
   assert.equal(glossaryTermMatchesTokenSequence("astrally projected", "astral", "en"), false);
   assert.equal(glossaryTermMatchesTokenSequence("he said", "he", "en"), true);
 
-  // Punctuation and hyphens are separators, not match characters.
-  assert.equal(glossaryTermMatchesTokenSequence("the astral-plane rises", "astral plane", "en"), true);
+  // Quotes, dots, and hyphens are match tokens (policy v2); em dash, comma,
+  // and whitespace remain separators.
+  assert.equal(glossaryTermMatchesTokenSequence("the astral-plane rises", "astral plane", "en"), false);
   assert.equal(glossaryTermMatchesTokenSequence("the astral—plane rises", "astral plane", "en"), true);
-  assert.equal(glossaryTermMatchesTokenSequence("an astral plane appears", "astral-plane", "en"), true);
+  assert.equal(glossaryTermMatchesTokenSequence("an astral plane appears", "astral-plane", "en"), false);
+  assert.equal(glossaryTermMatchesTokenSequence("an astral–plane appears", "astral-plane", "en"), true);
+  assert.equal(glossaryTermMatchesTokenSequence("el «Yo» habla", 'el "Yo"', "es"), true);
+  assert.equal(glossaryTermMatchesTokenSequence("el yo habla", 'el "Yo"', "es"), false);
+  assert.equal(glossaryTermMatchesTokenSequence("el «Yo» habla", "yo", "es"), true);
+  assert.equal(glossaryTermMatchesTokenSequence("談「存在」與", "“存在”", "zh-Hant"), true);
+  assert.equal(glossaryTermMatchesTokenSequence("談『存在』與", '"存在"', "zh-Hant"), true);
+  assert.equal(glossaryTermMatchesTokenSequence("談存在與", "“存在”", "zh-Hant"), false);
+  assert.equal(glossaryTermMatchesTokenSequence("canta I… A… O… ahora", "I.A.O.", "es"), true);
+  assert.equal(glossaryTermMatchesTokenSequence("canta I A O ahora", "I.A.O.", "es"), false);
+  assert.equal(glossaryTermMatchesTokenSequence("wait... now", "...", "en"), false);
 
   // Case-insensitive under the language's case rules.
   assert.equal(glossaryTermMatchesTokenSequence("The Astral Plane", "astral plane", "en"), true);
