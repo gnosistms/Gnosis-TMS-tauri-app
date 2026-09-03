@@ -1727,17 +1727,60 @@ struct GlossaryAlignmentMapping {
     translation_source_term: Option<String>,
 }
 
+// Matcher policy v2 token classes (see plans/glossary-matching-semantics.md):
+// a maximal run of word characters, or of one punctuation class — quotes,
+// dots, hyphens. Each punctuation run normalizes to one canonical token, so
+// straight/curly quotes and guillemets agree, `...` equals `…`, and hyphen
+// equals en dash. Every other character (em dash, comma, whitespace, ...)
+// remains a boundary. The frontend tokenizer in
+// editor-glossary-highlighting.js must use the same classes.
 fn glossary_token_regex() -> &'static Regex {
     static TOKEN_REGEX: OnceLock<Regex> = OnceLock::new();
-    TOKEN_REGEX
-        .get_or_init(|| Regex::new(r"[\p{L}\p{M}\p{N}]+").expect("valid glossary token regex"))
+    TOKEN_REGEX.get_or_init(|| {
+        Regex::new(r#"[\p{L}\p{M}\p{N}]+|["“”„‚«»‹›'‘’]+|[.…]+|[-‐‑‒–]+"#)
+            .expect("valid glossary token regex")
+    })
 }
 
+const GLOSSARY_QUOTE_TOKEN: &str = "\"";
+const GLOSSARY_DOT_TOKEN: &str = ".";
+const GLOSSARY_HYPHEN_TOKEN: &str = "-";
+
+/// The canonical token for a punctuation-class token (raw or already
+/// normalized), or `None` for a word token.
+fn glossary_punctuation_token(token: &str) -> Option<&'static str> {
+    match token.chars().next()? {
+        '"' | '“' | '”' | '„' | '‚' | '«' | '»' | '‹' | '›' | '\'' | '‘' | '’' => {
+            Some(GLOSSARY_QUOTE_TOKEN)
+        }
+        '.' | '…' => Some(GLOSSARY_DOT_TOKEN),
+        '-' | '‐' | '‑' | '‒' | '–' => Some(GLOSSARY_HYPHEN_TOKEN),
+        _ => None,
+    }
+}
+
+/// Lower-casing only — used for whole-surface dedupe keys and, via
+/// `normalize_glossary_match_token`, for word tokens.
 fn normalize_glossary_token(token: &str) -> String {
     token
         .chars()
         .flat_map(|character| character.to_lowercase())
         .collect()
+}
+
+fn normalize_glossary_match_token(token: &str) -> String {
+    match glossary_punctuation_token(token) {
+        Some(punctuation) => punctuation.to_string(),
+        None => normalize_glossary_token(token),
+    }
+}
+
+/// A glossary term compiles only when it has at least one word token;
+/// punctuation-only terms (`...`, `"`) never become candidates.
+fn glossary_tokens_are_matchable(tokens: &[String]) -> bool {
+    tokens
+        .iter()
+        .any(|token| glossary_punctuation_token(token).is_none())
 }
 
 fn sanitize_term_list(values: &[String]) -> Vec<String> {
@@ -1855,7 +1898,7 @@ fn merge_no_translation_hints(
 fn tokenize_glossary_term(term: &str) -> Vec<String> {
     glossary_token_regex()
         .find_iter(term)
-        .map(|matched| normalize_glossary_token(matched.as_str()))
+        .map(|matched| normalize_glossary_match_token(matched.as_str()))
         .collect()
 }
 
@@ -1865,7 +1908,7 @@ fn tokenize_text_words(text: &str) -> Vec<TokenizedWord> {
         .map(|matched| TokenizedWord {
             start: matched.start(),
             end: matched.end(),
-            normalized: normalize_glossary_token(matched.as_str()),
+            normalized: normalize_glossary_match_token(matched.as_str()),
         })
         .collect()
 }
@@ -1886,7 +1929,7 @@ fn build_glossary_match_candidates(
         let no_translation = normalize_no_translation_hint(term.no_translation.as_ref(), None);
         for source_term in sanitize_term_list(&term.glossary_source_terms) {
             let tokens = tokenize_glossary_term(&source_term);
-            if tokens.is_empty() {
+            if !glossary_tokens_are_matchable(&tokens) {
                 continue;
             }
 
@@ -3265,6 +3308,100 @@ mod tests {
             &terms,
         );
         assert!(row_bounded.is_empty());
+    }
+
+    fn glossary_term(source_term: &str) -> AiTranslatedGlossaryTermInput {
+        AiTranslatedGlossaryTermInput {
+            glossary_source_terms: vec![source_term.to_string()],
+            target_variants: vec![target_variant("x")],
+            no_translation: None,
+            notes: vec![],
+            global_notes: vec![],
+            footnotes: vec![],
+        }
+    }
+
+    fn matched_surfaces(text: &str, terms: &[AiTranslatedGlossaryTermInput]) -> Vec<String> {
+        find_matched_glossary_terms(text, terms)
+            .into_iter()
+            .map(|matched| matched.glossary_source_term)
+            .collect()
+    }
+
+    #[test]
+    fn glossary_matching_treats_quotes_as_tokens_across_quote_styles() {
+        let terms = [glossary_term("el \"Yo\""), glossary_term("yo")];
+        // The quoted surface wins its span under any quote style; the bare
+        // word still matches elsewhere. Surface dedupe is by lower-cased raw
+        // surface, so the guillemet and curly forms both survive while the
+        // bare "Yo" inside the last quote dedupes with "yo".
+        assert_eq!(
+            matched_surfaces("el «Yo» y el yo y el “Yo” y “Yo soy”", &terms),
+            vec![
+                "el «Yo»".to_string(),
+                "yo".to_string(),
+                "el “Yo”".to_string()
+            ]
+        );
+        // Without a quoted candidate the bare word matches inside quotes.
+        assert_eq!(
+            matched_surfaces("el «Yo» habla", &[glossary_term("yo")]),
+            vec!["Yo".to_string()]
+        );
+    }
+
+    #[test]
+    fn glossary_matching_treats_dots_as_tokens_and_collapses_dot_runs() {
+        let terms = [glossary_term("I.A.O.")];
+        assert_eq!(
+            matched_surfaces("I.A.O. e I. A. O. e I… A… O… e I A O", &terms),
+            vec![
+                "I.A.O.".to_string(),
+                "I. A. O.".to_string(),
+                "I… A… O…".to_string()
+            ]
+        );
+        assert!(matched_surfaces("I A O", &terms).is_empty());
+        // A sentence-ending dot after a plain term is a token of its own and
+        // does not block the term.
+        assert_eq!(
+            matched_surfaces("Habla el Ser.", &[glossary_term("Ser")]),
+            vec!["Ser".to_string()]
+        );
+    }
+
+    #[test]
+    fn glossary_matching_treats_hyphens_as_tokens_but_em_dash_as_separator() {
+        let hyphenated = [glossary_term("auto-realización")];
+        assert_eq!(
+            matched_surfaces(
+                "auto-realización, auto realización, auto–realización, auto - realización",
+                &hyphenated
+            ),
+            vec![
+                "auto-realización".to_string(),
+                "auto–realización".to_string(),
+                "auto - realización".to_string()
+            ]
+        );
+        let plain = [glossary_term("astral plane")];
+        assert_eq!(
+            matched_surfaces("astral-plane, astral—plane, astral. plane", &plain),
+            vec!["astral—plane".to_string()]
+        );
+    }
+
+    #[test]
+    fn punctuation_only_glossary_terms_never_compile() {
+        assert!(matched_surfaces(
+            "wait... now \"quoted\" - dash",
+            &[
+                glossary_term("..."),
+                glossary_term("\""),
+                glossary_term("-"),
+            ]
+        )
+        .is_empty());
     }
 
     #[test]

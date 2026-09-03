@@ -9,14 +9,29 @@ contract is `tests/fixtures/glossary-matching/golden.json`, consumed by
 
 - Matching is token-based, never substring-based: `he` does not match inside
   `the` or `theme`; `astral` does not match inside `astrally`.
-- Tokens are maximal runs of `\p{L}\p{M}\p{N}`. Punctuation, hyphens, em
-  dashes, and all other separators are boundaries, not match characters:
-  `astral-plane`, `astral plane`, and `astral—plane` are the same two-token
-  sequence.
+- Tokens are maximal runs of one of four classes (matcher policy v2, see
+  `plans/glossary-punctuation-tokens-plan.md`):
+  1. word: `\p{L}\p{M}\p{N}`, normalized by lower-casing;
+  2. quote: `" “ ” „ ‚ « » ‹ › ' ‘ ’`, normalized to `"`;
+  3. dot: `.` `…`, normalized to `.`;
+  4. hyphen: `-` `‐ ‑ ‒ –` (hyphen-minus, Unicode hyphens, figure dash, en
+     dash), normalized to `-`.
+  Every other character — em dash, comma, parentheses, whitespace, `¡!¿?` —
+  is a boundary, not a match character. So `astral plane` and
+  `astral—plane` are the same two-token sequence, while `astral-plane` and
+  `astral. plane` carry a third token between the words and do not match a
+  plain two-word term. `el "Yo"` matches `el «Yo»` and `el “Yo”` but not
+  `el yo`; `I.A.O.` matches `I. A. O.` and `I… A… O…` but not `I A O`. A run
+  of one punctuation class is one token; a run spanning two classes is two.
+- A glossary term compiles only when it has at least one word token.
+  Punctuation-only terms (`...`, `"`) never become candidates; punctuation-
+  only text tokenizes but can never match.
 - The frontend uses grapheme units instead of words for the
   non-space-delimited language set (`zh`, `ja`, `th`, `lo`, `km`, `my`, `bo`,
-  `dz`), selected by case-normalized base code. The backend has no grapheme
-  mode; this difference is deliberate and pinned by fixture cases.
+  `dz`), selected by case-normalized base code. The same four token classes
+  apply per grapheme, with adjacent units of one punctuation class merged
+  into a single token. The backend has no grapheme mode; this difference is
+  deliberate and pinned by fixture cases.
 - Case folding differs by design: the frontend uses
   `toLocaleLowerCase(languageCode)`, the backend uses Rust
   `char::to_lowercase`. The Turkish fixture cases pin the divergence.
@@ -54,6 +69,10 @@ kept for rollback during the bake period.
 `src-tauri/src/ai/glossary_matcher.rs`) must be flipped in the same commit as
 the fixture's `defaultPolicy` field — each runtime's tests assert its default
 against the fixture, so frontend and backend can never straddle algorithms.
+`GLOSSARY_MATCHER_POLICY_VERSION` (currently 2) moves the same way with the
+fixture's `policyVersion` whenever tokenizer or selection semantics change;
+the frontend derived-glossary revision key includes it, so cached derived
+entries regenerate on a version change.
 
 ## Row boundaries
 

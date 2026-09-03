@@ -108,10 +108,89 @@ function textUnitsForGlossaryMatching(text) {
   return Array.from(normalizedText);
 }
 
-function textUnitCanBeMatched(unit) {
+// Matcher policy v2 token classes (see plans/glossary-matching-semantics.md):
+// a maximal run of word characters, or of one punctuation class — quotes,
+// dots, hyphens. Each punctuation run normalizes to one canonical token, so
+// straight/curly quotes and guillemets agree, "..." equals "…", and hyphen
+// equals en dash. Every other character (em dash, comma, whitespace, ...)
+// remains a boundary. The backend tokenizer in src-tauri/src/ai/mod.rs must
+// use the same classes.
+const GLOSSARY_MATCH_TOKEN_REGEX = /[\p{L}\p{M}\p{N}]+|["“”„‚«»‹›'‘’]+|[.…]+|[-‐‑‒–]+/gu;
+const GLOSSARY_QUOTE_TOKEN = '"';
+const GLOSSARY_DOT_TOKEN = ".";
+const GLOSSARY_HYPHEN_TOKEN = "-";
+
+// The canonical token for a punctuation-class token or unit (raw or already
+// normalized), or null for a word token.
+function glossaryPunctuationToken(token) {
+  switch (String(token ?? "").charAt(0)) {
+    case '"':
+    case "“":
+    case "”":
+    case "„":
+    case "‚":
+    case "«":
+    case "»":
+    case "‹":
+    case "›":
+    case "'":
+    case "‘":
+    case "’":
+      return GLOSSARY_QUOTE_TOKEN;
+    case ".":
+    case "…":
+      return GLOSSARY_DOT_TOKEN;
+    case "-":
+    case "‐":
+    case "‑":
+    case "‒":
+    case "–":
+      return GLOSSARY_HYPHEN_TOKEN;
+    default:
+      return null;
+  }
+}
+
+function textUnitIsWord(unit) {
   return /[\p{L}\p{M}\p{N}]/u.test(unit);
 }
 
+// A glossary term compiles only when it has at least one word token;
+// punctuation-only terms ("...", '"') never become candidates.
+function glossaryTokensAreMatchable(tokens) {
+  return Array.isArray(tokens) && tokens.some((token) => glossaryPunctuationToken(token) === null);
+}
+
+function normalizeGlossaryMatchToken(token, languageCode) {
+  return glossaryPunctuationToken(token) ?? normalizeGlossaryToken(token, languageCode);
+}
+
+// Grapheme-mode units with adjacent same-class punctuation units merged into
+// one token, mirroring the word-mode "run of one class" rule. `normalized` is
+// null for separator units.
+function tokenizeGraphemeUnits(text, languageCode) {
+  const units = [];
+  let previousPunctuation = null;
+  for (const unit of textUnitsForGlossaryMatching(text)) {
+    const punctuation = glossaryPunctuationToken(unit);
+    if (punctuation !== null && punctuation === previousPunctuation) {
+      units[units.length - 1].value += unit;
+      continue;
+    }
+    previousPunctuation = punctuation;
+    if (punctuation !== null) {
+      units.push({ value: unit, normalized: punctuation });
+    } else if (textUnitIsWord(unit)) {
+      units.push({ value: unit, normalized: normalizeGlossaryToken(unit, languageCode) });
+    } else {
+      units.push({ value: unit, normalized: null });
+    }
+  }
+  return units;
+}
+
+// Lower-casing only — used for whole-surface dedupe keys and, via
+// normalizeGlossaryMatchToken, for word tokens.
 export function normalizeGlossaryToken(token, languageCode = "en") {
   const text = String(token ?? "");
   if (!text) {
@@ -128,13 +207,13 @@ export function normalizeGlossaryToken(token, languageCode = "en") {
 export function tokenizeGlossaryTerm(term, languageCode) {
   const baseText = extractGlossaryRubyBaseText(term);
   if (isNonSpaceDelimitedGlossaryLanguage(languageCode)) {
-    return textUnitsForGlossaryMatching(baseText)
-      .filter(textUnitCanBeMatched)
-      .map((unit) => normalizeGlossaryToken(unit, languageCode));
+    return tokenizeGraphemeUnits(baseText, languageCode)
+      .filter((unit) => unit.normalized !== null)
+      .map((unit) => unit.normalized);
   }
 
-  return Array.from(baseText.matchAll(/[\p{L}\p{M}\p{N}]+/gu), (match) =>
-    normalizeGlossaryToken(match[0], languageCode),
+  return Array.from(baseText.matchAll(GLOSSARY_MATCH_TOKEN_REGEX), (match) =>
+    normalizeGlossaryMatchToken(match[0], languageCode),
   );
 }
 
@@ -375,7 +454,7 @@ function buildLanguageGlossaryMatcher(entries, matchLanguage) {
   for (const entry of entries) {
     for (const matchTerm of entry.matchTerms || []) {
       const tokens = tokenizeGlossaryTerm(matchTerm, matchLanguage);
-      if (tokens.length === 0) {
+      if (!glossaryTokensAreMatchable(tokens)) {
         continue;
       }
 
@@ -676,7 +755,7 @@ function tokenizeTextForHighlighting(text, languageCode) {
   const wordEntries = [];
   let lastIndex = 0;
 
-  for (const match of sourceText.matchAll(/[\p{L}\p{M}\p{N}]+/gu)) {
+  for (const match of sourceText.matchAll(GLOSSARY_MATCH_TOKEN_REGEX)) {
     const index = match.index ?? 0;
     if (index > lastIndex) {
       tokens.push({
@@ -687,14 +766,15 @@ function tokenizeTextForHighlighting(text, languageCode) {
 
     const value = match[0];
     const tokenIndex = tokens.length;
+    const normalized = normalizeGlossaryMatchToken(value, languageCode);
     tokens.push({
       type: "word",
       value,
-      normalized: normalizeGlossaryToken(value, languageCode),
+      normalized,
     });
     wordEntries.push({
       tokenIndex,
-      normalized: normalizeGlossaryToken(value, languageCode),
+      normalized,
     });
     lastIndex = index + value.length;
   }
@@ -713,25 +793,23 @@ function tokenizeNonSpaceDelimitedTextForHighlighting(sourceText, languageCode) 
   const tokens = [];
   const wordEntries = [];
 
-  for (const unit of textUnitsForGlossaryMatching(sourceText)) {
-    const tokenIndex = tokens.length;
-    if (textUnitCanBeMatched(unit)) {
-      const normalized = normalizeGlossaryToken(unit, languageCode);
+  for (const unit of tokenizeGraphemeUnits(sourceText, languageCode)) {
+    if (unit.normalized === null) {
       tokens.push({
-        type: "word",
-        value: unit,
-        normalized,
-      });
-      wordEntries.push({
-        tokenIndex,
-        normalized,
+        type: "text",
+        value: unit.value,
       });
       continue;
     }
 
+    wordEntries.push({
+      tokenIndex: tokens.length,
+      normalized: unit.normalized,
+    });
     tokens.push({
-      type: "text",
-      value: unit,
+      type: "word",
+      value: unit.value,
+      normalized: unit.normalized,
     });
   }
 
@@ -771,11 +849,11 @@ export function findLongestGlossaryMatches(text, matcher) {
 // Token-sequence containment for redistribution-style checks (e.g. assigning
 // batch-derived entries to rows). True when the term's normalized token
 // sequence appears as consecutive matchable tokens in the text — the same
-// boundary semantics as the matcher, so "he" never matches inside "theme" and
-// hyphen/em-dash separated forms still match.
+// boundary semantics as the matcher, so "he" never matches inside "theme",
+// em-dash separated forms still match, and quotes/dots/hyphens must agree.
 export function glossaryTermMatchesTokenSequence(text, term, languageCode) {
   const termTokens = tokenizeGlossaryTerm(term, languageCode);
-  if (termTokens.length === 0) {
+  if (!glossaryTokensAreMatchable(termTokens)) {
     return false;
   }
 
@@ -1097,7 +1175,7 @@ function rowTargetTexts(sections, glossaryModel) {
 
 function textContainsGlossaryTerm(text, term, languageCode) {
   const tokens = tokenizeGlossaryTerm(term, languageCode);
-  if (tokens.length === 0) {
+  if (!glossaryTokensAreMatchable(tokens)) {
     return false;
   }
 
