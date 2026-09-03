@@ -2,7 +2,7 @@
   "version": 2,
   "policyVersion": 2,
   "defaultPolicy": "globalTrie",
-  "comment": "Shared golden cases for globally longest glossary matching under matcher policy v2 (quotes, dots, and hyphens are match tokens; em dash, comma, parentheses, and whitespace are separators). Consumed by src-ui/app/glossary-token-matcher.test.js and src-tauri/src/ai/glossary_matcher.rs tests. Indexes are matchable token/unit indexes (end exclusive) — punctuation-class runs count as tokens. 'discovered' is every trie terminal occurrence sorted by (start, end, id); 'accepted' is the globally selected set in source order; 'legacyAccepted' is present only where the historical left-to-right scan differs. Candidate ids in expectations are the first-seen id of a merged normalized token sequence.",
+  "comment": "Shared golden cases for globally longest glossary matching under matcher policy v2 (quotes including CJK corner brackets, dots, and hyphens are match tokens; em dash, comma, parentheses, and whitespace are separators). Consumed by src-ui/app/glossary-token-matcher.test.js and src-tauri/src/ai/glossary_matcher.rs tests. Indexes are matchable token/unit indexes (end exclusive) — punctuation-class runs count as tokens. 'discovered' is every trie terminal occurrence sorted by (start, end, id); 'accepted' is the globally selected set in source order; 'legacyAccepted' is present only where the historical left-to-right scan differs. Candidate ids in expectations are the first-seen id of a merged normalized token sequence.",
   "cases": [
     {
       "id": "crossing-scalar-length-priority",
@@ -613,7 +613,7 @@
     },
     {
       "id": "cjk-grapheme-quoted-term",
-      "description": "Frontend-only grapheme mode: quote units are tokens too, so the quoted term wins its span and the bare term survives only where it is unquoted.",
+      "description": "Frontend-only grapheme mode: quote units are tokens too (curly quotes and CJK corner brackets normalize to one quote token), so the quoted term wins its span and the bare term survives only where it is unquoted.",
       "profile": "grapheme",
       "languageCode": "zh-Hant",
       "runtimes": "js",
@@ -627,7 +627,7 @@
           "term": "存在"
         }
       ],
-      "text": "談“存在”與存在",
+      "text": "談“存在”與存在與「存在」",
       "discovered": [
         {
           "id": "Z1",
@@ -643,6 +643,16 @@
           "id": "Z2",
           "start": 6,
           "end": 8
+        },
+        {
+          "id": "Z1",
+          "start": 9,
+          "end": 13
+        },
+        {
+          "id": "Z2",
+          "start": 10,
+          "end": 12
         }
       ],
       "accepted": [
@@ -655,6 +665,11 @@
           "id": "Z2",
           "start": 6,
           "end": 8
+        },
+        {
+          "id": "Z1",
+          "start": 9,
+          "end": 13
         }
       ]
     },

@@ -880,6 +880,9 @@ test("glossaryTermMatchesTokenSequence enforces token boundaries", () => {
   assert.equal(glossaryTermMatchesTokenSequence("el «Yo» habla", 'el "Yo"', "es"), true);
   assert.equal(glossaryTermMatchesTokenSequence("el yo habla", 'el "Yo"', "es"), false);
   assert.equal(glossaryTermMatchesTokenSequence("el «Yo» habla", "yo", "es"), true);
+  assert.equal(glossaryTermMatchesTokenSequence("談「存在」與", "“存在”", "zh-Hant"), true);
+  assert.equal(glossaryTermMatchesTokenSequence("談『存在』與", '"存在"', "zh-Hant"), true);
+  assert.equal(glossaryTermMatchesTokenSequence("談存在與", "“存在”", "zh-Hant"), false);
   assert.equal(glossaryTermMatchesTokenSequence("canta I… A… O… ahora", "I.A.O.", "es"), true);
   assert.equal(glossaryTermMatchesTokenSequence("canta I A O ahora", "I.A.O.", "es"), false);
   assert.equal(glossaryTermMatchesTokenSequence("wait... now", "...", "en"), false);

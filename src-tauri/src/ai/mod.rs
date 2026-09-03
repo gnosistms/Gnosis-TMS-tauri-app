@@ -1730,14 +1730,14 @@ struct GlossaryAlignmentMapping {
 // Matcher policy v2 token classes (see plans/glossary-matching-semantics.md):
 // a maximal run of word characters, or of one punctuation class — quotes,
 // dots, hyphens. Each punctuation run normalizes to one canonical token, so
-// straight/curly quotes and guillemets agree, `...` equals `…`, and hyphen
-// equals en dash. Every other character (em dash, comma, whitespace, ...)
+// straight/curly quotes, guillemets, and CJK corner brackets agree, `...`
+// equals `…`, and hyphen equals en dash. Every other character (em dash, comma, whitespace, ...)
 // remains a boundary. The frontend tokenizer in
 // editor-glossary-highlighting.js must use the same classes.
 fn glossary_token_regex() -> &'static Regex {
     static TOKEN_REGEX: OnceLock<Regex> = OnceLock::new();
     TOKEN_REGEX.get_or_init(|| {
-        Regex::new(r#"[\p{L}\p{M}\p{N}]+|["“”„‚«»‹›'‘’]+|[.…]+|[-‐‑‒–]+"#)
+        Regex::new(r#"[\p{L}\p{M}\p{N}]+|["“”„‚«»‹›'‘’「」『』]+|[.…]+|[-‐‑‒–]+"#)
             .expect("valid glossary token regex")
     })
 }
@@ -1750,9 +1750,8 @@ const GLOSSARY_HYPHEN_TOKEN: &str = "-";
 /// normalized), or `None` for a word token.
 fn glossary_punctuation_token(token: &str) -> Option<&'static str> {
     match token.chars().next()? {
-        '"' | '“' | '”' | '„' | '‚' | '«' | '»' | '‹' | '›' | '\'' | '‘' | '’' => {
-            Some(GLOSSARY_QUOTE_TOKEN)
-        }
+        '"' | '“' | '”' | '„' | '‚' | '«' | '»' | '‹' | '›' | '\'' | '‘' | '’' | '「' | '」'
+        | '『' | '』' => Some(GLOSSARY_QUOTE_TOKEN),
         '.' | '…' => Some(GLOSSARY_DOT_TOKEN),
         '-' | '‐' | '‑' | '‒' | '–' => Some(GLOSSARY_HYPHEN_TOKEN),
         _ => None,
@@ -3347,6 +3346,11 @@ mod tests {
         assert_eq!(
             matched_surfaces("el «Yo» habla", &[glossary_term("yo")]),
             vec!["Yo".to_string()]
+        );
+        // CJK corner brackets are quotes too.
+        assert_eq!(
+            matched_surfaces("el 「Yo」 y el 『Yo』", &terms),
+            vec!["el 「Yo」".to_string(), "el 『Yo』".to_string()]
         );
     }
 

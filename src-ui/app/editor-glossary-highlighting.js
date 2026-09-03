@@ -111,11 +111,11 @@ function textUnitsForGlossaryMatching(text) {
 // Matcher policy v2 token classes (see plans/glossary-matching-semantics.md):
 // a maximal run of word characters, or of one punctuation class — quotes,
 // dots, hyphens. Each punctuation run normalizes to one canonical token, so
-// straight/curly quotes and guillemets agree, "..." equals "…", and hyphen
-// equals en dash. Every other character (em dash, comma, whitespace, ...)
+// straight/curly quotes, guillemets, and CJK corner brackets agree, "..."
+// equals "…", and hyphen equals en dash. Every other character (em dash, comma, whitespace, ...)
 // remains a boundary. The backend tokenizer in src-tauri/src/ai/mod.rs must
 // use the same classes.
-const GLOSSARY_MATCH_TOKEN_REGEX = /[\p{L}\p{M}\p{N}]+|["“”„‚«»‹›'‘’]+|[.…]+|[-‐‑‒–]+/gu;
+const GLOSSARY_MATCH_TOKEN_REGEX = /[\p{L}\p{M}\p{N}]+|["“”„‚«»‹›'‘’「」『』]+|[.…]+|[-‐‑‒–]+/gu;
 const GLOSSARY_QUOTE_TOKEN = '"';
 const GLOSSARY_DOT_TOKEN = ".";
 const GLOSSARY_HYPHEN_TOKEN = "-";
@@ -136,6 +136,10 @@ function glossaryPunctuationToken(token) {
     case "'":
     case "‘":
     case "’":
+    case "「":
+    case "」":
+    case "『":
+    case "』":
       return GLOSSARY_QUOTE_TOKEN;
     case ".":
     case "…":

@@ -12,7 +12,7 @@ contract is `tests/fixtures/glossary-matching/golden.json`, consumed by
 - Tokens are maximal runs of one of four classes (matcher policy v2, see
   `plans/glossary-punctuation-tokens-plan.md`):
   1. word: `\p{L}\p{M}\p{N}`, normalized by lower-casing;
-  2. quote: `" “ ” „ ‚ « » ‹ › ' ‘ ’`, normalized to `"`;
+  2. quote: `" “ ” „ ‚ « » ‹ › ' ‘ ’ 「 」 『 』`, normalized to `"`;
   3. dot: `.` `…`, normalized to `.`;
   4. hyphen: `-` `‐ ‑ ‒ –` (hyphen-minus, Unicode hyphens, figure dash, en
      dash), normalized to `-`.

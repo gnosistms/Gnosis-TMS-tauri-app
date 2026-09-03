@@ -18,7 +18,7 @@ distinction; the ES-EN glossary worked around it with article-bound surfaces
 
 - Tokens are maximal runs of one of four classes:
   1. word: `\p{L}\p{M}\p{N}` — normalized by lower-casing (unchanged);
-  2. quote: `" “ ” „ ‚ « » ‹ › ' ‘ ’` — normalized to `"`;
+  2. quote: `" “ ” „ ‚ « » ‹ › ' ‘ ’ 「 」 『 』` — normalized to `"`;
   3. dot: `.` `…` — normalized to `.`;
   4. hyphen: `-` `‐ ‑ ‒ –` (hyphen-minus, Unicode hyphens, figure dash, en
      dash) — normalized to `-`.
@@ -27,7 +27,8 @@ distinction; the ES-EN glossary worked around it with article-bound surfaces
   `I... A... O...` = `I… A… O…` = `I.A.O.`; a run spanning two classes
   (`".`) is two tokens.
 - Quote styles are one class on purpose: a glossary written with straight
-  quotes must match text set with guillemets or curly quotes.
+  quotes must match text set with guillemets, curly quotes, or CJK corner
+  brackets.
 - A glossary term compiles only if it has at least one word token; `...` or
   `"` alone never becomes a candidate. Punctuation-only text is tokenized but
   can never match.
