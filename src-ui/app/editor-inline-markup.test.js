@@ -9,6 +9,7 @@ import {
   extractInlineMarkupHistoryText,
   extractInlineMarkupVisibleText,
   extractInlineMarkupVisibleTextWithLinkUrls,
+  mapInlineMarkupVisiblePositionToRawInsertionOffset,
   renderSanitizedInlineMarkupHtml,
   renderSanitizedInlineMarkupHistoryHtml,
   renderSanitizedInlineMarkupWithEditorHighlightState,
@@ -17,6 +18,31 @@ import {
   splitInlineMarkupTextBySeparators,
   toggleInlineMarkupSelection,
 } from "./editor-inline-markup.js";
+
+test("visible footnote insertion offsets close formatting and ruby wrappers", () => {
+  const bold = "<strong>Kabbalah</strong> teaching";
+  const boldOffset = mapInlineMarkupVisiblePositionToRawInsertionOffset(bold, 8);
+  assert.equal(
+    `${bold.slice(0, boldOffset)}[1]${bold.slice(boldOffset)}`,
+    "<strong>Kabbalah</strong>[1] teaching",
+  );
+
+  const ruby = "<ruby>Kabbalah<rt>kabala</rt></ruby> teaching";
+  const rubyOffset = mapInlineMarkupVisiblePositionToRawInsertionOffset(ruby, 8);
+  assert.equal(
+    `${ruby.slice(0, rubyOffset)}[1]${ruby.slice(rubyOffset)}`,
+    "<ruby>Kabbalah<rt>kabala</rt></ruby>[1] teaching",
+  );
+});
+
+test("visible footnote insertion offsets remain inside a style that continues past the term", () => {
+  const value = "<strong>Kabbalah teaching</strong>";
+  const offset = mapInlineMarkupVisiblePositionToRawInsertionOffset(value, 8);
+  assert.equal(
+    `${value.slice(0, offset)}[1]${value.slice(offset)}`,
+    "<strong>Kabbalah[1] teaching</strong>",
+  );
+});
 
 test("ruby button config localizes labels, tooltips, and placeholders", () => {
   assert.deepEqual(rubyButtonConfig("ja"), {

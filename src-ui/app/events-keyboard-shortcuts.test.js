@@ -71,7 +71,10 @@ globalThis.window = {
   },
 };
 
-const { registerKeyboardShortcutEvents } = await import("./events/keyboard-shortcuts.js");
+const {
+  registerKeyboardShortcutEvents,
+  shouldInsertHoveredGlossaryFootnote,
+} = await import("./events/keyboard-shortcuts.js");
 
 function keyboardEvent(overrides = {}) {
   return {
@@ -124,4 +127,24 @@ test("keyboard shortcuts leave browser find alone when no page search input exis
   keydownHandler(event);
 
   assert.equal(event.prevented, false);
+});
+
+test("hovered glossary footnote insertion uses Ctrl+F on every platform", () => {
+  navigator.platform = "MacIntel";
+
+  assert.equal(
+    shouldInsertHoveredGlossaryFootnote(
+      keyboardEvent({ metaKey: false, ctrlKey: true }),
+      true,
+    ),
+    true,
+  );
+  assert.equal(shouldInsertHoveredGlossaryFootnote(keyboardEvent(), true), false);
+  assert.equal(
+    shouldInsertHoveredGlossaryFootnote(
+      keyboardEvent({ metaKey: false, ctrlKey: true }),
+      false,
+    ),
+    false,
+  );
 });

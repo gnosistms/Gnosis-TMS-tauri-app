@@ -1,4 +1,5 @@
 import { isMacPlatform } from "../runtime.js";
+import { activeGlossaryFootnoteInsertionRequest } from "./glossary-tooltip.js";
 
 const PAGE_SEARCH_INPUT_SELECTOR = [
   "[data-project-search-input]",
@@ -65,6 +66,18 @@ function shouldFocusPageSearch(event) {
   return event.ctrlKey && !event.metaKey;
 }
 
+export function shouldInsertHoveredGlossaryFootnote(event, hasActiveRequest) {
+  if (event.defaultPrevented || event.repeat || event.isComposing || !hasActiveRequest) {
+    return false;
+  }
+  const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
+  return key === "f"
+    && event.ctrlKey
+    && !event.metaKey
+    && !event.altKey
+    && !event.shiftKey;
+}
+
 function focusPageSearchInput(selectContents = false) {
   const input = document.querySelector(PAGE_SEARCH_INPUT_SELECTOR);
   if (!(input instanceof HTMLInputElement)) {
@@ -103,6 +116,13 @@ export function registerKeyboardShortcutEvents(dispatchAction) {
     // Dialog-local keyboard behavior is delegated to the modal controller.
     // Page-level shortcuts must not move focus or trigger work behind a modal.
     if (document.querySelector("[data-modal-dialog]")) {
+      return;
+    }
+
+    const glossaryFootnoteRequest = activeGlossaryFootnoteInsertionRequest();
+    if (shouldInsertHoveredGlossaryFootnote(event, Boolean(glossaryFootnoteRequest))) {
+      event.preventDefault();
+      void dispatchAction("insert-hovered-glossary-footnote", event);
       return;
     }
 

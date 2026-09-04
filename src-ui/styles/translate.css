@@ -1951,7 +1951,7 @@
   white-space: inherit;
   word-break: inherit;
   overflow-wrap: inherit;
-  cursor: help;
+  cursor: default;
   padding: 0;
 }
 

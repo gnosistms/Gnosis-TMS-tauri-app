@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildEditorFootnoteInsertion,
   applyEditorFootnoteText,
   editorFootnoteMarkerSequence,
   editorFootnoteMarkerSequencesEqual,
@@ -11,6 +12,25 @@ import {
   normalizeEditorRowFootnotesForSave,
   serializeEditorFootnotesForLegacy,
 } from "./editor-footnotes.js";
+
+test("glossary footnote insertion sticks a fresh marker to the hovered term end", () => {
+  assert.deepEqual(
+    buildEditorFootnoteInsertion(
+      "The Kabbaalah teaching continues.",
+      [{ marker: 1, text: "Existing note" }],
+      13,
+      "Glossary footnote",
+    ),
+    {
+      marker: 2,
+      text: "The Kabbaalah[2] teaching continues.",
+      footnotes: [
+        { marker: 1, text: "Existing note" },
+        { marker: 2, text: "Glossary footnote" },
+      ],
+    },
+  );
+});
 
 test("single-footnote updates reject structured values instead of stringifying them", () => {
   const original = [

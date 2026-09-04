@@ -60,12 +60,12 @@ import {
   normalizeFieldState,
 } from "./editor-utils.js";
 import {
-  ensureEditorFootnoteEntry,
-  nextEditorFootnoteMarker,
+  buildEditorFootnoteInsertion,
   normalizeEditorRowFootnotesForSave,
   serializeEditorFootnotesForLegacy,
 } from "./editor-footnotes.js";
 import { smartenInlineMarkupQuotes } from "./editor-inline-markup/smart-quotes.js";
+import { mapInlineMarkupVisiblePositionToRawInsertionOffset } from "./editor-inline-markup.js";
 import { cloneRowTimings } from "./editor-timing.js";
 import {
   assertQueuedEditorRowsReady,
@@ -758,10 +758,21 @@ export function openEditorFootnote(render, rowId, languageCode, options = {}) {
   const currentText = typeof row?.fields?.[languageCode] === "string"
     ? row.fields[languageCode]
     : String(row?.fields?.[languageCode] ?? "");
-  let insertIndex = currentText.length;
-  let selectionEnd = currentText.length;
+  const requestedVisibleInsertIndex = Number.isInteger(options.visibleInsertIndex)
+    ? options.visibleInsertIndex
+    : null;
+  const requestedInsertIndex = requestedVisibleInsertIndex === null
+    ? Number.isInteger(options.insertIndex)
+      ? Math.max(0, Math.min(currentText.length, options.insertIndex))
+      : null
+    : mapInlineMarkupVisiblePositionToRawInsertionOffset(
+      currentText,
+      requestedVisibleInsertIndex,
+    );
+  let insertIndex = requestedInsertIndex ?? currentText.length;
+  let selectionEnd = insertIndex;
 
-  if (typeof document !== "undefined") {
+  if (requestedInsertIndex === null && typeof document !== "undefined") {
     const activeElement = document.activeElement;
     const mainFieldSelector = buildEditorFieldSelector(rowId, languageCode, "field");
     if (
@@ -777,19 +788,21 @@ export function openEditorFootnote(render, rowId, languageCode, options = {}) {
     }
   }
 
-  const marker = nextEditorFootnoteMarker(currentText, row?.footnotes?.[languageCode]);
-  const markerText = `[${marker}]`;
-  // Auto-generated footnote markers stick to the preceding text with no space, so
-  // the marker follows the sentence directly in the HTML preview and all exports.
-  const nextText =
-    `${currentText.slice(0, insertIndex)}${markerText}${currentText.slice(selectionEnd)}`;
+  const currentFootnotes = row?.footnotes?.[languageCode];
+  const insertion = buildEditorFootnoteInsertion(
+    `${currentText.slice(0, insertIndex)}${currentText.slice(selectionEnd)}`,
+    currentFootnotes,
+    insertIndex,
+    options.footnoteText,
+  );
+  const { marker, text: nextText } = insertion;
 
   const { updateEditorChapterRow } = options;
   if (typeof updateEditorChapterRow === "function") {
     updateEditorChapterRow(rowId, (currentRow) => {
       const withMarker = applyEditorRowFieldValue(currentRow, languageCode, nextText, "field");
       const footnotes = cloneRowFootnotes(withMarker.footnotes);
-      footnotes[languageCode] = ensureEditorFootnoteEntry(footnotes[languageCode], marker);
+      footnotes[languageCode] = insertion.footnotes;
       return {
         ...withMarker,
         footnotes,

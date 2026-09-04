@@ -1014,8 +1014,9 @@ export function submitEditorInsertLink(render) {
   });
 }
 
-export function openEditorFootnote(render, rowId, languageCode) {
+export function openEditorFootnote(render, rowId, languageCode, options = {}) {
   openEditorFootnoteFlow(render, rowId, languageCode, {
+    ...options,
     updateEditorChapterRow,
   });
 }
