@@ -146,6 +146,23 @@ export function nextEditorFootnoteMarker(text, footnotes) {
   return marker;
 }
 
+export function buildEditorFootnoteInsertion(text, footnotes, insertIndex, footnoteText) {
+  const currentText = String(text ?? "");
+  const boundedInsertIndex = Number.isInteger(insertIndex)
+    ? Math.max(0, Math.min(currentText.length, insertIndex))
+    : currentText.length;
+  const marker = nextEditorFootnoteMarker(currentText, footnotes);
+  return {
+    marker,
+    text: `${currentText.slice(0, boundedInsertIndex)}[${marker}]${currentText.slice(boundedInsertIndex)}`,
+    footnotes: applyEditorFootnoteText(
+      footnotes,
+      marker,
+      typeof footnoteText === "string" ? footnoteText : "",
+    ),
+  };
+}
+
 export function applyEditorFootnoteText(footnotes, marker, text) {
   if (typeof text !== "string") {
     throw new TypeError("Footnote text must be a string.");

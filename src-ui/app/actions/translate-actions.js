@@ -12,6 +12,10 @@ import {
 } from "../editor-close-wait-flow.js";
 import { showNoticeBadge } from "../status-feedback.js";
 import {
+  activeGlossaryFootnoteInsertionRequest,
+  deactivateGlossaryTooltipMark,
+} from "../events/glossary-tooltip.js";
+import {
   captureLanguageToggleVisibilityAnchor,
   captureTranslateRowAnchor,
   restoreTranslateRowAnchor,
@@ -159,6 +163,7 @@ const SESSION_WRITE_ACTIONS = new Set([
   "submit-editor-insert-link",
   "open-editor-footnote",
   "open-editor-footnote-entry",
+  "insert-hovered-glossary-footnote",
   "open-editor-image-caption",
   "open-editor-image-url",
   "open-editor-image-upload",
@@ -641,6 +646,20 @@ export function createTranslateActions(render) {
       const rowId = button?.dataset.rowId ?? null;
       const languageCode = button?.dataset.languageCode ?? null;
       openEditorFootnote(render, rowId, languageCode, { target: event?.target ?? null });
+      return true;
+    }
+
+    if (action === "insert-hovered-glossary-footnote") {
+      const request = activeGlossaryFootnoteInsertionRequest();
+      if (!request) {
+        return true;
+      }
+      dismissActiveIdleEditorImageUpload(render);
+      deactivateGlossaryTooltipMark();
+      openEditorFootnote(render, request.rowId, request.languageCode, {
+        visibleInsertIndex: request.visibleInsertIndex,
+        footnoteText: request.footnoteText,
+      });
       return true;
     }
 

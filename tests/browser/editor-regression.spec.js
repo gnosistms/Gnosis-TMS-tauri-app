@@ -2391,6 +2391,141 @@ test.describe("editor regressions", () => {
     await expect(page.locator("[data-editor-search-input]")).toBeVisible();
   });
 
+  test("glossary popovers follow every source and target occurrence with the standard cursor", async ({ page }) => {
+    await mountEditorFixture(page, {
+      rowCount: 1,
+      fieldsByRowId: {
+        "fixture-row-0001": {
+          es: "Kabalistas",
+          vi: "nhà Kabbalah học, học giả Kabbalah, Kabbalah",
+        },
+      },
+      glossaryTerms: [{
+        termId: "term-kabbalists",
+        sourceTerms: ["Kabalistas"],
+        targetTerms: ["nhà Kabbalah học", "học giả Kabbalah", "Kabbalah"],
+        footnote: "Kabbalah glossary footnote",
+      }],
+    });
+
+    const row = page.locator('[data-editor-row-card][data-row-id="fixture-row-0001"]');
+    const sourceMarks = row.locator(
+      '[data-editor-display-field][data-language-code="es"] [data-editor-glossary-mark]',
+    );
+    const targetMarks = row.locator(
+      '[data-editor-display-field][data-language-code="vi"] [data-editor-glossary-mark]',
+    );
+    await expect(sourceMarks).toHaveCount(1);
+    await expect(targetMarks).toHaveCount(3);
+
+    const expectedTitles = [
+      "Kabalistas",
+      "nhà Kabbalah học",
+      "học giả Kabbalah",
+      "Kabbalah",
+    ];
+    const marks = [sourceMarks.first(), ...[0, 1, 2].map((index) => targetMarks.nth(index))];
+    for (let index = 0; index < marks.length; index += 1) {
+      await expect(marks[index]).toHaveCSS("cursor", "default");
+      await marks[index].hover();
+      await expect(page.locator(".editor-glossary-tooltip")).toBeVisible();
+      await expect(page.locator(".editor-glossary-info-card__title")).toHaveText(expectedTitles[index]);
+    }
+
+  });
+
+  test("target footnote popovers follow formatted glossary terms across rows", async ({ page }) => {
+    await mountEditorFixture(page, {
+      rowCount: 3,
+      fieldsByRowId: {
+        "fixture-row-0001": { es: "Kabalistas", vi: "<strong>nhà Kabbalah học</strong>" },
+        "fixture-row-0002": { es: "Gnosis", vi: "<em>ngộ đạo</em>" },
+        "fixture-row-0003": { es: "Absoluto", vi: "<u>Tuyệt Đối</u>" },
+      },
+      glossaryTerms: [
+        {
+          termId: "term-kabbalists",
+          sourceTerms: ["Kabalistas"],
+          targetTerms: ["nhà Kabbalah học"],
+          footnote: "Kabbalah glossary footnote",
+        },
+        {
+          termId: "term-gnosis",
+          sourceTerms: ["Gnosis"],
+          targetTerms: ["ngộ đạo"],
+          footnote: "Gnosis glossary footnote",
+        },
+        {
+          termId: "term-absolute",
+          sourceTerms: ["Absoluto"],
+          targetTerms: ["Tuyệt Đối"],
+          footnote: "Absolute glossary footnote",
+        },
+      ],
+    });
+
+    const expectedTitles = ["nhà Kabbalah học", "ngộ đạo", "Tuyệt Đối"];
+    for (let index = 0; index < expectedTitles.length; index += 1) {
+      const rowId = `fixture-row-${String(index + 1).padStart(4, "0")}`;
+      const mark = page.locator(
+        `[data-editor-row-card][data-row-id="${rowId}"] `
+        + '[data-editor-display-field][data-language-code="vi"] [data-editor-glossary-mark]',
+      );
+      await expect(mark).toHaveCount(1);
+      await mark.hover();
+      await expect(page.locator(".editor-glossary-tooltip")).toBeVisible();
+      await expect(page.locator(".editor-glossary-info-card__title")).toHaveText(expectedTitles[index]);
+    }
+  });
+
+  test("closed target fields keep ordinary glossary popovers for terms without footnotes", async ({ page }) => {
+    await mountEditorFixture(page, {
+      rowCount: 1,
+      fieldsByRowId: {
+        "fixture-row-0001": {
+          es: "Kabalistas Lilith Nahemah Lilith",
+          vi: "Kabbalah Li-lit Na-hê-ma Li-lit",
+        },
+      },
+      glossaryTerms: [
+        {
+          termId: "term-kabbalists",
+          sourceTerms: ["Kabalistas"],
+          targetTerms: ["Kabbalah"],
+          footnote: "Kabbalah glossary footnote",
+        },
+        {
+          termId: "term-lilith",
+          sourceTerms: ["Lilith"],
+          targetTerms: ["Li-lit"],
+          notesToTranslators: "Translator guidance",
+          footnote: "",
+        },
+        {
+          termId: "term-nahemah",
+          sourceTerms: ["Nahemah"],
+          targetTerms: ["Na-hê-ma"],
+          footnote: "",
+        },
+      ],
+    });
+
+    const targetMarks = page.locator(
+      '[data-editor-row-card][data-row-id="fixture-row-0001"] '
+      + '[data-editor-display-field][data-language-code="vi"] [data-editor-glossary-mark]',
+    );
+    await expect(targetMarks).toHaveCount(4);
+
+    const expectedTitles = ["Kabbalah", "Li-lit", "Na-hê-ma", "Li-lit"];
+    for (let index = 0; index < expectedTitles.length; index += 1) {
+      await targetMarks.nth(index).hover();
+      await expect(page.locator(".editor-glossary-tooltip")).toBeVisible();
+      await expect(page.locator(".editor-glossary-info-card__title")).toHaveText(expectedTitles[index]);
+      await expect(page.locator(".editor-glossary-info-card__label")).toHaveCount(index === 0 ? 1 : 0);
+      await expect(page.locator(".editor-glossary-info-card__hint--insert")).toHaveCount(index === 0 ? 1 : 0);
+    }
+  });
+
   test("editor glossary header action opens the linked glossary and shows editor-first glossary navigation", async ({ page }) => {
     await page.addInitScript(() => {
       globalThis.__gnosisMockTauriHandlers = {
