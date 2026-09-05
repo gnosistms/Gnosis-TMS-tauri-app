@@ -1,4 +1,14 @@
 import { invoke } from "./runtime.js";
+import { authSessionGeneration, invalidateAuthSession } from "./state.js";
+
+let pendingSessionWrite = Promise.resolve();
+
+function queueSessionWrite(operation) {
+  const result = pendingSessionWrite.then(operation);
+  // Keep the queue usable after failure; the caller still receives the rejection.
+  pendingSessionWrite = result.catch(() => {});
+  return result;
+}
 
 export async function loadStoredAuthSession() {
   if (!invoke) {
@@ -27,26 +37,25 @@ export async function saveStoredAuthSession(session) {
     return;
   }
 
-  try {
-    if (!session?.sessionToken || !session?.login) {
-      await clearStoredAuthSession();
-      return;
-    }
-
-    await invoke("save_broker_auth_session", { session });
-  } catch {
-    // Ignore native storage failures and continue in memory.
+  if (!session?.sessionToken || !session?.login) {
+    await clearStoredAuthSession();
+    return;
   }
+
+  const generation = authSessionGeneration;
+  await queueSessionWrite(() => {
+    if (generation !== authSessionGeneration) {
+      throw new Error("AUTH_SESSION_CHANGED:GitHub login changed before it could be saved.");
+    }
+    return invoke("save_broker_auth_session", { session });
+  });
 }
 
 export async function clearStoredAuthSession() {
+  invalidateAuthSession();
   if (!invoke) {
     return;
   }
 
-  try {
-    await invoke("clear_broker_auth_session");
-  } catch {
-    // Ignore native storage failures and continue in memory.
-  }
+  await queueSessionWrite(() => invoke("clear_broker_auth_session"));
 }

@@ -28,6 +28,13 @@ export function coerceEditorFontSizePx(value) {
   return EDITOR_FONT_SIZE_OPTIONS.includes(nextValue) ? nextValue : DEFAULT_EDITOR_FONT_SIZE_PX;
 }
 
+// Changes only when login intent changes, never for an automatic token refresh.
+export let authSessionGeneration = 0;
+
+export function invalidateAuthSession() {
+  authSessionGeneration += 1;
+}
+
 export const state = {
   screen: "start",
   expandedProjects: new Set(),
@@ -1337,6 +1344,7 @@ export function resetQaListPermanentDeletion() {
 }
 
 export function resetSessionState() {
+  invalidateAuthSession();
   clearActiveStorageLogin();
   const offlineState = {
     ...state.offline,
