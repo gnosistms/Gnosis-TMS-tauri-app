@@ -113,7 +113,12 @@ import {
   toggleEditorReplaceEnabled,
 } from "./app/translate-flow.js";
 import { registerTranslateEditorDomEvents } from "./app/translate-editor-dom-events.js";
-import { checkForAppUpdate } from "./app/updater-flow.js";
+import {
+  configureAppUpdateInstallation,
+  registerAppUpdateProgressListener,
+  startAppUpdateChecks,
+} from "./app/updater-flow.js";
+import { renderAppUpdateSurface } from "./app/app-update-surface.js";
 import { renderAppUpdateModal } from "./screens/app-update-modal.js";
 import { renderConnectionFailureModal } from "./screens/connection-failure-modal.js";
 import { renderEditorAiTranslateAllModal } from "./screens/editor-ai-translate-all-modal.js";
@@ -692,6 +697,10 @@ function renderTranslateImagePreviewOverlayOnly() {
 }
 
 function renderWithOptions(options = {}) {
+  if (options?.scope === "app-update-progress") {
+    renderAppUpdateSurface(app, state.appUpdate);
+    return;
+  }
   if (options?.scope === "status-surface") {
     if (!renderStatusSurfaceOnly()) {
       renderWithOptions();
@@ -778,6 +787,10 @@ function renderWithOptions(options = {}) {
     + renderTeamResourceMigrationModal(state)
     + renderTelemetryDisclosureModal(state)
     + renderConnectionFailureModal(state);
+  renderAppUpdateSurface(app, state.appUpdate);
+  if (app.firstElementChild instanceof HTMLElement) {
+    app.firstElementChild.inert = ["preparing", "restarting"].includes(state.appUpdate.status);
+  }
   syncGlossaryVariantTextareaHeights(app);
   if (app.firstElementChild instanceof HTMLElement) {
     app.firstElementChild.dataset.screen = state.screen;
@@ -858,6 +871,15 @@ function editorHasPendingDurableWrites() {
     )
   );
 }
+
+configureAppUpdateInstallation(async () => {
+  const saved = await flushDirtyEditorRows(render);
+  if (!saved || hasPendingEditorWrites(state.editorChapter)
+      || getEditorOperationQueueSnapshot().hasActiveOperations
+      || getRepoWriteQueueSnapshot().hasActiveWrites) {
+    throw new Error("Changes are still being saved or synced. Please wait, resolve any save errors, and try Restart to update again.");
+  }
+});
 
 // Set when the user force-closes past pending writes so the close guard and
 // beforeunload do not re-block a close the user already approved.
@@ -1119,7 +1141,8 @@ async function bootstrap() {
   void registerProjectTransferListeners(render);
   void registerChapterPdfExportListeners(render);
   void registerEditorImageCaptionListeners(render);
-  void checkForAppUpdate(render, { silent: true });
+  void registerAppUpdateProgressListener(render);
+  startAppUpdateChecks(render);
   render();
   void initializeConnectivity(render, () => restoreStoredBrokerSession(render, loadUserTeams, storedBrokerSession));
 }

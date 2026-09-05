@@ -3,6 +3,7 @@ import {
   buildSectionNav,
   escapeHtml,
   pageShell,
+  renderAppUpdatePill,
   primaryButton,
   renderFlowArrowIcon,
   renderInlineStateBox,
@@ -276,6 +277,7 @@ export function renderGlossariesScreen(state) {
     pageShell({
       title: "Glossaries",
       subtitle: selectedTeam?.name ?? "Team",
+      subtitleAction: renderAppUpdatePill(state.appUpdate),
       titleAction: buildPageRefreshAction(state, state.pageSync, "refresh-page", {
         backgroundRefreshing: refreshInProgress || coordinatorWriteActive,
         backgroundRefreshStartedAt: state.glossariesPage?.refreshStartedAt,

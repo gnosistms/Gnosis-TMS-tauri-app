@@ -45,6 +45,7 @@ export function createActionDispatcher(render) {
   ];
 
   return async function dispatchAction(action, event) {
+    if (["preparing", "restarting"].includes(state.appUpdate.status)) return true;
     if (state.appUpdate.required === true && !updateRequiredAllowsAction(action)) {
       return true;
     }

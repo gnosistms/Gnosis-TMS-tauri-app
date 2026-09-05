@@ -108,13 +108,14 @@ globalThis.window = {
 
 const { createActionDispatcher } = await import("./action-dispatcher.js");
 const { getNoticeBadgeText } = await import("./status-feedback.js");
-const { resetSessionState, state } = await import("./state.js");
+const { resetSessionState, state, createAppUpdateState } = await import("./state.js");
 
 test.afterEach(() => {
   invokeHandler = async () => null;
   invokeLog.length = 0;
   localStorageState.clear();
   resetSessionState();
+  state.appUpdate = createAppUpdateState();
 });
 
 test("required updates block non-update actions at dispatch time", async () => {

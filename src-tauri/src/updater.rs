@@ -1,9 +1,17 @@
-use std::{cmp::Ordering, collections::HashSet, sync::Mutex, time::Duration};
+use std::{
+    cmp::Ordering,
+    collections::HashSet,
+    sync::{
+        atomic::{AtomicBool, Ordering as AtomicOrdering},
+        Mutex,
+    },
+    time::Duration,
+};
 
 use reqwest::blocking::Client as BlockingClient;
 use reqwest::header::{ACCEPT as REQWEST_ACCEPT, USER_AGENT as REQWEST_USER_AGENT};
 use serde::Deserialize;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_updater::{Error as UpdaterError, Update, UpdaterExt};
 use url::Url;
 
@@ -18,8 +26,39 @@ const UPDATER_PUBLIC_KEY: &str = include_str!("../updater-public-key.txt");
 const DEVELOPMENT_UPDATE_INSTALL_ERROR: &str = "Automatic updates are unavailable in development builds. Merge or rebase this branch onto current main, then restart the development app.";
 const MAX_UPDATE_DOWNLOAD_ATTEMPTS: usize = 2;
 const UPDATE_DOWNLOAD_RETRY_DELAY: Duration = Duration::from_millis(500);
+const APP_UPDATE_DOWNLOAD_PROGRESS_EVENT: &str = "app-update-download-progress";
 
 pub(crate) struct PendingUpdate(pub(crate) Mutex<Option<Update>>);
+
+#[derive(Default)]
+pub(crate) struct UpdateInstallation {
+    busy: AtomicBool,
+    downloaded: Mutex<Option<(Update, Vec<u8>)>>,
+}
+
+struct UpdateOperation<'a>(&'a AtomicBool);
+
+impl<'a> UpdateOperation<'a> {
+    fn acquire(busy: &'a AtomicBool) -> Result<Self, String> {
+        busy.compare_exchange(false, true, AtomicOrdering::AcqRel, AtomicOrdering::Acquire)
+            .map_err(|_| "An update operation is already running.".to_string())?;
+        Ok(Self(busy))
+    }
+}
+
+impl Drop for UpdateOperation<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, AtomicOrdering::Release);
+    }
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateDownloadProgress {
+    downloaded_bytes: u64,
+    total_bytes: Option<u64>,
+    percentage: Option<u8>,
+}
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -151,12 +190,50 @@ fn should_retry_download(error: &UpdaterError, failed_attempt: usize) -> bool {
         && classify_download_failure(error) == DownloadFailureClass::Transient
 }
 
-async fn download_update_with_retry(update: &Update) -> Result<Vec<u8>, String> {
+fn download_percentage(downloaded_bytes: u64, total_bytes: Option<u64>) -> Option<u8> {
+    total_bytes
+        .filter(|total| *total > 0)
+        .map(|total| ((u128::from(downloaded_bytes.min(total)) * 100) / u128::from(total)) as u8)
+}
+
+fn emit_update_download_progress(app: &AppHandle, downloaded_bytes: u64, total_bytes: Option<u64>) {
+    let _ = app.emit(
+        APP_UPDATE_DOWNLOAD_PROGRESS_EVENT,
+        UpdateDownloadProgress {
+            downloaded_bytes,
+            total_bytes,
+            percentage: download_percentage(downloaded_bytes, total_bytes),
+        },
+    );
+}
+
+async fn download_update_with_retry(app: &AppHandle, update: &Update) -> Result<Vec<u8>, String> {
     let mut first_error = None;
 
     for attempt in 1..=MAX_UPDATE_DOWNLOAD_ATTEMPTS {
-        match update.download(|_, _| {}, || {}).await {
-            Ok(bytes) => return Ok(bytes),
+        emit_update_download_progress(app, 0, None);
+        let progress_app = app.clone();
+        let mut downloaded_bytes = 0_u64;
+        let mut last_emitted_percentage = None;
+        match update
+            .download(
+                move |chunk_length, total_bytes| {
+                    downloaded_bytes = downloaded_bytes.saturating_add(chunk_length as u64);
+                    let percentage = download_percentage(downloaded_bytes, total_bytes);
+                    if percentage != last_emitted_percentage {
+                        emit_update_download_progress(&progress_app, downloaded_bytes, total_bytes);
+                        last_emitted_percentage = percentage;
+                    }
+                },
+                || {},
+            )
+            .await
+        {
+            Ok(bytes) => {
+                let byte_count = bytes.len() as u64;
+                emit_update_download_progress(app, byte_count, Some(byte_count));
+                return Ok(bytes);
+            }
             Err(error) if should_retry_download(&error, attempt) => {
                 first_error = Some(error.to_string());
                 tokio::time::sleep(UPDATE_DOWNLOAD_RETRY_DELAY).await;
@@ -577,14 +654,17 @@ pub(crate) async fn check_for_app_update(
 }
 
 #[tauri::command]
-pub(crate) async fn install_app_update(
+pub(crate) async fn download_app_update(
     app: AppHandle,
     pending_update: State<'_, PendingUpdate>,
+    installation: State<'_, UpdateInstallation>,
     requested_version: Option<String>,
 ) -> Result<(), String> {
     if !updates_enabled() {
         return Err(DEVELOPMENT_UPDATE_INSTALL_ERROR.to_string());
     }
+
+    let _operation = UpdateOperation::acquire(&installation.busy)?;
 
     let requested_version = normalize_requested_version(requested_version);
     let requested_version_ref = requested_version.as_deref();
@@ -629,13 +709,61 @@ pub(crate) async fn install_app_update(
         }
     };
 
-    let bytes = download_update_with_retry(&update).await?;
-    update.install(bytes).map_err(|error| {
-        format!(
-            "Gnosis TMS {} was downloaded and verified, but could not be installed: {error}",
-            update.version
-        )
-    })?;
+    let bytes = download_update_with_retry(&app, &update).await?;
+    *installation
+        .downloaded
+        .lock()
+        .map_err(|_| "Could not store the downloaded update.".to_string())? = Some((update, bytes));
+    Ok(())
+}
+
+// Called only after the user confirms restart and the frontend has flushed and
+// checked durable writes. Windows installation itself may terminate the app.
+#[tauri::command]
+pub(crate) async fn install_app_update(
+    app: AppHandle,
+    installation: State<'_, UpdateInstallation>,
+    requested_version: Option<String>,
+) -> Result<(), String> {
+    if !updates_enabled() {
+        return Err(DEVELOPMENT_UPDATE_INSTALL_ERROR.to_string());
+    }
+    let _operation = UpdateOperation::acquire(&installation.busy)?;
+    let staged = {
+        let mut downloaded = installation
+            .downloaded
+            .lock()
+            .map_err(|_| "Could not access the downloaded update.".to_string())?;
+        if let Some((update, _)) = downloaded.as_ref() {
+            if !version_satisfies_requested(&update.version, requested_version.as_deref()) {
+                *downloaded = None;
+                return Err(
+                    "APP_UPDATE_DOWNLOAD_REQUIRED:A newer update is required. Download it before restarting.".to_string(),
+                );
+            }
+        }
+        downloaded
+            .take()
+            .ok_or("APP_UPDATE_DOWNLOAD_REQUIRED:Download the update before installing it.")?
+    };
+    let (staged, result) = tauri::async_runtime::spawn_blocking(move || {
+        let result = staged.0.install(&staged.1).map_err(|error| {
+            format!(
+                "Gnosis TMS {} could not be installed: {error}",
+                staged.0.version
+            )
+        });
+        (staged, result)
+    })
+    .await
+    .map_err(|error| format!("Could not run the installer: {error}"))?;
+    if let Err(error) = result {
+        *installation
+            .downloaded
+            .lock()
+            .map_err(|_| "Could not retain the downloaded update.".to_string())? = Some(staged);
+        return Err(error);
+    }
 
     app.request_restart();
     Ok(())
@@ -643,10 +771,19 @@ pub(crate) async fn install_app_update(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn update_operation_rejects_overlap_and_releases_on_failure() {
+        let busy = std::sync::atomic::AtomicBool::new(false);
+        let first = super::UpdateOperation::acquire(&busy).unwrap();
+        assert!(super::UpdateOperation::acquire(&busy).is_err());
+        drop(first);
+        assert!(super::UpdateOperation::acquire(&busy).is_ok());
+    }
+
     use super::{
-        classify_download_failure, compare_stable_versions, github_release_latest_json_url,
-        network_error_status, parse_github_release_tags, pending_update_decision,
-        platform_wait_and_lookup_failed_message, platform_wait_message,
+        classify_download_failure, compare_stable_versions, download_percentage,
+        github_release_latest_json_url, network_error_status, parse_github_release_tags,
+        pending_update_decision, platform_wait_and_lookup_failed_message, platform_wait_message,
         release_tag_candidates_for_version, should_retry_download, version_satisfies_requested,
         DownloadFailureClass, PendingUpdateDecision, DEVELOPMENT_UPDATE_INSTALL_ERROR,
     };
@@ -771,6 +908,14 @@ mod tests {
                 "expected status {status} to be permanent"
             );
         }
+    }
+
+    #[test]
+    fn download_percentage_is_bounded_and_requires_a_total() {
+        assert_eq!(download_percentage(25, Some(100)), Some(25));
+        assert_eq!(download_percentage(125, Some(100)), Some(100));
+        assert_eq!(download_percentage(25, Some(0)), None);
+        assert_eq!(download_percentage(25, None), None);
     }
 
     #[test]
