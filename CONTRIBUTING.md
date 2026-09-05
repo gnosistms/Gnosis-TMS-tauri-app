@@ -1,30 +1,26 @@
 # Contributing to Gnosis TMS
 
-Thank you for considering a contribution. Before you start, please read this page —
-especially the licensing section, because Gnosis TMS is not a conventional
-open-source project and we want you to know exactly what your contribution funds.
+Thank you for considering a contribution. Before you start, please read the
+licensing terms and development guidance below.
 
-## The licensing model, honestly
+## Licensing
 
-Gnosis TMS is **fair source**: the code is public, and use is free for
-noncommercial purposes (see [LICENSE](LICENSE)). Companies using it commercially
-buy a license (see [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md)), and those
-sales fund the project's development and the free use everyone else enjoys —
-including the translation teams of Gnostic organizations the project was built
-for.
+Gnosis TMS is open-source software under the GNU General Public License,
+version 3 only (`GPL-3.0-only`; see [LICENSE](LICENSE)). Commercial and
+noncommercial use are permitted without a separate paid commercial license.
+Contributions to this repository are distributed under the same license.
 
-This means the project's maintainer sells commercial licenses covering the whole
-codebase, including contributed code. To make that legally possible, every
-contributor signs a Contributor License Agreement (below). If that model isn't
-something you want to support with your work, we understand — and we'd rather you
-know before you write a patch than after.
+The separate GitHub App broker is licensed under the GNU Affero General Public
+License, version 3 only (`AGPL-3.0-only`). Third-party components retain their own
+licenses and notices.
 
 ## Contributor License Agreement
 
 All contributions require a signed CLA — see [CLA.md](CLA.md) for the full text.
 In short: you keep ownership of your contribution and can use it however you like,
 and you grant the maintainer the right to distribute and relicense it, including
-commercially.
+under commercial or proprietary terms. The CLA is separate from the public
+GPLv3 license and does not require users to buy a license.
 
 Signing is automatic: when you open your first pull request, the CLA Assistant bot
 posts a link, and you sign by authenticating with your GitHub account and

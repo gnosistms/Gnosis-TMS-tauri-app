@@ -2,10 +2,16 @@
 
 ## Why
 
-Gnosis TMS is moving to a PolyForm Noncommercial + commercial dual-license model.
-Strong copyleft (GPL/AGPL/LGPL-only) in the dependency tree is a hard blocker for
-the commercial license, so compliance must be enforced automatically, not by
-periodic manual audit.
+As of 2026-09-05, Gnosis TMS uses GPL-3.0-only; the separate broker uses
+AGPL-3.0-only. See [open-source-licensing-plan.md](open-source-licensing-plan.md).
+The existing dependency allowlist remains a conservative set of reviewed
+licenses. Other copyleft dependencies are not automatically incompatible with
+GPLv3, but require a compatibility and distribution-obligation review before
+the allowlist is expanded. Unknown licenses still fail closed.
+
+The implementation record below describes the June 2026 rollout. The root npm
+and Rust packages now declare GPL-3.0-only and remain excluded from third-party
+checks. License checks and bundled notices are already implemented.
 
 ## Current state (June 2026)
 

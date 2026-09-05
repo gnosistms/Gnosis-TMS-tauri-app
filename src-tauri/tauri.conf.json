@@ -39,12 +39,15 @@
     ]
   },
   "bundle": {
+    "license": "GPL-3.0-only",
     "active": true,
     "createUpdaterArtifacts": true,
     "externalBin": [
       "binaries/typst"
     ],
     "resources": {
+      "../LICENSE": "LICENSE",
+      "../README.md": "README.md",
       "resources/windows/git/": "git/windows/",
       "resources/macos/": "git/macos/",
       "resources/fonts/": "fonts/",

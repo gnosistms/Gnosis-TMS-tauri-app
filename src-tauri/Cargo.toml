@@ -2,6 +2,7 @@
 name = "gnosis-tms"
 version = "0.8.100"
 description = "Gnosis TMS"
+license = "GPL-3.0-only"
 authors = ["you"]
 edition = "2021"
 publish = false

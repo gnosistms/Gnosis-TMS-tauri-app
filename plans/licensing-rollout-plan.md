@@ -1,5 +1,11 @@
 # Licensing Rollout Plan
 
+> Superseded 2026-09-05 by [open-source-licensing-plan.md](open-source-licensing-plan.md).
+> The desktop app now uses GPL-3.0-only and the broker AGPL-3.0-only. The
+> noncommercial/paid licensing, license-token enforcement, and pricing tasks
+> below are historical and must not be implemented. Contributor-rights records
+> and existing CLA agreements remain relevant.
+
 ## Summary
 
 Move both public repos (Gnosis-TMS-tauri-app, gnosis-tms-github-app-broker) from the
