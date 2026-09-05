@@ -1,3 +1,4 @@
+import { downloadProjectImportSample } from "../project-import-sample-flow.js";
 import { state } from "../state.js";
 import { anchorProjectsSessionToItem } from "../projects-scroll-session.js";
 import { projectHeaderItemKey } from "../projects-list-model.js";
@@ -259,6 +260,7 @@ export function createProjectActions(render) {
     "close-project-old-layout-discard": () => closeProjectOldLayoutDiscard(render),
     "confirm-project-old-layout-discard": () => confirmProjectOldLayoutDiscard(render),
     "close-project-import-link-error": () => closeProjectImportLinkError(render),
+    "download-project-import-sample": () => downloadProjectImportSample(render),
     "close-project-import-upload-error": () => closeProjectImportUploadError(render),
     "continue-project-import-text": () => continueProjectImportText(render),
     "retry-project-import-link": () => retryProjectImportLink(render),

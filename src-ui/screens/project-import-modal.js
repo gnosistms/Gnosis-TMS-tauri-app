@@ -1,5 +1,7 @@
 import { escapeHtml, primaryButton, secondaryButton } from "../lib/ui.js";
 import { findIsoLanguageOption, isoLanguageOptions } from "../lib/language-options.js";
+import { formatErrorForDisplay } from "../app/error-display.js";
+import { isProjectImportFormatError, renderProjectImportFormatWarning } from "../app/project-import-format.js";
 import {
   normalizeProjectDocumentInputMode,
   renderProjectDocumentInputModal,
@@ -65,6 +67,10 @@ function renderProjectImportBatchErrorModal(modal) {
   if (failedFileNames.length === 0) {
     return "";
   }
+  const formatFailedFileNames = Array.isArray(modal.formatFailedFileNames)
+    ? modal.formatFailedFileNames.filter((name) => failedFileNames.includes(name))
+    : [];
+  const otherFailedFileNames = failedFileNames.filter((name) => !formatFailedFileNames.includes(name));
 
   return `
     <div class="modal-backdrop">
@@ -72,10 +78,10 @@ function renderProjectImportBatchErrorModal(modal) {
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">FILE UPLOAD ERROR</p>
           <h2 class="modal__title" id="project-import-batch-error-modal-title">Some files were not uploaded</h2>
-          <p class="modal__supporting">The following files did not upload successfully:</p>
-          <ul class="modal__list">
-            ${failedFileNames.map((fileName) => `<li>${escapeHtml(fileName)}</li>`).join("")}
-          </ul>
+          ${formatFailedFileNames.length ? `<p class="project-import-modal__error-badge" role="alert">${renderProjectImportFormatWarning()}</p>
+          <ul class="modal__list">${formatFailedFileNames.map((name) => `<li>${escapeHtml(name)}</li>`).join("")}</ul>` : ""}
+          ${otherFailedFileNames.length ? `<p class="modal__supporting">The following files did not upload successfully:</p>
+          <ul class="modal__list">${otherFailedFileNames.map((name) => `<li>${escapeHtml(name)}</li>`).join("")}</ul>` : ""}
           <div class="modal__actions">
             ${primaryButton("Ok", "close-project-import-upload-error", {
               modalDefault: true,
@@ -169,6 +175,9 @@ export function renderProjectImportModal(state) {
     return renderProjectImportUploadProgressStep(modal);
   }
   return renderProjectDocumentInputModal(modal, {
+    renderError: (error) => isProjectImportFormatError(error)
+      ? renderProjectImportFormatWarning()
+      : escapeHtml(formatErrorForDisplay(error)),
     modalId: "project-import",
     eyebrow: "ADD FILES",
     title: "Add new files to the project",

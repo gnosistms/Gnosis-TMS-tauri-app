@@ -587,12 +587,10 @@ pub(super) fn import_project_files_to_gtms_sync(
         }
 
         emit_batch_progress(app, &batch_id, index + 1, total, &file.file_name);
+        let file_name = file.file_name.clone();
         match parse_project_import_file(installation_id, &repo_name, project_id.clone(), file) {
             Ok(parsed) => parsed_workbooks.push(parsed),
-            Err(error) => failed_files.push(ImportProjectFileFailure {
-                file_name: error_file_name(&error),
-                error,
-            }),
+            Err(error) => failed_files.push(ImportProjectFileFailure { file_name, error }),
         }
     }
 
@@ -760,7 +758,12 @@ fn parse_project_import_file(
         }),
         _ => Err(format!("Unsupported file type for {file_name}.")),
     }
-    .map_err(|error| format!("{file_name}: {error}"))
+    .map_err(
+        |error| match error.strip_prefix("PROJECT_IMPORT_INVALID_FORMAT:") {
+            Some(detail) => format!("PROJECT_IMPORT_INVALID_FORMAT: {file_name}:{}", detail),
+            None => format!("{file_name}: {error}"),
+        },
+    )
 }
 
 fn required_source_language_code(file: &ImportProjectFileInput) -> Result<String, String> {
@@ -801,15 +804,6 @@ fn import_project_file_bytes(file: &ImportProjectFileInput) -> Result<Vec<u8>, S
         .ok_or_else(|| "The file could not be read.".to_string())?;
     ensure_within_import_size_limit(bytes.len() as u64, file_label)?;
     Ok(bytes)
-}
-
-fn error_file_name(error: &str) -> String {
-    error
-        .split_once(':')
-        .map(|(file_name, _)| file_name.trim())
-        .filter(|file_name| !file_name.is_empty())
-        .unwrap_or("file")
-        .to_string()
 }
 
 fn humanize_file_stem(file_name: &str) -> String {

@@ -1689,6 +1689,16 @@
   line-height: 1.35;
 }
 
+.project-import-modal__error-badge:has(.project-import-sample-link) {
+  border-radius: 12px;
+}
+
+.project-import-sample-link {
+  display: inline;
+  font: inherit;
+  text-decoration: underline;
+}
+
 .project-document-input__drop-target,
 .project-import-modal__drop-target {
   --project-import-drop-target-color: rgba(173, 111, 42, 0.5);
