@@ -471,7 +471,7 @@ export function renderAiKeyScreen(state) {
                 class="field__input"
                 type="${aiSettings.apiKeyIsSaved ? "password" : "text"}"
                 value="${aiSettings.apiKeyIsSaved ? "" : escapeHtml(aiSettings.apiKey)}"
-                ${aiSettings.apiKeyIsSaved ? 'placeholder="••••••••••••" data-ai-key-saved' : ""}
+                ${aiSettings.apiKeyIsSaved ? 'placeholder="••••••••••••••••••••••••••••••••••••••••••••••••" data-ai-key-saved' : ""}
                 data-ai-key-input
                 autocomplete="off"
                 autocapitalize="off"
