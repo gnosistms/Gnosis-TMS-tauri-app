@@ -18,6 +18,7 @@ import { loadStoredEditorFontSizePx } from "./editor-preferences.js";
 import { createResourcePageState } from "./resource-page-controller.js";
 import { createSyncState } from "./sync-state.js";
 import { DEFAULT_PDF_PAPER_SIZE } from "./editor-export-options.js";
+import { loadKnownAppUpdate } from "./app-update-storage.js";
 
 export const DEFAULT_EDITOR_FONT_SIZE_PX = 20;
 export const EDITOR_FONT_SIZE_OPTIONS = [16, 18, 20, 22, 24, 26, 28];
@@ -127,6 +128,8 @@ export const state = {
 };
 
 export function hydratePersistentAppState() {
+  const knownUpdate = loadKnownAppUpdate();
+  if (knownUpdate) state.appUpdate = { ...createAppUpdateState(), ...knownUpdate };
   hydrateStoredTeamState();
   hydrateStoredEditorPreferences();
   hydrateStoredAiSettingsPreferences();
@@ -212,6 +215,9 @@ export function createAppUpdateState() {
     body: null,
     promptVisible: false,
     dismissedVersion: null,
+    downloadPercent: null,
+    downloadedBytes: 0,
+    totalBytes: null,
   };
 }
 
@@ -1342,7 +1348,7 @@ export function resetSessionState() {
     session: null,
     pendingAutoOpenSingleTeam: false,
   };
-  state.appUpdate = createAppUpdateState();
+  // Updates belong to the installed app, not the signed-in account.
   state.teams = [];
   state.deletedTeams = [];
   state.selectedTeamId = null;

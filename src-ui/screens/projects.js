@@ -5,6 +5,7 @@ import {
   escapeHtml,
   loadingButton,
   pageShell,
+  renderAppUpdatePill,
   primaryButton,
   renderStateCard,
   secondaryButton,
@@ -458,6 +459,7 @@ export function renderProjectsScreen(state) {
     pageShell({
       title: "Projects",
       subtitle: selectedTeam?.name ?? "Team",
+      subtitleAction: renderAppUpdatePill(state.appUpdate),
       titleAction: buildPageRefreshAction(state, state.projectsPageSync, "refresh-page", {
         backgroundRefreshing:
           state.projectsPage?.isRefreshing === true

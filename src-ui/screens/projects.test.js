@@ -254,6 +254,39 @@ test("offline banner renders inside the page header", () => {
   assert.ok(bannerStart < headerEnd);
 });
 
+test("available app update renders a compact orange download pill beside the team name", () => {
+  const html = renderProjectsScreen(projectsState({
+    appUpdate: {
+      available: true,
+      status: "available",
+      version: "0.9.0",
+      downloadPercent: null,
+    },
+  }));
+  const subtitleRow = html.match(/<div class="page-header__subtitle-row">[\s\S]*?<\/div>/)?.[0] ?? "";
+
+  assert.match(subtitleRow, /class="page-header__subtitle">Team<\/p>/);
+  assert.match(html, /class="app-update-pill"/);
+  assert.match(html, /data-action="install-app-update"/);
+  assert.match(html, /M12 15V3/);
+  assert.match(html, />Update<\/span>/);
+});
+
+test("app update pill shows native download percentage", () => {
+  const html = renderProjectsScreen(projectsState({
+    appUpdate: {
+      available: true,
+      status: "installing",
+      version: "0.9.0",
+      downloadPercent: 47,
+    },
+  }));
+
+  assert.match(html, /class="app-update-pill"[^>]*data-action="noop"/);
+  assert.match(html, /aria-busy="true"/);
+  assert.match(html, />47%<\/span>/);
+});
+
 test("offline reconnect banner preserves its guarded action with a stable loading key", () => {
   const html = renderProjectsScreen(projectsState({
     offline: {

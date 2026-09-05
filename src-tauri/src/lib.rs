@@ -170,7 +170,10 @@ use crate::{
     team_repo_migrations::{
         list_pending_team_repo_layout_migrations, team_repo_migration_target_version,
     },
-    updater::{check_for_app_update, install_app_update, PendingUpdate},
+    updater::{
+        check_for_app_update, download_app_update, install_app_update, PendingUpdate,
+        UpdateInstallation,
+    },
     window::read_local_dropped_file,
 };
 
@@ -539,6 +542,7 @@ pub fn run() {
         .manage(ProjectRepoSyncStore::default())
         .manage(ProjectImportBatchCancelStore::default())
         .manage(PendingUpdate(Mutex::new(None)))
+        .manage(UpdateInstallation::default())
         .plugin(store::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -568,6 +572,7 @@ pub fn run() {
             read_local_dropped_file,
             append_editor_scroll_debug_log,
             check_for_app_update,
+            download_app_update,
             install_app_update,
             begin_broker_auth,
             wordpress::auth::begin_wordpress_auth,

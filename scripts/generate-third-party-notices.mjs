@@ -86,6 +86,10 @@ function generateVendoredSection() {
     join(rootDir, "scripts", "licenses", "apache-2.0.txt"),
     "utf8",
   ).trimEnd();
+  const featherIconLicense = readFileSync(
+    join(rootDir, "src-ui", "assets", "icons", "download.LICENSE.txt"),
+    "utf8",
+  ).trimEnd();
 
   return [
     "## Vendored libraries",
@@ -100,6 +104,17 @@ function generateVendoredSection() {
     "",
     "```",
     apacheText,
+    "```",
+    "",
+    "### Feather download icon",
+    "",
+    "Copyright 2013-present Cole Bemis.",
+    "https://github.com/feathericons/feather",
+    "",
+    "Adapted as `src-ui/assets/icons/download.svg`, licensed under the MIT License:",
+    "",
+    "```",
+    featherIconLicense,
     "```",
     "",
   ].join("\n");

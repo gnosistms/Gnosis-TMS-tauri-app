@@ -456,6 +456,65 @@ a {
   line-height: 1.1;
 }
 
+.page-header__subtitle-row {
+  min-height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.app-update-pill {
+  min-height: 25px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 10px 0 8px;
+  border: 0;
+  border-radius: 999px;
+  box-shadow: 0 5px 11px rgba(214, 128, 12, 0.22);
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.005em;
+  white-space: nowrap;
+  transition:
+    transform 140ms ease,
+    box-shadow 140ms ease,
+    filter 140ms ease;
+}
+
+.app-update-pill:hover:not([aria-disabled="true"]) {
+  transform: translateY(-0.5px);
+  filter: brightness(1.035);
+  box-shadow: 0 7px 14px rgba(214, 128, 12, 0.26);
+}
+
+.app-update-pill:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+}
+
+.app-update-pill[aria-disabled="true"] {
+  cursor: default;
+}
+
+.app-update-pill__icon {
+  width: 13px;
+  height: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.app-update-pill__icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  stroke-width: 2.25;
+}
+
 .button.is-disabled {
   opacity: 0.46;
   cursor: not-allowed;
@@ -657,10 +716,14 @@ a {
   font-size: 0.95rem;
 }
 
-.button--primary {
+.button--primary,
+.app-update-pill {
   border-color: transparent;
   background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
   color: var(--accent-text);
+}
+
+.button--primary {
   box-shadow: 0 14px 24px rgba(214, 128, 12, 0.24);
 }
 
@@ -1488,4 +1551,10 @@ a {
 
 .hero-link--button:hover {
   color: var(--link-hover);
+}
+.app-update-fallback {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 20;
 }
