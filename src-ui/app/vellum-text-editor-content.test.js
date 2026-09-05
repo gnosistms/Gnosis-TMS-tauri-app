@@ -459,6 +459,21 @@ test("buildVellumTextEditorContentDecodedXml writes images as Vellum image attac
   assert.ok(byteValues.some((value) => value.equals(Buffer.from([13, 0, 1, 1, 13, 0]))));
 });
 
+test("Vellum image requests derive filenames from URL paths and preserve download parameters", () => {
+  const cases = [
+    ["https://i0.wp.com/example.com/ladder.webp?w=1538&ssl=1", "ladder.webp", "org.webmproject.webp"],
+    ["https://i0.wp.com/example.com/diagram.png?resize=1536%2C1131&ssl=1", "diagram.png", "public.png"],
+    ["https://example.com/Plate%201.jpg?redirect=/other.png#detail", "Plate 1.jpg", "public.jpeg"],
+    ["https://example.com/diagram.png#detail", "diagram.png", "public.png"],
+  ];
+  for (const [source, fileName, uti] of cases) {
+    for (const caption of ["", "Caption added in TMS"]) {
+      const blocks = [{ kind: "image", image: { kind: "url", url: source }, caption }];
+      assert.deepEqual(buildVellumImageResourceRequests(blocks), [{ index: 1, source, fileName, uti }]);
+    }
+  }
+});
+
 test("buildVellumTextEditorContentDecodedXml uses prepared local Vellum image resources", () => {
   const blocks = [
     {

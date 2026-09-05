@@ -333,9 +333,11 @@ test("submitEditorExport copy HTML publishes WordPress block markup and plain te
   assert.match(html, /^<meta charset='utf-8'>/);
   assert.match(html, /<!-- wp:paragraph -->/);
   assert.match(html, /<p>Text one<sup/);
-  assert.match(html, /<sup data-fn="[0-9a-f-]{36}" class="fn"><a id="[0-9a-f-]{36}-link" href="#[0-9a-f-]{36}">1<\/a><\/sup>/);
-  assert.match(html, /<!-- wp:footnotes \/-->/);
-  assert.doesNotMatch(html, /<ol class="wp-block-footnotes">/);
+  assert.match(html, /<sup class="fn"><a id="[0-9a-f-]{36}-link" href="#[0-9a-f-]{36}" role="doc-noteref" aria-label="Footnote 1">1<\/a><\/sup>/);
+  assert.doesNotMatch(html, /<!-- wp:footnotes \/-->/);
+  const noteId = html.match(/href="#([0-9a-f-]{36})"/)[1];
+  assert.ok(html.includes(`<li id="${noteId}" tabindex="-1">footnote 1`));
+  assert.ok(html.includes(`<a href="#${noteId}-link" role="doc-backlink"`));
   const plain = await writes[0][0].items["text/plain"].text();
   assert.equal(plain, "Text one[1]\n\n[1] footnote 1");
   assert.equal(state.editorChapter.exportModal.isOpen, false);
@@ -394,70 +396,76 @@ test("submitEditorExport copy Vellum uses the native Vellum writer with fallback
   assert.equal(state.editorChapter.exportModal.isOpen, false);
 });
 
-test("submitEditorExport copy Vellum prepares image resources before building the archive", async () => {
-  installNavigator({ platform: "MacIntel" });
-  installEditorExportFixture({
-    rows: [{
-      rowId: "row-image",
-      lifecycleState: "active",
-      textStyle: "paragraph",
-      fields: { vi: "", es: "" },
-      footnotes: {},
-      imageCaptions: { vi: "Image caption" },
-      images: {
-        vi: {
-          kind: "url",
-          url: "https://example.com/images/Diogenes.webp",
+for (const [label, imageCaptions] of [
+  ["a caption", { vi: "Image caption" }],
+  ["an empty caption", { vi: "" }],
+  ["no caption metadata", undefined],
+]) {
+  test(`submitEditorExport copy Vellum prepares images with ${label}`, async () => {
+    installNavigator({ platform: "MacIntel" });
+    installEditorExportFixture({
+      rows: [{
+        rowId: "row-image",
+        lifecycleState: "active",
+        textStyle: "paragraph",
+        fields: { vi: "", es: "" },
+        footnotes: {},
+        imageCaptions,
+        images: {
+          vi: {
+            kind: "url",
+            url: "https://example.com/images/Diogenes.webp",
+          },
         },
+      }],
+    });
+    const prepareCalls = [];
+    const vellumCalls = [];
+    openExportModal("copy:vellum");
+
+    await submitEditorExport(() => {}, {
+      prepareVellumImageResources: async (input) => {
+        prepareCalls.push(input);
+        return [{
+          index: 1,
+          fileName: "Diogenes.webp",
+          imageKey: "diogenes",
+          preservedUrl: "file:///tmp/co.180g.Vellum/preserved-images.abc123/Diogenes.webp",
+          lastAbsolutePath: "/tmp/co.180g.Vellum/vellum-process-attachment.def456/Diogenes.webp",
+          uti: "org.webmproject.webp",
+          tooltip: "Diogenes.webp\n3840 × 2920 px",
+          pixelWidth: 3840,
+          pixelHeight: 2920,
+          colorSpace: "sRGB",
+          colorSpaceModel: "RGB",
+          hasAlpha: false,
+          canUpsize: false,
+        }];
       },
-    }],
-  });
-  const prepareCalls = [];
-  const vellumCalls = [];
-  openExportModal("copy:vellum");
+      copyVellumTextEditorContent: async (input) => {
+        vellumCalls.push(input);
+      },
+    });
 
-  await submitEditorExport(() => {}, {
-    prepareVellumImageResources: async (input) => {
-      prepareCalls.push(input);
-      return [{
+    assert.deepEqual(prepareCalls, [{
+      images: [{
         index: 1,
+        source: "https://example.com/images/Diogenes.webp",
         fileName: "Diogenes.webp",
-        imageKey: "diogenes",
-        preservedUrl: "file:///tmp/co.180g.Vellum/preserved-images.abc123/Diogenes.webp",
-        lastAbsolutePath: "/tmp/co.180g.Vellum/vellum-process-attachment.def456/Diogenes.webp",
         uti: "org.webmproject.webp",
-        tooltip: "Diogenes.webp\n3840 × 2920 px",
-        pixelWidth: 3840,
-        pixelHeight: 2920,
-        colorSpace: "sRGB",
-        colorSpaceModel: "RGB",
-        hasAlpha: false,
-        canUpsize: false,
-      }];
-    },
-    copyVellumTextEditorContent: async (input) => {
-      vellumCalls.push(input);
-    },
+      }],
+    }]);
+    assert.equal(vellumCalls.length, 1);
+    assert.match(vellumCalls[0].decodedPropertyListXml, /file:\/\/\/tmp\/co\.180g\.Vellum\/preserved-images\.abc123\/Diogenes\.webp/);
+    assert.match(vellumCalls[0].decodedPropertyListXml, /\/tmp\/co\.180g\.Vellum\/vellum-process-attachment\.def456\/Diogenes\.webp/);
+    assert.doesNotMatch(vellumCalls[0].decodedPropertyListXml, /https:\/\/example\.com\/images\/Diogenes\.webp/);
+    assert.match(vellumCalls[0].ogElementPrivateDecodedPropertyListXml, /file:\/\/\/tmp\/co\.180g\.Vellum\/preserved-images\.abc123\/Diogenes\.webp/);
+    assert.match(vellumCalls[0].ogElementPrivateDecodedPropertyListXml, /\/tmp\/co\.180g\.Vellum\/vellum-process-attachment\.def456\/Diogenes\.webp/);
+    assert.doesNotMatch(vellumCalls[0].ogElementPrivateDecodedPropertyListXml, /https:\/\/example\.com\/images\/Diogenes\.webp/);
+    assert.equal(vellumCalls[0].plainText, imageCaptions?.vi ?? "");
+    assert.equal(state.editorChapter.exportModal.isOpen, false);
   });
-
-  assert.deepEqual(prepareCalls, [{
-    images: [{
-      index: 1,
-      source: "https://example.com/images/Diogenes.webp",
-      fileName: "Diogenes.webp",
-      uti: "org.webmproject.webp",
-    }],
-  }]);
-  assert.equal(vellumCalls.length, 1);
-  assert.match(vellumCalls[0].decodedPropertyListXml, /file:\/\/\/tmp\/co\.180g\.Vellum\/preserved-images\.abc123\/Diogenes\.webp/);
-  assert.match(vellumCalls[0].decodedPropertyListXml, /\/tmp\/co\.180g\.Vellum\/vellum-process-attachment\.def456\/Diogenes\.webp/);
-  assert.doesNotMatch(vellumCalls[0].decodedPropertyListXml, /https:\/\/example\.com\/images\/Diogenes\.webp/);
-  assert.match(vellumCalls[0].ogElementPrivateDecodedPropertyListXml, /file:\/\/\/tmp\/co\.180g\.Vellum\/preserved-images\.abc123\/Diogenes\.webp/);
-  assert.match(vellumCalls[0].ogElementPrivateDecodedPropertyListXml, /\/tmp\/co\.180g\.Vellum\/vellum-process-attachment\.def456\/Diogenes\.webp/);
-  assert.doesNotMatch(vellumCalls[0].ogElementPrivateDecodedPropertyListXml, /https:\/\/example\.com\/images\/Diogenes\.webp/);
-  assert.equal(vellumCalls[0].plainText, "Image caption");
-  assert.equal(state.editorChapter.exportModal.isOpen, false);
-});
+}
 
 test("copy exports follow the preview language without changing editor selections", async () => {
   installEditorExportFixture();

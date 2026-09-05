@@ -478,17 +478,30 @@ function renderTextWithWordPressFootnoteRefs(block, footnoteState, options = {})
 
   const appendReference = (entry) => {
     usedMarkers.add(entry.marker);
+    // HTML can cite the same note repeatedly, including across an explicit
+    // separator. Keep this map local to the source row: markers restart per row.
+    const existingItem = options.htmlFootnotes?.get(entry.marker);
     const number = footnoteState.items.length + 1;
-    const id = options.serialize
+    const id = existingItem?.id ?? (options.serialize
       ? createWordPressFootnoteId(block, number)
-      : stableFootnoteId(block, number);
-    footnoteState.items.push({
+      : stableFootnoteId(block, number));
+    const item = existingItem ?? {
       id,
       number,
       rowId: block?.rowId ?? "",
       languageCode: block?.languageCode ?? "",
       text: entry.text,
-    });
+    };
+    if (!existingItem) {
+      footnoteState.items.push(item);
+    }
+    if (options.htmlFootnotes) {
+      options.htmlFootnotes.set(entry.marker, item);
+      item.references ??= [];
+      const referenceId = `${id}-link${item.references.length ? `-${item.references.length + 1}` : ""}`;
+      item.references.push(referenceId);
+      return `<sup class="fn"><a id="${escapeHtml(referenceId)}" href="#${escapeHtml(id)}" role="doc-noteref" aria-label="Footnote ${item.number}">${item.number}</a></sup>`;
+    }
     return options.serialize
       ? `<sup data-fn="${escapeHtml(id)}" class="fn"><a id="${escapeHtml(id)}-link" href="#${escapeHtml(id)}">${number}</a></sup>`
       : `<sup class="translate-preview__footnote-ref fn" data-fn="${escapeHtml(entry.text)}"><a href="#fn-${escapeHtml(id)}" id="fnref-${escapeHtml(id)}" aria-describedby="footnote-label">${number}</a></sup>`;
@@ -496,7 +509,7 @@ function renderTextWithWordPressFootnoteRefs(block, footnoteState, options = {})
 
   for (const marker of markers) {
     const entry = footnoteByMarker.get(marker.marker);
-    if (entry && !usedMarkers.has(marker.marker)) {
+    if (entry && (options.htmlFootnotes || !usedMarkers.has(marker.marker))) {
       const referenceHtml = appendReference(entry);
       ranges.push({
         start: marker.index,
@@ -724,9 +737,10 @@ function serializePreviewTextBlock(block, footnoteState, options = {}) {
   );
 }
 
-function serializePreviewTextBlockParts(block, footnoteState) {
+function serializePreviewTextBlockParts(block, footnoteState, options = {}) {
   const parts = previewTextParts(block);
   const usedMarkers = new Set();
+  const htmlFootnotes = options.htmlFootnotes ? new Map() : undefined;
   const appendPartIndex = footnoteAppendPartIndex(parts, block.footnotes);
   return parts
     .map((part, index) => {
@@ -738,6 +752,7 @@ function serializePreviewTextBlockParts(block, footnoteState) {
       }
       const textHtml = renderTextWithWordPressFootnoteRefs(part.block, footnoteState, {
         serialize: true,
+        htmlFootnotes,
         usedMarkers,
         appendRemaining: index === appendPartIndex,
       });
@@ -752,7 +767,7 @@ function serializePreviewTextBlockParts(block, footnoteState) {
     .join("\n\n");
 }
 
-function serializeEditorPreviewBlocks(blocks) {
+function serializeEditorPreviewBlocks(blocks, options = {}) {
   const footnoteState = { items: [] };
   const bodyHtml = (Array.isArray(blocks) ? blocks : [])
     .map((block) => {
@@ -768,7 +783,7 @@ function serializeEditorPreviewBlocks(blocks) {
         return rawHtml ? `<!-- wp:html -->\n${rawHtml}\n<!-- /wp:html -->` : "";
       }
 
-      return serializePreviewTextBlockParts(block, footnoteState);
+      return serializePreviewTextBlockParts(block, footnoteState, options);
     })
     .filter(Boolean)
     .join("\n\n");
@@ -777,8 +792,37 @@ function serializeEditorPreviewBlocks(blocks) {
 }
 
 export function serializeEditorPreviewHtml(blocks) {
-  const { bodyHtml, footnotesHtml } = serializeEditorPreviewBlocks(blocks);
+  const { bodyHtml, footnoteState } = serializeEditorPreviewBlocks(blocks, { htmlFootnotes: true });
+  const footnotesHtml = serializeHtmlFootnotes(footnoteState);
   return ["<meta charset='utf-8'>", bodyHtml, footnotesHtml].filter(Boolean).join("\n\n");
+}
+
+function serializeHtmlFootnotes(footnoteState) {
+  if (footnoteState.items.length === 0) {
+    return "";
+  }
+  const headingId = `${footnoteState.items[0].id}-heading`;
+  const items = footnoteState.items.map((item) => {
+    const multipleReferences = item.references.length > 1;
+    const backlinks = item.references.map((referenceId, index) => {
+      const label = multipleReferences
+        ? `Back to reference ${index + 1} for footnote ${item.number}`
+        : `Back to footnote reference ${item.number}`;
+      const arrow = multipleReferences ? `&#8617;<sup>${index + 1}</sup>` : "&#8617;";
+      return `<a href="#${escapeHtml(referenceId)}" role="doc-backlink" aria-label="${label}">${arrow}</a>`;
+    }).join(" ");
+    return `<li id="${escapeHtml(item.id)}" tabindex="-1">${serializePreviewText(item.text)} ${backlinks}</li>`;
+  }).join("\n");
+  // A static Custom HTML block also survives WordPress paste without depending
+  // on footnote post metadata, which cannot be carried on the clipboard.
+  return [
+    "<!-- wp:html -->",
+    `<section class="footnotes" role="doc-endnotes" aria-labelledby="${escapeHtml(headingId)}">`,
+    `<h2 id="${escapeHtml(headingId)}">Footnotes</h2>`,
+    `<ol>\n${items}\n</ol>`,
+    "</section>",
+    "<!-- /wp:html -->",
+  ].join("\n");
 }
 
 function isHeading1Block(block) {
@@ -812,9 +856,8 @@ const WORDPRESS_SEPARATOR_BLOCK = [
   "<!-- /wp:separator -->",
 ].join("\n");
 
-// WordPress post payload: the same block markup as the clipboard HTML export,
-// minus the clipboard charset prefix, plus the footnote bodies that the core
-// footnotes block stores in the `footnotes` post meta (ids match the
+// WordPress post payload uses native WordPress citation markup, plus the bodies
+// that the core footnotes block stores in the `footnotes` post meta (ids match the
 // `data-fn` refs already present in the markup). A leading H1 is promoted to
 // `title` and removed from the content.
 export function serializeEditorPreviewWordPress(blocks) {
