@@ -97,6 +97,7 @@ struct OpenAiModelVersion {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum OpenAiModelFamily {
     General,
+    Astra,
     Sol,
     Terra,
     Luna,
@@ -105,9 +106,10 @@ enum OpenAiModelFamily {
 }
 
 impl OpenAiModelFamily {
-    fn recommended_ordered() -> [Self; 6] {
+    fn recommended_ordered() -> [Self; 7] {
         [
             Self::General,
+            Self::Astra,
             Self::Sol,
             Self::Terra,
             Self::Luna,
@@ -119,6 +121,7 @@ impl OpenAiModelFamily {
     fn suffix(self) -> Option<&'static str> {
         match self {
             Self::General => None,
+            Self::Astra => Some("-astra"),
             Self::Sol => Some("-sol"),
             Self::Terra => Some("-terra"),
             Self::Luna => Some("-luna"),
@@ -130,11 +133,12 @@ impl OpenAiModelFamily {
     fn picker_rank(self) -> u8 {
         match self {
             Self::General => 0,
-            Self::Sol => 1,
-            Self::Terra => 2,
-            Self::Luna => 3,
-            Self::Mini => 4,
-            Self::Nano => 5,
+            Self::Astra => 1,
+            Self::Sol => 2,
+            Self::Terra => 3,
+            Self::Luna => 4,
+            Self::Mini => 5,
+            Self::Nano => 6,
         }
     }
 }
@@ -1336,6 +1340,39 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(ids, vec!["gpt-5.6", "gpt-5.6-sol"]);
+    }
+
+    #[test]
+    fn shortlist_recommended_models_includes_astra_as_newest_version() {
+        let models = [
+            "gpt-5.5",
+            "gpt-5.6-luna",
+            "gpt-6-astra",
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-6-astra-2026-09-01",
+        ]
+        .into_iter()
+        .map(|id| AiProviderModel {
+            id: id.to_string(),
+            label: id.to_string(),
+        })
+        .collect::<Vec<_>>();
+
+        let ids = shortlist_recommended_models(&models)
+            .into_iter()
+            .map(|model| model.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            ids,
+            vec![
+                "gpt-6-astra",
+                "gpt-5.6-sol",
+                "gpt-5.6-terra",
+                "gpt-5.6-luna"
+            ]
+        );
     }
 
     #[test]

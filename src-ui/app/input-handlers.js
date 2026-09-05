@@ -1001,13 +1001,18 @@ function handleProjectImportPastedTextInput(event, render) {
   return true;
 }
 
-function handleAiKeyInput(event) {
+function handleAiKeyInput(event, render) {
   const input = event.target.closest("[data-ai-key-input]");
   if (!input) {
     return false;
   }
 
+  const wasSaved = state.aiSettings.apiKeyIsSaved;
+  const hadDraft = Boolean(state.aiSettings.apiKey?.trim());
   updateAiProviderSecretDraft(input.value);
+  if (wasSaved || hadDraft !== Boolean(state.aiSettings.apiKey.trim())) {
+    render?.();
+  }
   return true;
 }
 

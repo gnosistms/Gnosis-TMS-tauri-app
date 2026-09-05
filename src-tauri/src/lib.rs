@@ -65,6 +65,7 @@ use crate::{
             AiTranslationBatchRequest, AiTranslationBatchResponse, AiTranslationRequest,
             AiTranslationResponse,
         },
+        validate_ai_provider_secret as validate_ai_provider_secret_task,
     },
     ai_secret_storage::{
         clear_ai_provider_secret as clear_ai_provider_secret_value,
@@ -239,6 +240,18 @@ async fn list_ai_provider_models(
     })
     .await
     .map_err(|error| format!("The AI models worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn validate_ai_provider_secret(
+    provider_id: AiProviderId,
+    api_key: String,
+) -> Result<Vec<AiProviderModel>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        validate_ai_provider_secret_task(provider_id, &api_key)
+    })
+    .await
+    .map_err(|error| format!("The AI key check worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -592,6 +605,7 @@ pub fn run() {
             load_ai_provider_secret,
             save_ai_provider_secret,
             list_ai_provider_models,
+            validate_ai_provider_secret,
             clear_ai_provider_secret,
             load_team_ai_broker_public_key,
             load_team_ai_settings,

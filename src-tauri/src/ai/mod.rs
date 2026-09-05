@@ -2211,6 +2211,18 @@ pub(crate) fn load_ai_provider_models(
     providers::list_models(provider_id, &api_key)
 }
 
+/// Check a candidate without replacing or reading the active stored credential.
+pub(crate) fn validate_ai_provider_secret(
+    provider_id: AiProviderId,
+    api_key: &str,
+) -> Result<Vec<AiProviderModel>, String> {
+    let api_key = api_key.trim();
+    if api_key.is_empty() {
+        return Err("Enter an API key to check.".to_string());
+    }
+    providers::list_models(provider_id, api_key)
+}
+
 pub(crate) fn run_ai_review(
     app: &AppHandle,
     request: AiReviewRequest,

@@ -1,7 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { resolveVisibleAiTranslateActions } from "./ai-action-config.js";
+import { pickPreferredAiModelId, resolveVisibleAiTranslateActions } from "./ai-action-config.js";
+
+test("OpenAI picker prefers Astra and preserves explicit model selections", () => {
+  const options = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra"]
+    .map((id) => ({ id, label: id }));
+
+  assert.equal(pickPreferredAiModelId("openai", options), "gpt-6-astra");
+  for (const { id } of options) {
+    assert.equal(pickPreferredAiModelId("openai", options, id), id);
+  }
+});
 
 test("resolveVisibleAiTranslateActions returns one unified translate action by default", () => {
   const actions = resolveVisibleAiTranslateActions({
