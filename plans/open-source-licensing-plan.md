@@ -4,6 +4,10 @@ Decision: 2026-09-05. Hans selected GPLv3 for the desktop app and AGPLv3 for
 the GitHub App broker. Use `GPL-3.0-only` and `AGPL-3.0-only`, respectively;
 future license versions are not automatically authorized.
 
+Contributor policy update: the [DCO transition](dco-contribution-policy-plan.md)
+retires the CLA requirement for new contributions. References below to retaining
+CLA agreements concern historical records, not a new signing requirement.
+
 ## Plan
 
 1. Replace both interim licenses with the complete standard license texts and

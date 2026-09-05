@@ -1,3 +1,9 @@
+> **Historical template — retired for new contributions on 2026-09-05.**
+> New contributions use the DCO sign-off process in [CONTRIBUTING.md](CONTRIBUTING.md).
+> The original template below is retained unchanged for reference. Previously
+> executed agreements and signature records are preserved; no new CLA signature
+> is required.
+
 # Gnosis TMS Individual Contributor License Agreement
 
 Thank you for your interest in contributing to Gnosis TMS (the "Project"), which
