@@ -159,6 +159,9 @@ Current invariant
 - The same protected vault holds provider keys, team member private keys, and the
   broker login. If secure persistence is unavailable, offer explicit session-only
   operation without writing credentials to ordinary files or browser storage.
+- Credential access MUST NOT display OS-password prompts. If access cannot succeed
+  silently, preserve the vault and offer session-only operation. Retries also
+  remain non-interactive, including in development builds.
 - Stored provider keys and member private keys stay in Rust. Frontend IPC returns
   availability and versions; user-entered replacement drafts still pass through
   JavaScript. The broker session token remains in runtime JS for existing APIs.

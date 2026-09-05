@@ -92,8 +92,8 @@ independent mechanisms — know which owns what before adding persistence:
 | Tauri plugin key-value store | JSON file store (`tauri-plugin-store`) | `store.rs` |
 
 **F-VIII — Protected credential persistence**: Use `credential_vault.rs` for secrets.
-New snapshots use a random 256-bit key stored by `keyring` in the platform credential
-store. Deterministic derivation is allowed only to read the legacy snapshot during
+New snapshots use a random 256-bit key stored in the platform credential store
+through `credential_vault/os_store.rs`. Deterministic derivation is allowed only to read the legacy snapshot during
 verified migration. Broker login JSON is also migrated. Keep credentials in Rust;
 never register an IPC command that returns stored API keys or member private keys.
 See [F-VIII](../.vt/memory/foundational-principles.md) for guarantees and limits.
@@ -120,6 +120,14 @@ old account after an interrupted update or sign-out. Successful vault opens repa
 the projection. This identity does not authorize network access or bypass the
 installation write-access checks. Session-only fallback retains the unlocked
 records when available, disables persistence, and preserves the old disk snapshot.
+
+Credential access must never display an OS password dialog. On macOS, retain the
+Security framework interaction-disable guard for the entire process lifetime;
+dropping a scoped guard would re-enable prompts. Linux uses Secret Service with
+`connect_with_max_prompt_timeout(..., 0)` and refuses locked or ambiguous items.
+Do not use keyring's interactive Linux unlock helpers. Windows uses non-interactive
+generic Credential Manager entries. Reads, writes, retries, and cleanup must all
+follow the silent policy; unavailable access uses the existing session-only choice.
 
 `store.rs` initializes `tauri-plugin-store` (a simple key-value JSON file store).
 It is **not** a SQLite database. `rusqlite` is used exclusively by `project_search/`

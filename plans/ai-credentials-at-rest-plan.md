@@ -174,6 +174,12 @@ and platform-specific persistence and fallback behavior have recorded verificati
   Session-only mode does not decrypt or modify vault files and also works when the
   data directory is unwritable. It is explicit for each app run; restarting is
   required to return from that mode to persistent storage.
+- `credential-storage-no-prompts-plan.md` supersedes interactive OS access: macOS
+  retains a process-lifetime Security framework guard that disables dialogs;
+  Linux uses `dbus-secret-service` 4.1.0 directly with a zero prompt timeout and
+  the existing keyring attributes. Windows retains generic Credential Manager
+  access. Startup, retries, saves, and cleanup all remain non-interactive. No
+  existing vault or OS entry is deleted or reset to avoid a prompt.
 - Review fixes in `credential-storage-review-fixes-plan.md` use a writable handle
   for Windows snapshot flushing and allow an already-open vault to transition to
   session-only mode after persistence fails. Public GitHub author fields are

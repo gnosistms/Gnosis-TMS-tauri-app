@@ -50,6 +50,40 @@ test("retry can unlock storage without falling back automatically", async () => 
   assert.equal(state.credentialStorage.mode, "persistent");
 });
 
+test("silent access failure can continue with a session-only GitHub login", async () => {
+  const calls = [];
+  let memoryOnly = false;
+  let loadedTeams = false;
+  const session = { sessionToken: "synthetic-session-only-token", login: "tester" };
+  handler = async (command, payload) => {
+    calls.push(command);
+    if (command === "load_credential_storage_status") {
+      return { mode: "locked", message: "Saved credentials could not be accessed silently. Gnosis TMS will not ask for your computer password. Retry or use session-only storage." };
+    }
+    if (command === "use_session_only_credential_storage") {
+      memoryOnly = true;
+      return { mode: "session_only", message: "Keys and login last for this app session." };
+    }
+    if (command === "save_broker_auth_session") {
+      assert.equal(memoryOnly, true);
+      assert.deepEqual(payload.session, session);
+      return null;
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+  await refreshCredentialStorage();
+  await refreshCredentialStorage(null, { retry: true });
+  assert.equal(state.credentialStorage.mode, "locked");
+  assert.equal(await loadStoredAuthSession(), null);
+  await useSessionOnlyCredentialStorage();
+  await applyBrokerAuthResult({ status: "success", session }, () => {}, () => { loadedTeams = true; });
+  assert.equal(state.credentialStorage.mode, "session_only");
+  assert.equal(state.auth.session.sessionToken, session.sessionToken);
+  assert.equal(loadedTeams, true);
+  assert.deepEqual(calls, ["load_credential_storage_status", "load_credential_storage_status", "use_session_only_credential_storage", "save_broker_auth_session"]);
+  assert.equal([...local.values()].some((value) => String(value).includes(session.sessionToken)), false);
+});
+
 test("a failed login save is visible and does not activate an unsaved session", async () => {
   handler = async () => { throw new Error("Could not write encrypted credentials."); };
   await applyBrokerAuthResult({ status: "success", session: { sessionToken: "synthetic", login: "tester" } }, () => {}, () => assert.fail("Teams should not load"));

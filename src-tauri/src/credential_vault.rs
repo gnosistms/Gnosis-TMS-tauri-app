@@ -36,58 +36,8 @@ trait CredentialStore {
     fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>, String>;
     fn write(&self, key: &[u8]) -> Result<(), String>;
 }
-struct OsCredentialStore {
-    account: String,
-}
-impl OsCredentialStore {
-    fn new(path: &Path) -> Self {
-        Self {
-            account: format!(
-                "vault-v3-{:x}",
-                Sha256::digest(path.to_string_lossy().as_bytes())
-            ),
-        }
-    }
-    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
-    fn entry(&self) -> Result<keyring::Entry, String> {
-        keyring::Entry::new("com.gnosis.tms.credentials", &self.account).map_err(os_error)
-    }
-}
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
-fn os_error(error: keyring::Error) -> String {
-    // Never format provider errors: some variants carry the secret bytes.
-    match error {
-        keyring::Error::NoStorageAccess(_) => "Secure credential storage is locked or access was denied. Unlock it or allow Gnosis TMS access, then retry.",
-        _ => "Secure credential storage is unavailable. Retry after unlocking your system credential store, or use session-only storage.",
-    }.into()
-}
-impl CredentialStore for OsCredentialStore {
-    fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>, String> {
-        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
-        {
-            match self.entry()?.get_secret() {
-                Ok(key) => Ok(Some(Zeroizing::new(key))),
-                Err(keyring::Error::NoEntry) => Ok(None),
-                Err(error) => Err(os_error(error)),
-            }
-        }
-        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
-        {
-            Err("Secure credential storage is unavailable on this system. Use session-only storage.".into())
-        }
-    }
-    fn write(&self, key: &[u8]) -> Result<(), String> {
-        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
-        {
-            self.entry()?.set_secret(key).map_err(os_error)
-        }
-        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
-        {
-            let _ = key;
-            Err("Secure credential storage is unavailable on this system.".into())
-        }
-    }
-}
+mod os_store;
+use os_store::OsCredentialStore;
 
 struct Vault {
     paths: Paths,
@@ -1083,14 +1033,14 @@ mod tests {
     fn native_os_store_persists_and_reopens_a_synthetic_vault() {
         let fixture = Fixture::new();
         let store = OsCredentialStore::new(&fixture.paths.snapshot);
-        struct Cleanup(keyring::Entry);
+        struct Cleanup(OsCredentialStore);
         impl Drop for Cleanup {
             fn drop(&mut self) {
-                let _ = self.0.delete_credential();
+                let _ = self.0.delete_for_test();
             }
         }
         assert!(store.read().unwrap().is_none());
-        let _cleanup = Cleanup(store.entry().unwrap());
+        let _cleanup = Cleanup(OsCredentialStore::new(&fixture.paths.snapshot));
         let mut vault = Vault::open(fixture.paths.clone(), &store).unwrap();
         vault
             .update(&[("test-key".into(), Some("synthetic-native-test".into()))])
