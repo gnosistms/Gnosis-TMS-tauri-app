@@ -1,4 +1,4 @@
-import { state } from "./state.js";
+import { authSessionGeneration, state } from "./state.js";
 import { classifySyncError } from "./sync-error.js";
 import { readDevRuntimeFlags } from "./dev-runtime-flags.js";
 import { reportCommandFailure } from "./telemetry.js";
@@ -71,6 +71,7 @@ export async function onCurrentWebviewDragDrop(handler) {
 }
 
 let pendingBrokerSessionRefresh = null;
+let completedBrokerSessionRefresh = null;
 
 const TEAM_AI_CREDENTIAL_COMMANDS = new Set([
   "list_ai_provider_models",
@@ -123,6 +124,7 @@ async function attemptTeamAiCredentialRecovery(command, payload, error) {
 
 export const invoke = rawInvoke
   ? async function invoke(command, payload = {}) {
+      const generation = authSessionGeneration;
       try {
         return await rawInvoke(command, payload);
       } catch (error) {
@@ -143,11 +145,14 @@ export const invoke = rawInvoke
         let refreshedSession = null;
         let refreshFailure = null;
         try {
-          refreshedSession = await refreshBrokerSession(currentSessionToken);
+          refreshedSession = await refreshBrokerSession(currentSessionToken, generation);
         } catch (error) {
           refreshFailure = error;
         }
         if (!refreshedSession?.sessionToken) {
+          if (refreshFailure?.code === "AUTH_SESSION_CHANGED" || refreshFailure?.code === "AUTH_STORAGE_FAILED") {
+            throw refreshFailure;
+          }
           // A refresh that failed because the broker was unreachable is a connectivity
           // problem, not an auth rejection — rethrow the original error so it is
           // handled as such instead of bouncing the user to the login page.
@@ -160,6 +165,7 @@ export const invoke = rawInvoke
           throw new Error("AUTH_REQUIRED:Your GitHub session expired. Please log in with GitHub again to continue.");
         }
 
+        assertCurrentBrokerSession(refreshedSession.sessionToken, generation);
         try {
           return await rawInvoke(
             command,
@@ -169,6 +175,7 @@ export const invoke = rawInvoke
           // A refreshed broker session may still yield a rejected installation token
           // or a genuinely non-auth command failure. Preserve that final failure in
           // telemetry instead of letting the retry bypass the normal report boundary.
+          assertCurrentBrokerSession(refreshedSession.sessionToken, generation);
           maybeReportCommandFailure(command, retryError);
           throw retryError;
         }
@@ -398,40 +405,79 @@ function updatePayloadSessionToken(payload, sessionToken) {
   };
 }
 
-async function refreshBrokerSession(sessionToken) {
-  if (pendingBrokerSessionRefresh) {
-    return pendingBrokerSessionRefresh;
+function assertCurrentBrokerSession(sessionToken, generation) {
+  if (!sessionToken || generation !== authSessionGeneration || state.auth.session?.sessionToken !== sessionToken) {
+    throw Object.assign(new Error("GitHub login changed. The previous request was canceled."), {
+      code: "AUTH_SESSION_CHANGED",
+    });
+  }
+}
+
+async function refreshBrokerSession(sessionToken, generation) {
+  // Another request may have already refreshed this login while ours was failing.
+  if (
+    generation === authSessionGeneration
+    && completedBrokerSessionRefresh?.generation === generation
+    && completedBrokerSessionRefresh.sessionToken === sessionToken
+    && completedBrokerSessionRefresh.refreshedToken === state.auth.session?.sessionToken
+  ) {
+    return state.auth.session;
+  }
+  assertCurrentBrokerSession(sessionToken, generation);
+  if (
+    pendingBrokerSessionRefresh?.sessionToken === sessionToken
+    && pendingBrokerSessionRefresh.generation === generation
+  ) {
+    return pendingBrokerSessionRefresh.promise;
   }
 
-  pendingBrokerSessionRefresh = (async () => {
-    const refreshedSession = await rawInvoke("refresh_broker_auth_session", { sessionToken });
-    if (!refreshedSession?.sessionToken || !refreshedSession?.login) {
+  const login = state.auth.session.login;
+  const pending = { sessionToken, generation, promise: null };
+  pending.promise = (async () => {
+    let refreshedSession;
+    try {
+      refreshedSession = await rawInvoke("refresh_broker_auth_session", { sessionToken });
+    } catch (error) {
+      assertCurrentBrokerSession(sessionToken, generation);
+      throw error;
+    }
+    assertCurrentBrokerSession(sessionToken, generation);
+    if (!refreshedSession?.sessionToken || refreshedSession?.login !== login) {
       throw new Error("GitHub session refresh failed.");
     }
 
-    if (
-      !state.auth.session
-      || state.auth.session.sessionToken === sessionToken
-    ) {
-      state.auth = {
-        ...state.auth,
-        session: refreshedSession,
-      };
-    }
-
     try {
-      await rawInvoke("save_broker_auth_session", { session: refreshedSession });
-    } catch {
-      // Ignore local persistence failures and continue with the refreshed in-memory session.
+      await rawInvoke("save_broker_auth_session", {
+        session: refreshedSession,
+        expectedSessionToken: sessionToken,
+      });
+    } catch (error) {
+      assertCurrentBrokerSession(sessionToken, generation);
+      if (String(error?.message ?? error).startsWith("AUTH_SESSION_CHANGED:")) {
+        throw Object.assign(new Error("GitHub login changed. The previous request was canceled."), {
+          code: "AUTH_SESSION_CHANGED",
+        });
+      }
+      const storageError = Object.assign(new Error("Could not save your refreshed GitHub login on this computer. Please try again."), {
+        code: "AUTH_STORAGE_FAILED",
+      });
+      maybeReportCommandFailure("save_broker_auth_session", storageError);
+      throw storageError;
     }
 
+    assertCurrentBrokerSession(sessionToken, generation);
+    state.auth = { ...state.auth, session: refreshedSession };
+    completedBrokerSessionRefresh = { generation, sessionToken, refreshedToken: refreshedSession.sessionToken };
     return refreshedSession;
   })();
+  pendingBrokerSessionRefresh = pending;
 
   try {
-    return await pendingBrokerSessionRefresh;
+    return await pending.promise;
   } finally {
-    pendingBrokerSessionRefresh = null;
+    if (pendingBrokerSessionRefresh === pending) {
+      pendingBrokerSessionRefresh = null;
+    }
   }
 }
 

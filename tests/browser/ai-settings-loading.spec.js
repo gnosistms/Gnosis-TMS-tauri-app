@@ -50,7 +50,7 @@ test("saved key is absent from the field and copy, cut and drag are blocked", as
   const field = page.locator("[data-ai-key-input]");
   await expect(field).toHaveValue("");
   await expect(field).toHaveAttribute("type", "password");
-  await expect(field).toHaveAttribute("placeholder", "••••••••••••");
+  await expect(field).toHaveAttribute("placeholder", "•".repeat(48));
   await expect(page.locator('[data-action="save-ai-key"]')).toBeDisabled();
   await expect(page.locator('[data-action="remove-ai-key"]')).toBeEnabled();
   const cancelled = await field.evaluate((element) => ["copy", "cut", "dragstart"].map((name) =>

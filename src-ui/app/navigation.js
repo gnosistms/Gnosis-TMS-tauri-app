@@ -8,7 +8,7 @@ import {
   resetProjectsPageSync,
 } from "./page-sync.js";
 import { lockScreenScrollSnapshot, unlockScreenScrollSnapshot } from "./scroll-state.js";
-import { state, resetSessionState } from "./state.js";
+import { authSessionGeneration, state, resetSessionState } from "./state.js";
 import { waitForNextPaint } from "./runtime.js";
 import {
   loadSelectedGlossaryEditorData,
@@ -224,7 +224,19 @@ export async function handleNavigation(navTarget, render) {
     }
 
     if (navTarget === "start") {
-      void clearStoredAuthSession();
+      const deletion = clearStoredAuthSession();
+      const generation = authSessionGeneration;
+      try {
+        await deletion;
+      } catch {
+        if (generation === authSessionGeneration) {
+          showNoticeBadge("Could not remove your saved GitHub login. You are still signed in. Please try signing out again.", render, null);
+        }
+        return;
+      }
+      if (generation !== authSessionGeneration) {
+        return;
+      }
       resetSessionState();
     } else {
       resetPageSync();
