@@ -333,9 +333,11 @@ test("submitEditorExport copy HTML publishes WordPress block markup and plain te
   assert.match(html, /^<meta charset='utf-8'>/);
   assert.match(html, /<!-- wp:paragraph -->/);
   assert.match(html, /<p>Text one<sup/);
-  assert.match(html, /<sup data-fn="[0-9a-f-]{36}" class="fn"><a id="[0-9a-f-]{36}-link" href="#[0-9a-f-]{36}">1<\/a><\/sup>/);
-  assert.match(html, /<!-- wp:footnotes \/-->/);
-  assert.doesNotMatch(html, /<ol class="wp-block-footnotes">/);
+  assert.match(html, /<sup class="fn"><a id="[0-9a-f-]{36}-link" href="#[0-9a-f-]{36}" role="doc-noteref" aria-label="Footnote 1">1<\/a><\/sup>/);
+  assert.doesNotMatch(html, /<!-- wp:footnotes \/-->/);
+  const noteId = html.match(/href="#([0-9a-f-]{36})"/)[1];
+  assert.ok(html.includes(`<li id="${noteId}" tabindex="-1">footnote 1`));
+  assert.ok(html.includes(`<a href="#${noteId}-link" role="doc-backlink"`));
   const plain = await writes[0][0].items["text/plain"].text();
   assert.equal(plain, "Text one[1]\n\n[1] footnote 1");
   assert.equal(state.editorChapter.exportModal.isOpen, false);

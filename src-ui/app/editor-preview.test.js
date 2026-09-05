@@ -162,7 +162,8 @@ test("buildEditorPreviewDocument skips all deleted-row preview content", () => {
   assert.doesNotMatch(rendered, /deleted\.png/);
 
   const serialized = serializeEditorPreviewHtml(blocks);
-  assert.match(serialized, /<!-- wp:footnotes \/-->/);
+  assert.match(serialized, /Visible footnote/);
+  assert.match(serialized, /role="doc-endnotes"/);
   assert.match(serialized, /Visible caption/);
   assert.match(serialized, /visible\.png/);
   assert.doesNotMatch(serialized, /Deleted text/);
@@ -358,8 +359,8 @@ test("preview footnote refs preserve inline markup when markers are inside tags"
   const html = serializeEditorPreviewHtml(blocks);
 
   assert.match(html, /<!-- wp:paragraph -->/);
-  assert.match(html, /<strong>Alpha <sup data-fn="[0-9a-f-]{36}" class="fn">/);
-  assert.match(html, /<a id="[0-9a-f-]{36}-link" href="#[0-9a-f-]{36}">1<\/a>/);
+  assert.match(html, /<strong>Alpha <sup class="fn">/);
+  assert.match(html, /<a id="[0-9a-f-]{36}-link" href="#[0-9a-f-]{36}" role="doc-noteref" aria-label="Footnote 1">1<\/a>/);
   assert.match(html, /<\/sup> body<\/strong>/);
   assert.doesNotMatch(html, /&lt;\/strong&gt;/);
 });
@@ -423,8 +424,8 @@ test("preview appends footnote refs with no matching marker without changing tex
 
   const html = serializeEditorPreviewHtml(blocks);
 
-  assert.match(html, /Alpha body \[100\]<sup data-fn="[0-9a-f-]{36}" class="fn">/);
-  assert.match(html, /<\/sup> <sup data-fn="[0-9a-f-]{36}" class="fn"><a id="[0-9a-f-]{36}-link" href="#[0-9a-f-]{36}">2<\/a><\/sup>/);
+  assert.match(html, /Alpha body \[100\]<sup class="fn">/);
+  assert.match(html, /<\/sup> <sup class="fn"><a id="[0-9a-f-]{36}-link" href="#[0-9a-f-]{36}" role="doc-noteref" aria-label="Footnote 2">2<\/a><\/sup>/);
 });
 
 test("preview ignores escaped literal markers before footnote refs", () => {
@@ -442,7 +443,7 @@ test("preview ignores escaped literal markers before footnote refs", () => {
 
   const html = serializeEditorPreviewHtml(blocks);
 
-  assert.match(html, /Literal \[100\] then note <sup data-fn="[0-9a-f-]{36}" class="fn">/);
+  assert.match(html, /Literal \[100\] then note <sup class="fn">/);
   assert.match(html, /<\/sup> end<\/p>/);
   assert.doesNotMatch(html, /\[1<sup/);
 });
@@ -521,10 +522,11 @@ test("serializeEditorPreviewHtml uses semantic tags and repo-relative uploaded i
   assert.match(html, /<!-- wp:quote -->/);
   assert.match(
     html,
-    /<blockquote class="wp-block-quote"><!-- wp:paragraph -->\n<p>Quoted line<sup data-fn="[0-9a-f-]{36}" class="fn">/,
+    /<blockquote class="wp-block-quote"><!-- wp:paragraph -->\n<p>Quoted line<sup class="fn">/,
   );
-  assert.match(html, /<!-- wp:footnotes \/-->/);
-  assert.doesNotMatch(html, /<ol class="wp-block-footnotes">/);
+  assert.doesNotMatch(html, /<!-- wp:footnotes \/-->/);
+  assert.match(html, /role="doc-endnotes"/);
+  assert.match(html, /Footnote line/);
   assert.match(html, /<figure/);
   assert.match(html, /src="chapters\/chapter-1\/images\/row-2\/image.png"/);
   assert.match(html, /<figcaption/);
@@ -632,6 +634,62 @@ test("preview mode constant remains stable", () => {
   assert.equal(EDITOR_MODE_PREVIEW, "preview");
 });
 
+test("HTML exports complete formatted notes with reciprocal links and row-local markers", () => {
+  const blocks = [
+    {
+      kind: "text", rowId: "row-1", languageCode: "vi", textStyle: "paragraph",
+      text: "Literal \\[2\\], first <strong>[2]</strong> then [1].",
+      footnotes: [
+        { marker: 1, text: 'Second <a href="https://example.com/source?a=1&b=2">source</a>' },
+        { marker: 2, text: "Đầu tiên <em>formatted</em> & safe\nNext line" },
+      ],
+    },
+    {
+      kind: "text", rowId: "row-2", languageCode: "vi", textStyle: "paragraph",
+      text: "Another row [1].",
+      footnotes: [{ marker: 1, text: "Distinct row note" }, { marker: 3, text: "Unmarked note" }],
+    },
+  ];
+  const html = serializeEditorPreviewHtml(blocks);
+  const refs = [...html.matchAll(/<a id="([^"]+)" href="#([^"]+)" role="doc-noteref" aria-label="Footnote (\d+)">/g)];
+  assert.deepEqual(refs.map((ref) => ref[3]), ["1", "2", "3", "4"]);
+  for (const [, referenceId, noteId] of refs) {
+    assert.ok(html.includes(`<li id="${noteId}" tabindex="-1">`));
+    assert.ok(html.includes(`<a href="#${referenceId}" role="doc-backlink"`));
+  }
+  assert.match(html, /Literal \[2\], first <strong><sup/);
+  assert.match(html, /Đầu tiên <em>formatted<\/em> &amp; safe<br>Next line/);
+  assert.match(html, /Second <a href="https:\/\/example.com\/source\?a=1&amp;b=2">source<\/a>/);
+  assert.match(html, /Distinct row note/);
+  assert.match(html, /Unmarked note/);
+  assert.match(html, /<h2 id="[^"]+">Footnotes<\/h2>\n<ol>/);
+  assert.doesNotMatch(html, /data-fn=|wp:footnotes/);
+});
+
+test("HTML repeated citations share one note and return to each occurrence across separators", () => {
+  const html = serializeEditorPreviewHtml([{
+    kind: "text", rowId: "repeated", languageCode: "en", textStyle: "paragraph",
+    text: "First [1], again <em>[1]</em>.<hr>Last [1].",
+    footnotes: [{ marker: 1, text: "One shared note" }],
+  }]);
+  const refs = [...html.matchAll(/<a id="([^"]+)" href="#([^"]+)" role="doc-noteref"/g)];
+  assert.equal(refs.length, 3);
+  assert.equal(new Set(refs.map((ref) => ref[1])).size, 3);
+  assert.equal(new Set(refs.map((ref) => ref[2])).size, 1);
+  assert.equal((html.match(/One shared note/g) ?? []).length, 1);
+  assert.equal((html.match(/<li /g) ?? []).length, 1);
+  refs.forEach((ref, index) => {
+    assert.ok(html.includes(`<a href="#${ref[1]}" role="doc-backlink" aria-label="Back to reference ${index + 1} for footnote 1">`));
+  });
+  assert.doesNotMatch(html, /\[1\]/);
+});
+
+test("HTML without footnotes has no empty notes section", () => {
+  for (const blocks of [[], [{ kind: "text", text: "No notes [1].", textStyle: "paragraph" }]]) {
+    assert.doesNotMatch(serializeEditorPreviewHtml(blocks), /Footnotes|doc-endnotes|doc-noteref|wp:footnotes/);
+  }
+});
+
 test("serializeEditorPreviewWordPress returns content plus matching footnote meta", () => {
   const blocks = buildEditorPreviewDocument([{
     rowId: "row-1",
@@ -655,6 +713,7 @@ test("serializeEditorPreviewWordPress returns content plus matching footnote met
   assert.doesNotMatch(content, /<meta charset/);
   assert.match(content, /^<!-- wp:paragraph -->/);
   assert.match(content, /<!-- wp:footnotes \/-->/);
+  assert.doesNotMatch(content, /doc-endnotes|doc-noteref|Footnote <strong>/);
   assert.doesNotMatch(
     content,
     /<!-- wp:separator -->\n<hr class="wp-block-separator has-alpha-channel-opacity"\/>\n<!-- \/wp:separator -->\n\n<!-- wp:footnotes \/-->/,
