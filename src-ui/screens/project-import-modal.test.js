@@ -3,6 +3,37 @@ import assert from "node:assert/strict";
 
 import { renderProjectImportModal } from "./project-import-modal.js";
 
+test("invalid workbook warning offers a sample without exposing parser details", () => {
+  const html = renderProjectImportModal({ projectImport: {
+    isOpen: true, status: "error", inputMode: "upload",
+    error: 'PROJECT_IMPORT_INVALID_FORMAT: Column 1 has unsupported language code "Key".',
+  } });
+  assert.match(html, /The file you uploaded is not formatted for import to Gnosis TMS\./);
+  assert.match(html, /<button[^>]*data-action="download-project-import-sample"[^>]*>Click here to download a sample file<\/button> you can use as an example\./);
+  assert.match(html, /We recommend you upload this sample file to an AI chat tool along with the file you just uploaded and ask it to modify your file to follow this format\./);
+  assert.doesNotMatch(html, /PROJECT_IMPORT_INVALID_FORMAT|unsupported language/);
+});
+
+test("batch format failures offer the sample and escape filenames", () => {
+  const html = renderProjectImportModal({ projectImport: {
+    isOpen: false,
+    failedFileNames: ['<bad>.xlsx', 'unreadable.docx'],
+    formatFailedFileNames: ['<bad>.xlsx'],
+  } });
+  assert.match(html, /download-project-import-sample/);
+  assert.match(html, /&lt;bad&gt;\.xlsx/);
+  assert.match(html, /unreadable.docx/);
+  assert.doesNotMatch(html, /<bad>/);
+});
+
+test("ordinary import errors retain their message and do not offer format recovery", () => {
+  const html = renderProjectImportModal({ projectImport: {
+    isOpen: true, status: "error", error: 'Write access denied <detail>',
+  } });
+  assert.match(html, /Write access denied &lt;detail&gt;/);
+  assert.doesNotMatch(html, /download-project-import-sample/);
+});
+
 test("project import modal renders the requested drop target copy", () => {
   const html = renderProjectImportModal({
     projectImport: {

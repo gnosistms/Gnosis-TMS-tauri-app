@@ -352,6 +352,7 @@ export function createProjectImportState() {
     pendingFiles: [],
     pendingFileName: "",
     failedFileNames: [],
+    formatFailedFileNames: [],
     isBatch: false,
     batchId: "",
     uploadProgress: null,

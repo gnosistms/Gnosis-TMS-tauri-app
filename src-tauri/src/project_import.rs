@@ -2,6 +2,7 @@ mod chapter_editor;
 mod chapter_editor_comments;
 mod chapter_import;
 mod chapter_lifecycle;
+mod import_sample;
 mod link_import;
 mod project_git;
 
@@ -10,6 +11,8 @@ use crate::installation_access::{
 };
 use crate::state::ProjectImportBatchCancelStore;
 use tauri::AppHandle;
+
+pub(crate) use import_sample::save_project_import_sample;
 
 pub(crate) use self::chapter_editor::{
     fetch_public_image_dimensions, list_imported_editor_conflict_refs,
