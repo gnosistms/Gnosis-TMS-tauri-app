@@ -295,23 +295,23 @@ fn prepare_vellum_image_resources_impl(
         }
 
         let image_bytes = load_vellum_image_source(source, &client)?;
-        let file_name = unique_file_name(
-            &sanitize_file_name(
-                &request
-                    .file_name
-                    .as_deref()
-                    .filter(|value| !value.trim().is_empty())
-                    .map(str::to_string)
-                    .unwrap_or_else(|| infer_file_name_from_source(source, request.index)),
-            ),
-            &mut used_names,
+        let requested_file_name = sanitize_file_name(
+            &request
+                .file_name
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(|| infer_file_name_from_source(source, request.index)),
         );
-        let uti = request
+        let requested_uti = request
             .uti
             .as_deref()
             .filter(|value| !value.trim().is_empty())
             .map(str::to_string)
-            .unwrap_or_else(|| infer_uti_from_file_name(&file_name));
+            .unwrap_or_else(|| infer_uti_from_file_name(&requested_file_name));
+        let (file_name, uti) =
+            vellum_image_file_metadata(&requested_file_name, &requested_uti, &image_bytes.bytes);
+        let file_name = unique_file_name(&file_name, &mut used_names);
         let dimensions = detect_image_dimensions(&image_bytes.bytes);
 
         let preserved_path = preserved_dir.join(&file_name);
@@ -479,17 +479,29 @@ fn prepare_vellum_image_resources_impl(
 
     fn unique_file_name(file_name: &str, used_names: &mut HashMap<String, usize>) -> String {
         let key = file_name.to_ascii_lowercase();
-        let count = used_names.entry(key).or_insert(0);
-        *count += 1;
-        if *count == 1 {
-            return file_name.to_string();
-        }
-
-        match file_name.rsplit_once('.') {
-            Some((stem, extension)) if !stem.is_empty() && !extension.is_empty() => {
-                format!("{stem} {count}.{extension}")
+        let mut count = used_names.get(&key).copied().unwrap_or(0) + 1;
+        loop {
+            let candidate = if count == 1 {
+                file_name.to_string()
+            } else {
+                match file_name.rsplit_once('.') {
+                    Some((stem, extension)) if !stem.is_empty() && !extension.is_empty() => {
+                        format!("{stem} {count}.{extension}")
+                    }
+                    _ => format!("{file_name} {count}"),
+                }
+            };
+            let candidate_key = candidate.to_ascii_lowercase();
+            if let std::collections::hash_map::Entry::Vacant(entry) =
+                used_names.entry(candidate_key)
+            {
+                // Reserve generated names too: a later source may already have
+                // a numeric suffix. Remember the last suffix to avoid rescanning.
+                entry.insert(1);
+                used_names.insert(key, count);
+                return candidate;
             }
-            _ => format!("{file_name} {count}"),
+            count += 1;
         }
     }
 
@@ -702,6 +714,36 @@ fn prepare_vellum_image_resources_impl(
     Err("Vellum image preparation is only available on macOS.".to_string())
 }
 
+#[cfg(target_os = "macos")]
+fn vellum_image_file_metadata(
+    file_name: &str,
+    requested_uti: &str,
+    bytes: &[u8],
+) -> (String, String) {
+    use image::ImageFormat;
+    use std::path::Path;
+
+    // WordPress/CDN URLs can retain a .webp suffix while serving JPEG data.
+    // Vellum's preserved filename and type must describe the downloaded bytes.
+    let (format, extension, uti) = match image::guess_format(bytes) {
+        Ok(ImageFormat::Jpeg) => (ImageFormat::Jpeg, "jpg", "public.jpeg"),
+        Ok(ImageFormat::Png) => (ImageFormat::Png, "png", "public.png"),
+        Ok(ImageFormat::Gif) => (ImageFormat::Gif, "gif", "com.compuserve.gif"),
+        Ok(ImageFormat::WebP) => (ImageFormat::WebP, "webp", "org.webmproject.webp"),
+        _ => return (file_name.to_string(), requested_uti.to_string()),
+    };
+    let path = Path::new(file_name);
+    let name_matches = path.extension().and_then(ImageFormat::from_extension) == Some(format);
+    let file_name = if name_matches {
+        file_name.to_string()
+    } else {
+        path.with_extension(extension)
+            .to_string_lossy()
+            .into_owned()
+    };
+    (file_name, uti.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -857,6 +899,31 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
+    fn image_file_metadata_uses_downloaded_format_over_cdn_url_hints() {
+        let mut jpeg = Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(2, 3)
+            .write_to(&mut jpeg, image::ImageFormat::Jpeg)
+            .expect("encode JPEG fixture");
+        assert_eq!(
+            vellum_image_file_metadata("ladder.webp", "org.webmproject.webp", jpeg.get_ref()),
+            ("ladder.jpg".to_string(), "public.jpeg".to_string())
+        );
+        assert_eq!(
+            vellum_image_file_metadata("ladder.jpeg", "", jpeg.get_ref()),
+            ("ladder.jpeg".to_string(), "public.jpeg".to_string())
+        );
+        assert_eq!(
+            vellum_image_file_metadata("diagram", "public.jpeg", &tiny_png_bytes(2, 3, 6)),
+            ("diagram.png".to_string(), "public.png".to_string())
+        );
+        assert_eq!(
+            vellum_image_file_metadata("other.tiff", "public.tiff", b"unknown format"),
+            ("other.tiff".to_string(), "public.tiff".to_string())
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
     fn prepares_local_image_resources_as_vellum_temp_files() {
         let source_dir = std::env::temp_dir().join(format!(
             "gnosis-vellum-image-test-{}",
@@ -873,21 +940,44 @@ mod tests {
         let stale_file = stale_dir.join("stale.png");
         std::fs::write(&stale_file, b"stale").expect("write stale Vellum temp file");
 
-        let prepared = prepare_vellum_image_resources_impl(VellumImagePreparationInput {
-            images: vec![VellumImageResourceRequest {
-                index: 1,
+        let mut requests = vec![VellumImageResourceRequest {
+            index: 1,
+            source: source_path.to_string_lossy().into_owned(),
+            file_name: Some("Source Image.png".to_string()),
+            uti: Some("public.png".to_string()),
+        }];
+        let mut expected_bytes = vec![bytes];
+        for (offset, file_name) in [
+            "Source Image.png",
+            "Source Image 2.png",
+            "Source Image 3.png",
+            "Source Image.png",
+            "Source Image.webp",
+            "SOURCE IMAGE.PNG",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let source_path = source_dir.join(format!("extra-{offset}.png"));
+            let bytes = tiny_png_bytes(offset as u32 + 3, 3, 6);
+            std::fs::write(&source_path, &bytes).expect("write distinct image");
+            expected_bytes.push(bytes);
+            requests.push(VellumImageResourceRequest {
+                index: offset + 2,
                 source: source_path.to_string_lossy().into_owned(),
-                file_name: Some("Source Image.png".to_string()),
+                file_name: Some((*file_name).to_string()),
                 uti: Some("public.png".to_string()),
-            }],
-        })
-        .expect("prepare image resources");
+            });
+        }
+        let prepared =
+            prepare_vellum_image_resources_impl(VellumImagePreparationInput { images: requests })
+                .expect("prepare image resources");
 
         assert!(
             !stale_file.exists(),
             "preparing a new Vellum image copy should clear stale temp files"
         );
-        assert_eq!(prepared.len(), 1);
+        assert_eq!(prepared.len(), expected_bytes.len());
         let image = &prepared[0];
         assert_eq!(image.index, 1);
         assert_eq!(image.file_name, "Source Image.png");
@@ -908,18 +998,30 @@ mod tests {
             .contains("/co.180g.Vellum/vellum-process-attachment."));
         assert!(image.tooltip.contains("Source Image.png\n2 × 3 px"));
 
-        let preserved_path = url::Url::parse(&image.preserved_url)
-            .expect("parse preserved url")
-            .to_file_path()
-            .expect("preserved file path");
-        assert_eq!(
-            std::fs::read(preserved_path).expect("read preserved image"),
-            bytes
-        );
-        assert_eq!(
-            std::fs::read(&image.last_absolute_path).expect("read process image"),
-            bytes
-        );
+        let mut allocated_names = std::collections::HashSet::new();
+        for (image, bytes) in prepared.iter().zip(expected_bytes) {
+            assert!(
+                allocated_names.insert(image.file_name.to_ascii_lowercase()),
+                "images must have distinct filenames: {}",
+                image.file_name
+            );
+            let preserved_path = url::Url::parse(&image.preserved_url)
+                .expect("parse preserved url")
+                .to_file_path()
+                .expect("preserved file path");
+            assert_eq!(
+                std::fs::read(preserved_path).expect("read preserved image"),
+                bytes,
+                "preserved image {} must retain its original bytes",
+                image.index
+            );
+            assert_eq!(
+                std::fs::read(&image.last_absolute_path).expect("read process image"),
+                bytes,
+                "process image {} must retain its original bytes",
+                image.index
+            );
+        }
     }
 
     #[cfg(target_os = "macos")]

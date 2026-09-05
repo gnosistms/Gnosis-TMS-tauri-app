@@ -1151,6 +1151,21 @@ function fileNameFromPath(path) {
   if (!source) {
     return "";
   }
+  // Download parameters belong to the source URL, not the preserved filename:
+  // keeping them after .png/.webp also prevents Vellum's image type detection.
+  if (/^(?:https?|file):\/\//i.test(source)) {
+    let fileName;
+    try {
+      fileName = new URL(source).pathname.split("/").pop() ?? "";
+    } catch {
+      return "";
+    }
+    try {
+      return decodeURIComponent(fileName);
+    } catch {
+      return fileName;
+    }
+  }
   const parts = source.split(/[\\/]/);
   return parts[parts.length - 1] ?? "";
 }
