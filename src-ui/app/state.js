@@ -731,6 +731,7 @@ export function createAiSettingsState() {
     successMessage: "",
     providerId: DEFAULT_AI_PROVIDER_ID,
     apiKey: "",
+    apiKeyIsSaved: false,
     hasLoaded: false,
     returnScreen: "teams",
     modelValidationRequestId: 0,

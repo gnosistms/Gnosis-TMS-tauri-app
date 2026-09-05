@@ -345,15 +345,24 @@ export async function loadSelectedTeamAiState(render, options = {}) {
       }),
     ]);
 
-    const nextState = {
-      ...buildReadyTeamAiState(current, context),
-      settings: normalizeTeamAiSettingsRecord(settingsPayload),
-      secrets: normalizeTeamAiSecretsMetadata(secretsPayload),
-    };
-    persistTeamAiSnapshotForContext(context, nextState);
     if (!isTeamAiContextCurrent(context)) {
       return null;
     }
+    // A background read may finish after the user has saved newer settings or
+    // a key. Preserve those writes, including a preference save still in flight.
+    const latest = currentTeamAiSharedState();
+    const nextState = {
+      ...buildReadyTeamAiState(latest, context),
+      settings: latest.settings !== current.settings
+        || latest.settingsSaveStatus === "saving"
+        || current.settingsSaveStatus === "saving"
+        ? latest.settings
+        : normalizeTeamAiSettingsRecord(settingsPayload),
+      secrets: latest.secrets !== current.secrets
+        ? latest.secrets
+        : normalizeTeamAiSecretsMetadata(secretsPayload),
+    };
+    persistTeamAiSnapshotForContext(context, nextState);
     updateTeamAiSharedState(nextState, render);
     return nextState;
   } catch (error) {
@@ -403,6 +412,7 @@ export async function loadSelectedTeamAiSavedProviderIds(render, options = {}) {
   const teamShared = await loadSelectedTeamAiState(render, {
     suppressLoadingState: options.suppressLoadingState,
     force: options.force,
+    cacheOnly: options.cacheOnly,
   });
   if (!teamShared) {
     return [];

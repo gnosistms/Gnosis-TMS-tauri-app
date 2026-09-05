@@ -29,7 +29,7 @@ function parseAnyOpenAiModelVersion(modelId) {
   const normalizedModelId =
     typeof modelId === "string" && modelId.trim() ? modelId.trim() : "";
   const match = normalizedModelId.match(
-    /^gpt-(\d+)(?:\.(\d+))?(?:-(pro|mini|nano|sol|terra|luna))?$/,
+    /^gpt-(\d+)(?:\.(\d+))?(?:-(pro|mini|nano|astra|sol|terra|luna))?$/,
   );
   if (!match) {
     return null;
@@ -403,6 +403,7 @@ export function pickPreferredAiModelId(providerId, options = [], fallbackModelId
   if (normalizedProviderId === "openai") {
     const latestFlagshipModelId = pickLatestOpenAiModelIdByKinds(normalizedOptions, [
       "general",
+      "astra",
       "sol",
     ]);
     if (latestFlagshipModelId) {

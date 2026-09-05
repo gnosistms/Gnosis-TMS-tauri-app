@@ -118,6 +118,24 @@ test.afterEach(() => {
   state.appUpdate = createAppUpdateState();
 });
 
+test("removing a masked AI key clears storage without submitting a placeholder", async () => {
+  resetSessionState();
+  state.screen = "aiKey";
+  state.aiSettings.status = "ready";
+  state.aiSettings.apiKeyIsSaved = true;
+  state.aiSettings.apiKey = "";
+  invokeHandler = async (command) => {
+    if (command === "clear_ai_provider_secret" || command === "load_ai_provider_secret") return null;
+    throw new Error(`Unexpected command: ${command}`);
+  };
+  const dispatch = createActionDispatcher(() => {});
+  await dispatch("remove-ai-key");
+  assert.equal(invokeLog.filter(({ command }) => command === "clear_ai_provider_secret").length, 1);
+  assert.equal(invokeLog.some(({ command }) => command === "save_ai_provider_secret"), false);
+  assert.equal(state.aiSettings.apiKeyIsSaved, false);
+  assert.equal(state.aiSettings.apiKey, "");
+});
+
 test("required updates block non-update actions at dispatch time", async () => {
   state.connectionFailure = {
     isOpen: true,

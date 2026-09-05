@@ -6,6 +6,7 @@ import {
   pageShell,
   renderAppUpdatePill,
   primaryButton,
+  secondaryButton,
   renderInlineStateBox,
   textAction,
 } from "../lib/ui.js";
@@ -128,11 +129,14 @@ function renderModelSelectOptions(actionConfig, providerId, selectedModelId) {
   }
 
   const modelsState = actionConfig.modelOptionsByProvider[providerId];
+  const savedSelectionMarkup = selectedModelId
+    ? `<option value="${escapeHtml(selectedModelId)}" selected>${escapeHtml(selectedModelId)}</option>`
+    : "";
   if (!modelsState || modelsState.status === "loading") {
-    return '<option value="" selected>Loading models...</option>';
+    return savedSelectionMarkup || '<option value="" selected>Loading models...</option>';
   }
   if (modelsState.status === "error") {
-    return '<option value="" selected>Could not load models</option>';
+    return savedSelectionMarkup || '<option value="" selected>Could not load models</option>';
   }
   if (!Array.isArray(modelsState.options) || modelsState.options.length === 0) {
     return '<option value="" selected>No models available</option>';
@@ -182,7 +186,7 @@ function renderActionSelectorFields(actionConfig, scopeId, title, controlsBusy =
     || modelsState.options.length === 0;
   const modelsErrorMarkup = renderInlineStateBox({
     tone: "error",
-    message: modelsState?.status === "error" ? modelsState.error : "",
+    message: modelsState?.error ?? "",
   });
 
   return `
@@ -238,15 +242,13 @@ function renderAiActionsPanel(state) {
           message: state.aiSettings.teamShared.settingsSaveError,
         })
       : "",
-    sharedTeamMode
+    readOnly
       ? renderInlineStateBox({
-          tone: readOnly ? "warning" : "success",
-          message: readOnly
-            ? "These shared AI settings are managed by the team owner."
-            : "Changes here save to the selected team automatically.",
+          tone: "warning",
+          message: "These shared AI settings are managed by the team owner.",
         })
       : "",
-    actionConfig.availableProvidersStatus === "error"
+    actionConfig.availableProvidersError
       ? renderInlineStateBox({
           tone: "error",
           message: actionConfig.availableProvidersError,
@@ -288,6 +290,9 @@ function renderAiActionsPanel(state) {
         <div class="ai-actions-stack">
           ${sectionsMarkup}
         </div>
+        ${sharedTeamMode && !readOnly
+          ? '<small class="modal__supporting">Changes here save to the selected team automatically.</small>'
+          : ""}
       </div>
     </article>
   `;
@@ -304,19 +309,18 @@ function renderSharedProviderState(state, providerId) {
 
   const providerMetadata = state.aiSettings.teamShared?.secrets?.providers?.[providerId] ?? null;
   const isOwner = selectedTeam?.canDelete === true;
+  if (isOwner) {
+    return "";
+  }
   if (providerMetadata?.configured) {
     return renderInlineStateBox({
       tone: "success",
-      message: isOwner
-        ? "A shared team key is already configured for this provider. Enter a new value to rotate it."
-        : "A shared team key is configured for this provider.",
+      message: "A shared team key is configured for this provider.",
     });
   }
 
   return renderInlineStateBox({
-    message: isOwner
-      ? "No shared team key is configured for this provider yet."
-      : "This provider is not configured for the team yet.",
+    message: "This provider is not configured for the team yet.",
   });
 }
 
@@ -399,6 +403,11 @@ export function renderAiKeyScreen(state) {
     Boolean(state.auth?.session?.sessionToken)
     && Number.isFinite(selectedTeam?.installationId);
   const canEditSharedTeamAi = !sharedTeamMode || selectedTeam?.canDelete === true;
+  const hasEnteredKey = aiSettings.apiKeyIsSaved
+    || Boolean(aiSettings.apiKey?.trim())
+    || (sharedTeamMode
+      && aiSettings.teamShared?.teamId === selectedTeam.id
+      && aiSettings.teamShared?.secrets?.providers?.[aiSettings.providerId]?.configured === true);
   const keyTitle = sharedTeamMode
     ? `Manage the team ${provider.label} key`
     : provider.keyTitle ?? `Enter your ${provider.label} key`;
@@ -410,7 +419,11 @@ export function renderAiKeyScreen(state) {
         action: "save-ai-key",
         isLoading: true,
       })
-    : primaryButton("Save", "save-ai-key", { disabled: !canEditSharedTeamAi });
+    : primaryButton("Save", "save-ai-key", {
+        disabled: !canEditSharedTeamAi
+          || aiSettings.apiKeyIsSaved === true
+          || !aiSettings.apiKey?.trim(),
+      });
   const errorMarkup = renderInlineStateBox({
     tone: "error",
     message: aiSettings.error,
@@ -443,12 +456,12 @@ export function renderAiKeyScreen(state) {
               ${
                 sharedTeamMode
                   ? canEditSharedTeamAi
-                    ? `Store the team's ${escapeHtml(provider.label)} key here. The app keeps the shared key encrypted in the team's metadata repo.`
+                    ? "One API key is shared securely with all members of the team."
                     : "Only the team owner can change shared AI keys for this team."
                   : `Save your ${escapeHtml(provider.keySupportingLabel ?? provider.label)} API key here. You can store keys for multiple providers at the same time.`
               }
             </p>
-            ${sharedTeamMode && !canEditSharedTeamAi ? "" : renderAiKeyInstructions(provider)}
+            ${canEditSharedTeamAi && !hasEnteredKey ? renderAiKeyInstructions(provider) : ""}
             ${sharedProviderStateMarkup}
             ${errorMarkup}
             ${successMarkup}
@@ -456,16 +469,23 @@ export function renderAiKeyScreen(state) {
               <span class="field__label">API key</span>
               <input
                 class="field__input"
-                type="text"
-                value="${escapeHtml(aiSettings.apiKey)}"
+                type="${aiSettings.apiKeyIsSaved ? "password" : "text"}"
+                value="${aiSettings.apiKeyIsSaved ? "" : escapeHtml(aiSettings.apiKey)}"
+                ${aiSettings.apiKeyIsSaved ? 'placeholder="••••••••••••" data-ai-key-saved' : ""}
                 data-ai-key-input
                 autocomplete="off"
                 autocapitalize="off"
                 spellcheck="false"
                 ${isBusy || !canEditSharedTeamAi ? "disabled" : ""}
               />
+              ${aiSettings.apiKeyIsSaved
+                ? '<span class="modal__supporting">Saved and hidden. Paste a new key to replace it.</span>'
+                : ""}
             </label>
             <div class="modal__actions">
+              ${aiSettings.apiKeyIsSaved && canEditSharedTeamAi
+                ? secondaryButton("Remove key", "remove-ai-key", { disabled: isBusy })
+                : ""}
               ${saveButton}
             </div>
           </div>

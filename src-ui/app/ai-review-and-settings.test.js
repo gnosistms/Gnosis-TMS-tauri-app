@@ -165,6 +165,7 @@ const {
   loadAiProviderSecret,
   refreshAiSavedProviders,
   saveAiProviderSecret,
+  removeAiProviderSecret,
   selectAiProvider,
   updateAiSettingsAboutModalDontShowAgain,
   updateAiActionModel,
@@ -4267,7 +4268,7 @@ test("AI key load and save flows populate and persist aiSettings state", async (
     if (command === "load_ai_provider_secret") {
       return "sk-existing";
     }
-    if (command === "list_ai_provider_models") {
+    if (command === "validate_ai_provider_secret" || command === "list_ai_provider_models") {
       return [
         { id: "gpt-5.4", label: "gpt-5.4" },
         { id: "gpt-5.4-mini", label: "gpt-5.4-mini" },
@@ -4283,7 +4284,8 @@ test("AI key load and save flows populate and persist aiSettings state", async (
 
   await loadAiProviderSecret(() => {});
   assert.equal(state.aiSettings.status, "ready");
-  assert.equal(state.aiSettings.apiKey, "sk-existing");
+  assert.equal(state.aiSettings.apiKey, "");
+  assert.equal(state.aiSettings.apiKeyIsSaved, true);
   assert.equal(state.aiSettings.hasLoaded, true);
 
   updateAiProviderSecretDraft("  sk-updated  ");
@@ -4294,7 +4296,8 @@ test("AI key load and save flows populate and persist aiSettings state", async (
     apiKey: "  sk-updated  ",
   });
   assert.equal(state.aiSettings.status, "ready");
-  assert.equal(state.aiSettings.apiKey, "sk-updated");
+  assert.equal(state.aiSettings.apiKey, "");
+  assert.equal(state.aiSettings.apiKeyIsSaved, true);
   assert.equal(state.aiSettings.successMessage, "OpenAI key saved.");
   assert.deepEqual(
     state.aiSettings.actionConfig.modelOptionsByProvider.openai.options,
@@ -4316,13 +4319,51 @@ function installKeyCheckSaveHandler({ listModels }) {
     if (command === "save_ai_provider_secret") {
       return null;
     }
-    if (command === "list_ai_provider_models") {
+    if (command === "validate_ai_provider_secret" || command === "list_ai_provider_models") {
       return listModels();
     }
 
     throw new Error(`Unexpected command: ${command}`);
   };
 }
+
+test("new API key stays visible until verification succeeds, then is discarded from settings", async () => {
+  resetSessionState();
+  state.screen = "aiKey";
+  const check = createDeferred();
+  const checking = createDeferred();
+  installKeyCheckSaveHandler({
+    listModels: () => {
+      checking.resolve();
+      return check.promise;
+    },
+  });
+  updateAiProviderSecretDraft("sk-new");
+  const saving = saveAiProviderSecret(() => {});
+  await checking.promise;
+  assert.equal(state.aiSettings.status, "saving");
+  assert.equal(state.aiSettings.apiKey, "sk-new");
+  assert.equal(state.aiSettings.apiKeyIsSaved, false);
+  check.resolve([{ id: "gpt-6-astra", label: "gpt-6-astra" }]);
+  await saving;
+  assert.equal(state.aiSettings.apiKey, "");
+  assert.equal(state.aiSettings.apiKeyIsSaved, true);
+  assert.equal(state.aiSettings.status, "ready");
+  const saveCount = invokeLog.filter(({ command }) => command === "save_ai_provider_secret").length;
+  await saveAiProviderSecret(() => {});
+  assert.equal(invokeLog.filter(({ command }) => command === "save_ai_provider_secret").length, saveCount);
+});
+
+test("a failed key save leaves the entered draft visible", async () => {
+  resetSessionState();
+  state.screen = "aiKey";
+  invokeHandler = async () => { throw new Error("Could not save key"); };
+  updateAiProviderSecretDraft("sk-unsaved");
+  await saveAiProviderSecret(() => {});
+  assert.equal(state.aiSettings.apiKey, "sk-unsaved");
+  assert.equal(state.aiSettings.apiKeyIsSaved, false);
+  assert.equal(state.aiSettings.status, "error");
+});
 
 test("key check badge says the provider is unreachable on a transient provider failure", async () => {
   resetSessionState();
@@ -4342,6 +4383,8 @@ test("key check badge says the provider is unreachable on a transient provider f
   await saveAiProviderSecret(render);
 
   assert.equal(state.aiSettings.status, "error");
+  assert.equal(state.aiSettings.apiKey, "sk-new");
+  assert.equal(state.aiSettings.apiKeyIsSaved, false);
   assert.ok(badgeTexts.includes("Couldn't reach OpenAI to check this key — try again later"));
   assert.ok(!badgeTexts.includes("This OpenAI key is not working"));
   assert.notEqual(getNoticeBadgeText(), "Checking key...");
@@ -4365,6 +4408,8 @@ test("key check badge still reports a not-working key on a non-transient failure
   await saveAiProviderSecret(render);
 
   assert.equal(state.aiSettings.status, "error");
+  assert.equal(state.aiSettings.apiKey, "sk-new");
+  assert.equal(state.aiSettings.apiKeyIsSaved, false);
   assert.ok(badgeTexts.includes("This OpenAI key is not working"));
   assert.notEqual(getNoticeBadgeText(), "Checking key...");
 });
@@ -4385,19 +4430,274 @@ test("key check badge is cleared when the settings scope changes mid-check", asy
   assert.equal(getNoticeBadgeText(), "");
 });
 
-function installOpenAiGpt56ModelListHandler() {
+
+test("candidate verification cannot be satisfied by concurrent background discovery", async () => {
+  resetSessionState();
+  state.screen = "aiKey";
+  const discovery = createDeferred();
+  const discovering = createDeferred();
+  const validation = createDeferred();
+  const validating = createDeferred();
+  let stored = "sk-working";
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_ai_provider_secret") return payload.providerId === "openai" ? stored : null;
+    if (command === "list_ai_provider_models") { discovering.resolve(); return discovery.promise; }
+    if (command === "validate_ai_provider_secret") {
+      assert.deepEqual(payload, { providerId: "openai", apiKey: "sk-invalid" });
+      validating.resolve();
+      return validation.promise;
+    }
+    if (command === "save_ai_provider_secret") { stored = payload.apiKey; return; }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+  const background = refreshAiSavedProviders(() => {});
+  await discovering.promise;
+  updateAiProviderSecretDraft("sk-invalid");
+  const saving = saveAiProviderSecret(() => {});
+  await validating.promise;
+  discovery.resolve([{ id: "gpt-6-astra", label: "gpt-6-astra" }]);
+  await background;
+  assert.equal(state.aiSettings.status, "saving");
+  assert.equal(state.aiSettings.apiKeyIsSaved, false);
+  assert.equal(stored, "sk-working");
+  validation.reject(new Error("Incorrect API key provided."));
+  await saving;
+  assert.equal(stored, "sk-working");
+  assert.equal(state.aiSettings.status, "error");
+  assert.equal(state.aiSettings.apiKey, "sk-invalid");
+  assert.equal(invokeLog.some(({ command }) => command === "save_ai_provider_secret"), false);
+});
+
+test("a stale discovery cannot replace models verified for the newly saved key", async () => {
+  resetSessionState();
+  state.screen = "aiKey";
+  const discovery = createDeferred();
+  const discovering = createDeferred();
+  let stored = "sk-old";
+  const verifiedModels = [{ id: "gpt-6-astra", label: "gpt-6-astra" }];
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_ai_provider_secret") return payload.providerId === "openai" ? stored : null;
+    if (command === "list_ai_provider_models") { discovering.resolve(); return discovery.promise; }
+    if (command === "validate_ai_provider_secret") return verifiedModels;
+    if (command === "save_ai_provider_secret") { stored = payload.apiKey; return; }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+  const background = refreshAiSavedProviders(() => {});
+  await discovering.promise;
+  updateAiProviderSecretDraft("sk-new");
+  await saveAiProviderSecret(() => {});
+  assert.equal(stored, "sk-new");
+  assert.equal(state.aiSettings.apiKeyIsSaved, true);
+  discovery.reject(new Error("Old request failed"));
+  await background;
+  assert.deepEqual(state.aiSettings.actionConfig.modelOptionsByProvider.openai.options, verifiedModels);
+  assert.equal(state.aiSettings.actionConfig.modelOptionsByProvider.openai.error, "");
+});
+
+test("a rejected team replacement leaves the shared credential and local cache untouched", async () => {
+  resetSessionState();
+  installSelectedTeam({ canDelete: true });
+  installReadyTeamAiState();
+  state.screen = "aiKey";
+  const secretsBefore = cloneValue(state.aiSettings.teamShared.secrets);
+  invokeHandler = async (command) => {
+    assert.equal(command, "validate_ai_provider_secret");
+    throw new Error("Incorrect API key provided.");
+  };
+  updateAiProviderSecretDraft("sk-invalid-team-key");
+  await saveAiProviderSecret(() => {});
+  assert.equal(state.aiSettings.status, "error");
+  assert.deepEqual(state.aiSettings.teamShared.secrets, secretsBefore);
+  assert.deepEqual(invokeLog.map(({ command }) => command), ["validate_ai_provider_secret"]);
+});
+
+for (const phase of ["verification", "storage"]) {
+  test(`leaving Settings during ${phase} still finalizes the saved key`, async () => {
+    resetSessionState();
+    state.screen = "aiKey";
+    const pending = createDeferred();
+    const started = createDeferred();
+    let stored = "sk-old";
+    invokeHandler = async (command, payload = {}) => {
+      if (command === "load_ai_provider_secret") return payload.providerId === "openai" ? stored : null;
+      if (command === "validate_ai_provider_secret") {
+        if (phase === "verification") { started.resolve(); await pending.promise; }
+        return [{ id: "gpt-6-astra", label: "gpt-6-astra" }];
+      }
+      if (command === "save_ai_provider_secret") {
+        if (phase === "storage") { started.resolve(); await pending.promise; }
+        stored = payload.apiKey;
+        return;
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    };
+    updateAiProviderSecretDraft("sk-new");
+    const saving = saveAiProviderSecret(() => {});
+    await started.promise;
+    state.screen = "teams";
+    pending.resolve();
+    await saving;
+    assert.equal(stored, "sk-new");
+    assert.equal(state.screen, "teams");
+    assert.equal(state.aiSettings.apiKey, "");
+    assert.equal(state.aiSettings.apiKeyIsSaved, true);
+    state.screen = "aiKey";
+    await loadAiProviderSecret(() => {});
+    assert.equal(state.aiSettings.apiKey, "");
+    assert.equal(state.aiSettings.apiKeyIsSaved, true);
+  });
+}
+
+test("reopening Settings during verification preserves the pending save and blocks duplicates", async () => {
+  resetSessionState();
+  state.screen = "aiKey";
+  const validation = createDeferred();
+  const validating = createDeferred();
+  let stored = "sk-old";
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_ai_provider_secret") return payload.providerId === "openai" ? stored : null;
+    if (command === "validate_ai_provider_secret") { validating.resolve(); return validation.promise; }
+    if (command === "save_ai_provider_secret") { stored = payload.apiKey; return; }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+  updateAiProviderSecretDraft("sk-new");
+  const saving = saveAiProviderSecret(() => {});
+  await validating.promise;
+  state.screen = "teams";
+  state.screen = "aiKey";
+  await loadAiProviderSecret(() => {});
+  assert.equal(state.aiSettings.status, "saving");
+  await saveAiProviderSecret(() => {});
+  assert.equal(invokeLog.filter(({ command }) => command === "validate_ai_provider_secret").length, 1);
+  validation.resolve([{ id: "gpt-6-astra", label: "gpt-6-astra" }]);
+  await saving;
+  assert.equal(stored, "sk-new");
+  assert.equal(state.aiSettings.apiKey, "");
+  assert.equal(state.aiSettings.apiKeyIsSaved, true);
+});
+
+test("switching teams during candidate verification prevents a stale credential write", async () => {
+  resetSessionState();
+  state.screen = "aiKey";
+  const validation = createDeferred();
+  const validating = createDeferred();
+  invokeHandler = async (command) => {
+    assert.equal(command, "validate_ai_provider_secret");
+    validating.resolve();
+    return validation.promise;
+  };
+  updateAiProviderSecretDraft("sk-team-a");
+  const saving = saveAiProviderSecret(() => {});
+  await validating.promise;
+  state.selectedTeamId = "team-b";
+  updateAiProviderSecretDraft("sk-team-b");
+  validation.resolve([{ id: "gpt-6-astra", label: "gpt-6-astra" }]);
+  await saving;
+  assert.deepEqual(invokeLog.map(({ command }) => command), ["validate_ai_provider_secret"]);
+  assert.equal(state.aiSettings.apiKey, "sk-team-b");
+  assert.equal(state.aiSettings.apiKeyIsSaved, false);
+});
+
+test("failed removal keeps the saved key available for a successful retry", async () => {
+  resetSessionState();
+  state.screen = "aiKey";
+  state.aiSettings.status = "ready";
+  state.aiSettings.apiKeyIsSaved = true;
+  let stored = "sk-working";
+  let attempts = 0;
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "clear_ai_provider_secret") {
+      if (++attempts === 1) throw new Error("Could not delete key");
+      stored = null;
+      return;
+    }
+    if (command === "load_ai_provider_secret") return payload.providerId === "openai" ? stored : null;
+    throw new Error(`Unexpected command: ${command}`);
+  };
+  await removeAiProviderSecret(() => {});
+  assert.equal(stored, "sk-working");
+  assert.equal(state.aiSettings.apiKeyIsSaved, true);
+  assert.equal(state.aiSettings.status, "error");
+  await removeAiProviderSecret(() => {});
+  assert.equal(stored, null);
+  assert.equal(state.aiSettings.apiKeyIsSaved, false);
+  assert.equal(state.aiSettings.status, "ready");
+});
+
+
+test("a late local read cannot restore a successfully removed key", async () => {
+  resetSessionState();
+  state.screen = "aiKey";
+  state.aiSettings.status = "ready";
+  state.aiSettings.apiKeyIsSaved = true;
+  const removing = createDeferred();
+  const removal = createDeferred();
+  const staleRead = createDeferred();
+  let reads = 0;
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "clear_ai_provider_secret") { removing.resolve(); return removal.promise; }
+    if (command === "load_ai_provider_secret") {
+      if (payload.providerId === "openai" && ++reads === 1) return staleRead.promise;
+      return null;
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+  const deleting = removeAiProviderSecret(() => {});
+  await removing.promise;
+  const loading = loadAiProviderSecret(() => {});
+  removal.resolve();
+  await deleting;
+  staleRead.resolve("sk-deleted");
+  await loading;
+  assert.equal(state.aiSettings.apiKeyIsSaved, false);
+  assert.equal(state.aiSettings.apiKey, "");
+});
+
+test("a failed settings read cannot interrupt candidate verification", async () => {
+  resetSessionState();
+  state.screen = "aiKey";
+  const validation = createDeferred();
+  const validating = createDeferred();
+  invokeHandler = async (command) => {
+    if (command === "validate_ai_provider_secret") { validating.resolve(); return validation.promise; }
+    if (command === "load_ai_provider_secret") throw new Error("Local read failed");
+    if (command === "save_ai_provider_secret") throw new Error("Local write failed");
+    throw new Error(`Unexpected command: ${command}`);
+  };
+  updateAiProviderSecretDraft("sk-new");
+  const saving = saveAiProviderSecret(() => {});
+  await validating.promise;
+  await loadAiProviderSecret(() => {});
+  assert.equal(state.aiSettings.status, "saving");
+  await saveAiProviderSecret(() => {});
+  assert.equal(invokeLog.filter(({ command }) => command === "validate_ai_provider_secret").length, 1);
+  validation.resolve([{ id: "gpt-6-astra", label: "gpt-6-astra" }]);
+  await saving;
+  assert.equal(state.aiSettings.status, "error");
+  assert.equal(state.aiSettings.error, "Local write failed");
+  assert.equal(state.aiSettings.apiKey, "sk-new");
+  assert.equal(state.aiSettings.apiKeyIsSaved, false);
+});
+
+test("empty Save does not delete a credential", async () => {
+  resetSessionState();
+  state.screen = "aiKey";
+  updateAiProviderSecretDraft("   ");
+  await saveAiProviderSecret(() => {});
+  assert.equal(invokeLog.length, 0);
+});
+
+function installOpenAiAstraModelListHandler() {
   invokeHandler = async (command, payload = {}) => {
     if (command === "load_ai_provider_secret") {
       return payload.providerId === "openai" ? "sk-openai" : null;
     }
-    if (command === "list_ai_provider_models") {
+    if (command === "validate_ai_provider_secret" || command === "list_ai_provider_models") {
       return [
+        { id: "gpt-6-astra", label: "gpt-6-astra" },
         { id: "gpt-5.6-sol", label: "gpt-5.6-sol" },
         { id: "gpt-5.6-terra", label: "gpt-5.6-terra" },
         { id: "gpt-5.6-luna", label: "gpt-5.6-luna" },
-        { id: "gpt-5.5", label: "gpt-5.5" },
-        { id: "gpt-5.5-mini", label: "gpt-5.5-mini" },
-        { id: "gpt-5.5-nano", label: "gpt-5.5-nano" },
       ];
     }
 
@@ -4415,7 +4715,7 @@ test("model list refresh keeps a chosen OpenAI model that is no longer listed", 
       unified: { providerId: "openai", modelId: "gpt-5.4-mini" },
     },
   };
-  installOpenAiGpt56ModelListHandler();
+  installOpenAiAstraModelListHandler();
 
   await refreshAiSavedProviders(() => {});
 
@@ -4429,13 +4729,13 @@ test("model list refresh repicks the never-configured default to the newest flag
   resetSessionState();
   state.screen = "aiKey";
   assert.equal(state.aiSettings.actionConfig.unified.modelId, "gpt-5.4");
-  installOpenAiGpt56ModelListHandler();
+  installOpenAiAstraModelListHandler();
 
   await refreshAiSavedProviders(() => {});
 
   assert.deepEqual(state.aiSettings.actionConfig.unified, {
     providerId: "openai",
-    modelId: "gpt-5.6-sol",
+    modelId: "gpt-6-astra",
   });
 });
 
@@ -4454,7 +4754,7 @@ test("AI key provider selection loads and saves keys independently by provider",
     if (command === "load_ai_provider_secret") {
       return storedKeys[payload.providerId] ?? null;
     }
-    if (command === "list_ai_provider_models") {
+    if (command === "validate_ai_provider_secret" || command === "list_ai_provider_models") {
       return [{ id: "gpt-5.4-mini", label: "gpt-5.4-mini" }];
     }
     if (command === "save_ai_provider_secret") {
@@ -4467,11 +4767,13 @@ test("AI key provider selection loads and saves keys independently by provider",
 
   await loadAiProviderSecret(() => {});
   assert.equal(state.aiSettings.providerId, "openai");
-  assert.equal(state.aiSettings.apiKey, "sk-openai");
+  assert.equal(state.aiSettings.apiKey, "");
+  assert.equal(state.aiSettings.apiKeyIsSaved, true);
 
   await selectAiProvider(() => {}, "gemini");
   assert.equal(state.aiSettings.providerId, "gemini");
-  assert.equal(state.aiSettings.apiKey, "gm-existing");
+  assert.equal(state.aiSettings.apiKey, "");
+  assert.equal(state.aiSettings.apiKeyIsSaved, true);
 
   updateAiProviderSecretDraft("  gm-updated  ");
   await saveAiProviderSecret(() => {});
@@ -4482,7 +4784,8 @@ test("AI key provider selection loads and saves keys independently by provider",
 
   await selectAiProvider(() => {}, "openai");
   assert.equal(state.aiSettings.providerId, "openai");
-  assert.equal(state.aiSettings.apiKey, "sk-openai");
+  assert.equal(state.aiSettings.apiKey, "");
+  assert.equal(state.aiSettings.apiKeyIsSaved, true);
 
   assert.deepEqual(
     invokeLog
@@ -4562,7 +4865,7 @@ test("saveAiProviderSecret initializes shared team action preferences for the sa
         keyVersion: 4,
       };
     }
-    if (command === "list_ai_provider_models") {
+    if (command === "validate_ai_provider_secret" || command === "list_ai_provider_models") {
       return [
         { id: "gpt-5.4", label: "gpt-5.4" },
         { id: "gpt-5.4-mini", label: "gpt-5.4-mini" },
@@ -5196,6 +5499,167 @@ test("loadSelectedChapterEditorData starts on the conflict filter for chapters w
   assert.equal(state.editorChapter.filters.rowFilterMode, EDITOR_ROW_FILTER_MODE_HAS_CONFLICT);
 });
 
+function installCachedAiSettingsPage() {
+  resetSessionState();
+  installSelectedTeam({ canDelete: true });
+  state.screen = "aiKey";
+  const settings = createTeamAiSettings("openai", "gpt-5.6-sol");
+  const secrets = createTeamAiSecrets();
+  saveStoredTeamAiSnapshot(42, "team-one", { settings, secrets }, "tester");
+  installReadyTeamAiState({ settings, secrets, isOwner: true });
+  state.aiSettings = {
+    ...state.aiSettings,
+    status: "ready",
+    apiKey: "",
+    apiKeyIsSaved: true,
+    hasLoaded: true,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      unified: settings.actionPreferences.unified,
+      availableProvidersStatus: "ready",
+      savedProviderIds: ["openai"],
+      modelOptionsByProvider: {
+        ...state.aiSettings.actionConfig.modelOptionsByProvider,
+        openai: {
+          status: "ready",
+          error: "",
+          hasLoaded: true,
+          options: ["gpt-6-astra", "gpt-5.6-sol"].map((id) => ({ id, label: id })),
+        },
+      },
+    },
+  };
+  return { settings, secrets };
+}
+
+test("AI settings shows local data during remote refresh and preserves a newer model save", async () => {
+  const { settings, secrets } = installCachedAiSettingsPage();
+  const broker = createDeferred();
+  const models = createDeferred();
+  const modelsStarted = createDeferred();
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_team_ai_settings") return broker.promise;
+    if (command === "load_team_ai_secrets_metadata") return secrets;
+    if (command === "load_ai_provider_secret") return payload.providerId === "openai" ? "sk-local" : null;
+    if (command === "load_team_ai_provider_cache") return { apiKey: "sk-local", keyVersion: 5 };
+    if (command === "list_ai_provider_models") {
+      modelsStarted.resolve();
+      return models.promise;
+    }
+    if (command === "probe_ai_provider_model") return null;
+    if (command === "save_team_ai_settings") return { ...settings, actionPreferences: payload.actionPreferences };
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const loading = loadAiSettingsPage(() => {});
+  await modelsStarted.promise;
+  assert.equal(state.aiSettings.apiKey, "");
+  assert.equal(state.aiSettings.apiKeyIsSaved, true);
+  assert.equal(state.aiSettings.status, "ready");
+  assert.equal(aiActionControlsAreBusy(), false);
+  assert.equal(state.aiSettings.actionConfig.modelOptionsByProvider.openai.isRefreshing, true);
+  assert.equal(invokeLog.some(({ command }) => command === "save_team_ai_settings"), false);
+
+  await updateAiActionModel(() => {}, "unified", "gpt-6-astra");
+  broker.resolve(settings);
+  models.resolve([{ id: "gpt-6-astra", label: "gpt-6-astra" }]);
+  await loading;
+  assert.equal(state.aiSettings.actionConfig.unified.modelId, "gpt-6-astra");
+  assert.equal(state.aiSettings.teamShared.settings.actionPreferences.unified.modelId, "gpt-6-astra");
+  assert.equal(aiActionControlsAreBusy(), false);
+});
+
+test("AI settings seeds disk metadata and starts model discovery before the broker responds", async () => {
+  const { settings, secrets } = installCachedAiSettingsPage();
+  state.aiSettings.teamShared = createTeamAiSharedState();
+  state.aiSettings.hasLoaded = false;
+  state.aiSettings.apiKeyIsSaved = false;
+  state.aiSettings.apiKey = "";
+  state.aiSettings.actionConfig.savedProviderIds = [];
+  state.aiSettings.actionConfig.availableProvidersStatus = "idle";
+  state.aiSettings.actionConfig.modelOptionsByProvider.openai = {
+    status: "idle", error: "", hasLoaded: false, options: [],
+  };
+  const broker = createDeferred();
+  const models = createDeferred();
+  const modelsStarted = createDeferred();
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_team_ai_settings") return broker.promise;
+    if (command === "load_team_ai_secrets_metadata") return secrets;
+    if (command === "load_ai_provider_secret") return payload.providerId === "openai" ? "sk-local" : null;
+    if (command === "load_team_ai_provider_cache") return { apiKey: "sk-local", keyVersion: 5 };
+    if (command === "list_ai_provider_models") {
+      modelsStarted.resolve();
+      return models.promise;
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+  const loading = loadAiSettingsPage(() => {});
+  await modelsStarted.promise;
+  assert.equal(state.aiSettings.apiKey, "");
+  assert.equal(state.aiSettings.apiKeyIsSaved, true);
+  assert.equal(state.aiSettings.actionConfig.unified.modelId, "gpt-5.6-sol");
+  assert.deepEqual(state.aiSettings.actionConfig.savedProviderIds, ["openai"]);
+  models.resolve([{ id: "gpt-5.6-sol", label: "gpt-5.6-sol" }]);
+  broker.resolve(settings);
+  await loading;
+});
+
+test("AI settings keeps cached models usable when background refresh fails", async () => {
+  installCachedAiSettingsPage();
+  const cachedOptions = cloneValue(state.aiSettings.actionConfig.modelOptionsByProvider.openai.options);
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_ai_provider_secret") return payload.providerId === "openai" ? "sk-local" : null;
+    if (command === "load_team_ai_provider_cache") return { apiKey: "sk-local", keyVersion: 5 };
+    throw new Error("Network request failed");
+  };
+  await loadAiSettingsPage(() => {});
+  const models = state.aiSettings.actionConfig.modelOptionsByProvider.openai;
+  assert.deepEqual(models.options, cachedOptions);
+  assert.equal(models.status, "ready");
+  assert.match(models.error, /Network request failed/);
+  assert.equal(state.aiSettings.apiKey, "");
+  assert.equal(state.aiSettings.apiKeyIsSaved, true);
+  assert.equal(aiActionControlsAreBusy(), false);
+});
+
+test("a delayed local key read preserves an edited draft", async () => {
+  installCachedAiSettingsPage();
+  const key = createDeferred();
+  invokeHandler = async () => key.promise;
+  const loading = loadAiProviderSecret(() => {});
+  assert.equal(state.aiSettings.status, "ready");
+  updateAiProviderSecretDraft("sk-edited");
+  key.resolve("sk-old");
+  await loading;
+  assert.equal(state.aiSettings.apiKey, "sk-edited");
+});
+
+test("AI settings releases an interrupted discovery so returning can retry", async () => {
+  installCachedAiSettingsPage();
+  state.auth.session = null;
+  const models = createDeferred();
+  const started = createDeferred();
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_ai_provider_secret") return payload.providerId === "openai" ? "sk-local" : null;
+    if (command === "list_ai_provider_models") {
+      started.resolve();
+      return models.promise;
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+  const loading = loadAiSettingsPage(() => {});
+  await started.promise;
+  state.screen = "projects";
+  models.resolve([{ id: "stale-model", label: "stale-model" }]);
+  await loading;
+  assert.equal(state.aiSettings.actionConfig.modelOptionsByProvider.openai.isRefreshing, false);
+  assert.equal(state.aiSettings.actionConfig.modelOptionsByProvider.openai.options[0].id, "gpt-6-astra");
+  state.screen = "aiKey";
+  await loadAiSettingsPage(() => {});
+  assert.equal(invokeLog.filter(({ command }) => command === "list_ai_provider_models").length, 2);
+});
+
 test("loadAiSettingsPage refreshes a stale ready team state", async () => {
   resetSessionState();
   installSelectedTeam({ canDelete: false });
@@ -5359,7 +5823,8 @@ test("loadAiProviderSecret ignores stale responses after switching teams", async
   await staleLoadPromise;
 
   assert.equal(state.selectedTeamId, "team-2");
-  assert.equal(state.aiSettings.apiKey, "team-2-secret");
+  assert.equal(state.aiSettings.apiKey, "");
+  assert.equal(state.aiSettings.apiKeyIsSaved, true);
 });
 
 test("runEditorAiReview loads shared team action preferences before choosing the provider", async () => {

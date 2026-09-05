@@ -64,6 +64,13 @@ export function registerAppEvents(render) {
     handleInputEvent(event, render);
   });
   document.addEventListener("paste", (event) => handlePasteEvent(event, render));
+  for (const eventName of ["copy", "cut", "dragstart"]) {
+    document.addEventListener(eventName, (event) => {
+      if (event.target instanceof Element && event.target.closest("[data-ai-key-input][data-ai-key-saved]")) {
+        event.preventDefault();
+      }
+    });
+  }
 
   document.addEventListener("mousedown", (event) => {
     if (event.target instanceof Element && event.target.closest("[data-glossary-inline-style-button]")) {
