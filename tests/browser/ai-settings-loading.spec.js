@@ -50,7 +50,7 @@ test("saved key is absent from the field and copy, cut and drag are blocked", as
   const field = page.locator("[data-ai-key-input]");
   await expect(field).toHaveValue("");
   await expect(field).toHaveAttribute("type", "password");
-  await expect(field).toHaveAttribute("placeholder", "••••••••••••");
+  await expect(field).toHaveAttribute("placeholder", "•".repeat(48));
   await expect(page.locator('[data-action="save-ai-key"]')).toBeDisabled();
   await expect(page.locator('[data-action="remove-ai-key"]')).toBeEnabled();
   const cancelled = await field.evaluate((element) => ["copy", "cut", "dragstart"].map((name) =>
@@ -80,4 +80,32 @@ test("first discovery displays the saved model while its options are loading", a
   await expect(model.locator("option:checked")).toHaveText("gpt-6-astra");
   await expect(model).toBeDisabled();
   await expect(page.locator("[data-ai-key-input]")).toBeEnabled();
+});
+
+test("unavailable credential storage shows retry and session-only choices in AI settings", async ({ page }) => {
+  await showSettings(page, { status: "ready", hasLoaded: true, options: [{ id: "gpt-6-astra", label: "gpt-6-astra" }] });
+  await page.evaluate(async () => {
+    const { state } = await import(`${location.origin}/app/state.js`);
+    const { renderAiKeyScreen } = await import(`${location.origin}/screens/ai-key.js`);
+    state.credentialStorage = { mode: "locked", message: "Secure credential storage is locked. Unlock it and retry, or use keys for this session only." };
+    document.querySelector("#app").innerHTML = renderAiKeyScreen(state);
+  });
+  await expect(page.getByRole("button", { name: "Retry secure storage", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Use for this session only", exact: true })).toBeVisible();
+  await expect(page.locator("[data-ai-key-input]")).toHaveValue("");
+  await expect(page.locator("[data-ai-key-input]")).toBeEnabled();
+  await page.locator(".ai-key-page").screenshot({ path: test.info().outputPath("credential-storage-warning.png") });
+});
+
+test("offline startup keeps local work available when credentials cannot be unlocked", async ({ page }) => {
+  await showSettings(page, { status: "idle", options: [] });
+  await page.evaluate(async () => {
+    const { state } = await import(`${location.origin}/app/state.js`);
+    const { renderStartScreen } = await import(`${location.origin}/screens/start.js`);
+    state.offline = { ...state.offline, checked: true, hasConnection: false, hasLocalData: true };
+    state.credentialStorage = { mode: "locked", message: "Unlock secure credential storage, or continue for this session only." };
+    document.querySelector("#app").innerHTML = renderStartScreen(state);
+  });
+  await expect(page.getByRole("button", { name: "Work offline", exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Retry secure storage", exact: true })).toBeVisible();
 });

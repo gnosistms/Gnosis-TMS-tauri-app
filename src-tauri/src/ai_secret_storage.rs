@@ -1,25 +1,13 @@
-use std::fs;
+use crate::{ai::types::AiProviderId, credential_vault};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
-
-use iota_stronghold::{engine::snapshot::try_set_encrypt_work_factor, Client, ClientError};
-use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Manager};
-use tauri_plugin_stronghold::stronghold::Stronghold;
-
-use crate::ai::types::AiProviderId;
-
-const AI_SECRET_SNAPSHOT_FILENAME: &str = "ai-provider-secrets-v2.hold";
-const AI_SECRET_CLIENT_ID: &[u8] = b"ai-provider-secrets";
+use tauri::AppHandle;
 
 /// Serializes all snapshot-mutating operations.
 ///
-/// Each write/clear opens the snapshot, mutates it, and saves the whole file back.
-/// Two of these running concurrently (Tauri runs commands on separate threads) is a
-/// last-writer-wins race: a `save` that opened before a `clear` re-persists the
-/// pre-clear snapshot, leaving a supposedly cleared secret on disk. Holding this lock
-/// across each public write/clear entry point serializes those cycles and also keeps
-/// the multi-step operations (secret + key-version) atomic as a unit.
+/// The vault serializes record updates internally. This outer lock also makes
+/// session/revision checks and compound credential changes atomic with clears.
+/// Never hold it across a network request.
 fn snapshot_write_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
@@ -39,18 +27,40 @@ pub(crate) fn with_snapshot_write_lock<T>(
     operation()
 }
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct TeamAiMemberKeypair {
     pub(crate) public_key_pem: String,
     pub(crate) private_key_pem: String,
 }
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+impl std::fmt::Debug for TeamAiMemberKeypair {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TeamAiMemberKeypair([redacted])")
+    }
+}
+impl Drop for TeamAiMemberKeypair {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.private_key_pem);
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct TeamAiCachedProviderSecret {
     pub(crate) api_key: Option<String>,
     pub(crate) key_version: Option<i64>,
+}
+
+impl std::fmt::Debug for TeamAiCachedProviderSecret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TeamAiCachedProviderSecret([redacted])")
+    }
+}
+impl Drop for TeamAiCachedProviderSecret {
+    fn drop(&mut self) {
+        if let Some(key) = &mut self.api_key {
+            zeroize::Zeroize::zeroize(key);
+        }
+    }
 }
 
 pub(crate) fn load_ai_provider_secret(
@@ -70,6 +80,7 @@ pub(crate) fn save_ai_provider_secret(
 ) -> Result<(), String> {
     let snapshot_path = stronghold_snapshot_path(app)?;
     with_snapshot_write_lock(|| {
+        crate::team_ai::invalidate_provider(&snapshot_path, installation_id, provider_id);
         save_ai_provider_secret_at_path(&snapshot_path, provider_id, api_key, installation_id)
     })
 }
@@ -81,6 +92,7 @@ pub(crate) fn clear_ai_provider_secret(
 ) -> Result<(), String> {
     let snapshot_path = stronghold_snapshot_path(app)?;
     with_snapshot_write_lock(|| {
+        crate::team_ai::invalidate_provider(&snapshot_path, installation_id, provider_id);
         clear_ai_provider_secret_at_path(&snapshot_path, provider_id, installation_id)
     })
 }
@@ -93,23 +105,6 @@ pub(crate) fn load_team_ai_member_keypair(
     load_team_ai_member_keypair_at_path(&snapshot_path, installation_id)
 }
 
-pub(crate) fn save_team_ai_member_keypair(
-    app: &AppHandle,
-    installation_id: i64,
-    public_key_pem: &str,
-    private_key_pem: &str,
-) -> Result<(), String> {
-    let snapshot_path = stronghold_snapshot_path(app)?;
-    with_snapshot_write_lock(|| {
-        save_team_ai_member_keypair_at_path(
-            &snapshot_path,
-            installation_id,
-            public_key_pem,
-            private_key_pem,
-        )
-    })
-}
-
 pub(crate) fn load_team_ai_cached_provider_secret(
     app: &AppHandle,
     installation_id: i64,
@@ -119,25 +114,6 @@ pub(crate) fn load_team_ai_cached_provider_secret(
     load_team_ai_cached_provider_secret_at_path(&snapshot_path, installation_id, provider_id)
 }
 
-pub(crate) fn save_team_ai_cached_provider_secret(
-    app: &AppHandle,
-    installation_id: i64,
-    provider_id: AiProviderId,
-    api_key: &str,
-    key_version: i64,
-) -> Result<(), String> {
-    let snapshot_path = stronghold_snapshot_path(app)?;
-    with_snapshot_write_lock(|| {
-        save_team_ai_cached_provider_secret_at_path(
-            &snapshot_path,
-            installation_id,
-            provider_id,
-            api_key,
-            key_version,
-        )
-    })
-}
-
 pub(crate) fn clear_team_ai_cached_provider_secret(
     app: &AppHandle,
     installation_id: i64,
@@ -145,141 +121,37 @@ pub(crate) fn clear_team_ai_cached_provider_secret(
 ) -> Result<(), String> {
     let snapshot_path = stronghold_snapshot_path(app)?;
     with_snapshot_write_lock(|| {
+        crate::team_ai::invalidate_provider(&snapshot_path, Some(installation_id), provider_id);
         clear_team_ai_cached_provider_secret_at_path(&snapshot_path, installation_id, provider_id)
     })
 }
 
 pub(crate) fn stronghold_snapshot_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let local_data_dir = app
-        .path()
-        .app_local_data_dir()
-        .map_err(|error| format!("Could not resolve the encrypted AI key store path: {error}"))?;
-    fs::create_dir_all(&local_data_dir)
-        .map_err(|error| format!("Could not create the encrypted AI key store folder: {error}"))?;
-    Ok(local_data_dir.join(AI_SECRET_SNAPSHOT_FILENAME))
-}
-
-/// Returns the deterministic Stronghold snapshot password used for local AI secrets.
-///
-/// This protects the snapshot while it is handled by Stronghold, but it is not
-/// intended to provide strong at-rest secrecy against someone who already has
-/// access to the local account and app files. The product threat model accepts
-/// that tradeoff to avoid OS keychain prompts for ordinary AI key storage.
-fn stronghold_password(snapshot_path: &Path) -> Vec<u8> {
-    let mut hasher = Sha256::new();
-    hasher.update(b"gnosis-tms-ai-provider-secrets");
-    hasher.update(snapshot_path.to_string_lossy().as_bytes());
-    hasher.finalize().to_vec()
-}
-
-fn open_stronghold(snapshot_path: &Path) -> Result<Stronghold, String> {
-    // Work factor 0 disables Argon2 key-stretching on the snapshot password. The
-    // password is a deterministic SHA-256 hash (see `stronghold_password`), so key
-    // stretching adds no meaningful protection here; this is the accepted at-rest
-    // tradeoff documented in F-VIII. The value must stay 0 to remain compatible with
-    // snapshots written by earlier versions.
-    try_set_encrypt_work_factor(0).map_err(|error| {
-        format!("Could not configure the encrypted AI key store work factor: {error}")
-    })?;
-    Stronghold::new(snapshot_path, stronghold_password(snapshot_path))
-        .map_err(|error| format!("Could not open the encrypted AI key store: {error}"))
-}
-
-fn load_or_create_client(stronghold: &Stronghold) -> Result<Client, String> {
-    // Already loaded into this session's runtime.
-    if let Ok(client) = stronghold.get_client(AI_SECRET_CLIENT_ID) {
-        return Ok(client);
-    }
-    // Not loaded yet: try to load it from the snapshot. (A corrupt snapshot or wrong
-    // password has already failed earlier, inside `Stronghold::new`'s eager
-    // `load_snapshot`, so reaching here means the snapshot itself opened cleanly.)
-    match stronghold.load_client(AI_SECRET_CLIENT_ID) {
-        Ok(client) => Ok(client),
-        // The client is genuinely absent from the snapshot — this is the first time
-        // any secret is stored, so create a fresh client.
-        Err(ClientError::ClientDataNotPresent) => stronghold
-            .create_client(AI_SECRET_CLIENT_ID)
-            .map_err(|error| format!("Could not create the encrypted AI key store: {error}")),
-        // Any other failure means the snapshot opened but this client's state could not
-        // be restored. Surface it instead of silently creating an empty store, which
-        // would make previously saved secrets look like they had vanished.
-        Err(error) => Err(format!(
-            "Could not open the encrypted AI key store: {error}"
-        )),
-    }
+    credential_vault::app_path(app)
 }
 
 pub(crate) fn load_store_value(
-    snapshot_path: &Path,
+    path: &Path,
     key: &str,
-    value_label: &str,
+    _label: &str,
 ) -> Result<Option<String>, String> {
-    let stronghold = open_stronghold(snapshot_path)?;
-    let client = load_or_create_client(&stronghold)?;
-    let maybe_value = client
-        .store()
-        .get(key.as_bytes())
-        .map_err(|error| format!("Could not load the saved {value_label}: {error}"))?;
-
-    let Some(value) = maybe_value else {
-        return Ok(None);
-    };
-
-    let decoded_value = String::from_utf8(value)
-        .map_err(|_| format!("The saved {value_label} could not be decoded."))?;
-    if decoded_value.trim().is_empty() {
-        return Ok(None);
-    }
-
-    Ok(Some(decoded_value))
+    Ok(credential_vault::read(path, key)?.filter(|value| !value.trim().is_empty()))
 }
-
 pub(crate) fn save_store_value(
-    snapshot_path: &Path,
+    path: &Path,
     key: &str,
     value: &str,
-    value_label: &str,
+    label: &str,
 ) -> Result<(), String> {
-    let normalized_value = value.trim();
-    if normalized_value.is_empty() {
+    if value.trim().is_empty() {
         return Err(format!(
-            "The {value_label} must not be blank. To remove a saved key, use the clear action."
+            "The {label} must not be blank. Use the clear action to remove it."
         ));
     }
-
-    let stronghold = open_stronghold(snapshot_path)?;
-    let client = load_or_create_client(&stronghold)?;
-    client
-        .store()
-        .insert(
-            key.as_bytes().to_vec(),
-            normalized_value.as_bytes().to_vec(),
-            None,
-        )
-        .map_err(|error| format!("Could not save the {value_label}: {error}"))?;
-    stronghold
-        .save()
-        .map_err(|error| format!("Could not persist the encrypted AI key store: {error}"))?;
-
-    Ok(())
+    credential_vault::update(path, &[(key.into(), Some(value.trim().into()))])
 }
-
-pub(crate) fn delete_store_value(
-    snapshot_path: &Path,
-    key: &str,
-    value_label: &str,
-) -> Result<(), String> {
-    let stronghold = open_stronghold(snapshot_path)?;
-    let client = load_or_create_client(&stronghold)?;
-    client
-        .store()
-        .delete(key.as_bytes())
-        .map_err(|error| format!("Could not clear the saved {value_label}: {error}"))?;
-    stronghold
-        .save()
-        .map_err(|error| format!("Could not persist the encrypted AI key store: {error}"))?;
-
-    Ok(())
+pub(crate) fn delete_store_value(path: &Path, key: &str, _label: &str) -> Result<(), String> {
+    credential_vault::update(path, &[(key.into(), None)])
 }
 
 fn provider_secret_key(provider_id: AiProviderId, installation_id: Option<i64>) -> String {
@@ -343,7 +215,7 @@ fn clear_ai_provider_secret_at_path(
     )
 }
 
-fn load_team_ai_member_keypair_at_path(
+pub(crate) fn load_team_ai_member_keypair_at_path(
     snapshot_path: &Path,
     installation_id: i64,
 ) -> Result<Option<TeamAiMemberKeypair>, String> {
@@ -372,7 +244,7 @@ fn load_team_ai_member_keypair_at_path(
 /// Both values are validated and both keys are written into the same Stronghold
 /// client in a single open/save cycle so the store is never left with only one
 /// half of the keypair persisted.
-fn save_team_ai_member_keypair_at_path(
+pub(crate) fn save_team_ai_member_keypair_at_path(
     snapshot_path: &Path,
     installation_id: i64,
     public_key_pem: &str,
@@ -393,35 +265,19 @@ fn save_team_ai_member_keypair_at_path(
         );
     }
 
-    let stronghold = open_stronghold(snapshot_path)?;
-    let client = load_or_create_client(&stronghold)?;
-    let store = client.store();
-
-    store
-        .insert(
-            team_ai_member_public_key_key(installation_id)
-                .as_bytes()
-                .to_vec(),
-            normalized_public.as_bytes().to_vec(),
-            None,
-        )
-        .map_err(|e| format!("Could not save the team AI public key: {e}"))?;
-
-    store
-        .insert(
-            team_ai_member_private_key_key(installation_id)
-                .as_bytes()
-                .to_vec(),
-            normalized_private.as_bytes().to_vec(),
-            None,
-        )
-        .map_err(|e| format!("Could not save the team AI private key: {e}"))?;
-
-    stronghold
-        .save()
-        .map_err(|e| format!("Could not persist the encrypted AI key store: {e}"))?;
-
-    Ok(())
+    credential_vault::update(
+        snapshot_path,
+        &[
+            (
+                team_ai_member_public_key_key(installation_id),
+                Some(normalized_public.into()),
+            ),
+            (
+                team_ai_member_private_key_key(installation_id),
+                Some(normalized_private.into()),
+            ),
+        ],
+    )
 }
 
 fn load_team_ai_cached_provider_secret_at_path(
@@ -445,7 +301,7 @@ fn load_team_ai_cached_provider_secret_at_path(
     })
 }
 
-fn save_team_ai_cached_provider_secret_at_path(
+pub(crate) fn save_team_ai_cached_provider_secret_at_path(
     snapshot_path: &Path,
     installation_id: i64,
     provider_id: AiProviderId,
@@ -460,15 +316,19 @@ fn save_team_ai_cached_provider_secret_at_path(
         );
     }
 
-    save_ai_provider_secret_at_path(snapshot_path, provider_id, api_key, Some(installation_id))?;
-    save_store_value(
+    credential_vault::update(
         snapshot_path,
-        &team_ai_provider_key_version_key(provider_id, installation_id),
-        &key_version.to_string(),
-        "team AI key version",
-    )?;
-
-    Ok(())
+        &[
+            (
+                provider_secret_key(provider_id, Some(installation_id)),
+                Some(api_key.trim().into()),
+            ),
+            (
+                team_ai_provider_key_version_key(provider_id, installation_id),
+                Some(key_version.to_string()),
+            ),
+        ],
+    )
 }
 
 fn clear_team_ai_cached_provider_secret_at_path(
@@ -476,38 +336,32 @@ fn clear_team_ai_cached_provider_secret_at_path(
     installation_id: i64,
     provider_id: AiProviderId,
 ) -> Result<(), String> {
-    clear_ai_provider_secret_at_path(snapshot_path, provider_id, Some(installation_id))?;
-    delete_store_value(
+    credential_vault::update(
         snapshot_path,
-        &team_ai_provider_key_version_key(provider_id, installation_id),
-        "team AI key version",
-    )?;
-
-    Ok(())
+        &[
+            (
+                provider_secret_key(provider_id, Some(installation_id)),
+                None,
+            ),
+            (
+                team_ai_provider_key_version_key(provider_id, installation_id),
+                None,
+            ),
+        ],
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
 
     use super::{
         clear_ai_provider_secret_at_path, clear_team_ai_cached_provider_secret_at_path,
         load_ai_provider_secret_at_path, load_team_ai_cached_provider_secret_at_path,
         load_team_ai_member_keypair_at_path, provider_secret_key, save_ai_provider_secret_at_path,
         save_team_ai_cached_provider_secret_at_path, save_team_ai_member_keypair_at_path,
-        stronghold_password, TeamAiCachedProviderSecret,
+        TeamAiCachedProviderSecret,
     };
     use crate::ai::types::AiProviderId;
-
-    #[test]
-    fn stronghold_password_is_stable_and_32_bytes() {
-        let snapshot_path = PathBuf::from("/tmp/gnosis-tms-ai-provider-secrets.hold");
-        let first = stronghold_password(&snapshot_path);
-        let second = stronghold_password(&snapshot_path);
-
-        assert_eq!(first, second);
-        assert_eq!(first.len(), 32);
-    }
 
     #[test]
     fn provider_secret_key_namespaces_the_provider() {
@@ -534,6 +388,7 @@ mod tests {
         let snapshot_path = temp_dir.join("ai-provider-secrets.hold");
 
         std::fs::create_dir_all(&temp_dir).unwrap();
+        crate::credential_vault::test_path(&snapshot_path);
 
         save_ai_provider_secret_at_path(&snapshot_path, AiProviderId::OpenAi, "sk-test-123", None)
             .unwrap();
@@ -550,32 +405,6 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_snapshot_surfaces_error_instead_of_reporting_no_secret() {
-        let temp_dir = std::env::temp_dir().join(format!(
-            "gnosis-tms-ai-secret-storage-corrupt-{}",
-            uuid::Uuid::now_v7()
-        ));
-        let snapshot_path = temp_dir.join("ai-provider-secrets.hold");
-
-        std::fs::create_dir_all(&temp_dir).unwrap();
-
-        save_ai_provider_secret_at_path(&snapshot_path, AiProviderId::OpenAi, "sk-test-123", None)
-            .unwrap();
-
-        // Damage the stored snapshot. A corrupt store must NOT silently look like an
-        // account with no saved key — that would mask the real failure (M7).
-        std::fs::write(&snapshot_path, b"this is not a valid stronghold snapshot").unwrap();
-
-        let result = load_ai_provider_secret_at_path(&snapshot_path, AiProviderId::OpenAi, None);
-        assert!(
-            result.is_err(),
-            "a corrupt snapshot should surface an error, got {result:?}"
-        );
-
-        let _ = std::fs::remove_dir_all(&temp_dir);
-    }
-
-    #[test]
     fn stronghold_keeps_multiple_provider_secrets_at_once() {
         let temp_dir = std::env::temp_dir().join(format!(
             "gnosis-tms-ai-secret-storage-multi-{}",
@@ -584,6 +413,7 @@ mod tests {
         let snapshot_path = temp_dir.join("ai-provider-secrets.hold");
 
         std::fs::create_dir_all(&temp_dir).unwrap();
+        crate::credential_vault::test_path(&snapshot_path);
 
         save_ai_provider_secret_at_path(&snapshot_path, AiProviderId::OpenAi, "sk-openai", None)
             .unwrap();
@@ -620,6 +450,7 @@ mod tests {
         let snapshot_path = temp_dir.join("ai-provider-secrets.hold");
 
         std::fs::create_dir_all(&temp_dir).unwrap();
+        crate::credential_vault::test_path(&snapshot_path);
 
         save_ai_provider_secret_at_path(&snapshot_path, AiProviderId::OpenAi, "sk-personal", None)
             .unwrap();
@@ -646,6 +477,7 @@ mod tests {
         let snapshot_path = temp_dir.join("ai-provider-secrets.hold");
 
         std::fs::create_dir_all(&temp_dir).unwrap();
+        crate::credential_vault::test_path(&snapshot_path);
 
         save_team_ai_member_keypair_at_path(&snapshot_path, 42, "public-pem", "private-pem")
             .unwrap();
@@ -669,6 +501,7 @@ mod tests {
         let snapshot_path = temp_dir.join("ai-provider-secrets.hold");
 
         std::fs::create_dir_all(&temp_dir).unwrap();
+        crate::credential_vault::test_path(&snapshot_path);
 
         save_team_ai_cached_provider_secret_at_path(
             &snapshot_path,

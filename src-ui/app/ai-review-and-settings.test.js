@@ -198,11 +198,6 @@ const {
 const { selectedEditorPreviewLanguageCode } = await import("./editor-preview.js");
 const { EDITOR_ROW_FILTER_MODE_HAS_CONFLICT } = await import("./editor-filters.js");
 const {
-  decryptTeamAiWrappedKey,
-  encryptTeamAiPlaintext,
-  generateTeamAiMemberKeypair,
-} = await import("./team-ai-crypto.js");
-const {
   clearStoredAiSettingsAboutDismissed,
   loadStoredAiSettingsAboutDismissed,
 } = await import("./ai-settings-preferences.js");
@@ -389,8 +384,8 @@ test.afterEach(() => {
 test("runEditorAiReview opens the missing-key modal when no saved key exists", async () => {
   installTranslateFixture();
   invokeHandler = async (command) => {
-    if (command === "load_ai_provider_secret") {
-      return null;
+    if (command === "load_ai_provider_secret_status") {
+      return false;
     }
 
     throw new Error(`Unexpected command: ${command}`);
@@ -401,7 +396,7 @@ test("runEditorAiReview opens the missing-key modal when no saved key exists", a
   assert.equal(state.aiReviewMissingKeyModal.isOpen, true);
   assert.deepEqual(
     invokeLog.map((entry) => entry.command),
-    ["load_ai_provider_secret"],
+    ["load_ai_provider_secret_status"],
   );
 });
 
@@ -427,9 +422,9 @@ test("runEditorAiReview uses the configured provider and model", async () => {
   };
 
   invokeHandler = async (command, payload = {}) => {
-    if (command === "load_ai_provider_secret") {
+    if (command === "load_ai_provider_secret_status") {
       assert.equal(payload.providerId, "gemini");
-      return "gm-key";
+      return true;
     }
     if (command === "run_ai_review") {
       assert.deepEqual(payload, {
@@ -478,8 +473,8 @@ test("runEditorAiReview keeps provider errors visible on rows with marked footno
     imageCaptions: { vi: "Caption" },
   });
   invokeHandler = async (command) => {
-    if (command === "load_ai_provider_secret") {
-      return "provider-key";
+    if (command === "load_ai_provider_secret_status") {
+      return true;
     }
     if (command === "run_ai_review") {
       throw new Error("The AI review changed footnote markers.");
@@ -526,8 +521,8 @@ test("runEditorAiReview matches the default QA list and sends advisory QA hints"
     if (command === "load_team_ai_settings" || command === "load_team_ai_secrets_metadata") {
       return null;
     }
-    if (command === "load_ai_provider_secret") {
-      return "oa-key";
+    if (command === "load_ai_provider_secret_status") {
+      return true;
     }
     if (command === "match_gtms_qa_list_terms") {
       matchedInput = payload.input;
@@ -588,8 +583,8 @@ test("runEditorAiReview uses the base language QA list for a duplicate target co
     if (command === "load_team_ai_settings" || command === "load_team_ai_secrets_metadata") {
       return null;
     }
-    if (command === "load_ai_provider_secret") {
-      return "oa-key";
+    if (command === "load_ai_provider_secret_status") {
+      return true;
     }
     if (command === "match_gtms_qa_list_terms") {
       matchedInput = payload.input;
@@ -644,8 +639,8 @@ test("runEditorAiReview translation mode uses the same review request shape as R
 
   let reviewPayload = null;
   invokeHandler = async (command, payload = {}) => {
-    if (command === "load_ai_provider_secret") {
-      return "oa-key";
+    if (command === "load_ai_provider_secret_status") {
+      return true;
     }
     if (command === "run_ai_review") {
       reviewPayload = payload;
@@ -708,8 +703,8 @@ test("translate-flow AI review facade preserves the selected review mode", async
 
   let reviewPayload = null;
   invokeHandler = async (command, payload = {}) => {
-    if (command === "load_ai_provider_secret") {
-      return "oa-key";
+    if (command === "load_ai_provider_secret_status") {
+      return true;
     }
     if (command === "run_ai_review") {
       reviewPayload = payload;
@@ -742,7 +737,7 @@ test("runEditorAiReview enters loading state before provider readiness resolves"
   const render = createSpy();
   const providerReady = createDeferred();
   invokeHandler = async (command) => {
-    if (command === "load_ai_provider_secret") {
+    if (command === "load_ai_provider_secret_status") {
       return providerReady.promise;
     }
     if (command === "run_ai_review") {
@@ -759,7 +754,7 @@ test("runEditorAiReview enters loading state before provider readiness resolves"
   assert.equal(state.editorChapter.aiReview.status, "loading");
   assert.equal(render.calls.length > 0, true);
 
-  providerReady.resolve("oa-key");
+  providerReady.resolve(true);
   await reviewPromise;
 
   assert.equal(state.editorChapter.aiReview.status, "ready");
@@ -792,8 +787,8 @@ test("runEditorAiReview completes when the user selects a different row before t
 
   const reviewResponse = createDeferred();
   invokeHandler = async (command) => {
-    if (command === "load_ai_provider_secret") {
-      return "oa-key";
+    if (command === "load_ai_provider_secret_status") {
+      return true;
     }
     if (command === "run_ai_review") {
       return reviewResponse.promise;
@@ -864,9 +859,9 @@ test("runEditorAiTranslate uses the configured translate action and creates an a
   let persistCount = 0;
   let persistedCommitMetadata = null;
   invokeHandler = async (command, payload = {}) => {
-    if (command === "load_ai_provider_secret") {
+    if (command === "load_ai_provider_secret_status") {
       assert.equal(payload.providerId, "openai");
-      return "oa-key";
+      return true;
     }
     if (command === "run_ai_translation") {
       assert.deepEqual(payload, {
@@ -946,8 +941,8 @@ test("runEditorAiTranslate auto-applies without waiting for durable row persiste
   let persistOptions = null;
   const durableWrite = createDeferred();
   invokeHandler = async (command) => {
-    if (command === "load_ai_provider_secret") {
-      return "oa-key";
+    if (command === "load_ai_provider_secret_status") {
+      return true;
     }
     if (command === "run_ai_translation") {
       return {
@@ -1031,7 +1026,7 @@ test("runEditorAiTranslate enters loading state before provider readiness resolv
   const render = createSpy();
   const providerReady = createDeferred();
   invokeHandler = async (command) => {
-    if (command === "load_ai_provider_secret") {
+    if (command === "load_ai_provider_secret_status") {
       return providerReady.promise;
     }
     if (command === "run_ai_translation") {
@@ -1059,7 +1054,7 @@ test("runEditorAiTranslate enters loading state before provider readiness resolv
   assert.equal(state.editorChapter.aiTranslate.translate1.status, "loading");
   assert.equal(render.calls.length > 0, true);
 
-  providerReady.resolve("oa-key");
+  providerReady.resolve(true);
   await translationPromise;
 
   assert.equal(state.editorChapter.aiTranslate.translate1.status, "idle");
@@ -1117,11 +1112,11 @@ test("runEditorAiTranslate keeps first-run team AI setup renders scoped to the e
         },
       };
     }
-    if (command === "load_ai_provider_secret") {
+    if (command === "load_ai_provider_secret_status") {
       assert.equal(payload.installationId, 42);
-      return null;
+      return false;
     }
-    if (command === "load_team_ai_provider_cache") {
+    if (command === "load_team_ai_provider_cache_status") {
       return providerCacheReady.promise;
     }
     if (command === "run_ai_translation") {
@@ -1162,7 +1157,7 @@ test("runEditorAiTranslate keeps first-run team AI setup renders scoped to the e
   );
 
   providerCacheReady.resolve({
-    apiKey: "sk-shared-openai",
+    configured: true,
     keyVersion: 5,
   });
   await translationPromise;
@@ -1197,9 +1192,9 @@ test("runEditorAiTranslate uses the active alternate language as the translation
 
   let persistCount = 0;
   invokeHandler = async (command, payload = {}) => {
-    if (command === "load_ai_provider_secret") {
+    if (command === "load_ai_provider_secret_status") {
       assert.equal(payload.providerId, "openai");
-      return "oa-key";
+      return true;
     }
     if (command === "run_ai_translation") {
       assert.deepEqual(payload, {
@@ -1301,9 +1296,9 @@ test("runEditorAiTranslate sends glossary hints for matched source-language term
   };
 
   invokeHandler = async (command, payload = {}) => {
-    if (command === "load_ai_provider_secret") {
+    if (command === "load_ai_provider_secret_status") {
       assert.equal(payload.providerId, "openai");
-      return "oa-key";
+      return true;
     }
     if (command === "run_ai_translation") {
       assert.deepEqual(payload, {
@@ -1419,8 +1414,8 @@ async function installPivotRefreshTranslateFixture() {
   };
 
   invokeHandler = async (command) => {
-    if (command === "load_ai_provider_secret") {
-      return "oa-key";
+    if (command === "load_ai_provider_secret_status") {
+      return true;
     }
     if (command === "run_ai_translation") {
       return { translatedText: "Hola nueva" };
@@ -1502,8 +1497,8 @@ test("runEditorAiTranslate keeps translated footnotes separate and auto-applies 
   });
 
   invokeHandler = async (command, payload = {}) => {
-    if (command === "load_ai_provider_secret") {
-      return "oa-key";
+    if (command === "load_ai_provider_secret_status") {
+      return true;
     }
     if (command === "run_ai_translation") {
       assert.equal(payload.request.text, "Hola");
@@ -1602,8 +1597,8 @@ test("runEditorAiTranslate prepares derived glossary hints when the glossary sou
   };
 
   invokeHandler = async (command, payload = {}) => {
-    if (command === "load_ai_provider_secret") {
-      return "oa-key";
+    if (command === "load_ai_provider_secret_status") {
+      return true;
     }
     if (command === "prepare_editor_ai_translated_glossary") {
       assert.deepEqual(payload, {
@@ -1686,7 +1681,7 @@ test("runEditorAiTranslate prepares derived glossary hints when the glossary sou
   assert.deepEqual(
     invokeLog.map((entry) => entry.command),
     [
-      "load_ai_provider_secret",
+      "load_ai_provider_secret_status",
       "prepare_editor_ai_translated_glossary",
       "run_ai_translation",
     ],
@@ -1768,8 +1763,8 @@ test("runEditorAiTranslate regenerates derived glossary hints without saving piv
   };
 
   invokeHandler = async (command, payload = {}) => {
-    if (command === "load_ai_provider_secret") {
-      return "oa-key";
+    if (command === "load_ai_provider_secret_status") {
+      return true;
     }
     if (command === "prepare_editor_ai_translated_glossary") {
       assert.equal(payload.request.glossarySourceText, "");
@@ -1883,8 +1878,8 @@ test("runEditorAiTranslateForContext does not overwrite a non-empty glossary-sou
 
   let persistCount = 0;
   invokeHandler = async (command, payload = {}) => {
-    if (command === "load_ai_provider_secret") {
-      return "oa-key";
+    if (command === "load_ai_provider_secret_status") {
+      return true;
     }
     if (command === "prepare_editor_ai_translated_glossary") {
       assert.equal(payload.request.glossarySourceText, "");
@@ -2003,8 +1998,8 @@ test("runEditorAiTranslate writes an empty glossary-source field before creating
   let prepareCount = 0;
   let translateCount = 0;
   invokeHandler = async (command, payload = {}) => {
-    if (command === "load_ai_provider_secret") {
-      return "oa-key";
+    if (command === "load_ai_provider_secret_status") {
+      return true;
     }
     if (command === "prepare_editor_ai_translated_glossary") {
       prepareCount += 1;
@@ -2069,10 +2064,10 @@ test("runEditorAiTranslate writes an empty glossary-source field before creating
   assert.deepEqual(
     invokeLog.map((entry) => entry.command),
     [
-      "load_ai_provider_secret",
+      "load_ai_provider_secret_status",
       "prepare_editor_ai_translated_glossary",
       "run_ai_translation",
-      "load_ai_provider_secret",
+      "load_ai_provider_secret_status",
       "run_ai_translation",
     ],
   );
@@ -2174,9 +2169,9 @@ test("runEditorAiTranslate preserves a ready derived glossary cache when final t
     },
   };
 
-  invokeHandler = async (command, payload = {}) => {
-    if (command === "load_ai_provider_secret") {
-      return "oa-key";
+  invokeHandler = async (command) => {
+    if (command === "load_ai_provider_secret_status") {
+      return true;
     }
     if (command === "run_ai_translation") {
       assert.deepEqual(payload.request.glossaryHints, [{
@@ -2198,7 +2193,7 @@ test("runEditorAiTranslate preserves a ready derived glossary cache when final t
 
   assert.deepEqual(
     invokeLog.map((entry) => entry.command),
-    ["load_ai_provider_secret", "run_ai_translation"],
+    ["load_ai_provider_secret_status", "run_ai_translation"],
   );
   assert.equal(state.editorChapter.aiTranslate.translate1.status, "error");
   assert.equal(
@@ -2270,9 +2265,9 @@ test("runEditorAiTranslate saves prepared glossary-source text when draft transl
 
   let persistCount = 0;
   let persistedCommitMetadata = null;
-  invokeHandler = async (command, payload = {}) => {
-    if (command === "load_ai_provider_secret") {
-      return "oa-key";
+  invokeHandler = async (command) => {
+    if (command === "load_ai_provider_secret_status") {
+      return true;
     }
     if (command === "prepare_editor_ai_translated_glossary") {
       return {
@@ -2310,7 +2305,7 @@ test("runEditorAiTranslate saves prepared glossary-source text when draft transl
   assert.deepEqual(
     invokeLog.map((entry) => entry.command),
     [
-      "load_ai_provider_secret",
+      "load_ai_provider_secret_status",
       "prepare_editor_ai_translated_glossary",
       "run_ai_translation",
     ],
@@ -2347,9 +2342,9 @@ test("runEditorAiTranslate opens the missing-key modal for the translate action 
   };
 
   invokeHandler = async (command, payload = {}) => {
-    if (command === "load_ai_provider_secret") {
+    if (command === "load_ai_provider_secret_status") {
       assert.equal(payload.providerId, "deepseek");
-      return null;
+      return false;
     }
 
     throw new Error(`Unexpected command: ${command}`);
@@ -2383,14 +2378,12 @@ test("runEditorAiTranslate issues and caches a shared team key before translatin
   };
   installReadyTeamAiState({ secrets: createTeamAiSecrets("openai", 7) });
 
-  const memberKeypair = await generateTeamAiMemberKeypair();
-  const issuedWrappedKey = await encryptTeamAiPlaintext("sk-shared-issued", memberKeypair.publicKeyPem);
   let persistCount = 0;
 
   invokeHandler = async (command, payload = {}) => {
-    if (command === "load_ai_provider_secret") {
+    if (command === "load_ai_provider_secret_status") {
       assert.equal(payload.installationId, 42);
-      return null;
+      return false;
     }
     if (command === "load_team_ai_settings") {
       return null;
@@ -2412,14 +2405,11 @@ test("runEditorAiTranslate issues and caches a shared team key before translatin
         },
       };
     }
-    if (command === "load_team_ai_provider_cache") {
+    if (command === "load_team_ai_provider_cache_status") {
       return {
-        apiKey: null,
+        configured: false,
         keyVersion: null,
       };
-    }
-    if (command === "load_team_ai_member_keypair") {
-      return memberKeypair;
     }
     if (command === "issue_team_ai_provider_secret") {
       assert.equal(payload.providerId, "openai");
@@ -2428,16 +2418,11 @@ test("runEditorAiTranslate issues and caches a shared team key before translatin
       return {
         providerId: "openai",
         keyVersion: 7,
-        wrappedKey: issuedWrappedKey,
+        ticket: "issued-ticket",
       };
     }
-    if (command === "save_team_ai_provider_cache") {
-      assert.deepEqual(payload, {
-        installationId: 42,
-        providerId: "openai",
-        apiKey: "sk-shared-issued",
-        keyVersion: 7,
-      });
+    if (command === "finish_team_ai_provider_secret") {
+      assert.deepEqual(payload, { ticket: "issued-ticket", commit: true });
       return null;
     }
     if (command === "run_ai_translation") {
@@ -2505,9 +2490,9 @@ test("runEditorAiTranslate tells members to contact the owner when no shared tea
   };
 
   invokeHandler = async (command, payload = {}) => {
-    if (command === "load_ai_provider_secret") {
+    if (command === "load_ai_provider_secret_status") {
       assert.equal(payload.installationId, 4152);
-      return null;
+      return false;
     }
     if (command === "load_team_ai_settings") {
       return null;
@@ -2793,9 +2778,9 @@ test("runEditorAiAssistant renders a draft when a chat response includes draft t
   };
 
   invokeHandler = async (command, payload = {}) => {
-    if (command === "load_ai_provider_secret") {
+    if (command === "load_ai_provider_secret_status") {
       assert.equal(payload.providerId, "openai");
-      return "oa-key";
+      return true;
     }
     if (command === "run_ai_assistant_turn") {
       assert.equal(payload.request.kind, "chat");
@@ -2910,8 +2895,8 @@ test("runEditorAiAssistant sends loaded target-language history with the assista
   };
 
   invokeHandler = async (command, payload = {}) => {
-    if (command === "load_ai_provider_secret") {
-      return "oa-key";
+    if (command === "load_ai_provider_secret_status") {
+      return true;
     }
     if (command === "load_team_ai_settings") {
       return null;
@@ -3016,8 +3001,8 @@ test("runEditorAiAssistant shows direct OpenAI billing guidance when credits are
   };
 
   invokeHandler = async (command) => {
-    if (command === "load_ai_provider_secret") {
-      return "oa-key";
+    if (command === "load_ai_provider_secret_status") {
+      return true;
     }
     if (command === "run_ai_assistant_turn") {
       throw new Error(
@@ -3067,8 +3052,8 @@ test("runEditorAiAssistant records malformed response details in the chat histor
   const rawModelResponse = "Here is a closer translation: Ban dich moi.";
   const promptText = "assistant prompt text";
   invokeHandler = async (command) => {
-    if (command === "load_ai_provider_secret") {
-      return "oa-key";
+    if (command === "load_ai_provider_secret_status") {
+      return true;
     }
     if (command === "run_ai_assistant_turn") {
       throw new Error(`AI_ASSISTANT_MALFORMED_RESPONSE_JSON:${JSON.stringify({
@@ -3301,18 +3286,11 @@ test("saveSelectedTeamAiProviderSecret wraps a shared key for the broker and cac
   resetSessionState();
   installSelectedTeam({ canDelete: true });
 
-  const brokerKeypair = await generateTeamAiMemberKeypair();
-  let savedWrappedKey = null;
+  let savedKey = null;
 
   invokeHandler = async (command, payload = {}) => {
-    if (command === "load_team_ai_broker_public_key") {
-      return {
-        algorithm: "rsa-oaep-sha256-v1",
-        publicKeyPem: brokerKeypair.publicKeyPem,
-      };
-    }
     if (command === "save_team_ai_provider_secret") {
-      savedWrappedKey = payload.wrappedKey;
+      savedKey = payload.apiKey;
       assert.equal(payload.installationId, 42);
       assert.equal(payload.orgLogin, "team-one");
       assert.equal(payload.providerId, "openai");
@@ -3333,13 +3311,8 @@ test("saveSelectedTeamAiProviderSecret wraps a shared key for the broker and cac
         },
       };
     }
-    if (command === "save_team_ai_provider_cache") {
-      assert.deepEqual(payload, {
-        installationId: 42,
-        providerId: "openai",
-        apiKey: "sk-team-shared",
-        keyVersion: 4,
-      });
+    if (command === "finish_team_ai_provider_secret") {
+      assert.deepEqual(payload, { ticket: "issued-ticket", commit: true });
       return null;
     }
 
@@ -3353,7 +3326,7 @@ test("saveSelectedTeamAiProviderSecret wraps a shared key for the broker and cac
   );
 
   assert.equal(
-    await decryptTeamAiWrappedKey(savedWrappedKey, brokerKeypair.privateKeyPem),
+    savedKey,
     "sk-team-shared",
   );
   assert.equal(secrets.providers.openai.keyVersion, 4);
@@ -3393,7 +3366,7 @@ test("saveSelectedTeamAiProviderSecret clears broker and local shared keys when 
         installationId: 42,
         orgLogin: "team-one",
         providerId: "openai",
-        wrappedKey: null,
+        apiKey: null,
         clear: true,
         sessionToken: "broker-session",
       });
@@ -3430,11 +3403,7 @@ test("saveSelectedTeamAiProviderSecret clears broker and local shared keys when 
 
   assert.deepEqual(
     invokeLog.map((entry) => entry.command),
-    [
-      "save_team_ai_provider_secret",
-      "clear_team_ai_provider_cache",
-      "clear_ai_provider_secret",
-    ],
+    ["save_team_ai_provider_secret"],
   );
   assert.equal(state.aiSettings.teamShared.status, "ready");
   assert.equal(state.aiSettings.teamShared.isOwner, true);
@@ -3652,27 +3621,23 @@ test("ensureSelectedTeamAiProviderReady reports a clear issue error when the bro
 
   await loadSelectedTeamAiState(() => {});
 
-  const memberKeypair = await generateTeamAiMemberKeypair();
   state.aiSettings = {
     ...state.aiSettings,
     teamShared: createTeamAiSharedState(),
   };
   invokeHandler = async (command, payload = {}) => {
-    if (command === "load_ai_provider_secret") {
+    if (command === "load_ai_provider_secret_status") {
       assert.equal(payload.installationId, 42);
-      return null;
+      return false;
     }
     if (command === "load_team_ai_settings" || command === "load_team_ai_secrets_metadata") {
       throw new Error("Could not reach the GitHub App broker.");
     }
-    if (command === "load_team_ai_provider_cache") {
+    if (command === "load_team_ai_provider_cache_status") {
       return {
-        apiKey: null,
+        configured: false,
         keyVersion: null,
       };
-    }
-    if (command === "load_team_ai_member_keypair") {
-      return memberKeypair;
     }
     if (command === "issue_team_ai_provider_secret") {
       throw new Error("Could not reach the GitHub App broker.");
@@ -3694,11 +3659,11 @@ test("ensureSelectedTeamAiProviderReady uses an existing cached key without fetc
   let issueCount = 0;
 
   invokeHandler = async (command) => {
-    if (command === "load_ai_provider_secret") {
-      return "sk-still-accepted";
+    if (command === "load_ai_provider_secret_status") {
+      return true;
     }
-    if (command === "load_team_ai_provider_cache") {
-      return { apiKey: "sk-still-accepted", keyVersion: 5 };
+    if (command === "load_team_ai_provider_cache_status") {
+      return { configured: true, keyVersion: 5 };
     }
     if (command === "issue_team_ai_provider_secret") {
       issueCount += 1;
@@ -3727,8 +3692,8 @@ test("ensureSelectedTeamAiProviderReady does not load shared provider caches for
   installReadyTeamAiState({ secrets: createTeamAiSecrets("openai", 6) });
 
   invokeHandler = async (command) => {
-    if (command === "load_ai_provider_secret") {
-      return null;
+    if (command === "load_ai_provider_secret_status") {
+      return false;
     }
     throw new Error(`Viewer provider readiness must not invoke ${command}`);
   };
@@ -3738,7 +3703,7 @@ test("ensureSelectedTeamAiProviderReady does not load shared provider caches for
   assert.deepEqual(result, { ok: false, reason: "read_only" });
   assert.deepEqual(
     invokeLog.map((entry) => entry.command),
-    ["load_ai_provider_secret"],
+    ["load_ai_provider_secret_status"],
   );
 });
 
@@ -3749,7 +3714,7 @@ test("ensureSelectedTeamAiProviderReady stops when the selected team changes dur
   const localKey = createDeferred();
 
   invokeHandler = async (command) => {
-    if (command === "load_ai_provider_secret") {
+    if (command === "load_ai_provider_secret_status") {
       return localKey.promise;
     }
     throw new Error(`Stale provider readiness must not invoke ${command}`);
@@ -3768,12 +3733,12 @@ test("ensureSelectedTeamAiProviderReady stops when the selected team changes dur
     settings: createTeamAiSettings("gemini", "gemini-3-flash-preview"),
     secrets: createTeamAiSecrets("gemini", 3),
   });
-  localKey.resolve("sk-old-team-key");
+  localKey.resolve(true);
 
   assert.deepEqual(await resultPromise, { ok: false, reason: "stale" });
   assert.deepEqual(
     invokeLog.map((entry) => entry.command),
-    ["load_ai_provider_secret"],
+    ["load_ai_provider_secret_status"],
   );
   assert.equal(state.aiSettings.teamShared.teamId, "team-2");
 });
@@ -3782,25 +3747,21 @@ test("an access-loss response from stale key issuance does not overwrite the new
   resetSessionState();
   installSelectedTeam({ canDelete: false });
   installReadyTeamAiState({ secrets: createTeamAiSecrets("openai", 7) });
-  const memberKeypair = await generateTeamAiMemberKeypair();
   const issuance = createDeferred();
   let issueStarted = false;
 
   invokeHandler = async (command) => {
-    if (command === "load_ai_provider_secret") {
-      return null;
+    if (command === "load_ai_provider_secret_status") {
+      return false;
     }
-    if (command === "load_team_ai_provider_cache") {
-      return { apiKey: null, keyVersion: null };
-    }
-    if (command === "load_team_ai_member_keypair") {
-      return memberKeypair;
+    if (command === "load_team_ai_provider_cache_status") {
+      return { configured: false, keyVersion: null };
     }
     if (command === "issue_team_ai_provider_secret") {
       issueStarted = true;
       return issuance.promise;
     }
-    if (command === "clear_team_ai_provider_cache") {
+    if (command === "clear_team_ai_credentials") {
       return null;
     }
     throw new Error(`Unexpected command: ${command}`);
@@ -3844,11 +3805,6 @@ test("an AI command rejected for an invalid team key refreshes the key and retri
   resetSessionState();
   installSelectedTeam({ canDelete: false });
 
-  const memberKeypair = await generateTeamAiMemberKeypair();
-  const issuedWrappedKey = await encryptTeamAiPlaintext(
-    "sk-current-team-key",
-    memberKeypair.publicKeyPem,
-  );
   let aiCallCount = 0;
   let issueCount = 0;
 
@@ -3862,8 +3818,8 @@ test("an AI command rejected for an invalid team key refreshes the key and retri
       }
       return { translatedText: "Recovered translation" };
     }
-    if (command === "load_ai_provider_secret") {
-      return null;
+    if (command === "load_ai_provider_secret_status") {
+      return false;
     }
     if (command === "load_team_ai_settings") {
       return null;
@@ -3883,27 +3839,19 @@ test("an AI command rejected for an invalid team key refreshes the key and retri
         },
       };
     }
-    if (command === "load_team_ai_provider_cache") {
-      return { apiKey: "sk-rejected-team-key", keyVersion: 7 };
-    }
-    if (command === "load_team_ai_member_keypair") {
-      return memberKeypair;
+    if (command === "load_team_ai_provider_cache_status") {
+      return { configured: true, keyVersion: 7 };
     }
     if (command === "issue_team_ai_provider_secret") {
       issueCount += 1;
       return {
         providerId: "openai",
         keyVersion: 8,
-        wrappedKey: issuedWrappedKey,
+        ticket: "issued-ticket",
       };
     }
-    if (command === "save_team_ai_provider_cache") {
-      assert.deepEqual(payload, {
-        installationId: 42,
-        providerId: "openai",
-        apiKey: "sk-current-team-key",
-        keyVersion: 8,
-      });
+    if (command === "finish_team_ai_provider_secret") {
+      assert.deepEqual(payload, { ticket: "issued-ticket", commit: true });
       return null;
     }
     throw new Error(`Unexpected command: ${command}`);
@@ -3935,8 +3883,8 @@ test("an invalid team key is not reissued when team metadata has the same key ve
         "The saved OpenAI API key was rejected. Update it in AI Settings and try again.",
       );
     }
-    if (command === "load_team_ai_provider_cache") {
-      return { apiKey: "sk-rejected-team-key", keyVersion: 8 };
+    if (command === "load_team_ai_provider_cache_status") {
+      return { configured: true, keyVersion: 8 };
     }
     if (command === "load_team_ai_secrets_metadata") {
       return createTeamAiSecrets("openai", 8);
@@ -3971,16 +3919,11 @@ test("concurrent invalid-key recoveries share one team key refresh", async () =>
   resetSessionState();
   installSelectedTeam({ canDelete: false });
 
-  const memberKeypair = await generateTeamAiMemberKeypair();
-  const issuedWrappedKey = await encryptTeamAiPlaintext(
-    "sk-current-team-key",
-    memberKeypair.publicKeyPem,
-  );
   let issueCount = 0;
 
-  invokeHandler = async (command) => {
-    if (command === "load_ai_provider_secret") {
-      return null;
+  invokeHandler = async (command, payload) => {
+    if (command === "load_ai_provider_secret_status") {
+      return false;
     }
     if (command === "load_team_ai_settings") {
       return null;
@@ -3996,21 +3939,19 @@ test("concurrent invalid-key recoveries share one team key refresh", async () =>
         },
       };
     }
-    if (command === "load_team_ai_provider_cache") {
-      return { apiKey: "sk-rejected-team-key", keyVersion: 8 };
-    }
-    if (command === "load_team_ai_member_keypair") {
-      return memberKeypair;
+    if (command === "load_team_ai_provider_cache_status") {
+      return { configured: true, keyVersion: 8 };
     }
     if (command === "issue_team_ai_provider_secret") {
       issueCount += 1;
       return {
         providerId: "openai",
         keyVersion: 9,
-        wrappedKey: issuedWrappedKey,
+        ticket: "issued-ticket",
       };
     }
-    if (command === "save_team_ai_provider_cache") {
+    if (command === "finish_team_ai_provider_secret") {
+      assert.deepEqual(payload, { ticket: "issued-ticket", commit: true });
       return null;
     }
     throw new Error(`Unexpected command: ${command}`);
@@ -4191,13 +4132,12 @@ test("ensureSelectedTeamAiProviderReady clears team AI caches when team access i
   installSelectedTeam({ canDelete: false });
   installReadyTeamAiState({ secrets: createTeamAiSecrets("openai", 7) });
 
-  const memberKeypair = await generateTeamAiMemberKeypair();
-  const clearedProviderIds = [];
+  const clearedInstallations = [];
 
   invokeHandler = async (command, payload = {}) => {
-    if (command === "load_ai_provider_secret") {
+    if (command === "load_ai_provider_secret_status") {
       assert.equal(payload.installationId, 42);
-      return null;
+      return false;
     }
     if (command === "load_team_ai_settings") {
       return null;
@@ -4219,22 +4159,19 @@ test("ensureSelectedTeamAiProviderReady clears team AI caches when team access i
         },
       };
     }
-    if (command === "load_team_ai_provider_cache") {
+    if (command === "load_team_ai_provider_cache_status") {
       return {
-        apiKey: null,
+        configured: false,
         keyVersion: null,
       };
-    }
-    if (command === "load_team_ai_member_keypair") {
-      return memberKeypair;
     }
     if (command === "issue_team_ai_provider_secret") {
       throw Object.assign(new Error("You no longer have access to this team."), {
         status: 403,
       });
     }
-    if (command === "clear_team_ai_provider_cache") {
-      clearedProviderIds.push(payload.providerId);
+    if (command === "clear_team_ai_credentials") {
+      clearedInstallations.push(payload.installationId);
       assert.equal(payload.installationId, 42);
       return null;
     }
@@ -4248,8 +4185,8 @@ test("ensureSelectedTeamAiProviderReady clears team AI caches when team access i
   );
 
   assert.deepEqual(
-    [...clearedProviderIds].sort(),
-    ["claude", "deepseek", "gemini", "openai"],
+    clearedInstallations,
+    [42],
   );
   assert.equal(state.aiSettings.teamShared.status, "error");
   assert.match(state.aiSettings.teamShared.error, /no longer have access to this team/i);
@@ -4265,8 +4202,8 @@ test("AI key load and save flows populate and persist aiSettings state", async (
 
   let savedPayload = null;
   invokeHandler = async (command, payload = {}) => {
-    if (command === "load_ai_provider_secret") {
-      return "sk-existing";
+    if (command === "load_ai_provider_secret_status") {
+      return true;
     }
     if (command === "validate_ai_provider_secret" || command === "list_ai_provider_models") {
       return [
@@ -4313,8 +4250,8 @@ test("AI key load and save flows populate and persist aiSettings state", async (
 
 function installKeyCheckSaveHandler({ listModels }) {
   invokeHandler = async (command, payload = {}) => {
-    if (command === "load_ai_provider_secret") {
-      return payload.providerId === "openai" ? "sk-openai" : null;
+    if (command === "load_ai_provider_secret_status") {
+      return payload.providerId === "openai" ? true : null;
     }
     if (command === "save_ai_provider_secret") {
       return null;
@@ -4440,7 +4377,7 @@ test("candidate verification cannot be satisfied by concurrent background discov
   const validating = createDeferred();
   let stored = "sk-working";
   invokeHandler = async (command, payload = {}) => {
-    if (command === "load_ai_provider_secret") return payload.providerId === "openai" ? stored : null;
+    if (command === "load_ai_provider_secret_status") return Boolean(payload.providerId === "openai" ? stored : null);
     if (command === "list_ai_provider_models") { discovering.resolve(); return discovery.promise; }
     if (command === "validate_ai_provider_secret") {
       assert.deepEqual(payload, { providerId: "openai", apiKey: "sk-invalid" });
@@ -4476,7 +4413,7 @@ test("a stale discovery cannot replace models verified for the newly saved key",
   let stored = "sk-old";
   const verifiedModels = [{ id: "gpt-6-astra", label: "gpt-6-astra" }];
   invokeHandler = async (command, payload = {}) => {
-    if (command === "load_ai_provider_secret") return payload.providerId === "openai" ? stored : null;
+    if (command === "load_ai_provider_secret_status") return Boolean(payload.providerId === "openai" ? stored : null);
     if (command === "list_ai_provider_models") { discovering.resolve(); return discovery.promise; }
     if (command === "validate_ai_provider_secret") return verifiedModels;
     if (command === "save_ai_provider_secret") { stored = payload.apiKey; return; }
@@ -4519,7 +4456,7 @@ for (const phase of ["verification", "storage"]) {
     const started = createDeferred();
     let stored = "sk-old";
     invokeHandler = async (command, payload = {}) => {
-      if (command === "load_ai_provider_secret") return payload.providerId === "openai" ? stored : null;
+      if (command === "load_ai_provider_secret_status") return Boolean(payload.providerId === "openai" ? stored : null);
       if (command === "validate_ai_provider_secret") {
         if (phase === "verification") { started.resolve(); await pending.promise; }
         return [{ id: "gpt-6-astra", label: "gpt-6-astra" }];
@@ -4555,7 +4492,7 @@ test("reopening Settings during verification preserves the pending save and bloc
   const validating = createDeferred();
   let stored = "sk-old";
   invokeHandler = async (command, payload = {}) => {
-    if (command === "load_ai_provider_secret") return payload.providerId === "openai" ? stored : null;
+    if (command === "load_ai_provider_secret_status") return Boolean(payload.providerId === "openai" ? stored : null);
     if (command === "validate_ai_provider_secret") { validating.resolve(); return validation.promise; }
     if (command === "save_ai_provider_secret") { stored = payload.apiKey; return; }
     throw new Error(`Unexpected command: ${command}`);
@@ -4611,7 +4548,7 @@ test("failed removal keeps the saved key available for a successful retry", asyn
       stored = null;
       return;
     }
-    if (command === "load_ai_provider_secret") return payload.providerId === "openai" ? stored : null;
+    if (command === "load_ai_provider_secret_status") return Boolean(payload.providerId === "openai" ? stored : null);
     throw new Error(`Unexpected command: ${command}`);
   };
   await removeAiProviderSecret(() => {});
@@ -4636,9 +4573,9 @@ test("a late local read cannot restore a successfully removed key", async () => 
   let reads = 0;
   invokeHandler = async (command, payload = {}) => {
     if (command === "clear_ai_provider_secret") { removing.resolve(); return removal.promise; }
-    if (command === "load_ai_provider_secret") {
+    if (command === "load_ai_provider_secret_status") {
       if (payload.providerId === "openai" && ++reads === 1) return staleRead.promise;
-      return null;
+      return false;
     }
     throw new Error(`Unexpected command: ${command}`);
   };
@@ -4647,7 +4584,7 @@ test("a late local read cannot restore a successfully removed key", async () => 
   const loading = loadAiProviderSecret(() => {});
   removal.resolve();
   await deleting;
-  staleRead.resolve("sk-deleted");
+  staleRead.resolve(true);
   await loading;
   assert.equal(state.aiSettings.apiKeyIsSaved, false);
   assert.equal(state.aiSettings.apiKey, "");
@@ -4660,7 +4597,7 @@ test("a failed settings read cannot interrupt candidate verification", async () 
   const validating = createDeferred();
   invokeHandler = async (command) => {
     if (command === "validate_ai_provider_secret") { validating.resolve(); return validation.promise; }
-    if (command === "load_ai_provider_secret") throw new Error("Local read failed");
+    if (command === "load_ai_provider_secret_status") throw new Error("Local read failed");
     if (command === "save_ai_provider_secret") throw new Error("Local write failed");
     throw new Error(`Unexpected command: ${command}`);
   };
@@ -4689,8 +4626,8 @@ test("empty Save does not delete a credential", async () => {
 
 function installOpenAiAstraModelListHandler() {
   invokeHandler = async (command, payload = {}) => {
-    if (command === "load_ai_provider_secret") {
-      return payload.providerId === "openai" ? "sk-openai" : null;
+    if (command === "load_ai_provider_secret_status") {
+      return payload.providerId === "openai" ? true : null;
     }
     if (command === "validate_ai_provider_secret" || command === "list_ai_provider_models") {
       return [
@@ -4751,8 +4688,8 @@ test("AI key provider selection loads and saves keys independently by provider",
   };
 
   invokeHandler = async (command, payload = {}) => {
-    if (command === "load_ai_provider_secret") {
-      return storedKeys[payload.providerId] ?? null;
+    if (command === "load_ai_provider_secret_status") {
+      return Boolean(storedKeys[payload.providerId]);
     }
     if (command === "validate_ai_provider_secret" || command === "list_ai_provider_models") {
       return [{ id: "gpt-5.4-mini", label: "gpt-5.4-mini" }];
@@ -4803,18 +4740,12 @@ test("saveAiProviderSecret initializes shared team action preferences for the sa
   installSelectedTeam({ canDelete: true });
   state.screen = "aiKey";
 
-  const brokerKeypair = await generateTeamAiMemberKeypair();
-  let cachedTeamApiKey = null;
+  let hasCachedTeamKey = false;
   const savedTeamSettingsPayloads = [];
 
   invokeHandler = async (command, payload = {}) => {
-    if (command === "load_team_ai_broker_public_key") {
-      return {
-        algorithm: "rsa-oaep-sha256-v1",
-        publicKeyPem: brokerKeypair.publicKeyPem,
-      };
-    }
     if (command === "save_team_ai_provider_secret") {
+      hasCachedTeamKey = true;
       return {
         schemaVersion: 1,
         updatedAt: null,
@@ -4831,8 +4762,8 @@ test("saveAiProviderSecret initializes shared team action preferences for the sa
         },
       };
     }
-    if (command === "save_team_ai_provider_cache") {
-      cachedTeamApiKey = payload.apiKey;
+    if (command === "finish_team_ai_provider_secret") {
+      assert.deepEqual(payload, { ticket: "issued-ticket", commit: true });
       return null;
     }
     if (command === "load_team_ai_settings") {
@@ -4855,13 +4786,13 @@ test("saveAiProviderSecret initializes shared team action preferences for the sa
         },
       };
     }
-    if (command === "load_ai_provider_secret") {
+    if (command === "load_ai_provider_secret_status") {
       assert.equal(payload.installationId, 42);
-      return cachedTeamApiKey;
+      return hasCachedTeamKey;
     }
-    if (command === "load_team_ai_provider_cache") {
+    if (command === "load_team_ai_provider_cache_status") {
       return {
-        apiKey: cachedTeamApiKey,
+        configured: hasCachedTeamKey,
         keyVersion: 4,
       };
     }
@@ -5005,8 +4936,8 @@ test("team metadata reconciliation persists the locally loaded action preference
         secrets: { providers: {} },
       };
     }
-    if (command === "load_team_ai_provider_cache") {
-      return { apiKey: null, keyVersion: null };
+    if (command === "load_team_ai_provider_cache_status") {
+      return { configured: false, keyVersion: null };
     }
 
     throw new Error(`Unexpected command: ${command}`);
@@ -5069,10 +5000,10 @@ test("team metadata reconciliation skips key issuance when versions match and ig
         secrets: createTeamAiSecrets("openai", 5),
       };
     }
-    if (command === "load_team_ai_provider_cache") {
+    if (command === "load_team_ai_provider_cache_status") {
       return payload.providerId === "openai"
-        ? { apiKey: "sk-current-team-key", keyVersion: 5 }
-        : { apiKey: null, keyVersion: null };
+        ? { configured: true, keyVersion: 5 }
+        : { configured: false, keyVersion: null };
     }
     if (command === "issue_team_ai_provider_secret") {
       issueCount += 1;
@@ -5101,11 +5032,6 @@ test("team metadata reconciliation skips key issuance when versions match and ig
 test("team metadata reconciliation fetches a key in the background when its version changes", async () => {
   resetSessionState();
   installSelectedTeam({ canDelete: false });
-  const memberKeypair = await generateTeamAiMemberKeypair();
-  const issuedWrappedKey = await encryptTeamAiPlaintext(
-    "sk-new-team-key",
-    memberKeypair.publicKeyPem,
-  );
   let issueCount = 0;
 
   invokeHandler = async (command, payload = {}) => {
@@ -5116,32 +5042,24 @@ test("team metadata reconciliation fetches a key in the background when its vers
         secrets: createTeamAiSecrets("openai", 6),
       };
     }
-    if (command === "load_ai_provider_secret") {
-      return null;
+    if (command === "load_ai_provider_secret_status") {
+      return false;
     }
-    if (command === "load_team_ai_provider_cache") {
+    if (command === "load_team_ai_provider_cache_status") {
       return payload.providerId === "openai"
-        ? { apiKey: "sk-old-team-key", keyVersion: 5 }
-        : { apiKey: null, keyVersion: null };
-    }
-    if (command === "load_team_ai_member_keypair") {
-      return memberKeypair;
+        ? { configured: true, keyVersion: 5 }
+        : { configured: false, keyVersion: null };
     }
     if (command === "issue_team_ai_provider_secret") {
       issueCount += 1;
       return {
         providerId: "openai",
         keyVersion: 6,
-        wrappedKey: issuedWrappedKey,
+        ticket: "issued-ticket",
       };
     }
-    if (command === "save_team_ai_provider_cache") {
-      assert.deepEqual(payload, {
-        installationId: 42,
-        providerId: "openai",
-        apiKey: "sk-new-team-key",
-        keyVersion: 6,
-      });
+    if (command === "finish_team_ai_provider_secret") {
+      assert.deepEqual(payload, { ticket: "issued-ticket", commit: true });
       return null;
     }
     throw new Error(`Unexpected command: ${command}`);
@@ -5540,8 +5458,8 @@ test("AI settings shows local data during remote refresh and preserves a newer m
   invokeHandler = async (command, payload = {}) => {
     if (command === "load_team_ai_settings") return broker.promise;
     if (command === "load_team_ai_secrets_metadata") return secrets;
-    if (command === "load_ai_provider_secret") return payload.providerId === "openai" ? "sk-local" : null;
-    if (command === "load_team_ai_provider_cache") return { apiKey: "sk-local", keyVersion: 5 };
+    if (command === "load_ai_provider_secret_status") return Boolean(payload.providerId === "openai" ? "sk-local" : null);
+    if (command === "load_team_ai_provider_cache_status") return { configured: true, keyVersion: 5 };
     if (command === "list_ai_provider_models") {
       modelsStarted.resolve();
       return models.promise;
@@ -5586,8 +5504,8 @@ test("AI settings seeds disk metadata and starts model discovery before the brok
   invokeHandler = async (command, payload = {}) => {
     if (command === "load_team_ai_settings") return broker.promise;
     if (command === "load_team_ai_secrets_metadata") return secrets;
-    if (command === "load_ai_provider_secret") return payload.providerId === "openai" ? "sk-local" : null;
-    if (command === "load_team_ai_provider_cache") return { apiKey: "sk-local", keyVersion: 5 };
+    if (command === "load_ai_provider_secret_status") return Boolean(payload.providerId === "openai" ? "sk-local" : null);
+    if (command === "load_team_ai_provider_cache_status") return { configured: true, keyVersion: 5 };
     if (command === "list_ai_provider_models") {
       modelsStarted.resolve();
       return models.promise;
@@ -5609,8 +5527,8 @@ test("AI settings keeps cached models usable when background refresh fails", asy
   installCachedAiSettingsPage();
   const cachedOptions = cloneValue(state.aiSettings.actionConfig.modelOptionsByProvider.openai.options);
   invokeHandler = async (command, payload = {}) => {
-    if (command === "load_ai_provider_secret") return payload.providerId === "openai" ? "sk-local" : null;
-    if (command === "load_team_ai_provider_cache") return { apiKey: "sk-local", keyVersion: 5 };
+    if (command === "load_ai_provider_secret_status") return Boolean(payload.providerId === "openai" ? "sk-local" : null);
+    if (command === "load_team_ai_provider_cache_status") return { configured: true, keyVersion: 5 };
     throw new Error("Network request failed");
   };
   await loadAiSettingsPage(() => {});
@@ -5641,7 +5559,7 @@ test("AI settings releases an interrupted discovery so returning can retry", asy
   const models = createDeferred();
   const started = createDeferred();
   invokeHandler = async (command, payload = {}) => {
-    if (command === "load_ai_provider_secret") return payload.providerId === "openai" ? "sk-local" : null;
+    if (command === "load_ai_provider_secret_status") return Boolean(payload.providerId === "openai" ? "sk-local" : null);
     if (command === "list_ai_provider_models") {
       started.resolve();
       return models.promise;
@@ -5754,13 +5672,13 @@ test("loadAiSettingsPage refreshes a stale ready team state", async () => {
         },
       };
     }
-    if (command === "load_ai_provider_secret") {
+    if (command === "load_ai_provider_secret_status") {
       assert.equal(payload.installationId, 42);
-      return null;
+      return false;
     }
-    if (command === "load_team_ai_provider_cache") {
+    if (command === "load_team_ai_provider_cache_status") {
       return {
-        apiKey: "sk-shared-openai",
+        configured: true,
         keyVersion: 5,
       };
     }
@@ -5802,12 +5720,12 @@ test("loadAiProviderSecret ignores stale responses after switching teams", async
 
   const teamOneSecret = createDeferred();
   invokeHandler = async (command, payload = {}) => {
-    if (command === "load_ai_provider_secret") {
+    if (command === "load_ai_provider_secret_status") {
       if (payload.installationId === 42) {
         return teamOneSecret.promise;
       }
       if (payload.installationId === 84) {
-        return "team-2-secret";
+        return true;
       }
     }
 
@@ -5874,13 +5792,13 @@ test("runEditorAiReview loads shared team action preferences before choosing the
         },
       };
     }
-    if (command === "load_ai_provider_secret") {
+    if (command === "load_ai_provider_secret_status") {
       assert.equal(payload.installationId, 42);
-      return null;
+      return false;
     }
-    if (command === "load_team_ai_provider_cache") {
+    if (command === "load_team_ai_provider_cache_status") {
       return {
-        apiKey: "sk-shared-openai",
+        configured: true,
         keyVersion: 5,
       };
     }
@@ -5948,11 +5866,11 @@ test("runEditorAiTranslate does not refresh team metadata before an ordinary act
     if (command === "run_ai_translation") {
       throw new Error("run_ai_translation should not be called");
     }
-    if (command === "load_ai_provider_secret") {
-      return null;
+    if (command === "load_ai_provider_secret_status") {
+      return false;
     }
-    if (command === "load_team_ai_provider_cache") {
-      return { apiKey: null, keyVersion: null };
+    if (command === "load_team_ai_provider_cache_status") {
+      return { configured: false, keyVersion: null };
     }
 
     throw new Error(`Unexpected command: ${command}`);
@@ -5983,8 +5901,8 @@ test("AI Settings shows the about modal by default and can persist dismissal", a
   state.screen = "aiKey";
 
   invokeHandler = async (command) => {
-    if (command === "load_ai_provider_secret") {
-      return null;
+    if (command === "load_ai_provider_secret_status") {
+      return false;
     }
 
     throw new Error(`Unexpected command: ${command}`);

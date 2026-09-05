@@ -1,3 +1,4 @@
+import { renderCredentialStorageStatus } from "./credential-storage.js";
 import caduceusLogoSvgSource from "../assets/brand/gnosisvn-caduceus-logo.svg?raw";
 import { primaryButton } from "../lib/ui.js";
 
@@ -32,6 +33,7 @@ export function renderStartScreen(state) {
                 </div>
                 ${renderStartHeroLogo()}
               </div>
+              ${renderCredentialStorageStatus(state.credentialStorage)}
               ${offlineAction}
             </div>
           </article>
@@ -68,6 +70,7 @@ export function renderStartScreen(state) {
   return `
     <main class="screen screen--start">
       <div class="start-stack">
+        ${renderCredentialStorageStatus(state.credentialStorage)}
         ${statusMarkup}
         <article class="card card--hero">
           <div class="card__body">

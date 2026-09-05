@@ -1,7 +1,8 @@
+import { state } from "./state.js";
 import { invoke } from "./runtime.js";
 
 export async function loadStoredAuthSession() {
-  if (!invoke) {
+  if (!invoke || state.credentialStorage?.mode === "locked") {
     return null;
   }
 
@@ -17,12 +18,13 @@ export async function loadStoredAuthSession() {
       name: session.name ?? null,
       avatarUrl: session.avatarUrl ?? null,
     };
-  } catch {
+  } catch (error) {
+    state.credentialStorage = { mode: "locked", message: error?.message ?? String(error) };
     return null;
   }
 }
 
-export async function saveStoredAuthSession(session) {
+export async function saveStoredAuthSession(session, expectedSessionToken = null) {
   if (!invoke) {
     return;
   }
@@ -33,9 +35,10 @@ export async function saveStoredAuthSession(session) {
       return;
     }
 
-    await invoke("save_broker_auth_session", { session });
-  } catch {
-    // Ignore native storage failures and continue in memory.
+    await invoke("save_broker_auth_session", { session, expectedSessionToken });
+  } catch (error) {
+    state.credentialStorage = { mode: "locked", message: error?.message ?? String(error) };
+    throw error;
   }
 }
 
@@ -46,7 +49,8 @@ export async function clearStoredAuthSession() {
 
   try {
     await invoke("clear_broker_auth_session");
-  } catch {
-    // Ignore native storage failures and continue in memory.
+  } catch (error) {
+    state.credentialStorage = { mode: "locked", message: error?.message ?? String(error) };
+    throw error;
   }
 }

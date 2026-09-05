@@ -56,3 +56,15 @@ descriptive, not directive.
 - Primary sources:
   - `src-tauri/src/project_import/chapter_editor/shared.rs`
   - `src-tauri/src/project_search/schema.rs`
+
+## F-VIII. Explicit Threat Model Scope
+
+- Product decision revised by Hans on 2026-09-05; prior decision retained in F-VIII.
+- Canonical implementation:
+  - `src-tauri/src/credential_vault.rs`
+  - `src-tauri/src/ai_secret_storage.rs`
+  - `src-tauri/src/broker_auth_storage.rs`
+  - `src-tauri/src/team_ai.rs`
+  - `src-tauri/src/team_ai_crypto.rs`
+- Verification and outstanding packaged-platform checks:
+  `plans/ai-credentials-at-rest-plan.md`.

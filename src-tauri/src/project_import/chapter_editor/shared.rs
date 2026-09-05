@@ -47,13 +47,35 @@ pub(in crate::project_import) fn write_row_files_and_commit(
     metadata: CommitMetadata<'_>,
     writes: &[PreparedRowFileWrite],
 ) -> Result<String, String> {
+    write_row_files_and_commit_with(
+        repo_path,
+        writes,
+        || crate::git_commit::ensure_local_commit_preconditions(app, repo_path),
+        |paths| {
+            git_commit_as_signed_in_user_with_metadata(
+                app,
+                repo_path,
+                commit_message,
+                paths,
+                metadata,
+            )
+        },
+    )
+}
+
+fn write_row_files_and_commit_with(
+    repo_path: &Path,
+    writes: &[PreparedRowFileWrite],
+    preconditions: impl FnOnce() -> Result<(), String>,
+    commit: impl FnOnce(&[&str]) -> Result<String, String>,
+) -> Result<String, String> {
     // Serialize the index-mutating `git add`/commit below against the background
     // reconcile and editor-driven syncs, which hold this same per-repo lock. Without
     // it a content save racing a sync collides on `.git/index.lock`.
     let repo_lock = crate::repo_sync_shared::repo_sync_lock(repo_path);
     let _repo_lock_guard = crate::repo_sync_shared::acquire_repo_sync_lock(&repo_lock);
 
-    crate::git_commit::ensure_local_commit_preconditions(app, repo_path)?;
+    preconditions()?;
 
     let mut written_count = 0usize;
     let mut failure = None;
@@ -73,15 +95,7 @@ pub(in crate::project_import) fn write_row_files_and_commit(
             .collect::<Vec<_>>();
         let mut add_args = vec!["add"];
         add_args.extend(relative_paths.iter().copied());
-        let result = git_output(repo_path, &add_args).and_then(|_| {
-            git_commit_as_signed_in_user_with_metadata(
-                app,
-                repo_path,
-                commit_message,
-                &relative_paths,
-                metadata,
-            )
-        });
+        let result = git_output(repo_path, &add_args).and_then(|_| commit(&relative_paths));
         match result {
             Ok(output) => commit_output = output,
             Err(error) => failure = Some(error),
@@ -1024,6 +1038,124 @@ pub(in crate::project_import) fn chapter_linked_glossaries_object_mut(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn row_write_and_commit_use_cached_author_with_locked_or_session_only_credentials() {
+        let root =
+            std::env::temp_dir().join(format!("gnosis-offline-author-{}", uuid::Uuid::now_v7()));
+        fs::create_dir_all(&root).unwrap();
+        let snapshot = root.join("credentials.hold");
+        crate::credential_vault::test_locked_session(
+            &snapshot,
+            &crate::broker_auth::BrokerSession {
+                session_token: "synthetic-unavailable-token".into(),
+                login: "Offline-Author".into(),
+                name: Some("Offline Author".into()),
+                avatar_url: None,
+            },
+        );
+        let repo = root.join("installation-42/project");
+        fs::create_dir_all(repo.join("chapters/chapter-1/rows")).unwrap();
+        git_output(&repo, &["init"]).unwrap();
+        let relative = "chapters/chapter-1/rows/row-1.json";
+        let row_path = repo.join(relative);
+        let mut original_text = None;
+        for (index, session_only) in [false, true].into_iter().enumerate() {
+            if session_only {
+                crate::credential_vault::test_select_session_only(&snapshot);
+                assert!(crate::credential_vault::read(
+                    &snapshot,
+                    crate::credential_vault::SESSION_KEY
+                )
+                .unwrap()
+                .is_none());
+            } else {
+                assert!(crate::credential_vault::read(
+                    &snapshot,
+                    crate::credential_vault::SESSION_KEY
+                )
+                .is_err());
+            }
+            let updated_text = format!(
+                r#"{{"row_id":"row-1","fields":{{"es":{{"plain_text":"Translation {index}"}}}}}}"#
+            );
+            let writes = [PreparedRowFileWrite {
+                path: row_path.clone(),
+                relative_path: relative.into(),
+                original_text: original_text.clone(),
+                updated_text: updated_text.clone(),
+            }];
+            let author = || {
+                crate::credential_vault::read_local_author(&snapshot)?
+                    .ok_or_else(|| "Missing offline author".to_string())
+            };
+            let checked = std::cell::Cell::new(false);
+            write_row_files_and_commit_with(
+                &repo,
+                &writes,
+                || {
+                    // The installation gate is supplied at the AppHandle boundary;
+                    // model a valid cached permission without a network request.
+                    checked.set(true);
+                    author().map(|_| ())
+                },
+                |paths| {
+                    assert!(checked.get());
+                    crate::git_commit::commit_with_author(
+                        &repo,
+                        "Save offline translation",
+                        paths,
+                        CommitMetadata {
+                            operation: Some("edit-row"),
+                            migration: None,
+                            status_note: None,
+                            ai_model: None,
+                        },
+                        &author()?,
+                    )
+                },
+            )
+            .unwrap();
+            assert_eq!(fs::read_to_string(&row_path).unwrap(), updated_text);
+            assert_eq!(
+                git_output(&repo, &["show", &format!("HEAD:{relative}")])
+                    .unwrap()
+                    .trim(),
+                updated_text
+            );
+            assert_eq!(
+                git_output(&repo, &["log", "-1", "--format=%an <%ae>"])
+                    .unwrap()
+                    .trim(),
+                "offline-author <offline-author@users.noreply.github.com>"
+            );
+            assert!(git_output(&repo, &["status", "--porcelain"])
+                .unwrap()
+                .trim()
+                .is_empty());
+            original_text = Some(updated_text);
+        }
+        let before = fs::read_to_string(&row_path).unwrap();
+        let writes = [PreparedRowFileWrite {
+            path: row_path.clone(),
+            relative_path: relative.into(),
+            original_text: Some(before.clone()),
+            updated_text: "must not be saved".into(),
+        }];
+        assert!(write_row_files_and_commit_with(
+            &repo,
+            &writes,
+            || Err("Repository is read-only".into()),
+            |_| panic!("Denied writes must not reach the commit")
+        )
+        .is_err());
+        assert_eq!(fs::read_to_string(&row_path).unwrap(), before);
+        assert!(git_output(&repo, &["status", "--porcelain"])
+            .unwrap()
+            .trim()
+            .is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn normalize_chapter_settings_drops_legacy_shapes() {

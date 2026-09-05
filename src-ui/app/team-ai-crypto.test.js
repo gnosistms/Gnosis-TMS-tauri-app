@@ -5,7 +5,7 @@ import {
   decryptTeamAiWrappedKey,
   encryptTeamAiPlaintext,
   generateTeamAiMemberKeypair,
-} from "./team-ai-crypto.js";
+} from "../test/team-ai-webcrypto.js";
 
 test("team AI wrap decrypt re-wrap round trip preserves the provider key", async () => {
   const brokerKeypair = await generateTeamAiMemberKeypair();

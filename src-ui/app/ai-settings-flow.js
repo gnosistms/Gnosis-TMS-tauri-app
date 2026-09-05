@@ -1,3 +1,4 @@
+import { refreshCredentialStorage } from "./credential-storage-flow.js";
 import { invoke } from "./runtime.js";
 import { selectedProjectsTeamInstallationId } from "./project-context.js";
 import { clearNoticeBadge, getNoticeBadgeText, showNoticeBadge } from "./status-feedback.js";
@@ -758,11 +759,11 @@ export async function refreshAiSavedProviders(render, options = {}) {
       : (
         await Promise.all(
           AI_PROVIDER_IDS.map(async (providerId) => {
-            const apiKey = await invoke("load_ai_provider_secret", {
+            const apiKey = await invoke("load_ai_provider_secret_status", {
               providerId,
               ...maybeInstallationPayload(),
             });
-            return typeof apiKey === "string" && apiKey.trim() ? providerId : null;
+            return apiKey === true ? providerId : null;
           }),
         )
       ).filter(Boolean);
@@ -825,6 +826,7 @@ export async function ensureSharedAiActionConfigurationLoaded(render) {
 }
 
 export async function loadAiSettingsPage(render, options = {}) {
+  void refreshCredentialStorage(render);
   const scope = captureAiSettingsScope();
   const requestId = ++settingsPageRequestId;
   const requestIsCurrent = () => requestId === settingsPageRequestId && isAiSettingsScopeCurrent(scope);
@@ -958,7 +960,7 @@ export async function loadAiProviderSecret(render, options = {}) {
   render?.();
 
   try {
-    const apiKey = await invoke("load_ai_provider_secret", {
+    const apiKey = await invoke("load_ai_provider_secret_status", {
       providerId,
       ...maybeInstallationPayload(),
     });
@@ -978,7 +980,7 @@ export async function loadAiProviderSecret(render, options = {}) {
         : "",
       apiKeyIsSaved: preserveDraft || providerSecretDraftRevision !== draftRevision
         ? state.aiSettings.apiKeyIsSaved
-        : typeof apiKey === "string" && Boolean(apiKey.trim()),
+        : apiKey === true,
       hasLoaded: true,
     };
   } catch (error) {

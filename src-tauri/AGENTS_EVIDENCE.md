@@ -21,6 +21,13 @@ directive.
 - Canonical files:
   - `src-tauri/src/store.rs`
   - `src-tauri/src/project_search/schema.rs`
+  - `src-tauri/src/credential_vault.rs` (2026-09-05: verified migration, OS-key
+    adapter, session-only fallback, atomic writes and exclusive snapshot lock)
+  - `src-tauri/src/ai_secret_storage.rs`
+  - `src-tauri/src/broker_auth_storage.rs`
+  - `src-tauri/src/local_author.rs` (public attribution bound to the encrypted
+    snapshot; local commits and comments do not require a token or OS unlock)
+  - `src-tauri/src/team_ai.rs` (native issuance and delayed-write guards)
 
 ## Metadata Lifecycle
 

@@ -1,97 +1,136 @@
-use std::{
-    fs,
-    path::{Path, PathBuf},
+use crate::{
+    ai_secret_storage::with_snapshot_write_lock, broker_auth::BrokerSession, credential_vault,
 };
+use tauri::AppHandle;
+use zeroize::Zeroizing;
 
-use tauri::{AppHandle, Manager};
-
-use crate::broker_auth::BrokerSession;
-
-const BROKER_AUTH_SESSION_FILE: &str = "broker-auth-session.json";
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-fn auth_session_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|error| format!("Could not resolve the app data directory: {error}"))?;
-
-    Ok(app_data_dir.join(BROKER_AUTH_SESSION_FILE))
-}
-
-/// Atomically write `contents` to `path` via a sibling `.tmp` file.
-fn atomic_write(path: &Path, contents: &str) -> Result<(), String> {
-    let tmp_path = path.with_extension("json.tmp");
-    fs::write(&tmp_path, contents).map_err(|e| format!("Could not write broker session: {e}"))?;
-    crate::util::atomic_replace(&tmp_path, path)
-        .map_err(|e| format!("Could not save broker session: {e}"))?;
-    Ok(())
-}
-
-fn write_session_json(session_path: &Path, session: &BrokerSession) -> Result<(), String> {
-    let contents = serde_json::to_string(session)
-        .map_err(|e| format!("Could not encode the broker session: {e}"))?;
-    atomic_write(session_path, &contents)
-}
-
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
-fn load_broker_auth_session_from_disk(app: &AppHandle) -> Result<Option<BrokerSession>, String> {
-    let session_path = auth_session_path(app)?;
-    if !session_path.exists() {
-        return Ok(None);
-    }
-
-    let contents = fs::read_to_string(&session_path)
-        .map_err(|e| format!("Could not read the saved broker session: {e}"))?;
-
-    let session = serde_json::from_str::<BrokerSession>(&contents)
-        .map_err(|e| format!("Could not parse the saved broker session: {e}"))?;
-
-    Ok(Some(session))
+pub(crate) fn load_local_author(
+    app: &AppHandle,
+) -> Result<Option<crate::local_author::LocalAuthor>, String> {
+    credential_vault::read_local_author(&credential_vault::app_path(app)?)
 }
 
 pub(crate) fn load_broker_auth_session_internal(
     app: &AppHandle,
 ) -> Result<Option<BrokerSession>, String> {
-    load_broker_auth_session_from_disk(app)
+    read_session(&credential_vault::app_path(app)?)
 }
-
-#[tauri::command]
-pub(crate) fn load_broker_auth_session(app: AppHandle) -> Result<Option<BrokerSession>, String> {
-    load_broker_auth_session_from_disk(&app)
+fn read_session(path: &std::path::Path) -> Result<Option<BrokerSession>, String> {
+    credential_vault::read(path, credential_vault::SESSION_KEY)?
+        .map(|raw| {
+            let raw = Zeroizing::new(raw);
+            serde_json::from_str(&raw)
+                .map_err(|_| "The saved broker login could not be decoded.".into())
+        })
+        .transpose()
 }
-
+fn save_session(
+    path: &std::path::Path,
+    session: &BrokerSession,
+    expected_session_token: Option<&str>,
+) -> Result<(), String> {
+    let previous = read_session(path)?;
+    if let Some(expected) = expected_session_token {
+        if previous.as_ref().map(|s| s.session_token.as_str()) != Some(expected) {
+            return Err(
+                "AUTH_REQUIRED:The signed-in account changed. Retry with the current account."
+                    .into(),
+            );
+        }
+    }
+    if session.session_token.trim().is_empty() || session.login.trim().is_empty() {
+        return Err("The broker login is incomplete.".into());
+    }
+    let changed_account = previous
+        .as_ref()
+        .is_some_and(|s| !s.login.eq_ignore_ascii_case(&session.login));
+    if previous.as_ref().map(|s| &s.session_token) != Some(&session.session_token) {
+        crate::team_ai::invalidate_session();
+    }
+    let raw = Zeroizing::new(
+        serde_json::to_string(&session).map_err(|_| "Could not encode broker login.")?,
+    );
+    credential_vault::replace_session(path, Some(&raw), changed_account)
+}
 #[tauri::command]
-pub(crate) fn save_broker_auth_session(
+pub(crate) async fn load_broker_auth_session(
+    app: AppHandle,
+) -> Result<Option<BrokerSession>, String> {
+    tauri::async_runtime::spawn_blocking(move || load_broker_auth_session_internal(&app))
+        .await
+        .map_err(|_| "Could not load the saved broker login.")?
+}
+#[tauri::command]
+pub(crate) async fn save_broker_auth_session(
     app: AppHandle,
     session: BrokerSession,
+    expected_session_token: Option<String>,
 ) -> Result<(), String> {
-    let session_path = auth_session_path(&app)?;
-    let session_dir = session_path
-        .parent()
-        .ok_or_else(|| "Could not resolve the broker session folder.".to_string())?;
-
-    fs::create_dir_all(session_dir)
-        .map_err(|e| format!("Could not create the broker session folder: {e}"))?;
-
-    write_session_json(&session_path, &session)?;
-
-    Ok(())
+    tauri::async_runtime::spawn_blocking(move || {
+        with_snapshot_write_lock(|| {
+            save_session(
+                &credential_vault::app_path(&app)?,
+                &session,
+                expected_session_token.as_deref(),
+            )
+        })
+    })
+    .await
+    .map_err(|_| "Could not save the broker login.")?
+}
+#[tauri::command]
+pub(crate) async fn clear_broker_auth_session(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        with_snapshot_write_lock(|| {
+            crate::team_ai::invalidate_session();
+            credential_vault::replace_session(&credential_vault::app_path(&app)?, None, true)
+        })
+    })
+    .await
+    .map_err(|_| "Could not clear the broker login.")?
 }
 
-#[tauri::command]
-pub(crate) fn clear_broker_auth_session(app: AppHandle) -> Result<(), String> {
-    let session_path = auth_session_path(&app)?;
-    if session_path.exists() {
-        fs::remove_file(&session_path)
-            .map_err(|e| format!("Could not remove the saved broker session: {e}"))?;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn account_change_and_logout_clear_team_secrets_and_reject_late_refreshes() {
+        let root = std::env::temp_dir().join(format!("gnosis-auth-test-{}", uuid::Uuid::now_v7()));
+        let path = root.join("test.hold");
+        credential_vault::test_path(&path);
+        let session = |token: &str, login: &str| BrokerSession {
+            session_token: token.into(),
+            login: login.into(),
+            name: None,
+            avatar_url: None,
+        };
+        with_snapshot_write_lock(|| {
+            save_session(&path, &session("first", "alice"), None)?;
+            credential_vault::update(
+                &path,
+                &[
+                    (
+                        "team-ai/42/openai/api-key".into(),
+                        Some("synthetic-team".into()),
+                    ),
+                    (
+                        "ai-provider/openai/api-key".into(),
+                        Some("synthetic-personal".into()),
+                    ),
+                ],
+            )?;
+            save_session(&path, &session("refreshed", "alice"), Some("first"))?;
+            assert!(credential_vault::read(&path, "team-ai/42/openai/api-key")?.is_some());
+            save_session(&path, &session("second", "bob"), None)?;
+            assert!(credential_vault::read(&path, "team-ai/42/openai/api-key")?.is_none());
+            assert!(credential_vault::read(&path, "ai-provider/openai/api-key")?.is_some());
+            assert!(save_session(&path, &session("late", "alice"), Some("refreshed")).is_err());
+            credential_vault::replace_session(&path, None, true)?;
+            assert!(save_session(&path, &session("late", "bob"), Some("second")).is_err());
+            assert!(read_session(&path)?.is_none());
+            Ok(())
+        })
+        .unwrap();
+        let _ = std::fs::remove_dir_all(root);
     }
-
-    Ok(())
 }

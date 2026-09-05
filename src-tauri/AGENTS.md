@@ -84,19 +84,42 @@ independent mechanisms — know which owns what before adding persistence:
 | Data | Mechanism | Owner |
 |---|---|---|
 | Resource metadata (project/glossary/QA lifecycle state) | Git repo files | `team_metadata_local/` |
-| Broker session (token + display fields) | Plain JSON file (`broker-auth-session.json`) | `broker_auth_storage.rs` |
+| Broker session (token + display fields) | OS-protected Stronghold vault, or explicit session-only memory | `broker_auth_storage.rs`, `credential_vault.rs` |
+| Public GitHub author (login + name, no token) | Snapshot-bound JSON cache, or session-only memory | `local_author.rs`, `credential_vault.rs` |
 | Installation write-access snapshots | Plain JSON file per installation | `installation_access.rs` |
-| AI provider secrets (API keys) | Stronghold encrypted store; deterministic SHA-256 key (accepted tradeoff — see F-VIII) | `ai_secret_storage.rs` |
+| AI provider secrets and team member keypairs | Stronghold under a random key protected by the OS credential store | `ai_secret_storage.rs`, `credential_vault.rs` |
 | Full-text search index | SQLite database (`project-search.sqlite3`) | `project_search/` |
 | Tauri plugin key-value store | JSON file store (`tauri-plugin-store`) | `store.rs` |
 
-**F-VIII — Accepted at-rest security tradeoff**: The broker session token and the
-Stronghold encryption key for AI provider secrets are stored in plain files accessible
-to any process running as the local user. A motivated attacker with filesystem access
-can read the session token and derive the Stronghold key. This is an explicit product
-decision — see [F-VIII in foundational-principles.md](../.vt/memory/foundational-principles.md).
-**Do not introduce OS keychain (`keyring`) integration to harden these storage paths.**
-The `keyring` crate is not a dependency of this crate.
+**F-VIII — Protected credential persistence**: Use `credential_vault.rs` for secrets.
+New snapshots use a random 256-bit key stored by `keyring` in the platform credential
+store. Deterministic derivation is allowed only to read the legacy snapshot during
+verified migration. Broker login JSON is also migrated. Keep credentials in Rust;
+never register an IPC command that returns stored API keys or member private keys.
+See [F-VIII](../.vt/memory/foundational-principles.md) for guarantees and limits.
+
+Production uses `credentials-v3.hold`; debug builds use a separate
+`credentials-development-v3.hold` and do not migrate production's legacy files.
+The OS entry is scoped by the full snapshot path. Debug builds therefore require
+separate login/key setup. Keep OS identifiers stable across upgrades.
+
+Snapshot updates are verified and published atomically; a lifetime file lock
+prevents concurrent processes overwriting cached records. Domain write/clear
+operations use `with_snapshot_write_lock` for session and issuance guards, but
+must release it before network calls. OS unlock and snapshot work run in blocking
+workers. Missing OS keys or cleanup failures must remain visible; explicit
+session-only fallback never modifies the old files. Sign-out clears the saved
+broker login and all cached team secrets, while preserving personal keys and
+unrelated credentials. Keep the OS vault key while its snapshot exists; deleting
+it alone would strand those records. There is no automatic whole-vault reset.
+
+Local Git attribution and editor comments use `load_local_author`, never a broker
+token read. The public author cache is scoped to the same development/production
+snapshot and bound to its ciphertext hash; a mismatched cache cannot restore an
+old account after an interrupted update or sign-out. Successful vault opens repair
+the projection. This identity does not authorize network access or bypass the
+installation write-access checks. Session-only fallback retains the unlocked
+records when available, disables persistence, and preserves the old disk snapshot.
 
 `store.rs` initializes `tauri-plugin-store` (a simple key-value JSON file store).
 It is **not** a SQLite database. `rusqlite` is used exclusively by `project_search/`

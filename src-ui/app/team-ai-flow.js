@@ -12,13 +12,6 @@ import {
   saveStoredTeamAiSnapshot,
 } from "./team-ai-storage.js";
 
-import {
-  decryptTeamAiWrappedKey,
-  encryptTeamAiPlaintext,
-  generateTeamAiMemberKeypair,
-} from "./team-ai-crypto.js";
-
-const brokerPublicKeyCache = new Map();
 const metadataRevisionReconciliations = new Map();
 const providerSecretIssuances = new Map();
 
@@ -119,7 +112,7 @@ function normalizeTeamAiSecretsMetadata(value) {
 
 function normalizeTeamAiProviderCache(value) {
   return {
-    apiKey: normalizeOptionalString(value?.apiKey),
+    configured: value?.configured === true,
     keyVersion: normalizePositiveInteger(value?.keyVersion),
   };
 }
@@ -174,11 +167,11 @@ async function loadLocalFallbackProviderIds(context) {
 
   const providerStatuses = await Promise.all(
     AI_PROVIDER_IDS.map(async (providerId) => {
-      const apiKey = await invoke("load_ai_provider_secret", {
+      const apiKey = await invoke("load_ai_provider_secret_status", {
         providerId,
         installationId: context.installationId,
       });
-      return typeof apiKey === "string" && apiKey.trim() ? providerId : null;
+      return apiKey === true ? providerId : null;
     }),
   );
   return providerStatuses.filter(Boolean);
@@ -225,29 +218,19 @@ function persistTeamAiSnapshotForContext(context, teamShared) {
   }, context.login);
 }
 
-function clearBrokerPublicKeyForContext(context) {
-  if (!context) {
-    return;
-  }
-
-  brokerPublicKeyCache.delete(`${context.sessionToken}:${context.installationId}`);
-}
-
 async function clearTeamAiLocalStateForContext(context) {
   if (!context) {
     return;
   }
 
   clearStoredTeamAiSnapshot(context.installationId, context.orgLogin, context.login);
-  clearBrokerPublicKeyForContext(context);
 
-  await Promise.allSettled(
-    AI_PROVIDER_IDS.map((providerId) =>
-      invoke("clear_team_ai_provider_cache", {
-        installationId: context.installationId,
-        providerId,
-      })),
-  );
+  const session = state.auth.session;
+  if (session?.login?.toLowerCase() !== context.login?.toLowerCase()) return;
+  await invoke("clear_team_ai_credentials", {
+    installationId: context.installationId,
+    sessionToken: session.sessionToken,
+  });
 }
 
 function buildReadyTeamAiState(current, context, overrides = {}) {
@@ -424,52 +407,13 @@ export async function loadSelectedTeamAiSavedProviderIds(render, options = {}) {
   return [...providerIds];
 }
 
-async function ensureBrokerPublicKey(context) {
-  const cacheKey = `${context.sessionToken}:${context.installationId}`;
-  if (brokerPublicKeyCache.has(cacheKey)) {
-    return brokerPublicKeyCache.get(cacheKey);
-  }
-
-  const payload = await invoke("load_team_ai_broker_public_key", {
-    sessionToken: context.sessionToken,
-  });
-  const normalizedPayload = {
-    algorithm: normalizeOptionalString(payload?.algorithm) ?? "",
-    publicKeyPem: normalizeOptionalString(payload?.publicKeyPem) ?? "",
-  };
-  brokerPublicKeyCache.set(cacheKey, normalizedPayload);
-  return normalizedPayload;
-}
-
-async function ensureTeamAiMemberKeypair(context) {
-  const existing = await invoke("load_team_ai_member_keypair", {
-    installationId: context.installationId,
-  });
-  if (
-    normalizeOptionalString(existing?.publicKeyPem)
-    && normalizeOptionalString(existing?.privateKeyPem)
-  ) {
-    return existing;
-  }
-
-  const generated = await generateTeamAiMemberKeypair();
-  await invoke("save_team_ai_member_keypair", {
-    installationId: context.installationId,
-    publicKeyPem: generated.publicKeyPem,
-    privateKeyPem: generated.privateKeyPem,
-  });
-  return generated;
-}
-
 async function issueAndCacheTeamAiProviderSecret(context, providerId, render) {
-  const memberKeypair = await ensureTeamAiMemberKeypair(context);
   let issuedSecret = null;
   try {
     issuedSecret = await invoke("issue_team_ai_provider_secret", {
       installationId: context.installationId,
       orgLogin: context.orgLogin,
       providerId,
-      memberPublicKeyPem: memberKeypair.publicKeyPem,
       sessionToken: context.sessionToken,
     });
   } catch (error) {
@@ -492,22 +436,14 @@ async function issueAndCacheTeamAiProviderSecret(context, providerId, render) {
     }
     throw error;
   }
-  const apiKey = await decryptTeamAiWrappedKey(
-    issuedSecret.wrappedKey,
-    memberKeypair.privateKeyPem,
-  );
-  if (!isTeamAiContextCurrent(context)) {
-    return {
-      ok: false,
-      reason: "stale",
-    };
-  }
-  await invoke("save_team_ai_provider_cache", {
-    installationId: context.installationId,
-    providerId,
-    apiKey,
-    keyVersion: issuedSecret.keyVersion,
+  const current = isTeamAiContextCurrent(context);
+  await invoke("finish_team_ai_provider_secret", {
+    ticket: issuedSecret.ticket,
+    commit: current,
   });
+  if (!current || !isTeamAiContextCurrent(context)) {
+    return { ok: false, reason: "stale" };
+  }
   return {
     ok: true,
     source: "broker-issue",
@@ -519,12 +455,12 @@ export async function ensureSelectedTeamAiProviderReady(render, providerId, opti
   const normalizedProviderId = normalizeAiProviderId(providerId);
   const context = selectedTeamAiContext();
 
-  const localApiKey = await invoke("load_ai_provider_secret", {
+  const localApiKey = await invoke("load_ai_provider_secret_status", {
     providerId: normalizedProviderId,
     ...localInstallationPayload(),
   });
   if (!context) {
-    return typeof localApiKey === "string" && localApiKey.trim()
+    return localApiKey === true
       ? { ok: true, source: "local" }
       : { ok: false, reason: "missing" };
   }
@@ -552,7 +488,7 @@ export async function ensureSelectedTeamAiProviderReady(render, providerId, opti
   const providerMetadata = normalizeTeamAiSecretsMetadata(teamShared?.secrets).providers[normalizedProviderId];
   if (providerMetadata?.configured) {
     const cachedProviderSecret = normalizeTeamAiProviderCache(
-      await invoke("load_team_ai_provider_cache", {
+      await invoke("load_team_ai_provider_cache_status", {
         installationId: context.installationId,
         providerId: normalizedProviderId,
       }),
@@ -562,7 +498,7 @@ export async function ensureSelectedTeamAiProviderReady(render, providerId, opti
     }
     if (
       options.forceProviderSecretRefresh !== true
-      && cachedProviderSecret.apiKey
+      && cachedProviderSecret.configured
     ) {
       return {
         ok: true,
@@ -590,7 +526,7 @@ export async function ensureSelectedTeamAiProviderReady(render, providerId, opti
     }
   }
 
-  if (context.isOwner && typeof localApiKey === "string" && localApiKey.trim()) {
+  if (context.isOwner && localApiKey === true) {
     return {
       ok: true,
       source: "local-fallback",
@@ -661,7 +597,7 @@ async function reconcileTeamAiMetadataRevision(context, headOid) {
   for (const providerId of providerIdsToReconcile) {
     const providerMetadata = secrets.providers[providerId];
     const cached = normalizeTeamAiProviderCache(
-      await invoke("load_team_ai_provider_cache", {
+      await invoke("load_team_ai_provider_cache_status", {
         installationId: context.installationId,
         providerId,
       }),
@@ -670,7 +606,7 @@ async function reconcileTeamAiMetadataRevision(context, headOid) {
       return false;
     }
     if (!providerMetadata?.configured) {
-      if (cached.apiKey || cached.keyVersion !== null) {
+      if (cached.configured || cached.keyVersion !== null) {
         try {
           await invoke("clear_team_ai_provider_cache", {
             installationId: context.installationId,
@@ -683,7 +619,7 @@ async function reconcileTeamAiMetadataRevision(context, headOid) {
       continue;
     }
     if (
-      cached.apiKey
+      cached.configured
       && cached.keyVersion === providerMetadata.keyVersion
     ) {
       continue;
@@ -769,7 +705,7 @@ export async function refreshSelectedTeamAiProviderAfterAuthenticationError(
 
   const refresh = (async () => {
     const rejectedCache = normalizeTeamAiProviderCache(
-      await invoke("load_team_ai_provider_cache", {
+      await invoke("load_team_ai_provider_cache_status", {
         installationId: context.installationId,
         providerId: normalizedProviderId,
       }),
@@ -822,49 +758,14 @@ export async function saveSelectedTeamAiProviderSecret(render, providerId, apiKe
   }
 
   const normalizedApiKey = typeof apiKey === "string" ? apiKey.trim() : "";
-  let secretsPayload = null;
-  if (!normalizedApiKey) {
-    secretsPayload = await invoke("save_team_ai_provider_secret", {
-      installationId: context.installationId,
-      orgLogin: context.orgLogin,
-      providerId: normalizedProviderId,
-      wrappedKey: null,
-      clear: true,
-      sessionToken: context.sessionToken,
-    });
-    await invoke("clear_team_ai_provider_cache", {
-      installationId: context.installationId,
-      providerId: normalizedProviderId,
-    });
-    await invoke("clear_ai_provider_secret", {
-      providerId: normalizedProviderId,
-      installationId: context.installationId,
-    });
-  } else {
-    const brokerPublicKey = await ensureBrokerPublicKey(context);
-    const wrappedKey = await encryptTeamAiPlaintext(
-      normalizedApiKey,
-      brokerPublicKey.publicKeyPem,
-    );
-    secretsPayload = await invoke("save_team_ai_provider_secret", {
-      installationId: context.installationId,
-      orgLogin: context.orgLogin,
-      providerId: normalizedProviderId,
-      wrappedKey,
-      clear: false,
-      sessionToken: context.sessionToken,
-    });
-    const normalizedSecrets = normalizeTeamAiSecretsMetadata(secretsPayload);
-    const keyVersion = normalizedSecrets.providers[normalizedProviderId]?.keyVersion ?? null;
-    if (keyVersion !== null) {
-      await invoke("save_team_ai_provider_cache", {
-        installationId: context.installationId,
-        providerId: normalizedProviderId,
-        apiKey: normalizedApiKey,
-        keyVersion,
-      });
-    }
-  }
+  const secretsPayload = await invoke("save_team_ai_provider_secret", {
+    installationId: context.installationId,
+    orgLogin: context.orgLogin,
+    providerId: normalizedProviderId,
+    apiKey: normalizedApiKey || null,
+    clear: !normalizedApiKey,
+    sessionToken: context.sessionToken,
+  });
 
   const nextTeamShared = {
     ...buildReadyTeamAiState(currentTeamAiSharedState(), context, {

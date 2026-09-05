@@ -281,7 +281,7 @@ function seedDeriveRunEnvironment() {
   // No team selected: the shared AI configuration load is skipped and the
   // provider-key check takes the local-secret path.
   invokeHandler = async (command) =>
-    command === "load_ai_provider_secret" ? "sk-test" : null;
+    command === "load_ai_provider_secret_status";
   state.aiSettings = {
     ...state.aiSettings,
     actionConfig: {

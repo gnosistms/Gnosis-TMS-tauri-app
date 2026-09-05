@@ -224,7 +224,12 @@ export async function handleNavigation(navTarget, render) {
     }
 
     if (navTarget === "start") {
-      void clearStoredAuthSession();
+      try {
+        await clearStoredAuthSession();
+      } catch (error) {
+        showNoticeBadge(`Could not sign out: ${error?.message ?? String(error)}`, render);
+        return;
+      }
       resetSessionState();
     } else {
       resetPageSync();

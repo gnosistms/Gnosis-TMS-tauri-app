@@ -157,6 +157,9 @@ export const invoke = rawInvoke
           ) {
             throw error;
           }
+          if (refreshFailure && state.credentialStorage?.mode === "locked") {
+            throw refreshFailure;
+          }
           throw new Error("AUTH_REQUIRED:Your GitHub session expired. Please log in with GitHub again to continue.");
         }
 
@@ -409,22 +412,25 @@ async function refreshBrokerSession(sessionToken) {
       throw new Error("GitHub session refresh failed.");
     }
 
-    if (
-      !state.auth.session
-      || state.auth.session.sessionToken === sessionToken
-    ) {
-      state.auth = {
-        ...state.auth,
-        session: refreshedSession,
-      };
+    // A late refresh must not restore a session after sign-out or an account change.
+    if (state.auth.session?.sessionToken !== sessionToken) {
+      throw new Error("AUTH_REQUIRED:Your GitHub session changed. Please retry.");
     }
-
     try {
-      await rawInvoke("save_broker_auth_session", { session: refreshedSession });
-    } catch {
-      // Ignore local persistence failures and continue with the refreshed in-memory session.
+      await rawInvoke("save_broker_auth_session", {
+        session: refreshedSession,
+        expectedSessionToken: sessionToken,
+      });
+    } catch (error) {
+      if (classifySyncError(error).type !== "auth_invalid") {
+        state.credentialStorage = { mode: "locked", message: error?.message ?? String(error) };
+      }
+      throw error;
     }
-
+    if (state.auth.session?.sessionToken !== sessionToken) {
+      throw new Error("AUTH_REQUIRED:Your GitHub session changed. Please retry.");
+    }
+    state.auth = { ...state.auth, session: refreshedSession };
     return refreshedSession;
   })();
 

@@ -125,7 +125,7 @@ test("removing a masked AI key clears storage without submitting a placeholder",
   state.aiSettings.apiKeyIsSaved = true;
   state.aiSettings.apiKey = "";
   invokeHandler = async (command) => {
-    if (command === "clear_ai_provider_secret" || command === "load_ai_provider_secret") return null;
+    if (command === "clear_ai_provider_secret" || command === "load_ai_provider_secret_status") return null;
     throw new Error(`Unexpected command: ${command}`);
   };
   const dispatch = createActionDispatcher(() => {});

@@ -6,12 +6,9 @@ use tauri::AppHandle;
 use crate::{
     ai::types::AiProviderId,
     ai_secret_storage::{
-        clear_team_ai_cached_provider_secret as clear_team_ai_cached_provider_secret_value,
+        self, clear_team_ai_cached_provider_secret as clear_team_ai_cached_provider_secret_value,
         load_team_ai_cached_provider_secret as load_team_ai_cached_provider_secret_value,
-        load_team_ai_member_keypair as load_team_ai_member_keypair_value,
-        save_team_ai_cached_provider_secret as save_team_ai_cached_provider_secret_value,
-        save_team_ai_member_keypair as save_team_ai_member_keypair_value,
-        TeamAiCachedProviderSecret, TeamAiMemberKeypair,
+        stronghold_snapshot_path, with_snapshot_write_lock,
     },
     broker::{
         broker_client, broker_get_json_with_session, broker_post_json_with_session,
@@ -171,18 +168,6 @@ fn issue_team_ai_provider_secret_with_client(
 }
 
 #[tauri::command]
-pub(crate) async fn load_team_ai_broker_public_key(
-    session_token: String,
-) -> Result<TeamAiBrokerPublicKey, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let client = broker_client()?;
-        load_team_ai_broker_public_key_with_client(&client, &session_token)
-    })
-    .await
-    .map_err(|error| format!("Could not run the team AI broker public key task: {error}"))?
-}
-
-#[tauri::command]
 pub(crate) async fn load_team_ai_settings(
     installation_id: i64,
     org_login: String,
@@ -244,25 +229,149 @@ pub(crate) async fn save_team_ai_provider_secret(
     installation_id: i64,
     org_login: String,
     provider_id: AiProviderId,
-    wrapped_key: Option<TeamAiWrappedKeyRecord>,
+    api_key: Option<String>,
     clear: bool,
     session_token: String,
 ) -> Result<TeamAiSecretsMetadata, String> {
     tauri::async_runtime::spawn_blocking(move || {
         ensure_installation_allows_team_management(&app, installation_id)?;
+        let path = stronghold_snapshot_path(&app)?;
+        let lease = with_snapshot_write_lock(|| {
+            require_current_session(&app, &session_token)?;
+            invalidate_provider(&path, Some(installation_id), provider_id);
+            Ok(current_generation(&path, installation_id, provider_id))
+        })?;
         let client = broker_client()?;
-        save_team_ai_provider_secret_with_client(
+        let api_key = zeroize::Zeroizing::new(api_key.unwrap_or_default());
+        let wrapped = if clear {
+            None
+        } else {
+            if api_key.trim().is_empty() {
+                return Err("Enter an AI provider key before saving.".into());
+            }
+            let public = load_team_ai_broker_public_key_with_client(&client, &session_token)?;
+            if public.algorithm != crate::team_ai_crypto::ALGORITHM {
+                return Err("The broker AI encryption algorithm is unsupported.".into());
+            }
+            Some(crate::team_ai_crypto::encrypt(
+                &api_key,
+                &public.public_key_pem,
+            )?)
+        };
+        let metadata = save_team_ai_provider_secret_with_client(
             &client,
             installation_id,
             &org_login,
             provider_id,
-            wrapped_key,
+            wrapped,
             clear,
             &session_token,
-        )
+        )?;
+        with_snapshot_write_lock(|| {
+            require_current_session(&app, &session_token)?;
+            if current_generation(&path, installation_id, provider_id) != lease {
+                return Err(
+                    "AI key settings changed while this request was running. Reload AI Settings."
+                        .into(),
+                );
+            }
+            let version = metadata
+                .providers
+                .get(provider_id.as_str())
+                .and_then(|p| p.as_ref())
+                .map(|p| p.key_version)
+                .unwrap_or(0);
+            ai_secret_storage::save_team_ai_cached_provider_secret_at_path(
+                &path,
+                installation_id,
+                provider_id,
+                &api_key,
+                version,
+            )
+        })?;
+        Ok(metadata)
     })
     .await
-    .map_err(|error| format!("Could not run the team AI provider secret save task: {error}"))?
+    .map_err(|_| "Could not complete the shared AI key save.")?
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PendingSecretResult {
+    ticket: String,
+    key_version: i64,
+}
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProviderCacheStatus {
+    configured: bool,
+    key_version: Option<i64>,
+}
+struct PendingSecret {
+    path: std::path::PathBuf,
+    installation_id: i64,
+    provider_id: AiProviderId,
+    session: zeroize::Zeroizing<String>,
+    secret: zeroize::Zeroizing<String>,
+    version: i64,
+    generation: (u64, u64),
+    created: std::time::Instant,
+}
+#[derive(Default)]
+struct Issuances {
+    epoch: u64,
+    revisions: BTreeMap<(std::path::PathBuf, i64, String), u64>,
+    pending: BTreeMap<String, PendingSecret>,
+}
+fn issuances() -> &'static std::sync::Mutex<Issuances> {
+    static STATE: std::sync::OnceLock<std::sync::Mutex<Issuances>> = std::sync::OnceLock::new();
+    STATE.get_or_init(|| std::sync::Mutex::new(Issuances::default()))
+}
+pub(crate) fn invalidate_session() {
+    let mut state = issuances().lock().unwrap_or_else(|p| p.into_inner());
+    state.epoch = state.epoch.wrapping_add(1);
+    state.pending.clear();
+}
+pub(crate) fn invalidate_provider(
+    path: &std::path::Path,
+    installation: Option<i64>,
+    provider: AiProviderId,
+) {
+    let Some(installation) = installation else {
+        return;
+    };
+    let mut state = issuances().lock().unwrap_or_else(|p| p.into_inner());
+    let revision = state
+        .revisions
+        .entry((path.to_path_buf(), installation, provider.as_str().into()))
+        .or_default();
+    *revision = revision.wrapping_add(1);
+    state.pending.retain(|_, p| {
+        p.path != path || p.installation_id != installation || p.provider_id != provider
+    });
+}
+fn current_generation(
+    path: &std::path::Path,
+    installation: i64,
+    provider: AiProviderId,
+) -> (u64, u64) {
+    let state = issuances().lock().unwrap_or_else(|p| p.into_inner());
+    (
+        state.epoch,
+        *state
+            .revisions
+            .get(&(path.to_path_buf(), installation, provider.as_str().into()))
+            .unwrap_or(&0),
+    )
+}
+fn require_current_session(app: &AppHandle, session: &str) -> Result<(), String> {
+    if crate::broker_auth_storage::load_broker_auth_session_internal(app)?
+        .is_some_and(|current| current.session_token == session)
+    {
+        Ok(())
+    } else {
+        Err("AUTH_REQUIRED:The signed-in account changed. Retry with the current account.".into())
+    }
 }
 
 #[tauri::command]
@@ -271,87 +380,174 @@ pub(crate) async fn issue_team_ai_provider_secret(
     installation_id: i64,
     org_login: String,
     provider_id: AiProviderId,
-    member_public_key_pem: String,
     session_token: String,
-) -> Result<TeamAiIssuedProviderSecret, String> {
+) -> Result<PendingSecretResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
         ensure_installation_allows_team_ai_access(&app, installation_id)?;
+        let path = stronghold_snapshot_path(&app)?;
+        // Generate outside the write lock; select the stored pair inside it.
+        let existing = ai_secret_storage::load_team_ai_member_keypair(&app, installation_id)?;
+        let candidate = match existing {
+            Some(pair) => pair,
+            None => crate::team_ai_crypto::generate()?,
+        };
+        let (pair, generation) = with_snapshot_write_lock(|| {
+            require_current_session(&app, &session_token)?;
+            let pair = match ai_secret_storage::load_team_ai_member_keypair_at_path(
+                &path,
+                installation_id,
+            )? {
+                Some(pair) => pair,
+                None => {
+                    ai_secret_storage::save_team_ai_member_keypair_at_path(
+                        &path,
+                        installation_id,
+                        &candidate.public_key_pem,
+                        &candidate.private_key_pem,
+                    )?;
+                    candidate
+                }
+            };
+            Ok((
+                pair,
+                current_generation(&path, installation_id, provider_id),
+            ))
+        })?;
         let client = broker_client()?;
-        issue_team_ai_provider_secret_with_client(
+        let issued = issue_team_ai_provider_secret_with_client(
             &client,
             installation_id,
             &org_login,
             provider_id,
-            &member_public_key_pem,
+            &pair.public_key_pem,
             &session_token,
-        )
+        )?;
+        if issued.key_version <= 0 || issued.provider_id != provider_id.as_str() {
+            return Err("The broker returned an invalid team AI key response.".into());
+        }
+        let secret = crate::team_ai_crypto::decrypt(&issued.wrapped_key, &pair.private_key_pem)?;
+        with_snapshot_write_lock(|| {
+            require_current_session(&app, &session_token)?;
+            if current_generation(&path, installation_id, provider_id) != generation {
+                return Err(
+                    "AI key access changed while this request was running. Retry the action."
+                        .into(),
+                );
+            }
+            let ticket = crate::util::random_token(48);
+            let mut state = issuances().lock().unwrap_or_else(|p| p.into_inner());
+            state
+                .pending
+                .retain(|_, p| p.created.elapsed().as_secs() < 60);
+            if state.pending.len() >= 32 {
+                return Err("Too many pending AI key requests. Retry shortly.".into());
+            }
+            state.pending.insert(
+                ticket.clone(),
+                PendingSecret {
+                    path,
+                    installation_id,
+                    provider_id,
+                    session: zeroize::Zeroizing::new(session_token),
+                    secret,
+                    version: issued.key_version,
+                    generation,
+                    created: std::time::Instant::now(),
+                },
+            );
+            Ok(PendingSecretResult {
+                ticket,
+                key_version: issued.key_version,
+            })
+        })
     })
     .await
-    .map_err(|error| format!("Could not run the team AI provider issue task: {error}"))?
+    .map_err(|_| "Could not issue the shared AI key.")?
 }
 
 #[tauri::command]
-pub(crate) async fn load_team_ai_member_keypair(
+pub(crate) async fn finish_team_ai_provider_secret(
     app: AppHandle,
-    installation_id: i64,
-) -> Result<Option<TeamAiMemberKeypair>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_team_ai_access(&app, installation_id)?;
-        load_team_ai_member_keypair_value(&app, installation_id)
-    })
-    .await
-    .map_err(|error| format!("The team AI member keypair load worker failed: {error}"))?
-}
-
-#[tauri::command]
-pub(crate) async fn save_team_ai_member_keypair(
-    app: AppHandle,
-    installation_id: i64,
-    public_key_pem: String,
-    private_key_pem: String,
+    ticket: String,
+    commit: bool,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_team_ai_access(&app, installation_id)?;
-        save_team_ai_member_keypair_value(&app, installation_id, &public_key_pem, &private_key_pem)
+        let pending = issuances()
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .pending
+            .remove(&ticket);
+        if !commit {
+            return Ok(());
+        }
+        let pending = pending.ok_or("The pending AI key expired. Retry the action.")?;
+        // Access refresh may contact the broker. Keep it outside the vault write lock.
+        ensure_installation_allows_team_ai_access(&app, pending.installation_id)?;
+        with_snapshot_write_lock(|| {
+            require_current_session(&app, &pending.session)?;
+            if pending.created.elapsed().as_secs() >= 60
+                || current_generation(&pending.path, pending.installation_id, pending.provider_id)
+                    != pending.generation
+            {
+                return Err(
+                    "AI key access changed while this request was running. Retry the action."
+                        .into(),
+                );
+            }
+            ai_secret_storage::save_team_ai_cached_provider_secret_at_path(
+                &pending.path,
+                pending.installation_id,
+                pending.provider_id,
+                &pending.secret,
+                pending.version,
+            )
+        })
     })
     .await
-    .map_err(|error| format!("The team AI member keypair save worker failed: {error}"))?
+    .map_err(|_| "Could not finish the shared AI key request.")?
 }
 
 #[tauri::command]
-pub(crate) async fn load_team_ai_provider_cache(
+pub(crate) async fn load_team_ai_provider_cache_status(
     app: AppHandle,
     installation_id: i64,
     provider_id: AiProviderId,
-) -> Result<TeamAiCachedProviderSecret, String> {
+) -> Result<ProviderCacheStatus, String> {
     tauri::async_runtime::spawn_blocking(move || {
         ensure_installation_allows_team_ai_access(&app, installation_id)?;
-        load_team_ai_cached_provider_secret_value(&app, installation_id, provider_id)
+        let cached = load_team_ai_cached_provider_secret_value(&app, installation_id, provider_id)?;
+        Ok(ProviderCacheStatus {
+            configured: cached.api_key.is_some(),
+            key_version: cached.key_version,
+        })
     })
     .await
-    .map_err(|error| format!("The team AI provider cache load worker failed: {error}"))?
+    .map_err(|_| "Could not check the shared AI key cache.")?
 }
 
 #[tauri::command]
-pub(crate) async fn save_team_ai_provider_cache(
+pub(crate) async fn clear_team_ai_credentials(
     app: AppHandle,
     installation_id: i64,
-    provider_id: AiProviderId,
-    api_key: String,
-    key_version: i64,
+    session_token: String,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_team_ai_access(&app, installation_id)?;
-        save_team_ai_cached_provider_secret_value(
-            &app,
-            installation_id,
-            provider_id,
-            &api_key,
-            key_version,
-        )
+        with_snapshot_write_lock(|| {
+            require_current_session(&app, &session_token)?;
+            let path = stronghold_snapshot_path(&app)?;
+            for provider in [
+                AiProviderId::OpenAi,
+                AiProviderId::Gemini,
+                AiProviderId::Claude,
+                AiProviderId::DeepSeek,
+            ] {
+                invalidate_provider(&path, Some(installation_id), provider);
+            }
+            crate::credential_vault::clear_team(&path, installation_id)
+        })
     })
     .await
-    .map_err(|error| format!("The team AI provider cache save worker failed: {error}"))?
+    .map_err(|_| "Could not remove the team's saved AI credentials.")?
 }
 
 #[tauri::command]
@@ -662,6 +858,76 @@ mod tests {
             json!({
                 "memberPublicKeyPem": "member-public-key-pem"
             })
+        );
+    }
+    #[test]
+    fn cleared_provider_and_signout_invalidate_delayed_issuance() {
+        use super::{
+            current_generation, invalidate_provider, invalidate_session, issuances, PendingSecret,
+        };
+        use crate::ai_secret_storage::with_snapshot_write_lock;
+        let path = std::path::PathBuf::from(format!("test-{}", uuid::Uuid::now_v7()));
+        with_snapshot_write_lock(|| {
+            let generation = current_generation(&path, 42, AiProviderId::OpenAi);
+            let other_provider = current_generation(&path, 42, AiProviderId::Gemini);
+            let other_team = current_generation(&path, 81, AiProviderId::OpenAi);
+            issuances().lock().unwrap().pending.insert(
+                "synthetic-ticket".into(),
+                PendingSecret {
+                    path: path.clone(),
+                    installation_id: 42,
+                    provider_id: AiProviderId::OpenAi,
+                    session: zeroize::Zeroizing::new("synthetic-session".into()),
+                    secret: zeroize::Zeroizing::new("synthetic-secret".into()),
+                    version: 1,
+                    generation,
+                    created: std::time::Instant::now(),
+                },
+            );
+            invalidate_provider(&path, Some(42), AiProviderId::OpenAi);
+            assert_ne!(
+                generation,
+                current_generation(&path, 42, AiProviderId::OpenAi)
+            );
+            assert!(!issuances()
+                .lock()
+                .unwrap()
+                .pending
+                .contains_key("synthetic-ticket"));
+            assert_eq!(
+                other_provider,
+                current_generation(&path, 42, AiProviderId::Gemini)
+            );
+            assert_eq!(
+                other_team,
+                current_generation(&path, 81, AiProviderId::OpenAi)
+            );
+            invalidate_session();
+            assert_ne!(
+                other_provider,
+                current_generation(&path, 42, AiProviderId::Gemini)
+            );
+            Ok(())
+        })
+        .unwrap();
+    }
+    #[test]
+    fn frontend_status_and_completion_payloads_contain_no_secret_fields() {
+        assert_eq!(
+            serde_json::to_value(super::ProviderCacheStatus {
+                configured: true,
+                key_version: Some(9)
+            })
+            .unwrap(),
+            json!({"configured":true,"keyVersion":9})
+        );
+        assert_eq!(
+            serde_json::to_value(super::PendingSecretResult {
+                ticket: "synthetic-ticket".into(),
+                key_version: 9
+            })
+            .unwrap(),
+            json!({"ticket":"synthetic-ticket","keyVersion":9})
         );
     }
 }

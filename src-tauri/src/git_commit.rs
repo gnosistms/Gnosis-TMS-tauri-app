@@ -3,10 +3,11 @@ use std::path::Path;
 use tauri::AppHandle;
 
 use crate::{
-    broker_auth_storage::load_broker_auth_session_internal,
+    broker_auth_storage::load_local_author,
     installation_access::ensure_repo_allows_writes,
+    local_author::LocalAuthor,
     repo_app_version::git_commit_app_version_trailer,
-    repo_sync_shared::{ensure_repo_local_git_identity, format_git_spawn_error, git_command},
+    repo_sync_shared::{configure_repo_local_git_identity, format_git_spawn_error, git_command},
 };
 
 pub(crate) struct GitCommitMetadata<'a> {
@@ -19,11 +20,6 @@ pub(crate) struct GitCommitMetadata<'a> {
 fn is_nothing_to_commit(detail: &str) -> bool {
     let normalized = detail.trim().to_lowercase();
     normalized.contains("nothing to commit") || normalized.contains("working tree clean")
-}
-
-struct SignedInGitAuthor {
-    login: String,
-    email: String,
 }
 
 fn log_git_commit_diagnostic(event: &str, repo_path: &Path, message: &str, paths: &[&str]) {
@@ -53,25 +49,17 @@ fn log_git_commit_diagnostic_failure(event: &str, repo_path: &Path, message: &st
     );
 }
 
-fn signed_in_git_author(app: &AppHandle) -> Result<SignedInGitAuthor, String> {
-    let session = load_broker_auth_session_internal(app)?
-        .ok_or_else(|| "Sign in with GitHub before creating local commits.".to_string())?;
-    let login = session.login.trim().to_lowercase();
-    if login.is_empty() {
-        return Err("The saved GitHub session is missing a login.".to_string());
-    }
-
-    Ok(SignedInGitAuthor {
-        email: format!("{login}@users.noreply.github.com"),
-        login,
-    })
+fn signed_in_git_author(app: &AppHandle) -> Result<LocalAuthor, String> {
+    load_local_author(app)?
+        .ok_or_else(|| "Sign in with GitHub before creating local commits.".to_string())
 }
 
-/// The write-access snapshot and signed-in-session checks normally run inside the
+/// The write-access snapshot and cached-author checks normally run inside the
 /// commit helper — after the caller has already written and staged files. Mutation
 /// commands call this before their first file write so an *expected* gate failure
 /// (degraded installation permissions, signed-out session) cannot strand a dirty
-/// working tree that breaks later pulls. Both checks are local file reads.
+/// working tree that breaks later pulls. Attribution is a local read independent
+/// of credential storage; the existing installation-access policy still applies.
 pub(crate) fn ensure_local_commit_preconditions(
     app: &AppHandle,
     repo_path: &Path,
@@ -113,8 +101,25 @@ pub(crate) fn git_commit_as_signed_in_user_with_metadata(
     ensure_repo_allows_writes(app, repo_path)?;
     log_git_commit_diagnostic("author:start", repo_path, message, paths);
     let author = signed_in_git_author(app)?;
+    commit_with_author(repo_path, message, paths, metadata, &author)
+}
+
+/// The caller must verify installation write access before invoking this helper.
+/// Attribution and Git configuration require only the public identity.
+pub(crate) fn commit_with_author(
+    repo_path: &Path,
+    message: &str,
+    paths: &[&str],
+    metadata: GitCommitMetadata<'_>,
+    author: &LocalAuthor,
+) -> Result<String, String> {
+    let login = author.login.trim().to_lowercase();
+    if login.is_empty() {
+        return Err("The saved GitHub author is missing a login.".into());
+    }
+    let email = format!("{login}@users.noreply.github.com");
     log_git_commit_diagnostic("identity:start", repo_path, message, paths);
-    ensure_repo_local_git_identity(app, repo_path)?;
+    configure_repo_local_git_identity(repo_path, &login)?;
     log_git_commit_diagnostic("git-command:build", repo_path, message, paths);
     let mut command =
         git_command().map_err(|error| format!("Could not run git commit: {error}"))?;
@@ -123,10 +128,10 @@ pub(crate) fn git_commit_as_signed_in_user_with_metadata(
         .arg("-m")
         .arg(message)
         .current_dir(repo_path)
-        .env("GIT_AUTHOR_NAME", &author.login)
-        .env("GIT_AUTHOR_EMAIL", &author.email)
-        .env("GIT_COMMITTER_NAME", &author.login)
-        .env("GIT_COMMITTER_EMAIL", &author.email);
+        .env("GIT_AUTHOR_NAME", &login)
+        .env("GIT_AUTHOR_EMAIL", &email)
+        .env("GIT_COMMITTER_NAME", &login)
+        .env("GIT_COMMITTER_EMAIL", &email);
 
     if let Some(operation) = metadata
         .operation

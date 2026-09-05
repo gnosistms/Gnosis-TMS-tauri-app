@@ -5,12 +5,14 @@ mod broker_auth;
 mod broker_auth_storage;
 mod callbacks;
 mod constants;
+mod credential_vault;
 mod git_commit;
 mod github;
 mod glossary_repo_sync;
 mod glossary_storage;
 mod insecure_github_app_config;
 mod installation_access;
+mod local_author;
 mod local_repo_sync_state;
 mod project_import;
 mod project_repo_paths;
@@ -29,6 +31,7 @@ mod state;
 mod storage_paths;
 mod store;
 mod team_ai;
+mod team_ai_crypto;
 mod team_metadata_local;
 mod team_repo_migrations;
 mod updater;
@@ -153,10 +156,10 @@ use crate::{
     repo_sync_shared::initialize_git_runtime,
     state::{AuthState, ProjectImportBatchCancelStore, ProjectRepoSyncStore},
     team_ai::{
-        clear_team_ai_provider_cache, issue_team_ai_provider_secret,
-        load_team_ai_broker_public_key, load_team_ai_member_keypair, load_team_ai_provider_cache,
-        load_team_ai_secrets_metadata, load_team_ai_settings, save_team_ai_member_keypair,
-        save_team_ai_provider_cache, save_team_ai_provider_secret, save_team_ai_settings,
+        clear_team_ai_credentials, clear_team_ai_provider_cache, finish_team_ai_provider_secret,
+        issue_team_ai_provider_secret, load_team_ai_provider_cache_status,
+        load_team_ai_secrets_metadata, load_team_ai_settings, save_team_ai_provider_secret,
+        save_team_ai_settings,
     },
     team_metadata_local::{
         delete_local_gnosis_glossary_metadata_record, delete_local_gnosis_project_metadata_record,
@@ -203,13 +206,14 @@ fn check_internet_connection_sync() -> bool {
 }
 
 #[tauri::command]
-async fn load_ai_provider_secret(
+async fn load_ai_provider_secret_status(
     app: tauri::AppHandle,
     provider_id: AiProviderId,
     installation_id: Option<i64>,
-) -> Result<Option<String>, String> {
+) -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(move || {
         load_ai_provider_secret_value(&app, provider_id, installation_id)
+            .map(|key| key.map(zeroize::Zeroizing::new).is_some())
     })
     .await
     .map_err(|error| format!("The AI key load worker failed: {error}"))?
@@ -602,22 +606,22 @@ pub fn run() {
             load_broker_auth_session,
             save_broker_auth_session,
             clear_broker_auth_session,
-            load_ai_provider_secret,
+            load_ai_provider_secret_status,
+            credential_vault::load_credential_storage_status,
+            credential_vault::use_session_only_credential_storage,
             save_ai_provider_secret,
             list_ai_provider_models,
             validate_ai_provider_secret,
             clear_ai_provider_secret,
-            load_team_ai_broker_public_key,
             load_team_ai_settings,
             save_team_ai_settings,
             load_team_ai_secrets_metadata,
             save_team_ai_provider_secret,
             issue_team_ai_provider_secret,
-            load_team_ai_member_keypair,
-            save_team_ai_member_keypair,
-            load_team_ai_provider_cache,
-            save_team_ai_provider_cache,
+            load_team_ai_provider_cache_status,
+            finish_team_ai_provider_secret,
             clear_team_ai_provider_cache,
+            clear_team_ai_credentials,
             run_ai_review,
             prepare_editor_ai_translated_glossary,
             prepare_editor_ai_translated_glossary_batch,

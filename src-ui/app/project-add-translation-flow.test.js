@@ -262,8 +262,8 @@ test("add translation language Continue runs preflight after selection", async (
   const commands = [];
   invokeHandler = async (command, payload = {}) => {
     commands.push({ command, payload });
-    if (command === "load_ai_provider_secret") {
-      return "openai-key";
+    if (command === "load_ai_provider_secret_status") {
+      return true;
     }
     if (command === "preflight_aligned_translation_to_gtms_chapter") {
       return {
@@ -279,7 +279,7 @@ test("add translation language Continue runs preflight after selection", async (
   await continueProjectAddTranslationLanguage(() => {});
 
   assert.deepEqual(commands.map((call) => call.command), [
-    "load_ai_provider_secret",
+    "load_ai_provider_secret_status",
     "preflight_aligned_translation_to_gtms_chapter",
   ]);
   assert.equal(state.projectAddTranslation.step, "mismatchWarning");
@@ -294,8 +294,8 @@ test("add translation language Continue shows progress modal before preflight re
   };
   let preflightStarted = false;
   invokeHandler = async (command) => {
-    if (command === "load_ai_provider_secret") {
-      return "openai-key";
+    if (command === "load_ai_provider_secret_status") {
+      return true;
     }
     if (command === "preflight_aligned_translation_to_gtms_chapter") {
       preflightStarted = true;

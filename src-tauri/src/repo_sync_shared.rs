@@ -30,7 +30,7 @@ use uuid::Uuid;
 
 use crate::{
     broker::{broker_client, broker_get_json_with_session},
-    broker_auth_storage::load_broker_auth_session_internal,
+    broker_auth_storage::load_local_author,
 };
 
 static REPO_SYNC_LOCKS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
@@ -314,8 +314,19 @@ pub(crate) fn ensure_repo_local_git_identity(
     repo_path: &Path,
 ) -> Result<(), String> {
     let identity = signed_in_git_identity(app)?;
-    set_local_git_config_if_needed(repo_path, "user.name", &identity.name)?;
-    set_local_git_config_if_needed(repo_path, "user.email", &identity.email)?;
+    configure_repo_local_git_identity(repo_path, &identity.name)
+}
+
+pub(crate) fn configure_repo_local_git_identity(
+    repo_path: &Path,
+    login: &str,
+) -> Result<(), String> {
+    set_local_git_config_if_needed(repo_path, "user.name", login)?;
+    set_local_git_config_if_needed(
+        repo_path,
+        "user.email",
+        &format!("{login}@users.noreply.github.com"),
+    )?;
     set_local_git_config_if_needed(repo_path, "user.useConfigOnly", "true")?;
     Ok(())
 }
@@ -343,21 +354,17 @@ pub(crate) fn git_error_indicates_missing_remote_ref(error: &str) -> bool {
 
 struct SignedInGitIdentity {
     name: String,
-    email: String,
 }
 
 fn signed_in_git_identity(app: &AppHandle) -> Result<SignedInGitIdentity, String> {
-    let session = load_broker_auth_session_internal(app)?
+    let session = load_local_author(app)?
         .ok_or_else(|| "Sign in with GitHub before syncing local repos.".to_string())?;
     let login = session.login.trim().to_lowercase();
     if login.is_empty() {
         return Err("The saved GitHub session is missing a login.".to_string());
     }
 
-    Ok(SignedInGitIdentity {
-        name: login.clone(),
-        email: format!("{login}@users.noreply.github.com"),
-    })
+    Ok(SignedInGitIdentity { name: login })
 }
 
 fn set_local_git_config_if_needed(repo_path: &Path, key: &str, value: &str) -> Result<(), String> {

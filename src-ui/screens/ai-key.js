@@ -1,3 +1,4 @@
+import { renderCredentialStorageStatus } from "./credential-storage.js";
 import {
   buildPageRefreshAction,
   buildSectionNav,
@@ -463,6 +464,7 @@ export function renderAiKeyScreen(state) {
             </p>
             ${canEditSharedTeamAi && !hasEnteredKey ? renderAiKeyInstructions(provider) : ""}
             ${sharedProviderStateMarkup}
+            ${renderCredentialStorageStatus(state.credentialStorage)}
             ${errorMarkup}
             ${successMarkup}
             <label class="field">
@@ -471,7 +473,7 @@ export function renderAiKeyScreen(state) {
                 class="field__input"
                 type="${aiSettings.apiKeyIsSaved ? "password" : "text"}"
                 value="${aiSettings.apiKeyIsSaved ? "" : escapeHtml(aiSettings.apiKey)}"
-                ${aiSettings.apiKeyIsSaved ? 'placeholder="••••••••••••" data-ai-key-saved' : ""}
+                ${aiSettings.apiKeyIsSaved ? 'placeholder="••••••••••••••••••••••••••••••••••••••••••••••••" data-ai-key-saved' : ""}
                 data-ai-key-input
                 autocomplete="off"
                 autocapitalize="off"

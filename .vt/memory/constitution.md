@@ -1,18 +1,10 @@
 <!--
 SYNC IMPACT REPORT
-  Version change: (new) -> 1.0.0 (constitution.md)
-  Modified: (initial instantiation)
-  Added: Standards I–V, Technical Standards, Anti-Rationalization Guardrails
-         (including F-VIII guardrail for deterministic Stronghold key)
-  Removed: (none — new document)
-  Companion impact: foundational-principles.md deferred TODO for constitution
-    instantiation is now resolved. Sync Impact Report in that file should be
-    updated to remove the deferred TODO.
-  Template updates:
-    - plan-template.md: Constitution Check gate updated to reference live path
-    - spec-template.md: no change needed
-    - tasks-template.md: no change needed
-  Deferred TODOs: (none)
+  Version change: 1.0.0 -> 2.0.0
+  Modified: F-VIII guardrails reflect the product owner's 2026-09-05 at-rest
+    storage decision. The former prohibition on OS credential stores is removed.
+  Companion updates: foundational-principles.md, backend storage guidance.
+  Templates: Constitution Check references remain applicable; no text changes.
 -->
 # Gnosis TMS Constitution
 
@@ -172,8 +164,8 @@ code review.
 
 | Rationalization | Why It's Invalid | Enforcement |
 |-----------------|------------------|-------------|
-| "The deterministic Stronghold key can be derived from known inputs — it should be replaced with a randomly-generated key stored in the OS credential store (Keychain/Secret Service/Credential Manager)" | F-VIII explicitly accepts this limitation. At-rest confidentiality against a local filesystem attacker is outside the product's threat model. OS keychain integration creates platform-specific code paths, daemon dependencies, and test complications that are not justified by the security benefit. The `keyring` crate MUST NOT be reintroduced. | Reject the finding at spec review; cite F-VIII. |
-| "The broker session bearer token should not be stored in plain JSON — move it to the OS credential store" | Same as above. The session token's at-rest exposure to a local attacker is accepted per F-VIII. Plain JSON storage is the intended design. | Reject the finding; cite F-VIII. |
+| "The OS credential store is unavailable — use a deterministic vault password or save the broker token as JSON" | F-VIII requires confidential persistence. Offer explicit session-only operation and preserve any existing vault instead. | Reject insecure persistence; test fallback and migration failure behavior. |
+| "Encrypted local storage means team members cannot recover the API keys they use" | F-VIII does not promise secrecy from a user or malware controlling the unlocked app. Direct provider access requires a usable credential in process memory. | Correct the claim; retain provider-independent direct access and document the limits. |
 | "Background sync is running — disable the Add/Create/Rename/Delete buttons to prevent concurrent operations" | Violates Standard V and F-I. Sync state and action availability are independent. Disabling actions during sync imposes network latency on user interactions that must be instantaneous. | Reject the change at review; point to Standard V. |
 | "This discovery flow needs to update visible state directly for performance — going through the query cache adds a round-trip" | Violates Standard I. The query cache is not a round-trip penalty; it is the boundary that makes state traceable. Direct writes create stuck-state bugs that outlast the performance win. | Reject the change at review; point to Standard I. |
 
@@ -225,6 +217,7 @@ Anti-Rationalization Guardrails here, or (rarely) to Foundational Principles.
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 2.0.0 | 2026-09-05 | Product-owner-approved F-VIII revision: OS-protected random vault key, encrypted broker login, explicit session-only fallback, and revised extraction limits. |
 | 1.0.0 | 2026-06-03 | Initial instantiation. Standards I–V, Technical Standards, Anti-Rationalization Guardrails including F-VIII (deterministic Stronghold key, broker session token plain JSON). |
 
 ---

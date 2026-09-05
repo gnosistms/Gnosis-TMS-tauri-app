@@ -81,6 +81,10 @@ const { classifySyncError } = await import("./sync-error.js");
 const { resetSessionState, state } = await import("./state.js");
 const { saveStoredTeamRecords, setActiveStorageLogin } = await import("./team-storage.js");
 
+test.beforeEach(() => {
+  state.credentialStorage = { mode: "persistent", message: "" };
+});
+
 test.afterEach(() => {
   invokeHandler = async () => true;
   globalThis.navigator.onLine = true;
@@ -147,7 +151,11 @@ test("restoreStoredBrokerSession preserves editor navigation state when requeste
   state.selectedChapterId = "chapter-1";
   state.projects = [{ id: "project-1" }];
 
-  invokeHandler = async (command) => {
+  invokeHandler = async (command, payload) => {
+    if (command === "save_broker_auth_session") {
+      assert.equal(payload.expectedSessionToken, storedSession.sessionToken);
+      return null;
+    }
     assert.equal(command, "inspect_broker_auth_session");
     return {
       login: storedSession.login,

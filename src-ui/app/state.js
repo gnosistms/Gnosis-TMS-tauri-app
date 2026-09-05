@@ -50,6 +50,7 @@ export const state = {
     session: null,
     pendingAutoOpenSingleTeam: false,
   },
+  credentialStorage: { mode: "unknown", message: "" },
   appUpdate: createAppUpdateState(),
   offline: createOfflineState(),
   connectionFailure: createConnectionFailureState(),

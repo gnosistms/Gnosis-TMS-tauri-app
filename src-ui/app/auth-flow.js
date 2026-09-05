@@ -1,3 +1,4 @@
+import { refreshCredentialStorage } from "./credential-storage-flow.js";
 import { invoke, listen, openExternalUrl } from "./runtime.js";
 import {
   loadStoredAuthSession,
@@ -31,9 +32,15 @@ export async function handleBrokerAuthExpired(render, error) {
   return handleSyncFailure(classifySyncError(error), { render });
 }
 
-export function applyBrokerAuthResult(payload, render, loadUserTeams) {
+export async function applyBrokerAuthResult(payload, render, loadUserTeams) {
   if (payload?.status === "success" && payload?.session?.sessionToken) {
     const session = payload.session;
+    try {
+      await saveStoredAuthSession(session);
+    } catch (error) {
+      setAuthState({ status: "error", message: error?.message ?? String(error), session: null }, render);
+      return;
+    }
     setActiveStorageLogin(session.login);
     hydrateStoredDataForActiveUser();
     state.auth = {
@@ -42,7 +49,6 @@ export function applyBrokerAuthResult(payload, render, loadUserTeams) {
       session,
       pendingAutoOpenSingleTeam: true,
     };
-    void saveStoredAuthSession(session);
     state.screen = "teams";
     render();
     void loadUserTeams(render);
@@ -60,6 +66,7 @@ export function applyBrokerAuthResult(payload, render, loadUserTeams) {
 }
 
 export async function prepareStoredBrokerSessionRestore() {
+  await refreshCredentialStorage();
   const session = await loadStoredAuthSession();
   if (!session) {
     return null;
@@ -133,12 +140,16 @@ export async function restoreStoredBrokerSession(
     const profile = await invoke("inspect_broker_auth_session", {
       sessionToken: session.sessionToken,
     });
+    const activeSession = state.auth.session;
+    if (!activeSession || activeSession.login !== session.login) return;
     const verifiedSession = {
-      sessionToken: session.sessionToken,
+      sessionToken: activeSession.sessionToken,
       login: profile.login,
       name: profile.name ?? null,
       avatarUrl: profile.avatarUrl ?? null,
     };
+    await saveStoredAuthSession(verifiedSession, activeSession.sessionToken);
+    if (state.auth.session?.sessionToken !== activeSession.sessionToken) return;
     setActiveStorageLogin(verifiedSession.login);
     hydrateStoredDataForActiveUser({
       preserveResourceContext: shouldPreserveCurrentScreen(options),
@@ -149,11 +160,16 @@ export async function restoreStoredBrokerSession(
       session: verifiedSession,
       pendingAutoOpenSingleTeam: !shouldPreserveCurrentScreen(options),
     };
-    void saveStoredAuthSession(verifiedSession);
     applyRestoredOnlineScreen(options);
     render();
     void loadUserTeams(render);
   } catch (error) {
+    if (state.auth.session?.login !== session.login) return;
+    if (state.credentialStorage?.mode === "locked") {
+      state.screen = "start";
+      setAuthState({ status: "error", message: error?.message ?? String(error), session: null }, render);
+      return;
+    }
     setActiveStorageLogin(session.login);
     hydrateStoredDataForActiveUser({
       preserveResourceContext: shouldPreserveCurrentScreen(options),
@@ -195,7 +211,7 @@ export async function registerBrokerAuthListener(render, loadUserTeams) {
   }
 
   await listen("broker-auth-callback", (event) => {
-    applyBrokerAuthResult(event.payload, render, loadUserTeams);
+    void applyBrokerAuthResult(event.payload, render, loadUserTeams);
   });
 }
 

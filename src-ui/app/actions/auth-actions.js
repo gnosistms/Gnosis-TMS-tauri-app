@@ -1,3 +1,4 @@
+import { refreshCredentialStorage, useSessionOnlyCredentialStorage } from "../credential-storage-flow.js";
 import { restoreStoredBrokerSession, startGithubLogin } from "../auth-flow.js";
 import { closeConnectionFailureModal, reconnectFromConnectionFailure } from "../connection-failure.js";
 import { refreshCurrentScreen } from "../navigation.js";
@@ -8,6 +9,14 @@ import { checkForAppUpdate } from "../updater-flow.js";
 
 export function createAuthActions(render) {
   return {
+    "retry-credential-storage": async () => {
+      await refreshCredentialStorage(render, { retry: true });
+      if (state.credentialStorage?.mode === "persistent") {
+        if (state.screen === "start") await restoreStoredBrokerSession(render, loadUserTeams);
+        else await refreshCurrentScreen(render);
+      }
+    },
+    "use-session-only-credentials": () => useSessionOnlyCredentialStorage(render),
     "login-with-github": () => startGithubLogin(render),
     "check-for-updates": () => checkForAppUpdate(render, { silent: false }),
     "refresh-page": () => refreshCurrentScreen(render),
