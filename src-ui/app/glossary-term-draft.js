@@ -1,13 +1,11 @@
 import { invoke } from "./runtime.js";
+import { requireBrokerSession } from "./auth-flow.js";
 import {
   createGlossaryTermEditorState,
   resetGlossaryTermEditor,
   state,
 } from "./state.js";
-import {
-  markGlossaryBackgroundSyncDirty,
-  maybeStartGlossaryBackgroundSync,
-} from "./glossary-background-sync.js";
+import { markGlossaryBackgroundSyncDirty } from "./glossary-background-sync.js";
 import { clearScopedSyncBadge, showNoticeBadge, showScopedSyncBadge } from "./status-feedback.js";
 import {
   GLOSSARY_EMPTY_TARGET_VARIANT_SENTINEL,
@@ -26,6 +24,7 @@ import { extractGlossaryRubyBaseText } from "./glossary-ruby.js";
 import {
   ensureGlossaryNotTombstoned,
   getGlossarySyncIssueMessage,
+  glossaryRepoDescriptor,
   syncSingleGlossaryForTeam,
 } from "./glossary-repo-flow.js";
 import { getGlossaryWritePolicy } from "./resource-write-policy.js";
@@ -33,12 +32,16 @@ import {
   buildGlossaryTermFromDraft,
   ensureGlossaryTermReadyForEdit,
   findGlossaryTermById,
+  markGlossaryTermsStale,
   markVisibleGlossaryTermConfirmed,
   markVisibleGlossaryTermFailed,
   removeVisibleGlossaryTerm,
   upsertVisibleGlossaryTerm,
 } from "./glossary-term-sync.js";
 import {
+  clearFailedGlossaryTermWrite,
+  failedGlossaryTermWrites,
+  getGlossaryTermWriteIntent,
   glossaryTermSaveIntentKey,
   glossaryTermWriteScope,
   requestGlossaryTermWriteIntent,
@@ -171,7 +174,11 @@ function createGlossaryTermEditorModalState(term = null, overrides = {}) {
     status: overrides.status ?? "idle",
     error: overrides.error ?? "",
     notice: overrides.notice ?? "",
-    glossaryId: state.glossaryEditor?.glossaryId ?? null,
+    glossaryId: overrides.glossaryId ?? state.glossaryEditor?.glossaryId ?? null,
+    teamId: state.selectedTeamId,
+    installationId: selectedTeam()?.installationId ?? null,
+    repoName: state.glossaryEditor?.repoName ?? "",
+    failedIntentKey: overrides.failedIntentKey ?? null,
     termId: overrides.termId ?? term?.termId ?? null,
     sourceTerms: normalizeEditableTerms(term?.sourceTerms ?? []),
     targetTerms,
@@ -188,10 +195,11 @@ function createGlossaryTermEditorModalState(term = null, overrides = {}) {
   };
 }
 
-async function reopenGlossaryTermEditorWithLatestRemote(render, termId) {
+async function reopenGlossaryTermEditorWithLatestRemote(render, termId, intent) {
   const latestTerm = await ensureGlossaryTermReadyForEdit(render, termId, {
     suppressNotice: true,
   });
+  if (!glossarySaveContextMatches(intent) || state.screen !== "glossaryEditor") return false;
   if (!latestTerm) {
     resetGlossaryTermEditor();
     render();
@@ -247,7 +255,16 @@ function clearGlossaryEditorStatus(render) {
   clearScopedSyncBadge(GLOSSARY_EDITOR_STATUS_SCOPE, render);
 }
 
+function glossarySaveContextMatches(intent) {
+  const input = intent.value?.repoInput;
+  return state.selectedTeamId === intent.teamId
+    && selectedTeam()?.installationId === input?.installationId
+    && state.glossaryEditor?.glossaryId === input?.glossaryId
+    && state.glossaryEditor?.repoName === input?.repoName;
+}
+
 function restoreFailedGlossaryTermSave(render, intent, message) {
+  if (!glossarySaveContextMatches(intent) || state.glossaryEditor?.status !== "ready") return;
   const draftSnapshot = intent.value?.draftSnapshot ?? null;
   const visibleTermId = intent.value?.visibleTermId ?? draftSnapshot?.termId ?? null;
   if (intent.value?.isCreate) {
@@ -255,18 +272,36 @@ function restoreFailedGlossaryTermSave(render, intent, message) {
   } else if (visibleTermId) {
     markVisibleGlossaryTermFailed(visibleTermId, message);
   }
+  if (state.screen !== "glossaryEditor" || state.glossaryTermEditor?.isOpen) return;
 
-  state.glossaryTermEditor = createGlossaryTermEditorModalState(draftSnapshot, {
-    error: message,
+  const remoteConflict = message === GLOSSARY_TERM_REMOTE_UPDATE_NOTICE;
+  const term = remoteConflict ? findGlossaryTermById(draftSnapshot?.termId) : draftSnapshot;
+  if (remoteConflict && !term) {
+    showNoticeBadge("The term was deleted on GitHub.", render);
+    clearFailedGlossaryTermWrite(intent.key);
+    return;
+  }
+  state.glossaryTermEditor = createGlossaryTermEditorModalState(term, {
+    glossaryId: intent.glossaryId,
+    failedIntentKey: intent.key,
+    error: remoteConflict ? "" : message,
+    notice: remoteConflict ? GLOSSARY_TERM_REMOTE_UPDATE_NOTICE : "",
+    attemptedDraft: remoteConflict ? draftSnapshot : null,
     termId: draftSnapshot?.termId ?? null,
   });
   render();
 }
 
+export function restorePendingGlossaryTermDraft(render) {
+  const editor = state.glossaryEditor;
+  const intent = failedGlossaryTermWrites(selectedTeam(), editor?.glossaryId, editor?.repoName)[0];
+  if (intent) restoreFailedGlossaryTermSave(render, intent, intent.error);
+}
+
 async function runGlossaryTermSaveIntent(render, intent) {
   try {
-    const team = selectedTeam(intent.teamId);
-    const glossary = selectedGlossary();
+    const team = intent.value?.team;
+    const glossary = intent.value?.glossary;
     const draftSnapshot = intent.value?.draftSnapshot;
     const repoInput = intent.value?.repoInput;
     if (!draftSnapshot || !repoInput || !Number.isFinite(team?.installationId)) {
@@ -275,14 +310,24 @@ async function runGlossaryTermSaveIntent(render, intent) {
 
     let previousHeadSha = null;
     showGlossaryEditorStatus(render, "Checking remote glossary changes...");
-    await maybeStartGlossaryBackgroundSync(render, { force: true });
+    const syncResult = await invoke("sync_gtms_glossary_editor_repo", {
+      input: { installationId: team.installationId, ...glossaryRepoDescriptor(glossary) },
+      sessionToken: requireBrokerSession(),
+    });
+    if (glossarySaveContextMatches(intent)) markGlossaryTermsStale(syncResult ?? {});
+    const remotelyChanged = [...(syncResult?.changedTermIds ?? []), ...(syncResult?.deletedTermIds ?? [])]
+      .includes(draftSnapshot.termId);
     if (draftSnapshot.termId) {
-      const currentTerm = findGlossaryTermById(draftSnapshot.termId, state.glossaryEditor);
-      if (currentTerm?.freshness === "stale" || currentTerm?.remotelyDeleted === true) {
-        markVisibleGlossaryTermFailed(draftSnapshot.termId, GLOSSARY_TERM_REMOTE_UPDATE_NOTICE);
-        const reopened = await reopenGlossaryTermEditorWithLatestRemote(render, draftSnapshot.termId);
-        if (reopened) {
-          state.glossaryTermEditor.attemptedDraft = draftSnapshot;
+      const currentTerm = glossarySaveContextMatches(intent)
+        ? findGlossaryTermById(draftSnapshot.termId, state.glossaryEditor) : null;
+      if (remotelyChanged || currentTerm?.freshness === "stale" || currentTerm?.remotelyDeleted === true) {
+        if (glossarySaveContextMatches(intent) && state.screen === "glossaryEditor") {
+          markVisibleGlossaryTermFailed(draftSnapshot.termId, GLOSSARY_TERM_REMOTE_UPDATE_NOTICE);
+          const reopened = await reopenGlossaryTermEditorWithLatestRemote(render, draftSnapshot.termId, intent);
+          if (reopened) {
+            state.glossaryTermEditor.attemptedDraft = draftSnapshot;
+            state.glossaryTermEditor.failedIntentKey = intent.key;
+          }
         }
         throw new Error(GLOSSARY_TERM_REMOTE_UPDATE_NOTICE);
       }
@@ -302,45 +347,20 @@ async function runGlossaryTermSaveIntent(render, intent) {
       },
     });
     previousHeadSha = upsertPayload?.previousHeadSha ?? null;
-    let syncIssue = null;
     try {
       showGlossaryEditorStatus(render, "Syncing glossary repo...");
-      syncIssue = getGlossarySyncIssueMessage(
-        await syncSingleGlossaryForTeam(team, glossary),
-      );
+      const syncIssue = getGlossarySyncIssueMessage(await syncSingleGlossaryForTeam(team, glossary));
+      if (syncIssue?.message) throw new Error(syncIssue.message);
     } catch (error) {
-      const errorMessage = error?.message ?? String(error);
       showGlossaryEditorStatus(render, "Rolling back glossary term save...");
-      const rollbackMessage = await rollbackGlossaryTermSave(repoInput, previousHeadSha, errorMessage);
-      if (intent.previousValue) {
-        markVisibleGlossaryTermConfirmed(intent.value.visibleTermId, intent.previousValue);
-      } else {
-        removeVisibleGlossaryTerm(intent.value.visibleTermId);
+      const rollbackMessage = await rollbackGlossaryTermSave(repoInput, previousHeadSha, error?.message ?? String(error));
+      if (glossarySaveContextMatches(intent)) {
+        if (intent.previousValue) {
+          markVisibleGlossaryTermConfirmed(intent.value.visibleTermId, intent.previousValue);
+        } else {
+          removeVisibleGlossaryTerm(intent.value.visibleTermId);
+        }
       }
-      state.glossaryTermEditor = createGlossaryTermEditorModalState(draftSnapshot, {
-        error: rollbackMessage,
-        termId: draftSnapshot.termId,
-      });
-      render();
-      throw new Error(rollbackMessage);
-    }
-    if (syncIssue?.message) {
-      showGlossaryEditorStatus(render, "Rolling back glossary term save...");
-      const rollbackMessage = await rollbackGlossaryTermSave(
-        repoInput,
-        previousHeadSha,
-        syncIssue.message,
-      );
-      if (intent.previousValue) {
-        markVisibleGlossaryTermConfirmed(intent.value.visibleTermId, intent.previousValue);
-      } else {
-        removeVisibleGlossaryTerm(intent.value.visibleTermId);
-      }
-      state.glossaryTermEditor = createGlossaryTermEditorModalState(draftSnapshot, {
-        error: rollbackMessage,
-        termId: draftSnapshot.termId,
-      });
-      render();
       throw new Error(rollbackMessage);
     }
 
@@ -352,27 +372,32 @@ async function runGlossaryTermSaveIntent(render, intent) {
         optimisticClientId: null,
       }
       : null;
-    if (confirmedTerm) {
-      markVisibleGlossaryTermConfirmed(intent.value.visibleTermId, confirmedTerm, {
-        termCount: upsertPayload?.termCount,
-      });
-    } else if (intent.value.visibleTermId) {
-      markVisibleGlossaryTermConfirmed(intent.value.visibleTermId, null, {
-        termCount: upsertPayload?.termCount,
-      });
+    if (glossarySaveContextMatches(intent)) {
+      if (confirmedTerm) {
+        markVisibleGlossaryTermConfirmed(intent.value.visibleTermId, confirmedTerm, {
+          termCount: upsertPayload?.termCount,
+        });
+      } else if (intent.value.visibleTermId) {
+        markVisibleGlossaryTermConfirmed(intent.value.visibleTermId, null, {
+          termCount: upsertPayload?.termCount,
+        });
+      }
+      if (state.glossaryEditor.status === "ready") markGlossaryBackgroundSyncDirty();
     }
-    markGlossaryBackgroundSyncDirty();
     clearGlossaryEditorStatus(render);
     showNoticeBadge(intent.value?.isCreate ? "Glossary term added." : "Glossary term saved.", render);
   } catch (error) {
     clearGlossaryEditorStatus(render);
     throw error;
+  } finally {
+    removeGlossaryEditorQuery(intent.value?.team, intent.value?.glossary);
   }
 }
 
 export async function openGlossaryTermEditor(render, termId = null) {
   const team = selectedTeam();
   const glossary = selectedGlossary();
+  const editor = state.glossaryEditor;
   if (!canManageGlossaries()) {
     showNoticeBadge("You do not have permission to edit glossary terms in this team.", render);
     return;
@@ -385,6 +410,7 @@ export async function openGlossaryTermEditor(render, termId = null) {
   if (await ensureGlossaryNotTombstoned(render, team, glossary)) {
     return;
   }
+  if (state.selectedTeamId !== team?.id || state.glossaryEditor !== editor) return;
 
   const term = termId
     ? findGlossaryTermById(termId, state.glossaryEditor)
@@ -399,6 +425,18 @@ export async function openGlossaryTermEditor(render, termId = null) {
 }
 
 export function cancelGlossaryTermEditor(render) {
+  const key = state.glossaryTermEditor?.failedIntentKey;
+  const intent = key ? getGlossaryTermWriteIntent(key) : null;
+  if (intent && glossarySaveContextMatches(intent)) {
+    if (intent.error === GLOSSARY_TERM_REMOTE_UPDATE_NOTICE) {
+      markVisibleGlossaryTermConfirmed(intent.value.visibleTermId, null);
+    } else if (intent.previousValue) {
+      markVisibleGlossaryTermConfirmed(intent.value.visibleTermId, intent.previousValue);
+    } else {
+      removeVisibleGlossaryTerm(intent.value.visibleTermId);
+    }
+  }
+  if (key) clearFailedGlossaryTermWrite(key);
   resetGlossaryTermEditor();
   render();
 }
@@ -589,7 +627,11 @@ export async function submitGlossaryTermEditor(render) {
   const repoName = selectedGlossaryRepoName();
   const glossary = selectedGlossary();
   const draft = state.glossaryTermEditor;
-  if (!draft?.isOpen || !Number.isFinite(team?.installationId) || !repoName) {
+  if (!draft?.isOpen || !Number.isFinite(team?.installationId) || !repoName
+    || draft.glossaryId !== state.glossaryEditor?.glossaryId
+    || (draft.teamId != null && draft.teamId !== team.id)
+    || (draft.installationId != null && draft.installationId !== team.installationId)
+    || (draft.repoName && draft.repoName !== repoName)) {
     return;
   }
 
@@ -609,6 +651,10 @@ export async function submitGlossaryTermEditor(render) {
     render();
     return;
   }
+
+  if (state.glossaryTermEditor !== draft || selectedTeam()?.id !== team.id
+    || state.glossaryEditor?.glossaryId !== draft.glossaryId
+    || state.glossaryEditor?.repoName !== repoName) return;
 
   const sourceTerms = sanitizeEditableTerms(draft.sourceTerms);
   if (sourceTerms.length === 0) {
@@ -652,6 +698,7 @@ export async function submitGlossaryTermEditor(render) {
   });
   upsertVisibleGlossaryTerm(optimisticTerm);
   removeGlossaryEditorQuery(team, glossary);
+  if (draft.failedIntentKey) clearFailedGlossaryTermWrite(draft.failedIntentKey);
   resetGlossaryTermEditor();
   render();
 
@@ -664,6 +711,8 @@ export async function submitGlossaryTermEditor(render) {
     type: "glossaryTermSave",
     previousValue,
     value: {
+      team: { ...team },
+      glossary: { ...glossary },
       draftSnapshot,
       repoInput,
       visibleTermId,
@@ -678,11 +727,14 @@ export async function submitGlossaryTermEditor(render) {
     onError: (error, intent) => {
       clearGlossaryEditorStatus(render);
       const errorMessage = error?.message ?? String(error);
-      if (state.glossaryTermEditor?.isOpen && state.glossaryTermEditor.notice) {
+      if (glossarySaveContextMatches(intent) && state.glossaryTermEditor?.isOpen && state.glossaryTermEditor.notice) {
         render();
         return;
       }
       restoreFailedGlossaryTermSave(render, intent, errorMessage);
+      if (!glossarySaveContextMatches(intent)) {
+        showNoticeBadge(`Could not save a term in ${intent.value?.glossary?.title || "the glossary"}. Reopen that glossary to retry.`, render);
+      }
     },
   });
 }

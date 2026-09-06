@@ -223,7 +223,7 @@ export async function submitQaTermEditor(render) {
     render();
     return;
   }
-  beginQaTermWrite();
+  beginQaTermWrite(team, qaList);
   let didSave = false;
   let didSaveRepoBackedTerm = false;
   try {
@@ -324,7 +324,7 @@ export async function submitQaTermEditor(render) {
       error: error?.message ?? "Could not save this QA term.",
     };
   } finally {
-    endQaTermWrite();
+    endQaTermWrite(team, qaList);
   }
   if (didSave && didSaveRepoBackedTerm) {
     markQaListBackgroundSyncDirty();
@@ -347,7 +347,7 @@ export async function deleteQaTerm(render, termId) {
     render();
     return;
   }
-  beginQaTermWrite();
+  beginQaTermWrite(team, qaList);
   try {
     if (isRepoBackedQaList) {
       await syncAndRefreshQaListEditorSnapshot(team, qaList);
@@ -391,7 +391,7 @@ export async function deleteQaTerm(render, termId) {
       error: error?.message ?? "Could not delete this QA term.",
     };
   } finally {
-    endQaTermWrite();
+    endQaTermWrite(team, qaList);
   }
   render();
 }
