@@ -156,7 +156,7 @@ export function buildEditorDerivedGlossaryContext(context = {}) {
     glossarySourceTextOrigin: normalizeGlossarySourceTextOrigin(
       context.glossarySourceTextOrigin ?? (glossarySourceText.trim() ? "row" : "generated"),
     ),
-    glossaryRevisionKey: sanitizeString(context.glossaryRevisionKey),
+    glossaryRevisionKey: normalizeEditorGlossaryRevisionKey(context.glossaryRevisionKey),
   };
 }
 
@@ -182,7 +182,7 @@ export function normalizeEditorDerivedGlossaryEntryState(entry) {
     glossarySourceTextOrigin: normalizeGlossarySourceTextOrigin(
       normalized.glossarySourceTextOrigin,
     ),
-    glossaryRevisionKey: sanitizeString(normalized.glossaryRevisionKey),
+    glossaryRevisionKey: normalizeEditorGlossaryRevisionKey(normalized.glossaryRevisionKey),
     entries: (Array.isArray(normalized.entries) ? normalized.entries : []).map((entryValue) => ({
       sourceTerm: sanitizeString(entryValue?.sourceTerm).trim(),
       glossarySourceTerm: sanitizeString(entryValue?.glossarySourceTerm).trim(),
@@ -276,11 +276,59 @@ function sanitizeGlossaryTerm(term) {
   };
 }
 
+// 53-bit string hash (cyrb53): stable across sessions and platforms, cheap on
+// the ~150 KB revision JSON, and collision-safe for the handful of glossary
+// revisions a chapter ever sees.
+function hashGlossaryRevisionSource(text) {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    h1 = Math.imul(h1 ^ code, 2654435761);
+    h2 = Math.imul(h2 ^ code, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507);
+  h1 ^= Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507);
+  h2 ^= Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return `${(h2 >>> 0).toString(16).padStart(8, "0")}${(h1 >>> 0).toString(16).padStart(8, "0")}`;
+}
+
+const GLOSSARY_REVISION_KEY_PREFIX = "h1:";
+
+// Revision keys used to be the full revision JSON (~150 KB per cached row
+// entry, 139 MB of persisted store on one machine). Entries persisted under
+// that format still carry the JSON; hashing it here yields exactly the key
+// buildEditorGlossaryRevisionKey now produces for the same glossary, so the
+// old cache keeps hitting without re-derivation.
+export function normalizeEditorGlossaryRevisionKey(value) {
+  const key = sanitizeString(value);
+  return key.startsWith("{")
+    ? `${GLOSSARY_REVISION_KEY_PREFIX}${hashGlossaryRevisionSource(key)}`
+    : key;
+}
+
+// Classification calls this once per row against the same glossary object;
+// memoised by glossary-state identity (state is replaced, not mutated, on
+// glossary changes) with the terms array as a guard.
+const revisionKeyByGlossaryState = new WeakMap();
+
 export function buildEditorGlossaryRevisionKey(glossaryState) {
   if (!glossaryState || typeof glossaryState !== "object") {
     return "";
   }
 
+  const terms = Array.isArray(glossaryState.terms) ? glossaryState.terms : null;
+  const cached = revisionKeyByGlossaryState.get(glossaryState);
+  if (cached && cached.terms === terms && cached.termCount === (terms?.length ?? 0)) {
+    return cached.key;
+  }
+  const key = normalizeEditorGlossaryRevisionKey(buildEditorGlossaryRevisionSource(glossaryState));
+  revisionKeyByGlossaryState.set(glossaryState, { terms, termCount: terms?.length ?? 0, key });
+  return key;
+}
+
+function buildEditorGlossaryRevisionSource(glossaryState) {
   return JSON.stringify({
     // Cached derived entries were selected under a specific matcher policy;
     // including it here makes them regenerate on a policy change instead of

@@ -228,3 +228,83 @@ test("applyEditorDerivedGlossaryEntries is a no-op for empty input or a missing 
     noChapter,
   );
 });
+
+const {
+  buildEditorGlossaryRevisionKey,
+  normalizeEditorDerivedGlossaryEntryState,
+  normalizeEditorGlossaryRevisionKey,
+} = await import("./editor-derived-glossary-state.js");
+const {
+  GLOSSARY_MATCHER_POLICY,
+  GLOSSARY_MATCHER_POLICY_VERSION,
+} = await import("./glossary-token-matcher.js");
+
+function revisionGlossaryState(overrides = {}) {
+  return {
+    glossaryId: "glossary-1",
+    repoName: "glossary-repo",
+    sourceLanguage: { code: "es" },
+    targetLanguage: { code: "vi" },
+    terms: [
+      { termId: "t1", sourceTerms: ["camara"], targetTerms: ["buong"], notesToTranslators: "" },
+      { termId: "t2", sourceTerms: ["luz"], targetTerms: ["anh sang"], lifecycleState: "deleted" },
+    ],
+    ...overrides,
+  };
+}
+
+test("glossary revision keys are short hashes that track glossary content", () => {
+  const glossaryState = revisionGlossaryState();
+  const key = buildEditorGlossaryRevisionKey(glossaryState);
+
+  // A hash, not the ~150 KB revision JSON that used to be stored per row entry.
+  assert.match(key, /^h1:[0-9a-f]{16}$/);
+  assert.equal(buildEditorGlossaryRevisionKey(glossaryState), key);
+  // Same content in a fresh object hashes the same (memo is by identity only).
+  assert.equal(buildEditorGlossaryRevisionKey(revisionGlossaryState()), key);
+  // A term change (or a term added in place) changes the key.
+  assert.notEqual(
+    buildEditorGlossaryRevisionKey(revisionGlossaryState({
+      terms: [{ termId: "t1", sourceTerms: ["camara"], targetTerms: ["phong"] }],
+    })),
+    key,
+  );
+  glossaryState.terms.push({ termId: "t3", sourceTerms: ["fuego"], targetTerms: ["lua"] });
+  assert.notEqual(buildEditorGlossaryRevisionKey(glossaryState), key);
+  assert.equal(buildEditorGlossaryRevisionKey(null), "");
+});
+
+test("legacy JSON revision keys normalize to the hashed key so cached entries stay fresh", () => {
+  const glossaryState = revisionGlossaryState();
+  // What buildEditorGlossaryRevisionKey stored before keys were hashed.
+  const legacyKey = JSON.stringify({
+    matcherPolicy: GLOSSARY_MATCHER_POLICY,
+    matcherPolicyVersion: GLOSSARY_MATCHER_POLICY_VERSION,
+    glossaryId: "glossary-1",
+    repoName: "glossary-repo",
+    sourceLanguageCode: "es",
+    targetLanguageCode: "vi",
+    terms: [{ termId: "t1", sourceTerms: ["camara"], targetTerms: ["buong"], notes: [] }],
+  });
+  const hashedKey = buildEditorGlossaryRevisionKey(glossaryState);
+
+  assert.equal(normalizeEditorGlossaryRevisionKey(legacyKey), hashedKey);
+  assert.equal(normalizeEditorGlossaryRevisionKey(hashedKey), hashedKey);
+  assert.equal(normalizeEditorGlossaryRevisionKey("rev-1"), "rev-1");
+  assert.equal(
+    normalizeEditorDerivedGlossaryEntryState({ glossaryRevisionKey: legacyKey }).glossaryRevisionKey,
+    hashedKey,
+  );
+
+  const entry = readyDerivedEntry({ glossaryRevisionKey: legacyKey });
+  const context = {
+    translationSourceLanguageCode: entry.translationSourceLanguageCode,
+    glossarySourceLanguageCode: entry.glossarySourceLanguageCode,
+    targetLanguageCode: entry.targetLanguageCode,
+    translationSourceText: entry.translationSourceText,
+    glossarySourceText: entry.glossarySourceText,
+    glossarySourceTextOrigin: entry.glossarySourceTextOrigin,
+    glossaryRevisionKey: hashedKey,
+  };
+  assert.equal(editorDerivedGlossaryIsStale(entry, context), false);
+});
