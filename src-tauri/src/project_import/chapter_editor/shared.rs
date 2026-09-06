@@ -53,6 +53,17 @@ pub(in crate::project_import) fn write_row_files_and_commit(
     let repo_lock = crate::repo_sync_shared::repo_sync_lock(repo_path);
     let _repo_lock_guard = crate::repo_sync_shared::acquire_repo_sync_lock(&repo_lock);
 
+    write_row_files_and_commit_locked(app, repo_path, commit_message, metadata, writes)
+}
+
+/// Caller must hold the repository lock across reading and preparing these writes.
+pub(in crate::project_import) fn write_row_files_and_commit_locked(
+    app: &AppHandle,
+    repo_path: &Path,
+    commit_message: &str,
+    metadata: CommitMetadata<'_>,
+    writes: &[PreparedRowFileWrite],
+) -> Result<String, String> {
     crate::git_commit::ensure_local_commit_preconditions(app, repo_path)?;
 
     let mut written_count = 0usize;

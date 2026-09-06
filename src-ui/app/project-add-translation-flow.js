@@ -544,6 +544,7 @@ export async function selectProjectAddTranslationLanguage(render, languageCode) 
   state.projectAddTranslation = {
     ...modal,
     targetLanguageCode,
+    targetBaseLanguageCode: targetLanguageCode,
     error: "",
   };
   render();
@@ -644,7 +645,8 @@ export async function runProjectAddTranslationPreflight(render) {
     error: "",
     providerId,
     modelId,
-    flow: state.projectAddTranslation.flow,
+    flow: "",
+    jobId: "",
     progress: {
       stageId: "prepare_units",
       stageLabel: "Preparing text units",
@@ -676,6 +678,7 @@ export async function runProjectAddTranslationPreflight(render) {
         typeof response?.targetLanguageCode === "string" && response.targetLanguageCode.trim()
           ? response.targetLanguageCode.trim()
           : state.projectAddTranslation.targetLanguageCode,
+      targetBaseLanguageCode: response?.targetBaseLanguageCode || modal.targetBaseLanguageCode || modal.targetLanguageCode,
       targetLanguageExists: response?.targetLanguageExists === true,
       flow: response?.flow || state.projectAddTranslation.flow || "",
       progress: response?.progress ?? state.projectAddTranslation.progress,
@@ -704,15 +707,52 @@ export async function runProjectAddTranslationPreflight(render) {
       ...state.projectAddTranslation,
       step: "selectLanguage",
       status: "idle",
-      error: formatErrorForDisplay(error),
+      error: formatErrorForDisplay(error).replace(/^ALIGNMENT_(?:SOURCE_CHANGED|SPLIT_REVIEW):\s*/, ""),
     };
     render();
   }
 }
 
+export function editProjectAddTranslationText(render) {
+  const modal = state.projectAddTranslation;
+  if (!modal?.isOpen || modal.status === "running") return;
+  state.projectAddTranslation = {
+    ...modal,
+    step: "input",
+    inputMode: "pasteText",
+    targetLanguageCode: modal.targetBaseLanguageCode || modal.targetLanguageCode,
+    jobId: "",
+    flow: "",
+    progress: null,
+    status: "idle",
+    error: "",
+    applyErrorKind: "",
+    applyContinueOnMismatch: false,
+  };
+  render();
+}
+
+export async function retryProjectAddTranslationApply(render) {
+  const modal = state.projectAddTranslation;
+  if (!modal?.isOpen || modal.step !== "applyError" || modal.status === "running") return;
+  if (modal.applyErrorKind === "sourceChanged") {
+    state.projectAddTranslation = {
+      ...modal,
+      targetLanguageCode: modal.targetBaseLanguageCode || modal.targetLanguageCode,
+      jobId: "",
+      progress: null,
+      flow: "",
+      error: "",
+    };
+    await runProjectAddTranslationPreflight(render);
+    return;
+  }
+  await applyProjectAddTranslation(render, { continueOnMismatch: modal.applyContinueOnMismatch });
+}
+
 export async function applyProjectAddTranslation(render, options = {}) {
   const modal = state.projectAddTranslation;
-  if (!modal?.isOpen || !modal.jobId) {
+  if (!modal?.isOpen || !modal.jobId || modal.status === "running") {
     return;
   }
   const applyJobId = modal.jobId;
@@ -721,6 +761,7 @@ export async function applyProjectAddTranslation(render, options = {}) {
     step: "applying",
     status: "running",
     error: "",
+    applyContinueOnMismatch: options.continueOnMismatch === true,
   };
   render();
 
@@ -741,9 +782,10 @@ export async function applyProjectAddTranslation(render, options = {}) {
     }
     state.projectAddTranslation = {
       ...current,
-      step: "applying",
+      step: "applyError",
       status: "idle",
-      error: formatErrorForDisplay(error),
+      applyErrorKind: String(error?.message ?? error).includes("ALIGNMENT_SOURCE_CHANGED:") ? "sourceChanged" : "retry",
+      error: formatErrorForDisplay(error).replace(/^ALIGNMENT_(?:SOURCE_CHANGED|SPLIT_REVIEW):\s*/, ""),
     };
     render();
   }

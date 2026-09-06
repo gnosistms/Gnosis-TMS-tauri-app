@@ -9,6 +9,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager};
+use unicode_normalization::UnicodeNormalization;
 
 use crate::{
     ai::{
@@ -25,7 +26,7 @@ const EVENT_NAME: &str = "aligned-translation-progress";
 const SECTION_SIZE: usize = 50;
 const SECTION_OVERLAP: usize = 25;
 const MISMATCH_THRESHOLD_PERCENT: f64 = 40.0;
-const ALIGNMENT_PROMPT_VERSION: &str = "app-aligned-translation-v1";
+const ALIGNMENT_PROMPT_VERSION: &str = "app-aligned-translation-v4-reliable-splits";
 const APPLY_DEBUG_LOG_DIR: &str = "logs";
 const APPLY_DEBUG_LOG_FILE: &str = "aligned-translation-apply.log";
 const APPLY_DEBUG_LOG_MAX_BYTES: u64 = 1_000_000;
@@ -185,6 +186,8 @@ struct SplitFragment {
     source_id: usize,
     range: [usize; 2],
     text: String,
+    #[serde(default)]
+    adjusted_text: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -205,6 +208,10 @@ struct AlignmentJob {
     project_id: Option<String>,
     chapter_id: String,
     chapter_base_commit_sha: Option<String>,
+    #[serde(default)]
+    source_context_hash: String,
+    #[serde(default)]
+    subtitle_continuations: bool,
     provider_id: AiProviderId,
     model_id: String,
     source_language_code: String,
@@ -280,6 +287,7 @@ struct SplitTargetResponse {
 struct SplitTargetResponseItem {
     target_id: usize,
     fragments: Vec<SplitTargetFragmentHint>,
+    needs_rewrite: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -287,6 +295,7 @@ struct SplitTargetResponseItem {
 struct SplitTargetFragmentHint {
     source_id: usize,
     target_text_fragment: String,
+    adjusted_text: Option<String>,
 }
 
 pub(crate) fn preflight_aligned_translation_to_gtms_chapter_sync(
@@ -349,8 +358,10 @@ pub(crate) fn preflight_aligned_translation_to_gtms_chapter_sync(
     let existing_translation_count =
         count_existing_translation_rows(&context.rows, &target_language_code);
 
+    let source_context_hash = alignment_source_context_hash(&context, &source_language_code);
     let signature = build_signature(
         &input,
+        &source_context_hash,
         &context.chapter_base_commit_sha,
         &source_units,
         &target_units,
@@ -409,6 +420,8 @@ pub(crate) fn preflight_aligned_translation_to_gtms_chapter_sync(
         project_id: input.project_id.clone(),
         chapter_id: input.chapter_id.clone(),
         chapter_base_commit_sha: context.chapter_base_commit_sha.clone(),
+        source_context_hash,
+        subtitle_continuations: chapter_has_srt_source(&context.chapter_file),
         provider_id: input.provider_id,
         model_id: input.model_id.clone(),
         source_language_code,
@@ -509,6 +522,7 @@ pub(crate) fn apply_aligned_translation_to_gtms_chapter_sync(
     if job.signature
         != build_apply_signature_check(
             &input,
+            &job.source_context_hash,
             &job.chapter_base_commit_sha,
             &job.source_units,
             &job.target_units,
@@ -534,29 +548,38 @@ pub(crate) fn apply_aligned_translation_to_gtms_chapter_sync(
         return Err("The alignment job is not ready to apply.".to_string());
     }
 
-    let mut context = load_alignment_context(
+    let repo_path = resolve_project_git_repo_path(
         app,
         input.installation_id,
         input.project_id.as_deref(),
-        &input.repo_name,
-        &input.chapter_id,
+        Some(&input.repo_name),
     )?;
-    log_alignment_apply_checkpoint(
-        app,
-        &job.job_id,
-        "apply-command:context-loaded",
-        &format!(
-            "rows={} has_base_commit={}",
-            context.rows.len(),
-            context.chapter_base_commit_sha.is_some()
-        ),
-    );
-    verify_source_unchanged(&job, &context)?;
-    log_alignment_apply_checkpoint(app, &job.job_id, "apply-command:source-verified", "");
+    let result = with_alignment_repo_lock(&repo_path, || {
+        let mut context = load_alignment_context(
+            app,
+            input.installation_id,
+            input.project_id.as_deref(),
+            &input.repo_name,
+            &input.chapter_id,
+        )?;
+        log_alignment_apply_checkpoint(
+            app,
+            &job.job_id,
+            "apply-command:context-loaded",
+            &format!(
+                "rows={} has_base_commit={}",
+                context.rows.len(),
+                context.chapter_base_commit_sha.is_some()
+            ),
+        );
+        verify_source_unchanged(&job, &context)?;
+        final_checks(&job)?;
+        log_alignment_apply_checkpoint(app, &job.job_id, "apply-command:source-verified", "");
 
-    emit_apply_progress(app, &job.job_id, 0, "Preparing aligned translation");
+        emit_apply_progress(app, &job.job_id, 0, "Preparing aligned translation");
 
-    let result = apply_job_to_chapter(app, &mut context, &job);
+        apply_job_to_chapter(app, &mut context, &job)
+    });
     match &result {
         Ok(response) => log_alignment_apply_checkpoint(
             app,
@@ -598,6 +621,15 @@ pub(crate) fn apply_aligned_translation_to_gtms_chapter_sync(
         ),
     );
     Ok(result)
+}
+
+fn with_alignment_repo_lock<T>(
+    repo_path: &Path,
+    operation: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let repo_lock = crate::repo_sync_shared::repo_sync_lock(repo_path);
+    let _repo_guard = crate::repo_sync_shared::acquire_repo_sync_lock(&repo_lock);
+    operation()
 }
 
 struct AlignmentContext {
@@ -841,7 +873,8 @@ fn number_duplicate_language_group(languages: &mut [ChapterLanguage], base_code:
 
 fn build_signature(
     input: &AlignedTranslationPreflightInput,
-    chapter_base_commit_sha: &Option<String>,
+    source_context_hash: &str,
+    _chapter_base_commit_sha: &Option<String>,
     source_units: &[AlignmentUnit],
     target_units: &[AlignmentUnit],
 ) -> Value {
@@ -849,7 +882,7 @@ fn build_signature(
         "version": ALIGNMENT_PROMPT_VERSION,
         "chapterId": input.chapter_id,
         "projectFullName": input.project_full_name,
-        "chapterBaseCommitSha": chapter_base_commit_sha,
+        "sourceContextHash": source_context_hash,
         "sourceLanguageCode": input.source_language_code,
         "targetLanguageCode": input.target_language_code,
         "providerId": input.provider_id.as_str(),
@@ -867,7 +900,8 @@ fn build_signature(
 
 fn build_apply_signature_check(
     input: &AlignedTranslationApplyInput,
-    chapter_base_commit_sha: &Option<String>,
+    source_context_hash: &str,
+    _chapter_base_commit_sha: &Option<String>,
     source_units: &[AlignmentUnit],
     target_units: &[AlignmentUnit],
     provider_id: &AiProviderId,
@@ -877,7 +911,7 @@ fn build_apply_signature_check(
         "version": ALIGNMENT_PROMPT_VERSION,
         "chapterId": input.chapter_id,
         "projectFullName": input.project_full_name,
-        "chapterBaseCommitSha": chapter_base_commit_sha,
+        "sourceContextHash": source_context_hash,
         "sourceLanguageCode": input.source_language_code,
         "targetLanguageCode": input.target_language_code,
         "providerId": provider_id.as_str(),
@@ -937,7 +971,7 @@ fn run_mismatch_preflight(
         );
         progress.flow = flow_label(job).to_string();
         emit_progress(app, &progress);
-        let matches = short_text_compatibility(job, api_key)?;
+        let matches = short_text_compatibility(app, job, api_key)?;
         job.mismatch = Some(if matches {
             MismatchMetrics {
                 source_unmatched_percent: 0.0,
@@ -1006,11 +1040,15 @@ fn run_remaining_alignment(
     align_rows(app, job, api_key)?;
     resolve_missing_alignments(job);
     split_targets(app, job, api_key)?;
-    job.final_checks = final_checks(job);
+    job.final_checks = final_checks(job)?;
     Ok(())
 }
 
-fn short_text_compatibility(job: &AlignmentJob, api_key: &str) -> Result<bool, String> {
+fn short_text_compatibility(
+    app: &AppHandle,
+    job: &AlignmentJob,
+    api_key: &str,
+) -> Result<bool, String> {
     let prompt_input = json!({
         "sourceUnits": job.source_units,
         "targetUnits": job.target_units,
@@ -1019,12 +1057,14 @@ fn short_text_compatibility(job: &AlignmentJob, api_key: &str) -> Result<bool, S
         "Determine whether the target text is a translation or partial translation of the source text. Return only the schema fields.\n\nInput:\n{}",
         serde_json::to_string_pretty(&prompt_input).unwrap_or_default()
     );
-    let response: CompatibilityResponse = run_json_prompt(
+    let response: CompatibilityResponse = run_cached_json_prompt(
+        app,
         job,
         api_key,
         "alignment_compatibility",
         compatibility_schema(),
         &prompt,
+        |_| Ok(()),
     )?;
     Ok(response.matches)
 }
@@ -1072,7 +1112,7 @@ fn summarize_sections(
         let language = if doc_role == "source" {
             &job.source_language_code
         } else {
-            &job.target_language_code
+            &job.target_base_language_code
         };
         let input = json!({
             "docRole": doc_role,
@@ -1084,12 +1124,20 @@ fn summarize_sections(
             "Summarize this {language} document section in approximately 100 words in {language}. Do not translate the summary to another language.\n\nInput:\n{}",
             serde_json::to_string_pretty(&input).unwrap_or_default()
         );
-        let response: SummaryResponse = run_json_prompt(
+        let response: SummaryResponse = run_cached_json_prompt(
+            app,
             job,
             api_key,
             "same_language_section_summary",
             summary_schema(),
             &prompt,
+            |response: &SummaryResponse| {
+                if response.section_summary.summary.trim().is_empty() {
+                    Err("The section summary was empty. Retry alignment.".to_string())
+                } else {
+                    Ok(())
+                }
+            },
         )?;
         job.summaries.push(SectionSummary {
             doc_role: doc_role.to_string(),
@@ -1149,12 +1197,25 @@ fn find_section_matches(
             "A match means the target section and source section contain overlapping rows. Because sections overlap by 50%, each target section typically has about three matches. Return every source candidate with match/no-match and estimated percent overlap. Do not explain.\n\nInput:\n{}",
             serde_json::to_string_pretty(&input).unwrap_or_default()
         );
-        let response: SectionMatchResponse = run_json_prompt(
+        let response: SectionMatchResponse = run_cached_json_prompt(
+            app,
             job,
             api_key,
             "section_overlap_matches",
             section_match_schema(),
             &prompt,
+            |response: &SectionMatchResponse| {
+                let mut seen = HashSet::new();
+                if response.matches.iter().any(|item| {
+                    !source_summaries
+                        .iter()
+                        .any(|source| source.section_id == item.source_section_id)
+                        || !seen.insert(item.source_section_id)
+                }) {
+                    return Err("Section matching returned invalid or duplicate source sections. Retry alignment.".to_string());
+                }
+                Ok(())
+            },
         )?;
         for item in response.matches {
             job.section_matches.push(SectionMatch {
@@ -1220,54 +1281,40 @@ fn select_corridor(app: &AppHandle, job: &mut AlignmentJob) {
 }
 
 fn align_rows(app: &AppHandle, job: &mut AlignmentJob, api_key: &str) -> Result<(), String> {
-    let total = job.corridor.len().max(1);
-    let mut candidates: BTreeMap<usize, Vec<Vec<usize>>> = BTreeMap::new();
-    let corridor = job.corridor.clone();
-    for (index, pair) in corridor.iter().enumerate() {
-        emit_progress(
-            app,
-            &progress_event(
-                &job.job_id,
-                "row_alignment",
-                "Aligning rows inside matched sections",
-                "running",
-                Some(index),
-                Some(total),
-                "Aligning section row pairs",
-            ),
-        );
-        let Some(source_section) = job
-            .source_sections
-            .iter()
-            .find(|section| section.section_id == pair.source_section_id)
-        else {
-            continue;
-        };
-        let Some(target_section) = job
-            .target_sections
-            .iter()
-            .find(|section| section.section_id == pair.target_section_id)
-        else {
-            continue;
-        };
-        let source_units = units_for_section(&job.source_units, source_section);
-        let target_units = units_for_section(&job.target_units, target_section);
-        let prompt = build_row_alignment_prompt(&source_units, &target_units)?;
-        let response: AlignmentResponse = run_json_prompt(
-            job,
-            api_key,
-            "row_alignment_response",
-            alignment_schema(),
-            &prompt,
-        )?;
-        let alignments = validate_alignments(response, &source_units, &target_units)?;
-        for alignment in alignments {
-            candidates
-                .entry(alignment.target_id)
-                .or_default()
-                .push(alignment.source_ids);
-        }
-    }
+    let total = job.target_sections.len().max(1);
+    let candidates = collect_row_candidates(
+        &job.source_units,
+        &job.target_units,
+        &job.source_sections,
+        &job.target_sections,
+        &job.corridor,
+        |index, source_units, target_units| {
+            emit_progress(
+                app,
+                &progress_event(
+                    &job.job_id,
+                    "row_alignment",
+                    "Aligning rows inside matched sections",
+                    "running",
+                    Some(index),
+                    Some(total),
+                    "Aligning target section with its source corridor",
+                ),
+            );
+            let prompt = build_row_alignment_prompt(source_units, target_units)?;
+            run_cached_json_prompt(
+                app,
+                job,
+                api_key,
+                "row_alignment_response",
+                alignment_schema(),
+                &prompt,
+                |response: &AlignmentResponse| {
+                    validate_alignments(response.clone(), source_units, target_units).map(|_| ())
+                },
+            )
+        },
+    )?;
     job.alignments = resolve_row_candidate_conflicts(app, job, api_key, candidates)?;
     emit_progress(
         app,
@@ -1282,6 +1329,65 @@ fn align_rows(app: &AppHandle, job: &mut AlignmentJob, api_key: &str) -> Result<
         ),
     );
     Ok(())
+}
+
+fn collect_row_candidates(
+    source_units: &[AlignmentUnit],
+    target_units: &[AlignmentUnit],
+    source_sections: &[SectionWindow],
+    target_sections: &[SectionWindow],
+    corridor: &[SectionMatch],
+    mut align: impl FnMut(
+        usize,
+        &[AlignmentUnit],
+        &[AlignmentUnit],
+    ) -> Result<AlignmentResponse, String>,
+) -> Result<BTreeMap<usize, Vec<Vec<usize>>>, String> {
+    let mut candidates: BTreeMap<usize, Vec<Vec<usize>>> = BTreeMap::new();
+    for (index, target_section) in target_sections.iter().enumerate() {
+        // A target window can cover several source windows. Give its one pass
+        // the complete selected corridor instead of asking each partial source
+        // view to account for the entire target window independently.
+        let matched_section_ids = corridor
+            .iter()
+            .filter(|pair| pair.target_section_id == target_section.section_id && pair.is_match)
+            .map(|pair| pair.source_section_id)
+            .collect::<HashSet<_>>();
+        let source_ids = source_sections
+            .iter()
+            .filter(|section| matched_section_ids.contains(&section.section_id))
+            .flat_map(|section| units_for_row_alignment(source_units, source_sections, section))
+            .map(|unit| unit.id)
+            .collect::<HashSet<_>>();
+        // Keep the document order and deduplicate shared context without filling
+        // the gaps between distant matches with unrelated source text.
+        let sources = source_units
+            .iter()
+            .filter(|unit| source_ids.contains(&unit.id))
+            .cloned()
+            .collect::<Vec<_>>();
+        let targets = units_for_section(target_units, target_section);
+        let response = if sources.is_empty() {
+            AlignmentResponse {
+                alignments: targets
+                    .iter()
+                    .map(|unit| Alignment {
+                        target_id: unit.id,
+                        source_ids: Vec::new(),
+                    })
+                    .collect(),
+            }
+        } else {
+            align(index, &sources, &targets)?
+        };
+        for alignment in validate_alignments(response, &sources, &targets)? {
+            candidates
+                .entry(alignment.target_id)
+                .or_default()
+                .push(alignment.source_ids);
+        }
+    }
+    Ok(candidates)
 }
 
 fn resolve_row_candidate_conflicts(
@@ -1318,7 +1424,7 @@ fn resolve_row_candidate_conflicts(
             ),
         );
         resolved.push(resolve_one_row_conflict(
-            job, api_key, target_id, &distinct,
+            app, job, api_key, target_id, &distinct,
         )?);
         completed += 1;
     }
@@ -1365,6 +1471,7 @@ fn dedupe_source_sets(source_sets: &[Vec<usize>]) -> Vec<Vec<usize>> {
 }
 
 fn resolve_one_row_conflict(
+    app: &AppHandle,
     job: &AlignmentJob,
     api_key: &str,
     target_id: usize,
@@ -1415,12 +1522,21 @@ fn resolve_one_row_conflict(
         }))
         .unwrap_or_default()
     );
-    let response: AlignmentResponse = run_json_prompt(
+    let response: AlignmentResponse = run_cached_json_prompt(
+        app,
         job,
         api_key,
         "row_conflict_resolution",
         alignment_schema(),
         &prompt,
+        |response: &AlignmentResponse| {
+            validate_alignments(
+                response.clone(),
+                &candidate_sources,
+                std::slice::from_ref(target),
+            )
+            .map(|_| ())
+        },
     )?;
     let mut alignments =
         validate_alignments(response, &candidate_sources, std::slice::from_ref(target))?;
@@ -1448,55 +1564,39 @@ fn resolve_missing_alignments(job: &mut AlignmentJob) {
 }
 
 fn split_targets(app: &AppHandle, job: &mut AlignmentJob, api_key: &str) -> Result<(), String> {
-    let split_inputs = job
+    let targets = job
         .alignments
         .iter()
         .filter(|alignment| alignment.source_ids.len() > 1)
-        .filter_map(|alignment| {
-            let target = job
-                .target_units
-                .iter()
-                .find(|unit| unit.id == alignment.target_id)?;
-            let sources = alignment
-                .source_ids
-                .iter()
-                .filter_map(|source_id| job.source_units.iter().find(|unit| unit.id == *source_id))
-                .map(|unit| json!({ "sourceId": unit.id, "sourceText": unit.text }))
-                .collect::<Vec<_>>();
-            Some(json!({
-                "targetId": target.id,
-                "targetText": target.text,
-                "sources": sources,
-            }))
-        })
+        .map(|alignment| alignment.target_id)
         .collect::<Vec<_>>();
-    if split_inputs.is_empty() {
+    let mut splits = Vec::new();
+    for (index, target_id) in targets.iter().enumerate() {
+        let prompt = build_split_prompt(job, *target_id)?;
+        let response: SplitTargetResponse = run_cached_json_prompt(
+            app,
+            job,
+            api_key,
+            "split_target_response",
+            split_schema(),
+            &prompt,
+            |response| validate_split_response(job, response, &[*target_id]).map(|_| ()),
+        )?;
+        splits.extend(validate_split_response(job, &response, &[*target_id])?);
         emit_progress(
             app,
             &progress_event(
                 &job.job_id,
                 "split_targets",
                 "Splitting combined target rows",
-                "complete",
-                Some(0),
-                Some(0),
-                "No combined target rows to split",
+                "running",
+                Some(index + 1),
+                Some(targets.len()),
+                "Checking sentence boundaries",
             ),
         );
-        return Ok(());
     }
-    let prompt = format!(
-        "Split target-language text units into the exact parts that correspond to each source-language unit. Return only target ids, source ids, and exact target text fragments copied from targetText.\n\nInput:\n{}",
-        serde_json::to_string_pretty(&json!({ "splitTargets": split_inputs })).unwrap_or_default()
-    );
-    let response: SplitTargetResponse = run_json_prompt(
-        job,
-        api_key,
-        "split_target_response",
-        split_schema(),
-        &prompt,
-    )?;
-    job.split_targets = validate_split_response(job, response);
+    job.split_targets = splits;
     emit_progress(
         app,
         &progress_event(
@@ -1504,88 +1604,195 @@ fn split_targets(app: &AppHandle, job: &mut AlignmentJob, api_key: &str) -> Resu
             "split_targets",
             "Splitting combined target rows",
             "complete",
-            Some(job.split_targets.len()),
-            Some(split_inputs.len()),
+            Some(targets.len()),
+            Some(targets.len()),
             "Completed split target pass",
         ),
     );
     Ok(())
 }
 
-fn validate_split_response(job: &AlignmentJob, response: SplitTargetResponse) -> Vec<SplitTarget> {
-    let target_by_id = job
+fn build_split_prompt(job: &AlignmentJob, target_id: usize) -> Result<String, String> {
+    let target = job
         .target_units
         .iter()
-        .map(|unit| (unit.id, unit))
-        .collect::<HashMap<_, _>>();
-    let allowed: HashMap<usize, HashSet<usize>> = job
+        .find(|unit| unit.id == target_id)
+        .ok_or_else(|| "The split target is missing.".to_string())?;
+    let alignment = job
         .alignments
         .iter()
-        .filter(|alignment| alignment.source_ids.len() > 1)
-        .map(|alignment| {
-            (
-                alignment.target_id,
-                alignment.source_ids.iter().copied().collect(),
-            )
-        })
-        .collect();
+        .find(|alignment| alignment.target_id == target_id)
+        .ok_or_else(|| "The split alignment is missing.".to_string())?;
+    let sources = alignment
+        .source_ids
+        .iter()
+        .filter_map(|id| job.source_units.iter().find(|unit| unit.id == *id))
+        .map(|unit| json!({"sourceId": unit.id, "sourceText": unit.text}))
+        .collect::<Vec<_>>();
+    let boundary_rule = if job.subtitle_continuations {
+        "These are subtitle segments: a row break may continue the same sentence. Do not add a period or capitalize solely because of a segment boundary. Follow actual sentence boundaries indicated by the source and target context."
+    } else {
+        "These are paragraph rows. Prefer existing sentence boundaries. If a target sentence combines separate source paragraphs, split at the semantic boundary and repair punctuation/capitalization so each paragraph reads correctly in the target language. Do not create a sentence fragment."
+    };
+    Ok(format!(
+        "Split this translated text across its matched source rows. Target language: {}.\n{}\nReturn exactly one splitTargets entry for targetId {}. For each fragment, targetTextFragment MUST be an exact substring of targetText. Preserve every non-whitespace character exactly once, in order, and cover every sourceId. Never split inside a word. Keep the exact fragment even when an adjustment is needed. adjustedText must be null when unchanged; otherwise it may change ONLY punctuation, whitespace, and letter capitalization appropriate for this language and boundary. Never add, remove, reorder, or replace words or change meaning. If grammatically correct paragraphs require changes to words, return needsRewrite: true rather than inventing a rewrite. Otherwise needsRewrite: false.\n\nInput:\n{}",
+        job.target_base_language_code, boundary_rule, target_id,
+        serde_json::to_string_pretty(&json!({"targetId": target_id, "targetText": target.text, "sources": sources}))
+            .map_err(|error| format!("Could not prepare the split input: {error}"))?
+    ))
+}
+
+fn split_error(target_id: usize) -> String {
+    format!("ALIGNMENT_SPLIT_REVIEW: Paragraph {target_id} could not be split safely. Retry, or go back and separate/revise that paragraph in the translation text. Nothing has been applied.")
+}
+
+fn split_word_content(text: &str) -> Vec<String> {
+    let normalized = text
+        .nfc()
+        .flat_map(char::to_uppercase)
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
+    normalized
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn valid_split_boundary(text: &str, index: usize, language: &str) -> bool {
+    // These writing systems commonly omit spaces between words. Their boundaries
+    // are determined semantically by the split prompt, not a whitespace heuristic.
+    if ["zh", "ja", "th", "lo", "km", "my"]
+        .contains(&language.split('-').next().unwrap_or(language))
+    {
+        return true;
+    }
+    if index == 0 {
+        return true;
+    }
+    let before = text.chars().nth(index - 1);
+    let after = text.chars().nth(index);
+    !matches!((before, after), (Some(left), Some(right)) if left.is_alphanumeric() && right.is_alphanumeric())
+}
+
+fn validate_split_response(
+    job: &AlignmentJob,
+    response: &SplitTargetResponse,
+    expected_targets: &[usize],
+) -> Result<Vec<SplitTarget>, String> {
+    let mut seen = HashSet::new();
     let mut results = Vec::new();
-    for item in response.split_targets {
-        let Some(target) = target_by_id.get(&item.target_id) else {
-            continue;
-        };
-        let Some(allowed_sources) = allowed.get(&item.target_id) else {
-            continue;
-        };
-        let mut search_start = 0usize;
+    for item in &response.split_targets {
+        if !expected_targets.contains(&item.target_id)
+            || !seen.insert(item.target_id)
+            || item.needs_rewrite
+        {
+            return Err(split_error(item.target_id));
+        }
+        let target = job
+            .target_units
+            .iter()
+            .find(|unit| unit.id == item.target_id)
+            .ok_or_else(|| split_error(item.target_id))?;
+        let alignment = job
+            .alignments
+            .iter()
+            .find(|alignment| alignment.target_id == item.target_id)
+            .ok_or_else(|| split_error(item.target_id))?;
+        let allowed_sources = alignment.source_ids.iter().copied().collect::<HashSet<_>>();
+        let mut search_start = 0;
         let mut fragments = Vec::new();
-        for hint in item.fragments {
+        for hint in &item.fragments {
             if !allowed_sources.contains(&hint.source_id)
                 || hint.target_text_fragment.trim().is_empty()
             {
-                continue;
+                return Err(split_error(item.target_id));
             }
-            if let Some((start, end)) =
+            let (start, end) =
                 find_fragment_range(&target.text, &hint.target_text_fragment, search_start)
+                    .ok_or_else(|| split_error(item.target_id))?;
+            if !valid_split_boundary(&target.text, start, &job.target_base_language_code)
+                || !valid_split_boundary(&target.text, end, &job.target_base_language_code)
             {
-                fragments.push(SplitFragment {
-                    source_id: hint.source_id,
-                    range: [start, end],
-                    text: slice_chars(&target.text, start, end),
-                });
-                search_start = end;
+                return Err(split_error(item.target_id));
             }
-        }
-        if split_covers_target(&target.text, &fragments, allowed_sources) {
-            results.push(SplitTarget {
-                target_id: item.target_id,
-                fragments,
+            let adjusted_text = hint
+                .adjusted_text
+                .as_ref()
+                .filter(|text| *text != &hint.target_text_fragment)
+                .cloned();
+            if adjusted_text.as_ref().is_some_and(|text| {
+                text.trim().is_empty()
+                    || split_word_content(text) != split_word_content(&hint.target_text_fragment)
+            }) {
+                return Err(split_error(item.target_id));
+            }
+            fragments.push(SplitFragment {
+                source_id: hint.source_id,
+                range: [start, end],
+                text: slice_chars(&target.text, start, end),
+                adjusted_text,
             });
+            search_start = end;
         }
+        if !split_covers_target(&target.text, &fragments, &allowed_sources) {
+            return Err(split_error(item.target_id));
+        }
+        results.push(SplitTarget {
+            target_id: item.target_id,
+            fragments,
+        });
     }
-    results
+    if let Some(missing) = expected_targets.iter().find(|id| !seen.contains(id)) {
+        return Err(split_error(*missing));
+    }
+    Ok(results)
 }
 
-fn final_checks(job: &AlignmentJob) -> Vec<FinalCheck> {
-    let rendered_target_texts = rendered_target_texts(job);
-    let target_missing = missing_tokens(
-        job.target_units.iter().map(|unit| unit.text.as_str()),
-        rendered_target_texts.iter().map(String::as_str),
-    );
-    vec![
-        FinalCheck {
-            name: "sourceTextCoverage".to_string(),
-            passed: true,
-            warning: false,
-            details: Vec::new(),
+fn final_checks(job: &AlignmentJob) -> Result<Vec<FinalCheck>, String> {
+    validate_alignments(
+        AlignmentResponse {
+            alignments: job.alignments.clone(),
         },
-        FinalCheck {
-            name: "targetWordCoverage".to_string(),
-            passed: target_missing.is_empty(),
-            warning: false,
-            details: target_missing,
-        },
-    ]
+        &job.source_units,
+        &job.target_units,
+    )?;
+    // Validate cached splits again before saving. Exact fragments prove coverage;
+    // adjusted text is checked separately so authorized punctuation/case repairs
+    // do not look like lost words.
+    let response = SplitTargetResponse {
+        split_targets: job
+            .split_targets
+            .iter()
+            .map(|split| SplitTargetResponseItem {
+                target_id: split.target_id,
+                needs_rewrite: false,
+                fragments: split
+                    .fragments
+                    .iter()
+                    .map(|fragment| SplitTargetFragmentHint {
+                        source_id: fragment.source_id,
+                        target_text_fragment: fragment.text.clone(),
+                        adjusted_text: fragment.adjusted_text.clone(),
+                    })
+                    .collect(),
+            })
+            .collect(),
+    };
+    let expected = job
+        .alignments
+        .iter()
+        .filter(|alignment| alignment.source_ids.len() > 1)
+        .map(|alignment| alignment.target_id)
+        .collect::<Vec<_>>();
+    validate_split_response(job, &response, &expected)?;
+    build_row_translation_plan(job)?;
+    Ok(vec![FinalCheck {
+        name: "exactTargetCoverageAndSafeSplits".to_string(),
+        passed: true,
+        warning: false,
+        details: Vec::new(),
+    }])
 }
 
 fn apply_job_to_chapter(
@@ -1667,7 +1874,7 @@ fn apply_job_to_chapter(
     }
 
     emit_apply_progress(app, &job.job_id, 2, "Preparing row updates");
-    let row_texts = build_row_translation_plan(job);
+    let row_texts = build_row_translation_plan(job)?;
     let matched_row_count = row_texts.matched_rows.len();
     let unmatched_target_count = row_texts.unmatched_targets.len();
     log_alignment_apply_checkpoint(
@@ -1692,6 +1899,17 @@ fn apply_job_to_chapter(
             continue;
         }
         set_row_plain_text(row_value, &job.target_language_code, &text)?;
+        if row_texts.adjusted_rows.contains(&row_id) {
+            mark_alignment_adjustment(
+                row_value,
+                &job.target_language_code,
+                row_texts
+                    .original_rows
+                    .get(&row_id)
+                    .map(String::as_str)
+                    .unwrap_or_default(),
+            )?;
+        }
         updated_row_count += 1;
     }
 
@@ -1793,7 +2011,7 @@ fn apply_job_to_chapter(
             "apply-job:write-commit-start",
             &format!("changed_paths={}", prepared_writes.len()),
         );
-        write_row_files_and_commit(
+        super::shared::write_row_files_and_commit_locked(
             app,
             &context.repo_path,
             &format!("Add aligned {} translation", job.target_language_code),
@@ -1862,9 +2080,11 @@ fn apply_job_to_chapter(
 struct RowTranslationPlan {
     matched_rows: BTreeMap<String, String>,
     unmatched_targets: Vec<AlignmentUnit>,
+    original_rows: BTreeMap<String, String>,
+    adjusted_rows: HashSet<String>,
 }
 
-fn build_row_translation_plan(job: &AlignmentJob) -> RowTranslationPlan {
+fn build_row_translation_plan(job: &AlignmentJob) -> Result<RowTranslationPlan, String> {
     let source_by_id = job
         .source_units
         .iter()
@@ -1895,22 +2115,62 @@ fn build_row_translation_plan(job: &AlignmentJob) -> RowTranslationPlan {
                     .get(&fragment.source_id)
                     .and_then(|unit| unit.row_id.clone())
                 {
-                    append_row_text(&mut plan.matched_rows, &row_id, &fragment.text);
+                    append_row_text(&mut plan.original_rows, &row_id, &fragment.text);
+                    append_row_text(
+                        &mut plan.matched_rows,
+                        &row_id,
+                        fragment.adjusted_text.as_deref().unwrap_or(&fragment.text),
+                    );
+                    if fragment.adjusted_text.is_some() {
+                        plan.adjusted_rows.insert(row_id);
+                    }
                 }
             }
             continue;
+        }
+        if alignment.source_ids.len() > 1 {
+            return Err(split_error(alignment.target_id));
         }
         for source_id in &alignment.source_ids {
             if let Some(row_id) = source_by_id
                 .get(source_id)
                 .and_then(|unit| unit.row_id.clone())
             {
+                append_row_text(&mut plan.original_rows, &row_id, &target.text);
                 append_row_text(&mut plan.matched_rows, &row_id, &target.text);
             }
         }
     }
     plan.unmatched_targets.sort_by_key(|unit| unit.id);
-    plan
+    Ok(plan)
+}
+
+fn mark_alignment_adjustment(
+    row: &mut Value,
+    language_code: &str,
+    original: &str,
+) -> Result<(), String> {
+    ensure_language_field(row, language_code)?;
+    let field = row
+        .get_mut("fields")
+        .and_then(|fields| fields.get_mut(language_code))
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| "The translation field is invalid.".to_string())?;
+    field.insert(
+        "editor_flags".to_string(),
+        json!({"please_check": true, "reviewed": false}),
+    );
+    let escaped = original
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;");
+    let existing_notes = field
+        .get("notes_html")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    field.insert("notes_html".to_string(), Value::String(format!("{existing_notes}<p>Original text before sentence-boundary adjustments:</p><p>{escaped}</p>")));
+    Ok(())
 }
 
 fn append_row_text(rows: &mut BTreeMap<String, String>, row_id: &str, text: &str) {
@@ -1997,11 +2257,32 @@ fn group_unmatched_targets(
         .collect()
 }
 
+fn alignment_source_context_hash(context: &AlignmentContext, language_code: &str) -> String {
+    hash_json(&json!({
+        "lifecycle": context.chapter_file.lifecycle.state,
+        "sourceLanguage": context.chapter_file.languages.iter().find(|language| language.code == language_code),
+        "sourceFiles": context.chapter_file.source_files,
+        "rows": context.rows.iter().map(|row| json!({
+            "rowId": row.row_id,
+            "orderKey": row.structure.order_key,
+            "sourceText": row_plain_text_map(row).get(language_code),
+        })).collect::<Vec<_>>(),
+    }))
+}
+
 fn verify_source_unchanged(job: &AlignmentJob, context: &AlignmentContext) -> Result<(), String> {
-    if context.chapter_base_commit_sha != job.chapter_base_commit_sha {
-        return Err(
-            "The file changed while alignment was running. Run Add translation again.".to_string(),
-        );
+    if alignment_source_context_hash(context, &job.source_language_code) != job.source_context_hash
+    {
+        return Err("ALIGNMENT_SOURCE_CHANGED: The source or chapter structure changed. Restart alignment using your saved text.".to_string());
+    }
+    if !job.target_language_exists
+        && context
+            .chapter_file
+            .languages
+            .iter()
+            .any(|language| language.code == job.target_language_code)
+    {
+        return Err("ALIGNMENT_SOURCE_CHANGED: The translation column was added while alignment was running. Restart alignment using your saved text.".to_string());
     }
     let current_units = source_units_from_rows(&context.rows, &job.source_language_code);
     let current = current_units
@@ -2015,7 +2296,7 @@ fn verify_source_unchanged(job: &AlignmentJob, context: &AlignmentContext) -> Re
         .collect::<Vec<_>>();
     if current != expected {
         return Err(
-            "The file changed while alignment was running. Run Add translation again.".to_string(),
+            "ALIGNMENT_SOURCE_CHANGED: The source changed. Restart alignment using your saved text.".to_string(),
         );
     }
     Ok(())
@@ -2331,6 +2612,75 @@ fn parse_order_key_hex_local(value: &str) -> Result<u128, String> {
     u128::from_str_radix(normalized, 16).map_err(|_| "The row order key is invalid.".to_string())
 }
 
+/// Cache only responses that pass the stage's semantic validator. Invalid cached
+/// responses are discarded so Retry can request a fresh answer.
+fn run_cached_json_prompt<T: for<'de> Deserialize<'de>>(
+    app: &AppHandle,
+    job: &AlignmentJob,
+    api_key: &str,
+    schema_name: &str,
+    schema: Value,
+    prompt: &str,
+    validate: impl Fn(&T) -> Result<(), String>,
+) -> Result<T, String> {
+    let path = job_path(app, job.installation_id, &job.job_id)?;
+    save_job(&path, job)?;
+    let cache_dir = path.with_extension("requests");
+    let key = hash_json(&json!({
+        "version": ALIGNMENT_PROMPT_VERSION,
+        "provider": job.provider_id.as_str(), "model": job.model_id,
+        "schemaName": schema_name, "schema": schema, "prompt": prompt,
+    }));
+    cached_validated_response(&cache_dir.join(format!("{key}.json")), validate, || {
+        run_json_prompt::<Value>(job, api_key, schema_name, schema, prompt)
+    })
+}
+
+fn cached_validated_response<T: for<'de> Deserialize<'de>>(
+    path: &Path,
+    validate: impl Fn(&T) -> Result<(), String>,
+    request: impl FnOnce() -> Result<Value, String>,
+) -> Result<T, String> {
+    if let Ok(text) = fs::read_to_string(path) {
+        if let Ok(response) = serde_json::from_str::<T>(&text) {
+            if validate(&response).is_ok() {
+                return Ok(response);
+            }
+        }
+        fs::remove_file(path)
+            .map_err(|error| format!("Could not reset the invalid alignment response: {error}"))?;
+    }
+    let value = request()?;
+    let response: T = serde_json::from_value(value.clone())
+        .map_err(|error| format!("The alignment response was invalid: {error}"))?;
+    validate(&response)?;
+    write_alignment_json_atomic(path, &value)?;
+    Ok(response)
+}
+
+fn write_alignment_json_atomic(path: &Path, value: &Value) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Could not create alignment cache: {error}"))?;
+    }
+    let temporary = path.with_extension(format!("{}.tmp", uuid::Uuid::now_v7()));
+    let result = (|| {
+        let mut file = fs::File::create(&temporary)
+            .map_err(|error| format!("Could not create alignment checkpoint: {error}"))?;
+        serde_json::to_writer(&mut file, value)
+            .map_err(|error| format!("Could not write alignment checkpoint: {error}"))?;
+        file.sync_all()
+            .map_err(|error| format!("Could not save alignment checkpoint: {error}"))?;
+        drop(file);
+        fs::rename(&temporary, path)
+            .map_err(|error| format!("Could not replace alignment checkpoint: {error}"))
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
 fn run_json_prompt<T: for<'de> Deserialize<'de>>(
     job: &AlignmentJob,
     api_key: &str,
@@ -2428,6 +2778,30 @@ fn units_for_section(units: &[AlignmentUnit], section: &SectionWindow) -> Vec<Al
         .collect()
 }
 
+fn units_for_row_alignment(
+    units: &[AlignmentUnit],
+    sections: &[SectionWindow],
+    section: &SectionWindow,
+) -> Vec<AlignmentUnit> {
+    // The corridor design includes one neighboring source section on each side.
+    // Without this context, a valid match outside the primary window becomes an
+    // empty/partial candidate that conflicts with passes which can see that text.
+    let first_section_id = section.section_id.saturating_sub(1);
+    let last_section_id = section.section_id.saturating_add(1);
+    let ids = sections
+        .iter()
+        .filter(|candidate| {
+            candidate.section_id >= first_section_id && candidate.section_id <= last_section_id
+        })
+        .flat_map(|candidate| candidate.unit_ids.iter().copied())
+        .collect::<HashSet<_>>();
+    units
+        .iter()
+        .filter(|unit| ids.contains(&unit.id))
+        .cloned()
+        .collect()
+}
+
 fn summaries_by_role(job: &AlignmentJob, role: &str) -> Vec<SectionSummary> {
     job.summaries
         .iter()
@@ -2463,41 +2837,6 @@ fn mismatch_metrics(job: &AlignmentJob) -> MismatchMetrics {
         total_source_sections: total_source,
         total_target_sections: total_target,
     }
-}
-
-fn rendered_target_texts(job: &AlignmentJob) -> Vec<String> {
-    let plan = build_row_translation_plan(job);
-    plan.matched_rows
-        .into_values()
-        .chain(plan.unmatched_targets.into_iter().map(|unit| unit.text))
-        .collect()
-}
-
-fn missing_tokens<'a>(
-    input: impl Iterator<Item = &'a str>,
-    output: impl Iterator<Item = &'a str>,
-) -> Vec<String> {
-    let input_counts = token_counts(input);
-    let output_counts = token_counts(output);
-    input_counts
-        .into_iter()
-        .filter_map(|(token, count)| {
-            let found = output_counts.get(&token).copied().unwrap_or(0);
-            (found < count).then_some(format!(
-                "{token:?}: expected at least {count}, found {found}"
-            ))
-        })
-        .collect()
-}
-
-fn token_counts<'a>(texts: impl Iterator<Item = &'a str>) -> BTreeMap<String, usize> {
-    let mut counts = BTreeMap::new();
-    for text in texts {
-        for token in text.split_whitespace() {
-            *counts.entry(token.to_string()).or_insert(0) += 1;
-        }
-    }
-    counts
 }
 
 fn find_fragment_range(text: &str, fragment: &str, start_char: usize) -> Option<(usize, usize)> {
@@ -2639,6 +2978,7 @@ fn job_path(app: &AppHandle, installation_id: i64, job_id: &str) -> Result<PathB
 /// Best-effort removal of a consumed/abandoned alignment job so its cached source and
 /// pasted-translation text does not linger on disk.
 fn remove_alignment_job_file(path: &Path) {
+    let _ = fs::remove_dir_all(path.with_extension("requests"));
     if let Err(error) = fs::remove_file(path) {
         if path.exists() && cfg!(debug_assertions) {
             eprintln!("[gtms alignment-jobs] could not remove job file: {error}");
@@ -2670,7 +3010,7 @@ fn prune_stale_alignment_jobs(app: &AppHandle, installation_id: i64) {
             .map(|age| age.as_secs() > ALIGNMENT_JOB_TTL_SECS)
             .unwrap_or(false);
         if aged_out {
-            let _ = fs::remove_file(&path);
+            remove_alignment_job_file(&path);
         }
     }
 }
@@ -2684,7 +3024,9 @@ fn load_cached_job(path: &Path, signature: &Value) -> Result<Option<AlignmentJob
 }
 
 fn save_job(path: &Path, job: &AlignmentJob) -> Result<(), String> {
-    write_json_pretty(path, job)
+    let value = serde_json::to_value(job)
+        .map_err(|error| format!("Could not serialize alignment checkpoint: {error}"))?;
+    write_alignment_json_atomic(path, &value)
 }
 
 fn hash_text(text: &str) -> String {
@@ -2788,18 +3130,20 @@ fn split_schema() -> Value {
                 "items": {
                     "type": "object",
                     "additionalProperties": false,
-                    "required": ["targetId", "fragments"],
+                    "required": ["targetId", "fragments", "needsRewrite"],
                     "properties": {
                         "targetId": { "type": "integer", "minimum": 1 },
+                        "needsRewrite": { "type": "boolean" },
                         "fragments": {
                             "type": "array",
                             "items": {
                                 "type": "object",
                                 "additionalProperties": false,
-                                "required": ["sourceId", "targetTextFragment"],
+                                "required": ["sourceId", "targetTextFragment", "adjustedText"],
                                 "properties": {
                                     "sourceId": { "type": "integer", "minimum": 1 },
-                                    "targetTextFragment": { "type": "string" }
+                                    "targetTextFragment": { "type": "string" },
+                                    "adjustedText": { "type": ["string", "null"] }
                                 }
                             }
                         }
@@ -2813,6 +3157,590 @@ fn split_schema() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn alignment_test_context() -> AlignmentContext {
+        let rows = ["We left early.", "We arrived on time."].iter().enumerate().map(|(index, text)| {
+            serde_json::from_value(json!({
+                "row_id": format!("r{}", index + 1),
+                "structure": {"order_key": format!("{:032x}", index + 1)},
+                "status": {"review_state": "unreviewed"}, "origin": {"source_row_number": index + 1},
+                "fields": {"en": {"plain_text": text}, "fr": {"plain_text": "Existing translation"}}
+            })).unwrap()
+        }).collect();
+        AlignmentContext {
+            repo_path: PathBuf::from("test-repo"), chapter_path: PathBuf::from("test-repo/chapter"),
+            chapter_json_path: PathBuf::from("test-repo/chapter/chapter.json"),
+            chapter_file: serde_json::from_value(json!({"chapter_id": "chapter-1", "title": "Chapter", "languages": [{"code":"en", "name":"English", "role":"source"}]})).unwrap(),
+            rows, chapter_base_commit_sha: Some("before".to_string()),
+        }
+    }
+
+    fn alignment_test_job() -> AlignmentJob {
+        let context = alignment_test_context();
+        let sources = source_units_from_rows(&context.rows, "en");
+        let targets = parse_target_units("We left early, and we arrived on time.");
+        AlignmentJob {
+            job_id: "test-job".to_string(),
+            status: "readyToApply".to_string(),
+            signature: json!({}),
+            installation_id: 1,
+            repo_name: "repo".to_string(),
+            project_id: None,
+            chapter_id: "chapter-1".to_string(),
+            chapter_base_commit_sha: context.chapter_base_commit_sha.clone(),
+            source_context_hash: alignment_source_context_hash(&context, "en"),
+            subtitle_continuations: false,
+            provider_id: AiProviderId::OpenAi,
+            model_id: "test-model".to_string(),
+            source_language_code: "en".to_string(),
+            target_language_code: "vi-x-2".to_string(),
+            target_base_language_code: "vi".to_string(),
+            target_language_exists: false,
+            existing_translation_count: 0,
+            source_sections: build_sections(&sources),
+            target_sections: build_sections(&targets),
+            source_units: sources,
+            target_units: targets,
+            summaries: vec![],
+            section_matches: vec![],
+            corridor: vec![],
+            alignments: vec![Alignment {
+                target_id: 1,
+                source_ids: vec![1, 2],
+            }],
+            split_targets: vec![],
+            mismatch: None,
+            final_checks: vec![],
+        }
+    }
+
+    fn test_split_response(
+        first: &str,
+        second: &str,
+        first_adjusted: Option<&str>,
+        second_adjusted: Option<&str>,
+    ) -> SplitTargetResponse {
+        serde_json::from_value(
+            json!({"splitTargets": [{"targetId":1, "needsRewrite":false, "fragments":[
+                {"sourceId":1, "targetTextFragment":first, "adjustedText":first_adjusted},
+                {"sourceId":2, "targetTextFragment":second, "adjustedText":second_adjusted}
+            ]}]}),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn missing_or_invalid_splits_cannot_duplicate_paragraphs_or_pass_final_checks() {
+        let job = alignment_test_job();
+        assert!(build_row_translation_plan(&job).is_err());
+        assert!(final_checks(&job).is_err());
+        assert!(validate_split_response(
+            &job,
+            &SplitTargetResponse {
+                split_targets: vec![]
+            },
+            &[1]
+        )
+        .is_err());
+        let invalid = test_split_response("Invented text", "and we arrived on time.", None, None);
+        assert!(validate_split_response(&job, &invalid, &[1]).is_err());
+        let missing = test_split_response("We left early,", "we arrived on time.", None, None);
+        assert!(validate_split_response(&job, &missing, &[1]).is_err());
+        let mut rewrite =
+            test_split_response("We left early,", "and we arrived on time.", None, None);
+        rewrite.split_targets[0].needs_rewrite = true;
+        assert!(validate_split_response(&job, &rewrite, &[1]).is_err());
+    }
+
+    #[test]
+    fn sentence_repairs_preserve_exact_fragments_and_flag_adjusted_rows() {
+        let mut job = alignment_test_job();
+        let response = test_split_response(
+            "We left early,",
+            "and we arrived on time.",
+            Some("We left early."),
+            Some("And we arrived on time."),
+        );
+        job.split_targets = validate_split_response(&job, &response, &[1]).unwrap();
+        assert!(final_checks(&job).unwrap().iter().all(|check| check.passed));
+        let plan = build_row_translation_plan(&job).unwrap();
+        assert_eq!(plan.matched_rows["r1"], "We left early.");
+        assert_eq!(plan.matched_rows["r2"], "And we arrived on time.");
+        assert_eq!(plan.original_rows["r1"], "We left early,");
+        assert_eq!(plan.adjusted_rows.len(), 2);
+        let mut row = json!({"fields":{"vi-x-2":{"notes_html":"<p>Existing note</p>"}}});
+        mark_alignment_adjustment(&mut row, "vi-x-2", "We left <early>,").unwrap();
+        assert_eq!(
+            row["fields"]["vi-x-2"]["editor_flags"]["please_check"],
+            true
+        );
+        let notes = row["fields"]["vi-x-2"]["notes_html"].as_str().unwrap();
+        assert!(notes.contains("Existing note"));
+        assert!(notes.contains("We left &lt;early&gt;,"));
+    }
+
+    #[test]
+    fn sentence_repairs_accept_vietnamese_case_but_reject_changed_words_and_midword_cuts() {
+        let mut job = alignment_test_job();
+        job.target_units = parse_target_units("Tôi đi sớm, và tôi đến đúng giờ.");
+        let response = test_split_response(
+            "Tôi đi sớm,",
+            "và tôi đến đúng giờ.",
+            Some("Tôi đi sớm."),
+            Some("Và tôi đến đúng giờ."),
+        );
+        assert!(validate_split_response(&job, &response, &[1]).is_ok());
+        let changed_words = test_split_response(
+            "Tôi đi sớm,",
+            "và tôi đến đúng giờ.",
+            Some("Tôi đi muộn."),
+            None,
+        );
+        assert!(validate_split_response(&job, &changed_words, &[1]).is_err());
+        let removed_word = test_split_response(
+            "Tôi đi sớm,",
+            "và tôi đến đúng giờ.",
+            None,
+            Some("Tôi đến đúng giờ."),
+        );
+        assert!(validate_split_response(&job, &removed_word, &[1]).is_err());
+        job.target_units = parse_target_units("Hello world.");
+        assert!(validate_split_response(
+            &job,
+            &test_split_response("Hel", "lo world.", None, None),
+            &[1]
+        )
+        .is_err());
+        assert_ne!(split_word_content("a part"), split_word_content("apart"));
+        assert_eq!(split_word_content("Straße"), split_word_content("STRASSE"));
+    }
+
+    #[test]
+    fn subtitle_continuations_remain_verbatim_and_prompt_uses_real_language() {
+        let mut job = alignment_test_job();
+        job.subtitle_continuations = true;
+        let prompt = build_split_prompt(&job, 1).unwrap();
+        assert!(prompt.contains("Target language: vi."));
+        assert!(!prompt.contains("vi-x-2"));
+        assert!(prompt.contains("Do not add a period or capitalize solely"));
+        let response = test_split_response("We left early,", "and we arrived on time.", None, None);
+        job.split_targets = validate_split_response(&job, &response, &[1]).unwrap();
+        let plan = build_row_translation_plan(&job).unwrap();
+        assert_eq!(plan.matched_rows["r2"], "and we arrived on time.");
+        assert!(plan.adjusted_rows.is_empty());
+        job.subtitle_continuations = false;
+        assert!(build_split_prompt(&job, 1)
+            .unwrap()
+            .contains("These are paragraph rows"));
+    }
+
+    #[test]
+    fn unrelated_commits_and_other_language_edits_do_not_invalidate_alignment() {
+        let job = alignment_test_job();
+        let mut context = alignment_test_context();
+        context.chapter_base_commit_sha = Some("unrelated-commit".to_string());
+        context.chapter_file.title = "Renamed chapter".to_string();
+        context.rows[0].fields.get_mut("fr").unwrap().plain_text =
+            "New French translation".to_string();
+        assert!(verify_source_unchanged(&job, &context).is_ok());
+        context.rows[0].fields.get_mut("en").unwrap().plain_text = "Changed source".to_string();
+        assert!(verify_source_unchanged(&job, &context)
+            .unwrap_err()
+            .contains("ALIGNMENT_SOURCE_CHANGED:"));
+        let mut context = alignment_test_context();
+        context.rows.reverse();
+        assert!(verify_source_unchanged(&job, &context).is_err());
+        let mut context = alignment_test_context();
+        context.chapter_file.languages.push(ChapterLanguage {
+            code: "vi-x-2".to_string(),
+            name: "Vietnamese".to_string(),
+            role: "target".to_string(),
+            base_code: Some("vi".to_string()),
+        });
+        assert!(verify_source_unchanged(&job, &context).is_err());
+    }
+
+    #[test]
+    fn alignment_lock_protects_reload_and_save_from_background_sync() {
+        use std::sync::mpsc;
+        let root = std::env::temp_dir().join(format!("alignment-lock-{}", uuid::Uuid::now_v7()));
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("row.json");
+        fs::write(&file, "before sync").unwrap();
+        let lock = crate::repo_sync_shared::repo_sync_lock(&root);
+        let sync_guard = crate::repo_sync_shared::acquire_repo_sync_lock(&lock);
+        let (started, waiting) = mpsc::channel();
+        let path = root.clone();
+        let worker = std::thread::spawn(move || {
+            started.send(()).unwrap();
+            with_alignment_repo_lock(&path, || {
+                let same_lock = crate::repo_sync_shared::repo_sync_lock(&path);
+                assert!(same_lock.try_lock().is_err());
+                let fresh = fs::read_to_string(path.join("row.json")).unwrap();
+                assert_eq!(fresh, "after sync");
+                fs::write(path.join("row.json"), format!("{fresh}; translation")).unwrap();
+                Ok(())
+            })
+            .unwrap();
+        });
+        waiting
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        fs::write(&file, "after sync").unwrap();
+        drop(sync_guard);
+        worker.join().unwrap();
+        assert_eq!(
+            fs::read_to_string(&file).unwrap(),
+            "after sync; translation"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn validated_response_checkpoints_survive_late_failures_and_reject_invalid_cache() {
+        let root = std::env::temp_dir().join(format!("alignment-cache-{}", uuid::Uuid::now_v7()));
+        let first = root.join("first.json");
+        let second = root.join("second.json");
+        let validate = |value: &Value| {
+            if value.get("ok").and_then(Value::as_bool) == Some(true) {
+                Ok(())
+            } else {
+                Err("invalid".to_string())
+            }
+        };
+        cached_validated_response::<Value>(&first, validate, || Ok(json!({"ok": true}))).unwrap();
+        assert!(
+            cached_validated_response::<Value>(&second, validate, || Err(
+                "provider failed".to_string()
+            ))
+            .is_err()
+        );
+        assert!(!second.exists());
+        let reused = cached_validated_response::<Value>(&first, validate, || {
+            panic!("completed request must not repeat")
+        })
+        .unwrap();
+        assert_eq!(reused, json!({"ok":true}));
+        assert!(
+            cached_validated_response::<Value>(&second, validate, || Ok(json!({"ok":false})))
+                .is_err()
+        );
+        assert!(!second.exists());
+        fs::write(&second, "broken json").unwrap();
+        cached_validated_response::<Value>(&second, validate, || Ok(json!({"ok":true}))).unwrap();
+        assert_eq!(
+            fs::read_dir(&root).unwrap().count(),
+            2,
+            "atomic writes leave no temp files"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn consumed_jobs_remove_their_response_checkpoints() {
+        let root = std::env::temp_dir().join(format!("alignment-cleanup-{}", uuid::Uuid::now_v7()));
+        let path = root.join("job.json");
+        write_alignment_json_atomic(&path, &json!({})).unwrap();
+        write_alignment_json_atomic(
+            &path.with_extension("requests").join("response.json"),
+            &json!({}),
+        )
+        .unwrap();
+        remove_alignment_job_file(&path);
+        assert!(!path.exists());
+        assert!(!path.with_extension("requests").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn numbered_alignment_units(count: usize) -> Vec<AlignmentUnit> {
+        parse_target_units(
+            &(1..=count)
+                .map(|id| format!("Unit {id}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+    }
+
+    fn positive_section_match(target_section_id: usize, source_section_id: usize) -> SectionMatch {
+        SectionMatch {
+            target_section_id,
+            source_section_id,
+            is_match: true,
+            overlap_percent: 50.0,
+        }
+    }
+
+    #[test]
+    fn row_alignment_combines_only_selected_source_regions_in_document_order() {
+        let sources = numbered_alignment_units(400);
+        let targets = numbered_alignment_units(1);
+        let mut negative_match = positive_section_match(1, 6);
+        negative_match.is_match = false;
+        let corridor = vec![
+            positive_section_match(1, 10),
+            positive_section_match(1, 1),
+            positive_section_match(1, 10),
+            positive_section_match(2, 6),
+            negative_match,
+        ];
+        let mut calls = 0;
+        let candidates = collect_row_candidates(
+            &sources,
+            &targets,
+            &build_sections(&sources),
+            &build_sections(&targets),
+            &corridor,
+            |index, source_input, target_input| {
+                calls += 1;
+                assert_eq!(index, 0);
+                assert_eq!(target_input, targets);
+                assert_eq!(
+                    source_input.iter().map(|unit| unit.id).collect::<Vec<_>>(),
+                    (1..=75).chain(201..=300).collect::<Vec<_>>()
+                );
+                Ok(AlignmentResponse {
+                    alignments: vec![Alignment {
+                        target_id: 1,
+                        source_ids: vec![74, 201],
+                    }],
+                })
+            },
+        )
+        .unwrap();
+        assert_eq!(calls, 1);
+        assert_eq!(candidates[&1], vec![vec![74, 201]]);
+    }
+
+    #[test]
+    fn row_alignment_preserves_empty_candidates_from_unmatched_target_sections() {
+        let sources = numbered_alignment_units(82);
+        let targets = numbered_alignment_units(54);
+        let mut calls = 0;
+        let candidates = collect_row_candidates(
+            &sources,
+            &targets,
+            &build_sections(&sources),
+            &build_sections(&targets),
+            &[positive_section_match(1, 1)],
+            |index, _, target_input| {
+                calls += 1;
+                assert_eq!(index, 0, "Unmatched sections must not call the AI provider");
+                Ok(AlignmentResponse {
+                    alignments: target_input
+                        .iter()
+                        .map(|target| Alignment {
+                            target_id: target.id,
+                            source_ids: vec![target.id],
+                        })
+                        .collect(),
+                })
+            },
+        )
+        .unwrap();
+        assert_eq!(calls, 1);
+        assert_eq!(candidates.len(), 54);
+        assert_eq!(candidates[&1], vec![vec![1]]);
+        assert_eq!(dedupe_source_sets(&candidates[&30]), vec![vec![30], vec![]]);
+        assert_eq!(candidates[&54], vec![Vec::<usize>::new()]);
+    }
+
+    #[test]
+    fn row_alignment_keeps_actual_disagreements_between_overlapping_target_sections() {
+        let sources = numbered_alignment_units(82);
+        let targets = numbered_alignment_units(54);
+        let candidates = collect_row_candidates(
+            &sources,
+            &targets,
+            &build_sections(&sources),
+            &build_sections(&targets),
+            &[positive_section_match(1, 1), positive_section_match(2, 1)],
+            |index, _, target_input| {
+                Ok(AlignmentResponse {
+                    alignments: target_input
+                        .iter()
+                        .map(|target| Alignment {
+                            target_id: target.id,
+                            source_ids: if target.id == 30 {
+                                vec![30 + index]
+                            } else {
+                                vec![target.id]
+                            },
+                        })
+                        .collect(),
+                })
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            dedupe_source_sets(&candidates[&30]),
+            vec![vec![30], vec![31]]
+        );
+        assert_eq!(
+            candidates
+                .values()
+                .filter(|sets| dedupe_source_sets(sets).len() > 1)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn row_alignment_expands_neighboring_source_sections_without_duplicate_ids() {
+        let units = numbered_alignment_units(132);
+        let sections = build_sections(&units);
+        // First, interior, and last windows include exactly their available neighbors.
+        for (index, expected_start, expected_end) in [(0, 1, 75), (2, 26, 125), (4, 76, 132)] {
+            let expanded = units_for_row_alignment(&units, &sections, &sections[index]);
+            assert_eq!(
+                expanded.iter().map(|unit| unit.id).collect::<Vec<_>>(),
+                (expected_start..=expected_end).collect::<Vec<_>>()
+            );
+            for unit in expanded {
+                assert_eq!(unit, units[unit.id - 1]);
+            }
+        }
+        let short_units = numbered_alignment_units(44);
+        let short_sections = build_sections(&short_units);
+        assert_eq!(
+            units_for_row_alignment(&short_units, &short_sections, &short_sections[0]),
+            short_units
+        );
+    }
+
+    #[test]
+    fn row_alignment_validates_against_expanded_source_bounds() {
+        let units = numbered_alignment_units(132);
+        let sections = build_sections(&units);
+        let expanded = units_for_row_alignment(&units, &sections, &sections[1]);
+        let targets = numbered_alignment_units(1);
+        let response = |source_ids| AlignmentResponse {
+            alignments: vec![Alignment {
+                target_id: 1,
+                source_ids,
+            }],
+        };
+        // S2 alone only contains 26..75; its neighbors provide 1..100.
+        assert!(validate_alignments(response(vec![1, 100]), &expanded, &targets).is_ok());
+        assert!(validate_alignments(response(vec![101]), &expanded, &targets).is_err());
+    }
+
+    #[test]
+    fn row_alignment_context_prevents_artificial_conflicts_on_every_content_target() {
+        let sources = numbered_alignment_units(82);
+        let source_sections = build_sections(&sources);
+        // A deterministic exact matcher isolates source visibility from AI behavior.
+        // 44 translated paragraphs cover source rows 2..82, leaving a heading.
+        // Also exercise the same shape with ten genuinely unmatched extra lines.
+        for target_count in [44, 54] {
+            let targets = numbered_alignment_units(target_count);
+            let target_sections = build_sections(&targets);
+            let candidates_for = |expanded: bool| {
+                let mut candidates: BTreeMap<usize, Vec<Vec<usize>>> = BTreeMap::new();
+                for target_section in &target_sections {
+                    let target_input = units_for_section(&targets, target_section);
+                    for source_section in &source_sections {
+                        let source_input = if expanded {
+                            units_for_row_alignment(&sources, &source_sections, source_section)
+                        } else {
+                            units_for_section(&sources, source_section)
+                        };
+                        let visible: HashSet<_> = source_input.iter().map(|unit| unit.id).collect();
+                        let response = AlignmentResponse {
+                            alignments: target_input
+                                .iter()
+                                .map(|target| Alignment {
+                                    target_id: target.id,
+                                    source_ids: if target.id <= 44 {
+                                        (2 + (target.id - 1) * 81 / 44..=1 + target.id * 81 / 44)
+                                            .filter(|id| visible.contains(id))
+                                            .collect()
+                                    } else {
+                                        Vec::new()
+                                    },
+                                })
+                                .collect(),
+                        };
+                        for alignment in
+                            validate_alignments(response, &source_input, &target_input).unwrap()
+                        {
+                            candidates
+                                .entry(alignment.target_id)
+                                .or_default()
+                                .push(alignment.source_ids);
+                        }
+                    }
+                }
+                candidates
+            };
+            let conflict_count = |candidates: &BTreeMap<usize, Vec<Vec<usize>>>| {
+                candidates
+                    .values()
+                    .filter(|sets| dedupe_source_sets(sets).len() > 1)
+                    .count()
+            };
+            assert_eq!(conflict_count(&candidates_for(false)), 44);
+            assert_eq!(conflict_count(&candidates_for(true)), 18);
+
+            let corridor = target_sections
+                .iter()
+                .flat_map(|target| {
+                    source_sections.iter().map(move |source| SectionMatch {
+                        target_section_id: target.section_id,
+                        source_section_id: source.section_id,
+                        is_match: true,
+                        overlap_percent: 50.0,
+                    })
+                })
+                .collect::<Vec<_>>();
+            let expected_ids = |target_id: usize| -> Vec<usize> {
+                if target_id <= 44 {
+                    (2 + (target_id - 1) * 81 / 44..=1 + target_id * 81 / 44).collect()
+                } else {
+                    Vec::new()
+                }
+            };
+            let mut calls = 0;
+            let combined = collect_row_candidates(
+                &sources,
+                &targets,
+                &source_sections,
+                &target_sections,
+                &corridor,
+                |_, visible_sources, input_targets| {
+                    calls += 1;
+                    let visible: HashSet<_> = visible_sources.iter().map(|unit| unit.id).collect();
+                    Ok(AlignmentResponse {
+                        alignments: input_targets
+                            .iter()
+                            .map(|target| Alignment {
+                                target_id: target.id,
+                                source_ids: expected_ids(target.id)
+                                    .into_iter()
+                                    .filter(|id| visible.contains(id))
+                                    .collect(),
+                            })
+                            .collect(),
+                    })
+                },
+            )
+            .unwrap();
+            assert_eq!(conflict_count(&combined), 0);
+            assert_eq!(calls, target_sections.len());
+            assert_eq!(combined.len(), target_count);
+            for target in &targets {
+                assert_eq!(
+                    dedupe_source_sets(&combined[&target.id]),
+                    vec![expected_ids(target.id)]
+                );
+                // Independent candidates from overlapping target windows are retained.
+                let expected_passes = target_sections
+                    .iter()
+                    .filter(|section| section.unit_ids.contains(&target.id))
+                    .count();
+                assert_eq!(combined[&target.id].len(), expected_passes);
+            }
+        }
+    }
 
     #[test]
     fn parse_target_units_trims_blank_lines_and_preserves_line_numbers() {
