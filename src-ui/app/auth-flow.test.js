@@ -11,7 +11,7 @@ globalThis.window = {
   localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
 };
 
-const { applyBrokerAuthResult, restoreStoredBrokerSession } = await import("./auth-flow.js");
+const { applyBrokerAuthResult, beginStoredBrokerSessionInspection, restoreStoredBrokerSession } = await import("./auth-flow.js");
 const { saveStoredAuthSession, clearStoredAuthSession } = await import("./auth-storage.js");
 const { handleNavigation } = await import("./navigation.js");
 const { resetSessionState, state } = await import("./state.js");
@@ -170,5 +170,45 @@ test("startup inspection failure after refresh retains the newly saved token", a
   };
   await restoreStoredBrokerSession(render, () => {}, session);
   assert.equal(state.auth.session.sessionToken, "fresh-token");
+  assert.equal(state.screen, "teams");
+});
+
+test("startup reuses an inspection that began before the connectivity probe", async () => {
+  let inspections = 0;
+  invokeHandler = async (command) => {
+    assert.equal(command, "inspect_broker_auth_session");
+    inspections += 1;
+    return { login: "owner", name: "Owner" };
+  };
+  assert.equal(beginStoredBrokerSessionInspection(null), null);
+  assert.equal(beginStoredBrokerSessionInspection({ login: "owner" }), null);
+  // Bootstrap prepares the restoring state before the early inspection begins.
+  state.auth = { ...state.auth, status: "restoring", message: "", session };
+  const inspection = beginStoredBrokerSessionInspection(session);
+  assert.equal(inspections, 1);
+  await restoreStoredBrokerSession(render, () => {}, session, { inspection });
+  assert.equal(inspections, 1);
+  assert.equal(state.auth.status, "success");
+  assert.equal(state.auth.session.login, "owner");
+  assert.equal(state.screen, "teams");
+});
+
+test("an early inspection failure waits for the restore and still refreshes the token", async () => {
+  const saves = [];
+  invokeHandler = async (command, payload) => {
+    if (command === "refresh_broker_auth_session") return { ...session, sessionToken: "fresh-token" };
+    if (command === "save_broker_auth_session") { saves.push(payload); return; }
+    assert.equal(command, "inspect_broker_auth_session");
+    if (payload.sessionToken === "old-token") throw new Error("GitHub API 401: Bad credentials");
+    return { login: "owner", name: "Owner" };
+  };
+  // Bootstrap prepares the restoring state before the early inspection begins.
+  state.auth = { ...state.auth, status: "restoring", message: "", session };
+  const inspection = beginStoredBrokerSessionInspection(session);
+  // Let the rejection settle before anything awaits it; an unhandled rejection would fail this test.
+  await new Promise((resolve) => setImmediate(resolve));
+  await restoreStoredBrokerSession(render, () => {}, session, { inspection });
+  assert.equal(state.auth.session.sessionToken, "fresh-token");
+  assert.equal(saves.length, 1);
   assert.equal(state.screen, "teams");
 });

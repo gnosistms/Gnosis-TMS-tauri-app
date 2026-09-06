@@ -195,8 +195,9 @@ fn check_internet_connection_sync() -> bool {
         Err(_) => return false,
     };
 
+    // HEAD: we only need reachability, not the GitHub homepage body (~200 KB).
     client
-        .get("https://github.com")
+        .head("https://github.com")
         .header("User-Agent", "gnosis-tms")
         .send()
         .map(|response| response.status().is_success() || response.status().is_redirection())
