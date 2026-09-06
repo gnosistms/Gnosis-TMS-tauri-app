@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  EDITOR_ROW_FILTER_MODE_DELETED,
   EDITOR_ROW_FILTER_MODE_HAS_COMMENTS,
   EDITOR_ROW_FILTER_MODE_HAS_CONFLICT,
   EDITOR_ROW_FILTER_MODE_HAS_FOOTNOTE,
@@ -112,6 +113,39 @@ test("search preserves row ordering and excludes deleted rows by default", () =>
 
   assert.deepEqual(result.filteredRows.map((item) => item.id), ["row-a", "row-d"]);
   assert.equal(result.searchResults.length, 2);
+});
+
+test("deleted rows filter preserves order and combines with search", () => {
+  const rows = [
+    row("active", { es: "matching active" }),
+    row("deleted-a", { es: "matching deleted" }, "deleted"),
+    row("deleted-b", { es: "other text" }, "deleted"),
+    row("deleted-c", { es: "matching again" }, "deleted"),
+  ];
+  const options = {
+    rows,
+    languages: [language("es")],
+    filters: { rowFilterMode: EDITOR_ROW_FILTER_MODE_DELETED },
+  };
+  const result = buildEditorFilterResult(options);
+  assert.equal(result.hasActiveFilters, true);
+  assert.equal(result.matchingRowCount, 3);
+  assert.deepEqual(result.filteredRows.map((item) => item.id), ["deleted-a", "deleted-b", "deleted-c"]);
+
+  const searched = buildEditorFilterResult({
+    ...options,
+    filters: { ...options.filters, searchQuery: "matching" },
+  });
+  assert.deepEqual(searched.filteredRows.map((item) => item.id), ["deleted-a", "deleted-c"]);
+  assert.equal(searched.matchingRowCount, 2);
+  assert.deepEqual(searched.searchResults.map((item) => item.rowId), ["deleted-a", "deleted-c"]);
+
+  const locked = buildEditorFilterResult({
+    ...options,
+    rows: [{ ...rows[0], hasConflict: true }, ...rows.slice(1)],
+  });
+  assert.equal(locked.isConflictLocked, true);
+  assert.deepEqual(locked.filteredRows.map((item) => item.id), ["active"]);
 });
 
 test("search includes visible footnotes and keeps their keys distinct from main text", () => {

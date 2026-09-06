@@ -2287,6 +2287,32 @@ test.describe("editor regressions", () => {
     );
   });
 
+  test("deleted rows filter reveals collapsed rows and combines with search", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 12 });
+    await softDeleteFixtureRow(page, "fixture-row-0003");
+    await softDeleteFixtureRow(page, "fixture-row-0008");
+
+    const filter = page.locator("[data-editor-filter-select]");
+    await filter.selectOption({ label: "Deleted rows" });
+    await expect(page.locator("[data-editor-row-card]")).toHaveCount(2);
+    await expect(page.locator("[data-editor-deleted-group]")).toHaveCount(0);
+    await expect(page.locator(".translation-results-banner__text")).toHaveText("Showing 2 matching rows");
+
+    const search = page.locator("[data-editor-search-input]");
+    await search.fill("0003");
+    await expect(page.locator("[data-editor-row-card]")).toHaveCount(1);
+    await expect(page.locator('[data-editor-row-card][data-row-id="fixture-row-0003"]')).toBeVisible();
+    await search.fill("");
+
+    await restoreFixtureRow(page, "fixture-row-0003");
+    await expect(page.locator("[data-editor-row-card]")).toHaveCount(1);
+    await expect(page.locator('[data-editor-row-card][data-row-id="fixture-row-0008"]')).toBeVisible();
+
+    await filter.selectOption("show-all");
+    await expect(page.locator("[data-editor-deleted-group]")).toHaveCount(1);
+    await expect(page.locator('[data-editor-row-card][data-row-id="fixture-row-0008"]')).toHaveCount(0);
+  });
+
   test("a new deleted section starts closed even after restoring a previously opened one", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 12 });
 

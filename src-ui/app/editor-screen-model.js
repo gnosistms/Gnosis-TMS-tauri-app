@@ -12,7 +12,11 @@ import {
   editorSessionCanWrite,
   getProjectLifecycleWritePolicy,
 } from "./editor-write-permission.js";
-import { buildEditorFilterResult, editorChapterFiltersAreActive } from "./editor-filters.js";
+import {
+  EDITOR_ROW_FILTER_MODE_DELETED,
+  buildEditorFilterResult,
+  editorChapterFiltersAreActive,
+} from "./editor-filters.js";
 import { normalizeEditorReplaceState } from "./editor-replace.js";
 import {
   editorImageEditorMatches,
@@ -399,6 +403,7 @@ function buildEditorDisplayItems(contentRows, editorChapter, team, editorReplace
   const rows = Array.isArray(contentRows) ? contentRows : [];
   const chapterContext = findChapterContextById(editorChapter?.chapterId);
   const showContextAction = editorChapterFiltersAreActive(editorChapter?.filters);
+  const showDeletedRows = editorChapter?.filters?.rowFilterMode === EDITOR_ROW_FILTER_MODE_DELETED;
   const expandedDeletedRowGroupIds =
     editorChapter?.expandedDeletedRowGroupIds instanceof Set
       ? editorChapter.expandedDeletedRowGroupIds
@@ -492,7 +497,7 @@ function buildEditorDisplayItems(contentRows, editorChapter, team, editorReplace
       replaceSelected: selectedReplaceRowIds.has(row.id),
       replaceSelectionDisabled: editorReplace?.status === "saving",
     };
-    if (nextRow.lifecycleState === "deleted") {
+    if (nextRow.lifecycleState === "deleted" && !showDeletedRows) {
       deletedRun.push(nextRow);
       continue;
     }

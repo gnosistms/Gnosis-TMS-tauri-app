@@ -3,6 +3,7 @@ import { rowHasUnresolvedEditorConflict } from "./editor-conflicts.js";
 import { extractInlineMarkupVisibleText } from "./editor-inline-markup.js";
 
 export const EDITOR_ROW_FILTER_MODE_SHOW_ALL = "show-all";
+export const EDITOR_ROW_FILTER_MODE_DELETED = "deleted";
 export const EDITOR_ROW_FILTER_MODE_REVIEWED = "reviewed";
 export const EDITOR_ROW_FILTER_MODE_NOT_REVIEWED = "not-reviewed";
 export const EDITOR_ROW_FILTER_MODE_PLEASE_CHECK = "please-check";
@@ -16,6 +17,7 @@ export const EDITOR_ROW_FILTER_MODE_HAS_TIMING_ERROR = "has-timing-error";
 
 export const EDITOR_ROW_FILTER_OPTIONS = [
   { value: EDITOR_ROW_FILTER_MODE_SHOW_ALL, label: "Show all" },
+  { value: EDITOR_ROW_FILTER_MODE_DELETED, label: "Deleted rows" },
   { value: EDITOR_ROW_FILTER_MODE_REVIEWED, label: "Reviewed" },
   { value: EDITOR_ROW_FILTER_MODE_NOT_REVIEWED, label: "Not reviewed" },
   { value: EDITOR_ROW_FILTER_MODE_PLEASE_CHECK, label: "Please check" },
@@ -188,6 +190,8 @@ function rowMatchesFilterMode(row, rowFilterMode, targetLanguageCode, seenRevisi
 
   const targetSection = findRowSection(row, targetLanguageCode);
   switch (rowFilterMode) {
+    case EDITOR_ROW_FILTER_MODE_DELETED:
+      return row.lifecycleState === "deleted";
     case EDITOR_ROW_FILTER_MODE_REVIEWED:
       return targetSection?.reviewed === true;
     case EDITOR_ROW_FILTER_MODE_NOT_REVIEWED:
@@ -331,7 +335,10 @@ export function buildEditorFilterResult({
   const searchMatchesByRowId = new Map();
 
   for (const row of rowList) {
-    if (!row || row.kind === "deleted-group" || row.lifecycleState === "deleted") {
+    if (!row || row.kind === "deleted-group") {
+      continue;
+    }
+    if (row.lifecycleState === "deleted" && effectiveFilters.rowFilterMode !== EDITOR_ROW_FILTER_MODE_DELETED) {
       continue;
     }
 
