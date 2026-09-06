@@ -22,6 +22,7 @@ import {
 // The pure language rule lives in derived-glossary-rule.js (screens import
 // it too); re-exported so existing flow imports keep working.
 export {
+  derivedGlossaryUnavailableReason,
   derivedGlossaryUsageKindForPair,
   glossarySourceLanguageCodeForChapter,
   resolveDerivedGlossaryPivotLanguage,

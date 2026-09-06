@@ -147,3 +147,42 @@ test("AI Translate All modal renders zero-work selected languages as complete pr
   assert.match(html, /0 \/ 0/);
   assert.match(html, /width: 100%;/);
 });
+
+test("AI Translate All modal explains when the linked glossary cannot serve a language", () => {
+  const base = {
+    ...createEditorChapterState(),
+    chapterId: "chapter-1",
+    selectedSourceLanguageCode: "en",
+    languages: [
+      { code: "en", name: "English", role: "source" },
+      { code: "vi", name: "Vietnamese", role: "target" },
+      { code: "ja", name: "Japanese", role: "target" },
+    ],
+    glossary: {
+      title: "Gnosis ES-VI",
+      sourceLanguage: { code: "es", name: "Spanish" },
+      targetLanguage: { code: "vi", name: "Vietnamese" },
+      matcherModel: {},
+    },
+    aiTranslateAllModal: {
+      ...createEditorChapterState().aiTranslateAllModal,
+      isOpen: true,
+      selectedLanguageCodes: ["vi"],
+    },
+  };
+
+  // No Spanish column: the es -> vi glossary is inert for Vietnamese and says so.
+  const html = renderEditorAiTranslateAllModal({ editorChapter: base });
+  assert.match(html, /Gnosis ES-VI won&#39;t be used for Vietnamese: this file has no Spanish column to pivot through\./);
+  // Japanese is simply not the glossary's target: no note.
+  assert.equal(html.match(/language-note/g).length, 1);
+
+  // With a Spanish column the note disappears.
+  const withPivot = renderEditorAiTranslateAllModal({
+    editorChapter: {
+      ...base,
+      languages: [...base.languages, { code: "es", name: "Spanish", role: "target" }],
+    },
+  });
+  assert.doesNotMatch(withPivot, /language-note/);
+});

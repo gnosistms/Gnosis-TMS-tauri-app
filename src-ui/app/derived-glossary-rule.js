@@ -83,3 +83,32 @@ export function derivedGlossaryUsageKindForPair(chapterState, sourceLanguage, ta
   }
   return resolveDerivedGlossaryPivotLanguage(chapterState) ? "derived" : "none";
 }
+
+// Why a linked glossary is inert for a translate pair, in user-facing words.
+// Non-empty only for the rule-4 failure above (right target language, no
+// pivot column) — a glossary that is simply about another target language,
+// or applies directly, or is not linked, yields "".
+export function derivedGlossaryUnavailableReason(chapterState, sourceLanguage, targetLanguage) {
+  const glossaryState = chapterState?.glossary ?? null;
+  const glossaryModel = glossaryState?.matcherModel ?? null;
+  const glossarySourceLanguageCode = glossarySourceLanguageCodeForChapter(chapterState);
+  const glossaryTargetLanguageCode = resolveLanguageCode(
+    glossaryState?.targetLanguage ?? glossaryModel?.targetLanguage,
+  );
+  if (
+    !glossarySourceLanguageCode
+    || !glossaryTargetLanguageCode
+    || glossaryTargetLanguageCode !== languageBaseCode(targetLanguage)
+    || glossarySourceLanguageCode === languageBaseCode(sourceLanguage)
+    || resolveDerivedGlossaryPivotLanguage(chapterState)
+  ) {
+    return "";
+  }
+  const title = String(glossaryState?.title ?? "").trim() || "The linked glossary";
+  const pivotLabel = resolveLanguageLabel(
+    glossaryState?.sourceLanguage ?? glossaryModel?.sourceLanguage,
+    glossarySourceLanguageCode,
+  );
+  const targetLabel = resolveLanguageLabel(targetLanguage, glossaryTargetLanguageCode);
+  return `${title} won't be used for ${targetLabel}: this file has no ${pivotLabel} column to pivot through.`;
+}

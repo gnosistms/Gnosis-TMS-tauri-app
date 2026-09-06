@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  derivedGlossaryUnavailableReason,
   derivedGlossaryUsageKindForPair,
   resolveDerivedGlossaryPivotLanguage,
 } from "./derived-glossary-rule.js";
@@ -46,4 +47,16 @@ test("derivedGlossaryUsageKindForPair applies the derived-glossary language rule
   assert.equal(derivedGlossaryUsageKindForPair(chapter([EN, ES, VI]), EN, ES), "none");
   // No glossary linked.
   assert.equal(derivedGlossaryUsageKindForPair(chapter([EN, ES, VI], null), EN, VI), "none");
+});
+
+test("derivedGlossaryUnavailableReason names the missing pivot column and stays silent otherwise", () => {
+  const glossary = { ...esViGlossary(), title: "Gnosis ES-VI", sourceLanguage: { code: "es", name: "Spanish" } };
+  assert.equal(
+    derivedGlossaryUnavailableReason(chapter([EN, VI], glossary), EN, VI),
+    "Gnosis ES-VI won't be used for Vietnamese: this file has no Spanish column to pivot through.",
+  );
+  assert.equal(derivedGlossaryUnavailableReason(chapter([EN, ES, VI], glossary), EN, VI), "");
+  assert.equal(derivedGlossaryUnavailableReason(chapter([ES, VI], glossary), ES, VI), "");
+  assert.equal(derivedGlossaryUnavailableReason(chapter([EN, VI], glossary), EN, ES), "");
+  assert.equal(derivedGlossaryUnavailableReason(chapter([EN, VI], null), EN, VI), "");
 });

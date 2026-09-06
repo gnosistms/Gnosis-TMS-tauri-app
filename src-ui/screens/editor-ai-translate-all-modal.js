@@ -1,17 +1,24 @@
 import { escapeHtml, loadingPrimaryButton, secondaryButton } from "../lib/ui.js";
+import { derivedGlossaryUnavailableReason } from "../app/derived-glossary-rule.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
 import {
   renderBatchLanguageProgressBars,
   renderBatchOverallProgress,
 } from "./editor-batch-progress.js";
 
-function visibleTargetLanguages(editorChapter) {
+function chapterSourceLanguageCode(editorChapter) {
   const languages = Array.isArray(editorChapter?.languages) ? editorChapter.languages : [];
-  const sourceLanguageCode =
+  return (
     String(editorChapter?.selectedSourceLanguageCode ?? "").trim()
     || languages.find((language) => language?.role === "source")?.code
     || languages[0]?.code
-    || "";
+    || ""
+  );
+}
+
+function visibleTargetLanguages(editorChapter) {
+  const languages = Array.isArray(editorChapter?.languages) ? editorChapter.languages : [];
+  const sourceLanguageCode = chapterSourceLanguageCode(editorChapter);
   const collapsedLanguageCodes =
     editorChapter?.collapsedLanguageCodes instanceof Set
       ? editorChapter.collapsedLanguageCodes
@@ -24,17 +31,24 @@ function visibleTargetLanguages(editorChapter) {
     });
 }
 
-function renderLanguageCheckboxes(languages, selectedLanguageCodes, disabled) {
+function renderLanguageCheckboxes(editorChapter, languages, selectedLanguageCodes, disabled) {
   if (languages.length === 0) {
     return '<p class="modal__supporting">There are no visible target languages to translate.</p>';
   }
 
+  const sourceLanguageCode = chapterSourceLanguageCode(editorChapter);
+  const sourceLanguage =
+    (Array.isArray(editorChapter?.languages) ? editorChapter.languages : [])
+      .find((language) => language?.code === sourceLanguageCode) ?? null;
   const selected = new Set(Array.isArray(selectedLanguageCodes) ? selectedLanguageCodes : []);
   return `
     <div class="ai-translate-all-modal__language-list">
       ${languages.map((language, index) => {
         const code = String(language?.code ?? "").trim();
         const name = String(language?.name ?? "").trim() || code;
+        // Tell the user up front when the linked glossary cannot serve this
+        // language, so an inert glossary is not mistaken for glossary hints.
+        const glossaryNote = derivedGlossaryUnavailableReason(editorChapter, sourceLanguage, language);
         return `
           <label class="field__checkbox ai-translate-all-modal__language">
             <input
@@ -45,7 +59,10 @@ function renderLanguageCheckboxes(languages, selectedLanguageCodes, disabled) {
               ${selected.has(code) ? "checked" : ""}
               ${disabled ? "disabled" : ""}
             />
-            <span>${escapeHtml(name)}</span>
+            <span>
+              ${escapeHtml(name)}
+              ${glossaryNote ? `<span class="ai-translate-all-modal__language-note">${escapeHtml(glossaryNote)}</span>` : ""}
+            </span>
           </label>
         `;
       }).join("")}
@@ -123,7 +140,7 @@ export function renderEditorAiTranslateAllModal(state) {
       ${renderOverallProgress(modal)}
       ${renderLanguageProgressBars(languages, modal.selectedLanguageCodes, modal.languageProgress)}
     `
-    : renderLanguageCheckboxes(languages, modal.selectedLanguageCodes, offlineMode);
+    : renderLanguageCheckboxes(state.editorChapter, languages, modal.selectedLanguageCodes, offlineMode);
   const supportingMarkup = isSubmitting
     ? ""
     : offlineMode
