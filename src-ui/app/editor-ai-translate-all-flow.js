@@ -569,9 +569,16 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
       || readRowFootnoteText(currentRow, item.sourceLanguageCode) !== entry.sourceFootnote
       || readRowImageCaptionText(currentRow, item.sourceLanguageCode) !== entry.sourceImageCaption
     ) {
-      // Source changed while the batch was in flight — the translation no longer
-      // matches what the user sees. Leave the row untouched (same as the
-      // single-row path's source-changed skip).
+      // Source changed (or the row vanished) while the batch was in flight —
+      // the translation no longer matches what the user sees. Leave the row
+      // untouched (same as the single-row path's source-changed skip). Logged
+      // because a silent skip is indistinguishable from a model that returned
+      // nothing.
+      console.warn("[gtms ai-translate] Batch result skipped: row changed while the batch was in flight.", {
+        rowId: item.rowId,
+        targetLanguageCode: item.targetLanguageCode,
+        rowMissing: !currentRow,
+      });
       return;
     }
     if (!rowHasTranslateAllWork(currentRow, item.sourceLanguageCode, item.targetLanguageCode)) {
