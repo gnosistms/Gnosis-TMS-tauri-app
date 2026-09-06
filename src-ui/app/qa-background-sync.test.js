@@ -201,12 +201,14 @@ const {
 } = await import("./qa-term-draft.js");
 const {
   maybeApplyQaListEditorSnapshot,
+  loadSelectedQaListEditorData,
   openQaListEditor,
+  primeSelectedQaListEditorLoadingState,
 } = await import("./qa-list-editor-flow.js");
 const {
   setCachedQaListEditorPayload,
 } = await import("./qa-list-editor-query.js");
-const { resetQaTermWriteCoordinator } = await import("./qa-term-write-coordinator.js");
+const { beginQaTermWrite, endQaTermWrite, resetQaTermWriteCoordinator } = await import("./qa-term-write-coordinator.js");
 const { queryClient } = await import("./query-client.js");
 
 function qaTerm(overrides = {}) {
@@ -333,6 +335,72 @@ test.beforeEach(async () => {
   queryClient.clear();
   resetQaTermWriteCoordinator();
   await syncAndStopQaListBackgroundSyncSession(() => {});
+});
+
+for (const entry of ["open", "navigation"]) {
+  test(`returning to the QA list via ${entry} keeps terms visible during a write`, async () => {
+    installQaListEditorFixture();
+    state.qaListEditor.terms[0].text = "edited term";
+    state.qaListEditor.searchQuery = "edited";
+    invokeHandler = async (command) => {
+      if (command === "load_gtms_qa_list_editor_data") return qaEditorPayload();
+      return null;
+    };
+    beginQaTermWrite();
+    state.screen = "translate";
+    const renderedStates = [];
+    const render = () => renderedStates.push(cloneValue(state.qaListEditor));
+    try {
+      if (entry === "open") {
+        await openQaListEditor(render, "qa-list-1", { navigationSource: "editor" });
+      } else {
+        primeSelectedQaListEditorLoadingState({ navigationSource: "editor" });
+        state.screen = "qaListEditor";
+        await loadSelectedQaListEditorData(render);
+      }
+      assert.equal(state.qaListEditor.status, "ready");
+      assert.equal(state.qaListEditor.terms[0].text, "edited term");
+      assert.equal(state.qaListEditor.terms.length, 2);
+      assert.equal(state.qaListEditor.searchQuery, "edited");
+      assert.ok(renderedStates.every((editor) => editor.status === "ready" && editor.terms.length === 2));
+    } finally {
+      endQaTermWrite();
+    }
+  });
+}
+
+test("priming a different QA list clears the previous list terms", () => {
+  installQaListEditorFixture();
+  state.qaLists.push({ ...state.qaLists[0], id: "qa-list-2", repoName: "qa-list-2" });
+  state.selectedQaListId = "qa-list-2";
+  primeSelectedQaListEditorLoadingState();
+  assert.equal(state.qaListEditor.status, "loading");
+  assert.equal(state.qaListEditor.qaListId, "qa-list-2");
+  assert.deepEqual(state.qaListEditor.terms, []);
+});
+
+test("QA list reload keeps ready terms visible while background sync defers the snapshot", async () => {
+  installQaListEditorFixture();
+  const terms = cloneValue(state.qaListEditor.terms);
+  const sync = deferred();
+  let syncCount = 0;
+  invokeHandler = async (command) => {
+    if (command === "sync_gtms_qa_list_editor_repo") {
+      syncCount += 1;
+      return syncCount === 1 ? sync.promise : null;
+    }
+    if (command === "load_gtms_qa_list_editor_data") return qaEditorPayload({ terms: [] });
+    return null;
+  };
+  const syncing = maybeStartQaListBackgroundSync(() => {}, { force: true });
+  primeSelectedQaListEditorLoadingState();
+  await loadSelectedQaListEditorData(() => {});
+  assert.equal(state.qaListEditor.status, "ready");
+  assert.deepEqual(state.qaListEditor.terms, terms);
+  sync.resolve({ changedTermIds: ["term-1"] });
+  await syncing;
+  assert.equal(state.qaListEditor.status, "ready");
+  assert.equal(state.qaListEditor.terms[0].freshness, "stale");
 });
 
 test("opening a QA list editor applies the exact cached snapshot before disk reload finishes", async () => {
@@ -1118,4 +1186,37 @@ test("QA list background sync opens a required update prompt when the repo was s
   assert.equal(state.appUpdate.version, "0.1.36");
   assert.equal(state.appUpdate.currentVersion, "0.1.35");
   assert.equal(state.appUpdate.message, "Update before syncing this QA list.");
+});
+
+test("editor QA shortcut must preserve the list during a write", async () => {
+  installQaListEditorFixture();
+  const { openEditorQaList } = await import("./qa-list-editor-flow.js");
+  state.screen = "translate";
+  state.editorChapter.selectedTargetLanguageCode = "fr";
+  invokeHandler = async (command) => command === "load_gtms_qa_list_editor_data" ? qaEditorPayload() : null;
+  beginQaTermWrite();
+  try {
+    await openEditorQaList(() => {});
+  } finally { endQaTermWrite(); }
+  assert.equal(state.qaListEditor.status, "ready");
+  assert.equal(state.qaListEditor.terms.length, 2);
+});
+
+test.afterEach(() => queryClient.clear());
+
+test("a QA write does not block loading another repository", async () => {
+  installQaListEditorFixture();
+  const team = state.teams[0];
+  const original = state.qaLists[0];
+  state.qaLists.push({ ...original, id: "qa-b", qaListId: "qa-b", repoName: "qa-b", fullName: "fixture-org/qa-b" });
+  invokeHandler = async (command, payload) => command === "load_gtms_qa_list_editor_data"
+    ? qaEditorPayload({ qaListId: payload.input.qaListId, repoName: payload.input.repoName }) : null;
+  beginQaTermWrite(team, original);
+  try {
+    await openQaListEditor(() => {}, "qa-b");
+    assert.equal(state.qaListEditor.status, "ready");
+    assert.equal(state.qaListEditor.qaListId, "qa-b");
+  } finally {
+    endQaTermWrite(team, original);
+  }
 });

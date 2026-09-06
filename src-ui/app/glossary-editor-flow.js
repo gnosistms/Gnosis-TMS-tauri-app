@@ -25,14 +25,15 @@ import {
 } from "./glossary-repo-flow.js";
 import { getGlossaryWritePolicy } from "./resource-write-policy.js";
 import { refreshCurrentUserTeamAccess } from "./team-query.js";
-import { anyGlossaryTermWriteIsActive } from "./glossary-term-write-coordinator.js";
+import { glossaryTermWriteIsActive, waitForGlossaryTermWritesToSettle } from "./glossary-term-write-coordinator.js";
 import {
   createGlossaryEditorQueryOptions,
   getCachedGlossaryEditorPayload,
   removeGlossaryEditorQuery,
 } from "./glossary-editor-query.js";
 import { queryClient } from "./query-client.js";
-import { rollbackGlossaryTermSave } from "./glossary-term-draft.js";
+import { restorePendingGlossaryTermDraft, rollbackGlossaryTermSave } from "./glossary-term-draft.js";
+import { removeVisibleGlossaryTerm } from "./glossary-term-sync.js";
 
 function resolveGlossaryForEditor(glossaryId = state.selectedGlossaryId, preferredGlossary = null) {
   const selected = selectedGlossary();
@@ -103,11 +104,13 @@ export function glossaryEditorPayloadMatches(payload, expectedContext) {
 }
 
 export function glossaryEditorHasOpenDraft() {
-  return state.glossaryTermEditor?.isOpen === true;
+  return state.glossaryTermEditor?.isOpen === true
+    && (!state.glossaryTermEditor.glossaryId
+      || state.glossaryTermEditor.glossaryId === state.glossaryEditor?.glossaryId);
 }
 
 export function glossaryEditorHasActiveTermWrite() {
-  return anyGlossaryTermWriteIsActive();
+  return glossaryTermWriteIsActive(selectedTeam(), state.glossaryEditor?.repoName);
 }
 
 export function glossaryEditorHasActiveBackgroundSync() {
@@ -167,6 +170,12 @@ export function maybeApplyGlossaryEditorSnapshot(payload, expectedContext, rende
   return { applied: true, reason: "applied" };
 }
 
+function hasReadyGlossaryEditor(glossary) {
+  return state.glossaryEditor?.status === "ready"
+    && state.glossaryEditor.glossaryId === glossary?.id
+    && state.glossaryEditor.repoName === glossary?.repoName;
+}
+
 export function primeSelectedGlossaryEditorLoadingState(options = {}) {
   const glossaryId = options.glossaryId ?? state.selectedGlossaryId;
   const glossary = resolveGlossaryForEditor(glossaryId, options.preferredGlossary ?? null);
@@ -175,6 +184,13 @@ export function primeSelectedGlossaryEditorLoadingState(options = {}) {
     options,
     state.glossaryEditor?.navigationSource,
   );
+
+  // Navigation must retain optimistic terms: the snapshot guard deliberately
+  // defers disk/cache results until a pending save or background sync finishes.
+  if (hasReadyGlossaryEditor(glossary)) {
+    state.glossaryEditor = { ...state.glossaryEditor, navigationSource };
+    return;
+  }
 
   if (!glossary?.repoName) {
     state.glossaryEditor = {
@@ -208,10 +224,10 @@ export function primeSelectedGlossaryEditorLoadingState(options = {}) {
 }
 
 export async function loadSelectedGlossaryEditorData(render, options = {}) {
-  const preserveVisibleData = options.preserveVisibleData === true;
   const glossaryId = options.glossaryId ?? state.selectedGlossaryId ?? state.glossaryEditor?.glossaryId ?? null;
   const team = selectedTeam();
   const glossary = resolveGlossaryForEditor(glossaryId, options.preferredGlossary ?? null);
+  const preserveVisibleData = hasReadyGlossaryEditor(glossary);
   const expectedContext = glossaryEditorContext(team, glossary, {
     navigationSource: state.glossaryEditor?.navigationSource ?? null,
   });
@@ -226,6 +242,7 @@ export async function loadSelectedGlossaryEditorData(render, options = {}) {
     return;
   }
   if (await ensureGlossaryNotTombstoned(render, team, glossary, { showNotice: false })) {
+    if (!glossaryEditorContextMatches(expectedContext)) return;
     removeGlossaryEditorQuery(team, glossary);
     state.glossaryEditor = {
       ...createGlossaryEditorState(),
@@ -236,6 +253,8 @@ export async function loadSelectedGlossaryEditorData(render, options = {}) {
     render();
     return;
   }
+
+  if (!glossaryEditorContextMatches(expectedContext)) return;
 
   beginPageSync();
   if (preserveVisibleData && state.glossaryEditor?.status === "ready") {
@@ -277,6 +296,12 @@ export async function loadSelectedGlossaryEditorData(render, options = {}) {
   await waitForNextPaint();
 
   try {
+    // A cold return to this repository must resume after its writes settle.
+    // Ready lists stay usable throughout saves; other repositories never wait.
+    if (!preserveVisibleData) {
+      await waitForGlossaryTermWritesToSettle(team, glossary.repoName);
+      if (!glossaryEditorContextMatches(expectedContext)) return;
+    }
     const queryOptions = createGlossaryEditorQueryOptions(team, glossary);
     await queryClient.invalidateQueries({ queryKey: queryOptions.queryKey, exact: true });
     const payload = await queryClient.fetchQuery(queryOptions);
@@ -285,6 +310,7 @@ export async function loadSelectedGlossaryEditorData(render, options = {}) {
     });
     if (glossaryEditorContextMatches(expectedContext)) {
       await completePageSync(render);
+      restorePendingGlossaryTermDraft(render);
       if (applyResult.applied) {
         render();
       }
@@ -363,6 +389,7 @@ export async function deleteGlossaryTerm(render, termId) {
   const team = selectedTeam();
   const repoName = selectedGlossaryRepoName();
   const glossary = selectedGlossary();
+  const expectedContext = glossaryEditorContext(team, glossary);
   if (!Number.isFinite(team?.installationId) || !repoName || !termId) {
     return;
   }
@@ -396,7 +423,7 @@ export async function deleteGlossaryTerm(render, termId) {
       });
       previousHeadSha = response?.previousHeadSha ?? null;
       const syncIssue = getGlossarySyncIssueMessage(
-        await syncSingleGlossaryForTeam(team, selectedGlossary()),
+        await syncSingleGlossaryForTeam(team, glossary),
       );
       if (syncIssue?.message) {
         throw new Error(syncIssue.message);
@@ -410,8 +437,11 @@ export async function deleteGlossaryTerm(render, termId) {
       throw new Error(rollbackMessage);
     }
     removeGlossaryEditorQuery(team, glossary);
-    markGlossaryBackgroundSyncDirty();
-    await loadSelectedGlossaryEditorData(render);
+    if (glossaryEditorContextMatches(expectedContext)) {
+      removeVisibleGlossaryTerm(termId);
+      markGlossaryBackgroundSyncDirty();
+      render();
+    }
   } catch (error) {
     showNoticeBadge(error?.message ?? String(error), render);
   }
