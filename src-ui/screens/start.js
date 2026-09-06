@@ -1,5 +1,5 @@
 import caduceusLogoSvgSource from "../assets/brand/gnosisvn-caduceus-logo.svg?raw";
-import { primaryButton } from "../lib/ui.js";
+import { loadingSpinner, primaryButton } from "../lib/ui.js";
 
 const caduceusLogoSvg = caduceusLogoSvgSource
   .replace(/<\?xml[\s\S]*?\?>\s*/i, "")
@@ -75,7 +75,15 @@ export function renderStartScreen(state) {
               <div class="start-hero__text">
                 <p class="card__eyebrow">PAZ INVERENCIAL!</p>
                 <h1 class="card__title">${heroTitle}</h1>
-                <p class="card__subtitle">${heroSubtitle}</p>
+                <p class="card__subtitle">${heroSubtitle}${
+                  isResolvingStartupAuth
+                    ? loadingSpinner({
+                      key: "startup-auth",
+                      className: "start-hero__spinner",
+                      label: "Logging in",
+                    })
+                    : ""
+                }</p>
               </div>
               ${renderStartHeroLogo()}
             </div>

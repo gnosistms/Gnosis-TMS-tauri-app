@@ -1101,6 +1101,17 @@ a {
   }
 }
 
+.start-hero__spinner {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-left: 0.55em;
+  vertical-align: -0.15em;
+  border-width: 2.5px;
+  border-color: rgba(164, 112, 41, 0.18);
+  border-top-color: rgba(236, 134, 9, 0.92);
+}
+
 .search-field {
   min-width: 340px;
   height: 42px;
