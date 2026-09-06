@@ -420,6 +420,62 @@ test("ensureBatchDerivedGlossaries generates missing pivot texts in one batch, p
   );
 });
 
+test("ensureBatchDerivedGlossaries persists a chunk's generated pivot texts in one grouped save", async () => {
+  resetSessionState();
+  state.editorChapter = chapter({
+    rows: [
+      { rowId: "row-1", lifecycleState: "active", fields: { es: "Oracion santa", en: "", vi: "" } },
+      { rowId: "row-2", lifecycleState: "active", fields: { es: "Luz clara", en: "", vi: "" } },
+      { rowId: "row-3", lifecycleState: "active", fields: { es: "Paz", en: "peace", vi: "" } },
+    ],
+  });
+  const perRowPersistCalls = [];
+  const batchSaves = [];
+
+  const { aborted, results } = await ensureBatchDerivedGlossaries({
+    chapterState: state.editorChapter,
+    items: items(state.editorChapter),
+    providerId: "openai",
+    modelId: "test-model",
+    generateMissingPivotText: true,
+    persistPivotTextToRow: true,
+    operations: {
+      updateEditorRowFieldValue: updateRowFieldInState,
+      persistEditorRowOnBlur: async (_render, rowId) => {
+        perRowPersistCalls.push(rowId);
+      },
+      persistEditorRowsBatch: async (_render, batchItems, options) => {
+        batchSaves.push({ items: batchItems, options });
+      },
+      runAiTranslationBatch: async (request) => ({
+        rows: request.rows.map((row) => ({
+          rowId: row.rowId,
+          translatedText: `en:${row.sourceText}`,
+        })),
+      }),
+      prepareEditorAiTranslatedGlossaryBatch: async (request) => ({
+        glossarySourceText: request.glossarySourceText,
+        entries: [],
+      }),
+    },
+  });
+
+  assert.equal(aborted, false);
+  // The two generated pivot texts land in ONE grouped save, never per-row.
+  assert.deepEqual(perRowPersistCalls, []);
+  assert.equal(batchSaves.length, 1);
+  assert.deepEqual(batchSaves[0].items, [
+    { rowId: "row-1", languageCode: "en" },
+    { rowId: "row-2", languageCode: "en" },
+  ]);
+  assert.equal(batchSaves[0].options.commitMessage, "AI translate 2 rows to English");
+  assert.deepEqual(batchSaves[0].options.commitMetadata, {
+    operation: "ai-translation",
+    aiModel: "test-model",
+  });
+  assert.deepEqual(results.map((result) => result.status), ["derived", "derived", "derived"]);
+});
+
 test("ensureBatchDerivedGlossaries settles rows as unresolved when pivot generation fails", async () => {
   resetSessionState();
   state.editorChapter = chapter({

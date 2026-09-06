@@ -119,6 +119,43 @@ function chunkPendingDerivations(pending, options = {}) {
   );
 }
 
+// Persists a chunk's generated pivot texts. One grouped save (one git
+// commit) per chunk when the batch persist operation is wired — hundreds of
+// per-row commits serialized through the write queue were the slowest part
+// of a derived-glossary Translate All run. Falls back to per-row saves.
+async function persistGeneratedPivotTexts(render, written, { modelId, operations }) {
+  const commitMetadata = {
+    operation: "ai-translation",
+    aiModel: modelId,
+  };
+  if (typeof operations.persistEditorRowsBatch === "function") {
+    const first = written[0];
+    const targetLabel =
+      first.usage.glossarySourceLanguageLabel || first.usage.glossarySourceLanguageCode;
+    await operations.persistEditorRowsBatch(
+      render,
+      written.map((entry) => ({
+        rowId: entry.item.rowId,
+        languageCode: entry.usage.glossarySourceLanguageCode,
+      })),
+      {
+        commitMessage: `AI translate ${written.length} row${written.length === 1 ? "" : "s"} to ${targetLabel}`,
+        commitMetadata,
+      },
+    );
+    return;
+  }
+  if (typeof operations.persistEditorRowOnBlur !== "function") {
+    return;
+  }
+  for (const entry of written) {
+    await operations.persistEditorRowOnBlur(render, entry.item.rowId, {
+      commitMetadata,
+      waitForDurable: false,
+    });
+  }
+}
+
 // Phase B: batched pivot-text generation. One run_ai_translation_batch call
 // per chunk translates the generation column into the glossary source
 // language; each returned text is written into the row's pivot column (and
@@ -186,6 +223,7 @@ async function generatePivotTextBatches({
     const returnedById = new Map(
       (Array.isArray(payload?.rows) ? payload.rows : []).map((row) => [row.rowId, row]),
     );
+    const written = [];
     for (const entry of chunk) {
       const pivotText =
         typeof returnedById.get(entry.item.rowId)?.translatedText === "string"
@@ -201,19 +239,17 @@ async function generatePivotTextBatches({
         entry.usage.glossarySourceLanguageCode,
         pivotText,
       );
-      if (persistPivotTextToRow && typeof operations.persistEditorRowOnBlur === "function") {
-        await operations.persistEditorRowOnBlur(render, entry.item.rowId, {
-          commitMetadata: {
-            operation: "ai-translation",
-            aiModel: modelId,
-          },
-          waitForDurable: false,
-        });
-        if (!isRunActive()) {
-          return { aborted: true, pending };
-        }
-      }
+      written.push(entry);
+    }
 
+    if (persistPivotTextToRow && written.length > 0) {
+      await persistGeneratedPivotTexts(render, written, { modelId, operations });
+      if (!isRunActive()) {
+        return { aborted: true, pending };
+      }
+    }
+
+    for (const entry of written) {
       // Re-resolve against the freshly written row so the derivation context
       // (and its staleness keys) reflect what is now in the pivot column.
       const freshContext = buildDerivedGlossaryItemContext(state.editorChapter, entry.item);
