@@ -1764,6 +1764,13 @@ export async function confirmEditorClearTranslations(render, operations = {}) {
         forbidPendingText: true,
         message: "Refresh or resolve the file before clearing translations.",
       });
+      // An earlier queued deletion may have removed a captured target from the
+      // active rows since the batch was prepared.
+      assertQueuedEditorRowsReady({
+        chapterId: operation.value.chapterId,
+        rowIds: operation.value.rows.map((row) => row.rowId),
+        message: "Refresh or resolve the file before clearing translations.",
+      });
       return invokeQueuedEditorWriteCommand("update_gtms_editor_row_fields_batch", {
         input: {
           ...operation.value.input,

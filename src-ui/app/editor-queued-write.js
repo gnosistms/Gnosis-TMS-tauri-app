@@ -69,10 +69,10 @@ function rowHasPendingCommentWrite(rowId, chapterState = state.editorChapter) {
   return commentsRowId === rowId && (comments?.status === "saving" || comments?.status === "deleting");
 }
 
-function rowNeedsRefreshBeforeQueuedWrite(row) {
+function rowNeedsRefreshBeforeQueuedWrite(row, { allowDeleted = false } = {}) {
   return (
     !row
-    || row.lifecycleState === "deleted"
+    || (!allowDeleted && row.lifecycleState === "deleted")
     || row?.freshness === "stale"
     || row?.freshness === "staleDirty"
     || row?.freshness === "conflict"
@@ -127,7 +127,9 @@ export function assertQueuedEditorRowsReady({
       ) ?? null,
     );
 
-  if (rows.some(rowNeedsRefreshBeforeQueuedWrite)) {
+  // Chapter snapshots retain soft-deleted rows. A settled deletion does not make
+  // the chapter stale, but a write targeting that row directly must still fail.
+  if (rows.some((row) => rowNeedsRefreshBeforeQueuedWrite(row, { allowDeleted: includeAllRows }))) {
     throw new Error(message);
   }
 
