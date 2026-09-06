@@ -2,7 +2,7 @@
   "name": "gnosis-tms",
   "license": "GPL-3.0-only",
   "private": true,
-  "version": "0.8.102",
+  "version": "0.8.103",
   "type": "module",
   "scripts": {
     "dev": "vite",
