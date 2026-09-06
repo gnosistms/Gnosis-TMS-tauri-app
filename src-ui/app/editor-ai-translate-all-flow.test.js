@@ -816,6 +816,93 @@ test("AI Translate All generates missing pivot texts in batch instead of single-
   );
 });
 
+test("AI Translate All derives a whole language pair concurrently before its batches translate", async () => {
+  resetSessionState();
+  editorAiTranslateAllTestApi.resetActiveBatchRunId();
+  // 20 rows -> two translate batches (15 + 5) and two derivation chunks. The
+  // pre-pass must issue both derivation calls, overlapping, before the first
+  // translation call, and the per-batch derivation must then be cache hits.
+  const chapterState = batchChapter();
+  const rows = Array.from({ length: 20 }, (_, index) => ({
+    rowId: `row-${index + 1}`,
+    lifecycleState: "active",
+    fields: { es: `Texto ${index + 1}`, en: `text ${index + 1}`, vi: "" },
+  }));
+  state.editorChapter = {
+    ...chapterState,
+    languages: [
+      { code: "es", name: "Spanish", role: "source" },
+      { code: "en", name: "English", role: "target" },
+      { code: "vi", name: "Vietnamese", role: "target" },
+    ],
+    rows,
+    glossary: {
+      sourceLanguage: { code: "en" },
+      targetLanguage: { code: "vi" },
+      glossaryId: "g1",
+      repoName: "repo",
+      title: "Glossary",
+      matcherModel: {},
+      terms: [
+        {
+          lifecycleState: "active",
+          sourceTerms: ["text"],
+          targetTerms: ["van ban"],
+        },
+      ],
+    },
+  };
+
+  const events = [];
+  let derivationsInFlight = 0;
+  let maxDerivationsInFlight = 0;
+
+  await confirmEditorAiTranslateAll(
+    () => {},
+    batchOperations({
+      persistEditorRowsBatch: async () => {},
+      prepareEditorAiTranslatedGlossaryBatch: async (request) => {
+        derivationsInFlight += 1;
+        maxDerivationsInFlight = Math.max(maxDerivationsInFlight, derivationsInFlight);
+        events.push(`derive:${request.translationSourceTexts.length}`);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        derivationsInFlight -= 1;
+        return { glossarySourceText: request.glossarySourceText, entries: [] };
+      },
+      runAiTranslationBatch: async (request) => {
+        events.push(`translate:${request.rows.length}`);
+        return {
+          rows: request.rows.map((row) => ({
+            rowId: row.rowId,
+            translatedText: `vi:${row.sourceText}`,
+          })),
+          promptText: "P",
+        };
+      },
+    }),
+  );
+
+  const deriveEvents = events.filter((event) => event.startsWith("derive:"));
+  const translateEvents = events.filter((event) => event.startsWith("translate:"));
+  assert.deepEqual(deriveEvents, ["derive:15", "derive:5"]);
+  assert.deepEqual(translateEvents.sort(), ["translate:15", "translate:5"]);
+  assert.equal(maxDerivationsInFlight, 2, "both derivation chunks overlap");
+  // Every derivation call precedes every translation call.
+  const lastDerive = events.lastIndexOf("derive:5") > events.lastIndexOf("derive:15")
+    ? events.lastIndexOf("derive:5")
+    : events.lastIndexOf("derive:15");
+  const firstTranslate = events.findIndex((event) => event.startsWith("translate:"));
+  assert.equal(lastDerive < firstTranslate, true, events.join(", "));
+  assert.equal(
+    state.editorChapter.rows.every((row) => row.fields.vi === `vi:${row.fields.es}`),
+    true,
+  );
+  assert.equal(
+    rows.every((row) => state.editorChapter.derivedGlossariesByRowId?.[row.rowId]?.status === "ready"),
+    true,
+  );
+});
+
 test("AI Translate All skips applying a batch result when the source changed mid-flight", async () => {
   resetSessionState();
   editorAiTranslateAllTestApi.resetActiveBatchRunId();

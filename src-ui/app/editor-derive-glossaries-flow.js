@@ -6,7 +6,7 @@ import {
   resolveAiActionProviderAndModel,
 } from "./ai-settings-flow.js";
 import { ensureSelectedTeamAiProviderReady } from "./team-ai-flow.js";
-import { groupWorkByLanguagePair } from "./editor-ai-batch-request.js";
+import { AI_BATCH_CONCURRENCY, groupWorkByLanguagePair } from "./editor-ai-batch-request.js";
 import { ensureBatchDerivedGlossaries } from "./editor-derived-glossary-batch-flow.js";
 import {
   prepareEditorDerivedGlossaryForContext,
@@ -582,6 +582,7 @@ export async function confirmEditorDeriveGlossaries(render, operations = {}) {
       persistPivotTextToRow: true,
       generationSourceLanguageCode: config.editorSourceLanguageCode,
       render,
+      concurrency: AI_BATCH_CONCURRENCY,
       onItemSettled: (result) => {
         if (result.status === "unresolved") {
           unresolvedItems.push(result.item);

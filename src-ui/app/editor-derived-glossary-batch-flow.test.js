@@ -212,8 +212,8 @@ test("ensureBatchDerivedGlossaries reuses fresh cached entries and reports rows 
     results.map((result) => [result.item.rowId, result.status, result.reason ?? null]),
     [
       ["row-1", "cached", null],
-      ["row-3", "unresolved", "missing-pivot-text"],
       ["row-2", "derived", null],
+      ["row-3", "unresolved", "missing-pivot-text"],
     ],
   );
   assert.equal(prepareCalls.length, 1);
@@ -511,8 +511,8 @@ test("ensureBatchDerivedGlossaries settles rows as unresolved when pivot generat
   assert.deepEqual(
     results.map((result) => [result.item.rowId, result.status, result.reason ?? null]),
     [
-      ["row-2", "unresolved", "generation-failed"],
       ["row-1", "derived", null],
+      ["row-2", "unresolved", "generation-failed"],
     ],
   );
 });
@@ -593,6 +593,69 @@ test("ensureBatchDerivedGlossaries generates pivot text from a distinct generati
   assert.deepEqual(
     state.editorChapter.derivedGlossariesByRowId["row-1"].entries.map((entry) => entry.sourceTerm),
     ["祈り"],
+  );
+});
+
+test("ensureBatchDerivedGlossaries fans chunks out up to the concurrency limit, serializes applies, and keeps item order", async () => {
+  resetSessionState();
+  state.editorChapter = chapter({
+    rows: [
+      { rowId: "row-1", lifecycleState: "active", fields: { es: "Uno", en: "one", vi: "" } },
+      { rowId: "row-2", lifecycleState: "active", fields: { es: "Dos", en: "two", vi: "" } },
+      { rowId: "row-3", lifecycleState: "active", fields: { es: "Tres", en: "three", vi: "" } },
+      { rowId: "row-4", lifecycleState: "active", fields: { es: "Cuatro", en: "four", vi: "" } },
+    ],
+  });
+  let inFlight = 0;
+  let maxInFlight = 0;
+  let applying = 0;
+  let maxApplying = 0;
+  const slotEvents = [];
+
+  const { aborted, results } = await ensureBatchDerivedGlossaries({
+    chapterState: state.editorChapter,
+    items: items(state.editorChapter),
+    providerId: "openai",
+    modelId: "test-model",
+    chunkOptions: { maxRows: 1 },
+    concurrency: 2,
+    withSlot: async (task) => {
+      slotEvents.push("acquire");
+      try {
+        return await task();
+      } finally {
+        slotEvents.push("release");
+      }
+    },
+    inApplyLane: async (task) => {
+      applying += 1;
+      maxApplying = Math.max(maxApplying, applying);
+      try {
+        return await task();
+      } finally {
+        applying -= 1;
+      }
+    },
+    operations: {
+      prepareEditorAiTranslatedGlossaryBatch: async (request) => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        // The first chunk is the slowest, so later chunks finish first and
+        // the item-ordered results below prove ordering is restored.
+        const delayMs = request.translationSourceTexts[0] === "Uno" ? 30 : 5;
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        inFlight -= 1;
+        return { glossarySourceText: request.glossarySourceText, entries: [] };
+      },
+    },
+  });
+  assert.equal(aborted, false);
+  assert.equal(maxInFlight, 2, "two chunks in flight at once, never more");
+  assert.equal(maxApplying, 1, "state applies never overlap");
+  assert.equal(slotEvents.filter((event) => event === "acquire").length, 4);
+  assert.deepEqual(
+    results.map((result) => [result.item.rowId, result.status]),
+    [["row-1", "derived"], ["row-2", "derived"], ["row-3", "derived"], ["row-4", "derived"]],
   );
 });
 

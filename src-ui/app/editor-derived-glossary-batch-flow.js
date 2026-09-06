@@ -10,7 +10,9 @@ import {
   AI_BATCH_MAX_ROWS,
   AI_BATCH_TOKEN_TARGET,
   estimateSourceTokens,
+  mapWithConcurrency,
 } from "./editor-ai-batch-request.js";
+import { createSerialLane } from "./editor-ai-batch-pool.js";
 import {
   buildDerivedGlossaryState,
   glossarySourceLanguageCodeForChapter,
@@ -160,7 +162,8 @@ async function persistGeneratedPivotTexts(render, written, { modelId, operations
 // per chunk translates the generation column into the glossary source
 // language; each returned text is written into the row's pivot column (and
 // optionally persisted) before the row is re-resolved into the derivation
-// queue. Rows whose generation fails settle as unresolved.
+// queue. Rows whose generation fails settle as unresolved. Chunks fan out up
+// to `concurrency`; the AI call takes a slot, the row writes take the lane.
 async function generatePivotTextBatches({
   chapterState,
   needsPivotText,
@@ -173,6 +176,9 @@ async function generatePivotTextBatches({
   settle,
   chunkOptions,
   operations,
+  concurrency,
+  runAiCall,
+  applyLane,
 }) {
   const runBatch =
     typeof operations.runAiTranslationBatch === "function"
@@ -180,20 +186,22 @@ async function generatePivotTextBatches({
       : (batchRequest) => invoke("run_ai_translation_batch", { request: batchRequest });
   const installationId = selectedProjectsTeamInstallationId();
   const pending = [];
+  let aborted = false;
 
   const chunks = chunkByTokenBudget(needsPivotText, chunkOptions, (entry) =>
     estimateSourceTokens(entry.generationSourceText),
   );
-  for (const chunk of chunks) {
-    if (!isRunActive()) {
-      return { aborted: true, pending };
+  await mapWithConcurrency(chunks, concurrency, async (chunk) => {
+    if (aborted || !isRunActive()) {
+      aborted = true;
+      return;
     }
 
     const first = chunk[0];
     const generationLanguage = languageByCode(chapterState, first.generationCode);
     let payload = null;
     try {
-      payload = await runBatch({
+      payload = await runAiCall(() => runBatch({
         providerId,
         modelId,
         sourceLanguage:
@@ -206,68 +214,79 @@ async function generatePivotTextBatches({
           sourceText: entry.generationSourceText,
         })),
         ...(installationId === null ? {} : { installationId }),
-      });
+      }));
     } catch {
       if (!isRunActive()) {
-        return { aborted: true, pending };
+        aborted = true;
+        return;
       }
       for (const entry of chunk) {
         settle({ item: entry.item, status: "unresolved", reason: "generation-failed" });
       }
-      continue;
+      return;
     }
     if (!isRunActive()) {
-      return { aborted: true, pending };
+      aborted = true;
+      return;
     }
 
     const returnedById = new Map(
       (Array.isArray(payload?.rows) ? payload.rows : []).map((row) => [row.rowId, row]),
     );
-    const written = [];
-    for (const entry of chunk) {
-      const pivotText =
-        typeof returnedById.get(entry.item.rowId)?.translatedText === "string"
-          ? returnedById.get(entry.item.rowId).translatedText.trim()
-          : "";
-      if (!pivotText) {
-        settle({ item: entry.item, status: "unresolved", reason: "generation-failed" });
-        continue;
+    // Row writes, the grouped save, and the re-resolution mutate chapter
+    // state: they run in the apply lane so concurrent chunks never interleave.
+    await applyLane(async () => {
+      if (aborted || !isRunActive()) {
+        aborted = true;
+        return;
+      }
+      const written = [];
+      for (const entry of chunk) {
+        const pivotText =
+          typeof returnedById.get(entry.item.rowId)?.translatedText === "string"
+            ? returnedById.get(entry.item.rowId).translatedText.trim()
+            : "";
+        if (!pivotText) {
+          settle({ item: entry.item, status: "unresolved", reason: "generation-failed" });
+          continue;
+        }
+
+        operations.updateEditorRowFieldValue(
+          entry.item.rowId,
+          entry.usage.glossarySourceLanguageCode,
+          pivotText,
+        );
+        written.push(entry);
       }
 
-      operations.updateEditorRowFieldValue(
-        entry.item.rowId,
-        entry.usage.glossarySourceLanguageCode,
-        pivotText,
-      );
-      written.push(entry);
-    }
-
-    if (persistPivotTextToRow && written.length > 0) {
-      await persistGeneratedPivotTexts(render, written, { modelId, operations });
-      if (!isRunActive()) {
-        return { aborted: true, pending };
+      if (persistPivotTextToRow && written.length > 0) {
+        await persistGeneratedPivotTexts(render, written, { modelId, operations });
+        if (!isRunActive()) {
+          aborted = true;
+          return;
+        }
       }
-    }
 
-    for (const entry of written) {
-      // Re-resolve against the freshly written row so the derivation context
-      // (and its staleness keys) reflect what is now in the pivot column.
-      const freshContext = buildDerivedGlossaryItemContext(state.editorChapter, entry.item);
-      const freshUsage = freshContext
-        ? resolveEditorDerivedGlossaryUsage(freshContext, { useCurrentGlossarySourceText })
-        : null;
-      if (
-        freshUsage?.kind !== "derived"
-        || !String(freshUsage.preparationGlossarySourceText ?? "").trim()
-      ) {
-        settle({ item: entry.item, status: "unresolved", reason: "generation-failed" });
-        continue;
+      for (const entry of written) {
+        // Re-resolve against the freshly written row so the derivation context
+        // (and its staleness keys) reflect what is now in the pivot column.
+        const freshContext = buildDerivedGlossaryItemContext(state.editorChapter, entry.item);
+        const freshUsage = freshContext
+          ? resolveEditorDerivedGlossaryUsage(freshContext, { useCurrentGlossarySourceText })
+          : null;
+        if (
+          freshUsage?.kind !== "derived"
+          || !String(freshUsage.preparationGlossarySourceText ?? "").trim()
+        ) {
+          settle({ item: entry.item, status: "unresolved", reason: "generation-failed" });
+          continue;
+        }
+        pending.push({ item: entry.item, context: freshContext, usage: freshUsage });
       }
-      pending.push({ item: entry.item, context: freshContext, usage: freshUsage });
-    }
-  }
+    });
+  });
 
-  return { aborted: false, pending };
+  return { aborted, pending };
 }
 
 // Ensures every item (all sharing one language pair) has a fresh derived
@@ -285,6 +304,13 @@ async function generatePivotTextBatches({
 // the item's source column — into the glossary source language); the result is
 // written into the row and, with persistPivotTextToRow, persisted like the
 // single-row path before the row joins the derivation queue.
+//
+// Chunks of both phases run up to `concurrency` at a time (default 1 keeps
+// the sequential behaviour). Every AI call goes through `withSlot` when the
+// caller shares a pool's slot semaphore, so derivation counts against the
+// run's cap on in-flight AI calls; every chapter-state mutation goes through
+// `inApplyLane` (the caller's lane, else a private serial lane), applied and
+// persisted once per chunk as before. Results come back in item order.
 export async function ensureBatchDerivedGlossaries({
   chapterState,
   items,
@@ -299,12 +325,26 @@ export async function ensureBatchDerivedGlossaries({
   onItemSettled = null,
   chunkOptions = {},
   operations = {},
+  concurrency = 1,
+  withSlot = null,
+  inApplyLane = null,
 }) {
+  const itemList = Array.isArray(items) ? items : [];
+  const itemIndex = new Map(itemList.map((item, index) => [item, index]));
   const results = [];
   const settle = (result) => {
     results.push(result);
     onItemSettled?.(result);
   };
+  const finish = (aborted) => ({
+    aborted,
+    results: [...results].sort(
+      (left, right) => (itemIndex.get(left.item) ?? 0) - (itemIndex.get(right.item) ?? 0),
+    ),
+  });
+  const chunkConcurrency = Number.isFinite(concurrency) && concurrency > 0 ? concurrency : 1;
+  const runAiCall = typeof withSlot === "function" ? withSlot : (task) => task();
+  const applyLane = typeof inApplyLane === "function" ? inApplyLane : createSerialLane();
 
   const canGeneratePivotText =
     generateMissingPivotText
@@ -312,7 +352,7 @@ export async function ensureBatchDerivedGlossaries({
 
   const pending = [];
   const needsPivotText = [];
-  for (const item of Array.isArray(items) ? items : []) {
+  for (const item of itemList) {
     const context = buildDerivedGlossaryItemContext(chapterState, item);
     if (!context) {
       settle({ item, status: "unresolved", reason: "no-context" });
@@ -358,15 +398,18 @@ export async function ensureBatchDerivedGlossaries({
       settle,
       chunkOptions,
       operations,
+      concurrency: chunkConcurrency,
+      runAiCall,
+      applyLane,
     });
     if (generated.aborted) {
-      return { aborted: true, results };
+      return finish(true);
     }
     pending.push(...generated.pending);
   }
 
   if (pending.length === 0) {
-    return { aborted: false, results };
+    return finish(false);
   }
 
   const prepareBatch =
@@ -376,15 +419,17 @@ export async function ensureBatchDerivedGlossaries({
         invoke("prepare_editor_ai_translated_glossary_batch", { request: batchRequest });
   const installationId = selectedProjectsTeamInstallationId();
 
-  for (const chunk of chunkPendingDerivations(pending, chunkOptions)) {
-    if (!isRunActive()) {
-      return { aborted: true, results };
+  let aborted = false;
+  await mapWithConcurrency(chunkPendingDerivations(pending, chunkOptions), chunkConcurrency, async (chunk) => {
+    if (aborted || !isRunActive()) {
+      aborted = true;
+      return;
     }
 
     const first = chunk[0];
     let payload = null;
     try {
-      payload = await prepareBatch({
+      payload = await runAiCall(() => prepareBatch({
         providerId,
         modelId,
         translationSourceTexts: chunk.map((entry) => entry.context.sourceText),
@@ -401,18 +446,20 @@ export async function ensureBatchDerivedGlossaries({
         ),
         glossaryTerms: first.usage.glossaryTerms,
         ...(installationId === null ? {} : { installationId }),
-      });
+      }));
     } catch {
       if (!isRunActive()) {
-        return { aborted: true, results };
+        aborted = true;
+        return;
       }
       for (const entry of chunk) {
         settle({ item: entry.item, status: "unresolved", reason: "derivation-failed" });
       }
-      continue;
+      return;
     }
     if (!isRunActive()) {
-      return { aborted: true, results };
+      aborted = true;
+      return;
     }
 
     const preparedEntries = Array.isArray(payload?.entries) ? payload.entries : [];
@@ -421,74 +468,81 @@ export async function ensureBatchDerivedGlossaries({
     // Chapter-state apply and cache save happen ONCE per chunk — per-row
     // writes re-normalize the whole entry map and clone + persist the whole
     // cross-chapter cache per row, which is quadratic in chapter size and has
-    // frozen the machine on large derivation runs.
-    const applied = [];
-    for (const entry of chunk) {
-      // The combined derivation ran against the classification-time source
-      // text; a mid-flight edit makes the alignment stale for that row.
-      const currentRow = findEditorRowById(entry.item.rowId, state.editorChapter);
-      if (
-        !currentRow
-        || readRowFieldText(currentRow, entry.item.sourceLanguageCode) !== entry.context.sourceText
-      ) {
-        settle({ item: entry.item, status: "unresolved", reason: "stale-source" });
-        continue;
+    // frozen the machine on large derivation runs. They run in the apply lane
+    // so concurrent chunks never interleave state updates.
+    await applyLane(() => {
+      if (aborted || !isRunActive()) {
+        aborted = true;
+        return;
+      }
+      const applied = [];
+      for (const entry of chunk) {
+        // The combined derivation ran against the classification-time source
+        // text; a mid-flight edit makes the alignment stale for that row.
+        const currentRow = findEditorRowById(entry.item.rowId, state.editorChapter);
+        if (
+          !currentRow
+          || readRowFieldText(currentRow, entry.item.sourceLanguageCode) !== entry.context.sourceText
+        ) {
+          settle({ item: entry.item, status: "unresolved", reason: "stale-source" });
+          continue;
+        }
+
+        // Token-aware containment, not String.includes: a plain substring check
+        // matches "he" inside "theme" and would assign entries to rows that do
+        // not actually contain the term under matcher boundary semantics.
+        const rowEntries = preparedEntries.filter((prepared) =>
+          typeof prepared?.sourceTerm === "string"
+          && prepared.sourceTerm
+          && glossaryTermMatchesTokenSequence(
+            entry.context.sourceText,
+            prepared.sourceTerm,
+            entry.item.sourceLanguageCode,
+          ),
+        );
+        const derivedEntry = buildDerivedGlossaryState({
+          glossaryState: entry.usage.glossaryState,
+          sourceLanguage: entry.context.sourceLanguage,
+          targetLanguage: entry.context.targetLanguage,
+          requestKey,
+          derivedContext: entry.usage.derivedContext,
+          payload: {
+            glossarySourceText: entry.usage.preparationGlossarySourceText,
+            entries: rowEntries,
+          },
+        });
+        applied.push({ entry, derivedEntry });
       }
 
-      // Token-aware containment, not String.includes: a plain substring check
-      // matches "he" inside "theme" and would assign entries to rows that do
-      // not actually contain the term under matcher boundary semantics.
-      const rowEntries = preparedEntries.filter((prepared) =>
-        typeof prepared?.sourceTerm === "string"
-        && prepared.sourceTerm
-        && glossaryTermMatchesTokenSequence(
-          entry.context.sourceText,
-          prepared.sourceTerm,
-          entry.item.sourceLanguageCode,
-        ),
-      );
-      const derivedEntry = buildDerivedGlossaryState({
-        glossaryState: entry.usage.glossaryState,
-        sourceLanguage: entry.context.sourceLanguage,
-        targetLanguage: entry.context.targetLanguage,
-        requestKey,
-        derivedContext: entry.usage.derivedContext,
-        payload: {
-          glossarySourceText: entry.usage.preparationGlossarySourceText,
-          entries: rowEntries,
-        },
-      });
-      applied.push({ entry, derivedEntry });
-    }
-
-    if (applied.length > 0) {
-      const entriesByRowId = Object.fromEntries(
-        applied.map(({ entry, derivedEntry }) => [entry.item.rowId, derivedEntry]),
-      );
-      state.editorChapter = applyEditorDerivedGlossaryEntries(
-        state.editorChapter,
-        entriesByRowId,
-      );
-      if (team && chapterState.projectId) {
-        saveStoredEditorDerivedGlossaryEntriesForChapter(
-          team,
-          chapterState.projectId,
-          chapterState.chapterId,
+      if (applied.length > 0) {
+        const entriesByRowId = Object.fromEntries(
+          applied.map(({ entry, derivedEntry }) => [entry.item.rowId, derivedEntry]),
+        );
+        state.editorChapter = applyEditorDerivedGlossaryEntries(
+          state.editorChapter,
           entriesByRowId,
         );
+        if (team && chapterState.projectId) {
+          saveStoredEditorDerivedGlossaryEntriesForChapter(
+            team,
+            chapterState.projectId,
+            chapterState.chapterId,
+            entriesByRowId,
+          );
+        }
+        for (const { entry, derivedEntry } of applied) {
+          settle({
+            item: entry.item,
+            status: "derived",
+            matcherModel: derivedEntry.matcherModel ?? null,
+            glossarySourceText: entry.usage.preparationGlossarySourceText,
+          });
+        }
       }
-      for (const { entry, derivedEntry } of applied) {
-        settle({
-          item: entry.item,
-          status: "derived",
-          matcherModel: derivedEntry.matcherModel ?? null,
-          glossarySourceText: entry.usage.preparationGlossarySourceText,
-        });
-      }
-    }
-  }
+    });
+  });
 
-  return { aborted: false, results };
+  return finish(aborted);
 }
 
 // Mirrors the source/target comparison in resolveEditorDerivedGlossaryUsage:

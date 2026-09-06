@@ -486,11 +486,11 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
   const glossarySourceLanguageChangedRowIds = new Set();
   let glossarySourceLanguageChangedCode = "";
 
-  // Residual derived-glossary resolution (rows the pre-pass below could not
-  // warm) runs one batch at a time: concurrent derivations could interleave
-  // chapter-state updates and duplicate derivation calls. After the pre-pass
-  // this lane is cache hits, so serializing it costs nothing in the common
-  // case.
+  // Residual derived-glossary resolution (rows the per-pair pre-pass below
+  // could not warm) runs one batch at a time: concurrent derivations could
+  // interleave chapter-state updates and duplicate derivation calls. After
+  // the pre-pass this lane is cache hits, so serializing it costs nothing in
+  // the common case.
   const inDerivationLane = createSerialLane();
 
   // Returns "abort" (run cancelled/changed) or "run-error" (modal error shown) —
@@ -968,10 +968,12 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
     // saves internally, so the whole call runs lane-serialized with its slot
     // acquired inside the lane task.
     const concurrencyOverride = Number(operations.aiBatchConcurrency);
-    const pool = createAiBatchPool({
-      concurrency: Number.isFinite(concurrencyOverride) && concurrencyOverride > 0
+    const poolConcurrency =
+      Number.isFinite(concurrencyOverride) && concurrencyOverride > 0
         ? concurrencyOverride
-        : AI_BATCH_CONCURRENCY,
+        : AI_BATCH_CONCURRENCY;
+    const pool = createAiBatchPool({
+      concurrency: poolConcurrency,
       isRunActive,
     });
     const runPoolBatch = async (batch, tools, batchIndex) => {
@@ -1005,10 +1007,41 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
         pairGroups.push({ key, batches: [batch] });
       }
     }
+    // Derived-glossary pre-pass, per pair: derive every row of the pair in
+    // one call whose chunks fan out through the pool's slots, so the AI
+    // calls overlap and the per-batch derivation lane below only sees cache
+    // hits. Rows it cannot resolve still fall back per batch. Running it
+    // inside the pair loop keeps the pair order: the glossary-source pair's
+    // pivot text is complete before any derived pair starts.
+    const warmDerivedPair = async (group) => {
+      if (!provider || kindByPair.get(group.key) !== "derived") {
+        return "ok";
+      }
+      const { aborted } = await ensureBatchDerivedGlossaries({
+        chapterState: state.editorChapter,
+        items: group.batches.flatMap((batch) => batch.items),
+        providerId: provider.providerId,
+        modelId: provider.modelId,
+        isRunActive,
+        generateMissingPivotText: true,
+        persistPivotTextToRow: true,
+        render,
+        operations,
+        concurrency: poolConcurrency,
+        withSlot: pool.withSlot,
+        inApplyLane: pool.inApplyLane,
+      });
+      return aborted || !isRunActive() ? "abort" : "ok";
+    };
+
     let outcome = "ok";
     let groupStartIndex = 0;
     for (const group of pairGroups) {
       const offset = groupStartIndex;
+      outcome = await warmDerivedPair(group);
+      if (outcome !== "ok") {
+        break;
+      }
       outcome = await pool.run(group.batches, (batch, tools, index) =>
         runPoolBatch(batch, tools, offset + index));
       groupStartIndex += group.batches.length;
