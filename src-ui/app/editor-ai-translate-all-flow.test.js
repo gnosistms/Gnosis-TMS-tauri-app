@@ -1468,3 +1468,100 @@ test("AI Translate All still refreshes pivot rows when the whole run took the si
   assert.equal(refreshPrepareCalls.length, 1);
   assert.equal(state.editorChapter.derivedGlossariesByRowId["row-1"].glossarySourceText, "es:solo");
 });
+
+test("AI Translate All retries rows missing from the batch response on the batch path before single-row", async () => {
+  resetSessionState();
+  editorAiTranslateAllTestApi.resetActiveBatchRunId();
+  state.editorChapter = batchChapter();
+  const batchCalls = [];
+  const fallbackRows = [];
+
+  await confirmEditorAiTranslateAll(
+    () => {},
+    batchOperations({
+      runAiTranslationBatch: async (request) => {
+        batchCalls.push(request.rows.map((row) => row.rowId));
+        const isRetry = batchCalls.length > 1;
+        return {
+          rows: request.rows
+            // The first call drops row-b (a merged/reformatted id); the retry
+            // for just that row succeeds.
+            .filter((row) => isRetry || row.rowId !== "row-b")
+            .map((row) => ({ rowId: row.rowId, translatedText: `vi:${isRetry ? "retry:" : ""}${row.sourceText}` })),
+          promptText: "P",
+          unknownRowIds: isRetry ? [] : ["row-b-merged"],
+        };
+      },
+      runEditorAiTranslateForContext: async (_render, _actionId, context) => {
+        fallbackRows.push(context.rowId);
+        return { ok: true };
+      },
+    }),
+  );
+
+  assert.deepEqual(batchCalls, [["row-a", "row-b", "row-c"], ["row-b"]]);
+  assert.deepEqual(fallbackRows, []);
+  assert.deepEqual(
+    state.editorChapter.rows.map((row) => row.fields.vi),
+    ["vi:Hola", "vi:retry:Adios", "vi:Gracias"],
+  );
+  assert.equal(state.statusBadges.left.text, "AI translated 3 fields.");
+});
+
+test("AI Translate All sends later language pairs the translations earlier pairs just wrote", async () => {
+  resetSessionState();
+  editorAiTranslateAllTestApi.resetActiveBatchRunId();
+  const chapterState = batchChapter();
+  state.editorChapter = {
+    ...chapterState,
+    languages: [
+      { code: "es", name: "Spanish", role: "source" },
+      { code: "vi", name: "Vietnamese", role: "target" },
+      { code: "fr", name: "French", role: "target" },
+    ],
+    rows: chapterState.rows.map((row) => ({ ...row, fields: { ...row.fields, fr: "" } })),
+    aiTranslateAllModal: {
+      ...createEditorAiTranslateAllModalState(),
+      isOpen: true,
+      selectedLanguageCodes: ["vi", "fr"],
+    },
+  };
+  const batchCalls = [];
+
+  await confirmEditorAiTranslateAll(
+    () => {},
+    batchOperations({
+      // Immutable row updates, like the real editor state layer: a run-start
+      // row snapshot would never see these writes.
+      updateEditorRowFieldValue: (rowId, languageCode, value) => {
+        state.editorChapter = {
+          ...state.editorChapter,
+          rows: state.editorChapter.rows.map((row) =>
+            row.rowId === rowId ? { ...row, fields: { ...row.fields, [languageCode]: value } } : row),
+        };
+      },
+      runAiTranslationBatch: async (request) => {
+        batchCalls.push(request);
+        return {
+          rows: request.rows.map((row) => ({
+            rowId: row.rowId,
+            translatedText: `${request.targetLanguageCode}:${row.sourceText}`,
+          })),
+          promptText: "P",
+        };
+      },
+    }),
+  );
+
+  assert.deepEqual(batchCalls.map((call) => call.targetLanguageCode), ["vi", "fr"]);
+  // The fr batch carries the vi translations written moments earlier as
+  // reference translations.
+  assert.deepEqual(
+    batchCalls[1].rows.map((row) => row.alternateLanguageTexts),
+    [
+      [{ languageCode: "vi", languageLabel: "Vietnamese", text: "vi:Hola" }],
+      [{ languageCode: "vi", languageLabel: "Vietnamese", text: "vi:Adios" }],
+      [{ languageCode: "vi", languageLabel: "Vietnamese", text: "vi:Gracias" }],
+    ],
+  );
+});
