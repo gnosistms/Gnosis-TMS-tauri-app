@@ -111,6 +111,16 @@ export function loadingSpinnerKeyAttribute(key) {
     : "";
 }
 
+// Standalone spinner (no button chrome) for waits that have no action to attach
+// to, such as the startup session restore. `key` opts into animation-phase
+// continuity across re-renders; `label` is announced to assistive technology.
+export function loadingSpinner({ key = "", className = "", label = "Loading" } = {}) {
+  const classes = ["button__spinner", String(className ?? "").trim()]
+    .filter(Boolean)
+    .join(" ");
+  return `<span class="${escapeHtml(classes)}"${loadingSpinnerKeyAttribute(key)} role="status" aria-label="${escapeHtml(label)}"></span>`;
+}
+
 export function loadingButton({
   label,
   loadingLabel,
