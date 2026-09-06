@@ -1,4 +1,5 @@
 import {
+  beginStoredBrokerSessionInspection,
   prepareStoredBrokerSessionRestore,
   registerBrokerAuthListener,
   registerGithubAppInstallListener,
@@ -1134,6 +1135,7 @@ async function bootstrap() {
   }
 
   const storedBrokerSession = await prepareStoredBrokerSessionRestore();
+  const brokerSessionInspection = beginStoredBrokerSessionInspection(storedBrokerSession);
   void registerBrokerAuthListener(render, loadUserTeams);
   void registerGithubAppInstallListener(render, setGithubAppInstallation);
   void registerWordPressExportListeners(render);
@@ -1144,7 +1146,12 @@ async function bootstrap() {
   void registerAppUpdateProgressListener(render);
   startAppUpdateChecks(render);
   render();
-  void initializeConnectivity(render, () => restoreStoredBrokerSession(render, loadUserTeams, storedBrokerSession));
+  void initializeConnectivity(render, () => restoreStoredBrokerSession(
+    render,
+    loadUserTeams,
+    storedBrokerSession,
+    { inspection: brokerSessionInspection },
+  ));
 }
 
 bootstrapPromise = bootstrap();

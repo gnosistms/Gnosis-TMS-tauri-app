@@ -97,6 +97,21 @@ export async function prepareStoredBrokerSessionRestore() {
   return session;
 }
 
+// Start the broker session inspection immediately so it runs concurrently with
+// the startup connectivity probe instead of after it. The returned promise is
+// consumed by restoreStoredBrokerSession() through `options.inspection`.
+export function beginStoredBrokerSessionInspection(session) {
+  if (!invoke || !session?.sessionToken) {
+    return null;
+  }
+  const inspection = invoke("inspect_broker_auth_session", {
+    sessionToken: session.sessionToken,
+  });
+  // Mark the rejection as observed; the consumer awaits and handles the failure.
+  inspection.catch(() => {});
+  return inspection;
+}
+
 function shouldPreserveCurrentScreen(options = {}) {
   return options.preserveCurrentScreen === true && state.screen !== "start";
 }
@@ -144,9 +159,15 @@ export async function restoreStoredBrokerSession(
   }
 
   try {
+    // An early inspection started from the prepared restoring state, and may
+    // already have refreshed the token in state.auth.session. Do not reset the
+    // session to the stored token in that case.
     if (
-      state.auth.status !== "restoring"
-      || state.auth.session?.sessionToken !== session.sessionToken
+      !options.inspection
+      && (
+        state.auth.status !== "restoring"
+        || state.auth.session?.sessionToken !== session.sessionToken
+      )
     ) {
       setAuthState(
         {
@@ -157,9 +178,12 @@ export async function restoreStoredBrokerSession(
         render,
       );
     }
-    const profile = await invoke("inspect_broker_auth_session", {
-      sessionToken: session.sessionToken,
-    });
+    const profile = await (
+      options.inspection
+      ?? invoke("inspect_broker_auth_session", {
+        sessionToken: session.sessionToken,
+      })
+    );
     if (generation !== authSessionGeneration || !state.auth.session) {
       return;
     }
