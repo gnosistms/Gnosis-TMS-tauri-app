@@ -874,19 +874,33 @@ fn parse_review_batch_response(text: &str) -> Result<Vec<AiReviewBatchRowResult>
 /// Keeps only rows whose id was requested, in response order, dropping unknown ids
 /// and duplicate ids (first occurrence wins). Rows requested but absent from the
 /// response are simply not present in the result — the caller treats those as
-/// unresolved and retries them through the single-row path.
+/// unresolved and retries them (batch path first, then single-row). The dropped
+/// unknown ids come back alongside so the caller can log what the model actually
+/// returned instead of a silent "missing".
 fn retain_known_unique_rows<T>(
     rows: Vec<T>,
     allowed: &HashSet<String>,
     id_of: impl Fn(&T) -> String,
-) -> Vec<T> {
+) -> (Vec<T>, Vec<String>) {
     let mut seen = HashSet::new();
-    rows.into_iter()
-        .filter(|row| {
-            let id = id_of(row);
-            !id.is_empty() && allowed.contains(&id) && seen.insert(id)
-        })
-        .collect()
+    let mut retained = Vec::new();
+    let mut unknown_ids: Vec<String> = Vec::new();
+    for row in rows {
+        let id = id_of(&row);
+        if id.is_empty() {
+            continue;
+        }
+        if !allowed.contains(&id) {
+            if !unknown_ids.contains(&id) {
+                unknown_ids.push(id);
+            }
+            continue;
+        }
+        if seen.insert(id) {
+            retained.push(row);
+        }
+    }
+    (retained, unknown_ids)
 }
 
 pub(crate) fn run_ai_translation_batch(
@@ -921,7 +935,7 @@ pub(crate) fn run_ai_translation_batch(
         .iter()
         .map(|row| row.row_id.trim().to_string())
         .collect();
-    let rows = retain_known_unique_rows(
+    let (rows, unknown_row_ids) = retain_known_unique_rows(
         parse_translation_batch_response(&response.text)?,
         &allowed,
         |row| row.row_id.trim().to_string(),
@@ -930,6 +944,7 @@ pub(crate) fn run_ai_translation_batch(
     Ok(AiTranslationBatchResponse {
         rows,
         prompt_text: prompt,
+        unknown_row_ids,
     })
 }
 
@@ -965,7 +980,7 @@ pub(crate) fn run_ai_review_batch(
         .iter()
         .map(|row| row.row_id.trim().to_string())
         .collect();
-    let rows = retain_known_unique_rows(
+    let (rows, unknown_row_ids) = retain_known_unique_rows(
         parse_review_batch_response(&response.text)?,
         &allowed,
         |row| row.row_id.trim().to_string(),
@@ -1002,6 +1017,7 @@ pub(crate) fn run_ai_review_batch(
     Ok(AiReviewBatchResponse {
         rows,
         prompt_text: prompt,
+        unknown_row_ids,
     })
 }
 
@@ -3966,13 +3982,15 @@ mod tests {
         )
         .unwrap();
         let allowed: HashSet<String> = ["r0", "r1", "r2"].iter().map(|s| s.to_string()).collect();
-        let kept = retain_known_unique_rows(rows, &allowed, |row| row.row_id.trim().to_string());
+        let (kept, unknown) =
+            retain_known_unique_rows(rows, &allowed, |row| row.row_id.trim().to_string());
 
-        // r0 kept once (first), ghost dropped, r1 kept, r2 absent (unresolved).
+        // r0 kept once (first), ghost dropped but reported, r1 kept, r2 absent (unresolved).
         assert_eq!(kept.len(), 2);
         assert_eq!(kept[0].row_id, "r0");
         assert_eq!(kept[0].translated_text, "A");
         assert_eq!(kept[1].row_id, "r1");
+        assert_eq!(unknown, vec!["ghost".to_string()]);
     }
 
     #[test]

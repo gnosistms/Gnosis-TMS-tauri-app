@@ -6,11 +6,12 @@ import {
   resolveAiActionProviderAndModel,
 } from "./ai-settings-flow.js";
 import { ensureSelectedTeamAiProviderReady } from "./team-ai-flow.js";
-import { groupWorkByLanguagePair } from "./editor-ai-batch-request.js";
+import { AI_BATCH_CONCURRENCY, groupWorkByLanguagePair } from "./editor-ai-batch-request.js";
 import { ensureBatchDerivedGlossaries } from "./editor-derived-glossary-batch-flow.js";
 import {
   prepareEditorDerivedGlossaryForContext,
   readRowFieldText,
+  resolveDerivedGlossaryPivotLanguage,
   resolveEditorDerivedGlossaryUsage,
   resolveLanguageCode,
   resolveLanguageLabel,
@@ -81,7 +82,10 @@ export function resolveEditorDeriveGlossariesConfig(chapterState) {
   const glossaryTargetLanguageCode = resolveLanguageCode(
     glossaryState?.targetLanguage ?? glossaryModel?.targetLanguage,
   );
-  const glossarySourceLanguage = languageByCode(chapterState, glossarySourceLanguageCode);
+  // The pivot column resolves through the shared derived-glossary rule so the
+  // modal and the translate flows agree on whether this chapter can derive.
+  const pivotLanguage = resolveDerivedGlossaryPivotLanguage(chapterState);
+  const glossarySourceLanguage = pivotLanguage ?? languageByCode(chapterState, glossarySourceLanguageCode);
   const glossaryTargetLanguage = languageByCode(chapterState, glossaryTargetLanguageCode);
   const derivableLanguages = languages.filter((language) => {
     const code = String(language?.code ?? "").trim();
@@ -97,7 +101,7 @@ export function resolveEditorDeriveGlossariesConfig(chapterState) {
       Boolean(chapterState?.chapterId)
       && languages.length >= 3
       && Boolean(glossaryState?.matcherModel)
-      && languageCodes.has(glossarySourceLanguageCode)
+      && Boolean(pivotLanguage)
       && languageCodes.has(glossaryTargetLanguageCode)
       && derivableLanguages.length > 0,
     editorSourceLanguageCode: sourceLanguageCodeForChapter(chapterState),
@@ -578,6 +582,7 @@ export async function confirmEditorDeriveGlossaries(render, operations = {}) {
       persistPivotTextToRow: true,
       generationSourceLanguageCode: config.editorSourceLanguageCode,
       render,
+      concurrency: AI_BATCH_CONCURRENCY,
       onItemSettled: (result) => {
         if (result.status === "unresolved") {
           unresolvedItems.push(result.item);

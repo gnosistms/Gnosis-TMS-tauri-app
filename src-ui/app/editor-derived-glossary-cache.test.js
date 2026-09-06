@@ -189,3 +189,48 @@ test("stored editor derived glossaries save a batch of entries in one write, mer
   assert.equal(stored["row-1"].requestKey, "req-1");
   assert.equal(stored["row-2"].requestKey, "req-2");
 });
+
+const { readPersistentValue, writePersistentValue } = await import("./persistent-store.js");
+const { normalizeEditorGlossaryRevisionKey } = await import("./editor-derived-glossary-state.js");
+
+test("saving any chapter migrates legacy JSON revision keys across the whole stored map", () => {
+  setActiveStorageLogin("tester");
+  const legacyKey = JSON.stringify({ glossaryId: "g", terms: [{ termId: "t1" }] });
+  const legacyEntry = {
+    status: "ready",
+    error: "",
+    requestKey: "req-legacy",
+    translationSourceLanguageCode: "en",
+    glossarySourceLanguageCode: "es",
+    targetLanguageCode: "vi",
+    translationSourceText: "Old text.",
+    glossarySourceText: "Texto viejo.",
+    glossarySourceTextOrigin: "row",
+    glossaryRevisionKey: legacyKey,
+    entries: [],
+  };
+  // A store written before revision keys were hashed: chapter-1 is untouched
+  // by the save below and must still be migrated.
+  writePersistentValue(DERIVED_GLOSSARY_STORAGE_KEY, {
+    "installation:42": { "project-1::chapter-1": { "row-1": legacyEntry } },
+  });
+
+  saveStoredEditorDerivedGlossaryEntryForChapter(fixtureTeam, "project-1", "chapter-2", "row-9", {
+    ...legacyEntry,
+    requestKey: "req-new",
+    glossaryRevisionKey: "h1:0000000000000000",
+  });
+
+  const stored = readPersistentValue(DERIVED_GLOSSARY_STORAGE_KEY, null);
+  const migratedKey = stored["installation:42"]["project-1::chapter-1"]["row-1"].glossaryRevisionKey;
+  assert.equal(migratedKey, normalizeEditorGlossaryRevisionKey(legacyKey));
+  assert.match(migratedKey, /^h1:[0-9a-f]{16}$/);
+  assert.equal(
+    loadStoredEditorDerivedGlossariesForChapter(fixtureTeam, "project-1", "chapter-1")["row-1"].glossaryRevisionKey,
+    migratedKey,
+  );
+  assert.equal(
+    stored["installation:42"]["project-1::chapter-2"]["row-9"].glossaryRevisionKey,
+    "h1:0000000000000000",
+  );
+});

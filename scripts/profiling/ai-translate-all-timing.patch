@@ -1,0 +1,559 @@
+diff --git a/instr/src-ui/app/editor-ai-timing-debug.js b/src-ui/app/editor-ai-timing-debug.js
+new file mode 100644
+index 0000000..7a95c6b
+--- /dev/null
++++ b/src-ui/app/editor-ai-timing-debug.js
+@@ -0,0 +1,70 @@
++// TEMPORARY profiling helper for the AI Translate All audit. Remove after use.
++// Writes "ai-timing:*" events to the editor debug log file
++// (~/Library/Application Support/com.gnosis.tms/logs/editor-scroll-debug.jsonl)
++// and mirrors them to the console.
++
++import { logEditorScrollDebug } from "./editor-scroll-debug.js";
++import { getEditorOperationQueueSnapshot, waitForEditorOperationQueueIdle } from "./editor-operation-queue.js";
++
++const now = () => (typeof performance === "object" && typeof performance.now === "function"
++  ? performance.now()
++  : Date.now());
++
++let runT0 = 0;
++
++export function aiTimingRunStart(detail = {}) {
++  runT0 = now();
++  aiTimingMark("run-start", detail);
++}
++
++export function aiTimingMark(event, detail = {}) {
++  const payload = { tMs: Math.round(now() - runT0), ...detail };
++  // The debug-log flusher needs a real window (unit tests stub one without timers).
++  if (typeof globalThis.window?.setTimeout === "function") {
++    logEditorScrollDebug(`ai-timing:${event}`, payload);
++    console.info(`[ai-timing] ${event}`, payload);
++  }
++}
++
++// Returns end(detail) which logs the elapsed time for `event`.
++export function aiTimingStart(event, detail = {}) {
++  const t0 = now();
++  return (endDetail = {}) => {
++    const ms = Math.round((now() - t0) * 10) / 10;
++    aiTimingMark(event, { ms, ...detail, ...endDetail });
++    return ms;
++  };
++}
++
++// After a run: wait for the editor write queue to drain and dump per-operation
++// queue wait / run durations for the batch saves this run enqueued.
++export async function aiTimingDrainQueue(sinceIso) {
++  const end = aiTimingStart("queue-drain");
++  await waitForEditorOperationQueueIdle();
++  const drainMs = end();
++  const snapshot = getEditorOperationQueueSnapshot();
++  const ops = snapshot.operations
++    .filter((op) => !sinceIso || (op.queuedAt && op.queuedAt >= sinceIso))
++    .map((op) => ({
++      kind: op.kind,
++      status: op.status,
++      rows: Array.isArray(op.metadata?.rowIds) ? op.metadata.rowIds.length : null,
++      waitMs: op.startedAt && op.queuedAt ? Date.parse(op.startedAt) - Date.parse(op.queuedAt) : null,
++      runMs: op.finishedAt && op.startedAt ? Date.parse(op.finishedAt) - Date.parse(op.startedAt) : null,
++    }));
++  const summary = { drainMs, count: ops.length };
++  for (const kind of new Set(ops.map((op) => op.kind))) {
++    const list = ops.filter((op) => op.kind === kind);
++    summary[kind] = {
++      count: list.length,
++      rows: list.reduce((sum, op) => sum + (op.rows ?? 0), 0),
++      waitMsTotal: list.reduce((sum, op) => sum + (op.waitMs ?? 0), 0),
++      runMsTotal: list.reduce((sum, op) => sum + (op.runMs ?? 0), 0),
++      runMsMax: Math.max(0, ...list.map((op) => op.runMs ?? 0)),
++    };
++  }
++  aiTimingMark("queue-summary", summary);
++  for (const op of ops.slice(0, 60)) {
++    aiTimingMark("queue-op", op);
++  }
++}
+diff --git a/src-ui/app/editor-ai-translate-all-flow.js b/src-ui/app/editor-ai-translate-all-flow.js
+index 374ee62..187d656 100644
+--- a/src-ui/app/editor-ai-translate-all-flow.js
++++ b/src-ui/app/editor-ai-translate-all-flow.js
+@@ -48,6 +48,13 @@ import { invoke } from "./runtime.js";
+ import { createEditorAiTranslateAllModalState, state } from "./state.js";
+ import { showNoticeBadge } from "./status-feedback.js";
+ import { addTelemetryBreadcrumb, reportBackendNonfatalError } from "./telemetry.js";
++// TEMP-TIMING
++import {
++  aiTimingDrainQueue,
++  aiTimingMark,
++  aiTimingRunStart,
++  aiTimingStart,
++} from "./editor-ai-timing-debug.js";
+ 
+ const BATCH_TRANSLATE_ACTION_ID = AI_TRANSLATE_ACTION_IDS[0] ?? "translate1";
+ 
+@@ -441,6 +448,14 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
+   const batchRunId = activeBatchRunId + 1;
+   activeBatchRunId = batchRunId;
+   const runStartedAt = Date.now();
++  // TEMP-TIMING
++  aiTimingRunStart({
++    work: work.length,
++    chapterRows: Array.isArray(state.editorChapter?.rows) ? state.editorChapter.rows.length : 0,
++    glossaryTerms: Array.isArray(state.editorChapter?.glossary?.terms) ? state.editorChapter.glossary.terms.length : 0,
++    derivedEntries: Object.keys(state.editorChapter?.derivedGlossariesByRowId ?? {}).length,
++    languages: selectedLanguageCodes,
++  });
+   let translatedCount = 0;
+   let currentLanguageProgress = languageProgress;
+ 
+@@ -449,6 +464,7 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
+     && state.editorChapter?.aiTranslateAllModal?.status === "loading";
+ 
+   const recordTranslated = (item) => {
++    const endRecord = aiTimingStart("record-translated"); // TEMP-TIMING
+     translatedCount += 1;
+     currentLanguageProgress = incrementEditorAiTranslateAllProgress(
+       currentLanguageProgress,
+@@ -462,6 +478,7 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
+       totalCount: work.length,
+     });
+     render?.({ scope: "translate-ai-translate-all-modal" });
++    endRecord(); // TEMP-TIMING
+   };
+ 
+   const failRun = (message) => {
+@@ -521,6 +538,7 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
+       return "skip";
+     }
+ 
++    const endSingle = aiTimingStart("single-row-item", { rowId: item.rowId }); // TEMP-TIMING
+     const translateForContext =
+       typeof operations.runEditorAiTranslateForContext === "function"
+         ? operations.runEditorAiTranslateForContext
+@@ -538,6 +556,7 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
+         suppressDerivedGlossaryRefresh: true,
+       },
+     );
++    endSingle({ ok: result?.ok === true, skipped: result?.skipped === true }); // TEMP-TIMING
+     if (!isRunActive()) {
+       return "abort";
+     }
+@@ -589,6 +608,8 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
+       return;
+     }
+ 
++    const endApplyRow = aiTimingStart("apply-row", { rowId: item.rowId }); // TEMP-TIMING
++    const tCtx0 = performance.now(); // TEMP-TIMING
+     const context = buildEditorAiTranslateContext(state.editorChapter, {
+       ...item,
+       skipRowWindow: true,
+@@ -596,12 +617,15 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
+     if (!context) {
+       return;
+     }
++    const tApply0 = performance.now(); // TEMP-TIMING
+     applyEditorAiTranslatePayloadToRow(context, rowResult, operations.updateEditorRowFieldValue);
++    const tRender0 = performance.now(); // TEMP-TIMING
+     render?.({
+       scope: "translate-visible-rows",
+       rowIds: [item.rowId],
+       reason: "ai-translate-all-batch",
+     });
++    const tRender1 = performance.now(); // TEMP-TIMING
+     if (pendingBatchSaveItems) {
+       pendingBatchSaveItems.push({ rowId: item.rowId, languageCode: item.targetLanguageCode });
+     } else {
+@@ -613,11 +637,13 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
+     if (!isRunActive() || state.editorChapter?.chapterId !== context.chapterId) {
+       return;
+     }
++    const tSync0 = performance.now(); // TEMP-TIMING
+     operations.syncEditorGlossaryHighlightRowDom?.(item.rowId);
+     if (changedLanguageMatchesGlossarySource(state.editorChapter, item.targetLanguageCode)) {
+       glossarySourceLanguageChangedRowIds.add(item.rowId);
+       glossarySourceLanguageChangedCode = item.targetLanguageCode;
+     }
++    const tLog0 = performance.now(); // TEMP-TIMING
+     logEditorAssistantTranslation({
+       rowId: item.rowId,
+       sourceLanguageCode: context.sourceLanguageCode,
+@@ -641,7 +667,17 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
+       // map (~100 ms per row measured); the batch persists once per response.
+       persist: false,
+     });
++    const tLog1 = performance.now(); // TEMP-TIMING
+     recordTranslated(item);
++    // TEMP-TIMING
++    endApplyRow({
++      contextMs: Math.round((tApply0 - tCtx0) * 10) / 10,
++      applyMs: Math.round((tRender0 - tApply0) * 10) / 10,
++      renderMs: Math.round((tRender1 - tRender0) * 10) / 10,
++      persistOrPushMs: Math.round((tSync0 - tRender1) * 10) / 10,
++      syncHighlightMs: Math.round((tLog0 - tSync0) * 10) / 10,
++      assistantLogMs: Math.round((tLog1 - tLog0) * 10) / 10,
++    });
+   };
+ 
+   // Resolves the batch's derived glossary per row via the shared batch
+@@ -746,15 +782,19 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
+ 
+     let batchHints = [];
+     if (batch.glossaryKind === "direct") {
++      const endHints = aiTimingStart("batch-direct-hints", { batchIndex }); // TEMP-TIMING
+       batchHints = buildBatchGlossaryHints(
+         liveEntries.map((entry) => entry.sourceText),
+         languageBaseCode(sourceLanguage),
+         languageBaseCode(targetLanguage),
+         chapterState?.glossary?.matcherModel ?? null,
+       );
++      endHints({ hints: batchHints.length }); // TEMP-TIMING
+     } else if (batch.glossaryKind === "derived") {
++      const endDerived = aiTimingStart("batch-derived-resolve", { batchIndex, rows: liveEntries.length }); // TEMP-TIMING
+       const derived = await inDerivationLane(() =>
+         resolveBatchDerivedGlossary(chapterState, liveEntries, provider));
++      endDerived({ fallback: derived === "abort" ? -1 : derived.fallbackEntries.length }); // TEMP-TIMING
+       if (derived === "abort") {
+         return "abort";
+       }
+@@ -795,10 +835,12 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
+       }
+       const items = pendingBatchSaveItems.splice(0);
+       const targetLabel = languageSemanticLabel(targetLanguage) || targetLanguageCode;
++      const endFlush = aiTimingStart("batch-save-enqueue", { batchIndex, rows: items.length }); // TEMP-TIMING
+       await operations.persistEditorRowsBatch(render, items, {
+         commitMessage: `AI translate ${items.length} row${items.length === 1 ? "" : "s"} to ${targetLabel}`,
+         commitMetadata: { operation: "ai-translation", aiModel: provider.modelId },
+       });
++      endFlush(); // TEMP-TIMING
+     };
+ 
+     // Calls the batch command for `entries` (holding a pool slot, retrying
+@@ -810,6 +852,7 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
+     // outside the lane, so their extra AI calls never block other batches'
+     // applies.
+     const requestAndApply = async (entries, attempt) => {
++      const endBuild = aiTimingStart("batch-request-build", { batchIndex, attempt }); // TEMP-TIMING
+       const request = buildTranslateBatchRequest(
+         chapterState,
+         entries,
+@@ -817,11 +860,25 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
+         provider.providerId,
+         provider.modelId,
+       );
++      // TEMP-TIMING
++      endBuild({
++        rows: request.rows.length,
++        hints: request.glossaryHints.length,
++        contextBefore: request.contextBefore.length,
++        contextAfter: request.contextAfter.length,
++        requestChars: JSON.stringify(request).length,
++        sourceChars: request.rows.reduce((sum, row) => sum + row.sourceText.length, 0),
++      });
+       let batchCallStartedAt = 0;
+-      const payload = await runWithTransientAiRetry({
++      const endSlotWait = aiTimingStart("batch-slot-and-call", { batchIndex, attempt }); // TEMP-TIMING
++      let endCall = null; // TEMP-TIMING
++      let payload; // TEMP-TIMING
++      try { // TEMP-TIMING
++      payload = await runWithTransientAiRetry({
+         withSlot: tools.withSlot,
+         isRunActive,
+         call: () => {
++          endCall = aiTimingStart("batch-ai-call", { batchIndex, attempt, rows: entries.length }); // TEMP-TIMING
+           // Start/success logs carry batchIndex, run-relative time (tMs), and
+           // call duration (elapsedMs) so batch overlap — and whether concurrent
+           // calls stay as fast as lone calls — is readable from the console.
+@@ -843,6 +900,14 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
+           });
+         },
+       });
++      } catch (error) { // TEMP-TIMING
++        endCall?.({ failed: true, error: error instanceof Error ? error.message : String(error) }); // TEMP-TIMING
++        endSlotWait({ failed: true }); // TEMP-TIMING
++        throw error; // TEMP-TIMING
++      } // TEMP-TIMING
++      // TEMP-TIMING
++      endCall?.({ returned: Array.isArray(payload?.rows) ? payload.rows.length : -1, promptChars: typeof payload?.promptText === "string" ? payload.promptText.length : -1 });
++      endSlotWait();
+       if (!isRunActive()) {
+         return { outcome: "abort", missingEntries: [] };
+       }
+@@ -872,7 +937,10 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
+           unknownRowIds,
+         });
+       }
++      const endLaneWait = aiTimingStart("batch-lane-wait", { batchIndex, attempt }); // TEMP-TIMING
+       const outcome = await tools.inApplyLane(async () => {
++        endLaneWait(); // TEMP-TIMING
++        const endApplyBatch = aiTimingStart("batch-apply", { batchIndex, attempt, rows: entries.length }); // TEMP-TIMING
+         try {
+           for (const entry of entries) {
+             if (!isRunActive()) {
+@@ -889,7 +957,10 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
+           // state must still reach a commit, and their assistant-log entries
+           // (appended without per-row persistence) must reach the cache.
+           await flushBatchSave();
++          const endPersistAssistant = aiTimingStart("batch-assistant-persist", { batchIndex, attempt }); // TEMP-TIMING
+           persistEditorAssistantState();
++          endPersistAssistant(); // TEMP-TIMING
++          endApplyBatch(); // TEMP-TIMING
+         }
+       });
+       return { outcome, missingEntries };
+@@ -998,7 +1069,9 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
+         typeof operations.ensureEditorAiTranslateProviderReady === "function"
+           ? operations.ensureEditorAiTranslateProviderReady
+           : ensureEditorAiTranslateProviderReady;
++      const endReady = aiTimingStart("provider-ready"); // TEMP-TIMING
+       const ready = await ensureReady(render, BATCH_TRANSLATE_ACTION_ID);
++      endReady({ ok: ready?.ok === true }); // TEMP-TIMING
+       if (!isRunActive()) {
+         return;
+       }
+@@ -1078,6 +1151,7 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
+       if (!provider || kindByPair.get(group.key) !== "derived") {
+         return "ok";
+       }
++      const endWarm = aiTimingStart("warm-derived-pair", { pair: group.key, items: group.batches.reduce((sum, batch) => sum + batch.items.length, 0) }); // TEMP-TIMING
+       const { aborted } = await ensureBatchDerivedGlossaries({
+         chapterState: state.editorChapter,
+         items: group.batches.flatMap((batch) => batch.items),
+@@ -1092,9 +1166,18 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
+         withSlot: pool.withSlot,
+         inApplyLane: pool.inApplyLane,
+       });
++      endWarm({ aborted }); // TEMP-TIMING
+       return aborted || !isRunActive() ? "abort" : "ok";
+     };
+ 
++    // TEMP-TIMING
++    aiTimingMark("plan", {
++      batches: batches.length,
++      multiRowBatches: batches.filter((batch) => batch.items.length > 1).length,
++      pairs: pairGroups.map((group) => `${group.key}:${kindByPair.get(group.key)}:${group.batches.length}`),
++      poolConcurrency,
++      canApplyBatchLocally,
++    });
+     let outcome = "ok";
+     let groupStartIndex = 0;
+     for (const group of pairGroups) {
+@@ -1103,8 +1186,10 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
+       if (outcome !== "ok") {
+         break;
+       }
++      const endPair = aiTimingStart("pair-batches", { pair: group.key, batches: group.batches.length }); // TEMP-TIMING
+       outcome = await pool.run(group.batches, (batch, tools, index) =>
+         runPoolBatch(batch, tools, offset + index));
++      endPair({ outcome }); // TEMP-TIMING
+       groupStartIndex += group.batches.length;
+       if (outcome !== "ok") {
+         break;
+@@ -1118,6 +1203,8 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
+       totalCount: work.length,
+       elapsedMs: Date.now() - runStartedAt,
+     });
++    aiTimingMark("run-end", { translatedCount, totalCount: work.length, elapsedMs: Date.now() - runStartedAt }); // TEMP-TIMING
++    void aiTimingDrainQueue(new Date(runStartedAt).toISOString()); // TEMP-TIMING
+   } finally {
+     // Runs regardless of how the loop above exits (completed, aborted,
+     // errored) — any row that already got new text written into the
+diff --git a/src-ui/app/editor-derived-glossary-batch-flow.js b/src-ui/app/editor-derived-glossary-batch-flow.js
+index d220e11..9640a9b 100644
+--- a/src-ui/app/editor-derived-glossary-batch-flow.js
++++ b/src-ui/app/editor-derived-glossary-batch-flow.js
+@@ -30,6 +30,7 @@ import { languageBaseCode, languageSemanticLabel } from "./editor-language-utils
+ import { selectedProjectsTeam, selectedProjectsTeamInstallationId } from "./project-context.js";
+ import { invoke } from "./runtime.js";
+ import { state } from "./state.js";
++import { aiTimingStart } from "./editor-ai-timing-debug.js"; // TEMP-TIMING
+ 
+ function createBatchDerivedRequestKey(chapterId) {
+   const uniqueSuffix =
+@@ -200,8 +201,10 @@ async function generatePivotTextBatches({
+     const first = chunk[0];
+     const generationLanguage = languageByCode(chapterState, first.generationCode);
+     let payload = null;
++    const endGenCall = aiTimingStart("pivot-gen-slot-and-call", { rows: chunk.length }); // TEMP-TIMING
++    let endGenInner = null; // TEMP-TIMING
+     try {
+-      payload = await runAiCall(() => runBatch({
++      payload = await runAiCall(() => (endGenInner = aiTimingStart("pivot-gen-ai-call", { rows: chunk.length }), runBatch({
+         providerId,
+         modelId,
+         sourceLanguage:
+@@ -214,8 +217,10 @@ async function generatePivotTextBatches({
+           sourceText: entry.generationSourceText,
+         })),
+         ...(installationId === null ? {} : { installationId }),
+-      }));
+-    } catch {
++      })));
++    } catch (error) {
++      endGenInner?.({ failed: true, error: error instanceof Error ? error.message : String(error) }); // TEMP-TIMING
++      endGenCall({ failed: true }); // TEMP-TIMING
+       if (!isRunActive()) {
+         aborted = true;
+         return;
+@@ -225,6 +230,8 @@ async function generatePivotTextBatches({
+       }
+       return;
+     }
++    endGenInner?.({ returned: Array.isArray(payload?.rows) ? payload.rows.length : -1 }); // TEMP-TIMING
++    endGenCall(); // TEMP-TIMING
+     if (!isRunActive()) {
+       aborted = true;
+       return;
+@@ -235,7 +242,11 @@ async function generatePivotTextBatches({
+     );
+     // Row writes, the grouped save, and the re-resolution mutate chapter
+     // state: they run in the apply lane so concurrent chunks never interleave.
++    const endGenLaneWait = aiTimingStart("pivot-gen-lane-wait"); // TEMP-TIMING
+     await applyLane(async () => {
++      endGenLaneWait(); // TEMP-TIMING
++      const endGenApply = aiTimingStart("pivot-gen-apply", { rows: chunk.length }); // TEMP-TIMING
++      const tW0 = performance.now(); // TEMP-TIMING
+       if (aborted || !isRunActive()) {
+         aborted = true;
+         return;
+@@ -259,6 +270,7 @@ async function generatePivotTextBatches({
+         written.push(entry);
+       }
+ 
++      const tP0 = performance.now(); // TEMP-TIMING
+       if (persistPivotTextToRow && written.length > 0) {
+         await persistGeneratedPivotTexts(render, written, { modelId, operations });
+         if (!isRunActive()) {
+@@ -266,6 +278,7 @@ async function generatePivotTextBatches({
+           return;
+         }
+       }
++      const tR0 = performance.now(); // TEMP-TIMING
+ 
+       for (const entry of written) {
+         // Re-resolve against the freshly written row so the derivation context
+@@ -283,6 +296,13 @@ async function generatePivotTextBatches({
+         }
+         pending.push({ item: entry.item, context: freshContext, usage: freshUsage });
+       }
++      // TEMP-TIMING
++      endGenApply({
++        written: written.length,
++        writeMs: Math.round((tP0 - tW0) * 10) / 10,
++        persistEnqueueMs: Math.round((tR0 - tP0) * 10) / 10,
++        reresolveMs: Math.round((performance.now() - tR0) * 10) / 10,
++      });
+     });
+   });
+ 
+@@ -352,6 +372,7 @@ export async function ensureBatchDerivedGlossaries({
+ 
+   const pending = [];
+   const needsPivotText = [];
++  const endClassify = aiTimingStart("derived-classify", { items: itemList.length }); // TEMP-TIMING
+   for (const item of itemList) {
+     const context = buildDerivedGlossaryItemContext(chapterState, item);
+     if (!context) {
+@@ -384,6 +405,14 @@ export async function ensureBatchDerivedGlossaries({
+     }
+     pending.push({ item, context, usage });
+   }
++  // TEMP-TIMING
++  endClassify({
++    cached: results.filter((result) => result.status === "cached").length,
++    none: results.filter((result) => result.status === "none").length,
++    unresolved: results.filter((result) => result.status === "unresolved").length,
++    needsPivotText: needsPivotText.length,
++    pending: pending.length,
++  });
+ 
+   if (needsPivotText.length > 0) {
+     const generated = await generatePivotTextBatches({
+@@ -428,8 +457,10 @@ export async function ensureBatchDerivedGlossaries({
+ 
+     const first = chunk[0];
+     let payload = null;
++    const endDeriveCall = aiTimingStart("derive-slot-and-call", { rows: chunk.length }); // TEMP-TIMING
++    let endDeriveInner = null; // TEMP-TIMING
+     try {
+-      payload = await runAiCall(() => prepareBatch({
++      payload = await runAiCall(() => (endDeriveInner = aiTimingStart("derive-ai-call", { rows: chunk.length, terms: first.usage.glossaryTerms.length, sourceChars: chunk.reduce((sum, entry) => sum + entry.context.sourceText.length, 0), pivotChars: chunk.reduce((sum, entry) => sum + entry.usage.preparationGlossarySourceText.length, 0) }), prepareBatch({
+         providerId,
+         modelId,
+         translationSourceTexts: chunk.map((entry) => entry.context.sourceText),
+@@ -446,8 +477,10 @@ export async function ensureBatchDerivedGlossaries({
+         ),
+         glossaryTerms: first.usage.glossaryTerms,
+         ...(installationId === null ? {} : { installationId }),
+-      }));
+-    } catch {
++      })));
++    } catch (error) {
++      endDeriveInner?.({ failed: true, error: error instanceof Error ? error.message : String(error) }); // TEMP-TIMING
++      endDeriveCall({ failed: true }); // TEMP-TIMING
+       if (!isRunActive()) {
+         aborted = true;
+         return;
+@@ -457,6 +490,8 @@ export async function ensureBatchDerivedGlossaries({
+       }
+       return;
+     }
++    endDeriveInner?.({ entries: Array.isArray(payload?.entries) ? payload.entries.length : -1 }); // TEMP-TIMING
++    endDeriveCall(); // TEMP-TIMING
+     if (!isRunActive()) {
+       aborted = true;
+       return;
+@@ -470,7 +505,11 @@ export async function ensureBatchDerivedGlossaries({
+     // cross-chapter cache per row, which is quadratic in chapter size and has
+     // frozen the machine on large derivation runs. They run in the apply lane
+     // so concurrent chunks never interleave state updates.
++    const endDeriveLaneWait = aiTimingStart("derive-lane-wait"); // TEMP-TIMING
+     await applyLane(() => {
++      endDeriveLaneWait(); // TEMP-TIMING
++      const endDeriveApply = aiTimingStart("derive-apply", { rows: chunk.length, prepared: preparedEntries.length }); // TEMP-TIMING
++      const tB0 = performance.now(); // TEMP-TIMING
+       if (aborted || !isRunActive()) {
+         aborted = true;
+         return;
+@@ -514,6 +553,9 @@ export async function ensureBatchDerivedGlossaries({
+         applied.push({ entry, derivedEntry });
+       }
+ 
++      const tA0 = performance.now(); // TEMP-TIMING
++      let applyStateMs = 0; // TEMP-TIMING
++      let cacheSaveMs = 0; // TEMP-TIMING
+       if (applied.length > 0) {
+         const entriesByRowId = Object.fromEntries(
+           applied.map(({ entry, derivedEntry }) => [entry.item.rowId, derivedEntry]),
+@@ -522,6 +564,8 @@ export async function ensureBatchDerivedGlossaries({
+           state.editorChapter,
+           entriesByRowId,
+         );
++        const tS0 = performance.now(); // TEMP-TIMING
++        applyStateMs = tS0 - tA0; // TEMP-TIMING
+         if (team && chapterState.projectId) {
+           saveStoredEditorDerivedGlossaryEntriesForChapter(
+             team,
+@@ -530,6 +574,7 @@ export async function ensureBatchDerivedGlossaries({
+             entriesByRowId,
+           );
+         }
++        cacheSaveMs = performance.now() - tS0; // TEMP-TIMING
+         for (const { entry, derivedEntry } of applied) {
+           settle({
+             item: entry.item,
+@@ -539,6 +584,14 @@ export async function ensureBatchDerivedGlossaries({
+           });
+         }
+       }
++      // TEMP-TIMING
++      endDeriveApply({
++        applied: applied.length,
++        containmentBuildMs: Math.round((tA0 - tB0) * 10) / 10,
++        applyStateMs: Math.round(applyStateMs * 10) / 10,
++        cacheSaveMs: Math.round(cacheSaveMs * 10) / 10,
++        derivedEntriesInState: Object.keys(state.editorChapter?.derivedGlossariesByRowId ?? {}).length,
++      });
+     });
+   });
+ 

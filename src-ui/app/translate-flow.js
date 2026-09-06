@@ -604,6 +604,7 @@ export async function confirmEditorDeriveGlossaries(render) {
   await confirmEditorDeriveGlossariesFlow(render, {
     updateEditorRowFieldValue,
     persistEditorRowOnBlur,
+    persistEditorRowsBatch,
     syncEditorGlossaryHighlightRowDom,
   });
 }

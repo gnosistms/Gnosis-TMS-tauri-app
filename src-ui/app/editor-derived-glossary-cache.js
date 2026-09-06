@@ -1,6 +1,9 @@
 import { readPersistentValue, removePersistentValue, writePersistentValue } from "./persistent-store.js";
 import { scopedTeamStorageKey, teamCacheKey } from "./team-cache.js";
-import { normalizeEditorDerivedGlossariesByRowId } from "./editor-derived-glossary-state.js";
+import {
+  normalizeEditorDerivedGlossariesByRowId,
+  normalizeEditorGlossaryRevisionKey,
+} from "./editor-derived-glossary-state.js";
 
 const EDITOR_DERIVED_GLOSSARY_STORAGE_KEY = "gnosis-tms-editor-derived-glossaries";
 
@@ -32,6 +35,34 @@ function loadDerivedGlossaryCacheMap() {
   }
 }
 
+// Entries persisted before revision keys were hashed carry the full glossary
+// JSON per row. Every save rewrites the whole cross-team map anyway, so the
+// first save after the upgrade shrinks all of it (139 MB → ~1 MB measured),
+// not just the chapter being saved. Cheap once migrated: the check is a
+// one-character test per entry.
+function migrateLegacyRevisionKeys(cacheMap) {
+  for (const teamCache of Object.values(cacheMap)) {
+    if (!teamCache || typeof teamCache !== "object") {
+      continue;
+    }
+    for (const chapterEntries of Object.values(teamCache)) {
+      if (!chapterEntries || typeof chapterEntries !== "object") {
+        continue;
+      }
+      for (const entry of Object.values(chapterEntries)) {
+        if (
+          entry
+          && typeof entry === "object"
+          && typeof entry.glossaryRevisionKey === "string"
+          && entry.glossaryRevisionKey.startsWith("{")
+        ) {
+          entry.glossaryRevisionKey = normalizeEditorGlossaryRevisionKey(entry.glossaryRevisionKey);
+        }
+      }
+    }
+  }
+}
+
 function saveDerivedGlossaryCacheMap(cacheMap) {
   try {
     const scopedKey = scopedTeamStorageKey(EDITOR_DERIVED_GLOSSARY_STORAGE_KEY);
@@ -40,6 +71,7 @@ function saveDerivedGlossaryCacheMap(cacheMap) {
     }
 
     if (cacheMap && typeof cacheMap === "object" && Object.keys(cacheMap).length > 0) {
+      migrateLegacyRevisionKeys(cacheMap);
       writePersistentValue(scopedKey, cacheMap);
       return;
     }

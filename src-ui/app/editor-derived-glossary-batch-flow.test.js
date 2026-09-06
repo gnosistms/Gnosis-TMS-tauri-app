@@ -212,8 +212,8 @@ test("ensureBatchDerivedGlossaries reuses fresh cached entries and reports rows 
     results.map((result) => [result.item.rowId, result.status, result.reason ?? null]),
     [
       ["row-1", "cached", null],
-      ["row-3", "unresolved", "missing-pivot-text"],
       ["row-2", "derived", null],
+      ["row-3", "unresolved", "missing-pivot-text"],
     ],
   );
   assert.equal(prepareCalls.length, 1);
@@ -420,6 +420,62 @@ test("ensureBatchDerivedGlossaries generates missing pivot texts in one batch, p
   );
 });
 
+test("ensureBatchDerivedGlossaries persists a chunk's generated pivot texts in one grouped save", async () => {
+  resetSessionState();
+  state.editorChapter = chapter({
+    rows: [
+      { rowId: "row-1", lifecycleState: "active", fields: { es: "Oracion santa", en: "", vi: "" } },
+      { rowId: "row-2", lifecycleState: "active", fields: { es: "Luz clara", en: "", vi: "" } },
+      { rowId: "row-3", lifecycleState: "active", fields: { es: "Paz", en: "peace", vi: "" } },
+    ],
+  });
+  const perRowPersistCalls = [];
+  const batchSaves = [];
+
+  const { aborted, results } = await ensureBatchDerivedGlossaries({
+    chapterState: state.editorChapter,
+    items: items(state.editorChapter),
+    providerId: "openai",
+    modelId: "test-model",
+    generateMissingPivotText: true,
+    persistPivotTextToRow: true,
+    operations: {
+      updateEditorRowFieldValue: updateRowFieldInState,
+      persistEditorRowOnBlur: async (_render, rowId) => {
+        perRowPersistCalls.push(rowId);
+      },
+      persistEditorRowsBatch: async (_render, batchItems, options) => {
+        batchSaves.push({ items: batchItems, options });
+      },
+      runAiTranslationBatch: async (request) => ({
+        rows: request.rows.map((row) => ({
+          rowId: row.rowId,
+          translatedText: `en:${row.sourceText}`,
+        })),
+      }),
+      prepareEditorAiTranslatedGlossaryBatch: async (request) => ({
+        glossarySourceText: request.glossarySourceText,
+        entries: [],
+      }),
+    },
+  });
+
+  assert.equal(aborted, false);
+  // The two generated pivot texts land in ONE grouped save, never per-row.
+  assert.deepEqual(perRowPersistCalls, []);
+  assert.equal(batchSaves.length, 1);
+  assert.deepEqual(batchSaves[0].items, [
+    { rowId: "row-1", languageCode: "en" },
+    { rowId: "row-2", languageCode: "en" },
+  ]);
+  assert.equal(batchSaves[0].options.commitMessage, "AI translate 2 rows to English");
+  assert.deepEqual(batchSaves[0].options.commitMetadata, {
+    operation: "ai-translation",
+    aiModel: "test-model",
+  });
+  assert.deepEqual(results.map((result) => result.status), ["derived", "derived", "derived"]);
+});
+
 test("ensureBatchDerivedGlossaries settles rows as unresolved when pivot generation fails", async () => {
   resetSessionState();
   state.editorChapter = chapter({
@@ -455,8 +511,8 @@ test("ensureBatchDerivedGlossaries settles rows as unresolved when pivot generat
   assert.deepEqual(
     results.map((result) => [result.item.rowId, result.status, result.reason ?? null]),
     [
-      ["row-2", "unresolved", "generation-failed"],
       ["row-1", "derived", null],
+      ["row-2", "unresolved", "generation-failed"],
     ],
   );
 });
@@ -537,6 +593,69 @@ test("ensureBatchDerivedGlossaries generates pivot text from a distinct generati
   assert.deepEqual(
     state.editorChapter.derivedGlossariesByRowId["row-1"].entries.map((entry) => entry.sourceTerm),
     ["祈り"],
+  );
+});
+
+test("ensureBatchDerivedGlossaries fans chunks out up to the concurrency limit, serializes applies, and keeps item order", async () => {
+  resetSessionState();
+  state.editorChapter = chapter({
+    rows: [
+      { rowId: "row-1", lifecycleState: "active", fields: { es: "Uno", en: "one", vi: "" } },
+      { rowId: "row-2", lifecycleState: "active", fields: { es: "Dos", en: "two", vi: "" } },
+      { rowId: "row-3", lifecycleState: "active", fields: { es: "Tres", en: "three", vi: "" } },
+      { rowId: "row-4", lifecycleState: "active", fields: { es: "Cuatro", en: "four", vi: "" } },
+    ],
+  });
+  let inFlight = 0;
+  let maxInFlight = 0;
+  let applying = 0;
+  let maxApplying = 0;
+  const slotEvents = [];
+
+  const { aborted, results } = await ensureBatchDerivedGlossaries({
+    chapterState: state.editorChapter,
+    items: items(state.editorChapter),
+    providerId: "openai",
+    modelId: "test-model",
+    chunkOptions: { maxRows: 1 },
+    concurrency: 2,
+    withSlot: async (task) => {
+      slotEvents.push("acquire");
+      try {
+        return await task();
+      } finally {
+        slotEvents.push("release");
+      }
+    },
+    inApplyLane: async (task) => {
+      applying += 1;
+      maxApplying = Math.max(maxApplying, applying);
+      try {
+        return await task();
+      } finally {
+        applying -= 1;
+      }
+    },
+    operations: {
+      prepareEditorAiTranslatedGlossaryBatch: async (request) => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        // The first chunk is the slowest, so later chunks finish first and
+        // the item-ordered results below prove ordering is restored.
+        const delayMs = request.translationSourceTexts[0] === "Uno" ? 30 : 5;
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        inFlight -= 1;
+        return { glossarySourceText: request.glossarySourceText, entries: [] };
+      },
+    },
+  });
+  assert.equal(aborted, false);
+  assert.equal(maxInFlight, 2, "two chunks in flight at once, never more");
+  assert.equal(maxApplying, 1, "state applies never overlap");
+  assert.equal(slotEvents.filter((event) => event === "acquire").length, 4);
+  assert.deepEqual(
+    results.map((result) => [result.item.rowId, result.status]),
+    [["row-1", "derived"], ["row-2", "derived"], ["row-3", "derived"], ["row-4", "derived"]],
   );
 });
 

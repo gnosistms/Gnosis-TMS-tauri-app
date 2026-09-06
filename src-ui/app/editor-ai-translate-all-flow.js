@@ -16,6 +16,7 @@ import {
 import {
   buildEditorAssistantAlternateLanguageTexts,
   logEditorAssistantTranslation,
+  persistEditorAssistantState,
 } from "./editor-ai-assistant-flow.js";
 import {
   AI_BATCH_CONCURRENCY,
@@ -38,8 +39,8 @@ import {
   refreshDerivedGlossariesForChangedGlossarySourceField,
 } from "./editor-derived-glossary-batch-flow.js";
 import {
+  derivedGlossaryUsageKindForPair,
   glossarySourceLanguageCodeForChapter,
-  resolveLanguageCode,
 } from "./editor-derived-glossary-flow.js";
 import { openAiMissingKeyModal } from "./ai-settings-flow.js";
 import { selectedProjectsTeamInstallationId } from "./project-context.js";
@@ -320,28 +321,14 @@ export function updateEditorAiTranslateAllLanguageSelection(render, languageCode
   render?.();
 }
 
+// Pair classification by language code; the rule itself lives in
+// derivedGlossaryUsageKindForPair so this flow, the single-row translate
+// path, and the Derive Glossaries modal can never disagree.
 function glossaryUsageKindForPair(chapterState, sourceLanguageCode, targetLanguageCode) {
-  const glossaryState = chapterState?.glossary ?? null;
-  const glossaryModel = glossaryState?.matcherModel ?? null;
-  const glossarySourceLanguageCode = glossarySourceLanguageCodeForChapter(chapterState);
-  const glossaryTargetLanguageCode = resolveLanguageCode(
-    glossaryState?.targetLanguage ?? glossaryModel?.targetLanguage,
-  );
   const languages = Array.isArray(chapterState?.languages) ? chapterState.languages : [];
   const sourceLanguage = languages.find((language) => language?.code === sourceLanguageCode) ?? null;
   const targetLanguage = languages.find((language) => language?.code === targetLanguageCode) ?? null;
-
-  if (
-    !glossarySourceLanguageCode
-    || !glossaryTargetLanguageCode
-    || glossaryTargetLanguageCode !== languageBaseCode(targetLanguage)
-  ) {
-    return "none";
-  }
-  if (glossarySourceLanguageCode === languageBaseCode(sourceLanguage)) {
-    return "direct";
-  }
-  return "derived";
+  return derivedGlossaryUsageKindForPair(chapterState, sourceLanguage, targetLanguage);
 }
 
 // entries: [{ item, row, sourceText, sourceFootnote, sourceImageCaption }] —
@@ -500,11 +487,11 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
   const glossarySourceLanguageChangedRowIds = new Set();
   let glossarySourceLanguageChangedCode = "";
 
-  // Residual derived-glossary resolution (rows the pre-pass below could not
-  // warm) runs one batch at a time: concurrent derivations could interleave
-  // chapter-state updates and duplicate derivation calls. After the pre-pass
-  // this lane is cache hits, so serializing it costs nothing in the common
-  // case.
+  // Residual derived-glossary resolution (rows the per-pair pre-pass below
+  // could not warm) runs one batch at a time: concurrent derivations could
+  // interleave chapter-state updates and duplicate derivation calls. After
+  // the pre-pass this lane is cache hits, so serializing it costs nothing in
+  // the common case.
   const inDerivationLane = createSerialLane();
 
   // Returns "abort" (run cancelled/changed) or "run-error" (modal error shown) —
@@ -583,9 +570,16 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
       || readRowFootnoteText(currentRow, item.sourceLanguageCode) !== entry.sourceFootnote
       || readRowImageCaptionText(currentRow, item.sourceLanguageCode) !== entry.sourceImageCaption
     ) {
-      // Source changed while the batch was in flight — the translation no longer
-      // matches what the user sees. Leave the row untouched (same as the
-      // single-row path's source-changed skip).
+      // Source changed (or the row vanished) while the batch was in flight —
+      // the translation no longer matches what the user sees. Leave the row
+      // untouched (same as the single-row path's source-changed skip). Logged
+      // because a silent skip is indistinguishable from a model that returned
+      // nothing.
+      console.warn("[gtms ai-translate] Batch result skipped: row changed while the batch was in flight.", {
+        rowId: item.rowId,
+        targetLanguageCode: item.targetLanguageCode,
+        rowMissing: !currentRow,
+      });
       return;
     }
     if (!rowHasTranslateAllWork(currentRow, item.sourceLanguageCode, item.targetLanguageCode)) {
@@ -642,6 +636,10 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
       appliedText: translatedSectionValue(rowResult, "translatedText"),
       providerContinuation: null,
       summary: `${AI_ACTION_LABELS[BATCH_TRANSLATE_ACTION_ID]} applied to ${context.targetLanguageLabel}.`,
+    }, {
+      // Persisting the assistant cache clones and IPCs the whole cross-chapter
+      // map (~100 ms per row measured); the batch persists once per response.
+      persist: false,
     });
     recordTranslated(item);
   };
@@ -696,11 +694,19 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
     return { fallbackEntries };
   };
 
-  const translateBatch = async (batch, provider, rowsById, tools, batchIndex) => {
+  const translateBatch = async (batch, provider, tools, batchIndex) => {
     const chapterState = state.editorChapter;
+    // Rows are read from the chapter state at batch start, never from a
+    // run-start snapshot: earlier language pairs (the glossary-source pair in
+    // particular) have written translations this batch sends as reference
+    // translations, and the staleness guard must compare against what was
+    // actually sent.
+    const rowsById = new Map(
+      (Array.isArray(chapterState?.rows) ? chapterState.rows : []).map((row) => [row.rowId, row]),
+    );
     let liveEntries = [];
     for (const item of batch.items) {
-      const row = rowsById.get(item.rowId) ?? findEditorRowById(item.rowId, chapterState);
+      const row = rowsById.get(item.rowId) ?? null;
       const sourceText = readRowFieldText(row, item.sourceLanguageCode);
       const sourceFootnote = readRowFootnoteText(row, item.sourceLanguageCode);
       const sourceImageCaption = readRowImageCaptionText(row, item.sourceLanguageCode);
@@ -772,63 +778,11 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
       );
     }
 
-    const request = buildTranslateBatchRequest(
-      chapterState,
-      liveEntries,
-      batchHints,
-      provider.providerId,
-      provider.modelId,
-    );
-
     const runBatch =
       typeof operations.runAiTranslationBatch === "function"
         ? operations.runAiTranslationBatch
         : (batchRequest) => invoke("run_ai_translation_batch", { request: batchRequest });
 
-    let payload;
-    let batchCallStartedAt = 0;
-    try {
-      payload = await runWithTransientAiRetry({
-        withSlot: tools.withSlot,
-        isRunActive,
-        call: () => {
-          // Start/success logs carry batchIndex, run-relative time (tMs), and
-          // call duration (elapsedMs) so batch overlap — and whether concurrent
-          // calls stay as fast as lone calls — is readable from the console.
-          batchCallStartedAt = Date.now();
-          console.info("[gtms ai-translate] Batch translation call started.", {
-            batchIndex,
-            rowCount: liveEntries.length,
-            tMs: batchCallStartedAt - runStartedAt,
-          });
-          return runBatch(request);
-        },
-        onRetry: (attempt, error) => {
-          console.warn("[gtms ai-translate] Batch translation call hit a transient provider error; retrying on the batch path.", {
-            batchIndex,
-            attempt,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        },
-      });
-    } catch (error) {
-      console.warn("[gtms ai-translate] Batch translation call failed; translating these rows one at a time.", {
-        rowCount: liveEntries.length,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      // The invoke wrapper owns the terminal command failure. Successful fallback is
-      // diagnostic context, not a separate product defect.
-      addTelemetryBreadcrumb({ operation: "ai-translate-batch", reason: "fallback-single-row" });
-      if (!isRunActive()) {
-        return "abort";
-      }
-      return runSingleRowFallback(liveEntries);
-    }
-    if (!isRunActive()) {
-      return "abort";
-    }
-
-    const promptText = typeof payload?.promptText === "string" ? payload.promptText : "";
     // One grouped save (one git commit) per batch response instead of one
     // commit per row: hundreds of per-row commits starve interactive saves in
     // the write queue. Falls back to per-row saves when the batch persist
@@ -846,64 +800,164 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
         commitMetadata: { operation: "ai-translation", aiModel: provider.modelId },
       });
     };
-    const returnedById = new Map(
-      (Array.isArray(payload?.rows) ? payload.rows : []).map((row) => [row.rowId, row]),
-    );
-    console.info("[gtms ai-translate] Batch translation call succeeded.", {
-      batchIndex,
-      requestedRowCount: liveEntries.length,
-      returnedRowCount: returnedById.size,
-      tMs: Date.now() - runStartedAt,
-      elapsedMs: Date.now() - batchCallStartedAt,
-    });
-    const missingRowIds = liveEntries
-      .filter((entry) => !returnedById.has(entry.item.rowId))
-      .map((entry) => entry.item.rowId);
-    if (missingRowIds.length > 0) {
-      // The model failed to echo these rowIds back; they fall through to the
-      // single-row path below. One aggregate report per batch, not per row.
-      console.warn("[gtms ai-translate] Batch response is missing rows; translating them individually.", {
-        missingRowIds,
+
+    // Calls the batch command for `entries` (holding a pool slot, retrying
+    // transient provider errors) and applies the returned rows inside the
+    // lane with one grouped save. Resolves { outcome, missingEntries } where
+    // missingEntries are the rows the model did not echo back; rejects when
+    // the call itself fails. Returned rows apply inside the lane (their
+    // grouped save is a git commit); missing rows are handled by the caller
+    // outside the lane, so their extra AI calls never block other batches'
+    // applies.
+    const requestAndApply = async (entries, attempt) => {
+      const request = buildTranslateBatchRequest(
+        chapterState,
+        entries,
+        batchHints,
+        provider.providerId,
+        provider.modelId,
+      );
+      let batchCallStartedAt = 0;
+      const payload = await runWithTransientAiRetry({
+        withSlot: tools.withSlot,
+        isRunActive,
+        call: () => {
+          // Start/success logs carry batchIndex, run-relative time (tMs), and
+          // call duration (elapsedMs) so batch overlap — and whether concurrent
+          // calls stay as fast as lone calls — is readable from the console.
+          batchCallStartedAt = Date.now();
+          console.info("[gtms ai-translate] Batch translation call started.", {
+            batchIndex,
+            attempt,
+            rowCount: entries.length,
+            tMs: batchCallStartedAt - runStartedAt,
+          });
+          return runBatch(request);
+        },
+        onRetry: (retryAttempt, error) => {
+          console.warn("[gtms ai-translate] Batch translation call hit a transient provider error; retrying on the batch path.", {
+            batchIndex,
+            attempt,
+            retryAttempt,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        },
       });
-      reportBackendNonfatalError({ operation: "ai-translate-batch", reason: "missing-rows" });
-    }
-    // Returned rows apply inside the lane (their grouped save is a git
-    // commit); rows missing from the response fall back to the single-row
-    // path afterwards, so their slow AI calls never sit inside the lane
-    // blocking other batches' applies.
-    const { applyOutcome, fallbackEntries } = await tools.inApplyLane(async () => {
-      const laneFallbackEntries = [];
-      try {
-        for (const entry of liveEntries) {
-          if (!isRunActive()) {
-            return { applyOutcome: "abort", fallbackEntries: laneFallbackEntries };
-          }
-          const rowResult = returnedById.get(entry.item.rowId);
-          if (!rowResult) {
-            laneFallbackEntries.push(entry);
-            continue;
-          }
-          await applyBatchRowResult(entry, rowResult, provider, promptText, batchHints, pendingBatchSaveItems);
-        }
-        return { applyOutcome: "ok", fallbackEntries: laneFallbackEntries };
-      } finally {
-        // Runs on abort/error exits too: rows already applied to visible state
-        // must still reach a commit.
-        await flushBatchSave();
+      if (!isRunActive()) {
+        return { outcome: "abort", missingEntries: [] };
       }
-    });
-    if (applyOutcome !== "ok") {
-      return applyOutcome;
+
+      const promptText = typeof payload?.promptText === "string" ? payload.promptText : "";
+      const returnedById = new Map(
+        (Array.isArray(payload?.rows) ? payload.rows : []).map((row) => [row.rowId, row]),
+      );
+      const unknownRowIds = Array.isArray(payload?.unknownRowIds) ? payload.unknownRowIds : [];
+      console.info("[gtms ai-translate] Batch translation call succeeded.", {
+        batchIndex,
+        attempt,
+        requestedRowCount: entries.length,
+        returnedRowCount: returnedById.size,
+        unknownRowCount: unknownRowIds.length,
+        tMs: Date.now() - runStartedAt,
+        elapsedMs: Date.now() - batchCallStartedAt,
+      });
+      const missingEntries = entries.filter((entry) => !returnedById.has(entry.item.rowId));
+      if (missingEntries.length > 0) {
+        // Ids the model returned that were not requested are logged alongside
+        // so a model that reformats or merges ids is diagnosable here.
+        console.warn("[gtms ai-translate] Batch response is missing rows.", {
+          batchIndex,
+          attempt,
+          missingRowIds: missingEntries.map((entry) => entry.item.rowId),
+          unknownRowIds,
+        });
+      }
+      const outcome = await tools.inApplyLane(async () => {
+        try {
+          for (const entry of entries) {
+            if (!isRunActive()) {
+              return "abort";
+            }
+            const rowResult = returnedById.get(entry.item.rowId);
+            if (rowResult) {
+              await applyBatchRowResult(entry, rowResult, provider, promptText, batchHints, pendingBatchSaveItems);
+            }
+          }
+          return "ok";
+        } finally {
+          // Runs on abort/error exits too: rows already applied to visible
+          // state must still reach a commit, and their assistant-log entries
+          // (appended without per-row persistence) must reach the cache.
+          await flushBatchSave();
+          persistEditorAssistantState();
+        }
+      });
+      return { outcome, missingEntries };
+    };
+
+    let missingEntries;
+    try {
+      const first = await requestAndApply(liveEntries, 1);
+      if (first.outcome !== "ok") {
+        return first.outcome;
+      }
+      missingEntries = first.missingEntries;
+    } catch (error) {
+      console.warn("[gtms ai-translate] Batch translation call failed; translating these rows one at a time.", {
+        rowCount: liveEntries.length,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      // The invoke wrapper owns the terminal command failure. Successful fallback is
+      // diagnostic context, not a separate product defect.
+      addTelemetryBreadcrumb({ operation: "ai-translate-batch", reason: "fallback-single-row" });
+      if (!isRunActive()) {
+        return "abort";
+      }
+      return runSingleRowFallback(liveEntries);
     }
-    return runSingleRowFallback(fallbackEntries);
+    if (missingEntries.length === 0) {
+      return "ok";
+    }
+
+    // Rows the model failed to echo back get ONE retry on the batch path: a
+    // single call for just those rows, run like any other batch (slot, lane,
+    // grouped save). The single-row path is the last resort, not the first —
+    // measured, one dropped row cost a full provider round trip serialized
+    // after the batch (11 s of a 39 s run).
+    try {
+      const retry = await requestAndApply(missingEntries, 2);
+      if (retry.outcome !== "ok") {
+        return retry.outcome;
+      }
+      missingEntries = retry.missingEntries;
+    } catch (error) {
+      console.warn("[gtms ai-translate] Batch retry for missing rows failed; translating them one at a time.", {
+        rowCount: missingEntries.length,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      addTelemetryBreadcrumb({ operation: "ai-translate-batch", reason: "fallback-single-row" });
+      if (!isRunActive()) {
+        return "abort";
+      }
+      return runSingleRowFallback(missingEntries);
+    }
+    if (missingEntries.length === 0) {
+      return "ok";
+    }
+    // Still missing after the retry: one aggregate report per batch, then the
+    // single-row path for whatever is left.
+    reportBackendNonfatalError({ operation: "ai-translate-batch", reason: "missing-rows" });
+    return runSingleRowFallback(missingEntries);
   };
 
   const canApplyBatchLocally =
     typeof operations.updateEditorRowFieldValue === "function"
     && typeof operations.persistEditorRowOnBlur === "function";
 
-  // Row lookup map: the chunker and batch assembly would otherwise do an
-  // O(chapter rows) findEditorRowById scan per work item.
+  // Row lookup map for the chunker's token estimate, which would otherwise do
+  // an O(chapter rows) findEditorRowById scan per work item. Batches re-read
+  // rows at batch time (see translateBatch); this snapshot goes stale as soon
+  // as the first pair writes translations.
   const rowsById = new Map(
     (Array.isArray(state.editorChapter?.rows) ? state.editorChapter.rows : [])
       .map((row) => [row.rowId, row]),
@@ -975,10 +1029,12 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
     // saves internally, so the whole call runs lane-serialized with its slot
     // acquired inside the lane task.
     const concurrencyOverride = Number(operations.aiBatchConcurrency);
-    const pool = createAiBatchPool({
-      concurrency: Number.isFinite(concurrencyOverride) && concurrencyOverride > 0
+    const poolConcurrency =
+      Number.isFinite(concurrencyOverride) && concurrencyOverride > 0
         ? concurrencyOverride
-        : AI_BATCH_CONCURRENCY,
+        : AI_BATCH_CONCURRENCY;
+    const pool = createAiBatchPool({
+      concurrency: poolConcurrency,
       isRunActive,
     });
     const runPoolBatch = async (batch, tools, batchIndex) => {
@@ -992,7 +1048,7 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
         }
         return "ok";
       }
-      return translateBatch(batch, provider, rowsById, tools, batchIndex);
+      return translateBatch(batch, provider, tools, batchIndex);
     };
 
     // Language pairs run strictly one after another, in the prioritized work
@@ -1012,10 +1068,41 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
         pairGroups.push({ key, batches: [batch] });
       }
     }
+    // Derived-glossary pre-pass, per pair: derive every row of the pair in
+    // one call whose chunks fan out through the pool's slots, so the AI
+    // calls overlap and the per-batch derivation lane below only sees cache
+    // hits. Rows it cannot resolve still fall back per batch. Running it
+    // inside the pair loop keeps the pair order: the glossary-source pair's
+    // pivot text is complete before any derived pair starts.
+    const warmDerivedPair = async (group) => {
+      if (!provider || kindByPair.get(group.key) !== "derived") {
+        return "ok";
+      }
+      const { aborted } = await ensureBatchDerivedGlossaries({
+        chapterState: state.editorChapter,
+        items: group.batches.flatMap((batch) => batch.items),
+        providerId: provider.providerId,
+        modelId: provider.modelId,
+        isRunActive,
+        generateMissingPivotText: true,
+        persistPivotTextToRow: true,
+        render,
+        operations,
+        concurrency: poolConcurrency,
+        withSlot: pool.withSlot,
+        inApplyLane: pool.inApplyLane,
+      });
+      return aborted || !isRunActive() ? "abort" : "ok";
+    };
+
     let outcome = "ok";
     let groupStartIndex = 0;
     for (const group of pairGroups) {
       const offset = groupStartIndex;
+      outcome = await warmDerivedPair(group);
+      if (outcome !== "ok") {
+        break;
+      }
       outcome = await pool.run(group.batches, (batch, tools, index) =>
         runPoolBatch(batch, tools, offset + index));
       groupStartIndex += group.batches.length;

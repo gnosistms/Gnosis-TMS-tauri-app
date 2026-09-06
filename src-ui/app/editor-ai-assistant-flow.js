@@ -1609,7 +1609,16 @@ export function toggleEditorAssistantDraftDiff(render, itemId) {
   renderAssistantSidebar(render);
 }
 
-export function logEditorAssistantTranslation(payload = {}) {
+// Persists the current chapter's assistant state (translation logs, threads).
+// Batch flows that log many rows pass `persist: false` to
+// logEditorAssistantTranslation and call this once per batch: each persist
+// clones and IPCs the whole cross-chapter assistant cache (measured ~100 ms
+// per call on a 9 MB cache), which per row serialized the batch apply lane.
+export function persistEditorAssistantState() {
+  persistAssistantState();
+}
+
+export function logEditorAssistantTranslation(payload = {}, options = {}) {
   const threadKey = buildEditorAssistantThreadKey(
     payload.rowId,
     payload.sourceLanguageCode,
@@ -1658,7 +1667,9 @@ export function logEditorAssistantTranslation(payload = {}) {
       payload.providerContinuation,
     );
   }
-  persistAssistantState();
+  if (options.persist !== false) {
+    persistAssistantState();
+  }
 }
 
 export function logEditorAssistantTranslationDraft(payload = {}) {
