@@ -1,4 +1,5 @@
 import {
+  editorRowChangedLanguageCodes,
   resolveDirtyTrackedEditorRowIds,
   rowHasFieldChanges,
   rowHasPersistedChanges,
@@ -324,24 +325,34 @@ function normalizeEditorRowForPersist(row) {
     ...Object.keys(footnotes),
     ...Object.keys(imageCaptions),
   ]);
+  // Smart quotes are applied only to the columns this save is about. A save
+  // is per row but the edit is per column: rewriting sibling columns (the
+  // source, a teammate's language, text imported with straight quotes) on
+  // the way past made every "did the text change under me?" comparison in
+  // the AI flows fail after any save of the same row.
+  const changedLanguageCodes = editorRowChangedLanguageCodes(row);
+  const smarten = (languageCode, text) =>
+    changedLanguageCodes.has(languageCode)
+      ? smartenInlineMarkupQuotes(text, { language: languageCode })
+      : text;
   for (const languageCode of languageCodes) {
     const normalized = normalizeEditorRowFootnotesForSave(fields[languageCode] ?? "", footnotes[languageCode]);
     // Convert straight quotes to typographic quotes as the last text transform, so
     // footnote-marker handling above sees the user's literal text first. The same
     // transform runs on captions and footnote bodies — all three are inline-markup
     // prose the reader sees.
-    const nextText = smartenInlineMarkupQuotes(normalized.text, { language: languageCode });
+    const nextText = smarten(languageCode, normalized.text);
     if (nextText !== (fields[languageCode] ?? "")) {
       fields[languageCode] = nextText;
       changed = true;
     }
-    const nextCaption = smartenInlineMarkupQuotes(imageCaptions[languageCode] ?? "", { language: languageCode });
+    const nextCaption = smarten(languageCode, imageCaptions[languageCode] ?? "");
     if (nextCaption !== (imageCaptions[languageCode] ?? "")) {
       imageCaptions[languageCode] = nextCaption;
       changed = true;
     }
     const smartenedFootnotes = normalized.footnotes.map((entry) => {
-      const smartText = smartenInlineMarkupQuotes(entry.text ?? "", { language: languageCode });
+      const smartText = smarten(languageCode, entry.text ?? "");
       return smartText === entry.text ? entry : { ...entry, text: smartText };
     });
     if (!rowTextContentEqual(
@@ -2480,3 +2491,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
   } catch {}
   return true;
 }
+
+export const editorPersistenceTestApi = {
+  normalizeEditorRowForPersist,
+};
