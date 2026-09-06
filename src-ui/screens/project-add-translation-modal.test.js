@@ -230,3 +230,26 @@ test("add translation progress modal treats cached preflight as aligned", () => 
   assert.match(html, /aria-label="Final checks"[\s\S]*aria-valuenow="100"/);
   assert.match(html, /aria-label="Applying translation"[\s\S]*aria-valuenow="0"/);
 });
+
+
+test("apply errors provide retry, edit, and keyboard cancel without a busy dialog", () => {
+  for (const [kind, label] of [["retry", "Retry"], ["sourceChanged", "Restart alignment"]]) {
+    const html = renderProjectAddTranslationModal({ projectAddTranslation: {
+      isOpen: true, step: "applyError", status: "idle", applyErrorKind: kind, error: "Could not save.",
+    } });
+    assert.match(html, /Translation could not be applied/);
+    assert.match(html, /data-action="retry-project-add-translation-apply"/);
+    assert.ok(html.includes(label));
+    assert.match(html, /data-action="edit-project-add-translation-text"/);
+    assert.match(html, /data-modal-cancel/);
+    assert.doesNotMatch(html, /aria-busy="true"|Please wait/);
+  }
+});
+
+test("preflight split failures allow editing the original text", () => {
+  const html = renderProjectAddTranslationModal({ projectAddTranslation: {
+    isOpen: true, step: "selectLanguage", targetLanguageCode: "vi", error: "Paragraph 2 could not be split safely.",
+  } });
+  assert.match(html, /Paragraph 2 could not be split safely/);
+  assert.match(html, /data-action="edit-project-add-translation-text"/);
+});

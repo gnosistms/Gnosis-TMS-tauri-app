@@ -66,6 +66,8 @@ import {
   continueProjectAddTranslationWithExistingText,
   openProjectAddTranslation,
   retryProjectAddTranslationLink,
+  retryProjectAddTranslationApply,
+  editProjectAddTranslationText,
   selectProjectAddTranslationFile,
   selectProjectAddTranslationInputMode,
   selectProjectAddTranslationLanguage,
@@ -89,6 +91,7 @@ const READ_ONLY_PROJECT_WRITE_ACTIONS = new Set([
   "continue-project-add-translation-language",
   "continue-project-add-translation-existing",
   "continue-project-add-translation-mismatch",
+  "retry-project-add-translation-apply",
   "overwrite-conflicted-project-repos",
   "submit-project-creation",
   "confirm-project-permanent-deletion",
@@ -256,6 +259,7 @@ export function createProjectActions(render) {
     "toggle-project-search-weaker": () => toggleProjectSearchWeakerMatches(render),
     "cancel-project-import": () => cancelProjectImportModal(render),
     "cancel-project-add-translation": () => cancelProjectAddTranslation(render),
+    "edit-project-add-translation-text": () => editProjectAddTranslationText(render),
     "close-project-add-translation-link-error": () => closeProjectAddTranslationLinkError(render),
     "close-project-old-layout-discard": () => closeProjectOldLayoutDiscard(render),
     "confirm-project-old-layout-discard": () => confirmProjectOldLayoutDiscard(render),
@@ -408,6 +412,10 @@ export function createProjectActions(render) {
       await runWithImmediateLoading(event, "Continue...", () =>
         submitProjectAddTranslationPaste(render),
       );
+      return true;
+    }
+    if (action === "retry-project-add-translation-apply") {
+      await runWithImmediateLoading(event, "Retrying...", () => retryProjectAddTranslationApply(render));
       return true;
     }
     if (action === "continue-project-add-translation-language") {

@@ -59,6 +59,9 @@ globalThis.requestAnimationFrame = (callback) => {
 };
 
 const {
+  applyProjectAddTranslation,
+  retryProjectAddTranslationApply,
+  editProjectAddTranslationText,
   continueProjectAddTranslationLanguage,
   handleDroppedProjectAddTranslationFiles,
   registerProjectAddTranslationProgress,
@@ -405,4 +408,59 @@ test("add translation language Continue requires a selected language", async () 
   assert.equal(state.projectAddTranslation.error, "Select a language before continuing.");
   assert.equal(renderCount, 1);
   assert.deepEqual(invokeCalls, []);
+});
+
+
+test("failed apply offers recovery and retry preserves mismatch consent", async () => {
+  resetProjectAddTranslationTestState();
+  Object.assign(state.projectAddTranslation, { jobId: "job-1", targetLanguageCode: "vi-x-2", targetBaseLanguageCode: "vi" });
+  const originalText = state.projectAddTranslation.pastedText;
+  invokeHandler = async () => { throw new Error("Temporary save failure"); };
+  await applyProjectAddTranslation(() => {}, { continueOnMismatch: true });
+  assert.equal(state.projectAddTranslation.step, "applyError");
+  assert.equal(state.projectAddTranslation.status, "idle");
+  assert.equal(state.projectAddTranslation.pastedText, originalText);
+  let retryInput;
+  invokeHandler = async (command, { input }) => {
+    assert.equal(command, "apply_aligned_translation_to_gtms_chapter");
+    retryInput = input;
+    return { updatedRowCount: 2, insertedRowCount: 0 };
+  };
+  await retryProjectAddTranslationApply(() => {});
+  assert.equal(retryInput.jobId, "job-1");
+  assert.equal(retryInput.continueOnMismatch, true);
+  assert.equal(state.projectAddTranslation.isOpen, false);
+});
+
+test("source change recovery realigns saved text using the base target language", async () => {
+  resetProjectAddTranslationTestState();
+  Object.assign(state.projectAddTranslation, { jobId: "old-job", targetLanguageCode: "vi-x-2", targetBaseLanguageCode: "vi" });
+  invokeHandler = async () => { throw new Error("ALIGNMENT_SOURCE_CHANGED: Source changed. Restart alignment."); };
+  await applyProjectAddTranslation(() => {});
+  assert.equal(state.projectAddTranslation.applyErrorKind, "sourceChanged");
+  let preflightInput;
+  invokeHandler = async (command, payload) => {
+    if (command === "load_ai_provider_secret") return "openai-key";
+    assert.equal(command, "preflight_aligned_translation_to_gtms_chapter");
+    preflightInput = payload.input;
+    assert.equal(state.projectAddTranslation.jobId, "");
+    return { status: "mismatch", jobId: "new-job", targetLanguageCode: "vi-x-3", targetBaseLanguageCode: "vi" };
+  };
+  await retryProjectAddTranslationApply(() => {});
+  assert.equal(preflightInput.targetLanguageCode, "vi");
+  assert.equal(preflightInput.pastedText, "Translated text");
+  assert.equal(state.projectAddTranslation.jobId, "new-job");
+  assert.equal(state.projectAddTranslation.step, "mismatchWarning");
+});
+
+test("edit text recovery retains the translation and clears stale alignment identity", () => {
+  resetProjectAddTranslationTestState();
+  Object.assign(state.projectAddTranslation, { step: "applyError", jobId: "job-1", targetLanguageCode: "vi-x-2", targetBaseLanguageCode: "vi", applyContinueOnMismatch: true });
+  editProjectAddTranslationText(() => {});
+  assert.equal(state.projectAddTranslation.step, "input");
+  assert.equal(state.projectAddTranslation.inputMode, "pasteText");
+  assert.equal(state.projectAddTranslation.pastedText, "Translated text");
+  assert.equal(state.projectAddTranslation.targetLanguageCode, "vi");
+  assert.equal(state.projectAddTranslation.jobId, "");
+  assert.equal(state.projectAddTranslation.applyContinueOnMismatch, false);
 });
