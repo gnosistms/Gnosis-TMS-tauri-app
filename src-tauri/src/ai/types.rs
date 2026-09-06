@@ -348,9 +348,8 @@ pub struct AiTranslationBatchResponse {
     pub rows: Vec<AiTranslationBatchRowResult>,
     #[serde(default)]
     pub prompt_text: String,
-    /// Row ids the model returned that were not requested (trimmed, deduped,
-    /// response order). Diagnostic: a model that reformats ids shows up here
-    /// instead of silently leaving rows "missing".
+    /// Kept for IPC compatibility. Translation batches now reject the entire
+    /// response on unexpected labels, so successful responses leave this empty.
     #[serde(default)]
     pub unknown_row_ids: Vec<String>,
 }
@@ -427,7 +426,8 @@ pub struct AiReviewBatchResponse {
     pub rows: Vec<AiReviewBatchRowResult>,
     #[serde(default)]
     pub prompt_text: String,
-    /// See `AiTranslationBatchResponse::unknown_row_ids`.
+    /// Row ids the model returned that were not requested (trimmed, deduped,
+    /// response order), for diagnostics when review rows are retried.
     #[serde(default)]
     pub unknown_row_ids: Vec<String>,
 }

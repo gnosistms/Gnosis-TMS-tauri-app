@@ -485,7 +485,7 @@ fn translation_glossary_rules() -> &'static str {
 // ---- Batch translate / review ----------------------------------------------
 
 fn translation_batch_response_contract() -> &'static str {
-    "Return only valid JSON:\n{\"rows\":[{\"rowId\":\"\",\"translatedText\":\"\",\"translatedFootnote\":\"\",\"translatedImageCaption\":\"\"}]}\nReturn exactly one entry per row in <rows_to_translate>, in the same order, each with its matching rowId."
+    "Return only valid JSON:\n{\"rows\":[{\"rowId\":\"1\",\"translatedText\":\"\",\"translatedFootnote\":\"\",\"translatedImageCaption\":\"\"}]}\nReturn exactly one entry per row in <rows_to_translate>, in the same order, each with its matching rowId. Row IDs are local labels numbered from 1 through the number of rows in this batch. Return rowId as a string copied from the row's id attribute, not a chapter number or any other number in its text."
 }
 
 fn review_batch_response_contract() -> &'static str {
@@ -514,6 +514,7 @@ fn format_batch_context(entries: &[AiAssistantRowWindowEntry]) -> String {
 fn format_translation_batch_row(
     row: &AiTranslationBatchRowInput,
     request: &AiTranslationBatchRequest,
+    label: usize,
 ) -> String {
     let mut sections: Vec<String> = Vec::new();
     sections.push(format!(
@@ -538,11 +539,7 @@ fn format_translation_batch_row(
             "<reference_translations>\n{reference_translations}\n</reference_translations>"
         ));
     }
-    format!(
-        "<row id=\"{}\">\n{}\n</row>",
-        row.row_id.trim(),
-        sections.join("\n\n")
-    )
+    format!("<row id=\"{}\">\n{}\n</row>", label, sections.join("\n\n"))
 }
 
 pub(crate) fn build_translation_batch_prompt(request: &AiTranslationBatchRequest) -> String {
@@ -589,7 +586,8 @@ pub(crate) fn build_translation_batch_prompt(request: &AiTranslationBatchRequest
     let rows_block = request
         .rows
         .iter()
-        .map(|row| format_translation_batch_row(row, request))
+        .enumerate()
+        .map(|(index, row)| format_translation_batch_row(row, request, index + 1))
         .collect::<Vec<_>>()
         .join("\n\n");
     sections.push(format!(
@@ -871,6 +869,46 @@ fn parse_review_batch_response(text: &str) -> Result<Vec<AiReviewBatchRowResult>
     Err("The AI review returned a malformed batch response.".to_string())
 }
 
+// Validate the whole response before exposing any row to callers. A partial
+// response can attach a neighboring translation to an otherwise valid label;
+// salvaging those rows and retrying only missing labels preserves that shift.
+// The mapping belongs to this request, so concurrent batches can each use 1..n.
+fn parse_validated_translation_batch_response(
+    text: &str,
+    requested_rows: &[AiTranslationBatchRowInput],
+) -> Result<Vec<AiTranslationBatchRowResult>, String> {
+    let mut rows = parse_translation_batch_response(text)?;
+    if rows.len() != requested_rows.len() {
+        return Err(
+            "The AI translation returned an incomplete or extra-row batch. No batch results were accepted."
+                .to_string(),
+        );
+    }
+
+    let row_ids_by_label: HashMap<String, &str> = requested_rows
+        .iter()
+        .enumerate()
+        .map(|(index, row)| ((index + 1).to_string(), row.row_id.as_str()))
+        .collect();
+    let mut seen = HashSet::new();
+    for row in &mut rows {
+        let Some(row_id) = row_ids_by_label.get(&row.row_id) else {
+            return Err(
+                "The AI translation returned an unexpected row label. No batch results were accepted."
+                    .to_string(),
+            );
+        };
+        if !seen.insert(row.row_id.clone()) {
+            return Err(
+                "The AI translation returned a duplicate row label. No batch results were accepted."
+                    .to_string(),
+            );
+        }
+        row.row_id = (*row_id).to_string();
+    }
+    Ok(rows)
+}
+
 /// Keeps only rows whose id was requested, in response order, dropping unknown ids
 /// and duplicate ids (first occurrence wins). Rows requested but absent from the
 /// response are simply not present in the result — the caller treats those as
@@ -930,21 +968,12 @@ pub(crate) fn run_ai_translation_batch(
         &api_key,
     )?;
 
-    let allowed: HashSet<String> = request
-        .rows
-        .iter()
-        .map(|row| row.row_id.trim().to_string())
-        .collect();
-    let (rows, unknown_row_ids) = retain_known_unique_rows(
-        parse_translation_batch_response(&response.text)?,
-        &allowed,
-        |row| row.row_id.trim().to_string(),
-    );
+    let rows = parse_validated_translation_batch_response(&response.text, &request.rows)?;
 
     Ok(AiTranslationBatchResponse {
         rows,
         prompt_text: prompt,
-        unknown_row_ids,
+        unknown_row_ids: vec![],
     })
 }
 
@@ -2636,7 +2665,8 @@ mod tests {
         find_matched_glossary_terms_in_texts, parse_assistant_structured_response,
         parse_review_batch_response, parse_review_structured_response,
         parse_translation_batch_response, parse_translation_sections_response,
-        retain_known_unique_rows, PreparedGlossaryMatch,
+        parse_validated_translation_batch_response, retain_known_unique_rows,
+        PreparedGlossaryMatch,
     };
     use crate::ai::types::{
         AiAssistantRowContext, AiAssistantRowLanguageText, AiAssistantRowWindowEntry,
@@ -3865,7 +3895,7 @@ mod tests {
     }
 
     #[test]
-    fn build_translation_batch_prompt_emits_contract_twice_and_per_row_ids() {
+    fn build_translation_batch_prompt_emits_contract_twice_and_local_row_labels() {
         let prompt = build_translation_batch_prompt(&translation_batch_request(vec![
             translation_batch_row("r0", "The rain had not stopped."),
             translation_batch_row("r1", "She looked up."),
@@ -3873,8 +3903,10 @@ mod tests {
 
         assert_eq!(prompt.matches("Return only valid JSON:").count(), 2);
         assert!(prompt.contains("<rows_to_translate>"));
-        assert!(prompt.contains("<row id=\"r0\">"));
-        assert!(prompt.contains("<row id=\"r1\">"));
+        assert!(prompt.contains("<row id=\"1\">"));
+        assert!(prompt.contains("<row id=\"2\">"));
+        assert!(!prompt.contains("<row id=\"r0\">"));
+        assert!(!prompt.contains("<row id=\"r1\">"));
         assert!(prompt.contains("<source_text>\nThe rain had not stopped.\n</source_text>"));
         // No context tags when no surrounding rows were supplied.
         assert!(!prompt.contains("<context_before>"));
@@ -3915,6 +3947,93 @@ mod tests {
         assert!(prompt.contains("Next line."));
         // Exactly one glossary block for the whole batch.
         assert_eq!(prompt.matches("<glossary_info").count(), 1);
+    }
+
+    #[test]
+    fn translation_batch_labels_restart_for_each_request_and_preserve_all_fields() {
+        let text = r#"{"rows":[{"rowId":"1","translatedText":"Main","translatedFootnote":"Note","translatedImageCaption":"Caption"}]}"#;
+        for id in [
+            "019dbe04-70c5-7f92-bac2-a942deec4ae8",
+            "different-batch-row",
+        ] {
+            let request = translation_batch_request(vec![translation_batch_row(id, "Source")]);
+            let prompt = build_translation_batch_prompt(&request);
+            assert!(prompt.contains("<row id=\"1\">"));
+            assert!(!prompt.contains(id));
+            let rows = parse_validated_translation_batch_response(text, &request.rows).unwrap();
+            assert_eq!(rows[0].row_id, id);
+            assert_eq!(rows[0].translated_text, "Main");
+            assert_eq!(rows[0].translated_footnote, "Note");
+            assert_eq!(rows[0].translated_image_caption, "Caption");
+        }
+    }
+
+    #[test]
+    fn translation_batch_maps_reordered_labels_to_requested_ids_not_response_positions() {
+        // Include a durable ID that looks like another row's local label.
+        let request = translation_batch_request(vec![
+            translation_batch_row("2", "First"),
+            translation_batch_row("permanent-second", "Second"),
+        ]);
+        let rows = parse_validated_translation_batch_response(
+            r#"{"rows":[{"rowId":"2","translatedText":"Second result"},{"rowId":"1","translatedText":"First result"}]}"#,
+            &request.rows,
+        )
+        .unwrap();
+        assert_eq!(rows[0].row_id, "permanent-second");
+        assert_eq!(rows[0].translated_text, "Second result");
+        assert_eq!(rows[1].row_id, "2");
+        assert_eq!(rows[1].translated_text, "First result");
+    }
+
+    #[test]
+    fn translation_batch_rejects_inconsistent_labels_without_salvaging_rows() {
+        let request = translation_batch_request(vec![
+            translation_batch_row("permanent-first", "First"),
+            translation_batch_row("permanent-second", "Second"),
+        ]);
+        for response in [
+            // The reported failure: first row missing, its text on the next ID.
+            r#"{"rows":[{"rowId":"2","translatedText":"First result"}]}"#,
+            r#"{"rows":[]}"#,
+            r#"{"rows":[{"rowId":"1"},{"rowId":"2"},{"rowId":"3"}]}"#,
+            r#"{"rows":[{"rowId":"1"},{"rowId":"1"}]}"#,
+            r#"{"rows":[{"rowId":"1"},{"rowId":"3"}]}"#,
+            r#"{"rows":[{"rowId":"1"},{"rowId":""}]}"#,
+            r#"{"rows":[{"rowId":"1"},{}]}"#,
+            r#"{"rows":[{"rowId":"0"},{"rowId":"1"}]}"#,
+            r#"{"rows":[{"rowId":"01"},{"rowId":"2"}]}"#,
+            r#"{"rows":[{"rowId":"permanent-first"},{"rowId":"permanent-second"}]}"#,
+            // A bare number violates the string-label response contract.
+            r#"{"rows":[{"rowId":1},{"rowId":"2"}]}"#,
+        ] {
+            assert!(
+                parse_validated_translation_batch_response(response, &request.rows).is_err(),
+                "accepted inconsistent response: {response}"
+            );
+        }
+    }
+
+    #[test]
+    fn translation_batch_labels_cover_fifteen_rows_with_identical_sources() {
+        let request = translation_batch_request(
+            (1..=15)
+                .map(|index| translation_batch_row(&format!("uuid-{index}"), "Repeated source"))
+                .collect(),
+        );
+        let prompt = build_translation_batch_prompt(&request);
+        assert_eq!(prompt.matches("<row id=").count(), 15);
+        assert!(prompt.contains("<row id=\"15\">"));
+        assert!(!prompt.contains("uuid-"));
+        let response = serde_json::json!({"rows": (1..=15).rev().map(|index| {
+            serde_json::json!({"rowId": index.to_string(), "translatedText": format!("Result {index}")})
+        }).collect::<Vec<_>>()});
+        let rows = parse_validated_translation_batch_response(&response.to_string(), &request.rows)
+            .unwrap();
+        for (index, row) in rows.iter().enumerate() {
+            assert_eq!(row.row_id, format!("uuid-{}", 15 - index));
+            assert_eq!(row.translated_text, format!("Result {}", 15 - index));
+        }
     }
 
     #[test]
