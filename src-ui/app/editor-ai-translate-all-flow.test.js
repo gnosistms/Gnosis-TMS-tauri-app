@@ -1037,7 +1037,9 @@ test("glossaryUsageKindForPair classifies none/direct/derived from the chapter g
   };
   assert.equal(editorAiTranslateAllTestApi.glossaryUsageKindForPair(chapterState, "es", "vi"), "direct");
 
-  const derivedChapter = {
+  // Glossary source (en) differs from the chapter source (es), but the chapter
+  // has no en column to pivot through: nothing can be derived, so "none".
+  const pivotlessChapter = {
     ...chapterState,
     glossary: {
       sourceLanguage: { code: "en" },
@@ -1049,7 +1051,101 @@ test("glossaryUsageKindForPair classifies none/direct/derived from the chapter g
       { code: "vi", name: "Vietnamese", role: "target" },
     ],
   };
+  assert.equal(editorAiTranslateAllTestApi.glossaryUsageKindForPair(pivotlessChapter, "es", "vi"), "none");
+
+  // With an en column present (any suffix, matched by base code) it derives.
+  const derivedChapter = {
+    ...pivotlessChapter,
+    languages: [
+      ...pivotlessChapter.languages,
+      { code: "en-x-2", baseCode: "en", name: "English 2", role: "target" },
+    ],
+  };
   assert.equal(editorAiTranslateAllTestApi.glossaryUsageKindForPair(derivedChapter, "es", "vi"), "derived");
+});
+
+test("AI Translate All skips derivation when the glossary source language is not a chapter column", async () => {
+  resetSessionState();
+  editorAiTranslateAllTestApi.resetActiveBatchRunId();
+  // en-source chapter linked to an es -> vi glossary, with no es column: the
+  // field case that generated pivot text for every row. The run must make one
+  // translation call and never generate, persist, or align pivot text.
+  const chapterState = batchChapter();
+  state.editorChapter = {
+    ...chapterState,
+    selectedSourceLanguageCode: "en",
+    languages: [
+      { code: "en", name: "English", role: "source" },
+      { code: "vi", name: "Vietnamese", role: "target" },
+    ],
+    rows: [
+      { rowId: "row-a", lifecycleState: "active", fields: { en: "Hello", vi: "" } },
+      { rowId: "row-b", lifecycleState: "active", fields: { en: "World", vi: "" } },
+      { rowId: "row-c", lifecycleState: "active", fields: { en: "Again", vi: "" } },
+    ],
+    glossary: {
+      sourceLanguage: { code: "es" },
+      targetLanguage: { code: "vi" },
+      glossaryId: "g1",
+      repoName: "repo",
+      title: "Glossary",
+      matcherModel: {},
+      terms: [
+        {
+          lifecycleState: "active",
+          sourceTerms: ["hola"],
+          targetTerms: ["xin chao"],
+        },
+      ],
+    },
+  };
+
+  const batchCalls = [];
+  const persistedRowIds = [];
+  const batchSaves = [];
+  let alignmentCalls = 0;
+
+  await confirmEditorAiTranslateAll(
+    () => {},
+    batchOperations({
+      // Per-row saves are what pivot-text generation uses; the translations
+      // themselves land in one grouped save.
+      persistEditorRowOnBlur: async (_render, rowId) => {
+        persistedRowIds.push(rowId);
+      },
+      persistEditorRowsBatch: async (_render, items) => {
+        batchSaves.push(items.map((item) => item.rowId));
+      },
+      prepareEditorAiTranslatedGlossaryBatch: async () => {
+        alignmentCalls += 1;
+        return { glossarySourceText: "", entries: [] };
+      },
+      runAiTranslationBatch: async (request) => {
+        batchCalls.push(request);
+        return {
+          rows: request.rows.map((row) => ({
+            rowId: row.rowId,
+            translatedText: `vi:${row.sourceText}`,
+          })),
+          promptText: "P",
+        };
+      },
+    }),
+  );
+
+  assert.equal(batchCalls.length, 1);
+  assert.equal(batchCalls[0].targetLanguageCode, "vi");
+  assert.equal(alignmentCalls, 0);
+  assert.deepEqual(persistedRowIds, []);
+  assert.deepEqual(batchSaves, [["row-a", "row-b", "row-c"]]);
+  assert.deepEqual(
+    state.editorChapter.rows.map((row) => row.fields),
+    [
+      { en: "Hello", vi: "vi:Hello" },
+      { en: "World", vi: "vi:World" },
+      { en: "Again", vi: "vi:Again" },
+    ],
+  );
 });
 
 test("AI Translate All refreshes stale derived glossaries once for the whole run when restoring the glossary's own source language", async () => {

@@ -38,8 +38,8 @@ import {
   refreshDerivedGlossariesForChangedGlossarySourceField,
 } from "./editor-derived-glossary-batch-flow.js";
 import {
+  derivedGlossaryUsageKindForPair,
   glossarySourceLanguageCodeForChapter,
-  resolveLanguageCode,
 } from "./editor-derived-glossary-flow.js";
 import { openAiMissingKeyModal } from "./ai-settings-flow.js";
 import { selectedProjectsTeamInstallationId } from "./project-context.js";
@@ -320,28 +320,14 @@ export function updateEditorAiTranslateAllLanguageSelection(render, languageCode
   render?.();
 }
 
+// Pair classification by language code; the rule itself lives in
+// derivedGlossaryUsageKindForPair so this flow, the single-row translate
+// path, and the Derive Glossaries modal can never disagree.
 function glossaryUsageKindForPair(chapterState, sourceLanguageCode, targetLanguageCode) {
-  const glossaryState = chapterState?.glossary ?? null;
-  const glossaryModel = glossaryState?.matcherModel ?? null;
-  const glossarySourceLanguageCode = glossarySourceLanguageCodeForChapter(chapterState);
-  const glossaryTargetLanguageCode = resolveLanguageCode(
-    glossaryState?.targetLanguage ?? glossaryModel?.targetLanguage,
-  );
   const languages = Array.isArray(chapterState?.languages) ? chapterState.languages : [];
   const sourceLanguage = languages.find((language) => language?.code === sourceLanguageCode) ?? null;
   const targetLanguage = languages.find((language) => language?.code === targetLanguageCode) ?? null;
-
-  if (
-    !glossarySourceLanguageCode
-    || !glossaryTargetLanguageCode
-    || glossaryTargetLanguageCode !== languageBaseCode(targetLanguage)
-  ) {
-    return "none";
-  }
-  if (glossarySourceLanguageCode === languageBaseCode(sourceLanguage)) {
-    return "direct";
-  }
-  return "derived";
+  return derivedGlossaryUsageKindForPair(chapterState, sourceLanguage, targetLanguage);
 }
 
 // entries: [{ item, row, sourceText, sourceFootnote, sourceImageCaption }] —

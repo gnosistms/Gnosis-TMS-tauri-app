@@ -12,35 +12,24 @@ import { extractGlossaryRubyBaseText } from "./glossary-ruby.js";
 import { selectedProjectsTeam, selectedProjectsTeamInstallationId } from "./project-context.js";
 import { invoke } from "./runtime.js";
 import { findEditorRowById } from "./editor-utils.js";
-import { languageBaseCode } from "./editor-language-utils.js";
+import {
+  derivedGlossaryUsageKindForPair,
+  glossarySourceLanguageCodeForChapter,
+  resolveDerivedGlossaryPivotLanguage,
+  resolveLanguageLabel,
+} from "./derived-glossary-rule.js";
+
+// The pure language rule lives in derived-glossary-rule.js (screens import
+// it too); re-exported so existing flow imports keep working.
+export {
+  derivedGlossaryUsageKindForPair,
+  glossarySourceLanguageCodeForChapter,
+  resolveDerivedGlossaryPivotLanguage,
+  resolveLanguageCode,
+  resolveLanguageLabel,
+} from "./derived-glossary-rule.js";
 import { buildGlossaryTargetVariantGuidance } from "./glossary-shared.js";
 import { state } from "./state.js";
-
-export function resolveLanguageCode(language) {
-  if (typeof language === "string" && language.trim()) {
-    return language.trim();
-  }
-
-  if (language && typeof language === "object") {
-    const code = typeof language.code === "string" ? language.code.trim() : "";
-    if (code) {
-      return code;
-    }
-  }
-
-  return "";
-}
-
-export function resolveLanguageLabel(language, fallbackCode = "") {
-  if (language && typeof language === "object") {
-    const name = typeof language.name === "string" ? language.name.trim() : "";
-    if (name) {
-      return name;
-    }
-  }
-
-  return fallbackCode || "";
-}
 
 export function readRowFieldText(row, languageCode) {
   if (!languageCode) {
@@ -185,28 +174,17 @@ export function resolvePreparedDerivedGlossaryContext(glossaryUsage, payload = {
   };
 }
 
-// The single resolution of "which language is this chapter's linked
-// glossary's source language" — the translate-all pair classifier, the
-// batch-flow change gate, and the usage resolver below must all agree on it.
-export function glossarySourceLanguageCodeForChapter(chapterState) {
-  const glossaryState = chapterState?.glossary ?? null;
-  const glossaryModel = glossaryState?.matcherModel ?? null;
-  return resolveLanguageCode(glossaryState?.sourceLanguage ?? glossaryModel?.sourceLanguage);
-}
-
 export function resolveEditorDerivedGlossaryUsage(context, options = {}) {
   const glossaryState = context.chapterState?.glossary ?? null;
   const glossaryModel = glossaryState?.matcherModel ?? null;
   const glossarySourceLanguageCode = glossarySourceLanguageCodeForChapter(context.chapterState);
-  const glossaryTargetLanguageCode = resolveLanguageCode(
-    glossaryState?.targetLanguage ?? glossaryModel?.targetLanguage,
-  );
 
   if (
-    !glossarySourceLanguageCode
-    || !glossaryTargetLanguageCode
-    || glossaryTargetLanguageCode !== languageBaseCode(context.targetLanguage)
-    || glossarySourceLanguageCode === languageBaseCode(context.sourceLanguage)
+    derivedGlossaryUsageKindForPair(
+      context.chapterState,
+      context.sourceLanguage,
+      context.targetLanguage,
+    ) !== "derived"
   ) {
     return {
       kind: "none",
@@ -220,9 +198,7 @@ export function resolveEditorDerivedGlossaryUsage(context, options = {}) {
     };
   }
 
-  const glossarySourceLanguage = (Array.isArray(context.chapterState?.languages) ? context.chapterState.languages : [])
-    .find((language) => languageBaseCode(language) === glossarySourceLanguageCode);
-  const glossarySourceColumnCode = glossarySourceLanguage?.code ?? glossarySourceLanguageCode;
+  const glossarySourceColumnCode = resolveDerivedGlossaryPivotLanguage(context.chapterState).code;
   const currentGlossarySourceText = readRowFieldText(context.row, glossarySourceColumnCode);
   const {
     glossarySourceText: preparationGlossarySourceText,
