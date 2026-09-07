@@ -61,7 +61,6 @@ globalThis.requestAnimationFrame = (callback) => {
 const {
   applyProjectAddTranslation,
   retryProjectAddTranslationApply,
-  editProjectAddTranslationText,
   continueProjectAddTranslationLanguage,
   handleDroppedProjectAddTranslationFiles,
   registerProjectAddTranslationProgress,
@@ -451,16 +450,4 @@ test("source change recovery realigns saved text using the base target language"
   assert.equal(preflightInput.pastedText, "Translated text");
   assert.equal(state.projectAddTranslation.jobId, "new-job");
   assert.equal(state.projectAddTranslation.step, "mismatchWarning");
-});
-
-test("edit text recovery retains the translation and clears stale alignment identity", () => {
-  resetProjectAddTranslationTestState();
-  Object.assign(state.projectAddTranslation, { step: "applyError", jobId: "job-1", targetLanguageCode: "vi-x-2", targetBaseLanguageCode: "vi", applyContinueOnMismatch: true });
-  editProjectAddTranslationText(() => {});
-  assert.equal(state.projectAddTranslation.step, "input");
-  assert.equal(state.projectAddTranslation.inputMode, "pasteText");
-  assert.equal(state.projectAddTranslation.pastedText, "Translated text");
-  assert.equal(state.projectAddTranslation.targetLanguageCode, "vi");
-  assert.equal(state.projectAddTranslation.jobId, "");
-  assert.equal(state.projectAddTranslation.applyContinueOnMismatch, false);
 });

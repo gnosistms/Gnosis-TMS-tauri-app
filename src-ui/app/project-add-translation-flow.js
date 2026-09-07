@@ -713,25 +713,6 @@ export async function runProjectAddTranslationPreflight(render) {
   }
 }
 
-export function editProjectAddTranslationText(render) {
-  const modal = state.projectAddTranslation;
-  if (!modal?.isOpen || modal.status === "running") return;
-  state.projectAddTranslation = {
-    ...modal,
-    step: "input",
-    inputMode: "pasteText",
-    targetLanguageCode: modal.targetBaseLanguageCode || modal.targetLanguageCode,
-    jobId: "",
-    flow: "",
-    progress: null,
-    status: "idle",
-    error: "",
-    applyErrorKind: "",
-    applyContinueOnMismatch: false,
-  };
-  render();
-}
-
 export async function retryProjectAddTranslationApply(render) {
   const modal = state.projectAddTranslation;
   if (!modal?.isOpen || modal.step !== "applyError" || modal.status === "running") return;

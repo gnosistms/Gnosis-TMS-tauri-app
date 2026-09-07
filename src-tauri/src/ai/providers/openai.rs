@@ -43,6 +43,28 @@ struct OpenAiResponsesCreateResponse {
     output_text: String,
     #[serde(default)]
     output: Vec<OpenAiOutputItem>,
+    #[serde(default)]
+    usage: Option<OpenAiUsage>,
+}
+
+/// Optional provider-reported counts. Missing fields are unavailable, not zero.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct OpenAiUsage {
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub total_tokens: Option<u64>,
+    pub input_tokens_details: Option<OpenAiInputTokenDetails>,
+    pub output_tokens_details: Option<OpenAiOutputTokenDetails>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct OpenAiInputTokenDetails {
+    pub cached_tokens: Option<u64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct OpenAiOutputTokenDetails {
+    pub reasoning_tokens: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -462,6 +484,13 @@ pub(crate) fn run_prompt(
     request: &AiPromptRequest,
     api_key: &str,
 ) -> Result<AiPromptResponse, String> {
+    run_prompt_with_usage(request, api_key).map(|(response, _)| response)
+}
+
+pub(crate) fn run_prompt_with_usage(
+    request: &AiPromptRequest,
+    api_key: &str,
+) -> Result<(AiPromptResponse, Option<OpenAiUsage>), String> {
     let normalized_key = api_key.trim();
     if normalized_key.is_empty() {
         return Err("No OpenAI API key is saved yet.".to_string());
@@ -496,12 +525,16 @@ pub(crate) fn run_prompt(
     } else {
         Some(payload.id.clone())
     };
+    let usage = payload.usage.clone();
     let text = extract_suggested_text(payload, "OpenAI returned an empty response.")?;
 
-    Ok(AiPromptResponse {
-        text,
-        provider_response_id,
-    })
+    Ok((
+        AiPromptResponse {
+            text,
+            provider_response_id,
+        },
+        usage,
+    ))
 }
 
 fn normalize_transport_error(error: reqwest::Error) -> String {
@@ -762,6 +795,30 @@ fn extract_suggested_text(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn response_usage_keeps_reported_counts_and_missing_values_distinct() {
+        let response: super::OpenAiResponsesCreateResponse = serde_json::from_value(serde_json::json!({
+            "output_text":"ok", "usage":{"input_tokens":123,"output_tokens":45,"total_tokens":168,
+            "input_tokens_details":{"cached_tokens":64},"output_tokens_details":{"reasoning_tokens":10}}
+        })).unwrap();
+        let usage = response.usage.unwrap();
+        assert_eq!(usage.input_tokens, Some(123));
+        assert_eq!(usage.output_tokens, Some(45));
+        assert_eq!(usage.total_tokens, Some(168));
+        assert_eq!(usage.input_tokens_details.unwrap().cached_tokens, Some(64));
+        assert_eq!(
+            usage.output_tokens_details.unwrap().reasoning_tokens,
+            Some(10)
+        );
+        let response: super::OpenAiResponsesCreateResponse =
+            serde_json::from_value(serde_json::json!({"output_text":"ok"})).unwrap();
+        assert!(response.usage.is_none());
+        let usage: super::OpenAiUsage =
+            serde_json::from_value(serde_json::json!({"output_tokens":0})).unwrap();
+        assert_eq!(usage.output_tokens, Some(0));
+        assert!(usage.input_tokens.is_none());
+    }
+
     use super::{
         build_probe_request, build_prompt_request, is_hidden_gpt_pro_model, normalize_http_error,
         normalize_review_response, shortlist_recommended_models, OPENAI_PROBE_MAX_OUTPUT_TOKENS,
