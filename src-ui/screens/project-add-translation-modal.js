@@ -86,7 +86,6 @@ function renderLanguageModal(modal) {
           </div>
           <div class="modal__actions">
             ${secondaryButton("Cancel", "cancel-project-add-translation", { modalCancel: true })}
-            ${secondaryButton("Edit text", "edit-project-add-translation-text")}
             ${primaryButton("Continue", "continue-project-add-translation-language", {
               disabled: !selectedCode,
               modalDefault: true,
@@ -247,11 +246,10 @@ function renderApplyErrorModal(modal) {
       <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="project-add-translation-error-title" data-modal-dialog="project-add-translation:error" tabindex="-1">
         <div class="card__body modal-card__body">
           <h2 class="modal__title" id="project-add-translation-error-title">Translation could not be applied</h2>
-          <p class="modal__supporting">Your translation text is still available. You can retry or go back to edit it.</p>
+          <p class="modal__supporting">Your translation text is still available. You can retry alignment.</p>
           ${renderError(modal.error)}
           <div class="modal__actions">
             ${secondaryButton("Cancel", "cancel-project-add-translation", { modalCancel: true })}
-            ${secondaryButton("Edit text", "edit-project-add-translation-text")}
             ${primaryButton(retryLabel, "retry-project-add-translation-apply", { modalDefault: true })}
           </div>
         </div>
