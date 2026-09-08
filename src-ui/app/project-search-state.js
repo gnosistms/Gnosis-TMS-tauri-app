@@ -28,15 +28,12 @@ export function projectsSearchResultCountLabel(projectsSearch = {}) {
 
 export function projectSearchWeakerToggleLabel(projectsSearch = {}) {
   if (projectsSearch?.includeWeakerMatches === true) {
-    return "Hide weaker matches";
+    return "Show fewer results";
   }
   const weakerTotal = Number.isFinite(projectsSearch?.weakerTotal)
     ? projectsSearch.weakerTotal
     : (projectsSearch?.results ?? []).filter((row) => row?.qualityTier === "weaker").length;
-  if (projectsSearch?.totalCapped === true) {
-    return `Include weaker matches (${weakerTotal} available)`;
-  }
-  return `Include ${weakerTotal} weaker match${weakerTotal === 1 ? "" : "es"}`;
+  return `Show more results (${weakerTotal})`;
 }
 
 export function projectSearchVisibleResults(projectsSearch = {}) {

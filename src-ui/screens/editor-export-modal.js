@@ -182,9 +182,11 @@ function renderWordPressAddSite(wordpress) {
           I understand that credentials will be sent to ${escapeHtml(wordpress.inspection.siteUrl)} without encryption.
         </label>
       ` : ""}
+      <p class="modal__supporting">
+        <button type="button" class="text-link" data-action="connect-wordpress">Use WordPress.com login instead</button>
+      </p>
       <div class="editor-export-modal__wordpress-actions">
         ${secondaryButton("Cancel", "cancel-add-wordpress-site")}
-        ${secondaryButton("Use WordPress.com login instead", "connect-wordpress")}
         <button class="button button--primary" data-action="save-self-hosted-wordpress-site" ${insecure && !wordpress.allowInsecure ? "disabled aria-disabled=\"true\"" : ""}>Connect site</button>
       </div>
     `;
@@ -194,9 +196,11 @@ function renderWordPressAddSite(wordpress) {
       <span class="field__label">WordPress site address</span>
       <input class="field__input" type="url" placeholder="https://example.com" value="${escapeHtml(wordpress.siteUrl ?? "")}" data-wordpress-site-url-input data-modal-enter-action="inspect-wordpress-site" />
     </label>
+    ${addStage === "inconclusive" ? `<p class="modal__supporting">
+      <button type="button" class="text-link" data-action="connect-wordpress">Use WordPress.com login instead</button>
+    </p>` : ""}
     <div class="editor-export-modal__wordpress-actions">
       ${secondaryButton("Cancel", "cancel-add-wordpress-site")}
-      ${addStage === "inconclusive" ? secondaryButton("Use WordPress.com login instead", "connect-wordpress") : ""}
       <button class="button button--primary" data-action="inspect-wordpress-site">Continue</button>
     </div>
   `;
@@ -277,11 +281,6 @@ function wordpressDetail(wordpress, isExporting) {
         : supportingText("Search for the post to overwrite, then choose it from the results.")}
     `
     : "";
-  const canRefreshImages = !isExporting
-    && !wordpress.reauthRequired
-    && (wordpress.mode === "create"
-      ? Boolean(String(wordpress.title ?? "").trim())
-      : Boolean(selectedPost));
 
   return {
     bodyMarkup: `
@@ -313,9 +312,6 @@ function wordpressDetail(wordpress, isExporting) {
         : ""}
     `,
     submitButton: `
-      ${canRefreshImages
-        ? secondaryButton("Refresh images and export", "refresh-wordpress-images-and-export")
-        : ""}
       ${loadingPrimaryButton({
         label: wordpress.mode === "overwrite" ? "Overwrite post" : "Export draft",
         loadingLabel: "Exporting...",

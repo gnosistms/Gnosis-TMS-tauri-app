@@ -1220,8 +1220,7 @@ a {
   font-size: 14px;
 }
 
-.project-search-results__clear-button,
-.project-search-results__weaker-button {
+.project-search-results__clear-button {
   min-height: 36px;
   padding: 0 14px;
   border-color: rgba(164, 112, 41, 0.18);
@@ -1232,12 +1231,20 @@ a {
   box-shadow: none;
 }
 
-.project-search-results__clear-button:hover:not(:disabled):not(.is-disabled),
-.project-search-results__weaker-button:hover:not(:disabled):not(.is-disabled) {
+.project-search-results__clear-button:hover:not(:disabled):not(.is-disabled) {
   transform: none;
   background: rgba(var(--surface-rgb-strong), 0.92);
   color: var(--link-hover);
   box-shadow: none;
+}
+
+.project-search-results__more {
+  margin-top: 12px;
+}
+
+.project-search-results__more .text-link {
+  font-size: 14px;
+  text-decoration: underline;
 }
 
 .project-search-tree {
