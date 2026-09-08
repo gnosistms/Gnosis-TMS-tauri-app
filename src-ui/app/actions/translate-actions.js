@@ -797,11 +797,6 @@ export function createTranslateActions(render) {
       return true;
     }
 
-    if (action === "refresh-wordpress-images-and-export") {
-      await submitEditorExport(render, { refreshWordPressImages: true });
-      return true;
-    }
-
     if (action === "connect-wordpress") {
       await connectWordPress(render);
       return true;

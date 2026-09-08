@@ -228,7 +228,7 @@ test("project search hides weak-only branches until weaker matches are included"
   assert.match(strongHtml, /Strong Project/);
   assert.doesNotMatch(strongHtml, /Weak Project/);
   assert.match(strongHtml, /data-action="toggle-project-search-weaker"/);
-  assert.match(strongHtml, /Include weaker matches \(1 available\)/);
+  assert.match(strongHtml, /Show more results \(1\)/);
 
   const allHtml = renderProjectsScreen(projectsState({
     projectsSearch: { ...baseSearch, includeWeakerMatches: true },
@@ -236,7 +236,7 @@ test("project search hides weak-only branches until weaker matches are included"
   assert.match(allHtml, /2 matching rows shown/);
   assert.match(allHtml, /Strong Project/);
   assert.match(allHtml, /Weak Project/);
-  assert.match(allHtml, /Hide weaker matches/);
+  assert.match(allHtml, /Show fewer results/);
 });
 
 test("offline banner renders inside the page header", () => {

@@ -411,7 +411,7 @@ test("editor export modal shows the WordPress overwrite pane with search and war
   assert.match(html, /Hello World/);
   assert.doesNotMatch(html, /This cannot be undone\./);
   assert.match(html, /Overwrite post/);
-  assert.match(html, /data-action="refresh-wordpress-images-and-export"/);
+  assert.match(html, /data-action="submit-editor-export"/);
   assert.match(html, /editor-export-modal__wordpress-mode is-selected[\s\S]*value="overwrite"/);
 });
 

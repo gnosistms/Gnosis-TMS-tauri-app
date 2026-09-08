@@ -144,9 +144,9 @@ function renderProjectSearchResults(state) {
   const search = state.projectsSearch ?? {};
   const visibleResults = projectSearchVisibleResults(search);
   const weakerToggle = Number(search.weakerTotal ?? 0) > 0
-    ? secondaryButton(projectSearchWeakerToggleLabel(search), "toggle-project-search-weaker", {
-      className: "project-search-results__weaker-button",
-    })
+    ? `<div class="project-search-results__more">
+        <button type="button" class="text-link" data-action="toggle-project-search-weaker" aria-expanded="${search.includeWeakerMatches === true}">${escapeHtml(projectSearchWeakerToggleLabel(search))}</button>
+      </div>`
     : "";
   const header = `
     <div class="project-search-results__toolbar">
@@ -154,7 +154,6 @@ function renderProjectSearchResults(state) {
         <h2 class="project-search-results__title">Search results</h2>
         <p class="project-search-results__count">${escapeHtml(projectsSearchResultCountLabel(search))}</p>
       </div>
-      ${weakerToggle}
       ${secondaryButton("Clear", "clear-project-search", { className: "project-search-results__clear-button" })}
     </div>
   `;
@@ -204,7 +203,7 @@ function renderProjectSearchResults(state) {
         eyebrow: "NO RESULTS",
         title: "No matches found.",
         subtitle: "",
-      })
+      }) + weakerToggle
     );
   }
 
@@ -214,6 +213,7 @@ function renderProjectSearchResults(state) {
     <section class="project-search-tree">
       ${tree.map((project, projectIndex) => renderProjectSearchProject(project, search, projectIndex)).join("")}
     </section>
+    ${weakerToggle}
   `;
 }
 

@@ -54,15 +54,15 @@ test("projectSearchVisibleResults hides weaker rows until requested", () => {
   );
   assert.equal(
     projectSearchWeakerToggleLabel({ weakerTotal: 4 }),
-    "Include 4 weaker matches",
+    "Show more results (4)",
   );
   assert.equal(
     projectSearchWeakerToggleLabel({ weakerTotal: 4, totalCapped: true }),
-    "Include weaker matches (4 available)",
+    "Show more results (4)",
   );
   assert.equal(
     projectSearchWeakerToggleLabel({ weakerTotal: 4, includeWeakerMatches: true }),
-    "Hide weaker matches",
+    "Show fewer results",
   );
 });
 
