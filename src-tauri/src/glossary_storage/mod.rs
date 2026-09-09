@@ -34,7 +34,7 @@ use crate::repo_resource_storage::{
     write_resource_lifecycle, write_resource_title, write_text_file, RepoResourceStorageDomain,
 };
 use terms::{
-    has_conflicting_source_terms, has_duplicate_term_values, sanitize_target_term_pairs,
+    conflicting_source_terms, has_duplicate_term_values, sanitize_target_term_pairs,
     trim_non_empty_term_values,
 };
 use tmx::{parse_tmx_glossary, serialize_tmx_glossary};
@@ -94,7 +94,7 @@ fn glossary_git_repo_path(
     )
 }
 const SOURCE_TERM_DUPLICATE_WARNING: &str =
-  "The terms highlighted in red below are redundant with other parts of this glossary. Please remove them before saving.";
+    "Some source variants are repeated within this term. Remove or change the duplicates before saving.";
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1016,12 +1016,16 @@ fn upsert_gtms_glossary_term_sync(
         return Err(SOURCE_TERM_DUPLICATE_WARNING.to_string());
     }
     let existing_terms = load_glossary_terms(&repo_path.join("terms"))?;
-    if has_conflicting_source_terms(
+    let conflicts = conflicting_source_terms(
         &existing_terms,
         &trimmed_source_terms,
         input.term_id.as_deref(),
-    ) {
-        return Err(SOURCE_TERM_DUPLICATE_WARNING.to_string());
+    );
+    if !conflicts.is_empty() {
+        return Err(format!(
+            "Remove or change these duplicate source variants before saving: {}",
+            json!(conflicts)
+        ));
     }
     let sanitized_source_terms = trimmed_source_terms;
 

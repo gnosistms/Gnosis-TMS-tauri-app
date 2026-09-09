@@ -35,11 +35,11 @@ pub(super) fn has_duplicate_term_values(values: &[String]) -> bool {
     false
 }
 
-pub(super) fn has_conflicting_source_terms(
+pub(super) fn conflicting_source_terms(
     existing_terms: &[StoredGlossaryTermFile],
     source_terms: &[String],
     current_term_id: Option<&str>,
-) -> bool {
+) -> Vec<String> {
     let mut existing_source_terms = BTreeSet::new();
     for term in existing_terms {
         if term.lifecycle.state != "active" || current_term_id == Some(term.term_id.as_str()) {
@@ -56,7 +56,9 @@ pub(super) fn has_conflicting_source_terms(
 
     source_terms
         .iter()
-        .any(|source_term| existing_source_terms.contains(source_term))
+        .filter(|source_term| existing_source_terms.contains(*source_term))
+        .cloned()
+        .collect()
 }
 
 pub(super) fn sanitize_target_term_pairs(
@@ -105,4 +107,40 @@ fn merge_note_text(existing: &mut String, incoming: &str) {
         existing.push_str("\n\n");
     }
     existing.push_str(incoming);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn conflicts_identify_exact_variants_and_ignore_current_and_deleted_terms() {
+        let term = |id: &str, source: &str, state: &str| {
+            serde_json::from_value::<StoredGlossaryTermFile>(serde_json::json!({
+                "term_id": id,
+                "source_terms": [source],
+                "target_terms": [],
+                "lifecycle": { "state": state }
+            }))
+            .expect("valid term fixture")
+        };
+        let existing = vec![
+            term("current", "Dag Dugpa", "active"),
+            term("other", " Dag-Dugpa ", "active"),
+            term("quoted", "Dugpa \"quoted\"", "active"),
+            term("deleted", "Dad-Dugpa", "deleted"),
+        ];
+        let candidates = [
+            "Dag Dugpa",
+            "Dag-Dugpa",
+            "Dad-Dugpa",
+            "Dugpa \"quoted\"",
+            "New",
+        ]
+        .map(String::from);
+        assert_eq!(
+            conflicting_source_terms(&existing, &candidates, Some("current")),
+            vec!["Dag-Dugpa", "Dugpa \"quoted\""]
+        );
+    }
 }

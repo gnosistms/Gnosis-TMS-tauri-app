@@ -84,6 +84,7 @@ function renderVariantRow(
           class="${inputClasses.join(" ")}"
           aria-label="${escapeHtml(inputLabel)}"
           placeholder="Enter term..."
+          aria-invalid="${isRedundant}"
           rows="1"
           data-glossary-term-variant-input
           data-variant-side="${escapeHtml(side)}"
@@ -225,6 +226,7 @@ export function renderGlossaryTermEditorModal(state) {
   const duplicateWarningMarkup = `
     <p
       class="glossary-term-modal__warning"
+      role="alert"
       data-glossary-term-duplicate-warning
       ${editor.sourceTermDuplicateWarning ? "" : "hidden"}
     >${escapeHtml(editor.sourceTermDuplicateWarning ?? "")}</p>
