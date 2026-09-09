@@ -181,14 +181,17 @@ export function applyGlossaryEditorPayload(payload) {
     ?? null;
   const repoName = state.glossaryEditor?.repoName || existingSummary?.repoName || selectedGlossaryRepoName();
   const repoId =
-    Number.isFinite(state.glossaryEditor?.repoId)
-      ? state.glossaryEditor.repoId
-      : Number.isFinite(existingSummary?.repoId)
-        ? existingSummary.repoId
-        : null;
-  const fullName = state.glossaryEditor?.fullName || existingSummary?.fullName || "";
+    Number.isFinite(payload?.repoId)
+      ? payload.repoId
+      : Number.isFinite(state.glossaryEditor?.repoId)
+        ? state.glossaryEditor.repoId
+        : Number.isFinite(existingSummary?.repoId)
+          ? existingSummary.repoId
+          : null;
+  const fullName = payload?.fullName || state.glossaryEditor?.fullName || existingSummary?.fullName || "";
   const defaultBranchName =
-    state.glossaryEditor?.defaultBranchName
+    payload?.defaultBranchName
+    || state.glossaryEditor?.defaultBranchName
     || existingSummary?.defaultBranchName
     || "main";
   const defaultBranchHeadOid =

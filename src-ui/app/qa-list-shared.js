@@ -154,14 +154,17 @@ export function applyQaListEditorPayload(payload) {
     ?? null;
   const repoName = state.qaListEditor?.repoName || existingSummary?.repoName || selectedQaListRepoName();
   const repoId =
-    Number.isFinite(state.qaListEditor?.repoId)
-      ? state.qaListEditor.repoId
-      : Number.isFinite(existingSummary?.repoId)
-        ? existingSummary.repoId
-        : null;
-  const fullName = state.qaListEditor?.fullName || existingSummary?.fullName || "";
+    Number.isFinite(payload?.repoId)
+      ? payload.repoId
+      : Number.isFinite(state.qaListEditor?.repoId)
+        ? state.qaListEditor.repoId
+        : Number.isFinite(existingSummary?.repoId)
+          ? existingSummary.repoId
+          : null;
+  const fullName = payload?.fullName || state.qaListEditor?.fullName || existingSummary?.fullName || "";
   const defaultBranchName =
-    state.qaListEditor?.defaultBranchName
+    payload?.defaultBranchName
+    || state.qaListEditor?.defaultBranchName
     || existingSummary?.defaultBranchName
     || "main";
   const defaultBranchHeadOid =

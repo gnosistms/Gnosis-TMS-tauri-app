@@ -219,6 +219,10 @@ const {
   resetGlossaryTermWriteCoordinator,
 } = await import("./glossary-term-write-coordinator.js");
 const { queryClient, teamKeys } = await import("./query-client.js");
+const { createNavigationActions } = await import("./actions/navigation-actions.js");
+const { createGlossaryEditorQueryOptions } = await import("./glossary-editor-query.js");
+const { createQaListEditorQueryOptions } = await import("./qa-list-editor-query.js");
+const { applyQaListEditorPayload } = await import("./qa-list-shared.js");
 
 function glossaryTerm(overrides = {}) {
   return {
@@ -1320,6 +1324,135 @@ for (const termId of [null, "term-1"]) {
     assert.equal(state.glossaryTermEditor.sourceTermDuplicateWarning, "");
   });
 }
+
+for (const context of ["missing summary", "local summary without identity"]) {
+  test(`chapter term navigation saves a footnote with ${context}`, async () => {
+    installGlossaryEditorFixture();
+    const terms = cloneValue(state.glossaryEditor.terms);
+    const glossary = cloneValue(state.glossaries[0]);
+    state.glossaries = context === "missing summary" ? [] : [{
+      id: glossary.id, repoName: glossary.repoName, title: glossary.title,
+    }];
+    state.glossaryEditor = createGlossaryEditorState();
+    state.selectedGlossaryId = null;
+    state.screen = "translate";
+    state.selectedChapterId = "chapter-1";
+    state.projects = [{ id: "project-1", chapters: [{
+      id: "chapter-1",
+      linkedGlossary: { glossaryId: glossary.id, repoName: glossary.repoName },
+    }] }];
+    invokeHandler = async (command, payload) => {
+      if (command === "load_gtms_glossary_editor_data") return {
+        glossaryId: glossary.id, title: glossary.title, terms,
+        lifecycleState: "active", termCount: terms.length,
+      };
+      if (command === "list_local_gnosis_glossary_metadata_records") {
+        assert.equal(payload.installationId, 7);
+        return [{
+          id: glossary.id, repoName: glossary.repoName, title: glossary.title,
+          fullName: "actual-owner/glossary-1", githubRepoId: 42,
+          defaultBranch: "translation",
+        }];
+      }
+      if (command === "sync_gtms_glossary_editor_repo") return {
+        changedTermIds: [], insertedTermIds: [], deletedTermIds: [],
+      };
+      if (command === "upsert_gtms_glossary_term") return {
+        term: glossaryTerm(payload.input),
+      };
+      if (command === "sync_gtms_glossary_repos") return [];
+      return null;
+    };
+
+    await createNavigationActions(() => {})("open-editor-glossary-term:term-1");
+    await flushAsyncWork();
+    assert.equal(state.glossaryTermEditor.isOpen, true);
+    assert.equal(state.glossaryTermEditor.termId, "term-1");
+    state.glossaryTermEditor.footnote = "Updated footnote only.";
+    await submitGlossaryTermEditor(() => {});
+    await waitForGlossaryTermWrites();
+
+    const saved = invokeLog.filter(entry => entry.command === "upsert_gtms_glossary_term");
+    assert.equal(saved.length, 1, state.glossaryTermEditor.error);
+    assert.equal(saved[0].payload.input.termId, "term-1");
+    assert.equal(saved[0].payload.input.footnote, "Updated footnote only.");
+    assert.deepEqual(saved[0].payload.input.sourceTerms, terms[0].sourceTerms);
+    const syncInput = invokeLog.find(entry => entry.command === "sync_gtms_glossary_editor_repo").payload.input;
+    assert.equal(syncInput.fullName, "actual-owner/glossary-1");
+    assert.equal(syncInput.repoId, 42);
+    assert.equal(syncInput.defaultBranchName, "translation");
+    assert.equal(state.glossaryTermEditor.isOpen, false);
+    assert.equal(state.glossaryEditor.terms.length, terms.length);
+    assert.equal(state.glossaryEditor.terms[0].footnote, "Updated footnote only.");
+  });
+}
+
+for (const [kind, queryOptions, command] of [
+  ["glossary", createGlossaryEditorQueryOptions, "list_local_gnosis_glossary_metadata_records"],
+  ["QA list", createQaListEditorQueryOptions, "list_local_gnosis_qa_list_metadata_records"],
+]) {
+  for (const mismatch of ["id", "repoName", "githubRepoId", "fullName"]) {
+    test(`${kind} editor never hydrates identity from mismatched ${mismatch}`, async () => {
+      installGlossaryEditorFixture();
+      const resource = { id: "resource-1", repoName: "repo-1", repoId: 42 };
+      invokeHandler = async (name) => name === command ? [{
+        id: resource.id, repoName: resource.repoName, title: "Resource",
+        fullName: "owner/repo-1", githubRepoId: 42,
+        [mismatch]: mismatch === "githubRepoId" ? 43 : "other",
+      }] : {};
+      const load = queryOptions(state.teams[0], resource).queryFn();
+      if (mismatch === "id") {
+        assert.equal((await load).fullName, "");
+      } else {
+        await assert.rejects(load, /repository details have changed/);
+      }
+    });
+  }
+}
+
+test("QA editor applies repository identity loaded from local metadata", async () => {
+  installGlossaryEditorFixture();
+  const resource = { id: "qa-1", repoName: "qa-repo", title: "QA" };
+  state.selectedQaListId = resource.id;
+  state.qaLists = [resource];
+  Object.assign(state.qaListEditor, { qaListId: resource.id, repoName: resource.repoName });
+  invokeHandler = async (command) => command === "list_local_gnosis_qa_list_metadata_records" ? [{
+    ...resource, fullName: "actual-owner/qa-repo", githubRepoId: 43, defaultBranch: "qa",
+  }] : { qaListId: resource.id, title: "QA", terms: [] };
+  const payload = await createQaListEditorQueryOptions(state.teams[0], resource).queryFn();
+  applyQaListEditorPayload(payload);
+  assert.equal(state.qaListEditor.fullName, "actual-owner/qa-repo");
+  assert.equal(state.qaListEditor.repoId, 43);
+  assert.equal(state.qaListEditor.defaultBranchName, "qa");
+});
+
+test("a late metadata lookup cannot replace another glossary after navigation", async () => {
+  installGlossaryEditorFixture();
+  state.glossaries[0].fullName = "";
+  const metadata = deferred();
+  invokeHandler = async (command) => {
+    if (command === "load_gtms_glossary_editor_data") return {
+      glossaryId: "glossary-1", title: "Original", terms: [],
+    };
+    if (command === "list_local_gnosis_glossary_metadata_records") return metadata.promise;
+    return null;
+  };
+  const opening = openGlossaryEditor(() => {}, "glossary-1");
+  await flushAsyncWork();
+  state.selectedGlossaryId = "other";
+  state.glossaryEditor = {
+    ...createGlossaryEditorState(), glossaryId: "other", repoName: "other",
+    fullName: "owner/other", status: "ready",
+  };
+  metadata.resolve([{
+    id: "glossary-1", repoName: "glossary-1", title: "Original",
+    fullName: "owner/glossary-1", githubRepoId: 42,
+  }]);
+  await opening;
+  assert.equal(state.glossaryEditor.glossaryId, "other");
+  assert.equal(state.glossaryEditor.fullName, "owner/other");
+  assert.equal(state.glossaryTermEditor.isOpen, false);
+});
 
 for (const context of ["missing summary", "missing full name"]) {
   for (const termId of [null, "term-1"]) {

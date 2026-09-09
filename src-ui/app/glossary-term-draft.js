@@ -439,7 +439,10 @@ export async function openGlossaryTermEditor(render, termId = null) {
   if (await ensureGlossaryNotTombstoned(render, team, glossary)) {
     return;
   }
-  if (state.selectedTeamId !== team?.id || state.glossaryEditor !== editor) return;
+  if (state.selectedTeamId !== team?.id
+    || state.screen !== "glossaryEditor"
+    || state.glossaryEditor?.glossaryId !== editor?.glossaryId
+    || state.glossaryEditor?.repoName !== editor?.repoName) return;
 
   const term = termId
     ? findGlossaryTermById(termId, state.glossaryEditor)
