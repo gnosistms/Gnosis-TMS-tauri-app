@@ -32,7 +32,7 @@ import {
   removeGlossaryEditorQuery,
 } from "./glossary-editor-query.js";
 import { queryClient } from "./query-client.js";
-import { restorePendingGlossaryTermDraft, rollbackGlossaryTermSave } from "./glossary-term-draft.js";
+import { resolveGlossaryTermWriteRepo, restorePendingGlossaryTermDraft, rollbackGlossaryTermSave } from "./glossary-term-draft.js";
 import { removeVisibleGlossaryTerm } from "./glossary-term-sync.js";
 
 function resolveGlossaryForEditor(glossaryId = state.selectedGlossaryId, preferredGlossary = null) {
@@ -388,8 +388,6 @@ export function updateGlossaryTermSearchQuery(render, value) {
 export async function deleteGlossaryTerm(render, termId) {
   const team = selectedTeam();
   const repoName = selectedGlossaryRepoName();
-  const glossary = selectedGlossary();
-  const expectedContext = glossaryEditorContext(team, glossary);
   if (!Number.isFinite(team?.installationId) || !repoName || !termId) {
     return;
   }
@@ -398,6 +396,14 @@ export async function deleteGlossaryTerm(render, termId) {
     showNoticeBadge("You do not have permission to edit glossary terms in this team.", render);
     return;
   }
+  let glossary;
+  try {
+    glossary = resolveGlossaryTermWriteRepo();
+  } catch (error) {
+    showNoticeBadge(error.message, render);
+    return;
+  }
+  const expectedContext = glossaryEditorContext(team, glossary);
   const policy = getGlossaryWritePolicy({ team, glossary });
   if (!policy.allowed) {
     showNoticeBadge(policy.message, render);

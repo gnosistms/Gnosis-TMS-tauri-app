@@ -200,6 +200,9 @@ const {
 const {
   openGlossaryTermEditor,
   submitGlossaryTermEditor,
+  updateGlossaryTermVariant,
+  moveGlossaryTermVariantToIndex,
+  removeGlossaryTermVariant,
 } = await import("./glossary-term-draft.js");
 const {
   deleteGlossaryTerm,
@@ -481,10 +484,11 @@ for (const entry of ["open", "navigation"]) {
       assert.equal(anyGlossaryTermWriteIsActive(), false);
       assert.equal(state.glossaryEditor.status, "ready");
       assert.equal(state.glossaryEditor.terms.length, 2);
-      assert.deepEqual(state.glossaryEditor.terms[0].targetTerms, ["edited target"]);
+      assert.deepEqual(state.glossaryEditor.terms[0].targetTerms, outcome === "saved" ? ["edited target"] : ["mot"]);
       assert.equal(state.glossaryEditor.terms[0].pendingMutation, null);
       if (outcome === "failed") {
         assert.equal(state.glossaryTermEditor.isOpen, true);
+        assert.deepEqual(state.glossaryTermEditor.targetTerms, ["edited target"]);
         assert.match(state.glossaryTermEditor.error, /Save failed/);
       }
     });
@@ -1275,6 +1279,48 @@ test("saving a glossary term syncs first and then persists the user's modal draf
   assert.ok(renderCalls.length > 0);
 });
 
+for (const termId of [null, "term-1"]) {
+  test(`backend duplicate rejection marks the recovered ${termId ? "edited" : "new"} draft and tracks variant changes`, async () => {
+    installGlossaryEditorFixture();
+    state.glossaryTermEditor = {
+      ...createGlossaryTermEditorState(),
+      isOpen: true,
+      glossaryId: "glossary-1",
+      termId,
+      sourceTerms: ["Dag Dugpa", "Dag-Dugpa", 'Dugpa "quoted"'],
+      targetTerms: ["Dag Dugpa"],
+      footnote: "Keep this footnote.",
+    };
+    invokeHandler = async (command) => {
+      if (command === "sync_gtms_glossary_editor_repo") return { changedTermIds: [] };
+      if (command === "upsert_gtms_glossary_term") {
+        throw new Error(`Remove or change these duplicate source variants before saving: ${JSON.stringify(["Dag-Dugpa", 'Dugpa "quoted"'])}`);
+      }
+      return null;
+    };
+
+    await submitGlossaryTermEditor(() => {});
+    await waitForGlossaryTermWrites();
+
+    assert.equal(syncInvocationCount("upsert_gtms_glossary_term"), 1);
+    assert.equal(syncInvocationCount("sync_gtms_glossary_repos"), 0);
+    assert.equal(state.glossaryTermEditor.isOpen, true);
+    assert.equal(state.glossaryTermEditor.footnote, "Keep this footnote.");
+    assert.equal(state.glossaryTermEditor.error, "");
+    assert.deepEqual(state.glossaryTermEditor.redundantSourceVariantIndices, [1, 2]);
+    assert.match(state.glossaryTermEditor.sourceTermDuplicateWarning, /marked variants/);
+    assert.doesNotMatch(state.glossaryTermEditor.sourceTermDuplicateWarning, /below/);
+
+    moveGlossaryTermVariantToIndex("source", 2, 0);
+    assert.deepEqual(state.glossaryTermEditor.redundantSourceVariantIndices, [0, 2]);
+    removeGlossaryTermVariant("source", 0);
+    assert.deepEqual(state.glossaryTermEditor.redundantSourceVariantIndices, [1]);
+    updateGlossaryTermVariant("source", 1, "Unique variant");
+    assert.deepEqual(state.glossaryTermEditor.redundantSourceVariantIndices, []);
+    assert.equal(state.glossaryTermEditor.sourceTermDuplicateWarning, "");
+  });
+}
+
 for (const context of ["missing summary", "missing full name"]) {
   for (const termId of [null, "term-1"]) {
     test(`${termId ? "editing" : "creating"} a glossary term syncs with ${context}`, async () => {
@@ -1565,6 +1611,53 @@ test("successful deletion must remove the visible term", async () => {
   await flushAsyncWork();
   await deleteGlossaryTerm(() => {}, "term-1");
   assert.equal(state.glossaryEditor.terms.some(t => t.termId === "term-1"), false);
+});
+
+test("deleting a search result without a collection summary updates the filtered screen", async () => {
+  installGlossaryEditorFixture();
+  state.glossaryEditor.fullName = state.glossaries[0].fullName;
+  state.glossaryEditor.defaultBranchHeadOid = "remote-head-1";
+  state.glossaryEditor.searchQuery = "uno";
+  state.glossaries = [];
+  let renderedHtml = "";
+  const { renderGlossaryEditorScreen } = await import("../screens/glossary-editor.js");
+  invokeHandler = async (command) => {
+    if (command === "delete_gtms_glossary_term") return { termId: "term-1", termCount: 1 };
+    if (command === "sync_gtms_glossary_repos") return [];
+    return null;
+  };
+
+  await deleteGlossaryTerm(() => { renderedHtml = renderGlossaryEditorScreen(state); }, "term-1");
+
+  assert.equal(syncInvocationCount("delete_gtms_glossary_term"), 1);
+  assert.equal(syncInvocationCount("sync_gtms_glossary_repos"), 1);
+  assert.deepEqual(state.glossaryEditor.terms.map(term => term.termId), ["term-2"]);
+  assert.equal(state.glossaryEditor.searchQuery, "uno");
+  assert.match(renderedHtml, /No terms match this search/);
+  assert.doesNotMatch(renderedHtml, /edit-glossary-term:term-1/);
+});
+
+test("a rejected edit restores the saved row while keeping the conflicting draft", async () => {
+  installGlossaryEditorFixture({ terms: [glossaryTerm({ sourceTerms: ["Original"] })] });
+  state.glossaryEditor.searchQuery = "Dugpa";
+  await openGlossaryTermEditor(() => {}, "term-1");
+  state.glossaryTermEditor.sourceTerms = ["Dag Dugpa"];
+  invokeHandler = async (command) => {
+    if (command === "sync_gtms_glossary_editor_repo") return { changedTermIds: [] };
+    if (command === "upsert_gtms_glossary_term") {
+      state.glossaryEditor.terms.push(glossaryTerm({ termId: "remote-term", sourceTerms: ["Dag Dugpa"] }));
+      throw new Error('Remove or change these duplicate source variants before saving: ["Dag Dugpa"]');
+    }
+    return null;
+  };
+  await submitGlossaryTermEditor(() => {});
+  await waitForGlossaryTermWrites();
+
+  assert.deepEqual(state.glossaryEditor.terms.find(term => term.termId === "term-1").sourceTerms, ["Original"]);
+  assert.equal(state.glossaryEditor.terms.filter(term => term.sourceTerms.includes("Dag Dugpa")).length, 1);
+  assert.deepEqual(state.glossaryTermEditor.sourceTerms, ["Dag Dugpa"]);
+  assert.deepEqual(state.glossaryTermEditor.redundantSourceVariantIndices, [0]);
+  assert.equal(state.glossaryEditor.searchQuery, "Dugpa");
 });
 
 for (const outcome of ["success", "failure", "rollback"]) {

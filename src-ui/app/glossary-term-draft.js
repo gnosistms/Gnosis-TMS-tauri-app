@@ -49,7 +49,8 @@ import {
 import { removeGlossaryEditorQuery } from "./glossary-editor-query.js";
 
 const SOURCE_TERM_DUPLICATE_WARNING =
-  "The terms highlighted in red below are redundant with other parts of this glossary. Please remove them before saving.";
+  "Some source variants are duplicated within this term or elsewhere in the glossary. Remove or change the marked variants before saving.";
+const SOURCE_TERM_CONFLICT_PREFIX = "Remove or change these duplicate source variants before saving: ";
 const GLOSSARY_TERM_REMOTE_UPDATE_NOTICE =
   "Error: this glossary term has a more recent version on GitHub. Please redo your edits and save again.";
 const GLOSSARY_EDITOR_STATUS_SCOPE = "glossaryEditor";
@@ -67,7 +68,9 @@ function findRedundantSourceVariantIndices(
 ) {
   const candidateTerms = Array.isArray(sourceTerms) ? sourceTerms : [];
   const candidateCounts = new Map();
-  const existingTerms = new Set();
+  const existingTerms = new Set(
+    (state.glossaryTermEditor?.conflictingSourceTerms ?? []).map(normalizeSourceTermForDuplicateDetection),
+  );
 
   for (const glossaryTerm of Array.isArray(glossaryTerms) ? glossaryTerms : []) {
     if (!glossaryTerm || glossaryTerm.lifecycleState === "deleted" || glossaryTerm.termId === termId) {
@@ -119,6 +122,7 @@ function syncGlossaryTermDuplicateFeedbackDom() {
         "term-variant-row__input--redundant",
         Number.isInteger(index) && redundantIndices.has(index),
       );
+      element.setAttribute("aria-invalid", String(Number.isInteger(index) && redundantIndices.has(index)));
     });
 
   const warning = document.querySelector("[data-glossary-term-duplicate-warning]");
@@ -188,6 +192,7 @@ function createGlossaryTermEditorModalState(term = null, overrides = {}) {
     ),
     sourceTermDuplicateWarning: "",
     redundantSourceVariantIndices: [],
+    conflictingSourceTerms: [],
     notesToTranslators: term?.notesToTranslators ?? "",
     footnote: term?.footnote ?? "",
     untranslated: term?.untranslated === true,
@@ -269,6 +274,8 @@ function restoreFailedGlossaryTermSave(render, intent, message) {
   const visibleTermId = intent.value?.visibleTermId ?? draftSnapshot?.termId ?? null;
   if (intent.value?.isCreate) {
     removeVisibleGlossaryTerm(visibleTermId);
+  } else if (intent.previousValue && message !== GLOSSARY_TERM_REMOTE_UPDATE_NOTICE) {
+    markVisibleGlossaryTermConfirmed(visibleTermId, intent.previousValue);
   } else if (visibleTermId) {
     markVisibleGlossaryTermFailed(visibleTermId, message);
   }
@@ -289,6 +296,24 @@ function restoreFailedGlossaryTermSave(render, intent, message) {
     attemptedDraft: remoteConflict ? draftSnapshot : null,
     termId: draftSnapshot?.termId ?? null,
   });
+  if (message.startsWith(SOURCE_TERM_CONFLICT_PREFIX)) {
+    try {
+      const conflicts = JSON.parse(message.slice(SOURCE_TERM_CONFLICT_PREFIX.length));
+      if (Array.isArray(conflicts) && conflicts.every(value => typeof value === "string")) {
+        state.glossaryTermEditor.conflictingSourceTerms = conflicts;
+        if (refreshGlossaryTermDuplicateFeedback({ activateWarning: true })) {
+          state.glossaryTermEditor.error = "";
+        }
+      }
+    } catch {
+      // Preserve the readable backend error if its details cannot be decoded.
+    }
+  } else if (message === "The terms highlighted in red below are redundant with other parts of this glossary. Please remove them before saving.") {
+    // A running native backend can predate the frontend during development.
+    state.glossaryTermEditor.error = refreshGlossaryTermDuplicateFeedback({ activateWarning: true })
+      ? ""
+      : "Some source variants already exist in this glossary. Refresh the glossary to identify them, then remove or change them before saving.";
+  }
   render();
 }
 
@@ -626,22 +651,15 @@ export function moveGlossaryTermVariantToIndex(side, fromIndex, toIndex) {
   }
 }
 
-export async function submitGlossaryTermEditor(render) {
-  const team = selectedTeam();
-  const repoName = selectedGlossaryRepoName();
-  const summary = selectedGlossary();
-  const draft = state.glossaryTermEditor;
-  if (!draft?.isOpen || !Number.isFinite(team?.installationId) || !repoName
-    || draft.glossaryId !== state.glossaryEditor?.glossaryId
-    || (draft.teamId != null && draft.teamId !== team.id)
-    || (draft.installationId != null && draft.installationId !== team.installationId)
-    || (draft.repoName && draft.repoName !== repoName)) {
-    return;
-  }
-
+export function resolveGlossaryTermWriteRepo() {
   // Collection refreshes can leave an incomplete summary while the editor stays open.
   // Capture the repo identity now so queued saves never depend on later navigation.
   const editor = state.glossaryEditor;
+  const summary = selectedGlossary();
+  const repoName = selectedGlossaryRepoName();
+  if (!editor?.glossaryId || !repoName) {
+    throw new Error("Could not determine the glossary repository. Reopen the glossary and try again.");
+  }
   const fullName = summary?.fullName || editor.fullName || "";
   if ((summary && summary.id !== editor.glossaryId)
     || (summary?.repoName && summary.repoName !== repoName)
@@ -649,9 +667,7 @@ export async function submitGlossaryTermEditor(render) {
     || (Number.isFinite(summary?.repoId) && Number.isFinite(editor.repoId)
       && summary.repoId !== editor.repoId)
     || (fullName && (fullName.split("/").length !== 2 || fullName.split("/")[1] !== repoName))) {
-    state.glossaryTermEditor.error = "The glossary repository details have changed. Reopen the glossary before saving.";
-    render();
-    return;
+    throw new Error("The glossary repository details have changed. Reopen the glossary before making changes.");
   }
   const glossary = {
     ...summary,
@@ -666,7 +682,28 @@ export async function submitGlossaryTermEditor(render) {
     remoteState: summary?.remoteState ?? editor.remoteState,
   };
   if (!glossaryRepoDescriptor(glossary)) {
-    state.glossaryTermEditor.error = "Could not determine the glossary repository. Reopen the glossary and try again.";
+    throw new Error("Could not determine the glossary repository. Reopen the glossary and try again.");
+  }
+  return glossary;
+}
+
+export async function submitGlossaryTermEditor(render) {
+  const team = selectedTeam();
+  const repoName = selectedGlossaryRepoName();
+  const draft = state.glossaryTermEditor;
+  if (!draft?.isOpen || !Number.isFinite(team?.installationId) || !repoName
+    || draft.glossaryId !== state.glossaryEditor?.glossaryId
+    || (draft.teamId != null && draft.teamId !== team.id)
+    || (draft.installationId != null && draft.installationId !== team.installationId)
+    || (draft.repoName && draft.repoName !== repoName)) {
+    return;
+  }
+
+  let glossary;
+  try {
+    glossary = resolveGlossaryTermWriteRepo();
+  } catch (error) {
+    state.glossaryTermEditor.error = error.message;
     render();
     return;
   }
