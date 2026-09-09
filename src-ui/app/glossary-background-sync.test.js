@@ -1275,6 +1275,125 @@ test("saving a glossary term syncs first and then persists the user's modal draf
   assert.ok(renderCalls.length > 0);
 });
 
+for (const context of ["missing summary", "missing full name"]) {
+  for (const termId of [null, "term-1"]) {
+    test(`${termId ? "editing" : "creating"} a glossary term syncs with ${context}`, async () => {
+      installGlossaryEditorFixture();
+      Object.assign(state.glossaryEditor, {
+        fullName: "fixture-org/glossary-1",
+        repoId: 42,
+        defaultBranchName: "translation",
+        defaultBranchHeadOid: "remote-head-1",
+      });
+      if (context === "missing summary") {
+        state.glossaries = [];
+      } else {
+        state.glossaries[0].fullName = "";
+        state.glossaries[0].defaultBranchName = "translation";
+      }
+      state.glossaryTermEditor = {
+        ...createGlossaryTermEditorState(),
+        isOpen: true,
+        glossaryId: "glossary-1",
+        termId,
+        sourceTerms: ["Bons", "Bonz"],
+        targetTerms: ["Bön"],
+        footnote: "Keep this footnote.",
+      };
+      invokeHandler = async (command, payload) => {
+        if (command === "sync_gtms_glossary_editor_repo") {
+          if (!payload.input.repoName || !payload.input.fullName) {
+            throw new Error("missing repository context");
+          }
+          return { changedTermIds: [], insertedTermIds: [], deletedTermIds: [] };
+        }
+        if (command === "upsert_gtms_glossary_term") {
+          return { term: glossaryTerm({ ...payload.input, termId: termId || "created-term" }) };
+        }
+        if (command === "sync_gtms_glossary_repos") return [];
+        return null;
+      };
+
+      await submitGlossaryTermEditor(() => {});
+      await waitForGlossaryTermWrites();
+
+      assert.equal(syncInvocationCount("upsert_gtms_glossary_term"), 1);
+      const preflight = invokeLog.find(entry => entry.command === "sync_gtms_glossary_editor_repo").payload.input;
+      assert.equal(preflight.installationId, 7);
+      assert.equal(preflight.glossaryId, "glossary-1");
+      assert.equal(preflight.repoName, "glossary-1");
+      assert.equal(preflight.fullName, "fixture-org/glossary-1");
+      assert.equal(preflight.repoId, 42);
+      assert.equal(preflight.defaultBranchName, "translation");
+      const pushedRepo = invokeLog.find(entry => entry.command === "sync_gtms_glossary_repos")?.payload.input.glossaries[0];
+      assert.equal(pushedRepo?.fullName, preflight.fullName);
+      assert.equal(pushedRepo?.repoName, preflight.repoName);
+      assert.equal(state.glossaryTermEditor.isOpen, false);
+      assert.equal(state.glossaryEditor.terms.find(term => term.termId === (termId || "created-term"))?.footnote, "Keep this footnote.");
+    });
+  }
+}
+
+test("missing glossary repository identity is not inferred from the team and preserves the draft", async () => {
+  installGlossaryEditorFixture();
+  state.glossaries[0].fullName = "";
+  const draft = {
+    ...createGlossaryTermEditorState(),
+    isOpen: true,
+    glossaryId: "glossary-1",
+    sourceTerms: ["Bons"],
+    targetTerms: ["Bön"],
+    footnote: "Keep this footnote.",
+  };
+  state.glossaryTermEditor = draft;
+
+  await submitGlossaryTermEditor(() => {});
+  await waitForGlossaryTermWrites();
+
+  assert.equal(state.glossaryTermEditor, draft);
+  assert.match(draft.error, /repository/i);
+  assert.equal(draft.footnote, "Keep this footnote.");
+  assert.equal(syncInvocationCount("sync_gtms_glossary_editor_repo"), 0);
+  assert.equal(syncInvocationCount("upsert_gtms_glossary_term"), 0);
+});
+
+for (const conflict of ["glossary ID", "repo name", "full name", "repo ID", "full name path"]) {
+  test(`conflicting glossary ${conflict} preserves the draft without syncing`, async () => {
+    installGlossaryEditorFixture();
+    const summary = state.glossaries[0];
+    state.glossaryEditor.fullName = summary.fullName;
+    state.glossaryEditor.repoId = summary.repoId;
+    if (conflict === "glossary ID") {
+      summary.id = "other-glossary";
+      state.selectedGlossaryId = summary.id;
+    }
+    if (conflict === "repo name") summary.repoName = "other-repo";
+    if (conflict === "full name") summary.fullName = "other-org/glossary-1";
+    if (conflict === "repo ID") summary.repoId = 999;
+    if (conflict === "full name path") {
+      summary.fullName = "fixture-org/other-repo";
+      state.glossaryEditor.fullName = summary.fullName;
+    }
+    const draft = {
+      ...createGlossaryTermEditorState(),
+      isOpen: true,
+      glossaryId: "glossary-1",
+      sourceTerms: ["Bons"],
+      targetTerms: ["Bön"],
+      footnote: "Keep this footnote.",
+    };
+    state.glossaryTermEditor = draft;
+
+    await submitGlossaryTermEditor(() => {});
+    await waitForGlossaryTermWrites();
+
+    assert.equal(state.glossaryTermEditor, draft);
+    assert.match(draft.error, /repository details have changed/);
+    assert.equal(draft.footnote, "Keep this footnote.");
+    assert.equal(invokeLog.length, 0);
+  });
+}
+
 test("saving a glossary term sanitizes ruby markup and escapes unsupported inline formatting", async () => {
   installGlossaryEditorFixture({
     terms: [

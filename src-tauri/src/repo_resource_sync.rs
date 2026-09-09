@@ -1183,6 +1183,33 @@ mod tests {
     }
 
     #[test]
+    fn editor_sync_input_requires_repository_context_for_both_domains() {
+        let missing_repo = serde_json::from_value::<super::RepoResourceEditorSyncInput>(
+            serde_json::json!({ "installationId": 7 }),
+        );
+        assert_eq!(
+            missing_repo
+                .err()
+                .expect("repository context is required")
+                .to_string(),
+            "missing field `repoName`"
+        );
+
+        for id_field in ["glossaryId", "qaListId"] {
+            let mut payload = serde_json::json!({
+                "installationId": 7,
+                "repoName": "terms",
+                "fullName": "team/terms"
+            });
+            payload[id_field] = serde_json::json!("resource-1");
+            let input = serde_json::from_value::<super::RepoResourceEditorSyncInput>(payload)
+                .expect("complete editor sync input is accepted");
+            assert_eq!(input.resource_id.as_deref(), Some("resource-1"));
+            assert_eq!(input.to_descriptor().repo_name, "terms");
+        }
+    }
+
+    #[test]
     fn editor_preflight_allows_a_repo_that_has_not_been_cloned() {
         let missing_repo = std::env::temp_dir().join(format!(
             "gnosis-missing-editor-repo-{}",

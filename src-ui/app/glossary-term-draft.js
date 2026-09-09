@@ -308,10 +308,14 @@ async function runGlossaryTermSaveIntent(render, intent) {
       throw new Error("Could not determine which glossary term to save.");
     }
 
+    const descriptor = glossaryRepoDescriptor(glossary);
+    if (!descriptor) {
+      throw new Error("Could not determine the glossary repository. Reopen the glossary and try again.");
+    }
     let previousHeadSha = null;
     showGlossaryEditorStatus(render, "Checking remote glossary changes...");
     const syncResult = await invoke("sync_gtms_glossary_editor_repo", {
-      input: { installationId: team.installationId, ...glossaryRepoDescriptor(glossary) },
+      input: { installationId: team.installationId, ...descriptor },
       sessionToken: requireBrokerSession(),
     });
     if (glossarySaveContextMatches(intent)) markGlossaryTermsStale(syncResult ?? {});
@@ -625,13 +629,45 @@ export function moveGlossaryTermVariantToIndex(side, fromIndex, toIndex) {
 export async function submitGlossaryTermEditor(render) {
   const team = selectedTeam();
   const repoName = selectedGlossaryRepoName();
-  const glossary = selectedGlossary();
+  const summary = selectedGlossary();
   const draft = state.glossaryTermEditor;
   if (!draft?.isOpen || !Number.isFinite(team?.installationId) || !repoName
     || draft.glossaryId !== state.glossaryEditor?.glossaryId
     || (draft.teamId != null && draft.teamId !== team.id)
     || (draft.installationId != null && draft.installationId !== team.installationId)
     || (draft.repoName && draft.repoName !== repoName)) {
+    return;
+  }
+
+  // Collection refreshes can leave an incomplete summary while the editor stays open.
+  // Capture the repo identity now so queued saves never depend on later navigation.
+  const editor = state.glossaryEditor;
+  const fullName = summary?.fullName || editor.fullName || "";
+  if ((summary && summary.id !== editor.glossaryId)
+    || (summary?.repoName && summary.repoName !== repoName)
+    || (summary?.fullName && editor.fullName && summary.fullName !== editor.fullName)
+    || (Number.isFinite(summary?.repoId) && Number.isFinite(editor.repoId)
+      && summary.repoId !== editor.repoId)
+    || (fullName && (fullName.split("/").length !== 2 || fullName.split("/")[1] !== repoName))) {
+    state.glossaryTermEditor.error = "The glossary repository details have changed. Reopen the glossary before saving.";
+    render();
+    return;
+  }
+  const glossary = {
+    ...summary,
+    id: editor.glossaryId,
+    repoName,
+    fullName,
+    repoId: summary?.repoId ?? editor.repoId,
+    defaultBranchName: summary?.defaultBranchName || editor.defaultBranchName,
+    defaultBranchHeadOid: summary?.defaultBranchHeadOid ?? editor.defaultBranchHeadOid,
+    lifecycleState: summary?.lifecycleState ?? editor.lifecycleState,
+    recordState: summary?.recordState ?? editor.recordState,
+    remoteState: summary?.remoteState ?? editor.remoteState,
+  };
+  if (!glossaryRepoDescriptor(glossary)) {
+    state.glossaryTermEditor.error = "Could not determine the glossary repository. Reopen the glossary and try again.";
+    render();
     return;
   }
 
