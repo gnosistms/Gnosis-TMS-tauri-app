@@ -778,6 +778,48 @@ test("project loading clears stale missing-local-repo repair after repo sync clo
   assert.equal(state.projects[0].chapters.length, 1);
 });
 
+test("repo sync publications render once after applying project state", async () => {
+  setupProjectDiscoveryFlowTest();
+  installProjectDiscoveryInvokeMock({
+    remoteProjectsPromise: Promise.resolve([{
+      id: "project-1",
+      name: "project-repo",
+      title: "Local Project",
+      fullName: "team/project-repo",
+      defaultBranchName: "main",
+      defaultBranchHeadOid: "remote-head",
+    }]),
+    repoSyncSnapshots: [{ projectId: "project-1", repoName: "project-repo", status: "upToDate" }],
+  });
+  const options = projectDiscoveryOptions();
+  const publishSnapshot = options.publishProjectLoadSnapshot;
+  const publications = [];
+  let currentPublication = null;
+  options.publishProjectLoadSnapshot = (payload) => {
+    currentPublication = null;
+    if (["repoSyncProgress", "repoSyncSnapshot"].includes(payload.progressType)) {
+      currentPublication = { type: payload.progressType, renders: 0 };
+      publications.push(currentPublication);
+    }
+    publishSnapshot(payload);
+  };
+  // Other progress events delimit the next phase of the load.
+  options.onProjectLoadProgress = ({ type }) => {
+    if (!["repoSyncProgress", "repoSyncSnapshot"].includes(type)) currentPublication = null;
+  };
+  await loadProjectSnapshotForTeam((renderOptions) => {
+    if (!renderOptions?.scope && currentPublication) {
+      currentPublication.renders += 1;
+      assert.equal(state.projectRepoSyncByProjectId["project-1"].status, "upToDate");
+    }
+  }, "team-1", options);
+
+  assert.deepEqual(publications, [
+    { type: "repoSyncProgress", renders: 1 },
+    { type: "repoSyncSnapshot", renders: 1 },
+  ]);
+});
+
 test("an expired session during the remote phase routes to the sign-in screen", async () => {
   setupProjectDiscoveryFlowTest();
   // Local data exists, so the local-first tolerance would normally swallow the broker
