@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./test.js";
 
 async function mountKeyboardFixture(page, markup) {
   await page.locator("#app").evaluate((app, html) => {

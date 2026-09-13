@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./test.js";
 
 for (const platform of ["macos", "windows"]) {
   test(`glossary error filter finds unmounted rows and restores scrolling (${platform})`, async ({ page }) => {
