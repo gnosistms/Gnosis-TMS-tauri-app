@@ -38,6 +38,12 @@ const {
   getRepoWriteQueueSnapshot,
   resetRepoWriteQueue,
 } = await import("./repo-write-queue.js");
+const {
+  deferProjectsRenderWhileSelectEngaged,
+  flushProjectsHeldRender,
+  resetProjectsRenderHoldForTests,
+} = await import("./projects-render-hold.js");
+const { clearNoticeBadge } = await import("./status-feedback.js");
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -93,6 +99,50 @@ test.afterEach(() => {
   resetRepoWriteQueue();
   resetSessionState();
 });
+
+for (const status of ["upToDate", "syncError"]) {
+  test(`sync completion preserves the held full render for ${status}`, async (t) => {
+    setupProjectRepoSyncTest();
+    state.screen = "projects";
+    const previousSelectElement = globalThis.HTMLSelectElement;
+    class ChapterSelect {
+      matches(selector) {
+        return selector.includes("[data-chapter-status-select]");
+      }
+    }
+    globalThis.HTMLSelectElement = ChapterSelect;
+    document.activeElement = new ChapterSelect();
+    t.after(() => {
+      document.activeElement = null;
+      if (previousSelectElement === undefined) delete globalThis.HTMLSelectElement;
+      else globalThis.HTMLSelectElement = previousSelectElement;
+      resetProjectsRenderHoldForTests();
+      clearNoticeBadge();
+    });
+    invokeHandler = async () => [{ projectId: "project-1", repoName: "repo-one", status }];
+    const performed = [];
+    const render = (options = {}) => {
+      const perform = () => performed.push({
+        scope: options.scope ?? "full",
+        status: state.projectRepoSyncByProjectId["project-1"]?.status,
+        syncBadgeVisible: state.statusBadges.right.visible,
+        noticeVisible: state.statusBadges.left.visible,
+      });
+      if (!deferProjectsRenderWhileSelectEngaged(state, perform)) perform();
+    };
+
+    await reconcileProjectRepoSyncStates(render, team(), [project()]);
+    assert.deepEqual(performed, [], "keep the dropdown intact during sync");
+    document.activeElement = null;
+    flushProjectsHeldRender();
+    assert.deepEqual(performed, [{
+      scope: "full",
+      status,
+      syncBadgeVisible: false,
+      noticeVisible: status === "syncError",
+    }]);
+  });
+}
 
 test("project repo sync waits behind an existing repo queue write for the same repo", async () => {
   const events = [];
@@ -295,8 +345,13 @@ test("project repo sync polling exits and marks a repo stalled after no progress
     }];
   };
   const appliedSnapshots = [];
+  const publishedStatuses = [];
+  let fullRenders = 0;
 
-  const snapshots = await reconcileProjectRepoSyncStates(() => {}, team(), [project()], {
+  const snapshots = await reconcileProjectRepoSyncStates((options) => {
+    if (!options?.scope) fullRenders += 1;
+  }, team(), [project()], {
+    onSnapshots: (nextSnapshots) => publishedStatuses.push(nextSnapshots[0].status),
     applySnapshots: (nextSnapshots) => {
       appliedSnapshots.push(nextSnapshots);
       state.projectRepoSyncByProjectId = Object.fromEntries(
@@ -310,6 +365,8 @@ test("project repo sync polling exits and marks a repo stalled after no progress
     8,
   );
   assert.equal(snapshots[0].status, "syncStalled");
+  assert.deepEqual(publishedStatuses, ["syncing", "syncStalled"]);
+  assert.equal(fullRenders, 3, "initial, stalled, and final snapshots each render once");
   assert.equal(snapshots[0].syncStalled, true);
   assert.equal(appliedSnapshots.at(-1)[0].status, "syncStalled");
   assert.equal(state.projectRepoSyncByProjectId["project-1"].syncStalled, true);
@@ -318,4 +375,49 @@ test("project repo sync polling exits and marks a repo stalled after no progress
     state.statusBadges.left.text,
     "1 project repo sync is taking longer than expected; try refreshing again",
   );
+});
+
+test("unchanged repo polls skip publication and rendering but changed details still publish", async () => {
+  setupProjectRepoSyncTest();
+  let polls = 0;
+  let fullRenders = 0;
+  let rendersAfterPreviousUpdate = 0;
+  const publications = [];
+  const initial = {
+    projectId: "project-1",
+    repoName: "repo-one",
+    status: "syncing",
+    message: "Syncing project repo...",
+  };
+  __setProjectRepoSyncTiming({ delay: async () => {} });
+  invokeHandler = async (command) => {
+    if (command === "reconcile_project_repo_sync_states") return [{ ...initial }];
+    assert.equal(command, "list_project_repo_sync_states");
+    polls += 1;
+    if (polls === 1) rendersAfterPreviousUpdate = fullRenders;
+    if (polls === 3) {
+      assert.equal(fullRenders, rendersAfterPreviousUpdate, "identical polls must not render");
+      assert.equal(publications.length, 1);
+      // A field outside the stall-detection signature must still be delivered.
+      return [{ ...initial, localPath: "/updated/project/path" }];
+    }
+    if (polls === 4) {
+      assert.equal(fullRenders, rendersAfterPreviousUpdate + 1);
+      assert.equal(publications.at(-1).localPath, "/updated/project/path");
+      return [{ ...initial, status: "clean" }];
+    }
+    return [{ ...initial }];
+  };
+
+  const result = await reconcileProjectRepoSyncStates((options) => {
+    if (!options?.scope) fullRenders += 1;
+  }, team(), [project()], {
+    onSnapshots: (snapshots) => publications.push(snapshots[0]),
+  });
+
+  assert.equal(polls, 4);
+  assert.deepEqual(publications.map((snapshot) => snapshot.status), ["syncing", "syncing", "clean"]);
+  assert.equal(fullRenders, 4, "three changed snapshots plus final reconciliation");
+  assert.equal(result[0].status, "clean");
+  assert.equal(state.projectRepoSyncByProjectId["project-1"].status, "clean");
 });

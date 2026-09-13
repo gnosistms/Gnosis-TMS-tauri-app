@@ -1191,6 +1191,8 @@ export async function loadProjectSnapshotForTeam(render, teamId = state.selected
     }
     await reconcileProjectRepoSyncStates(render, selectedTeam, mappedProjects, {
       shouldAbort: () => !isProjectDiscoveryCurrent(selectedTeam.id, requestId, syncVersionAtStart),
+      // The sync flow renders after these query-layer publications. Passing
+      // render through as well would replace the page twice for each update.
       applySnapshots: (snapshots) => {
         repoSyncByProjectId = repoSyncSnapshotMap(snapshots);
         mappedProjects = applyProjectFileLoadStates(mappedProjects, {
@@ -1198,7 +1200,6 @@ export async function loadProjectSnapshotForTeam(render, teamId = state.selected
           missingListingState: "loading",
         });
         currentLoadResult = publishProjectLoadSnapshot({
-          render,
           selectedTeam,
           snapshot: {
             items: mappedProjects.filter((project) => project.lifecycleState !== "deleted"),
@@ -1221,7 +1222,6 @@ export async function loadProjectSnapshotForTeam(render, teamId = state.selected
           missingListingState: "loading",
         });
         currentLoadResult = publishProjectLoadSnapshot({
-          render,
           selectedTeam,
           snapshot: {
             items: mappedProjects.filter((project) => project.lifecycleState !== "deleted"),

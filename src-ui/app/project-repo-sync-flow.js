@@ -291,6 +291,10 @@ async function reconcileOneProjectRepoSyncState({
       render();
 
       let snapshots = initialSnapshots;
+      // The backend returns its stored snapshot on each poll. Do not publish
+      // identical results: publication rebuilds the projects page and interrupts
+      // scrolling even though no project information changed.
+      let publishedSnapshotJson = JSON.stringify(snapshots);
       const pollingStartedAt = projectRepoSyncNow();
       let previousSignature = projectRepoSyncSignature(snapshots);
       let noProgressPolls = 0;
@@ -323,6 +327,11 @@ async function reconcileOneProjectRepoSyncState({
           render();
           break;
         }
+        const snapshotJson = JSON.stringify(snapshots);
+        if (snapshotJson === publishedSnapshotJson) {
+          continue;
+        }
+        publishedSnapshotJson = snapshotJson;
         mergeSnapshots(snapshots);
         onSnapshots?.(snapshots, descriptor);
         openRequiredAppUpdatePromptFromProjectSnapshots(snapshots, render);
@@ -433,9 +442,10 @@ export async function reconcileProjectRepoSyncStates(render, team, projects, opt
   const issueText = issueNoticeText(snapshots);
   if (issueText) {
     showNoticeBadge(issueText, render, 2400);
-  } else {
-    render();
   }
+  // Keep the full render last: an engaged project dropdown holds only the
+  // latest render, so a later badge-only update would discard the page refresh.
+  render();
 
   return Array.isArray(snapshots) ? snapshots : [];
 }
