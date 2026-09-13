@@ -19,12 +19,14 @@ export async function guardLeavingTranslateEditor({
 
 export async function guardRefreshingTranslateEditor({
   currentScreen,
-  render,
-  flushDirtyEditorRows,
+  waitForPendingEditorWrites,
 }) {
   if (currentScreen !== "translate") {
     return true;
   }
 
-  return flushDirtyEditorRows(render);
+  // A refresh must not turn the current draft into a save request. The chapter
+  // loader keeps dirty text in memory; only already submitted writes must finish.
+  await waitForPendingEditorWrites();
+  return true;
 }

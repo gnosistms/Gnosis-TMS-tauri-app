@@ -1541,6 +1541,162 @@ async function openPlatformEditorFixture(page, platform) {
 }
 
 test.describe("editor regressions", () => {
+  test("background sync does not commit a focused draft while History is open", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 6 }, { mockTauri: true });
+    const field = await activateMainEditorField(page, "fixture-row-0001", "vi");
+    await field.fill("unfinished draft that has never been saved");
+    await page.locator('[data-action="switch-editor-sidebar-tab:history"]').click();
+    await expect(field).toBeFocused();
+    const before = await readMockTauriState(page);
+    await runEditorBackgroundSync(page);
+    await expect(field).toBeFocused();
+    await expect(field).toHaveValue("unfinished draft that has never been saved");
+    const after = await readMockTauriState(page);
+    expect(after.histories).toEqual(before.histories);
+    expect(after.invocations.filter((entry) => entry.command === "update_gtms_editor_row_fields")).toHaveLength(0);
+    // The normal deliberate save remains available after sync deferred.
+    await field.press("Shift+Enter");
+    await expect.poll(async () => (await readMockTauriState(page)).invocations.filter(
+      (entry) => entry.command === "update_gtms_editor_row_fields",
+    ).length).toBe(1);
+  });
+
+  for (const trigger of ["background sync", "manual refresh"]) {
+    test(`${trigger} defers conflict reload when typing starts during sync`, async ({ page }) => {
+      await mountEditorFixture(page, { rowCount: 6 }, { mockTauri: true });
+      const field = await activateMainEditorField(page, "fixture-row-0001", "vi");
+      await field.focus();
+      await installImportedConflictBackgroundReloadMock(page, {
+        targetRowId: "fixture-row-0002",
+        localRowPatch: { targetText: "conflicted local text" },
+        remoteRowPatch: { targetText: "conflicted remote text" },
+      });
+      await page.evaluate(() => {
+        const handlers = globalThis.__gnosisMockTauriHandlers;
+        const originalSync = handlers.sync_gtms_project_editor_repo;
+        const conflictLoad = handlers.load_gtms_chapter_editor_data;
+        delete handlers.load_gtms_chapter_editor_data;
+        const pending = new Promise((resolve) => { globalThis.__releaseDraftSync = resolve; });
+        handlers.sync_gtms_project_editor_repo = async () => {
+          globalThis.__draftSyncStarted = true;
+          await pending;
+          handlers.load_gtms_chapter_editor_data = conflictLoad;
+          return originalSync();
+        };
+      });
+      const syncing = trigger === "manual refresh" ? runEditorRefresh(page) : runEditorBackgroundSync(page);
+      await page.waitForFunction(() => globalThis.__draftSyncStarted);
+      const loadsBefore = (await readMockTauriState(page)).invocations.filter(
+        (entry) => entry.command === "load_gtms_chapter_editor_data",
+      ).length;
+      await field.fill("unsubmitted text typed while sync was pending");
+      await page.evaluate(() => globalThis.__releaseDraftSync());
+      await syncing;
+      await expect(field).toBeFocused();
+      await expect(field).toHaveValue("unsubmitted text typed while sync was pending");
+      const calls = (await readMockTauriState(page)).invocations;
+      expect(calls.filter((entry) => entry.command === "update_gtms_editor_row_fields")).toHaveLength(0);
+      expect(calls.filter((entry) => entry.command === "load_gtms_chapter_editor_data")).toHaveLength(loadsBefore);
+      await expect(page.locator(".modal-card--navigation-loading")).toHaveCount(0);
+      // A deliberate save releases the deferred conflict reload.
+      await field.press("Shift+Enter");
+      await expect.poll(async () => (await readMockTauriState(page)).invocations.filter(
+        (entry) => entry.command === "update_gtms_editor_row_fields",
+      ).length).toBe(1);
+      await runEditorBackgroundSync(page);
+      await expect(page.locator('[data-action="open-editor-conflict-resolution:fixture-row-0002:vi"]')).toBeVisible();
+    });
+  }
+
+  test("an earlier save can finish without committing newer focused draft text", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 6 }, { mockTauri: true });
+    await page.evaluate(() => {
+      const pending = new Promise((resolve) => { globalThis.__finishEarlierSave = resolve; });
+      let savedText = null;
+      globalThis.__gnosisMockTauriHandlers = {
+        async update_gtms_editor_row_fields({ input }) {
+          globalThis.__earlierSaveStarted = true;
+          await pending;
+          savedText = input.fields.vi;
+          return { status: "saved", row: {
+            rowId: input.rowId, lifecycleState: "active", textStyle: "paragraph",
+            fields: input.fields, footnotes: input.footnotes, imageCaptions: input.imageCaptions,
+            images: {}, fieldStates: {},
+          } };
+        },
+        load_gtms_editor_field_history() {
+          return { entries: savedText === null ? [] : [{
+            commitSha: "earlier-save", plainText: savedText,
+            authorName: "Mock Backend", operationType: "editor-update",
+          }] };
+        },
+      };
+    });
+    let field = await activateMainEditorField(page, "fixture-row-0001", "vi");
+    await field.fill("earlier deliberate save");
+    await field.press("Shift+Enter");
+    await page.waitForFunction(() => globalThis.__earlierSaveStarted === true);
+    field = await activateMainEditorField(page, "fixture-row-0001", "vi");
+    await field.fill("newer unsaved draft");
+    await page.locator('[data-action="switch-editor-sidebar-tab:history"]').click();
+    await page.evaluate(() => globalThis.__finishEarlierSave());
+    await expect(page.locator(".history-item__content").first()).toContainText("earlier deliberate save");
+    await expect(field).toHaveValue("newer unsaved draft");
+    await expect(field).toBeFocused();
+    const saves = (await readMockTauriState(page)).invocations.filter(
+      (entry) => entry.command === "update_gtms_editor_row_fields",
+    );
+    expect(saves).toHaveLength(1);
+    expect(saves[0].payload.input.fields.vi).toBe("earlier deliberate save");
+  });
+
+  for (const platform of ["mac", "windows"]) {
+    test(`refresh preserves an open draft without committing it (${platform})`, async ({ page }) => {
+      await mountEditorFixture(page, { rowCount: 6 }, { mockTauri: true, path: `/?platform=${platform}` });
+      const field = await activateMainEditorField(page, "fixture-row-0001", "vi");
+      await field.fill("draft retained across refresh");
+      const before = await readMockTauriState(page);
+      await page.locator('[data-action="refresh-page"]').click();
+      await expect.poll(async () => (await readMockTauriState(page)).invocations.filter(
+        (entry) => entry.command === "load_gtms_chapter_editor_data",
+      ).length).toBeGreaterThan(0);
+      // Await a complete refresh too, checking repeated reloads and shortcut/API use.
+      await runEditorRefresh(page);
+      await expect(field).toHaveValue("draft retained across refresh");
+      await expect(field).toBeFocused();
+      const after = await readMockTauriState(page);
+      expect(after.histories).toEqual(before.histories);
+      expect(after.invocations.filter((entry) => entry.command === "update_gtms_editor_row_fields")).toHaveLength(0);
+    });
+  }
+
+  test("failed refresh retains the latest open draft and allows retry", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 6 }, { mockTauri: true });
+    const field = await activateMainEditorField(page, "fixture-row-0001", "vi");
+    await field.fill("draft survives a read failure");
+    await page.evaluate(() => {
+      globalThis.__gnosisMockTauriHandlers = {
+        load_gtms_chapter_editor_data() { throw new Error("Fixture read failure"); },
+      };
+    });
+    await runEditorRefresh(page);
+    await expect(page.getByText("Up to date", { exact: true })).toHaveCount(0);
+    expect((await readMockTauriState(page)).invocations.filter(
+      (entry) => entry.command === "sync_gtms_project_editor_repo",
+    )).toHaveLength(0);
+
+    await expect(field).toHaveValue("draft survives a read failure");
+    await expect(field).toBeFocused();
+    await field.fill("latest draft after read failure");
+    await page.evaluate(() => { delete globalThis.__gnosisMockTauriHandlers.load_gtms_chapter_editor_data; });
+    await runEditorRefresh(page);
+    await expect(field).toHaveValue("latest draft after read failure");
+    await expect(field).toBeFocused();
+    expect((await readMockTauriState(page)).invocations.filter(
+      (entry) => entry.command === "update_gtms_editor_row_fields",
+    )).toHaveLength(0);
+  });
+
   test("mounting the editor fixture renders one translate action in unified AI settings mode", async ({ page }) => {
     await mountEditorFixture(page, {
       rowCount: 6,
@@ -2595,6 +2751,59 @@ test.describe("editor regressions", () => {
     await expect(page.locator('[data-nav-target="glossaries"]')).toHaveCount(0);
     await expect(page.locator('[data-nav-target="projects"]')).toHaveCount(0);
   });
+
+  for (const destination of ["Projects", "glossary header", "glossary term"]) {
+    test(`leaving through ${destination} saves the focused row without Shift+Enter`, async ({ page }) => {
+      await page.addInitScript(() => {
+        globalThis.__gnosisMockTauriHandlers = {
+          async load_gtms_glossary_editor_data() {
+            return {
+              glossaryId: "fixture-glossary", title: "Fixture Glossary",
+              sourceLanguage: { code: "es", name: "Spanish" },
+              targetLanguage: { code: "vi", name: "Vietnamese" },
+              termCount: 1,
+              terms: [{ termId: "term-1", sourceTerms: ["alpha"], targetTerms: ["alpha"],
+                notesToTranslators: "", footnote: "" }],
+            };
+          },
+        };
+      });
+      await mountEditorFixture(page, { rowCount: 6, glossary: true }, { mockTauri: true });
+      const field = await activateMainEditorField(page, "fixture-row-0001", "vi");
+      const draft = `draft saved when leaving through ${destination}`;
+      await field.fill(draft);
+      await expect(field).toBeFocused();
+      expect((await readMockTauriState(page)).invocations.filter(
+        (entry) => entry.command === "update_gtms_editor_row_fields",
+      )).toHaveLength(0);
+
+      if (destination === "Projects") {
+        await page.locator('[data-nav-target="projects"]').click();
+      } else if (destination === "glossary header") {
+        await page.locator('[data-action="open-editor-glossary"]').click();
+      } else {
+        const mark = page.locator(
+          '[data-editor-row-card][data-row-id="fixture-row-0001"] [data-editor-display-field][data-language-code="es"] [data-editor-glossary-mark]',
+        ).first();
+        const bounds = await mark.boundingBox();
+        expect(bounds).not.toBeNull();
+        // The first click replaces the mark with a textarea; click the same
+        // coordinates twice to exercise the real pointer-based term shortcut.
+        await page.mouse.dblclick(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+      }
+
+      await expect(page.locator("h1.page-header__title")).toHaveText(
+        destination === "Projects" ? "Projects" : "Fixture Glossary",
+      );
+      await expect.poll(async () => (
+        await readMockTauriState(page)
+      ).histories["fixture-chapter::fixture-row-0001::vi"]?.[0]?.plainText).toBe(draft);
+      const saves = (await readMockTauriState(page)).invocations.filter(
+        (entry) => entry.command === "update_gtms_editor_row_fields",
+      );
+      expect(saves).toHaveLength(1);
+    });
+  }
 
   test("active search highlights keep the textarea text geometry after resize", async ({ page }) => {
     const targetText = [

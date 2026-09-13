@@ -122,6 +122,7 @@ const {
 } = await import("./state.js");
 const { queryClient } = await import("./query-client.js");
 const {
+  maybeStartEditorBackgroundSync,
   startEditorBackgroundSyncSession,
   stopEditorBackgroundSyncSession,
   syncAndStopEditorBackgroundSyncSession,
@@ -1399,4 +1400,120 @@ test("background sync opens a required update prompt when the repo was saved by 
   assert.equal(state.appUpdate.version, "0.1.36");
   assert.equal(state.appUpdate.currentVersion, "0.1.35");
   assert.equal(state.appUpdate.message, "Update before syncing this project.");
+});
+
+
+test("periodic sync leaves an open dirty row unsaved", async (t) => {
+  installEditorFixture();
+  invokeLog.length = 0;
+  let now = 0;
+  const previousNow = performance.now;
+  performance.now = () => now;
+  t.after(() => { performance.now = previousNow; });
+  const row = createEditorRowFixture({
+    fields: { es: "unfinished draft", en: "hello" },
+    persistedFields: { es: "hola", en: "hello" },
+    baseFields: { es: "hola", en: "hello" },
+    saveStatus: "dirty",
+  });
+  state.editorChapter.rows = [row];
+  state.editorChapter.dirtyRowIds = new Set([row.rowId]);
+  state.editorChapter.activeRowId = row.rowId;
+  state.editorChapter.activeLanguageCode = "es";
+  state.editorChapter.mainFieldEditor = { rowId: row.rowId, languageCode: "es" };
+  invokeHandler = async (command) => { throw new Error(`Unexpected command: ${command}`); };
+  startEditorBackgroundSyncSession(() => {}, { skipInitialSync: true });
+  now = 180_000;
+  [...scheduledIntervals.values()][0]();
+  await maybeStartEditorBackgroundSync(() => {});
+  assert.deepEqual(invokeLog, []);
+  assert.equal(state.editorChapter.rows[0].fields.es, "unfinished draft");
+  assert.equal(state.editorChapter.rows[0].persistedFields.es, "hola");
+  assert.equal(state.editorChapter.backgroundSyncStatus, "waiting");
+  assert.equal(state.editorChapter.mainFieldEditor.rowId, row.rowId);
+});
+
+
+test("sync defers imported-conflict reload when typing starts in flight and retries after drafts clear", async () => {
+  installEditorFixture();
+  invokeLog.length = 0;
+  const row = createEditorRowFixture();
+  state.editorChapter.rows = [row];
+  const response = deferred();
+  let syncCount = 0;
+  invokeHandler = async (command) => {
+    if (command === "sync_gtms_project_editor_repo") {
+      syncCount += 1;
+      return syncCount === 1 ? response.promise : { oldHeadSha: "head-2", newHeadSha: "head-2" };
+    }
+    if (command === "load_gtms_chapter_editor_data") return createRemoteChapterLoadPayload([row]);
+    throw new Error(`Unexpected command: ${command}`);
+  };
+  const modalStates = [];
+  const render = () => { modalStates.push(state.navigationLoadingModal?.isOpen); };
+  startEditorBackgroundSyncSession(render, { skipInitialSync: true });
+  const pending = syncEditorBackgroundNowWithSummary(render);
+  await Promise.resolve();
+  state.editorChapter.rows = [{ ...row, fields: { ...row.fields, es: "draft typed during sync" }, saveStatus: "dirty" }];
+  state.editorChapter.dirtyRowIds = new Set([row.rowId]);
+  response.resolve({ repoSyncStatus: "importedEditorConflicts", affectedChapterIds: ["chapter-1"], newHeadSha: "head-2" });
+  const deferredResult = await pending;
+  assert.equal(deferredResult.reloadDeferred, true);
+  assert.equal(deferredResult.performedBlockingReload, false);
+  assert.equal(deferredResult.requiresChapterReload, true);
+  assert.equal(modalStates.includes(true), false);
+  assert.equal(invokeLog.some((entry) => entry.command === "load_gtms_chapter_editor_data"), false);
+  assert.equal(state.editorChapter.rows[0].fields.es, "draft typed during sync");
+  assert.equal(state.editorChapter.backgroundSyncStatus, "waiting");
+
+  // Reverting the draft clears dirty tracking; the next remote response contains
+  // no conflict notification, but the deferred local reload must still happen.
+  state.editorChapter.rows = [row];
+  state.editorChapter.dirtyRowIds = new Set();
+  const retried = await syncEditorBackgroundNowWithSummary(render);
+  assert.equal(retried.performedBlockingReload, true);
+  assert.equal(retried.reloadDeferred, false);
+  assert.equal(retried.blockingReloadReason, "imported-editor-conflicts");
+  const loadCount = invokeLog.filter((entry) => entry.command === "load_gtms_chapter_editor_data").length;
+  assert.equal(loadCount, 1);
+  await syncEditorBackgroundNowWithSummary(render);
+  assert.equal(invokeLog.filter((entry) => entry.command === "load_gtms_chapter_editor_data").length, loadCount);
+});
+
+test("failed blocking reload preserves rows but reports failure and retries an unchanged head", async () => {
+  installEditorFixture();
+  invokeLog.length = 0;
+  const row = createEditorRowFixture();
+  state.editorChapter.rows = [row];
+  let failLoad = true;
+  let syncCount = 0;
+  invokeHandler = async (command) => {
+    if (command === "sync_gtms_project_editor_repo") {
+      syncCount += 1;
+      return syncCount === 1
+        ? { chapterLanguagesChanged: true, oldHeadSha: "head-1", newHeadSha: "head-2" }
+        : { oldHeadSha: "head-2", newHeadSha: "head-2" };
+    }
+    if (command === "load_gtms_chapter_editor_data") {
+      if (failLoad) throw new Error("Simulated read failure");
+      return createRemoteChapterLoadPayload([row]);
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+  startEditorBackgroundSyncSession(() => {}, { skipInitialSync: true });
+  const failed = await syncEditorBackgroundNowWithSummary(() => {});
+  assert.equal(failed.performedBlockingReload, false);
+  assert.equal(failed.reloadDeferred, false);
+  assert.equal(failed.requiresChapterReload, true);
+  assert.equal(state.editorChapter.status, "ready");
+  assert.equal(state.editorChapter.rows[0], row);
+  assert.equal(state.editorChapter.chapterBaseCommitSha, "head-1");
+  assert.equal(state.editorChapter.backgroundSyncStatus, "error");
+  failLoad = false;
+  // The assistant sidebar also needs to propagate successful chapter loading.
+  state.editorChapter.sidebarTab = "assistant";
+  const retried = await syncEditorBackgroundNowWithSummary(() => {});
+  assert.equal(retried.performedBlockingReload, true);
+  assert.equal(state.editorChapter.chapterBaseCommitSha, "head-2");
+  assert.equal(state.editorChapter.backgroundSyncStatus, "idle");
 });

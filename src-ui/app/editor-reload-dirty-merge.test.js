@@ -31,7 +31,7 @@ test("preserves in-flight typed content and dirty ids for a same-chapter reload"
   assert.deepEqual([...dirtyRowIds], ["r2"], "dirty tracking survives the reload");
 });
 
-test("drops dirty ids for rows the reload no longer contains", () => {
+test("refuses a reload that would discard a dirty row removed on disk", () => {
   const reloadedRows = [reloadedRow("r1", "server one")];
   const liveChapter = {
     chapterId: CHAPTER_ID,
@@ -39,10 +39,12 @@ test("drops dirty ids for rows the reload no longer contains", () => {
     dirtyRowIds: new Set(["gone"]),
   };
 
-  const { rows, dirtyRowIds } = mergeInFlightDirtyEditorRows(reloadedRows, liveChapter, CHAPTER_ID);
-
-  assert.equal(rows.length, 1);
-  assert.equal(dirtyRowIds.size, 0, "a dirty row absent from the payload is not resurrected");
+  assert.throws(
+    () => mergeInFlightDirtyEditorRows(reloadedRows, liveChapter, CHAPTER_ID),
+    /Your draft has been kept in the editor/,
+  );
+  assert.equal(liveChapter.rows[0].fields.target, "typed then deleted on disk");
+  assert.deepEqual([...liveChapter.dirtyRowIds], ["gone"]);
 });
 
 test("does not merge when the live chapter is a different chapter", () => {
@@ -57,6 +59,18 @@ test("does not merge when the live chapter is a different chapter", () => {
 
   assert.equal(rows[0].fields.target, "server one");
   assert.equal(dirtyRowIds.size, 0);
+});
+
+test("refuses a reload that removes the language containing a draft", () => {
+  const liveRow = {
+    ...reloadedRow("r1", "unsaved translation"),
+    persistedFields: { target: "saved translation" },
+  };
+  const liveChapter = { chapterId: CHAPTER_ID, rows: [liveRow], dirtyRowIds: new Set(["r1"]) };
+  assert.throws(() => mergeInFlightDirtyEditorRows(
+    [reloadedRow("r1", "saved translation")], liveChapter, CHAPTER_ID, [{ code: "source" }],
+  ), /A language with unsaved changes was removed/);
+  assert.equal(liveChapter.rows[0], liveRow);
 });
 
 test("returns the reloaded rows untouched when nothing is dirty", () => {
