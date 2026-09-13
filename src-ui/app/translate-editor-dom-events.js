@@ -340,6 +340,17 @@ export function registerTranslateEditorDomEvents(app, render) {
   });
 
   app.addEventListener("mousedown", (event) => {
+    // Refresh preserves the draft. Do not let its button first blur the textarea
+    // and submit that draft through the ordinary focusout save handler.
+    if (
+      closestEventTarget(event.target, '[data-action="refresh-page"]')
+      && document.activeElement instanceof HTMLTextAreaElement
+      && document.activeElement.matches("[data-editor-row-field]")
+    ) {
+      event.preventDefault();
+      return;
+    }
+
     const button = closestEventTarget(
       event.target,
       "[data-editor-row-text-style-button], [data-editor-inline-style-button], [data-editor-separator-button], [data-editor-link-button], [data-editor-footnote-button], [data-editor-image-button], [data-editor-image-caption-button], [data-editor-image-upload-dropzone], [data-editor-image-upload-close-button], [data-editor-image-url-close-button], [data-editor-image-url-status-button], [data-editor-language-image-remove-button], [data-action^=\"switch-editor-sidebar-tab:\"], [data-action^=\"restore-editor-history:\"], [data-action^=\"run-editor-ai-translate:\"], [data-action^=\"apply-editor-assistant-draft:\"], [data-action^=\"review-editor-text-now:\"], [data-action=\"review-editor-text-now\"], [data-action=\"apply-editor-ai-review\"], [data-preview-search-nav-button]",

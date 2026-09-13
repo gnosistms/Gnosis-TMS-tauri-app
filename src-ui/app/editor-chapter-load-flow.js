@@ -32,7 +32,7 @@ import {
   waitForEditorOperationQueueIdle,
 } from "./editor-operation-queue.js";
 import { resetProjectsPageSync } from "./page-sync.js";
-import { cloneDirtyRowIds } from "./editor-row-persistence-model.js";
+import { cloneDirtyRowIds, editorRowChangedLanguageCodes } from "./editor-row-persistence-model.js";
 import {
   createEditorChapterFilterState,
   createEditorChapterGlossaryState,
@@ -105,7 +105,7 @@ function hasEditorChapterLoadOperations(operations) {
 // and derives dirty tracking from the pre-invoke snapshot — silently dropping
 // both the typed content and its unsaved-change indicator. Preserve the live
 // dirty rows' content and ids for the chapter being reloaded.
-export function mergeInFlightDirtyEditorRows(reloadedRows, liveChapter, chapterId) {
+export function mergeInFlightDirtyEditorRows(reloadedRows, liveChapter, chapterId, languages = null) {
   const empty = { rows: reloadedRows, dirtyRowIds: new Set() };
   if (!chapterId || liveChapter?.chapterId !== chapterId) {
     return empty;
@@ -119,6 +119,20 @@ export function mergeInFlightDirtyEditorRows(reloadedRows, liveChapter, chapterI
       .filter((row) => row?.rowId)
       .map((row) => [row.rowId, row]),
   );
+  const reloadedRowsById = new Map(reloadedRows.map((row) => [row.rowId, row]));
+  const languageCodes = Array.isArray(languages) ? new Set(languages.map((language) => language.code)) : null;
+  for (const rowId of liveDirtyRowIds) {
+    if (!liveRowsById.has(rowId)) {
+      continue;
+    }
+    if (!reloadedRowsById.has(rowId) || reloadedRowsById.get(rowId)?.lifecycleState === "deleted") {
+      throw new Error("A row with unsaved changes was removed on disk. Your draft has been kept in the editor.");
+    }
+    if (languageCodes && [...editorRowChangedLanguageCodes(liveRowsById.get(rowId))]
+      .some((code) => !languageCodes.has(code))) {
+      throw new Error("A language with unsaved changes was removed on disk. Your draft has been kept in the editor.");
+    }
+  }
   const rows = reloadedRows.map((row) =>
     row?.rowId && liveDirtyRowIds.has(row.rowId) && liveRowsById.has(row.rowId)
       ? liveRowsById.get(row.rowId)
@@ -162,7 +176,7 @@ function applyEditorPayloadToState(
   // must not carry a prior chapter's dirty rows, so gate on chapter identity.
   const isSameChapterReload = previousEditorChapter?.chapterId === payload.chapterId;
   const { rows: reconciledRows, dirtyRowIds: preservedDirtyRowIds } = isSameChapterReload
-    ? mergeInFlightDirtyEditorRows(visibleRows, state.editorChapter, payload.chapterId)
+    ? mergeInFlightDirtyEditorRows(visibleRows, state.editorChapter, payload.chapterId, payload.languages)
     : { rows: visibleRows, dirtyRowIds: new Set() };
   const hasImportedEditorConflicts = visibleRows.some((row) =>
     row?.freshness === "conflict"
@@ -307,7 +321,7 @@ function canResumeCurrentEditorChapter(chapterId) {
 
 export async function loadSelectedChapterEditorData(render, options = {}, operations = {}) {
   if (!hasEditorChapterReloadOperations(operations)) {
-    return;
+    return false;
   }
 
   const team = selectedProjectsTeam();
@@ -319,7 +333,7 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
       error: "Could not determine which file to open.",
     };
     render?.();
-    return;
+    return false;
   }
   if (await ensureProjectNotTombstoned(render, team, context.project)) {
     state.editorChapter = {
@@ -329,7 +343,7 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
       rows: [],
     };
     render?.();
-    return;
+    return false;
   }
 
   const preserveVisibleRows =
@@ -480,12 +494,25 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
     if (state.editorChapter.sidebarTab === "comments" && state.editorChapter.activeRowId) {
       loadActiveEditorRowComments(render);
     } else if (state.editorChapter.sidebarTab === "assistant") {
-      return;
+      return true;
     } else if (hasActiveEditorField(state.editorChapter)) {
       operations.loadActiveEditorFieldHistory(render);
     }
+    return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    if (preserveVisibleRows && state.editorChapter?.chapterId === context.chapter.id) {
+      // The live rows are the temporary draft storage for an in-process reload.
+      // Keep their latest text, baseline and dirty ids even when loading fails.
+      state.editorChapter = {
+        ...state.editorChapter,
+        status: "ready",
+        error: "",
+      };
+      showNoticeBadge(message || "The file could not be refreshed.", render);
+      render?.();
+      return false;
+    }
     state.editorChapter = {
       ...state.editorChapter,
       status: "error",
@@ -500,6 +527,7 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
     };
     showNoticeBadge(message || "The file could not be loaded.", render);
     render?.();
+    return false;
   }
 }
 

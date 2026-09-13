@@ -710,7 +710,7 @@ export async function persistEditorChapterSelections(render) {
 }
 
 export async function loadSelectedChapterEditorData(render, options = {}) {
-  await reloadSelectedChapterEditorData(render, options);
+  return reloadSelectedChapterEditorData(render, options);
 }
 
 export async function openTranslateChapter(render, chapterId) {

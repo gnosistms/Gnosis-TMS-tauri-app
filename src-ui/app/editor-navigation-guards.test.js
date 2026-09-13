@@ -41,19 +41,28 @@ test("leaving the translate editor proceeds after dirty rows flush", async () =>
   assert.deepEqual(notices, []);
 });
 
-test("refreshing the translate editor waits for dirty rows to flush", async () => {
-  const blocked = await guardRefreshingTranslateEditor({
+test("refresh waits only for submitted writes, without flushing unsaved drafts", async () => {
+  let finishSave;
+  const pendingSave = new Promise((resolve) => { finishSave = resolve; });
+  let finished = false;
+  const refresh = guardRefreshingTranslateEditor({
     currentScreen: "translate",
-    render: () => {},
-    flushDirtyEditorRows: async () => false,
+    waitForPendingEditorWrites: () => pendingSave,
+    flushDirtyEditorRows: () => { assert.fail("Refresh must not submit drafts"); },
+  }).then((allowed) => {
+    finished = true;
+    return allowed;
   });
 
-  const allowed = await guardRefreshingTranslateEditor({
-    currentScreen: "translate",
-    render: () => {},
-    flushDirtyEditorRows: async () => true,
-  });
+  await Promise.resolve();
+  assert.equal(finished, false);
+  finishSave();
+  assert.equal(await refresh, true);
+});
 
-  assert.equal(blocked, false);
-  assert.equal(allowed, true);
+test("refresh outside translate does not wait for editor writes", async () => {
+  assert.equal(await guardRefreshingTranslateEditor({
+    currentScreen: "projects",
+    waitForPendingEditorWrites: () => { assert.fail("Unrelated screen"); },
+  }), true);
 });
