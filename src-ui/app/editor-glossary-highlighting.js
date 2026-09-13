@@ -981,7 +981,7 @@ function buildStructuredGlossaryTooltipPayload(candidate, hoveredTerm, glossaryM
   };
 }
 
-function buildHighlightMarkup(text, matcher, glossaryModel, resolveMatchState = null) {
+function buildHighlightMarkup(text, matcher, glossaryModel, resolveMatchState = null, includeMarkup = true) {
   const sourceText = String(text ?? "");
   const baseText = extractInlineMarkupBaseText(sourceText);
   const result = findLongestGlossaryMatches(baseText, matcher);
@@ -989,14 +989,26 @@ function buildHighlightMarkup(text, matcher, glossaryModel, resolveMatchState = 
     return {
       html: "",
       hasMatches: false,
+      hasErrors: false,
     };
   }
 
   const { tokens, matches } = result;
+  // Diagnostics use exactly the selected highlight matches and error resolver,
+  // without allocating HTML, tooltips, or inline-markup range mappings.
+  if (!includeMarkup) {
+    return {
+      html: "",
+      hasMatches: true,
+      hasErrors: typeof resolveMatchState === "function"
+        && matches.some((match) => resolveMatchState(match.candidate) === "error"),
+    };
+  }
   const htmlParts = [];
   let tokenIndex = 0;
   let matchIndex = 0;
   let characterOffset = 0;
+  let hasErrors = false;
 
   while (tokenIndex < tokens.length) {
     const currentMatch = matches[matchIndex];
@@ -1023,6 +1035,7 @@ function buildHighlightMarkup(text, matcher, glossaryModel, resolveMatchState = 
         "translation-language-panel__glossary-mark",
       ];
       if (matchState === "error") {
+        hasErrors = true;
         matchClasses.push("glossary-match-error");
       }
       const tooltipText = buildGlossaryTooltipText(currentMatch.candidate, glossaryModel);
@@ -1061,6 +1074,7 @@ function buildHighlightMarkup(text, matcher, glossaryModel, resolveMatchState = 
   return {
     html: htmlParts.join(""),
     hasMatches: true,
+    hasErrors,
   };
 }
 
@@ -1217,7 +1231,7 @@ function sourceCandidateHasTargetMatch(candidate, targetTexts, glossaryModel) {
   );
 }
 
-export function buildEditorRowGlossaryHighlights(sections, glossaryModel) {
+export function buildEditorRowGlossaryHighlights(sections, glossaryModel, { includeMarkup = true } = {}) {
   const highlights = new Map();
   if (!glossaryModel?.sourceMatcher) {
     return highlights;
@@ -1246,6 +1260,7 @@ export function buildEditorRowGlossaryHighlights(sections, glossaryModel) {
                 ? "normal"
                 : "error"
           : null,
+        includeMarkup,
       );
       if (highlight.hasMatches) {
         highlights.set(section.code, highlight);
@@ -1258,6 +1273,8 @@ export function buildEditorRowGlossaryHighlights(sections, glossaryModel) {
         section.text ?? "",
         targetMatcher,
         glossaryModel,
+        null,
+        includeMarkup,
       );
       if (highlight.hasMatches) {
         highlights.set(section.code, highlight);

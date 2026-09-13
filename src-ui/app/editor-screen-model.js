@@ -5,6 +5,7 @@ import {
 } from "./editor-conflicts.js";
 import { normalizeEditorAiTranslateState } from "./editor-ai-translate-state.js";
 import { normalizeEditorDerivedGlossariesByRowId } from "./editor-derived-glossary-state.js";
+import { editorRowHasGlossaryError } from "./editor-glossary-highlight-cache.js";
 import { coerceEditorFontSizePx } from "./state.js";
 import { canPermanentlyDeleteProjectFiles } from "./resource-capabilities.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
@@ -537,6 +538,7 @@ export function buildEditorScreenViewModel(appState) {
     filters: editorChapter?.filters,
     targetLanguageCode: targetCode,
     commentSeenRevisions,
+    rowHasGlossaryError: (row) => editorRowHasGlossaryError(row, editorChapter),
   });
   const editorReplace = buildEditorReplaceViewModel(editorChapter, editorFilters);
   const contentRows = buildEditorDisplayItems(

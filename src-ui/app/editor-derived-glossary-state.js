@@ -386,11 +386,12 @@ export function editorDerivedGlossaryMatchesContext(entry, context = {}) {
 }
 
 export function resolveEditorDerivedGlossaryEntry(chapterState, rowId) {
-  const entriesByRowId = normalizeEditorDerivedGlossariesByRowId(
-    chapterState?.derivedGlossariesByRowId,
-  );
-  const entry = entriesByRowId[rowId];
-  return entry ?? null;
+  const entriesByRowId = chapterState?.derivedGlossariesByRowId;
+  if (typeof rowId !== "string" || !rowId.trim() || !entriesByRowId || typeof entriesByRowId !== "object"
+    || !Object.hasOwn(entriesByRowId, rowId)) {
+    return null;
+  }
+  return normalizeEditorDerivedGlossaryEntryState(entriesByRowId[rowId]);
 }
 
 export function resolveReadyEditorDerivedGlossaryEntry(chapterState, rowId) {
@@ -398,11 +399,8 @@ export function resolveReadyEditorDerivedGlossaryEntry(chapterState, rowId) {
   return entry?.status === "ready" ? entry : null;
 }
 
-function buildCurrentHighlightableDerivedGlossaryContext(chapterState, rowId, entry) {
+function buildCurrentHighlightableDerivedGlossaryContext(chapterState, row, entry) {
   const normalizedEntry = normalizeEditorDerivedGlossaryEntryState(entry);
-  const row = (Array.isArray(chapterState?.rows) ? chapterState.rows : []).find(
-    (candidate) => candidate?.rowId === rowId,
-  );
   if (
     !row
     || !normalizedEntry.translationSourceLanguageCode
@@ -436,13 +434,16 @@ function buildCurrentHighlightableDerivedGlossaryContext(chapterState, rowId, en
   });
 }
 
-export function resolveHighlightableEditorDerivedGlossaryEntry(chapterState, rowId) {
+export function resolveHighlightableEditorDerivedGlossaryEntry(chapterState, rowId, row = null) {
   const entry = resolveEditorDerivedGlossaryEntry(chapterState, rowId);
   if (!entry?.matcherModel) {
     return null;
   }
 
-  const context = buildCurrentHighlightableDerivedGlossaryContext(chapterState, rowId, entry);
+  const currentRow = row ?? (Array.isArray(chapterState?.rows) ? chapterState.rows : []).find(
+    (candidate) => candidate?.rowId === rowId,
+  );
+  const context = buildCurrentHighlightableDerivedGlossaryContext(chapterState, currentRow, entry);
   if (!context || editorDerivedGlossaryIsStale(entry, context)) {
     return null;
   }

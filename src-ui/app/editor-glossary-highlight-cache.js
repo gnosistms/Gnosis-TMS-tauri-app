@@ -1,5 +1,6 @@
 import { buildEditorRowGlossaryHighlights } from "./editor-glossary-highlighting.js";
 import { resolveHighlightableEditorDerivedGlossaryEntry } from "./editor-derived-glossary-state.js";
+import { isCustomHtmlRowTextStyle } from "./editor-row-text-style.js";
 import {
   languageBaseCode,
   languageBaseCodesMatch,
@@ -12,6 +13,10 @@ const EDITOR_GLOSSARY_HIGHLIGHT_CACHE_LIMIT = 400;
 let editorGlossaryHighlightCacheContextKey = "";
 let editorGlossaryHighlightCacheMatcherModel = null;
 const editorGlossaryHighlightCache = new Map();
+// One small diagnostic per row in the current chapter, independent of the
+// bounded viewport HTML cache. Sequential chapter scans must not evict each other.
+const editorGlossaryErrorCache = new Map();
+let editorGlossaryErrorCacheRows = null;
 
 function buildEditorRowSections(row, chapterState = state.editorChapter) {
   return (Array.isArray(chapterState?.languages) ? chapterState.languages : []).map((language) => ({
@@ -40,6 +45,8 @@ function synchronizeEditorGlossaryHighlightCache(chapterState = state.editorChap
   editorGlossaryHighlightCacheContextKey = nextContextKey;
   editorGlossaryHighlightCacheMatcherModel = nextMatcherModel;
   editorGlossaryHighlightCache.clear();
+  editorGlossaryErrorCache.clear();
+  editorGlossaryErrorCacheRows = null;
 }
 
 function buildEditorRowGlossaryHighlightCacheKey(row, chapterState = state.editorChapter) {
@@ -66,6 +73,7 @@ function buildEditorRowGlossaryHighlightCacheKey(row, chapterState = state.edito
   const derivedGlossaryEntry = resolveHighlightableEditorDerivedGlossaryEntry(
     chapterState,
     rowId,
+    row,
   );
   const derivedSourceCode = derivedGlossaryEntry?.matcherModel?.sourceLanguage?.code ?? "";
   const derivedTargetCode = derivedGlossaryEntry?.matcherModel?.targetLanguage?.code ?? "";
@@ -102,7 +110,6 @@ export function buildCachedEditorRowGlossaryHighlights(row, chapterState = state
   synchronizeEditorGlossaryHighlightCache(chapterState);
 
   const glossaryModel = chapterState?.glossary?.matcherModel ?? null;
-  const directTargetLanguageCode = glossaryModel?.targetLanguage?.code ?? "";
   const cacheKey = buildEditorRowGlossaryHighlightCacheKey(row, chapterState);
   if (!glossaryModel && !cacheKey) {
     return new Map();
@@ -112,25 +119,36 @@ export function buildCachedEditorRowGlossaryHighlights(row, chapterState = state
     return editorGlossaryHighlightCache.get(cacheKey);
   }
 
-  const sections = buildEditorRowSections(row, chapterState);
+  const derivedGlossaryEntry = resolveHighlightableEditorDerivedGlossaryEntry(
+    chapterState,
+    row?.rowId ?? "",
+    row,
+  );
+  const highlightMap = buildMergedEditorRowGlossaryHighlights(
+    buildEditorRowSections(row, chapterState), glossaryModel, derivedGlossaryEntry?.matcherModel,
+  );
+  cacheEditorGlossaryHighlightResult(cacheKey, highlightMap);
+  return highlightMap;
+}
+
+function buildMergedEditorRowGlossaryHighlights(sections, glossaryModel, derivedModel, options) {
+  const directTargetLanguageCode = glossaryModel?.targetLanguage?.code ?? "";
   const highlightMap = new Map();
   if (glossaryModel) {
     for (const [languageCode, nextHighlight] of buildEditorRowGlossaryHighlights(
       sections,
       glossaryModel,
+      options,
     )) {
       highlightMap.set(languageCode, nextHighlight);
     }
   }
 
-  const derivedGlossaryEntry = resolveHighlightableEditorDerivedGlossaryEntry(
-    chapterState,
-    row?.rowId ?? "",
-  );
-  if (derivedGlossaryEntry?.matcherModel) {
+  if (derivedModel) {
     for (const [languageCode, nextHighlight] of buildEditorRowGlossaryHighlights(
       sections,
-      derivedGlossaryEntry.matcherModel,
+      derivedModel,
+      options,
     )) {
       if (
         languageBaseCodesMatch({ code: languageCode }, { code: directTargetLanguageCode })
@@ -142,8 +160,42 @@ export function buildCachedEditorRowGlossaryHighlights(row, chapterState = state
     }
   }
 
-  cacheEditorGlossaryHighlightResult(cacheKey, highlightMap);
   return highlightMap;
+}
+
+export function editorRowHasGlossaryError(row, chapterState = state.editorChapter) {
+  if (isCustomHtmlRowTextStyle(row?.textStyle)) {
+    return false;
+  }
+  synchronizeEditorGlossaryHighlightCache(chapterState);
+  if (editorGlossaryErrorCacheRows !== chapterState?.rows) {
+    editorGlossaryErrorCacheRows = chapterState?.rows;
+    const rowIds = new Set((chapterState?.rows ?? []).map((item) => item.rowId));
+    for (const rowId of editorGlossaryErrorCache.keys()) {
+      if (!rowIds.has(rowId)) editorGlossaryErrorCache.delete(rowId);
+    }
+  }
+
+  const glossaryModel = chapterState?.glossary?.matcherModel ?? null;
+  const derivedModel = resolveHighlightableEditorDerivedGlossaryEntry(
+    chapterState, row?.rowId ?? "", row,
+  )?.matcherModel ?? null;
+  if (!glossaryModel && !derivedModel) return false;
+
+  const sections = buildEditorRowSections(row, chapterState);
+  const textKey = JSON.stringify(sections);
+  const cached = editorGlossaryErrorCache.get(row?.rowId);
+  if (cached?.textKey === textKey && cached.derivedModel === derivedModel) {
+    return cached.hasErrors;
+  }
+  const diagnostics = buildMergedEditorRowGlossaryHighlights(
+    sections, glossaryModel, derivedModel, { includeMarkup: false },
+  );
+  const hasErrors = [...diagnostics.values()].some((highlight) => highlight.hasErrors === true);
+  if (row?.rowId) {
+    editorGlossaryErrorCache.set(row.rowId, { textKey, derivedModel, hasErrors });
+  }
+  return hasErrors;
 }
 
 export function readCachedEditorRowGlossaryHighlights(row, chapterState = state.editorChapter) {
