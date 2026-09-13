@@ -272,6 +272,26 @@ export function resolveCommandFailureReport(command, error) {
   // are corrected by user action, not a code fix — do not report them as defects
   // (matches the telemetry policy in src-ui/AGENTS.md; see JAVASCRIPT-13/S/T/Q).
   if (
+    command === "upsert_gtms_glossary_term"
+    && (
+      rawMessage === "Enter at least one source term."
+      || rawMessage === "Some source variants are repeated within this term. Remove or change the duplicates before saving."
+      || rawMessage === "The terms highlighted in red below are redundant with other parts of this glossary. Please remove them before saving."
+      || rawMessage.startsWith("Remove or change these duplicate source variants before saving: ")
+    )
+  ) {
+    return null;
+  }
+  if (command === "upsert_gtms_qa_list_term" && rawMessage === "Enter QA term text.") {
+    return null;
+  }
+  if (
+    command === "import_xlsx_to_gtms"
+    && /^Column \d+ in row \d+ has unsupported language code ".*"\. Use supported codes such as /s.test(rawMessage)
+  ) {
+    return null;
+  }
+  if (
     normalizedMessage.includes("no source text to") // nothing to translate/discuss/align yet
     || normalizedMessage.includes("is not a file") // dropped a folder / non-file
     || normalizedMessage.includes("not a valid supported image") // unsupported upload

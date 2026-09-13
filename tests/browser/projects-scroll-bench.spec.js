@@ -1,4 +1,4 @@
-import { test } from "@playwright/test";
+import { test } from "./test.js";
 
 // Scroll-performance probe: scrolls the virtualized projects list one step
 // per animation frame and logs the frame-gap distribution. Not part of the

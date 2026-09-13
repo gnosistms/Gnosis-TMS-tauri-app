@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./test.js";
 
 // Projects page virtualization + scroll restore acceptance tests. The
 // projects fixture writes visible state directly (no Tauri backend), so these

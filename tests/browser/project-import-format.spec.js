@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./test.js";
 
 test("format warning stays readable and its link invokes native sample saving", async ({ page }) => {
   await page.route("**/import-format-fixture", (route) => route.fulfill({
