@@ -1,6 +1,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use rusqlite::Connection;
@@ -30,6 +31,12 @@ pub(super) fn open_project_search_db(db_path: &Path) -> Result<Connection, Strin
             db_path.display()
         )
     })?;
+    // A refresh can legitimately hold the writer reservation while indexing a
+    // chapter. Wait for it rather than failing after rusqlite's five-second default.
+    // WAL readers remain independent; the wait is bounded and runs off the IPC thread.
+    connection
+        .busy_timeout(Duration::from_secs(30))
+        .map_err(|error| format!("Could not configure project search lock timeout: {error}"))?;
     connection
         .execute_batch(
             "PRAGMA journal_mode = WAL;

@@ -5,7 +5,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, Transaction, TransactionBehavior};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tauri::AppHandle;
@@ -14,6 +14,7 @@ use super::PROJECT_SEARCH_CONTENT_VERSION;
 use super::{
     discovery::{discover_project_repos, load_indexed_repo_states, RepoRecord},
     refresh::{plan_repo_refresh, RepoRefreshPlan},
+    schema::mark_project_search_index_refresh_completed,
     scoring::{
         collect_unique_bigrams, collect_unique_tokens, collect_unique_trigrams,
         normalize_search_text,
@@ -160,14 +161,39 @@ pub(super) fn refresh_project_index_current(
     connection: &mut Connection,
 ) -> Result<ProjectSearchIndexRefreshStats, String> {
     let repo_root = installation_data_dir(app, installation_id)?.join("projects");
-    fs::create_dir_all(&repo_root).map_err(|error| {
+    refresh_project_index_at_root(&repo_root, connection)
+}
+
+fn refresh_project_index_at_root(
+    repo_root: &Path,
+    connection: &mut Connection,
+) -> Result<ProjectSearchIndexRefreshStats, String> {
+    fs::create_dir_all(repo_root).map_err(|error| {
         format!(
             "Could not create the local project repo folder '{}': {error}",
             repo_root.display()
         )
     })?;
 
-    let repos = discover_project_repos(&repo_root)?;
+    // Reserve the writer before reading indexed state. This serializes refreshes
+    // across connections AND app processes and avoids upgrading a stale WAL snapshot.
+    // Keep the completion marker atomic with the documents, including stale removals.
+    let mut transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| format!("Could not start project search refresh: {error}"))?;
+    let stats = refresh_project_index_in_transaction(repo_root, &mut transaction)?;
+    mark_project_search_index_refresh_completed(&transaction)?;
+    transaction
+        .commit()
+        .map_err(|error| format!("Could not commit project search refresh: {error}"))?;
+    Ok(stats)
+}
+
+fn refresh_project_index_in_transaction(
+    repo_root: &Path,
+    connection: &mut Transaction<'_>,
+) -> Result<ProjectSearchIndexRefreshStats, String> {
+    let repos = discover_project_repos(repo_root)?;
     let indexed_repos = load_indexed_repo_states(connection)?;
     let active_repo_keys = repos
         .iter()
@@ -238,12 +264,12 @@ pub(super) fn refresh_project_index_current(
 }
 
 fn apply_incremental_repo_refresh(
-    connection: &mut Connection,
+    connection: &mut Transaction<'_>,
     repo: &RepoRecord,
     plan: &RepoRefreshPlan,
     metadata_changed: bool,
 ) -> Result<(), String> {
-    let transaction = connection.transaction().map_err(|error| {
+    let transaction = connection.savepoint().map_err(|error| {
         format!("Could not start project search incremental transaction: {error}")
     })?;
 
@@ -274,9 +300,9 @@ fn apply_incremental_repo_refresh(
     Ok(())
 }
 
-fn reindex_repo(connection: &mut Connection, repo: &RepoRecord) -> Result<(), String> {
+fn reindex_repo(connection: &mut Transaction<'_>, repo: &RepoRecord) -> Result<(), String> {
     let transaction = connection
-        .transaction()
+        .savepoint()
         .map_err(|error| format!("Could not start project search reindex transaction: {error}"))?;
 
     remove_repo_from_index_tx(&transaction, &repo.repo_key)?;
@@ -611,4 +637,151 @@ fn current_unix_timestamp() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::project_search::schema::{ensure_project_search_schema, open_project_search_db};
+    use std::{path::PathBuf, sync::mpsc, thread, time::Duration};
+
+    struct SearchFixture(PathBuf);
+
+    impl SearchFixture {
+        fn new() -> Self {
+            let root =
+                std::env::temp_dir().join(format!("gnosis-search-lock-{}", uuid::Uuid::now_v7()));
+            fs::create_dir_all(&root).unwrap();
+            Self(root)
+        }
+
+        fn open(&self) -> Connection {
+            let connection = open_project_search_db(&self.0.join("search.sqlite3")).unwrap();
+            ensure_project_search_schema(&connection).unwrap();
+            connection
+        }
+    }
+
+    impl Drop for SearchFixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn seed_stale_repo(connection: &Connection) {
+        connection.execute(
+            "INSERT INTO indexed_repos (repo_key, project_id, repo_name, project_title, head_sha, last_indexed_at)
+             VALUES ('stale', 'stale', 'stale', 'Stale', 'old', 0)", [],
+        ).unwrap();
+    }
+
+    #[test]
+    fn refresh_waits_for_another_writer_beyond_default_timeout_without_blocking_readers() {
+        let fixture = SearchFixture::new();
+        let mut writer = fixture.open();
+        seed_stale_repo(&writer);
+        let transaction = writer
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+        transaction
+            .execute("UPDATE indexed_repos SET head_sha = 'new'", [])
+            .unwrap();
+        let reader = fixture.open();
+        let mut refresher = fixture.open();
+        let projects = fixture.0.join("projects");
+        let (started_tx, started_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let result = refresh_project_index_at_root(&projects, &mut refresher);
+            done_tx.send(result.map(|stats| stats.repo_count)).unwrap();
+        });
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        // Exceed rusqlite's old five-second default with an actual competing writer.
+        assert!(matches!(
+            done_rx.recv_timeout(Duration::from_secs(6)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        let head: String = reader
+            .query_row("SELECT head_sha FROM indexed_repos", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            head, "old",
+            "WAL readers retain the last committed snapshot"
+        );
+        transaction.commit().unwrap();
+        assert_eq!(
+            done_rx
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .unwrap(),
+            0
+        );
+        worker.join().unwrap();
+        let remaining: i64 = reader
+            .query_row("SELECT COUNT(*) FROM indexed_repos", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(remaining, 0);
+        assert!(
+            !crate::project_search::schema::project_search_index_requires_refresh(&reader).unwrap()
+        );
+    }
+
+    #[test]
+    fn failed_refresh_rolls_back_stale_removals_and_completion_marker() {
+        let fixture = SearchFixture::new();
+        let mut connection = fixture.open();
+        seed_stale_repo(&connection);
+        connection
+            .execute_batch(
+                "CREATE TRIGGER fail_completion BEFORE INSERT ON search_metadata
+             BEGIN SELECT RAISE(ABORT, 'fixture completion failure'); END;",
+            )
+            .unwrap();
+        let error = refresh_project_index_at_root(&fixture.0.join("projects"), &mut connection)
+            .err()
+            .unwrap();
+        assert!(error.contains("fixture completion failure"));
+        let remaining: i64 = connection
+            .query_row("SELECT COUNT(*) FROM indexed_repos", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            remaining, 1,
+            "the previously usable index must survive a failed refresh"
+        );
+        let markers: i64 = connection
+            .query_row("SELECT COUNT(*) FROM search_metadata", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(markers, 0);
+        connection
+            .execute_batch("DROP TRIGGER fail_completion")
+            .unwrap();
+        refresh_project_index_at_root(&fixture.0.join("projects"), &mut connection).unwrap();
+    }
+
+    #[test]
+    fn full_and_incremental_refresh_work_inside_the_writer_transaction() {
+        let fixture = SearchFixture::new();
+        let mut connection = fixture.open();
+        let mut transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+        let mut repo = RepoRecord {
+            repo_key: "project".into(),
+            project_id: "project".into(),
+            repo_name: "project".into(),
+            project_title: "Before".into(),
+            repo_path: fixture.0.join("project"),
+            head_sha: "old".into(),
+        };
+        reindex_repo(&mut transaction, &repo).unwrap();
+        repo.project_title = "After".into();
+        repo.head_sha = "new".into();
+        apply_incremental_repo_refresh(&mut transaction, &repo, &RepoRefreshPlan::default(), true)
+            .unwrap();
+        transaction.commit().unwrap();
+        let state = load_indexed_repo_states(&connection).unwrap();
+        assert_eq!(state["project"].project_title, "After");
+        assert_eq!(state["project"].head_sha, "new");
+    }
 }

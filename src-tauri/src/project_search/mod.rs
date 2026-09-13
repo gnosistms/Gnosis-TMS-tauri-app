@@ -13,10 +13,7 @@ mod scoring;
 
 use indexer::refresh_project_index_current;
 use query::search_projects_sync;
-use schema::{
-    ensure_project_search_schema, mark_project_search_index_refresh_completed,
-    open_project_search_db, project_search_db_path,
-};
+use schema::{ensure_project_search_schema, open_project_search_db, project_search_db_path};
 #[cfg(test)]
 use scoring::{
     build_plain_text_snippet, collect_unique_bigrams, collect_unique_tokens,
@@ -192,7 +189,6 @@ fn refresh_project_search_index_sync(
     let mut connection = open_project_search_db(&db_path)?;
     ensure_project_search_schema(&connection)?;
     let stats = refresh_project_index_current(app, input.installation_id, &mut connection)?;
-    mark_project_search_index_refresh_completed(&connection)?;
     Ok(RefreshProjectSearchIndexResponse {
         repo_count: stats.repo_count,
         updated_repo_count: stats.updated_repo_count,
