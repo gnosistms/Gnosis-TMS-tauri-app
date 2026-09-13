@@ -1151,9 +1151,9 @@ fn prepare_typst_workspace(
                 match normalize_editor_text_style_value(Some(text_style)).as_str() {
                     "heading1" => source.push_str(&format!("= {inline}\n\n")),
                     "heading2" => source.push_str(&format!("== {inline}\n\n")),
-                    "quote" | "blockquote" => {
-                        source.push_str(&format!("#quote(block: true)[{inline}]\n\n"))
-                    }
+                    "quote" | "blockquote" => source.push_str(&format!(
+                        "#quote(block: true)[#text(style: \"italic\")[{inline}]]\n\n"
+                    )),
                     "centered" => source.push_str(&format!("#align(center)[{inline}]\n\n")),
                     "indented" => source.push_str(&format!("#pad(left: 2em)[{inline}]\n\n")),
                     _ if Some(block_index) == dropcap_index => {
