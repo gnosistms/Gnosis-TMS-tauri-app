@@ -55,6 +55,33 @@ test("skips the expected session-expired path", () => {
   );
 });
 
+test("expected glossary/QA validation stays visible to callers without becoming telemetry", () => {
+  for (const message of [
+    "Enter at least one source term.",
+    "Some source variants are repeated within this term. Remove or change the duplicates before saving.",
+    "The terms highlighted in red below are redundant with other parts of this glossary. Please remove them before saving.",
+    'Remove or change these duplicate source variants before saving: ["example"]',
+  ]) {
+    assert.equal(resolveCommandFailureReport("upsert_gtms_glossary_term", message), null);
+    assert.ok(resolveCommandFailureReport("unexpected_command", message));
+  }
+  assert.equal(resolveCommandFailureReport("upsert_gtms_qa_list_term", "Enter QA term text."), null);
+  for (const [command, message] of [
+    ["delete_gtms_glossary_term", "The glossary term could not be found."],
+    ["upsert_gtms_glossary_term", "Could not parse term file: invalid JSON"],
+    ["upsert_gtms_qa_list_term", "The QA term file is not a JSON object."],
+  ]) {
+    assert.ok(resolveCommandFailureReport(command, message));
+  }
+});
+
+test("invalid XLSX language headers are expected but other import failures still report", () => {
+  const message = 'Column 1 in row 1 has unsupported language code "Key". Use supported codes such as es, en, vi, zh-Hans, or zh-Hant.';
+  assert.equal(resolveCommandFailureReport("import_xlsx_to_gtms", new Error(message)), null);
+  assert.ok(resolveCommandFailureReport("unexpected_command", message));
+  assert.ok(resolveCommandFailureReport("import_xlsx_to_gtms", "Could not write chapter: disk full"));
+});
+
 test("skips forced-update control flow", () => {
   assert.equal(
     resolveCommandFailureReport(
