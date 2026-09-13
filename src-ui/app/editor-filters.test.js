@@ -5,6 +5,7 @@ import {
   EDITOR_ROW_FILTER_MODE_DELETED,
   EDITOR_ROW_FILTER_MODE_HAS_COMMENTS,
   EDITOR_ROW_FILTER_MODE_HAS_CONFLICT,
+  EDITOR_ROW_FILTER_MODE_HAS_GLOSSARY_ERROR,
   EDITOR_ROW_FILTER_MODE_HAS_FOOTNOTE,
   EDITOR_ROW_FILTER_MODE_HAS_IMAGE,
   EDITOR_ROW_FILTER_MODE_HAS_UNREAD_COMMENTS,
@@ -57,6 +58,65 @@ function row(rowId, fields, lifecycleState = "active", options = {}) {
     })),
   };
 }
+
+test("glossary error filter combines with search and excludes deleted rows", () => {
+  const options = editorRowFilterOptionsForChapter();
+  const conflictIndex = options.findIndex((option) => option.value === EDITOR_ROW_FILTER_MODE_HAS_CONFLICT);
+  assert.deepEqual(options[conflictIndex + 1], {
+    value: EDITOR_ROW_FILTER_MODE_HAS_GLOSSARY_ERROR,
+    label: "Has glossary error",
+  });
+  const evaluatedRows = [];
+  const input = {
+    rows: [
+      row("error-a", { es: "matching source" }),
+      row("valid", { es: "matching source" }),
+      row("error-deleted", { es: "matching source" }, "deleted"),
+      row("error-b", { es: "other source" }),
+    ],
+    languages: [language("es")],
+    filters: { rowFilterMode: EDITOR_ROW_FILTER_MODE_HAS_GLOSSARY_ERROR },
+    rowHasGlossaryError: (item) => {
+      evaluatedRows.push(item.id);
+      return item.id.startsWith("error-");
+    },
+  };
+  const result = buildEditorFilterResult(input);
+  assert.equal(result.hasActiveFilters, true);
+  assert.equal(result.matchingRowCount, 2);
+  assert.deepEqual(result.filteredRows.map((item) => item.id), ["error-a", "error-b"]);
+  assert.deepEqual(evaluatedRows, ["error-a", "valid", "error-b"]);
+
+  const searched = buildEditorFilterResult({
+    ...input,
+    filters: { ...input.filters, searchQuery: "matching" },
+  });
+  assert.deepEqual(searched.filteredRows.map((item) => item.id), ["error-a"]);
+  assert.equal(searched.matchingRowCount, 1);
+  assert.deepEqual(searched.searchResults.map((match) => match.rowId), ["error-a"]);
+
+  const withoutGlossary = buildEditorFilterResult({ ...input, rowHasGlossaryError: undefined });
+  assert.equal(withoutGlossary.matchingRowCount, 0);
+});
+
+test("glossary matching runs only for the effective glossary error filter", () => {
+  const input = {
+    rows: [row("row-1", { es: "source" })],
+    languages: [language("es")],
+    rowHasGlossaryError: () => assert.fail("Glossary matching should not run"),
+  };
+  for (const rowFilterMode of ["show-all", "target-empty", "has-timing-error"]) {
+    buildEditorFilterResult({ ...input, filters: { rowFilterMode } });
+  }
+  const locked = buildEditorFilterResult({
+    ...input,
+    rows: [row("conflict", { es: "source" }, "active", { hasConflict: true })],
+    filters: { rowFilterMode: EDITOR_ROW_FILTER_MODE_HAS_GLOSSARY_ERROR },
+  });
+  assert.equal(locked.isConflictLocked, true);
+  assert.equal(locked.filters.rowFilterMode, EDITOR_ROW_FILTER_MODE_HAS_CONFLICT);
+  assert.deepEqual(locked.filteredRows.map((item) => item.id), ["conflict"]);
+});
 
 test("editor filters are inactive when the search query is empty and the dropdown is show all", () => {
   assert.equal(editorChapterFiltersAreActive({ searchQuery: "" }), false);

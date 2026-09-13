@@ -9,6 +9,7 @@ import {
   editorDerivedGlossaryMatchesContext,
   hydrateEditorDerivedGlossaryEntryState,
   resolveHighlightableEditorDerivedGlossaryEntry,
+  resolveEditorDerivedGlossaryEntry,
   resolveEditorDerivedGlossarySourceText,
 } from "./editor-derived-glossary-state.js";
 
@@ -29,6 +30,21 @@ function readyDerivedEntry(overrides = {}) {
     ...overrides,
   };
 }
+
+test("derived lookup reads only the requested entry and uses an already-known row", () => {
+  const row = { rowId: "row-1", fields: { en: "The inner chamber glows.", es: "" } };
+  const chapter = {
+    glossary: null,
+    get rows() { assert.fail("known-row resolution must not scan chapter rows"); },
+    derivedGlossariesByRowId: {
+      "row-1": readyDerivedEntry({ glossaryRevisionKey: "" }),
+      get unrelated() { assert.fail("must not normalize unrelated derived entries"); },
+    },
+  };
+  assert.equal(resolveEditorDerivedGlossaryEntry(chapter, "missing"), null);
+  assert.equal(resolveEditorDerivedGlossaryEntry(chapter, "row-1").status, "ready");
+  assert.equal(resolveHighlightableEditorDerivedGlossaryEntry(chapter, row.rowId, row).status, "ready");
+});
 
 test("generated derived glossary entries match when the live glossary-source field is still empty", () => {
   const entry = readyDerivedEntry();

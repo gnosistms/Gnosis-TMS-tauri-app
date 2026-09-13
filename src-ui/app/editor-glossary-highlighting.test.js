@@ -29,6 +29,48 @@ function glossaryPayload(overrides = {}) {
   };
 }
 
+test("hasErrors follows red glossary marks for required variants and exemptions", () => {
+  const model = buildEditorGlossaryModel(glossaryPayload({
+    terms: [
+      { termId: "t1", sourceTerms: ["sala"], targetTerms: ["phong", "gian"] },
+      { termId: "t2", sourceTerms: ["meditacion"], targetTerms: ["thien"] },
+      { termId: "t3", sourceTerms: ["opcional"], targetTerms: [""] },
+      { termId: "t4", sourceTerms: ["sala grande"], targetTerms: ["dai sanh"] },
+    ],
+  }));
+  for (const [name, source, target, expected] of [
+    ["missing", "sala", "otro", true],
+    ["alternative", "sala", "gian", false],
+    ["empty target", "sala", "", true],
+    ["mixed matches", "sala meditacion", "phong", true],
+    ["no translation", "opcional", "", false],
+    ["longest match only", "sala grande", "dai sanh", false],
+    ["markup and case", "<b>SALA</b>", "GIAN", false],
+    ["markup error", "<ruby>sala<rt>sa</rt></ruby>", "otro", true],
+    ["no target column", "sala", null, false],
+    ["no source match", "nada", "", false],
+  ]) {
+    const sections = [{ code: "es", text: source }];
+    if (target !== null) sections.push({ code: "vi", text: target });
+    const highlights = buildEditorRowGlossaryHighlights(sections, model);
+    const diagnostics = buildEditorRowGlossaryHighlights(sections, model, { includeMarkup: false });
+    assert.deepEqual([...diagnostics], [...highlights].map(([code, highlight]) => [
+      code, { ...highlight, html: "" },
+    ]), name);
+    assert.equal(highlights.get("es")?.hasErrors ?? false, expected, name);
+    assert.equal(/glossary-match-error/.test(highlights.get("es")?.html ?? ""), expected, name);
+    for (const highlight of highlights.values()) {
+      assert.equal(typeof highlight.hasErrors, "boolean", name);
+    }
+    if (highlights.has("vi")) assert.equal(highlights.get("vi").hasErrors, false, name);
+  }
+  assert.equal(buildEditorRowGlossaryHighlights([{ code: "es", text: "sala" }], null).size, 0);
+  const sourceOnly = buildEditorRowSourceGlossaryHighlights([
+    { code: "es", text: "sala" }, { code: "vi", text: "" },
+  ], model);
+  assert.equal(sourceOnly.get("es").hasErrors, false);
+});
+
 test("glossary matching prefers the longest source term", () => {
   const model = buildEditorGlossaryModel(glossaryPayload({
     terms: [

@@ -13,6 +13,7 @@ export const EDITOR_ROW_FILTER_MODE_HAS_FOOTNOTE = "has-footnote";
 export const EDITOR_ROW_FILTER_MODE_HAS_COMMENTS = "has-comments";
 export const EDITOR_ROW_FILTER_MODE_HAS_UNREAD_COMMENTS = "has-unread-comments";
 export const EDITOR_ROW_FILTER_MODE_HAS_CONFLICT = "has-conflict";
+export const EDITOR_ROW_FILTER_MODE_HAS_GLOSSARY_ERROR = "has-glossary-error";
 export const EDITOR_ROW_FILTER_MODE_HAS_TIMING_ERROR = "has-timing-error";
 
 export const EDITOR_ROW_FILTER_OPTIONS = [
@@ -27,6 +28,7 @@ export const EDITOR_ROW_FILTER_OPTIONS = [
   { value: EDITOR_ROW_FILTER_MODE_HAS_COMMENTS, label: "Has comments" },
   { value: EDITOR_ROW_FILTER_MODE_HAS_UNREAD_COMMENTS, label: "Has unread comments" },
   { value: EDITOR_ROW_FILTER_MODE_HAS_CONFLICT, label: "Has conflict" },
+  { value: EDITOR_ROW_FILTER_MODE_HAS_GLOSSARY_ERROR, label: "Has glossary error" },
   // Subtitle chapters only — hidden from the dropdown elsewhere.
   { value: EDITOR_ROW_FILTER_MODE_HAS_TIMING_ERROR, label: "Has timing error" },
 ];
@@ -183,7 +185,7 @@ function rowHasUnresolvedTextConflict(row, targetLanguageCode) {
   );
 }
 
-function rowMatchesFilterMode(row, rowFilterMode, targetLanguageCode, seenRevisions) {
+function rowMatchesFilterMode(row, rowFilterMode, targetLanguageCode, seenRevisions, rowHasGlossaryError) {
   if (rowFilterMode === EDITOR_ROW_FILTER_MODE_SHOW_ALL) {
     return true;
   }
@@ -210,6 +212,8 @@ function rowMatchesFilterMode(row, rowFilterMode, targetLanguageCode, seenRevisi
       return editorRowHasUnreadComments(row, seenRevisions);
     case EDITOR_ROW_FILTER_MODE_HAS_CONFLICT:
       return rowHasUnresolvedTextConflict(row, targetLanguageCode);
+    case EDITOR_ROW_FILTER_MODE_HAS_GLOSSARY_ERROR:
+      return rowHasGlossaryError(row);
     case EDITOR_ROW_FILTER_MODE_HAS_TIMING_ERROR:
       // Any language with a timing error matches; the marks themselves are
       // computed by the screen model into the row's sections.
@@ -295,6 +299,7 @@ export function buildEditorFilterResult({
   filters,
   targetLanguageCode = "",
   commentSeenRevisions = {},
+  rowHasGlossaryError = () => false,
 }) {
   const normalizedFilters = normalizeEditorChapterFilterState(filters);
   const visibleLanguageCodes = buildVisibleLanguageCodeSet(languages, collapsedLanguageCodes);
@@ -342,7 +347,7 @@ export function buildEditorFilterResult({
       continue;
     }
 
-    if (!rowMatchesFilterMode(row, effectiveFilters.rowFilterMode, targetLanguageCode, commentSeenRevisions)) {
+    if (!rowMatchesFilterMode(row, effectiveFilters.rowFilterMode, targetLanguageCode, commentSeenRevisions, rowHasGlossaryError)) {
       continue;
     }
 
