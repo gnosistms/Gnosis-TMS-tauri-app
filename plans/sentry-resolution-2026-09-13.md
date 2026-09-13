@@ -131,3 +131,27 @@ Localhost-dependent workflow/Rust/browser tests were rerun with network sandbox
 permission after their initial loopback binding failures. No unrelated product
 fixes were made. The pre-existing AI audit plan and a concurrent edit to
 `src-tauri/src/project_import/chapter_editor/pdf_export.rs` remain untouched.
+
+## Pull request follow-up
+
+The user subsequently authorized including the existing `pdf_export.rs` change
+and opening and merging one combined pull request.
+
+1. Verify the PDF blockquote italics change with the existing PDF export tests and
+   formatting/lint checks, and commit it separately.
+2. Compare against the current remote default branch so the PR includes only the
+   Sentry resolution work, this PDF change, and their audit notes.
+3. Open the PR with the completed validation and known browser-test limitations;
+   inspect CI/review results, address relevant failures, and merge after checks.
+4. Verify the merge. The search Sentry issue remains open until the merged fix is
+   actually released; merging alone does not satisfy that release gate.
+
+The user then authorized completing the paused 0.8.110 release after this PR
+lands. The earlier release task stopped before creating a tag or publishing;
+remote verification confirms 0.8.109 is latest and v0.8.110 does not exist.
+Reuse its prepared version metadata in a separate release PR after the fixes
+merge, expand the release notes, verify CI, tag the merged release commit, and
+verify all platform artifacts before resolving search issue 1A in that release.
+
+PDF verification: all 30 existing PDF export tests passed. Rustfmt normalized
+only the changed match arm; actual PDF rendering was not separately verified.
