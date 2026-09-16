@@ -1089,7 +1089,7 @@ export function renderTranslationContentRow(
     : '<div class="translation-row__selection" aria-hidden="true"></div>';
 
   return `
-    <div class="translation-row-shell${row.lifecycleState === "deleted" ? " is-deleted" : ""}" data-editor-row-card data-row-id="${escapeHtml(row.id)}"${rowIndexAttribute}>
+    <div class="translation-row-shell${row.isConnected ? " is-connected" : ""}${row.lifecycleState === "deleted" ? " is-deleted" : ""}" data-editor-row-card data-row-id="${escapeHtml(row.id)}"${rowIndexAttribute}>
       <div class="translation-row__toolbar">
         ${renderEditorRowLastUpdate(row)}
         ${rowActions}

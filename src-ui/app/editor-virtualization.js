@@ -1,3 +1,4 @@
+import { createEditorRowConnectionController } from "./editor-row-connection-dom.js";
 import { syncEditorRowTextareaHeights } from "./autosize.js";
 import { logEditorScrollDebug } from "./editor-scroll-debug.js";
 import {
@@ -21,6 +22,15 @@ import { buildEditorScreenViewModel } from "./editor-screen-model.js";
 import { createEditorVirtualListController } from "./editor-virtual-list.js";
 
 let activeController = null;
+let connectionController = null;
+
+export function syncEditorRowConnection() {
+  connectionController?.schedule();
+}
+
+export function revealConnectedEditorRow() {
+  return connectionController?.reveal() ?? false;
+}
 
 const rowHeightCacheByLayoutKey = new Map();
 
@@ -81,6 +91,8 @@ export function refreshEditorVirtualizationLayout(anchorSnapshot = null) {
 }
 
 export function initializeEditorVirtualization(root, appState) {
+  connectionController?.destroy();
+  connectionController = null;
   activeController?.destroy?.();
   activeController = null;
 
@@ -122,12 +134,16 @@ export function initializeEditorVirtualization(root, appState) {
       topSpacer,
       bottomSpacer,
       rowHeightCache,
+      onLayout: syncEditorRowConnection,
     });
     if (tanstackController) {
       activeController = tanstackController;
+      connectionController = createEditorRowConnectionController(root, appState, scrollContainer, activeController);
       return;
     }
   }
+
+  connectionController = createEditorRowConnectionController(root, appState, scrollContainer);
 
   const rangeKey = shouldVirtualize ? "tanstack-unavailable" : "non-virtualized";
   const visibleImageDebugSnapshot = () => ({

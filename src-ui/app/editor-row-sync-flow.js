@@ -1,3 +1,4 @@
+import { expandedDeletedRowGroupIdsAfterSoftDelete } from "./editor-deleted-rows.js";
 import { rowHasPersistedChanges } from "./editor-row-persistence-model.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import { invoke } from "./runtime.js";
@@ -60,11 +61,18 @@ function applyMissingRemoteRow(rowId) {
 }
 
 function applyDeletedRemoteRow(rowId, payloadRow, chapterBaseCommitSha = null) {
+  const previousRows = state.editorChapter.rows;
+  const wasDeleted = previousRows.some((row) => row.rowId === rowId && row.lifecycleState === "deleted");
   const normalizedRow = normalizeEditorRow(payloadRow);
   updateEditorChapterRow(rowId, () => normalizedRow);
-  clearActiveEditorSelectionForRow(rowId);
+  // Soft-deleted rows can still be selected in an expanded deleted section.
+  // Rendering reconciles membership and disconnects only when the row is hidden.
   state.editorChapter = {
     ...state.editorChapter,
+    expandedDeletedRowGroupIds: wasDeleted
+      ? state.editorChapter.expandedDeletedRowGroupIds
+      : expandedDeletedRowGroupIdsAfterSoftDelete(previousRows, rowId,
+        state.editorChapter.expandedDeletedRowGroupIds, state.editorChapter.rows),
     chapterBaseCommitSha:
       typeof chapterBaseCommitSha === "string" && chapterBaseCommitSha.trim()
         ? chapterBaseCommitSha
@@ -271,7 +279,7 @@ export async function ensureEditorRowReadyForActivation(render, rowId, options =
     input.readOnly = false;
   }
 
-  return updatedRow?.lifecycleState !== "deleted";
+  return Boolean(updatedRow);
 }
 
 export async function ensureEditorRowReadyForWrite(render, rowId, options = {}) {

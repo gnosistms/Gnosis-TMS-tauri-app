@@ -6557,3 +6557,161 @@ test.describe("subtitle timing", () => {
     }).toBeGreaterThan(0);
   });
 });
+
+// Persistent sidebar connection: mounted and unmounted rows share the same UI.
+for (const rowCount of [6, 200]) {
+  test(`connected row outline and offscreen reveal (${rowCount} rows)`, async ({ page }) => {
+    await mountEditorFixture(page, { rowCount, chapterStatus: "ready" });
+    const notice = page.locator("[data-editor-row-connection]");
+    const first = page.locator('[data-editor-row-card][data-row-id="fixture-row-0001"]');
+    await expect(first).toHaveClass(/is-connected/);
+    await expect(notice).toBeHidden();
+    const background = await first.locator(".card--translation").evaluate((el) => getComputedStyle(el).background);
+    await expect.poll(() => page.locator('[data-editor-row-card]:not(.is-connected) .card--translation').first()
+      .evaluate((el) => getComputedStyle(el).background)).toBe(background);
+    await setTranslateScrollTop(page, 1000000);
+    await expect(notice).toContainText("The connected text is scrolled above the top - click to show it.");
+    await expect(notice).toBeVisible();
+    if (rowCount === 200) await expect(first).toHaveCount(0);
+    await notice.click();
+    await expect(first).toHaveClass(/is-connected/);
+    await expect(notice).toBeHidden();
+    await expect.poll(() => first.evaluate((el) => {
+      const row = el.getBoundingClientRect(), pane = document.querySelector(".translate-main-scroll").getBoundingClientRect();
+      return row.bottom > pane.top && row.top < pane.bottom;
+    })).toBe(true);
+
+    // Select a different row near the bottom, then leave it unmounted below.
+    await setTranslateScrollTop(page, 1000000);
+    const last = page.locator("[data-editor-row-card]").last();
+    const lastId = await last.getAttribute("data-row-id");
+    await last.locator('[data-editor-display-field][data-language-code="vi"]').click();
+    await page.locator('[data-action="switch-editor-sidebar-tab:history"]').click();
+    await page.locator("[data-editor-search-input]").focus(); // allow the editor to unpin
+    await setTranslateScrollTop(page, 0);
+    await expect(notice).toContainText("The connected text is scrolled below the bottom - click to show it.");
+    await expect(notice).toBeVisible();
+    await notice.focus();
+    await page.keyboard.press("Enter");
+    await expect(notice).toBeHidden();
+    await expect(page.locator(`[data-editor-row-card][data-row-id="${lastId}"]`)).toHaveClass(/is-connected/);
+    await expect(page.locator('[data-action="switch-editor-sidebar-tab:history"]')).toHaveClass(/active/);
+    await expect.poll(() => page.evaluate(() => document.activeElement?.closest("[data-editor-row-card]")?.dataset.rowId)).toBe(lastId);
+
+    await page.locator("[data-editor-search-input]").fill("no possible match 123456789");
+    await expect(notice).toBeHidden();
+    await expect(page.locator("[data-editor-row-card].is-connected")).toHaveCount(0);
+    await page.locator("[data-editor-search-input]").fill("");
+    await expect(page.locator("[data-editor-row-card].is-connected")).toHaveCount(0);
+    await expect(notice).toBeHidden();
+  });
+}
+
+test("connected row notice follows actual intersection even when editing pins the row", async ({ page }) => {
+  await mountEditorFixture(page, { rowCount: 200, chapterStatus: "ready" });
+  const notice = page.locator("[data-editor-row-connection]");
+  const row = page.locator('[data-editor-row-card][data-row-id="fixture-row-0001"]');
+  await row.locator('[data-editor-display-field][data-language-code="vi"]').click();
+  const field = row.locator('[data-editor-row-field][data-language-code="vi"]');
+  await expect(field).toBeFocused();
+  const rowBottom = await row.evaluate((el) => {
+    const pane = document.querySelector(".translate-main-scroll");
+    return el.getBoundingClientRect().bottom - pane.getBoundingClientRect().top + pane.scrollTop;
+  });
+  await setTranslateScrollTop(page, rowBottom - 3);
+  await expect(notice).toBeHidden();
+  await setTranslateScrollTop(page, rowBottom + 3);
+  await expect(notice).toContainText("scrolled above the top");
+  await expect(field).toBeFocused();
+  await expect(row).toHaveCount(1); // pinned DOM presence is not visibility
+  await notice.click();
+  await expect(notice).toBeHidden();
+  await expect(field).toBeFocused();
+  await expect(row).toHaveClass(/is-connected/);
+  await page.setViewportSize({ width: 1100, height: 620 });
+  await expect(row).toHaveClass(/is-connected/);
+  await expect(notice).toBeHidden();
+});
+
+test("connected row disconnects when a content change removes it from the active filter", async ({ page }) => {
+  await mountEditorFixture(page, {
+    rowCount: 6, chapterStatus: "ready", searchQuery: "unique connection token",
+    fieldsByRowId: { "fixture-row-0001": { vi: "unique connection token" } },
+  });
+  await expect(page.locator("[data-editor-row-card].is-connected")).toHaveCount(1);
+  await patchFixtureRow(page, "fixture-row-0001", { fields: { vi: "replacement without match" } });
+  await expect.poll(() => page.evaluate(() => window.__gnosisDebug.readEditorState().activeRowId)).toBeNull();
+  await expect(page.locator("[data-editor-row-connection]")).toBeHidden();
+  await page.locator("[data-editor-search-input]").fill("");
+  await expect(page.locator("[data-editor-row-card].is-connected")).toHaveCount(0);
+});
+
+test("connected row reveal yields to newer scroll input", async ({ page }) => {
+  await mountEditorFixture(page, { rowCount: 200, chapterStatus: "ready" });
+  await setTranslateScrollTop(page, 1000000);
+  await expect(page.locator("[data-editor-row-connection]")).toBeVisible();
+  const top = await page.evaluate(() => new Promise((resolve) => {
+    const pane = document.querySelector(".translate-main-scroll");
+    // The delegated click action is async. Wait for its first scroll before
+    // expressing newer intent, but do so before the next animation frame.
+    pane.addEventListener("scroll", () => {
+      pane.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: 500 }));
+      pane.scrollTop = 1500;
+      resolve(pane.scrollTop);
+    }, { once: true });
+    document.querySelector("[data-editor-row-connection]").click();
+  }));
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await expect.poll(() => page.locator(".translate-main-scroll").evaluate((el) => el.scrollTop)).toBeGreaterThan(top / 2);
+  await expect(page.locator("[data-editor-row-connection]")).toBeVisible();
+});
+
+test("connected deleted rows disconnect on section close and permanent deletion", async ({ page }) => {
+  await mountEditorFixture(page, { rowCount: 200, chapterStatus: "ready" });
+  const rowId = "fixture-row-0002";
+  await softDeleteFixtureRow(page, rowId);
+  const group = page.locator(`[data-editor-deleted-group][data-row-id="deleted-group:${rowId}"]`);
+  await group.locator(".section-separator").click();
+  const row = page.locator(`[data-editor-row-card][data-row-id="${rowId}"]`);
+  await row.locator('[data-editor-display-field][data-language-code="vi"]').click();
+  await expect(row).toHaveClass(/is-connected/);
+  await page.locator('[data-action="switch-editor-sidebar-tab:history"]').click();
+  await page.locator("[data-editor-search-input]").focus();
+  await expect.poll(() => page.evaluate(() => window.__gnosisDebug.readEditorState().mainFieldEditor.rowId)).toBeNull();
+  await page.locator(".translate-main-scroll").dispatchEvent("wheel", { deltaY: 1000 });
+  await setTranslateScrollTop(page, 1000000);
+  const notice = page.locator("[data-editor-row-connection]");
+  await expect(notice).toBeVisible();
+  await expect(row).toHaveCount(0);
+  await notice.click();
+  await expect(row).toHaveClass(/is-connected/);
+  await expect(notice).toBeHidden();
+  await group.locator(".section-separator").click();
+  await expect(row).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => window.__gnosisDebug.readEditorState().activeRowId)).toBeNull();
+  await expect(notice).toBeHidden();
+  await group.locator(".section-separator").click();
+  await expect(row).not.toHaveClass(/is-connected/);
+  await row.locator('[data-editor-display-field][data-language-code="vi"]').click();
+  await expect(row).toHaveClass(/is-connected/);
+  await page.locator(`[data-action="open-editor-row-permanent-delete:${rowId}"]`).click();
+  await page.locator('[data-action="confirm-editor-row-permanent-delete"]').click();
+  await expect(row).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => window.__gnosisDebug.readEditorState().activeRowId)).toBeNull();
+  await expect(notice).toBeHidden();
+});
+
+test("connected row remains selected when soft deletion joins an expanded section", async ({ page }) => {
+  await mountEditorFixture(page, { rowCount: 6, chapterStatus: "ready" });
+  await softDeleteFixtureRow(page, "fixture-row-0002");
+  await page.locator("[data-editor-deleted-group] .section-separator").click();
+  const rowId = "fixture-row-0003";
+  const row = page.locator(`[data-editor-row-card][data-row-id="${rowId}"]`);
+  await row.locator('[data-editor-display-field][data-language-code="vi"]').click();
+  await row.locator(`[data-action="soft-delete-editor-row:${rowId}"]`).click();
+  await expect(row).toHaveClass(/is-deleted/);
+  await expect(row).toHaveClass(/is-connected/);
+  await expect.poll(() => page.evaluate(() => window.__gnosisDebug.readEditorState().activeRowId)).toBe(rowId);
+  await page.locator("[data-editor-deleted-group] .section-separator").click();
+  await expect.poll(() => page.evaluate(() => window.__gnosisDebug.readEditorState().activeRowId)).toBeNull();
+});

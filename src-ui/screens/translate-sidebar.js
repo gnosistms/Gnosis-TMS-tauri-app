@@ -771,6 +771,11 @@ export function renderTranslateSidebar(
   return `
     <aside class="translate-sidebar card card--history${activeTab === "assistant" ? " translate-sidebar--assistant" : ""}">
       <div class="card__body">
+        <button type="button" class="editor-row-connection" data-editor-row-connection
+          data-action="show-connected-editor-row" hidden>
+          <span data-editor-row-connection-arrow aria-hidden="true"></span>
+          <span data-editor-row-connection-text></span>
+        </button>
         <div class="history-tabs">
           ${writeActionsAvailable ? renderSidebarTab("AI Assistant", "assistant", activeTab, "translate") : ""}
           ${writeActionsAvailable ? renderSidebarTab("Review", "review", activeTab) : ""}

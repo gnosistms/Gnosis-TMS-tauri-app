@@ -1,3 +1,4 @@
+import { reconcileEditorRowConnection } from "./app/editor-row-connection.js";
 import {
   beginStoredBrokerSessionInspection,
   prepareStoredBrokerSessionRestore,
@@ -13,6 +14,7 @@ import { registerChapterPdfExportListeners } from "./app/editor-export-flow.js";
 import { registerEditorImageCaptionListeners } from "./app/editor-image-flow.js";
 import {
   initializeEditorVirtualization,
+  syncEditorRowConnection,
 } from "./app/editor-virtualization.js";
 import { loadUserTeams, setGithubAppInstallation } from "./app/team-setup-flow.js";
 import { syncLanguagePickerAlphabetIndexes } from "./app/language-picker-alphabet-index.js";
@@ -698,6 +700,19 @@ function renderTranslateImagePreviewOverlayOnly() {
 }
 
 function renderWithOptions(options = {}) {
+  const disconnected = reconcileEditorRowConnection(state);
+  try {
+    // A partial refresh must remove the excluded row and empty its sidebar.
+    if (disconnected && ["translate-visible-rows", "translate-header", "translate-sidebar"].includes(options.scope)) {
+      return renderWithOptionsImpl({ ...options, scope: "translate-body" });
+    }
+    return renderWithOptionsImpl(options);
+  } finally {
+    syncEditorRowConnection();
+  }
+}
+
+function renderWithOptionsImpl(options = {}) {
   if (options?.scope === "app-update-progress") {
     renderAppUpdateSurface(app, state.appUpdate);
     return;
