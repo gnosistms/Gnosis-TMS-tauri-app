@@ -6583,8 +6583,11 @@ for (const rowCount of [6, 200]) {
 
     // Select a different row near the bottom, then leave it unmounted below.
     await setTranslateScrollTop(page, 1000000);
-    const last = page.locator("[data-editor-row-card]").last();
-    const lastId = await last.getAttribute("data-row-id");
+    // The virtual window updates asynchronously after scrolling. Keep the
+    // locator tied to the intended row instead of reading a stale last card.
+    const lastId = `fixture-row-${String(rowCount).padStart(4, "0")}`;
+    const last = page.locator(`[data-editor-row-card][data-row-id="${lastId}"]`);
+    await expect(last).toBeVisible();
     await last.locator('[data-editor-display-field][data-language-code="vi"]').click();
     await page.locator('[data-action="switch-editor-sidebar-tab:history"]').click();
     await page.locator("[data-editor-search-input]").focus(); // allow the editor to unpin

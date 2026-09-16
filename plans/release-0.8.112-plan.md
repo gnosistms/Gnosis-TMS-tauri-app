@@ -11,3 +11,12 @@ from PR #324, after its Linux and Windows browser suites and quality checks pass
 5. Verify all release jobs, platform assets, updater metadata/signatures, and published notes.
 
 Keep the unrelated AI batch-alignment audit plan in the primary checkout untouched.
+
+## CI follow-up
+
+The first release Windows run exposed a browser-test race: the test read the last
+mounted row before virtualization updated, then clicked a different row after the
+update. The trace showed row 200 correctly revealed while the assertion expected
+row 3. Bind the test to the known final fixture row and wait for it to become
+visible; application behavior is unchanged. Recheck repeated local runs and
+Linux/Windows CI before tagging.
