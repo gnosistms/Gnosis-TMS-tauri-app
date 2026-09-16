@@ -3786,6 +3786,31 @@ test.describe("editor regressions", () => {
     }
   });
 
+  test("pasting multiline text keeps native undo and redo across virtual range changes", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 80 });
+    const field = await activateMainEditorField(page, "fixture-row-0001", "vi");
+    const originalText = await field.inputValue();
+    await field.evaluate((element) => {
+      element.setSelectionRange(0, element.value.length);
+      window.__fieldBeforePaste = element;
+    });
+    const mountedCount = await page.locator("[data-editor-row-card]").count();
+    const pastedText = Array.from({ length: 30 }, (_, index) => `Pasted line ${index + 1}`).join("\n");
+    // Insert in one native editing transaction, as plain-text paste does. Unlike
+    // fill()/assigning .value, this populates the browser's native undo history.
+    await page.keyboard.insertText(pastedText);
+    await expect(field).toHaveValue(pastedText);
+    await expect.poll(() => page.locator("[data-editor-row-card]").count()).toBeLessThan(mountedCount);
+
+    await field.press("ControlOrMeta+z");
+    await expect(field).toHaveValue(originalText);
+    await expect.poll(() => page.locator("[data-editor-row-card]").count()).toBe(mountedCount);
+    await field.press("ControlOrMeta+Shift+z");
+    await expect(field).toHaveValue(pastedText);
+    expect(await field.evaluate((element) => element === window.__fieldBeforePaste)).toBe(true);
+    await expect(field).toBeFocused();
+  });
+
   test("patching the focused row keeps the textarea node and its native undo stack", async ({ page }) => {
     const targetRowId = "fixture-row-0005";
     await mountEditorFixture(page, { rowCount: 12 });
@@ -3800,14 +3825,16 @@ test.describe("editor regressions", () => {
     await page.keyboard.type(" edited");
     await expect(field).toHaveValue(`${originalText} edited`);
 
+    // Use an editable row update. A stale row intentionally cancels beforeinput,
+    // including native historyUndo in WebKit, so it cannot test undo retention.
     const patchResult = await patchFixtureRow(page, targetRowId, {
-      freshness: "stale",
+      textStyle: "heading2",
     });
     expect(patchResult?.patchedVisible).toBe(true);
     expect(patchResult?.patchedRowIds).toEqual([targetRowId]);
-    await expect(
-      page.locator(`[data-editor-row-card][data-row-id="${targetRowId}"]`),
-    ).toContainText("Needs refresh");
+    expect(await field.evaluate((element) =>
+      element.closest("[data-row-text-style]")?.dataset.rowTextStyle,
+    )).toBe("heading2");
 
     const preservation = await field.evaluate((element) => ({
       sameNode: element === window.__focusedFieldBeforePatch,
@@ -3818,11 +3845,9 @@ test.describe("editor regressions", () => {
 
     // Typing may span several native undo groups; undoing them all must land
     // back on the original text. A recreated textarea has nothing to undo.
-    await field.evaluate(() => {
-      for (let step = 0; step < 8; step += 1) {
-        document.execCommand("undo");
-      }
-    });
+    for (let step = 0; step < 8 && await field.inputValue() !== originalText; step += 1) {
+      await field.press("ControlOrMeta+z");
+    }
     await expect(field).toHaveValue(originalText);
   });
 
