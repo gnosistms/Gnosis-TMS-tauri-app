@@ -275,7 +275,7 @@ function renderWindowRange(
   editorReplace,
   editorChapter,
 ) {
-  itemsContainer.innerHTML = renderTranslationContentRowsRange(
+  const html = renderTranslationContentRowsRange(
     rows,
     collapsedLanguageCodes,
     startIndex,
@@ -283,6 +283,46 @@ function renderWindowRange(
     editorReplace,
     editorChapter,
   );
+  const activeField = itemsContainer.ownerDocument.activeElement;
+  const focusedRow = activeField instanceof HTMLTextAreaElement
+    && activeField.matches("[data-editor-row-field]")
+    ? activeField.closest("[data-editor-row-card]")
+    : null;
+  const template = itemsContainer.ownerDocument.createElement("template");
+  if (focusedRow?.parentElement === itemsContainer) {
+    template.innerHTML = html;
+  }
+  const nextRow = focusedRow
+    ? template.content.querySelector(
+      `[data-editor-row-card][data-row-id="${CSS.escape(focusedRow.dataset.rowId)}"]`,
+    )
+    : null;
+
+  if (nextRow) {
+    // Range changes only update layout; row-content changes are applied through
+    // row patching. Keep the focused row connected at all times: even removing
+    // and reinserting the same textarea discards its native undo/redo history.
+    const before = [];
+    const after = [];
+    let seenFocusedRow = false;
+    for (const node of [...template.content.childNodes]) {
+      if (node === nextRow) {
+        seenFocusedRow = true;
+      } else {
+        (seenFocusedRow ? after : before).push(node);
+      }
+    }
+    while (focusedRow.previousSibling) {
+      focusedRow.previousSibling.remove();
+    }
+    while (focusedRow.nextSibling) {
+      focusedRow.nextSibling.remove();
+    }
+    focusedRow.before(...before);
+    focusedRow.after(...after);
+  } else {
+    itemsContainer.innerHTML = html;
+  }
   syncEditorRowTextareaHeights(itemsContainer);
 }
 
