@@ -5842,6 +5842,63 @@ test.describe("editor regressions", () => {
     await expect(historyFootnoteContent).toHaveCSS("font-style", "italic");
   });
 
+  test("glossary-error filtering preserves scroll when a footnote closes into body editing", async ({ page }) => {
+    const rowId = "fixture-row-0010";
+    const languageCode = "vi";
+    await mountEditorFixture(page, {
+      rowCount: 18,
+      glossary: true,
+      fieldsByRowId: Object.fromEntries(Array.from({ length: 18 }, (_, index) => [
+        `fixture-row-${String(index + 1).padStart(4, "0")}`,
+        { es: "alpha source", vi: "Body text without the glossary translation. ".repeat(12) },
+      ])),
+    }, { mockTauri: true });
+    const body = page.locator(
+      `[data-editor-display-field][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    );
+    await body.click();
+    await page.locator(
+      `[data-editor-footnote-button][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    ).click();
+    const footnote = page.locator(
+      `[data-editor-row-field][data-row-id="${rowId}"][data-language-code="${languageCode}"][data-content-kind="footnote"]`,
+    );
+    await expect(footnote).toBeFocused();
+    await footnote.fill("A footnote to preserve while switching editors.");
+    await page.locator("[data-editor-search-input]").click();
+    await expect.poll(async () => (await readMockTauriState(page))
+      ?.footnotes?.["fixture-chapter"]?.[rowId]?.vi).toBe("A footnote to preserve while switching editors.");
+    await page.locator("[data-editor-filter-select]").selectOption("has-glossary-error");
+    await expect(page.locator("[data-editor-row-card]")).toHaveCount(18);
+    const footnoteDisplay = page.locator(
+      `[data-editor-footnote-display][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    );
+    await footnoteDisplay.click();
+    await expect(footnote).toBeFocused();
+    await footnote.fill("Edited footnote to preserve while switching editors.");
+    await body.evaluate(async (element) => {
+      const container = element.closest(".translate-main-scroll");
+      container.scrollTop += element.getBoundingClientRect().top
+        - container.getBoundingClientRect().top - 80;
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    });
+    const before = await readTranslateScrollTop(page);
+    expect(before).toBeGreaterThan(100);
+    const box = await body.boundingBox();
+    // Use a physical click so the test cannot scroll a remounted field into view.
+    await page.mouse.click(box.x + 50, box.y + 20);
+    const mainField = page.locator(
+      `[data-editor-row-field][data-row-id="${rowId}"][data-language-code="${languageCode}"]:not([data-content-kind])`,
+    );
+    await expect(mainField).toBeFocused();
+    await expect(footnote).toHaveCount(0);
+    await expect(footnoteDisplay).toContainText("Edited footnote");
+    await expect.poll(async () => Math.abs((await readTranslateScrollTop(page)) - before)).toBeLessThan(4);
+    await page.locator("[data-editor-search-input]").click();
+    await expect.poll(async () => (await readMockTauriState(page))
+      ?.footnotes?.["fixture-chapter"]?.[rowId]?.vi).toBe("Edited footnote to preserve while switching editors.");
+  });
+
   test("a referenced empty footnote survives blur, save, and reopen", async ({ page }) => {
     const rowId = "fixture-row-0001";
     const languageCode = "vi";
