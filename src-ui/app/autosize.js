@@ -17,8 +17,43 @@ export function syncAutoSizeTextarea(textarea, options = {}) {
       ? scrollContainer.scrollTop
       : null;
 
-  textarea.style.height = "auto";
-  const scrollHeight = textarea.scrollHeight;
+  let scrollHeight;
+  if (options.measureOffscreen === true && textarea.parentElement) {
+    // Collapsing the live assistant composer expands the transcript viewport,
+    // which can clamp its scroll position before the final height is applied.
+    // Measure a hidden sibling so the visible grid never sees that intermediate size.
+    const measurement = textarea.cloneNode(false);
+    measurement.removeAttribute("id");
+    measurement.removeAttribute("name");
+    measurement.setAttribute("aria-hidden", "true");
+    measurement.tabIndex = -1;
+    measurement.value = textarea.value;
+    Object.assign(measurement.style, {
+      position: "fixed",
+      left: "-10000px",
+      top: "0",
+      visibility: "hidden",
+      pointerEvents: "none",
+      boxSizing: "border-box",
+      // clientWidth rounds away subpixels and includes the current scrollbar's
+      // effect. Measure the full fractional width so wrapping and shrinkage agree.
+      width: window.getComputedStyle(textarea).width,
+      height: "0",
+      minHeight: "0",
+      maxHeight: "none",
+      border: "0",
+      overflowY: "hidden",
+    });
+    textarea.parentElement.append(measurement);
+    try {
+      scrollHeight = measurement.scrollHeight;
+    } finally {
+      measurement.remove();
+    }
+  } else {
+    textarea.style.height = "auto";
+    scrollHeight = textarea.scrollHeight;
+  }
   const nextHeight = Math.max(minHeight, Math.min(scrollHeight, maxHeight));
   textarea.style.height = `${nextHeight}px`;
   textarea.style.overflowY = hasMaxHeight && scrollHeight > maxHeight ? "auto" : "hidden";
@@ -113,5 +148,7 @@ export function syncEditorConflictResolutionTextareaHeights(root = document) {
 export function syncEditorAssistantDraftTextareaHeights(root = document) {
   root
     .querySelectorAll("[data-editor-assistant-draft]")
-    .forEach((element) => syncAutoSizeTextarea(element, { minHeight: 71, maxHeight: 213 }));
+    .forEach((element) => syncAutoSizeTextarea(element, {
+      minHeight: 71, maxHeight: 213, measureOffscreen: true,
+    }));
 }

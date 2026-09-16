@@ -1806,6 +1806,160 @@ test.describe("editor regressions", () => {
     await expect(page.locator(".assistant-composer__hint")).toContainText("Shift + Return to send");
   });
 
+  for (const position of ["bottom", "middle"]) {
+    test(`typing in a full assistant composer preserves transcript scroll at the ${position}`, async ({ page }) => {
+      await mountEditorFixture(page, {
+        rowCount: 1,
+        assistant: {
+          activeThreadKey: "fixture-row-0001::es::vi",
+          threadsByKey: {
+            "fixture-row-0001::es::vi": {
+              rowId: "fixture-row-0001",
+              sourceLanguageCode: "es",
+              targetLanguageCode: "vi",
+              items: Array.from({ length: 28 }, (_, index) => ({
+                id: `assistant-${index}`,
+                type: "assistant-message",
+                text: `Conversation entry ${index}. A translation explanation to fill the transcript.`,
+                sourceLanguageCode: "es",
+                targetLanguageCode: "vi",
+              })),
+            },
+          },
+        },
+      });
+      await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
+      const composer = page.locator("[data-editor-assistant-draft]");
+      await composer.fill("Short question");
+      await expect(composer).toHaveCSS("height", "71px");
+      await page.evaluate(() => new Promise((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      }));
+      const growthStart = await page.evaluate((position) => {
+        const transcript = document.querySelector(".assistant-transcript");
+        transcript.scrollTop = position === "bottom"
+          ? transcript.scrollHeight
+          : (transcript.scrollHeight - transcript.clientHeight) / 2;
+        return transcript.scrollTop;
+      }, position);
+      const expectGrowthScrollPreserved = async () => {
+        const distance = await page.evaluate(({ position, growthStart }) => {
+          const transcript = document.querySelector(".assistant-transcript");
+          return position === "bottom"
+            ? transcript.scrollHeight - transcript.clientHeight - transcript.scrollTop
+            : transcript.scrollTop - growthStart;
+        }, { position, growthStart });
+        expect(Math.abs(distance)).toBeLessThanOrEqual(1);
+      };
+      await composer.fill("Question\n".repeat(3));
+      await expect(composer).toHaveCSS("height", "124px");
+      await expectGrowthScrollPreserved();
+      await composer.fill("A long question about the translation.\n".repeat(20));
+      await expect(composer).toHaveCSS("height", "213px");
+      await expectGrowthScrollPreserved();
+      await composer.press("ControlOrMeta+End");
+      // Let tab-entry scrolling settle before choosing the reader's position.
+      await page.evaluate(() => new Promise((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      }));
+      const before = await page.evaluate((position) => {
+        const transcript = document.querySelector(".assistant-transcript");
+        transcript.scrollTop = position === "bottom"
+          ? transcript.scrollHeight
+          : (transcript.scrollHeight - transcript.clientHeight) / 2;
+        const top = transcript.scrollTop;
+        window.__assistantScrollSamples = [];
+        window.__assistantHeightSamples = [];
+        window.__assistantScrollWrites = [];
+        const scrollTopProperty = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop");
+        Object.defineProperty(transcript, "scrollTop", {
+          configurable: true,
+          get() { return scrollTopProperty.get.call(this); },
+          set(value) {
+            window.__assistantScrollWrites.push(value);
+            scrollTopProperty.set.call(this, value);
+          },
+        });
+        const scrollHeightGetter = Object.getOwnPropertyDescriptor(Element.prototype, "scrollHeight").get;
+        Object.defineProperty(HTMLTextAreaElement.prototype, "scrollHeight", {
+          configurable: true,
+          get() {
+            const height = scrollHeightGetter.call(this);
+            if (this.matches(".assistant-composer__field")) {
+              window.__assistantHeightSamples.push(transcript.clientHeight);
+            }
+            return height;
+          },
+        });
+        // Sample synchronously after input handlers, before any deferred scroll
+        // could mask the temporary jump caused by measuring the live textarea.
+        window.addEventListener("input", () => {
+          window.__assistantScrollSamples.push(transcript.scrollTop);
+        });
+        return { top, height: transcript.clientHeight };
+      }, position);
+      expect(before.top).toBeGreaterThan(0);
+      await composer.pressSequentially("Another sentence", { delay: 20 });
+      await page.evaluate(() => new Promise((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      }));
+      const after = await page.evaluate(() => ({
+        top: document.querySelector(".assistant-transcript").scrollTop,
+        samples: window.__assistantScrollSamples,
+        heights: window.__assistantHeightSamples,
+        writes: window.__assistantScrollWrites,
+      }));
+      expect(after.samples.length).toBeGreaterThan(0);
+      expect(after.writes).toEqual([]);
+      for (const top of [...after.samples, after.top]) {
+        expect(Math.abs(top - before.top)).toBeLessThanOrEqual(1);
+      }
+      for (const height of after.heights) {
+        expect(height).toBe(before.height);
+      }
+      await expect(composer).toBeFocused();
+      await expect(composer).toHaveCSS("height", "213px");
+      await composer.fill("Short question");
+      await expect(composer).toHaveCSS("height", "71px");
+      await expect(composer).toHaveCSS("overflow-y", "hidden");
+      const shrinkDistance = await page.evaluate(({ position, top }) => {
+        const transcript = document.querySelector(".assistant-transcript");
+        return position === "bottom"
+          ? transcript.scrollHeight - transcript.clientHeight - transcript.scrollTop
+          : transcript.scrollTop - top;
+      }, { position, top: before.top });
+      expect(Math.abs(shrinkDistance)).toBeLessThanOrEqual(1);
+    });
+  }
+
+  test("assistant composer measures fractional wrapping widths without clipping", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 1 });
+    await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
+    const composer = page.locator("[data-editor-assistant-draft]");
+    await composer.evaluate((element) => {
+      // A fractional width just below a wrap boundary: rounding it to 298px
+      // makes the measurement fit two lines when the visible field needs three.
+      element.parentElement.style.width = "299.703125px";
+      element.style.font = "16px / 24px Arial";
+    });
+    await page.addStyleTag({ content: ".assistant-composer__field::-webkit-scrollbar { width: 16px; }" });
+    for (const initiallyOverflowing of [false, true]) {
+      if (initiallyOverflowing) {
+        await composer.fill("Long question\n".repeat(20));
+        await expect(composer).toHaveCSS("height", "213px");
+        await expect(composer).toHaveCSS("overflow-y", "auto");
+      }
+      await composer.fill("w".repeat(46));
+      await expect(composer).toHaveCSS("height", "100px");
+      const geometry = await composer.evaluate((element) => ({
+        height: element.clientHeight,
+        contentHeight: element.scrollHeight,
+      }));
+      expect(geometry.contentHeight).toBeLessThanOrEqual(geometry.height);
+      await expect(composer).toHaveCSS("overflow-y", "hidden");
+    }
+  });
+
   test("selecting assistant transcript text preserves assistant transcript scroll", async ({ page }) => {
     const assistantItems = Array.from({ length: 28 }, (_, index) => ({
       id: `assistant-${index + 1}`,
