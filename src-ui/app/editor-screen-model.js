@@ -553,6 +553,7 @@ export function buildEditorScreenViewModel(appState) {
 
     return {
       ...row,
+      isConnected: row.id === editorChapter?.activeRowId,
       sections: (Array.isArray(row.sections) ? row.sections : []).map((section) => {
         const aiTranslateLoadingText = activeAiTranslateLoadingTexts.get(
           createEditorAiTranslateLoadingKey(row.rowId, section.code),

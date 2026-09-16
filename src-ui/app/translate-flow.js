@@ -682,10 +682,6 @@ export function switchEditorSidebarTab(render, tab) {
   });
 }
 
-export function scheduleEditorAssistantTranscriptScrollToBottom() {
-  scheduleAssistantTranscriptScrollToBottom();
-}
-
 export function updateEditorCommentDraft(nextValue) {
   updateEditorCommentDraftFlow(nextValue);
 }

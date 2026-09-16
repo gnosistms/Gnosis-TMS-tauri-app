@@ -334,6 +334,7 @@ export function createEditorVirtualListController({
   topSpacer,
   bottomSpacer,
   rowHeightCache,
+  onLayout = () => {},
 }) {
   if (
     !(root instanceof HTMLElement)
@@ -665,6 +666,7 @@ export function createEditorVirtualListController({
       }
     } finally {
       isRendering = false;
+      onLayout();
     }
 
     if (needsPostMeasureRender) {
@@ -894,6 +896,21 @@ export function createEditorVirtualListController({
   glossarySync.schedule();
 
   return {
+    getRowBounds(rowId) {
+      const index = currentRowIndexById.get(rowId);
+      if (!Number.isInteger(index)) return null;
+      // getTotalSize refreshes measurements; measurementsCache is a public
+      // Virtual Core field. Keep that dependency inside this controller.
+      virtualizer.getTotalSize();
+      const item = virtualizer.measurementsCache[index];
+      const listOffset = topSpacer.getBoundingClientRect().top
+        - scrollContainer.getBoundingClientRect().top - scrollContainer.clientTop
+        + scrollContainer.scrollTop;
+      return item ? { start: item.start + listOffset, end: item.end + listOffset } : null;
+    },
+    renderRevealedRow() {
+      renderWindow(false, { reason: EDITOR_VIRTUALIZATION_SCROLL_REASON });
+    },
     notifyRowsChanged,
     notifyRowHeightMayHaveChanged,
     refreshLayout,

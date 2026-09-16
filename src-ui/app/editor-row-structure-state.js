@@ -207,8 +207,15 @@ export function toggleDeletedEditorRowGroupState(chapterState, groupId) {
     expandedDeletedRowGroupIds.add(groupId);
   }
 
+  const selectedRow = chapterState.rows?.find((row) => row.rowId === chapterState.activeRowId);
+  const closesSelectedGroup = !expandedDeletedRowGroupIds.has(groupId)
+    && selectedRow?.lifecycleState === "deleted"
+    && deletedRowGroupIdAfterSoftDelete(chapterState.rows, selectedRow.rowId) === groupId;
   return {
-    ...chapterState,
+    ...(closesSelectedGroup ? {
+      ...withClearedActiveFieldForRow(chapterState, selectedRow.rowId),
+      comments: { ...chapterState.comments, status: "idle", requestKey: null, error: "", deletingCommentId: null },
+    } : chapterState),
     expandedDeletedRowGroupIds,
   };
 }
@@ -429,7 +436,9 @@ export function applySoftDeletedEditorRowState(
 
   return {
     chapterState: {
-      ...withClearedActiveFieldForRow(chapterState, rowId),
+      ...(nextDeletedGroupIsOpen || chapterState.filters?.rowFilterMode === "deleted"
+        ? chapterState
+        : withClearedActiveFieldForRow(chapterState, rowId)),
       rows,
       expandedDeletedRowGroupIds,
       wordCounts: resolveSourceWordCounts(chapterState, wordCounts),

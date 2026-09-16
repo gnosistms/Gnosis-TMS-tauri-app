@@ -83,7 +83,6 @@ import {
   validateEditorLinkUrl,
   toggleEditorReplaceEnabled,
   toggleEditorReplaceRowSelected,
-  scheduleEditorAssistantTranscriptScrollToBottom,
   updateEditorConflictResolutionFinalText,
   updateEditorFontSize,
   updateEditorCommentDraft,
@@ -734,15 +733,24 @@ function handleEditorCommentDraftInput(event, render) {
   return true;
 }
 
-function handleEditorAssistantDraftInput(event, render) {
+function handleEditorAssistantDraftInput(event) {
   const input = event.target.closest("[data-editor-assistant-draft]");
   if (!input) {
     return false;
   }
 
+  const transcript = input.closest(".assistant-pane")?.querySelector(".assistant-transcript");
+  const previousTranscriptHeight = transcript?.clientHeight;
+  const wasAtBottom = transcript
+    && transcript.scrollHeight - transcript.clientHeight - transcript.scrollTop <= 1;
+
   updateEditorAssistantComposerDraft(input.value);
-  syncAutoSizeTextarea(input, { minHeight: 71, maxHeight: 213 });
-  scheduleEditorAssistantTranscriptScrollToBottom();
+  syncAutoSizeTextarea(input, { minHeight: 71, maxHeight: 213, measureOffscreen: true });
+  // Follow an actual resize before paint, without moving readers of older
+  // messages or scheduling a scroll on every keystroke once the height is capped.
+  if (wasAtBottom && transcript.clientHeight !== previousTranscriptHeight) {
+    transcript.scrollTop = transcript.scrollHeight;
+  }
   return true;
 }
 

@@ -2718,3 +2718,35 @@
   font-size: 12px;
   user-select: none;
 }
+
+/* Selection belongs to the sidebar, independently of keyboard focus. */
+.translation-row-shell.is-connected .card--translation {
+  outline: 1px solid var(--accent-strong);
+  outline-offset: -1px;
+}
+
+.editor-row-connection {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  width: 100%;
+  padding: 0 0 14px;
+  border: 0;
+  border-bottom: 1px solid var(--surface-border);
+  background: transparent;
+  color: var(--link);
+  text-align: left;
+  font: 500 14px/1.5 var(--font-sans);
+  cursor: pointer;
+}
+
+.editor-row-connection[hidden] { display: none; }
+.editor-row-connection:hover [data-editor-row-connection-text] {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.editor-row-connection:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 4px;
+}
+[data-editor-row-connection-arrow] { font-size: 18px; line-height: 21px; }

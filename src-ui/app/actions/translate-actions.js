@@ -1,3 +1,5 @@
+import { reconcileEditorRowConnection } from "../editor-row-connection.js";
+import { revealConnectedEditorRow } from "../editor-virtualization.js";
 import { actionSuffix } from "../action-helpers.js";
 import {
   assertEditorSessionWritePermission,
@@ -903,6 +905,15 @@ export function createTranslateActions(render) {
     if (deletedRowGroupKey !== null) {
       const scrollAnchor = captureTranslateRowAnchor(event?.target ?? null);
       toggleDeletedEditorRowGroup(render, deletedRowGroupKey, scrollAnchor);
+      return true;
+    }
+
+    if (action === "show-connected-editor-row") {
+      if (reconcileEditorRowConnection(state)) {
+        render?.({ scope: "translate-body" });
+        return true;
+      }
+      revealConnectedEditorRow();
       return true;
     }
 
