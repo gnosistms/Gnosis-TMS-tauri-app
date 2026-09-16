@@ -254,6 +254,11 @@ export function switchEditorSidebarTab(render, tab, operations = {}) {
   const normalizedTab = normalizeEditorSidebarTab(tab);
   state.editorChapter = applyEditorSidebarTab(state.editorChapter, normalizedTab);
 
+  if (!state.editorChapter.activeRowId) {
+    renderEditorCommentsSidebar(render);
+    return;
+  }
+
   if (normalizedTab === "comments" && state.editorChapter.activeRowId) {
     const row = findEditorRowById(state.editorChapter.activeRowId, state.editorChapter);
     const comments = currentEditorCommentsForRow(state.editorChapter, state.editorChapter.activeRowId);

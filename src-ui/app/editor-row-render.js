@@ -1105,7 +1105,7 @@ export function renderTranslationContentRow(
                 const isCollapsed = collapsedLanguageCodes.has(language.code);
                 return `
                   <section
-                    class="translation-language-panel${isCollapsed ? " is-collapsed" : ""}"
+                    class="translation-language-panel${language.isActive ? " is-active" : ""}${isCollapsed ? " is-collapsed" : ""}"
                     data-editor-language-panel
                     data-row-id="${escapeHtml(row.id)}"
                     data-language-code="${escapeHtml(language.code)}"

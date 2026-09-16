@@ -28,10 +28,21 @@ export function createEditorRowConnectionController(root, appState, scrollContai
   function sync() {
     if (!current()) return;
     const rowId = appState.editorChapter.activeRowId;
+    const languageCode = appState.editorChapter.activeLanguageCode;
     root.querySelectorAll('[data-editor-row-card].is-connected').forEach((row) => {
       if (row.dataset.rowId !== rowId) row.classList.remove("is-connected");
     });
     if (rowId) rowElement(rowId)?.classList.add("is-connected");
+    root.querySelectorAll('[data-editor-language-panel].is-active').forEach((panel) => {
+      if (panel.dataset.rowId !== rowId || panel.dataset.languageCode !== languageCode) {
+        panel.classList.remove("is-active");
+      }
+    });
+    if (rowId && languageCode) {
+      rowElement(rowId)?.querySelector(
+        `[data-editor-language-panel][data-language-code="${CSS.escape(languageCode)}"]`,
+      )?.classList.add("is-active");
+    }
     const notice = root.querySelector("[data-editor-row-connection]");
     if (!notice) return;
     const direction = rowId ? editorRowViewportDirection(boundsFor(rowId), {

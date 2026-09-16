@@ -1541,6 +1541,138 @@ async function openPlatformEditorFixture(page, platform) {
 }
 
 test.describe("editor regressions", () => {
+  for (const platform of ["macos", "windows"]) {
+    test(`card whitespace selects through edges and dividers without editing (${platform})`, async ({ page }) => {
+      await mountEditorFixture(page, { rowCount: 6, chapterStatus: "ready" }, {
+        mockTauri: true, path: `/?platform=${platform}`,
+      });
+      const first = page.locator('[data-editor-row-card][data-row-id="fixture-row-0001"]');
+      const card = first.locator(".card--translation");
+      const selected = page.locator("[data-editor-language-panel].is-active");
+      await page.locator('[data-action="switch-editor-sidebar-tab:history"]').click();
+
+      for (const [edge, language] of [
+        ["top", "es"], ["bottom", "vi"], ["left-upper", "es"], ["right-lower", "vi"],
+        ["above-divider", "es"], ["below-divider", "vi"], ["right-upper", "es"], ["left-lower", "vi"],
+      ]) {
+        const point = await card.evaluate((element, edge) => {
+          const bounds = element.getBoundingClientRect();
+          const panels = [...element.querySelectorAll("[data-editor-language-panel]")]
+            .map((panel) => panel.getBoundingClientRect());
+          const divider = panels[1].top;
+          const x = edge.startsWith("left") ? bounds.left + 1
+            : edge.startsWith("right") ? bounds.right - 1 : (bounds.left + bounds.right) / 2;
+          const y = edge === "top" ? bounds.top + 1
+            : edge === "bottom" ? bounds.bottom - 1
+            : edge === "above-divider" ? divider - 1
+            : edge === "below-divider" ? divider + 1
+            : edge.endsWith("upper") ? panels[0].top + 5 : panels[1].top + 5;
+          return { x, y };
+        }, edge);
+        await page.mouse.click(point.x, point.y);
+        await expect(selected).toHaveCount(1);
+        await expect(selected).toHaveAttribute("data-row-id", "fixture-row-0001");
+        await expect(selected).toHaveAttribute("data-language-code", language);
+        await expect(first).toHaveClass(/is-connected/);
+        await expect(page.locator("[data-editor-row-field]")).toHaveCount(0);
+        await expect(page.locator('[data-action="switch-editor-sidebar-tab:history"]')).toHaveAttribute("aria-pressed", "true");
+      }
+
+      // Collapsing is still its own action; reordered sections keep full hit areas.
+      await first.locator('[data-editor-language-toggle][data-language-code="es"]').click();
+      await expect(selected).toHaveAttribute("data-language-code", "vi");
+      await expect(first.locator('[data-editor-language-panel][data-language-code="es"]')).toHaveClass(/is-collapsed/);
+      const collapsedBounds = await card.boundingBox();
+      await page.mouse.click(collapsedBounds.x + collapsedBounds.width / 2, collapsedBounds.y + collapsedBounds.height - 1);
+      await expect(selected).toHaveAttribute("data-language-code", "es");
+      await expect(page.locator("[data-editor-row-field]")).toHaveCount(0);
+
+      // Text still opens for editing; selecting another card preserves its draft.
+      await first.locator('[data-editor-language-toggle][data-language-code="es"]').click();
+      const field = await activateMainEditorField(page, "fixture-row-0001", "vi");
+      await field.fill("Draft preserved when selecting card whitespace");
+      const second = page.locator('[data-editor-row-card][data-row-id="fixture-row-0002"] .card--translation');
+      await second.scrollIntoViewIfNeeded();
+      const secondBounds = await second.boundingBox();
+      await page.mouse.click(secondBounds.x + secondBounds.width / 2, secondBounds.y + 1);
+      await expect(selected).toHaveAttribute("data-row-id", "fixture-row-0002");
+      await expect(selected).toHaveAttribute("data-language-code", "es");
+      await expect(page.locator("[data-editor-row-field]")).toHaveCount(0);
+      await expect.poll(async () => (await readMockTauriState(page)).invocations.filter(
+        (entry) => entry.command === "update_gtms_editor_row_fields",
+      ).length).toBeGreaterThan(0);
+      await expect(first.locator('[data-editor-display-field][data-language-code="vi"]'))
+        .toHaveText("Draft preserved when selecting card whitespace");
+    });
+  }
+
+  for (const platform of ["macos", "windows"]) {
+    test(`selected language pill follows selection and persists in the sidebar (${platform})`, async ({ page }) => {
+      await mountEditorFixture(page, { rowCount: 6, chapterStatus: "ready" }, {
+        mockTauri: true, path: `/?platform=${platform}`,
+      });
+      const selected = page.locator("[data-editor-language-panel].is-active");
+      await expect(selected).toHaveCount(1);
+      await expect(selected).toHaveAttribute("data-row-id", "fixture-row-0001");
+      await expect(selected).toHaveAttribute("data-language-code", "vi");
+      await expect(selected.locator(".translation-language-panel__label"))
+        .toHaveCSS("background-color", "rgba(243, 156, 24, 0.2)");
+
+      await activateMainEditorField(page, "fixture-row-0001", "es");
+      await expect(selected).toHaveCount(1);
+      await expect(selected).toHaveAttribute("data-language-code", "es");
+      await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
+      await page.locator("[data-editor-assistant-draft]").focus();
+      await expect(page.locator("[data-editor-assistant-draft]")).toBeFocused();
+      await expect(selected).toHaveAttribute("data-language-code", "es");
+
+      await activateMainEditorField(page, "fixture-row-0002", "vi");
+      await expect(selected).toHaveCount(1);
+      await expect(selected).toHaveAttribute("data-row-id", "fixture-row-0002");
+      await expect(selected).toHaveAttribute("data-language-code", "vi");
+      await page.locator("[data-editor-search-input]").fill("no matching translation for language pill");
+      await expect(selected).toHaveCount(0);
+      await page.locator("[data-editor-search-input]").fill("");
+      await expect(selected).toHaveCount(0);
+    });
+  }
+
+  test("sidebar tabs stay clickable and compact without a selected row", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 6, chapterStatus: "ready" }, { mockTauri: true });
+    const search = page.locator("[data-editor-search-input]");
+    await search.fill("no matching translation for sidebar regression");
+    const sidebar = page.locator(".translate-sidebar");
+    await expect(sidebar.locator(".history-empty")).toHaveText("Select a translation to view review tools.");
+    const reviewHeight = (await sidebar.boundingBox()).height;
+    const callsBefore = (await readMockTauriState(page)).invocations.length;
+
+    for (const [tab, message] of [
+      ["history", "Select a translation to view History."],
+      ["comments", "Select a translation to view Comments."],
+      ["translate", "Select a translation to use the AI Assistant."],
+      ["review", "Select a translation to view review tools."],
+      ["comments", "Select a translation to view Comments."],
+      ["history", "Select a translation to view History."],
+    ]) {
+      const button = sidebar.locator(`[data-action="switch-editor-sidebar-tab:${tab}"]`);
+      await button.click();
+      await expect(button).toHaveAttribute("aria-pressed", "true");
+      await expect(sidebar.locator(".history-empty")).toHaveText(message);
+      await expect(sidebar.locator("textarea, .translate-ai-tools, .history-stack")).toHaveCount(0);
+      expect((await sidebar.boundingBox()).height).toBeCloseTo(reviewHeight, 0);
+    }
+    const newCalls = (await readMockTauriState(page)).invocations.slice(callsBefore);
+    expect(newCalls.filter((entry) => [
+      "load_gtms_editor_field_history", "load_gtms_editor_row_comments",
+    ].includes(entry.command))).toHaveLength(0);
+
+    await search.fill("");
+    await activateMainEditorField(page, "fixture-row-0001", "vi");
+    await sidebar.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
+    await expect(sidebar.locator("[data-editor-assistant-draft]")).toBeEnabled();
+    await expect(sidebar).toHaveClass(/translate-sidebar--assistant/);
+  });
+
   test("background sync does not commit a focused draft while History is open", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 6 }, { mockTauri: true });
     const field = await activateMainEditorField(page, "fixture-row-0001", "vi");
@@ -6087,6 +6219,75 @@ test.describe("editor regressions", () => {
     await expect(footnoteField).toBeFocused();
     await expect(footnoteField).toHaveValue("");
   });
+
+  for (const firstClick of ["whitespace", "text"]) {
+    for (const reselectCurrentRow of [false, true]) {
+      test(`delayed ${firstClick} activation yields to ${reselectCurrentRow ? "reselecting the current row" : "a newer row selection"}`, async ({ page }) => {
+        await page.addInitScript(() => {
+          let releaseRowLoad;
+          const rowLoadGate = new Promise((resolve) => { releaseRowLoad = resolve; });
+          window.__releaseMockRowLoad = releaseRowLoad;
+          window.__gnosisMockTauriHandlers = {
+            async load_gtms_editor_row(payload) {
+              window.__mockRowLoadStarted = true;
+              await rowLoadGate;
+              return {
+                row: {
+                  rowId: payload.input.rowId,
+                  orderKey: "00001",
+                  lifecycleState: "active",
+                  commentCount: 0,
+                  commentsRevision: 0,
+                  textStyle: "paragraph",
+                  fields: { es: "reloaded source text", vi: "reloaded target text" },
+                  footnotes: { es: "", vi: "" },
+                  fieldStates: {
+                    es: { reviewed: false, pleaseCheck: false },
+                    vi: { reviewed: false, pleaseCheck: false },
+                  },
+                },
+              };
+            },
+          };
+        });
+        await mountEditorFixture(page, { rowCount: 6, chapterStatus: "ready" }, { mockTauri: true });
+        const clickCardWhitespace = async (rowId) => {
+          const card = page.locator(`[data-editor-row-card][data-row-id="${rowId}"] .card--translation`);
+          await card.scrollIntoViewIfNeeded();
+          const bounds = await card.boundingBox();
+          await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + 1);
+        };
+        if (reselectCurrentRow) {
+          await clickCardWhitespace("fixture-row-0002");
+          await expect.poll(() => page.evaluate(() => window.__gnosisDebug.readEditorState().activeRowId))
+            .toBe("fixture-row-0002");
+        }
+        await page.evaluate(() => window.__gnosisDebug.setEditorRowSyncState("fixture-row-0001", { freshness: "stale" }));
+        if (firstClick === "whitespace") {
+          await clickCardWhitespace("fixture-row-0001");
+        } else {
+          await page.locator('[data-editor-display-field][data-row-id="fixture-row-0001"][data-language-code="vi"]').click();
+        }
+        await page.waitForFunction(() => window.__mockRowLoadStarted === true);
+        await clickCardWhitespace("fixture-row-0002");
+        await expect.poll(() => page.evaluate(() => window.__gnosisDebug.readEditorState().activeRowId))
+          .toBe("fixture-row-0002");
+        await page.evaluate(() => window.__releaseMockRowLoad());
+        await expect.poll(() => page.evaluate(() => window.__gnosisDebug.readEditorState().rows
+          .find((row) => row.rowId === "fixture-row-0001").fields.vi)).toBe("reloaded target text");
+        await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+
+        const snapshot = await page.evaluate(() => window.__gnosisDebug.readEditorState());
+        expect(snapshot.activeRowId).toBe("fixture-row-0002");
+        expect(snapshot.activeLanguageCode).toBe("es");
+        expect(snapshot.mainFieldEditor.rowId).toBeNull();
+        const selected = page.locator("[data-editor-language-panel].is-active");
+        await expect(selected).toHaveCount(1);
+        await expect(selected).toHaveAttribute("data-row-id", "fixture-row-0002");
+        await expect(page.locator("[data-editor-row-field]")).toHaveCount(0);
+      });
+    }
+  }
 
   test("footnote controls hide on blur even if row activation finishes later", async ({ page }) => {
     await page.addInitScript(() => {

@@ -53,6 +53,31 @@ function previewEditableTextBlockFromTarget(target) {
   return block instanceof HTMLElement ? block : null;
 }
 
+function cardWhitespaceLanguageFromPointer(event) {
+  const target = event.target;
+  if (!(target instanceof Element) || target.closest(
+    'button, a, input, textarea, select, label, [contenteditable], [data-action], [data-stop-row-action], [data-editor-glossary-field-stack]',
+  )) {
+    return null;
+  }
+
+  const card = target.closest("[data-editor-row-card] .card--translation");
+  if (!(card instanceof HTMLElement)) {
+    return null;
+  }
+
+  const panels = Array.from(card.querySelectorAll("[data-editor-language-panel]"));
+  // A section's top border is the visible language divider. Extend each
+  // section horizontally to the card edges; give outer padding and the gap
+  // before the next divider to the adjacent section, leaving no dead zones.
+  let selected = panels[0] ?? null;
+  for (const panel of panels) {
+    if (panel.getBoundingClientRect().top > event.clientY) break;
+    selected = panel;
+  }
+  return selected;
+}
+
 export function activeElementKeepsEditorControlOpen(
   rowId,
   languageCode,
@@ -379,6 +404,17 @@ export function registerTranslateEditorDomEvents(app, render) {
     const previewBlock = previewEditableTextBlockFromTarget(event.target);
     if (previewBlock && event.detail === 1) {
       showNoticeBadge("Double click to edit this text", render, 2200);
+      return;
+    }
+
+    const cardLanguage = cardWhitespaceLanguageFromPointer(event);
+    if (cardLanguage) {
+      const rowId = cardLanguage.dataset.rowId ?? "";
+      const languageCode = cardLanguage.dataset.languageCode ?? "";
+      dismissActiveIdleEditorImageUpload(render);
+      // Keep normal blur behavior so an existing draft is saved/collapsed.
+      // Selection itself must never open an editing control.
+      void setActiveEditorField(render, rowId, languageCode);
       return;
     }
 
