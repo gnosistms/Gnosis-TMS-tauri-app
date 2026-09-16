@@ -736,6 +736,14 @@ function renderAssistantComposer(editorChapter, rows, languages, targetCode, off
 }
 
 function renderAssistantPane(editorChapter, rows, languages, sourceCode, targetCode, actionConfig, offlineMode = false, readOnly = false) {
+  if (!rows.some((row) => row.id === editorChapter?.activeRowId)) {
+    return `
+      <div class="history-empty">
+        <p>Select a translation to use the AI Assistant.</p>
+      </div>
+    `;
+  }
+
   return `
     <div class="assistant-pane">
       ${renderTranslateTools(editorChapter, rows, languages, sourceCode, targetCode, actionConfig, offlineMode, readOnly)}
@@ -757,6 +765,7 @@ export function renderTranslateSidebar(
   writeActionsAvailable = true,
 ) {
   const requestedTab = normalizeEditorSidebarTab(editorChapter?.sidebarTab);
+  const hasActiveRow = rows.some((row) => row.id === editorChapter?.activeRowId);
   const activeTab = !writeActionsAvailable && (requestedTab === "assistant" || requestedTab === "review")
     ? "history"
     : requestedTab;
@@ -769,7 +778,7 @@ export function renderTranslateSidebar(
       : renderHistoryPane(editorChapter, rows, languages);
 
   return `
-    <aside class="translate-sidebar card card--history${activeTab === "assistant" ? " translate-sidebar--assistant" : ""}">
+    <aside class="translate-sidebar card card--history${activeTab === "assistant" && hasActiveRow ? " translate-sidebar--assistant" : ""}">
       <div class="card__body">
         <button type="button" class="editor-row-connection" data-editor-row-connection
           data-action="show-connected-editor-row" hidden>

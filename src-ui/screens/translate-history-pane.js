@@ -141,7 +141,7 @@ export function renderHistoryPane(editorChapter, rows, languages) {
   return !activeRow || !activeLanguage
     ? `
       <div class="history-empty">
-        <p>Select a translation to view its Git history.</p>
+        <p>Select a translation to view History.</p>
       </div>
     `
     : `

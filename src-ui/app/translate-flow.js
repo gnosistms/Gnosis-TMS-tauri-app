@@ -345,13 +345,22 @@ function describeFocusedTextControl() {
   return `control:${activeElement.getAttributeNames().filter((name) => name.startsWith("data-")).join(",")}`;
 }
 
+let editorFieldActivationSequence = 0;
+
 export async function setActiveEditorField(render, rowId, languageCode, options = {}) {
   if (!rowId || !languageCode) {
     return;
   }
 
+  const activationSequence = ++editorFieldActivationSequence;
   const focusBeforeActivation = describeFocusedTextControl();
   if (!(await ensureEditorRowReadyForActivation(render, rowId, options))) {
+    return;
+  }
+
+  // Whitespace selections do not focus a text control. A newer activation
+  // must supersede this one even when focus is unchanged or selection is a no-op.
+  if (activationSequence !== editorFieldActivationSequence) {
     return;
   }
 

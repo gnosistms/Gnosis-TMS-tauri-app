@@ -923,9 +923,18 @@
   color: inherit;
   font-size: 1rem;
   font-weight: 700;
+  padding: 3px 8px;
+  margin-block: -3px;
+  border-radius: 999px;
 }
 
-.translation-language-panel__label--conflict {
+.translation-language-panel.is-active .translation-language-panel__label {
+  background: rgba(243, 156, 24, 0.2);
+  color: var(--text-hover);
+}
+
+.translation-language-panel__label--conflict,
+.translation-language-panel.is-active .translation-language-panel__label--conflict {
   color: var(--message-error-text);
 }
 
