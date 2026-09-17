@@ -26,6 +26,15 @@ const UPDATER_PUBLIC_KEY: &str = include_str!("../updater-public-key.txt");
 const DEVELOPMENT_UPDATE_INSTALL_ERROR: &str = "Automatic updates are unavailable in development builds. Merge or rebase this branch onto current main, then restart the development app.";
 const MAX_UPDATE_DOWNLOAD_ATTEMPTS: usize = 2;
 const UPDATE_DOWNLOAD_RETRY_DELAY: Duration = Duration::from_millis(500);
+// Per manifest request. The check may fall back through many release endpoints,
+// so the command as a whole is bounded separately below.
+const UPDATE_CHECK_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+// For the whole check command. A stalled check must fail rather than leave the
+// frontend on "checking" forever; the hourly timer does not run while that
+// status is set.
+const UPDATE_CHECK_TOTAL_TIMEOUT: Duration = Duration::from_secs(90);
+const UPDATE_CHECK_TIMED_OUT_ERROR: &str =
+    "Could not check for updates: the update server did not respond in time.";
 const APP_UPDATE_DOWNLOAD_PROGRESS_EVENT: &str = "app-update-download-progress";
 
 pub(crate) struct PendingUpdate(pub(crate) Mutex<Option<Update>>);
@@ -470,6 +479,7 @@ async fn check_update_at_endpoint(
     let updater = app
         .updater_builder()
         .pubkey(UPDATER_PUBLIC_KEY.trim())
+        .timeout(UPDATE_CHECK_REQUEST_TIMEOUT)
         .endpoints(vec![endpoint])
         .map_err(|error| {
             EndpointCheckError::Configuration(format!(
@@ -636,7 +646,13 @@ pub(crate) async fn check_for_app_update(
         return Ok(build_no_update_metadata(current_version, None));
     }
 
-    let (update, unavailable_message) = match resolve_latest_compatible_update(&app).await? {
+    let resolved = tokio::time::timeout(
+        UPDATE_CHECK_TOTAL_TIMEOUT,
+        resolve_latest_compatible_update(&app),
+    )
+    .await
+    .map_err(|_elapsed| UPDATE_CHECK_TIMED_OUT_ERROR.to_string())??;
+    let (update, unavailable_message) = match resolved {
         ResolvedUpdate::Available(update) => (Some(update), None),
         ResolvedUpdate::Unavailable { message } => (None, message),
     };
