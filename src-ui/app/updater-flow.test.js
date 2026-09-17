@@ -162,6 +162,18 @@ test("manual update checks explain why they are skipped while an update is downl
   assert.equal(state.statusBadges.left.text, "Update 0.2.0 is downloading.");
 });
 
+test("manual update checks report saving while an install is preparing", async () => {
+  invokeHandler = async () => {
+    throw new Error("check must not run");
+  };
+  state.appUpdate = { ...state.appUpdate, status: "preparing", available: true, version: "0.2.0" };
+
+  await checkForAppUpdate(() => {}, { silent: false });
+
+  assert.equal(state.appUpdate.status, "preparing");
+  assert.equal(state.statusBadges.left.text, "Saving changes before installing the update.");
+});
+
 test("silent update checks stay silent when skipped", async () => {
   invokeHandler = async () => {
     throw new Error("check must not run");

@@ -1,6 +1,6 @@
 import { invoke } from "./runtime.js";
 import { selectedProjectsTeamInstallationId } from "./project-context.js";
-import { clearNoticeBadge, getNoticeBadgeText, showNoticeBadge } from "./status-feedback.js";
+import { clearNoticeBadge, clearNoticeBadgeIfText, showNoticeBadge } from "./status-feedback.js";
 import { isTransientAiProviderError } from "./editor-ai-batch-pool.js";
 import {
   AI_ACTION_IDS,
@@ -329,14 +329,9 @@ function getAiKeyCheckUnreachableBadgeText(providerId) {
 }
 
 // The "Checking key..." badge is persistent (no auto-hide), so every exit
-// path between showing it and showing a result badge must clear it. Guarded
-// by text so a badge shown later by another flow is left alone.
+// path between showing it and showing a result badge must clear it.
 function clearAiKeyCheckingBadge(render) {
-  if (getNoticeBadgeText() !== AI_KEY_CHECKING_BADGE_TEXT) {
-    return;
-  }
-  clearNoticeBadge();
-  render?.({ scope: "status-surface" });
+  clearNoticeBadgeIfText(AI_KEY_CHECKING_BADGE_TEXT, render);
 }
 
 function missingTeamAiProviderMessage(providerId, reason, teamName = "") {

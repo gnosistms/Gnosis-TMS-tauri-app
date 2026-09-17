@@ -1,5 +1,5 @@
 import { invoke, listen } from "./runtime.js";
-import { clearNoticeBadge, getNoticeBadgeText, showNoticeBadge } from "./status-feedback.js";
+import { clearNoticeBadgeIfText, showNoticeBadge } from "./status-feedback.js";
 import { state } from "./state.js";
 import { confirmsKnownUpdateInstalled, storeKnownAppUpdate } from "./app-update-storage.js";
 
@@ -36,20 +36,13 @@ function upToDateMessage(currentVersion) {
 
 const CHECKING_FOR_UPDATES_MESSAGE = "Checking for updates...";
 
-function checkingForUpdatesMessage() {
-  return CHECKING_FOR_UPDATES_MESSAGE;
-}
-
 // Discard the result of any in-flight check. The manual check badge is
 // persistent, and the discarded result never reaches the code that would
-// replace it, so clear it here. Guarded by text so another flow's badge stays.
-function supersedeUpdateCheck(render) {
+// replace it, so clear it here. Every caller renders right after, so no
+// render is needed here.
+function supersedeUpdateCheck() {
   latestUpdateCheckId += 1;
-  if (getNoticeBadgeText() !== CHECKING_FOR_UPDATES_MESSAGE) {
-    return;
-  }
-  clearNoticeBadge();
-  render?.({ scope: "status-surface" });
+  clearNoticeBadgeIfText(CHECKING_FOR_UPDATES_MESSAGE);
 }
 
 function requestedUpdateVersion() {
@@ -165,7 +158,7 @@ export function requireAppUpdate(requirement, render) {
     return false;
   }
 
-  supersedeUpdateCheck(render);
+  supersedeUpdateCheck();
 
   try {
     document.activeElement?.blur?.();
@@ -215,6 +208,9 @@ function skippedCheckMessage() {
   if (state.appUpdate.status === "installing") {
     return `${label} is downloading.`;
   }
+  if (state.appUpdate.status === "preparing") {
+    return "Saving changes before installing the update.";
+  }
   return `${label} is being installed.`;
 }
 
@@ -238,7 +234,7 @@ export async function checkForAppUpdate(render, options = {}) {
   state.appUpdate.status = "checking";
   if (!silent) {
     state.appUpdate.error = "";
-    showNoticeBadge(checkingForUpdatesMessage(), render, null);
+    showNoticeBadge(CHECKING_FOR_UPDATES_MESSAGE, render, null);
     render();
   }
 
@@ -318,7 +314,7 @@ export async function installAppUpdate(render) {
   }
 
   if (state.appUpdate.status === "downloaded") {
-    supersedeUpdateCheck(render);
+    supersedeUpdateCheck();
     state.appUpdate.status = "preparing";
     state.appUpdate.promptVisible = true;
     state.appUpdate.error = "";
@@ -340,7 +336,7 @@ export async function installAppUpdate(render) {
     return;
   }
 
-  supersedeUpdateCheck(render);
+  supersedeUpdateCheck();
   state.appUpdate.status = "installing";
   state.appUpdate.error = "";
   if (state.appUpdate.required !== true) {
