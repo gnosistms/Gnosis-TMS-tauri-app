@@ -51,7 +51,7 @@ export function createEditorRowConnectionController(root, appState, scrollContai
     }) : null;
     const offscreen = direction === "above" || direction === "below";
     if (offscreen) {
-      const text = `The connected text is scrolled ${direction === "above" ? "above the top" : "below the bottom"} - click to show it.`;
+      const text = `Selected row is ${direction === "above" ? "above" : "below"} the visible area`;
       const label = notice.querySelector("[data-editor-row-connection-text]");
       if (label.textContent !== text) {
         label.textContent = text;

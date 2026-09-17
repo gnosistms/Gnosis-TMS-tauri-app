@@ -782,8 +782,9 @@ export function renderTranslateSidebar(
       <div class="card__body">
         <button type="button" class="editor-row-connection" data-editor-row-connection
           data-action="show-connected-editor-row" hidden>
-          <span data-editor-row-connection-arrow aria-hidden="true"></span>
-          <span data-editor-row-connection-text></span>
+          <span class="editor-row-connection__arrow" data-editor-row-connection-arrow aria-hidden="true"></span>
+          <span class="editor-row-connection__text" data-editor-row-connection-text></span>
+          <span class="editor-row-connection__action">Show row</span>
         </button>
         <div class="history-tabs">
           ${writeActionsAvailable ? renderSidebarTab("AI Assistant", "assistant", activeTab, "translate") : ""}
