@@ -888,12 +888,15 @@ function editorHasPendingDurableWrites() {
   );
 }
 
+// Only local durable writes can be lost by a restart. Remote syncs and repo
+// maintenance (clone, reconcile, reindex) run as git subprocesses that resume on
+// the next launch, and a stalled one must never hold the update hostage.
 configureAppUpdateInstallation(async () => {
   const saved = await flushDirtyEditorRows(render);
   if (!saved || hasPendingEditorWrites(state.editorChapter)
       || getEditorOperationQueueSnapshot().hasActiveOperations
-      || getRepoWriteQueueSnapshot().hasActiveWrites) {
-    throw new Error("Changes are still being saved or synced. Please wait, resolve any save errors, and try Restart to update again.");
+      || getRepoWriteQueueSnapshot().hasActiveLocalWrites) {
+    throw new Error("Changes are still being saved. Please wait, resolve any save errors, and try Restart to update again.");
   }
 });
 
