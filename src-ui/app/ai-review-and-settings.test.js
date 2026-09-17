@@ -1351,6 +1351,111 @@ test("runEditorAiTranslate sends glossary hints for matched source-language term
   assert.equal(latestAssistantDraft(), null);
 });
 
+test("runEditorAiTranslate loads a not-yet-ready chapter glossary before translating", async () => {
+  installTranslateFixture({
+    fields: {
+      es: "La gnostica habla.",
+      vi: "",
+    },
+  });
+  installSelectedTeam({ canDelete: true, login: "tester" });
+  state.projects = [{
+    id: "project-1",
+    name: "repo-one",
+    chapters: [{
+      id: "chapter-1",
+      linkedGlossary: { glossaryId: "glossary-1", repoName: "glossary-1" },
+    }],
+  }];
+  state.editorChapter = {
+    ...state.editorChapter,
+    glossary: {
+      status: "loading",
+      error: "",
+      glossaryId: "glossary-1",
+      repoName: "glossary-1",
+      title: "",
+      sourceLanguage: null,
+      targetLanguage: null,
+      terms: [],
+      matcherModel: null,
+    },
+  };
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      detailedConfiguration: true,
+      actions: {
+        ...state.aiSettings.actionConfig.actions,
+        translate1: {
+          providerId: "openai",
+          modelId: "gpt-5.4-mini",
+        },
+      },
+    },
+  };
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_ai_provider_secret") {
+      return "oa-key";
+    }
+    if (command === "load_gtms_glossary_editor_data") {
+      assert.equal(payload.input.glossaryId, "glossary-1");
+      assert.equal(payload.input.repoName, "glossary-1");
+      return {
+        glossaryId: "glossary-1",
+        title: "Glossary",
+        sourceLanguage: { code: "es", name: "Spanish" },
+        targetLanguage: { code: "vi", name: "Vietnamese" },
+        terms: [{
+          termId: "t1",
+          sourceTerms: ["gnostica", "gnostico"],
+          targetTerms: ["hoc tro gnosis", "cua gnosis"],
+          notesToTranslators: "Lien quan den Gnosis",
+          footnote: "Chu thich bo sung",
+        }],
+      };
+    }
+    if (command === "run_ai_translation") {
+      return {
+        translatedText: "Ban dich",
+      };
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await runEditorAiTranslate(() => {}, "translate1", {
+    updateEditorRowFieldValue(rowId, languageCode, nextValue) {
+      const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
+      row.fields[languageCode] = nextValue;
+      row.saveStatus = "dirty";
+    },
+    async persistEditorRowOnBlur(_render, rowId) {
+      const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
+      row.persistedFields = { ...row.fields };
+      row.saveStatus = "idle";
+    },
+  });
+
+  assert.equal(
+    invokeLog.some((entry) => entry.command === "load_gtms_glossary_editor_data"),
+    true,
+    "expected AI Translate to load the not-yet-ready chapter glossary before translating",
+  );
+  const sentRequest = invokeLog.find((entry) => entry.command === "run_ai_translation")?.payload?.request;
+  assert.deepEqual(sentRequest?.glossaryHints, [{
+    sourceTerm: "gnostica",
+    targetVariants: [{ text: "hoc tro gnosis" }, { text: "cua gnosis" }],
+    globalNotes: ["Lien quan den Gnosis"],
+    notes: ["Lien quan den Gnosis"],
+    footnotes: ["Chu thich bo sung"],
+  }]);
+  assert.equal(state.editorChapter.glossary.status, "ready");
+  assert.equal(state.editorChapter.rows[0].fields.vi, "Ban dich");
+});
+
 // Shared setup for the pivot-refresh translate tests: chapter source en,
 // linked es -> vi glossary (so es is a "pivot" language), a seeded ready
 // en -> vi derived entry pivoting through the OLD Spanish text, and the es

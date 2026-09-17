@@ -49,7 +49,7 @@ import {
   buildEditorAiTranslationGlossaryHints,
   buildEditorDerivedGlossaryModel,
 } from "./editor-glossary-highlighting.js";
-import { loadEditorGlossaryState } from "./editor-glossary-flow.js";
+import { ensureEditorGlossaryReady } from "./editor-glossary-flow.js";
 import { buildDerivedGlossaryTermInputs } from "./editor-derived-glossary-flow.js";
 import { saveStoredEditorDerivedGlossaryEntryForChapter } from "./editor-derived-glossary-cache.js";
 import { saveStoredEditorAssistantChapterData } from "./editor-ai-assistant-cache.js";
@@ -946,35 +946,8 @@ function classifyAssistantIntent(message, context) {
   return result;
 }
 
-// The chapter's linked glossary loads asynchronously in the background when the
-// chapter opens (`editor-chapter-load-flow.js`); until that resolves (or if it
-// previously failed), `chapterState.glossary` is a placeholder with no matcher
-// model. Unlike AI Translate, the assistant chat can be invoked immediately, so
-// it must (re)fetch a not-yet-ready glossary itself rather than silently
-// treating "not loaded yet" as "no glossary terms match". A prior "error"
-// status is retried too, rather than permanently disabling glossary hints for
-// the rest of the session over one transient failure.
-async function ensureAssistantGlossaryReady(context) {
-  const glossaryState = context.chapterState?.glossary ?? null;
-  if (glossaryState?.status === "ready") {
-    return glossaryState;
-  }
-
-  const team = selectedProjectsTeam();
-  const chapterContext = findChapterContextById(context.chapterId);
-  if (!team || !chapterContext?.chapter?.linkedGlossary) {
-    return glossaryState;
-  }
-
-  const freshGlossaryState = await loadEditorGlossaryState(team, chapterContext.chapter);
-  if (state.editorChapter?.chapterId === context.chapterId) {
-    state.editorChapter = { ...state.editorChapter, glossary: freshGlossaryState };
-  }
-  return freshGlossaryState;
-}
-
 async function resolveAssistantGlossaryHints(context, providerId, modelId, allowDerivedPreparation = false) {
-  const glossaryState = await ensureAssistantGlossaryReady(context);
+  const glossaryState = await ensureEditorGlossaryReady(context.chapterState, context.chapterId);
   const glossaryModel = glossaryState?.matcherModel ?? null;
   const glossarySourceLanguageCode =
     typeof glossaryState?.sourceLanguage?.code === "string" && glossaryState.sourceLanguage.code.trim()
