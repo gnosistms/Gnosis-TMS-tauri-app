@@ -130,6 +130,98 @@ test("startup update check opens the global prompt when an update is available",
   assert.ok(renderCount >= 2);
 });
 
+test("manual update checks explain why they are skipped once an update is downloaded", async () => {
+  let invoked = false;
+  invokeHandler = async () => {
+    invoked = true;
+    return null;
+  };
+  state.appUpdate = { ...state.appUpdate, status: "downloaded", available: true, version: "0.2.0" };
+
+  let renderCount = 0;
+  await checkForAppUpdate(() => {
+    renderCount += 1;
+  }, { silent: false });
+
+  assert.equal(invoked, false);
+  assert.equal(state.appUpdate.status, "downloaded");
+  assert.equal(state.statusBadges.left.visible, true);
+  assert.equal(state.statusBadges.left.text, "Update 0.2.0 is downloaded. Restart to install it.");
+  assert.ok(renderCount >= 1);
+});
+
+test("manual update checks explain why they are skipped while an update is downloading", async () => {
+  invokeHandler = async () => {
+    throw new Error("check must not run");
+  };
+  state.appUpdate = { ...state.appUpdate, status: "installing", available: true, version: "0.2.0" };
+
+  await checkForAppUpdate(() => {}, { silent: false });
+
+  assert.equal(state.appUpdate.status, "installing");
+  assert.equal(state.statusBadges.left.text, "Update 0.2.0 is downloading.");
+});
+
+test("manual update checks report saving while an install is preparing", async () => {
+  invokeHandler = async () => {
+    throw new Error("check must not run");
+  };
+  state.appUpdate = { ...state.appUpdate, status: "preparing", available: true, version: "0.2.0" };
+
+  await checkForAppUpdate(() => {}, { silent: false });
+
+  assert.equal(state.appUpdate.status, "preparing");
+  assert.equal(state.statusBadges.left.text, "Saving changes before installing the update.");
+});
+
+test("silent update checks stay silent when skipped", async () => {
+  invokeHandler = async () => {
+    throw new Error("check must not run");
+  };
+  state.appUpdate = { ...state.appUpdate, status: "downloaded", available: true, version: "0.2.0" };
+
+  await checkForAppUpdate(() => {}, { silent: true });
+
+  assert.equal(state.appUpdate.status, "downloaded");
+  assert.equal(state.statusBadges.left.visible, false);
+});
+
+test("installing from the pill clears the persistent checking badge of a superseded manual check", async () => {
+  let resolveCheck = null;
+  invokeHandler = async (command) => {
+    if (command === "check_for_app_update") {
+      return await new Promise((resolve) => {
+        resolveCheck = resolve;
+      });
+    }
+    assert.equal(command, "download_app_update");
+    return null;
+  };
+  state.appUpdate = { ...state.appUpdate, status: "available", available: true, version: "0.2.0" };
+
+  const pendingCheck = checkForAppUpdate(() => {}, { silent: false });
+  assert.equal(state.statusBadges.left.text, "Checking for updates...");
+
+  await installAppUpdate(() => {});
+  assert.equal(state.appUpdate.status, "downloaded");
+  assert.equal(state.statusBadges.left.visible, false);
+
+  resolveCheck({ available: true, version: "0.2.0", currentVersion: "0.1.0", body: null });
+  await pendingCheck;
+  assert.equal(state.appUpdate.status, "downloaded");
+  assert.equal(state.statusBadges.left.visible, false);
+});
+
+test("superseding a check leaves an unrelated notice badge alone", async () => {
+  invokeHandler = async () => null;
+  state.appUpdate = { ...state.appUpdate, status: "available", available: true, version: "0.2.0" };
+  state.statusBadges.left = { visible: true, text: "Saved" };
+
+  await installAppUpdate(() => {});
+
+  assert.equal(state.statusBadges.left.text, "Saved");
+});
+
 test("manual update checks show immediate checking feedback before the result arrives", async () => {
   let resolveUpdate = null;
   invokeHandler = async (command) => {

@@ -1,5 +1,5 @@
 import { invoke, listen } from "./runtime.js";
-import { showNoticeBadge } from "./status-feedback.js";
+import { clearNoticeBadgeIfText, showNoticeBadge } from "./status-feedback.js";
 import { state } from "./state.js";
 import { confirmsKnownUpdateInstalled, storeKnownAppUpdate } from "./app-update-storage.js";
 
@@ -34,8 +34,15 @@ function upToDateMessage(currentVersion) {
   return currentVersion ? `Gnosis TMS ${currentVersion} is up to date` : "Gnosis TMS is up to date";
 }
 
-function checkingForUpdatesMessage() {
-  return "Checking for updates...";
+const CHECKING_FOR_UPDATES_MESSAGE = "Checking for updates...";
+
+// Discard the result of any in-flight check. The manual check badge is
+// persistent, and the discarded result never reaches the code that would
+// replace it, so clear it here. Every caller renders right after, so no
+// render is needed here.
+function supersedeUpdateCheck() {
+  latestUpdateCheckId += 1;
+  clearNoticeBadgeIfText(CHECKING_FOR_UPDATES_MESSAGE);
 }
 
 function requestedUpdateVersion() {
@@ -151,7 +158,7 @@ export function requireAppUpdate(requirement, render) {
     return false;
   }
 
-  latestUpdateCheckId += 1;
+  supersedeUpdateCheck();
 
   try {
     document.activeElement?.blur?.();
@@ -192,8 +199,32 @@ function shouldShowUpdatePrompt(update, options, dismissedVersion) {
   return update.version !== dismissedVersion;
 }
 
+function skippedCheckMessage() {
+  const version = requestedUpdateVersion();
+  const label = version ? `Update ${version}` : "An update";
+  if (state.appUpdate.status === "downloaded") {
+    return `${label} is downloaded. Restart to install it.`;
+  }
+  if (state.appUpdate.status === "installing") {
+    return `${label} is downloading.`;
+  }
+  if (state.appUpdate.status === "preparing") {
+    return "Saving changes before installing the update.";
+  }
+  return `${label} is being installed.`;
+}
+
 export async function checkForAppUpdate(render, options = {}) {
-  if (!updatesSupported() || updateBusy() || state.appUpdate.status === "downloaded") {
+  if (!updatesSupported()) {
+    return;
+  }
+
+  // A manual check while an update is downloading, downloaded, or installing
+  // must not look like a hung check: say why nothing is happening.
+  if (updateBusy() || state.appUpdate.status === "downloaded") {
+    if (options.silent !== true) {
+      showNoticeBadge(skippedCheckMessage(), render, 3200);
+    }
     return;
   }
 
@@ -203,7 +234,7 @@ export async function checkForAppUpdate(render, options = {}) {
   state.appUpdate.status = "checking";
   if (!silent) {
     state.appUpdate.error = "";
-    showNoticeBadge(checkingForUpdatesMessage(), render, null);
+    showNoticeBadge(CHECKING_FOR_UPDATES_MESSAGE, render, null);
     render();
   }
 
@@ -283,7 +314,7 @@ export async function installAppUpdate(render) {
   }
 
   if (state.appUpdate.status === "downloaded") {
-    latestUpdateCheckId += 1;
+    supersedeUpdateCheck();
     state.appUpdate.status = "preparing";
     state.appUpdate.promptVisible = true;
     state.appUpdate.error = "";
@@ -305,7 +336,7 @@ export async function installAppUpdate(render) {
     return;
   }
 
-  latestUpdateCheckId += 1;
+  supersedeUpdateCheck();
   state.appUpdate.status = "installing";
   state.appUpdate.error = "";
   if (state.appUpdate.required !== true) {

@@ -875,6 +875,9 @@ app.addEventListener("scroll", (event) => {
   scheduleEditorLocationSave(state);
 }, true);
 
+// Stricter than the Restart-to-update guard below on purpose: a running remote
+// sync blocks a close, but the close wait has a force-close escape, while the
+// update guard has none. Keep the two in step when either changes.
 function editorHasPendingDurableWrites() {
   const repoWriteSnapshot = getRepoWriteQueueSnapshot();
   return (
@@ -888,12 +891,17 @@ function editorHasPendingDurableWrites() {
   );
 }
 
+// Block on every active repo operation except remote sync. Imports, project
+// creates, renames and rebuilds land in the repoMaintenance bucket and can be
+// lost mid-commit if the process dies. A remote sync only pushes or pulls
+// already-committed state and resumes on the next launch, so a stalled one must
+// never hold the update hostage.
 configureAppUpdateInstallation(async () => {
   const saved = await flushDirtyEditorRows(render);
   if (!saved || hasPendingEditorWrites(state.editorChapter)
       || getEditorOperationQueueSnapshot().hasActiveOperations
-      || getRepoWriteQueueSnapshot().hasActiveWrites) {
-    throw new Error("Changes are still being saved or synced. Please wait, resolve any save errors, and try Restart to update again.");
+      || getRepoWriteQueueSnapshot().hasActiveNonSyncWrites) {
+    throw new Error("Changes are still being saved. Please wait, resolve any save errors, and try Restart to update again.");
   }
 });
 
