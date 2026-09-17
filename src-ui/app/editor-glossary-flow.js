@@ -1,4 +1,5 @@
 import { buildEditorGlossaryModel } from "./editor-glossary-highlighting.js";
+import { waitForGlossaryTermWritesToSettle } from "./glossary-term-write-coordinator.js";
 import { buildEditorRowSearchHighlightMap } from "./editor-search-flow.js";
 import { buildEditorSearchHighlightKey } from "./editor-search-highlighting.js";
 import {
@@ -81,6 +82,7 @@ export async function loadEditorGlossaryState(team, chapter) {
   }
 
   try {
+    await waitForGlossaryTermWritesToSettle(team, linkedGlossary.repoName);
     const payload = await invoke("load_gtms_glossary_editor_data", {
       input: {
         installationId: team.installationId,

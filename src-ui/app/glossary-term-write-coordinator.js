@@ -30,16 +30,28 @@ export function glossaryTermWriteIsActive(team, repoName) {
   return writeIntents.anyActive((intent) => intent.scope === scope);
 }
 
+// A term write can involve a git sync over the network with no timeout of its own
+// (see src-tauri/src/repo_sync_shared.rs), so this wait is bounded: callers must not
+// hang indefinitely on a stuck/offline write. A caller that times out proceeds with
+// whatever data it has rather than freezing.
+const GLOSSARY_TERM_WRITE_SETTLE_TIMEOUT_MS = 10000;
+
 export function waitForGlossaryTermWritesToSettle(team, repoName) {
   const scope = glossaryTermWriteScope(team, repoName);
   if (!writeIntents.scopeIsActive(scope)) return Promise.resolve();
   return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      unsubscribe();
+      globalThis.clearTimeout(timeoutId);
+      resolve();
+    };
     const unsubscribe = writeIntents.subscribe(() => {
-      if (!writeIntents.scopeIsActive(scope)) {
-        unsubscribe();
-        resolve();
-      }
+      if (!writeIntents.scopeIsActive(scope)) finish();
     });
+    const timeoutId = globalThis.setTimeout(finish, GLOSSARY_TERM_WRITE_SETTLE_TIMEOUT_MS);
   });
 }
 
