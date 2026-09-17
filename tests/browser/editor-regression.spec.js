@@ -6791,7 +6791,15 @@ for (const rowCount of [6, 200]) {
     await expect(last).toBeVisible();
     await last.locator('[data-editor-display-field][data-language-code="vi"]').click();
     await page.locator('[data-action="switch-editor-sidebar-tab:history"]').click();
-    await page.locator("[data-editor-search-input]").focus(); // allow the editor to unpin
+    await page.locator("[data-editor-search-input]").focus();
+    // Blurring the field closes its editor on the next animation frame, and
+    // that re-render restores a viewport anchor captured at the bottom. A raw
+    // scrollTop write is not user scroll intent (editor-scroll-session.js), so
+    // scrolling before the anchored render lands lets the restore drag the
+    // viewport back down and the row stays visible. Wait for the editor to
+    // close, then express intent the way a user would before scrolling.
+    await expect.poll(() => page.evaluate(() => window.__gnosisDebug.readEditorState().mainFieldEditor.rowId)).toBeNull();
+    await page.locator(".translate-main-scroll").dispatchEvent("wheel", { deltaY: -1000 });
     await setTranslateScrollTop(page, 0);
     await expect(notice).toContainText("Selected row is below the visible area");
     await expect(notice).toBeVisible();
