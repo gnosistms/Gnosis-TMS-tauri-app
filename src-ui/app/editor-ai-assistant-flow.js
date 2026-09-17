@@ -951,10 +951,12 @@ function classifyAssistantIntent(message, context) {
 // previously failed), `chapterState.glossary` is a placeholder with no matcher
 // model. Unlike AI Translate, the assistant chat can be invoked immediately, so
 // it must (re)fetch a not-yet-ready glossary itself rather than silently
-// treating "not loaded yet" as "no glossary terms match".
+// treating "not loaded yet" as "no glossary terms match". A prior "error"
+// status is retried too, rather than permanently disabling glossary hints for
+// the rest of the session over one transient failure.
 async function ensureAssistantGlossaryReady(context) {
   const glossaryState = context.chapterState?.glossary ?? null;
-  if (glossaryState?.status === "ready" || glossaryState?.status === "error") {
+  if (glossaryState?.status === "ready") {
     return glossaryState;
   }
 

@@ -3174,6 +3174,111 @@ test("runEditorAiAssistant loads a not-yet-ready chapter glossary before answeri
   assert.equal(state.editorChapter.glossary.status, "ready");
 });
 
+test("runEditorAiAssistant retries a glossary that previously failed to load", async () => {
+  installTranslateFixture({
+    fields: {
+      es: "La gnostica habla.",
+      vi: "",
+    },
+  });
+  installSelectedTeam({ canDelete: true, login: "tester" });
+  state.projects = [{
+    id: "project-1",
+    name: "repo-one",
+    chapters: [{
+      id: "chapter-1",
+      linkedGlossary: { glossaryId: "glossary-1", repoName: "glossary-1" },
+    }],
+  }];
+  state.editorChapter = {
+    ...state.editorChapter,
+    glossary: {
+      status: "error",
+      error: "The glossary could not be loaded.",
+      glossaryId: "glossary-1",
+      repoName: "glossary-1",
+      title: "",
+      sourceLanguage: null,
+      targetLanguage: null,
+      terms: [],
+      matcherModel: null,
+    },
+    assistant: {
+      ...state.editorChapter.assistant,
+      composerDraft: "What glossary entry applies here?",
+    },
+  };
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: discussActionConfig(),
+  };
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_ai_provider_secret") {
+      return "oa-key";
+    }
+    if (command === "load_team_ai_settings") {
+      return null;
+    }
+    if (command === "load_team_ai_secrets_metadata") {
+      return {
+        schemaVersion: 1,
+        updatedAt: null,
+        updatedBy: null,
+        providers: {
+          openai: null,
+          gemini: null,
+          claude: null,
+          deepseek: null,
+        },
+      };
+    }
+    if (command === "load_gtms_glossary_editor_data") {
+      assert.equal(payload.input.glossaryId, "glossary-1");
+      assert.equal(payload.input.repoName, "glossary-1");
+      return {
+        glossaryId: "glossary-1",
+        title: "Glossary",
+        sourceLanguage: { code: "es", name: "Spanish" },
+        targetLanguage: { code: "vi", name: "Vietnamese" },
+        terms: [{
+          termId: "t1",
+          sourceTerms: ["gnostica", "gnostico"],
+          targetTerms: ["hoc tro gnosis", "cua gnosis"],
+          notesToTranslators: "Lien quan den Gnosis",
+          footnote: "Chu thich bo sung",
+        }],
+      };
+    }
+    if (command === "run_ai_assistant_turn") {
+      return {
+        assistantText: "Use hoc tro gnosis here.",
+        draftTranslationText: null,
+        promptText: "prompt text",
+      };
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await runEditorAiAssistant(() => {});
+
+  assert.equal(
+    invokeLog.some((entry) => entry.command === "load_gtms_glossary_editor_data"),
+    true,
+    "expected the assistant to retry a glossary that previously failed to load",
+  );
+  const sentRequest = invokeLog.find((entry) => entry.command === "run_ai_assistant_turn")?.payload?.request;
+  assert.deepEqual(sentRequest?.glossaryHints, [{
+    sourceTerm: "gnostica",
+    targetVariants: [{ text: "hoc tro gnosis" }, { text: "cua gnosis" }],
+    globalNotes: ["Lien quan den Gnosis"],
+    notes: ["Lien quan den Gnosis"],
+    footnotes: ["Chu thich bo sung"],
+  }]);
+  assert.equal(state.editorChapter.glossary.status, "ready");
+});
+
 test("runEditorAiAssistant shows direct OpenAI billing guidance when credits are exhausted", async () => {
   installTranslateFixture();
   state.editorChapter = {
