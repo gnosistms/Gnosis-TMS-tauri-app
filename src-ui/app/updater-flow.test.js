@@ -174,6 +174,42 @@ test("silent update checks stay silent when skipped", async () => {
   assert.equal(state.statusBadges.left.visible, false);
 });
 
+test("installing from the pill clears the persistent checking badge of a superseded manual check", async () => {
+  let resolveCheck = null;
+  invokeHandler = async (command) => {
+    if (command === "check_for_app_update") {
+      return await new Promise((resolve) => {
+        resolveCheck = resolve;
+      });
+    }
+    assert.equal(command, "download_app_update");
+    return null;
+  };
+  state.appUpdate = { ...state.appUpdate, status: "available", available: true, version: "0.2.0" };
+
+  const pendingCheck = checkForAppUpdate(() => {}, { silent: false });
+  assert.equal(state.statusBadges.left.text, "Checking for updates...");
+
+  await installAppUpdate(() => {});
+  assert.equal(state.appUpdate.status, "downloaded");
+  assert.equal(state.statusBadges.left.visible, false);
+
+  resolveCheck({ available: true, version: "0.2.0", currentVersion: "0.1.0", body: null });
+  await pendingCheck;
+  assert.equal(state.appUpdate.status, "downloaded");
+  assert.equal(state.statusBadges.left.visible, false);
+});
+
+test("superseding a check leaves an unrelated notice badge alone", async () => {
+  invokeHandler = async () => null;
+  state.appUpdate = { ...state.appUpdate, status: "available", available: true, version: "0.2.0" };
+  state.statusBadges.left = { visible: true, text: "Saved" };
+
+  await installAppUpdate(() => {});
+
+  assert.equal(state.statusBadges.left.text, "Saved");
+});
+
 test("manual update checks show immediate checking feedback before the result arrives", async () => {
   let resolveUpdate = null;
   invokeHandler = async (command) => {

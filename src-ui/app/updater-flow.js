@@ -1,5 +1,5 @@
 import { invoke, listen } from "./runtime.js";
-import { showNoticeBadge } from "./status-feedback.js";
+import { clearNoticeBadge, getNoticeBadgeText, showNoticeBadge } from "./status-feedback.js";
 import { state } from "./state.js";
 import { confirmsKnownUpdateInstalled, storeKnownAppUpdate } from "./app-update-storage.js";
 
@@ -34,8 +34,22 @@ function upToDateMessage(currentVersion) {
   return currentVersion ? `Gnosis TMS ${currentVersion} is up to date` : "Gnosis TMS is up to date";
 }
 
+const CHECKING_FOR_UPDATES_MESSAGE = "Checking for updates...";
+
 function checkingForUpdatesMessage() {
-  return "Checking for updates...";
+  return CHECKING_FOR_UPDATES_MESSAGE;
+}
+
+// Discard the result of any in-flight check. The manual check badge is
+// persistent, and the discarded result never reaches the code that would
+// replace it, so clear it here. Guarded by text so another flow's badge stays.
+function supersedeUpdateCheck(render) {
+  latestUpdateCheckId += 1;
+  if (getNoticeBadgeText() !== CHECKING_FOR_UPDATES_MESSAGE) {
+    return;
+  }
+  clearNoticeBadge();
+  render?.({ scope: "status-surface" });
 }
 
 function requestedUpdateVersion() {
@@ -151,7 +165,7 @@ export function requireAppUpdate(requirement, render) {
     return false;
   }
 
-  latestUpdateCheckId += 1;
+  supersedeUpdateCheck(render);
 
   try {
     document.activeElement?.blur?.();
@@ -304,7 +318,7 @@ export async function installAppUpdate(render) {
   }
 
   if (state.appUpdate.status === "downloaded") {
-    latestUpdateCheckId += 1;
+    supersedeUpdateCheck(render);
     state.appUpdate.status = "preparing";
     state.appUpdate.promptVisible = true;
     state.appUpdate.error = "";
@@ -326,7 +340,7 @@ export async function installAppUpdate(render) {
     return;
   }
 
-  latestUpdateCheckId += 1;
+  supersedeUpdateCheck(render);
   state.appUpdate.status = "installing";
   state.appUpdate.error = "";
   if (state.appUpdate.required !== true) {
