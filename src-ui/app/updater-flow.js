@@ -192,8 +192,29 @@ function shouldShowUpdatePrompt(update, options, dismissedVersion) {
   return update.version !== dismissedVersion;
 }
 
+function skippedCheckMessage() {
+  const version = requestedUpdateVersion();
+  const label = version ? `Update ${version}` : "An update";
+  if (state.appUpdate.status === "downloaded") {
+    return `${label} is downloaded. Restart to install it.`;
+  }
+  if (state.appUpdate.status === "installing") {
+    return `${label} is downloading.`;
+  }
+  return `${label} is being installed.`;
+}
+
 export async function checkForAppUpdate(render, options = {}) {
-  if (!updatesSupported() || updateBusy() || state.appUpdate.status === "downloaded") {
+  if (!updatesSupported()) {
+    return;
+  }
+
+  // A manual check while an update is downloading, downloaded, or installing
+  // must not look like a hung check: say why nothing is happening.
+  if (updateBusy() || state.appUpdate.status === "downloaded") {
+    if (options.silent !== true) {
+      showNoticeBadge(skippedCheckMessage(), render, 3200);
+    }
     return;
   }
 
