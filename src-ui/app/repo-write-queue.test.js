@@ -240,6 +240,8 @@ test("repo queue snapshots expose local write and remote sync state separately",
   assert.equal(runningRemoteSnapshot.hasActiveRemoteSync, true);
   assert.equal(runningRemoteSnapshot.hasRunningRemoteSync, true);
   assert.equal(runningRemoteSnapshot.hasActiveLocalWrites, false);
+  assert.equal(runningRemoteSnapshot.hasActiveNonSyncWrites, false);
+  assert.equal(getRepoWriteQueueSnapshot().hasActiveNonSyncWrites, false);
   assert.equal(runningRemoteSnapshot.operations[0].operationType, "remoteSync");
 
   releaseRemoteSync.resolve();
@@ -258,11 +260,33 @@ test("repo queue snapshots expose local write and remote sync state separately",
   await delay(0);
   const localSnapshot = getRepoWriteQueueSnapshot("7:project-1:repo-one");
   assert.equal(localSnapshot.hasActiveLocalWrites, true);
+  assert.equal(localSnapshot.hasActiveNonSyncWrites, true);
   assert.equal(localSnapshot.hasActiveRemoteSync, false);
   assert.equal(localSnapshot.operations[0].operationType, "localEditorWrite");
 
   releaseLocalWrite.resolve();
   await localWrite;
+
+  // Project-level writes fall into the repoMaintenance catch-all. They are not
+  // local editor writes, but they must still count as non-sync work.
+  const releaseImport = deferred();
+  const projectImport = enqueueRepoWrite({
+    scope: "7:project-1:repo-one",
+    kind: "projectImport",
+    run: async () => {
+      await releaseImport.promise;
+    },
+  });
+
+  await delay(0);
+  const importSnapshot = getRepoWriteQueueSnapshot("7:project-1:repo-one");
+  assert.equal(importSnapshot.operations[0].operationType, "repoMaintenance");
+  assert.equal(importSnapshot.hasActiveLocalWrites, false);
+  assert.equal(importSnapshot.hasActiveNonSyncWrites, true);
+  assert.equal(getRepoWriteQueueSnapshot().hasActiveNonSyncWrites, true);
+
+  releaseImport.resolve();
+  await projectImport;
 });
 
 test("repo queue watchdog surfaces overdue writes without settling the operation", async () => {

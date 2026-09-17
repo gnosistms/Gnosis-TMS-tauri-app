@@ -273,6 +273,12 @@ function snapshotQueue(queue) {
     ACTIVE_REPO_WRITE_STATUSES.has(operation.status)
     && REMOTE_REPO_WRITE_OPERATION_TYPES.has(operation.operationType),
   );
+  // Everything active that is not a remote sync: local writes plus the
+  // repoMaintenance catch-all, which also holds user-initiated project writes.
+  const activeNonSyncOperations = operations.filter((operation) =>
+    ACTIVE_REPO_WRITE_STATUSES.has(operation.status)
+    && !REMOTE_REPO_WRITE_OPERATION_TYPES.has(operation.operationType),
+  );
   const snapshotOperations = operations.map(snapshotOperation);
 
   return {
@@ -284,6 +290,7 @@ function snapshotQueue(queue) {
     queuedOperationIds: queuedOperations.map((operation) => operation.operationId),
     hasActiveWrites: operations.some((operation) => ACTIVE_REPO_WRITE_STATUSES.has(operation.status)),
     hasActiveLocalWrites: activeLocalOperations.length > 0,
+    hasActiveNonSyncWrites: activeNonSyncOperations.length > 0,
     hasActiveRemoteSync: activeRemoteOperations.length > 0,
     hasRunningRemoteSync: activeRemoteOperations.some((operation) => operation.status === "running"),
     hasOverdueWrites: snapshotOperations.some((operation) => operation.overdue),
@@ -645,6 +652,10 @@ export function getRepoWriteQueueSnapshot(scope = null) {
     ACTIVE_REPO_WRITE_STATUSES.has(operation.status)
     && REMOTE_REPO_WRITE_OPERATION_TYPES.has(operation.operationType),
   );
+  const activeNonSyncWrites = operations.filter((operation) =>
+    ACTIVE_REPO_WRITE_STATUSES.has(operation.status)
+    && !REMOTE_REPO_WRITE_OPERATION_TYPES.has(operation.operationType),
+  );
   const oldestOperation = oldestActiveOperation(
     queues.flatMap((queue) => [
       ...queue.operations,
@@ -657,6 +668,7 @@ export function getRepoWriteQueueSnapshot(scope = null) {
     activeCount: queuedCount + runningCount,
     hasActiveWrites: queuedCount + runningCount > 0,
     hasActiveLocalWrites: activeLocalWrites.length > 0,
+    hasActiveNonSyncWrites: activeNonSyncWrites.length > 0,
     hasActiveRemoteSync: activeRemoteSync.length > 0,
     hasRunningRemoteSync: activeRemoteSync.some((operation) => operation.status === "running"),
     hasOverdueWrites: operations.some((operation) => operation.overdue),
