@@ -22,6 +22,7 @@ import {
 import {
   buildEditorAiTranslationGlossaryHints,
 } from "./editor-glossary-highlighting.js";
+import { ensureEditorGlossaryReady } from "./editor-glossary-flow.js";
 import {
   prepareEditorDerivedGlossaryForContext,
   resolveEditorDerivedGlossaryUsage,
@@ -164,14 +165,14 @@ export function applyEditorAiTranslatePayloadToRow(context, payload, updateEdito
   }
 }
 
-function resolveGlossaryUsage(context) {
+async function resolveGlossaryUsage(context) {
   if (context.captionOnly === true) {
     return {
       kind: "none",
       glossaryHints: [],
     };
   }
-  const glossaryState = context.chapterState?.glossary ?? null;
+  const glossaryState = await ensureEditorGlossaryReady(context.chapterState, context.chapterId);
   const glossaryModel = glossaryState?.matcherModel ?? null;
   const glossarySourceLanguageCode = resolveLanguageCode(
     glossaryState?.sourceLanguage ?? glossaryModel?.sourceLanguage,
@@ -532,7 +533,7 @@ export async function runEditorAiTranslateForContext(
   let retainedDerivedEntry = null;
   let preparedDerivedGlossaryNeedsPersist = false;
   try {
-    glossaryUsage = resolveGlossaryUsage(context);
+    glossaryUsage = await resolveGlossaryUsage(context);
     retainedDerivedEntry = glossaryUsage.kind === "derived"
       ? (glossaryUsage.cachedDerivedEntry ?? null)
       : null;

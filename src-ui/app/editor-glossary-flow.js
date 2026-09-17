@@ -14,6 +14,7 @@ import {
 import { buildStaticInlineFootnoteMarkerRanges } from "./editor-static-footnote-markers.js";
 import { isCustomHtmlRowTextStyle } from "./editor-row-text-style.js";
 import { editorFootnotesPlainText, findEditorRowById } from "./editor-utils.js";
+import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import { invoke } from "./runtime.js";
 import { createEditorChapterGlossaryState, state } from "./state.js";
 
@@ -100,6 +101,34 @@ export async function loadEditorGlossaryState(team, chapter) {
       repoName: linkedGlossary.repoName,
     };
   }
+}
+
+// A chapter's linked glossary loads asynchronously in the background when the
+// chapter opens (`editor-chapter-load-flow.js`); until that resolves (or if it
+// previously failed), `chapterState.glossary` is a placeholder with no matcher
+// model. AI features that can be invoked immediately after a chapter opens
+// (assistant chat, AI Translate) must (re)fetch a not-yet-ready glossary
+// themselves rather than silently treating "not loaded yet" as "no glossary
+// terms match". A prior "error" status is retried too, rather than
+// permanently disabling glossary hints for the rest of the session over one
+// transient failure.
+export async function ensureEditorGlossaryReady(chapterState, chapterId) {
+  const glossaryState = chapterState?.glossary ?? null;
+  if (glossaryState?.status === "ready") {
+    return glossaryState;
+  }
+
+  const team = selectedProjectsTeam();
+  const chapterContext = findChapterContextById(chapterId);
+  if (!team || !chapterContext?.chapter?.linkedGlossary) {
+    return glossaryState;
+  }
+
+  const freshGlossaryState = await loadEditorGlossaryState(team, chapterContext.chapter);
+  if (state.editorChapter?.chapterId === chapterId) {
+    state.editorChapter = { ...state.editorChapter, glossary: freshGlossaryState };
+  }
+  return freshGlossaryState;
 }
 
 
