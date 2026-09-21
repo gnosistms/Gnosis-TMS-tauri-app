@@ -303,7 +303,8 @@ function computeProjectsScreenFlags(state) {
   const pageWritesDisabled = areResourcePageWritesDisabled(state.projectsPage) || discoveryLoading;
   const heavyActionsDisabled = pageWritesDisabled || anyProjectWriteIsActive() || projectRepoQueueActive;
   const mutatingWriteActionsDisabled =
-    pageWritesDisabled || anyProjectMutatingWriteIsActive() || projectMutatingRepoQueueActive;
+    areResourcePageWriteSubmissionsDisabled(state.projectsPage)
+    || discoveryLoading || anyProjectMutatingWriteIsActive() || projectMutatingRepoQueueActive;
   const lifecycleActionsDisabled = areResourcePageWriteSubmissionsDisabled(state.projectsPage);
   // Local hard-delete (clear/remove deleted files) is a local-only action; like Restore
   // it must stay available during a background refresh. Gate it on write submissions

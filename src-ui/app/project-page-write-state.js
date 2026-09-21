@@ -30,7 +30,7 @@ export function anyProjectMutatingRepoQueueWriteActive() {
 
 export function areProjectCreationWritesDisabled() {
   return (
-    areResourcePageWritesDisabled(state.projectsPage)
+    areResourcePageWriteSubmissionsDisabled(state.projectsPage)
     || anyProjectMutatingWriteIsActive()
     || anyProjectMutatingRepoQueueWriteActive()
   );

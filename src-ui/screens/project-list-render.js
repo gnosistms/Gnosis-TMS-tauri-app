@@ -24,12 +24,7 @@ export function deriveProjectRenderState(project, options = {}) {
   const filesLength = visibleProjectFileCount(project);
   const fileLoadState = String(project?.fileLoadState ?? "").trim();
   const localRepoUnavailable = syncStatus === "notCloned";
-  const localRepoSetupPending = (
-    fileLoadState === "loading"
-    ||
-    (syncStatus === "syncing" && filesLength === 0)
-    || localRepoUnavailable
-  );
+  const localRepoSetupPending = fileLoadState === "loading" || localRepoUnavailable;
   const projectFilesUnavailable = fileLoadState === "error";
   const resolution = deriveProjectResolution(project, syncSnapshot, {
     suppressMissingLocalRepoRepair:

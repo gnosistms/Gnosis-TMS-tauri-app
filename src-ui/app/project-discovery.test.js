@@ -912,3 +912,70 @@ test("online project loading does not render persistent cache when local scan fa
   assert.deepEqual(state.projects.map((project) => project.title), ["Remote Project"]);
   assert.ok(!renders.some((snapshot) => snapshot.projects.includes("Cached Project")));
 });
+
+test("an empty local checkout remains ready through remote discovery and sync failure", async () => {
+  setupProjectDiscoveryFlowTest();
+  const events = [];
+  installProjectDiscoveryInvokeMock({
+    localMetadata: [projectMetadataRecord({ chapterCount: 0 })],
+    remoteProjectsPromise: Promise.resolve([{
+      id: "project-1", name: "project-repo", fullName: "team/project-repo", defaultBranchName: "main",
+    }]),
+    localProjectFiles: [{ projectId: "project-1", repoName: "project-repo", localRepoReady: true, chapters: [] }],
+    repoSyncSnapshots: [{ projectId: "project-1", repoName: "project-repo", status: "syncError", message: "Network unavailable" }],
+  });
+  await loadProjectSnapshotForTeam(() => {}, "team-1", projectDiscoveryOptions({
+    onProjectLoadProgress: (event) => events.push(event),
+  }));
+  for (const type of ["localSnapshot", "remoteSnapshot", "repoSyncSnapshot", "repairSnapshot"]) {
+    const event = events.find((item) => item.type === type);
+    assert.ok(event, type);
+    assert.equal(event.snapshot.items[0]?.fileLoadState, "ready", type);
+  }
+  assert.equal(state.projects[0].fileLoadState, "ready");
+});
+
+test("a missing checkout is not a ready empty project", async () => {
+  setupProjectDiscoveryFlowTest();
+  const listing = deferred();
+  const events = [];
+  installProjectDiscoveryInvokeMock({
+    remoteProjectsPromise: listing.promise,
+    localProjectFiles: [{ projectId: "project-1", repoName: "project-repo", localRepoReady: false, chapters: [] }],
+  });
+  const load = loadProjectSnapshotForTeam(() => {}, "team-1", projectDiscoveryOptions({
+    onProjectLoadProgress: (event) => events.push(event),
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(events.find((event) => event.type === "localSnapshot")?.snapshot.items[0]?.fileLoadState, "loading");
+  state.screen = "teams";
+  listing.resolve([]);
+  await load;
+});
+
+test("creation cancels an older discovery before it can report the new repo missing", async () => {
+  setupProjectDiscoveryFlowTest();
+  const { createProjectsQueryOptions, publishCreatedProjectToQuery } = await import("./project-query.js");
+  const remoteListing = deferred();
+  const localPublished = deferred();
+  let metadataWrites = 0;
+  installProjectDiscoveryInvokeMock({ remoteProjectsPromise: remoteListing.promise });
+  const team = state.teams[0];
+  const oldLoad = queryClient.fetchQuery(createProjectsQueryOptions(team, projectDiscoveryOptions({
+    onProjectLoadProgress: (event) => {
+      if (event.type === "localSnapshot") localPublished.resolve();
+    },
+    upsertProjectMetadataRecord: async () => { metadataWrites += 1; },
+  }))).catch(() => null);
+  await localPublished.promise;
+  await publishCreatedProjectToQuery(team, {
+    projectId: "new-project", title: "New project", repoName: "new-project",
+    remoteProject: { name: "new-project", fullName: "team/new-project" },
+  });
+  remoteListing.resolve([]);
+  await oldLoad;
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(metadataWrites, 0, "canceled discovery must not finalize missing repos");
+  assert.deepEqual(state.projects.map((project) => project.id).sort(), ["new-project", "project-1"]);
+  assert.equal(state.projectDiscovery.status, "ready");
+});

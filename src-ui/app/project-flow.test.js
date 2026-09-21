@@ -34,11 +34,17 @@ globalThis.window = {
 const { createResourcePageState } = await import("./resource-page-controller.js");
 const {
   confirmProjectPermanentDeletion,
+  submitProjectCreation,
+  deleteProject,
 } = await import("./project-flow.js");
-const { queryClient } = await import("./query-client.js");
+const { queryClient, projectKeys } = await import("./query-client.js");
 const { removePersistentValue } = await import("./persistent-store.js");
 const { resetSessionState, state } = await import("./state.js");
 const { setActiveStorageLogin } = await import("./team-storage.js");
+
+const { createProjectsQuerySnapshot } = await import("./project-query.js");
+const { renderProjectsScreen } = await import("../screens/projects.js");
+const { clearNoticeBadge } = await import("./status-feedback.js");
 
 const STORAGE_LOGIN = "project-flow-local-delete-test";
 const LOCAL_HARD_DELETE_STORAGE_KEY = `gnosis-tms-local-hard-delete-tombstones:${STORAGE_LOGIN}`;
@@ -88,6 +94,7 @@ function setupProjectPermanentDeletionState() {
 }
 
 test.afterEach(() => {
+  clearNoticeBadge();
   queryClient.clear();
   invokeCalls.length = 0;
   invokeHandler = async () => null;
@@ -127,4 +134,77 @@ test("successful project local delete closes the modal with a full render", asyn
     renderCalls.some((options) => options?.scope === "status-surface"),
     "expected the notice/status badge to request its scoped render",
   );
+});
+
+function setupActiveProjectState() {
+  const { team, project } = setupProjectPermanentDeletionState();
+  team.membershipRole = "owner";
+  state.screen = "projects";
+  project.lifecycleState = "active";
+  project.fileLoadState = "ready";
+  state.projects = [project];
+  state.deletedProjects = [];
+  state.projectDiscovery = { status: "ready", error: "" };
+  state.projectPermanentDeletion.isOpen = false;
+  queryClient.setQueryData(projectKeys.byTeam(team.id), createProjectsQuerySnapshot({ items: [project] }));
+  return { team, project };
+}
+
+test("a failed deletion retains the project list and reports the operation error", async () => {
+  const { project } = setupActiveProjectState();
+  invokeHandler = async (command) => {
+    if (command === "upsert_local_gnosis_project_metadata_record") throw new Error("Metadata push failed");
+    return null;
+  };
+  await deleteProject(() => {}, project.id);
+  assert.ok(invokeCalls.some((call) => call.command === "upsert_local_gnosis_project_metadata_record"));
+  assert.equal(state.projectDiscovery.status, "ready");
+  assert.equal(state.projects[0]?.id, project.id);
+  assert.match(state.statusBadges.left.text, /Could not delete project:.*Metadata push failed/);
+  const html = renderProjectsScreen(state);
+  assert.doesNotMatch(html, /PROJECT LOAD FAILED/);
+  assert.match(html, /data-action="delete-project:project-1"/);
+});
+
+test("creation completes locally while its background refresh is still pending", async () => {
+  const { team } = setupActiveProjectState();
+  state.projectsPage.isRefreshing = true;
+  state.projectCreation = { isOpen: true, status: "idle", error: "", projectName: "New project" };
+  let resolveListing;
+  const listing = new Promise((resolve) => { resolveListing = resolve; });
+  let oldSignal;
+  const oldDiscovery = queryClient.fetchQuery({
+    queryKey: projectKeys.byTeam(team.id),
+    queryFn: ({ signal }) => {
+      oldSignal = signal;
+      return listing;
+    },
+  }).catch(() => null);
+  invokeHandler = async (command, payload) => {
+    if (command === "create_gnosis_project_repo") {
+      assert.equal(oldSignal.aborted, true, "cancel discovery before creating remote or local metadata");
+      return { name: payload.input.repoName, fullName: `team-1/${payload.input.repoName}`, defaultBranchName: "main" };
+    }
+    if (command === "list_gnosis_resources_for_installation") return listing;
+    return null;
+  };
+  try {
+    await submitProjectCreation(() => {});
+    assert.ok(invokeCalls.some((call) => call.command === "initialize_gtms_project_repo"));
+    assert.equal(state.projectCreation.isOpen, false);
+    assert.equal(state.projectsPage.writeState, "idle");
+    const created = state.projects.find((project) => project.title === "New project");
+    assert.ok(created);
+    assert.equal(created.fileLoadState, "ready");
+    assert.deepEqual(created.chapters, []);
+    const html = renderProjectsScreen(state);
+    const addButton = html.match(new RegExp(`<button[^>]*data-action="add-project-files:${created.id}"[^>]*>`))?.[0];
+    assert.ok(addButton);
+    assert.doesNotMatch(addButton, /disabled/);
+  } finally {
+    state.screen = "teams";
+    resolveListing({ projects: [], glossaries: [], qaLists: [] });
+    await oldDiscovery;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
 });

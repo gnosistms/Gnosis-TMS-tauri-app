@@ -34,6 +34,7 @@ const {
   preserveProjectLifecyclePatchesInProjectSnapshot,
   preservePendingProjectLifecyclePatches,
   seedProjectsQueryFromCache,
+  publishCreatedProjectToQuery,
   upsertProjectChapterInQueryData,
 } = await import("./project-query.js");
 const { glossaryKeys, projectKeys, queryClient } = await import("./query-client.js");
@@ -1118,4 +1119,30 @@ test("project mutation settle invalidates active project query once without expl
 
   assert.equal(invalidateCount, 1);
   assert.equal(fetchCount, 0);
+});
+
+
+test("created projects stay in stale snapshots until metadata discovery observes them", () => {
+  const created = project({ id: "new", fileLoadState: "ready", localLifecycleIntent: "create" });
+  const previous = { items: [created], deletedItems: [] };
+  const stale = preserveProjectLifecyclePatchesInProjectSnapshot({ items: [], deletedItems: [] }, previous);
+  assert.deepEqual(stale.items, [created]);
+  const discovered = project({ id: "new", fileLoadState: "ready" });
+  const settled = preserveProjectLifecyclePatchesInProjectSnapshot({ items: [discovered], deletedItems: [] }, previous);
+  assert.equal(settled.items[0].localLifecycleIntent, undefined);
+  const deleted = { ...discovered, lifecycleState: "deleted" };
+  const deletion = preserveProjectLifecyclePatchesInProjectSnapshot({ items: [], deletedItems: [deleted] }, previous);
+  assert.deepEqual(deletion.items, []);
+  assert.deepEqual(deletion.deletedItems, [deleted]);
+});
+
+test("creation finishing after a team switch updates only its team's query", async () => {
+  resetSessionState();
+  state.selectedTeamId = "other-team";
+  state.projects = [project({ id: "other-project" })];
+  await publishCreatedProjectToQuery({ id: "original-team", installationId: 42 }, {
+    projectId: "new", title: "New", repoName: "new", remoteProject: { name: "new" },
+  });
+  assert.deepEqual(state.projects.map((item) => item.id), ["other-project"]);
+  assert.equal(queryClient.getQueryData(projectKeys.byTeam("original-team")).snapshot.items[0].id, "new");
 });
