@@ -986,6 +986,7 @@ fn mark_repo_synced(
             current_repo_name: Some(resource.repo_name.clone()),
             kind: Some(domain.state_kind().to_string()),
             has_ever_synced: Some(true),
+            initialization_head_oid: None,
             last_known_github_repo_id: resource.repo_id,
             last_known_full_name: Some(resource.full_name.clone()),
             touch_success_timestamp: true,

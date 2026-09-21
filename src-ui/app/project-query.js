@@ -16,6 +16,7 @@ import {
   setResourcePageRefreshing,
 } from "./resource-page-controller.js";
 import { teamCacheKey } from "./team-cache.js";
+import { refreshInstallationResourcesForTeam } from "./installation-resources-query.js";
 
 let activeProjectsQuerySubscription = null;
 
@@ -435,6 +436,11 @@ export function preserveProjectLifecyclePatchesInProjectSnapshot(nextSnapshot, p
     const isPending = typeof previousProject?.pendingMutation === "string"
       && previousProject.pendingMutation.trim();
 
+    if (intent === "create" && !projectLocation(nextData, previousProject.id)) {
+      nextData = moveProjectInPlainSnapshot(nextData, previousProject.id, "active", {}, previousProject);
+      continue;
+    }
+
     if (intent === "softDelete") {
       if (!isPending && projectLocation(nextData, previousProject.id) === "deleted") {
         continue;
@@ -584,6 +590,7 @@ function createProjectsQueryProgressPublisher(team, teamId, options = {}) {
       repoSyncByProjectId,
       persist = false,
     } = {}) => {
+      if (options.signal?.aborted) return;
       latestSnapshot = createProjectsQuerySnapshot({
         items: Array.isArray(snapshot?.items)
           ? snapshot.items
@@ -615,6 +622,7 @@ function createProjectsQueryProgressPublisher(team, teamId, options = {}) {
       render,
       discovery,
     } = {}) => {
+      if (options.signal?.aborted) return;
       latestSnapshot = createProjectsQuerySnapshot({
         items: latestSnapshot.snapshot.items,
         deletedItems: latestSnapshot.snapshot.deletedItems,
@@ -635,12 +643,13 @@ function createProjectsQueryProgressPublisher(team, teamId, options = {}) {
 
 export function createProjectsQueryOptions(team, options = {}) {
   const teamId = options.teamId ?? team?.id ?? null;
-  const progressPublisher = createProjectsQueryProgressPublisher(team, teamId, options);
   return {
     queryKey: projectKeys.byTeam(teamId),
-    queryFn: async () => {
+    queryFn: async ({ signal } = {}) => {
+      const progressPublisher = createProjectsQueryProgressPublisher(team, teamId, { ...options, signal });
       const result = await loadProjectSnapshotForTeam(options.render, teamId, {
         ...options,
+        signal,
         ...progressPublisher,
         teamId,
         preserveProjectLifecyclePatches: (snapshot) => {
@@ -654,7 +663,7 @@ export function createProjectsQueryOptions(team, options = {}) {
           );
         },
       });
-      if (state.selectedTeamId !== teamId) {
+      if (signal?.aborted || state.selectedTeamId !== teamId) {
         throw new Error("Stale project refresh ignored.");
       }
       const nextSnapshot = createProjectsQuerySnapshot(result);
@@ -669,6 +678,47 @@ export function createProjectsQueryOptions(team, options = {}) {
       );
     },
   };
+}
+
+export function cancelProjectDiscoveryForMutation(team) {
+  return queryClient.cancelQueries({ queryKey: projectKeys.byTeam(team.id) });
+}
+
+export async function publishCreatedProjectToQuery(team, created) {
+  const queryKey = projectKeys.byTeam(team.id);
+  // Progress publications can be newer than the last completed query result.
+  const visibleSnapshot = state.selectedTeamId === team.id && projectsBelongToTeam(team.id, teamCacheKey(team))
+    ? { items: state.projects, deletedItems: state.deletedProjects }
+    : null;
+  await cancelProjectDiscoveryForMutation(team);
+  // A pre-create listing must not classify the just-created repository as deleted.
+  await refreshInstallationResourcesForTeam(team);
+  const previous = queryClient.getQueryData(queryKey) ?? createProjectsQuerySnapshot();
+  const collection = visibleSnapshot ?? previous.snapshot;
+  const project = {
+    ...created.remoteProject,
+    id: created.projectId,
+    name: created.repoName,
+    title: created.title,
+    status: "active",
+    lifecycleState: "active",
+    remoteState: "linked",
+    recordState: "live",
+    chapters: [],
+    fileLoadState: "ready",
+    localLifecycleIntent: "create",
+  };
+  const next = {
+    ...previous,
+    snapshot: {
+      ...collection,
+      items: [...collection.items.filter((item) => item.id !== project.id), project],
+    },
+    discovery: { ...previous.discovery, status: "ready", error: "" },
+  };
+  queryClient.setQueryData(queryKey, next);
+  applyProjectsQuerySnapshotToState(next, { teamId: team.id });
+  return next;
 }
 
 export function ensureProjectsQueryObserver(render, team, options = {}) {
@@ -771,7 +821,7 @@ function createProjectLifecycleMutationOptions({
       await commitMutation(team, mutation);
     },
     onMutate: async () => {
-      await queryClient.cancelQueries({ queryKey });
+      await cancelProjectDiscoveryForMutation(team);
       const previousQueryData = queryClient.getQueryData(queryKey);
       let optimisticQueryData = previousQueryData;
       if (mutationType === "softDelete") {

@@ -171,6 +171,7 @@ function mapMetadataProjectToVisibleProject(record, remoteProject, existingProje
         : Array.isArray(existingProject?.chapters)
           ? existingProject.chapters
           : [],
+    fileLoadState: existingProject?.fileLoadState,
     remoteState,
     recordState: record.recordState ?? "live",
     deletedAt: record.deletedAt ?? null,

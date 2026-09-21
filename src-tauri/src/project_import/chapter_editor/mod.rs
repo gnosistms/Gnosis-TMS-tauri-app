@@ -176,6 +176,7 @@ pub(super) struct LocalProjectFilesDescriptor {
 pub(crate) struct LocalProjectFilesResponse {
     project_id: String,
     repo_name: String,
+    local_repo_ready: bool,
     chapters: Vec<ProjectChapterSummary>,
 }
 
@@ -1314,16 +1315,18 @@ pub(super) fn list_local_gtms_project_files_sync(
             Some(&project.repo_name),
         )?
         .unwrap_or_else(|| repo_root.join(&project.repo_name));
-        let chapters =
-            if repo_path.exists() && git_output(&repo_path, &["rev-parse", "--git-dir"]).is_ok() {
-                load_project_chapter_summaries(&repo_path)?
-            } else {
-                Vec::new()
-            };
+        let local_repo_ready = repo_path.join("project.json").is_file()
+            && git_output(&repo_path, &["rev-parse", "--git-dir"]).is_ok();
+        let chapters = if local_repo_ready {
+            load_project_chapter_summaries(&repo_path)?
+        } else {
+            Vec::new()
+        };
 
         results.push(LocalProjectFilesResponse {
             project_id: project.project_id,
             repo_name: project.repo_name,
+            local_repo_ready,
             chapters,
         });
     }
@@ -1407,17 +1410,18 @@ pub(super) fn initialize_gtms_project_repo_sync(
         ],
     )?;
 
-    let _ = crate::local_repo_sync_state::upsert_local_repo_sync_state(
+    crate::local_repo_sync_state::upsert_local_repo_sync_state(
         &repo_path,
         crate::local_repo_sync_state::LocalRepoSyncStateUpdate {
             resource_id: Some(project_id.clone()),
             current_repo_name: Some(repo_name.to_string()),
             kind: Some("project".to_string()),
             has_ever_synced: Some(false),
+            initialization_head_oid: Some(git_output(&repo_path, &["rev-parse", "HEAD"])?),
             storage_layout_version: Some(STORAGE_LAYOUT_VERSION_V2),
             ..Default::default()
         },
-    );
+    )?;
 
     Ok(InitializeProjectRepoResponse {
         project_id,

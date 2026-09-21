@@ -889,7 +889,7 @@ test("disabled project glossary selectors show assigned repo label when the glos
   assert.doesNotMatch(html, /select-pill__value">no glossary</);
 });
 
-test("project refresh keeps lifecycle and local hard-delete actions enabled and heavy actions disabled", () => {
+test("project refresh keeps creation, lifecycle and local hard-delete actions enabled", () => {
   const html = renderProjectsScreen(projectsState({
     projectsPage: {
       isRefreshing: true,
@@ -936,7 +936,7 @@ test("project refresh keeps lifecycle and local hard-delete actions enabled and 
   assert.doesNotMatch(actionButtonHtml(html, "delete-file:chapter-1"), /disabled/);
   assert.doesNotMatch(actionButtonHtml(html, "restore-file:deleted-chapter-1"), /disabled/);
 
-  assert.match(actionButtonHtml(html, "open-new-project"), /disabled/);
+  assert.doesNotMatch(actionButtonHtml(html, "open-new-project"), /disabled/);
   assert.doesNotMatch(actionButtonHtml(html, "add-project-files:project-1"), /disabled/);
   // Local hard-delete is local-only and stays available during a background refresh.
   assert.doesNotMatch(actionButtonHtml(html, "clear-deleted-files:project-1"), /disabled/);
@@ -1235,4 +1235,17 @@ test("repo sync intents do not globally disable new project, add files, or keep 
   assert.doesNotMatch(actionButtonHtml(html, "add-project-files:project-1"), /disabled/);
   assert.doesNotMatch(actionButtonHtml(html, "refresh-page"), /\bis-spinning\b/);
   assert.doesNotMatch(actionButtonHtml(html, "refresh-page"), /aria-disabled="true"/);
+});
+
+test("an empty local project stays usable while background sync is running", () => {
+  const html = renderProjectsScreen(projectsState({
+    projectsPage: { isRefreshing: true, writeState: "idle" },
+    projects: [{ id: "project-1", title: "New project", name: "new-project", chapters: [], fileLoadState: "ready" }],
+    projectRepoSyncByProjectId: { "project-1": { status: "syncing" } },
+  }));
+  assert.match(html, />0 files</);
+  assert.doesNotMatch(html, /Downloading data|Loading files/);
+  for (const action of ["add-project-files:project-1", "transfer-project:project-1", "rename-project:project-1", "delete-project:project-1", "open-new-project"]) {
+    assert.doesNotMatch(actionButtonHtml(html, action), /disabled/, action);
+  }
 });
