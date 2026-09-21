@@ -29,6 +29,9 @@ pub(crate) struct LocalRepoSyncState {
     pub(crate) kind: Option<String>,
     #[serde(default)]
     pub(crate) has_ever_synced: bool,
+    /// Bootstrap commit, before any user work, for attaching a newly created project.
+    #[serde(default)]
+    pub(crate) initialization_head_oid: Option<String>,
     #[serde(default)]
     pub(crate) last_known_github_repo_id: Option<i64>,
     #[serde(default)]
@@ -47,6 +50,7 @@ pub(crate) struct LocalRepoSyncStateUpdate {
     pub(crate) current_repo_name: Option<String>,
     pub(crate) kind: Option<String>,
     pub(crate) has_ever_synced: Option<bool>,
+    pub(crate) initialization_head_oid: Option<String>,
     pub(crate) last_known_github_repo_id: Option<i64>,
     pub(crate) last_known_full_name: Option<String>,
     pub(crate) touch_success_timestamp: bool,
@@ -136,6 +140,9 @@ pub(crate) fn upsert_local_repo_sync_state(
 
     if let Some(has_ever_synced) = update.has_ever_synced {
         state.has_ever_synced = has_ever_synced;
+    }
+    if let Some(head) = update.initialization_head_oid {
+        state.initialization_head_oid = Some(head);
     }
 
     if let Some(repo_id) = update.last_known_github_repo_id {
