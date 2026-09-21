@@ -217,6 +217,7 @@ export function createAppUpdateState() {
     message: "",
     available: false,
     required: false,
+    requirement: null,
     version: null,
     currentVersion: null,
     body: null,

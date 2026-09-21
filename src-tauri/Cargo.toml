@@ -1,6 +1,6 @@
 [package]
 name = "gnosis-tms"
-version = "0.8.118"
+version = "0.8.119"
 description = "Gnosis TMS"
 license = "GPL-3.0-only"
 authors = ["you"]

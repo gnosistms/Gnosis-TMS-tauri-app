@@ -182,6 +182,7 @@ const {
   createGlossaryEditorState,
   createGlossaryTermEditorState,
   resetSessionState,
+  createAppUpdateState,
   state,
 } = await import("./state.js");
 const {
@@ -1667,30 +1668,37 @@ test("saving a glossary term sanitizes ruby markup and escapes unsupported inlin
   assert.deepEqual(state.glossaryEditor.terms[0]?.targetTerms, capturedUpsertInput?.targetTerms);
 });
 
-test("glossary background sync opens a required update prompt when the repo was saved by a newer app", async () => {
-  installGlossaryEditorFixture();
+for (const available of [true, false]) {
+  test(`glossary background sync keeps sync paused and gates the update prompt on platform availability (${available})`, async () => {
+    installGlossaryEditorFixture();
 
-  invokeHandler = async (command) => {
-    if (command === "sync_gtms_glossary_editor_repo") {
-      throw new Error(
-        "APP_UPDATE_REQUIRED:{\"requiredVersion\":\"0.1.36\",\"currentVersion\":\"0.1.35\",\"message\":\"Update before syncing this glossary.\"}",
-      );
-    }
-    return null;
-  };
+    state.appUpdate = createAppUpdateState();
+    invokeHandler = async (command) => {
+      if (command === "check_for_app_update") {
+        return { available, version: available ? "0.1.36" : null, currentVersion: "0.1.35" };
+      }
+      if (command === "sync_gtms_glossary_editor_repo") {
+        throw new Error(
+          "APP_UPDATE_REQUIRED:{\"requiredVersion\":\"0.1.36\",\"currentVersion\":\"0.1.35\",\"message\":\"Update before syncing this glossary.\"}",
+        );
+      }
+      return null;
+    };
 
-  startGlossaryBackgroundSyncSession(() => {});
-  await flushAsyncWork();
+    startGlossaryBackgroundSyncSession(() => {});
+    await flushAsyncWork();
 
-  const synced = await maybeStartGlossaryBackgroundSync(() => {}, { force: true });
+    const synced = await maybeStartGlossaryBackgroundSync(() => {}, { force: true });
 
-  assert.equal(synced, false);
-  assert.equal(state.appUpdate.required, true);
-  assert.equal(state.appUpdate.promptVisible, true);
-  assert.equal(state.appUpdate.version, "0.1.36");
-  assert.equal(state.appUpdate.currentVersion, "0.1.35");
-  assert.equal(state.appUpdate.message, "Update before syncing this glossary.");
-});
+    assert.equal(synced, false);
+    await new Promise(setImmediate);
+    assert.equal(state.appUpdate.required, available);
+    assert.equal(state.appUpdate.promptVisible, available);
+    assert.equal(state.appUpdate.version, "0.1.36");
+    assert.equal(state.appUpdate.currentVersion, "0.1.35");
+    assert.equal(state.appUpdate.requirement.message, "Update before syncing this glossary.");
+  });
+}
 
 test("completing an A save must not insert its term into B", async () => {
   installGlossaryEditorFixture();
