@@ -35,6 +35,7 @@ const {
   preservePendingProjectLifecyclePatches,
   seedProjectsQueryFromCache,
   publishCreatedProjectToQuery,
+  publishLocalProjectRemovalToQuery,
   upsertProjectChapterInQueryData,
 } = await import("./project-query.js");
 const { glossaryKeys, projectKeys, queryClient } = await import("./query-client.js");
@@ -1145,4 +1146,37 @@ test("creation finishing after a team switch updates only its team's query", asy
   });
   assert.deepEqual(state.projects.map((item) => item.id), ["other-project"]);
   assert.equal(queryClient.getQueryData(projectKeys.byTeam("original-team")).snapshot.items[0].id, "new");
+});
+
+test("explicit local removal publishes an empty collection without ending refresh", () => {
+  const team = { id: "local-remove-team", installationId: 78 };
+  state.teams = [team];
+  state.selectedTeamId = team.id;
+  state.projectsPage = createResourcePageState();
+  const removed = project({ id: "remove-me", lifecycleState: "deleted" });
+  const snapshot = createProjectsQuerySnapshot({
+    deletedItems: [removed],
+    repoSyncByProjectId: { "remove-me": { status: "upToDate" } },
+    pendingChapterMutations: [{ projectId: "remove-me" }, { projectId: "other-project" }],
+    discovery: { status: "ready", glossaryWarning: "Preserve warning" },
+  });
+  const key = projectKeys.byTeam(team.id);
+  queryClient.setQueryData(key, snapshot);
+  applyProjectsQuerySnapshotToState(snapshot, { teamId: team.id, isFetching: true });
+  const observer = new QueryObserver(queryClient, { queryKey: key, enabled: false });
+  const unsubscribe = observer.subscribe(({ data }) => {
+    applyProjectsQuerySnapshotToState(data, { teamId: team.id, isFetching: true });
+  });
+  try {
+    const next = publishLocalProjectRemovalToQuery(team, removed.id);
+    assert.deepEqual(next.snapshot.deletedItems, []);
+    assert.deepEqual(state.deletedProjects, []);
+    assert.deepEqual(state.projectRepoSyncByProjectId, {});
+    assert.deepEqual(state.pendingChapterMutations, [{ projectId: "other-project" }]);
+    assert.equal(state.projectsPage.isRefreshing, true);
+    assert.equal(state.projectDiscovery.glossaryWarning, "Preserve warning");
+    assert.deepEqual(queryClient.getQueryData(key), next);
+  } finally {
+    unsubscribe();
+  }
 });

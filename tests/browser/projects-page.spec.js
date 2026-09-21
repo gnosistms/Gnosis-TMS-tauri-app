@@ -552,3 +552,73 @@ test.describe("projects page virtualization", () => {
     expect(keysAfterCollapse).not.toContain("f:fixture-project-001:fixture-chapter-0-0");
   });
 });
+
+for (const refreshInitially of [true, false]) {
+  test(`local project removal works with refresh ${refreshInitially ? "already running" : "starting in the dialog"}`, async ({ page }) => {
+    await page.route("**/local-project-removal-fixture", (route) => route.fulfill({
+      contentType: "text/html",
+      body: '<html><head><link rel="stylesheet" href="/styles.css"></head><body><div id="app"></div></body></html>',
+    }));
+    await page.goto("/local-project-removal-fixture");
+    await page.evaluate(async (refreshing) => {
+      window.localRemovalCalls = [];
+      const nativeFinished = new Promise((resolve) => { window.finishLocalRemoval = resolve; });
+      window.__TAURI__ = { core: { invoke: async (command, payload) => {
+        window.localRemovalCalls.push({ command, payload });
+        if (command !== "purge_local_gtms_project_repo") throw new Error(`Unexpected IPC: ${command}`);
+        await nativeFinished;
+      } } };
+      const { state } = await import(`${location.origin}/app/state.js`);
+      const { queryClient, projectKeys } = await import(`${location.origin}/app/query-client.js`);
+      const { createProjectsQuerySnapshot, applyProjectsQuerySnapshotToState } = await import(`${location.origin}/app/project-query.js`);
+      const { setActiveStorageLogin } = await import(`${location.origin}/app/team-storage.js`);
+      const { createProjectActions } = await import(`${location.origin}/app/actions/project-actions.js`);
+      const { handleInputEvent } = await import(`${location.origin}/app/input-handlers.js`);
+      const { renderProjectsScreen } = await import(`${location.origin}/screens/projects.js`);
+      setActiveStorageLogin("local-removal-browser-test");
+      const team = { id: "team-local-removal", installationId: 42, membershipRole: "owner", githubOrg: "test-team" };
+      state.teams = [team];
+      state.selectedTeamId = team.id;
+      state.screen = "projects";
+      state.showDeletedProjects = true;
+      const staleSnapshot = createProjectsQuerySnapshot({
+        items: [{ id: "active-project", name: "active-repo", title: "Keep this project", lifecycleState: "active", fileLoadState: "ready", chapters: [] }],
+        deletedItems: [{ id: "deleted-project", name: "deleted-repo", title: "Remove this copy", lifecycleState: "deleted", chapters: [] }],
+      });
+      queryClient.setQueryData(projectKeys.byTeam(team.id), staleSnapshot);
+      applyProjectsQuerySnapshotToState(staleSnapshot, { teamId: team.id, isFetching: refreshing });
+      const render = () => { document.querySelector("#app").innerHTML = renderProjectsScreen(state); };
+      const handleAction = createProjectActions(render);
+      document.addEventListener("click", (event) => {
+        const action = event.target.closest("[data-action]")?.dataset.action;
+        if (action) void handleAction(action, event);
+      });
+      document.addEventListener("input", (event) => handleInputEvent(event, render));
+      window.startRemovalRefresh = () => { state.projectsPage.isRefreshing = true; };
+      window.finishStaleRemovalRefresh = () => {
+        applyProjectsQuerySnapshotToState(staleSnapshot, { teamId: team.id });
+        render();
+      };
+      render();
+    }, refreshInitially);
+    const deleteAction = page.locator('[data-action="delete-deleted-project:deleted-project"]');
+    await expect(deleteAction).toBeEnabled();
+    await deleteAction.click();
+    const dialog = page.locator('[data-modal-dialog="project-permanent-deletion"]');
+    await expect(dialog).toBeVisible();
+    if (!refreshInitially) await page.evaluate(() => window.startRemovalRefresh());
+    await dialog.locator('[data-project-permanent-delete-input]').fill("Remove this copy");
+    await dialog.getByRole("button", { name: "Delete", exact: true }).click();
+    await expect(dialog).toBeVisible();
+    await expect(page.getByText("PROJECT LOAD FAILED", { exact: true })).toHaveCount(0);
+    await page.evaluate(() => window.finishLocalRemoval());
+    await expect(dialog).toHaveCount(0);
+    await expect(deleteAction).toHaveCount(0);
+    await page.evaluate(() => window.finishStaleRemovalRefresh());
+    await expect(deleteAction).toHaveCount(0);
+    await expect(page.getByText("Keep this project", { exact: true })).toBeVisible();
+    await expect(page.getByText("PROJECT LOAD FAILED", { exact: true })).toHaveCount(0);
+    expect(await page.evaluate(() => window.localRemovalCalls.map((call) => call.command)))
+      .toEqual(["purge_local_gtms_project_repo"]);
+  });
+}
