@@ -979,3 +979,50 @@ test("creation cancels an older discovery before it can report the new repo miss
   assert.deepEqual(state.projects.map((project) => project.id).sort(), ["new-project", "project-1"]);
   assert.equal(state.projectDiscovery.status, "ready");
 });
+
+for (const scenario of ["restored", "removed-during-refresh", "offline", "failed-metadata"]) {
+  test(`project local removal restoration requires subsequent successful metadata: ${scenario}`, async () => {
+    setupProjectDiscoveryFlowTest();
+    const { setActiveStorageLogin } = await import("./team-storage.js");
+    const { addLocalHardDeleteTombstone, isLocalHardDeletedResource } = await import("./local-hard-delete-store.js");
+    const { removePersistentValue } = await import("./persistent-store.js");
+    const login = `removal-discovery-${scenario}`;
+    setActiveStorageLogin(login);
+    const team = state.teams[0];
+    const record = projectMetadataRecord();
+    const project = { id: record.id, name: record.repoName, fullName: record.fullName, lifecycleState: "deleted" };
+    const metadata = deferred();
+    const started = deferred();
+    installProjectDiscoveryInvokeMock({
+      localMetadata: [record],
+      remoteMetadata: [record],
+      remoteProjectsPromise: Promise.resolve([{ id: record.id, name: record.repoName, fullName: record.fullName }]),
+      metadataSyncPromise: metadata.promise,
+    });
+    const baseInvoke = invokeHandler;
+    invokeHandler = (command, payload) => {
+      if (command === "sync_local_team_metadata_repo") started.resolve();
+      return baseInvoke(command, payload);
+    };
+    if (scenario !== "removed-during-refresh") addLocalHardDeleteTombstone(team, "project", project);
+    state.offline.isEnabled = scenario === "offline";
+    const options = projectDiscoveryOptions({
+      loadStoredProjectsForTeam: () => ({ exists: true, projects: [{ ...project, lifecycleState: "active" }], deletedProjects: [] }),
+    });
+    try {
+      const request = loadProjectSnapshotForTeam(() => {}, team.id, options);
+      if (scenario !== "offline") await started.promise;
+      if (scenario === "removed-during-refresh") addLocalHardDeleteTombstone(team, "project", project);
+      if (scenario === "failed-metadata") metadata.reject(new Error("Network unavailable"));
+      else metadata.resolve();
+      const result = await request;
+      const restored = scenario === "restored";
+      assert.equal(isLocalHardDeletedResource(team, "project", project), !restored);
+      assert.deepEqual(result.items.map(item => item.id), restored ? [project.id] : []);
+      assert.deepEqual(result.deletedItems, []);
+    } finally {
+      metadata.resolve();
+      removePersistentValue(`gnosis-tms-local-hard-delete-tombstones:${login}`);
+    }
+  });
+}

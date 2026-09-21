@@ -53,9 +53,9 @@ function normalizeTombstone(value) {
   };
 }
 
-function loadLocalHardDeleteTombstones() {
+function loadLocalHardDeleteTombstones(login) {
   try {
-    const key = scopedStorageKey();
+    const key = scopedStorageKey(login);
     if (!key) {
       return [];
     }
@@ -68,9 +68,9 @@ function loadLocalHardDeleteTombstones() {
   }
 }
 
-function saveLocalHardDeleteTombstones(tombstones) {
+function saveLocalHardDeleteTombstones(tombstones, login) {
   try {
-    const key = scopedStorageKey();
+    const key = scopedStorageKey(login);
     if (!key) {
       return;
     }
@@ -122,7 +122,7 @@ function tombstoneIdentity(tombstone) {
   ].join("|");
 }
 
-export function addLocalHardDeleteTombstone(team, resourceKind, resource) {
+export function addLocalHardDeleteTombstone(team, resourceKind, resource, login = getActiveStorageLogin()) {
   const identifiers = resourceIdentifier(resource, resourceKind);
   const tombstone = normalizeTombstone({
     installationId: teamInstallationId(team),
@@ -134,10 +134,10 @@ export function addLocalHardDeleteTombstone(team, resourceKind, resource) {
     return;
   }
 
-  const tombstones = loadLocalHardDeleteTombstones();
+  const tombstones = loadLocalHardDeleteTombstones(login);
   const next = tombstones.filter((item) => tombstoneIdentity(item) !== tombstoneIdentity(tombstone));
   next.push(tombstone);
-  saveLocalHardDeleteTombstones(next);
+  saveLocalHardDeleteTombstones(next, login);
 }
 
 export function resourceMatchesLocalHardDeleteTombstone(team, resourceKind, resource, tombstone) {
@@ -188,7 +188,7 @@ export function filterLocalHardDeletedResources(team, resourceKind, resources, {
   );
 }
 
-export function clearRestoredLocalHardDeleteTombstones(team, resourceKind, resources, { isActive } = {}) {
+export function clearRestoredLocalHardDeleteTombstones(team, resourceKind, resources, { isActive, canClear = () => true } = {}) {
   const activePredicate = typeof isActive === "function" ? isActive : () => false;
   const activeResources = (Array.isArray(resources) ? resources : []).filter(activePredicate);
   if (activeResources.length === 0) {
@@ -196,11 +196,26 @@ export function clearRestoredLocalHardDeleteTombstones(team, resourceKind, resou
   }
   const tombstones = loadLocalHardDeleteTombstones();
   const next = tombstones.filter((tombstone) =>
-    !activeResources.some((resource) =>
+    !canClear(tombstone) || !activeResources.some((resource) =>
       resourceMatchesLocalHardDeleteTombstone(team, resourceKind, resource, tombstone)
     )
   );
   if (next.length !== tombstones.length) {
     saveLocalHardDeleteTombstones(next);
   }
+}
+
+// Only metadata reads begun after a removal can establish that it was restored.
+// Capture the existing markers, rather than clearing markers added during the read.
+export function captureLocalHardDeleteRestorationCheck(team, resourceKind) {
+  const login = getActiveStorageLogin();
+  const markerKey = (marker) => `${tombstoneIdentity(marker)}|${marker.deletedAt}`;
+  const eligible = new Set(loadLocalHardDeleteTombstones(login).map(markerKey));
+  return (resources, isActive) => {
+    if (getActiveStorageLogin() !== login) return;
+    clearRestoredLocalHardDeleteTombstones(team, resourceKind, resources, {
+      isActive,
+      canClear: (marker) => eligible.has(markerKey(marker)),
+    });
+  };
 }

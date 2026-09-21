@@ -16,7 +16,10 @@ import {
   anyProjectWriteIsActive,
 } from "../app/project-write-coordinator.js";
 import { getRepoWriteQueueSnapshot } from "../app/repo-write-queue.js";
-import { resourceHasPendingLifecycleMutation } from "../app/project-page-write-state.js";
+import {
+  areProjectLocalHardDeleteWritesDisabled,
+  resourceHasPendingLifecycleMutation,
+} from "../app/project-page-write-state.js";
 import { renderProjectCard } from "./project-list-render.js";
 
 function renderDeletedProjectsToggle(state) {
@@ -46,7 +49,7 @@ export function renderDeletedProjectsSection(state) {
   const lifecycleActionsDisabled = areResourcePageWriteSubmissionsDisabled(state.projectsPage);
   // Local hard-delete stays available during a background refresh (gated on write
   // submissions only), matching Restore — see projects.js for rationale.
-  const localHardDeleteActionsDisabled = lifecycleActionsDisabled;
+  const localHardDeleteActionsDisabled = areProjectLocalHardDeleteWritesDisabled(state.projectsPage);
   const syncSnapshotsByProjectId = state.projectRepoSyncByProjectId ?? {};
   const glossaryChangesDisabled = state.projectImport?.status === "importing";
   const discovery = state.projectDiscovery ?? {};
@@ -108,4 +111,3 @@ export function renderDeletedProjectsSection(state) {
     </section>
   `;
 }
-

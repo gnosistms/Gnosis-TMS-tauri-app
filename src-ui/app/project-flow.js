@@ -2,8 +2,10 @@ import { invoke } from "./runtime.js";
 import { requireBrokerSession } from "./auth-flow.js";
 import {
   loadStoredChapterPendingMutations,
+  saveStoredChapterPendingMutations,
   loadStoredProjectsForTeam,
   saveStoredProjectsForTeam,
+  removeStoredProjectCopyForTeam,
 } from "./project-cache.js";
 import { loadStoredGlossariesForTeam } from "./glossary-cache.js";
 import {
@@ -11,6 +13,7 @@ import {
   buildProjectRepoSyncInput,
 } from "./project-repo-sync-shared.js";
 import {
+  authSessionGeneration,
   createProjectOldLayoutDiscardState,
   createProjectRepoConflictRecoveryState,
   resetProjectCreation,
@@ -37,7 +40,6 @@ import {
   upsertProjectMetadataRecord,
 } from "./team-metadata-flow.js";
 import {
-  guardPermanentDeleteConfirmation,
   guardTopLevelResourceAction,
 } from "./resource-lifecycle-engine.js";
 import {
@@ -61,10 +63,12 @@ import {
   ensureProjectsQueryObserver,
   seedProjectsQueryFromCache,
   publishCreatedProjectToQuery,
+  publishLocalProjectRemovalToQuery,
   cancelProjectDiscoveryForMutation,
 } from "./project-query.js";
 import { createMutationObserver, projectKeys, queryClient } from "./query-client.js";
 import { teamCacheKey } from "./team-cache.js";
+import { getActiveStorageLogin } from "./team-storage.js";
 import {
   applyProjectWriteIntentsToSnapshot,
   anyProjectWriteIsActive,
@@ -111,7 +115,6 @@ import {
   refreshProjectFilesFromDisk,
   removeVisibleProject,
   setProjectUiDebug,
-  updateProjectQueryCache,
   clearProjectUiDebug,
   clearProjectsStatus,
   showProjectsNotice,
@@ -1150,52 +1153,43 @@ export async function reloadProjectsAfterWrite(render, selectedTeam, options = {
   return [...state.projects, ...state.deletedProjects];
 }
 
+function localProjectRemovalBlockedMessage(team, project) {
+  if (!Number.isFinite(team?.installationId) || state.selectedTeamId !== team.id
+    || state.projectsPage.visibleTeamId !== team.id) {
+    return "Could not determine the selected team.";
+  }
+  if (!project || project.lifecycleState !== "deleted") {
+    return "Could not find the selected deleted project.";
+  }
+  if (areProjectLocalHardDeleteWritesDisabled() || resourceHasPendingLifecycleMutation(project)) {
+    return projectLifecycleWriteBlockedMessage();
+  }
+  return "";
+}
+
 export function permanentlyDeleteProject(render, projectId) {
+  if (state.projectPermanentDeletion.status === "loading") return;
   const project = state.deletedProjects.find((item) => item.id === projectId);
   const selectedTeam = selectedProjectsTeam();
-  if (areProjectLocalHardDeleteWritesDisabled()) {
-    setProjectDiscoveryState("error", projectWriteBlockedMessage());
-    render();
+  const blockedMessage = localProjectRemovalBlockedMessage(selectedTeam, project);
+  if (blockedMessage) {
+    showProjectsNotice(render, blockedMessage);
     return;
   }
-  if (resourceHasPendingLifecycleMutation(project)) {
-    setProjectDiscoveryState("error", projectLifecycleWriteBlockedMessage());
-    render();
-    return;
-  }
-  void guardTopLevelResourceAction({
-    resource: project,
-    isExpectedResource: (currentProject) =>
-      Boolean(currentProject) && currentProject.lifecycleState === "deleted",
-    getBlockedMessage: () =>
-      selectedTeam ? "" : "Could not determine the selected team.",
-    ensureNotTombstoned: (currentProject) =>
-      ensureProjectNotTombstoned(render, selectedTeam, currentProject),
-    onMissing: () => {
-      setProjectDiscoveryState("error", "Could not find the selected deleted project.");
-      render();
-    },
-    onBlocked: (blockedMessage) => {
-      setProjectDiscoveryState("error", blockedMessage);
-      render();
-    },
-  }).then((allowed) => {
-    if (!allowed) {
-      return;
-    }
 
-    openEntityConfirmationModal({
-      setState: (nextState) => {
-        state.projectPermanentDeletion = nextState;
-      },
-      entityId: projectId,
-      idField: "projectId",
-      nameField: "projectName",
-      confirmationField: "confirmationText",
-      currentName: project.title ?? project.name,
-    });
-    render();
+  // This action only removes local files. Remote tombstone discovery is neither
+  // needed nor allowed to purge a copy before the user confirms this dialog.
+  openEntityConfirmationModal({
+    setState: (nextState) => {
+      state.projectPermanentDeletion = { ...nextState, teamId: selectedTeam.id };
+    },
+    entityId: projectId,
+    idField: "projectId",
+    nameField: "projectName",
+    confirmationField: "confirmationText",
+    currentName: project.title ?? project.name,
   });
+  render();
 }
 
 export function updateProjectPermanentDeletionConfirmation(value) {
@@ -1207,57 +1201,39 @@ export function cancelProjectPermanentDeletion(render) {
 }
 
 export async function confirmProjectPermanentDeletion(render) {
+  const modal = state.projectPermanentDeletion;
+  if (!modal.isOpen || modal.status === "loading") return;
   const selectedTeam = selectedProjectsTeam();
-  const project = state.deletedProjects.find(
-    (item) => item.id === state.projectPermanentDeletion.projectId,
-  );
-  if (areProjectLocalHardDeleteWritesDisabled()) {
-    state.projectPermanentDeletion.status = "idle";
-    state.projectPermanentDeletion.error = projectWriteBlockedMessage();
+  if (modal.teamId !== selectedTeam?.id || state.screen !== "projects") return;
+  const project = state.deletedProjects.find((item) => item.id === modal.projectId);
+  const blockedMessage = localProjectRemovalBlockedMessage(selectedTeam, project);
+  if (blockedMessage) {
+    modal.error = blockedMessage;
     render();
     return;
   }
-  if (resourceHasPendingLifecycleMutation(project)) {
-    state.projectPermanentDeletion.status = "idle";
-    state.projectPermanentDeletion.error = projectLifecycleWriteBlockedMessage();
+  if (!entityConfirmationMatches(modal, {
+    nameField: "projectName",
+    confirmationField: "confirmationText",
+  })) {
+    modal.error = "Project name confirmation does not match.";
     render();
-    return;
-  }
-  const allowed = await guardPermanentDeleteConfirmation({
-    resource: selectedTeam?.installationId ? project : null,
-    modalState: state.projectPermanentDeletion,
-    missingMessage: "Could not find the selected deleted project.",
-    getBlockedMessage: () => {
-      return selectedTeam ? "" : "Could not determine the selected team.";
-    },
-    confirmationMessage: "Project name confirmation does not match.",
-    matchesConfirmation: () => entityConfirmationMatches(state.projectPermanentDeletion, {
-      nameField: "projectName",
-      confirmationField: "confirmationText",
-    }),
-    ensureNotTombstoned: (currentProject) =>
-      ensureProjectNotTombstoned(render, selectedTeam, currentProject),
-    onTombstoned: () => {
-      resetProjectPermanentDeletion();
-      render();
-    },
-    render,
-  });
-  if (!allowed) {
     return;
   }
 
-  state.projectPermanentDeletion.status = "loading";
-  state.projectPermanentDeletion.error = "";
-  showProjectsStatus(render, "Removing local project repo...");
+  const storageLogin = getActiveStorageLogin();
+  const generation = authSessionGeneration;
+  const sameSession = () => generation === authSessionGeneration && getActiveStorageLogin() === storageLogin;
+  const stillCurrent = () => sameSession() && state.selectedTeamId === selectedTeam.id
+    && state.screen === "projects" && state.projectPermanentDeletion === modal;
+  // Validate and claim this submission synchronously, before the first await.
+  modal.status = "loading";
+  modal.error = "";
   render();
 
   try {
-    // Removing the local copy is a purely local, idempotent file deletion. The project is
-    // already soft-deleted, so the transport-eligibility rule guarantees nothing is syncing
-    // this repo — there is no concurrent writer to serialize against. Routing it through the
-    // repo-write queue only let an unrelated stuck remote op on this scope wedge the delete
-    // (the "Deleting…" modal that never finished). Invoke directly so it always settles.
+    // Local removal must not wait behind unrelated network work. Pending
+    // lifecycle changes are guarded above; deleted projects cannot start sync.
     await invoke("purge_local_gtms_project_repo", {
       input: {
         installationId: selectedTeam.installationId,
@@ -1265,21 +1241,25 @@ export async function confirmProjectPermanentDeletion(render) {
         repoName: project.name,
       },
     });
-    addLocalHardDeleteTombstone(selectedTeam, "project", project);
-    removeVisibleProject(project.id);
+    addLocalHardDeleteTombstone(selectedTeam, "project", project, storageLogin);
+    if (!sameSession()) {
+      removeStoredProjectCopyForTeam(selectedTeam, project.id, storageLogin);
+      return;
+    }
+    const queryData = publishLocalProjectRemovalToQuery(selectedTeam, project.id, {
+      reconcileExpandedDeletedFiles,
+    });
+    persistProjectQueryDataForTeam(selectedTeam, queryData);
+    saveStoredChapterPendingMutations(selectedTeam, queryData.pendingChapterMutations);
+    if (!stillCurrent()) return;
     clearSelectedProjectState(project);
-    dropProjectMutationsForProject(selectedTeam, project.id);
-    delete state.projectRepoSyncByProjectId[project.id];
-    persistProjectsForTeam(selectedTeam);
-    updateProjectQueryCache(selectedTeam);
     resetProjectPermanentDeletion();
-    clearProjectsStatus(render);
     showProjectsNotice(render, "Local project copy removed.");
     render();
   } catch (error) {
-    clearProjectsStatus(render);
-    state.projectPermanentDeletion.status = "idle";
-    state.projectPermanentDeletion.error = error?.message ?? String(error);
+    if (!stillCurrent()) return;
+    modal.status = "idle";
+    modal.error = error?.message ?? String(error);
     render();
   }
 }

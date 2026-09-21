@@ -1229,6 +1229,7 @@ export function resetInviteUser() {
 
 export function createProjectPermanentDeletionState() {
   return createEntityModalState({
+    teamId: null,
     projectId: null,
     projectName: "",
     confirmationText: "",

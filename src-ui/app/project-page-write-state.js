@@ -36,8 +36,8 @@ export function areProjectCreationWritesDisabled() {
   );
 }
 
-export function areProjectLocalHardDeleteWritesDisabled() {
-  return areResourcePageWritesDisabled(state.projectsPage);
+export function areProjectLocalHardDeleteWritesDisabled(pageState = state.projectsPage) {
+  return areResourcePageWriteSubmissionsDisabled(pageState);
 }
 
 export function areProjectLifecycleWritesDisabled() {

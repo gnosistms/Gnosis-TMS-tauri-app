@@ -17,6 +17,7 @@ import {
 } from "./resource-page-controller.js";
 import { teamCacheKey } from "./team-cache.js";
 import { refreshInstallationResourcesForTeam } from "./installation-resources-query.js";
+import { loadStoredProjectsForTeam, loadStoredChapterPendingMutations } from "./project-cache.js";
 
 let activeProjectsQuerySubscription = null;
 
@@ -137,6 +138,7 @@ export function applyProjectsQuerySnapshotToState(snapshot, {
   cacheKey,
   cacheUpdatedAt = null,
   reconcileExpandedDeletedFiles,
+  allowEmptySnapshot = false,
 } = {}) {
   if (state.selectedTeamId !== teamId) {
     return false;
@@ -153,6 +155,7 @@ export function applyProjectsQuerySnapshotToState(snapshot, {
     const preserveCurrentProjects =
       (
         isFetching === true
+        && !allowEmptySnapshot
         && projectSnapshotIsEmpty(visibleProjectSnapshot)
         && (state.projects.length > 0 || state.deletedProjects.length > 0)
         && projectsBelongToTeam(teamId, expectedCacheKey)
@@ -682,6 +685,49 @@ export function createProjectsQueryOptions(team, options = {}) {
 
 export function cancelProjectDiscoveryForMutation(team) {
   return queryClient.cancelQueries({ queryKey: projectKeys.byTeam(team.id) });
+}
+
+export function publishLocalProjectRemovalToQuery(team, projectId, options = {}) {
+  const queryKey = projectKeys.byTeam(team.id);
+  const visibleTeam = state.selectedTeamId === team.id && projectsBelongToTeam(team.id, teamCacheKey(team));
+  const cached = loadStoredProjectsForTeam(team);
+  const previous = visibleTeam
+    ? createProjectsQuerySnapshot({
+      items: state.projects,
+      deletedItems: state.deletedProjects,
+      repoSyncByProjectId: state.projectRepoSyncByProjectId,
+      glossaries: state.glossaries,
+      pendingChapterMutations: state.pendingChapterMutations,
+      discovery: state.projectDiscovery,
+    })
+    : queryClient.getQueryData(queryKey) ?? createProjectsQuerySnapshot({
+      items: cached?.projects,
+      deletedItems: cached?.deletedProjects,
+      pendingChapterMutations: loadStoredChapterPendingMutations(team),
+    });
+  const repoSyncByProjectId = { ...previous.repoSyncByProjectId };
+  delete repoSyncByProjectId[projectId];
+  const next = {
+    ...previous,
+    snapshot: {
+      items: previous.snapshot.items.filter((project) => project.id !== projectId),
+      deletedItems: previous.snapshot.deletedItems.filter((project) => project.id !== projectId),
+    },
+    repoSyncByProjectId,
+    pendingChapterMutations: previous.pendingChapterMutations.filter((mutation) => mutation.projectId !== projectId),
+  };
+  const isFetching = visibleTeam && state.projectsPage.isRefreshing;
+  queryClient.setQueryData(queryKey, next);
+  if (visibleTeam) {
+    applyProjectsQuerySnapshotToState(next, {
+      teamId: team.id,
+      isFetching,
+      // Explicit removal of the last row is not an empty loading placeholder.
+      allowEmptySnapshot: true,
+      reconcileExpandedDeletedFiles: options.reconcileExpandedDeletedFiles,
+    });
+  }
+  return next;
 }
 
 export async function publishCreatedProjectToQuery(team, created) {

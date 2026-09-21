@@ -23,10 +23,10 @@ import {
 } from "./team-metadata-flow.js";
 import {
   clearRestoredLocalHardDeleteTombstones,
+  captureLocalHardDeleteRestorationCheck,
   filterLocalHardDeletedResources,
   isLocalHardDeletedResource,
 } from "./local-hard-delete-store.js";
-import { isSoftDeletedResource } from "./resource-write-policy.js";
 import { filterKnownDeletedRepoResources, isDeletedRepoResource } from "./repo-transport-eligibility.js";
 import {
   projectRepoScope,
@@ -163,17 +163,16 @@ export function applyLocalProjectSnapshotHardDeleteState(selectedTeam, snapshot)
   if (!selectedTeam) {
     return { items, deletedItems };
   }
-  clearRestoredLocalHardDeleteTombstones(selectedTeam, "project", [...items, ...deletedItems], {
-    isActive: (project) => !isSoftDeletedResource(project, "project"),
-  });
+  // Cached/progress snapshots cannot prove restoration. Both collections must
+  // respect removal until a subsequent metadata read confirms an active record.
+  const visibleItems = preserveArrayIdentity(
+    items, filterLocalHardDeletedResources(selectedTeam, "project", items),
+  );
   const visibleDeletedItems = preserveArrayIdentity(
-    deletedItems,
-    filterLocalHardDeletedResources(selectedTeam, "project", deletedItems, {
-      isDeleted: (project) => isSoftDeletedResource(project, "project"),
-    }),
+    deletedItems, filterLocalHardDeletedResources(selectedTeam, "project", deletedItems),
   );
   return {
-    items: applyLocalChapterHardDeleteStateToProjects(selectedTeam, items),
+    items: applyLocalChapterHardDeleteStateToProjects(selectedTeam, visibleItems),
     deletedItems: applyLocalChapterHardDeleteStateToProjects(selectedTeam, visibleDeletedItems),
   };
 }
@@ -866,6 +865,7 @@ export async function refreshProjectFilesFromDisk(render, selectedTeam, projects
 
 export async function loadProjectSnapshotForTeam(render, teamId = state.selectedTeamId, options = {}) {
   const selectedTeam = state.teams.find((team) => team.id === teamId);
+  const confirmRestoredLocalProjects = captureLocalHardDeleteRestorationCheck(selectedTeam, "project");
   const syncVersionAtStart = state.projectSyncVersion;
   const requestId = nextProjectDiscoveryRequestId();
   let pendingChapterMutations = [];
@@ -1024,6 +1024,10 @@ export async function loadProjectSnapshotForTeam(render, teamId = state.selected
         ? metadataResult.value
         : [];
     const metadataLoaded = metadataResult.status === "fulfilled";
+    if (metadataLoaded) {
+      confirmRestoredLocalProjects(projectMetadataRecords, (record) =>
+        record.recordState === "live" && record.lifecycleState === "active");
+    }
     let repairLoaded = repairResult.status === "fulfilled";
     let repairIssues =
       repairResult.status === "fulfilled"
