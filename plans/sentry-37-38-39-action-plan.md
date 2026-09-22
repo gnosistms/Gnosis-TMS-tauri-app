@@ -1,7 +1,6 @@
 # Action plan — Sentry 37, 38, and 39
 
-Status: implemented and under final verification on `codex/sentry-access-sync`;
-release and Sentry closure remain pending.
+Status: implemented, merged, and published in v0.8.120. Issues 37/38 remain open for production-cause confirmation. Issue 39 is fixed and shipped; exact release-linked Sentry closure is blocked by release-registration permissions.
 
 Source: [September 22 review](sentry-review-2026-09-22.md). This plan covers
 [37](https://gnosis-tms.sentry.io/issues/7734748982/),
@@ -254,3 +253,25 @@ an affected-installation reproduction establishes the cause and verifies recover
 - No broker server change or new endpoint is required. Unrelated original-checkout
   edits are untouched. Dependency and sidecar symlinks used for local checks are
   temporary and excluded from commits.
+
+
+## Delivery record
+
+- Fix PR: [#335](https://github.com/gnosistms/Gnosis-TMS-tauri-app/pull/335), merged as `4a16cfa5651981dbf836036f4deac1755a451dab`.
+- Release PR: [#336](https://github.com/gnosistms/Gnosis-TMS-tauri-app/pull/336), merged as `f499b3497ccc41f6028c662cf486e70070d2e95a`.
+- Both PRs passed all quality and browser checks. The implementation browser suite passed 175 tests on each of Linux and Windows (one skipped on each platform).
+- The merged release tree exactly matches the tested release branch. Tag `v0.8.120` points to that merge commit and contains all implementation commits.
+- [Signed release workflow](https://github.com/gnosistms/Gnosis-TMS-tauri-app/actions/runs/35688087473) passed for macOS Apple Silicon, macOS Intel, and Windows x64, followed by successful release-note publication.
+- Implementation and publication evidence was added to all three Sentry issues. Their counts remain 63 / 1 / 1, with last occurrences on 0.8.115 / 0.8.110 / 0.8.114 respectively. No fixing-release recurrence was observed at the post-publication check.
+- Native Windows app smoke testing remains outstanding. Browser CI and signed compilation are separate evidence, not a native end-to-end smoke test.
+
+
+### Published release verification
+
+[0.8.120 is published](https://github.com/gnosistms/Gnosis-TMS-tauri-app/releases/tag/v0.8.120). Verification passed for 13 release assets; seven updater entries point to this exact tag and carry signatures matching their signature assets. Published release notes match the repository notes. The remote annotated tag dereferences to `f499b3497ccc41f6028c662cf486e70070d2e95a`, which contains the fixes and matches the tested release tree.
+
+### Remaining Sentry bookkeeping blocker
+
+The current and previous release logs show that the GitHub `SENTRY_AUTH_TOKEN` secret is invalid (HTTP 401). Therefore Sentry release creation and source-map publication failed even though the native release builds succeeded. The separate token supplied for issue management remains valid for its intended scope, but release creation returns HTTP 403. Resolving issue 39 with `inRelease: gnosis-tms@0.8.120` returns HTTP 400: "Unable to find a release with the given version." Read-back confirms 39 remains unresolved with no fixing release attached.
+
+A release-capable token was requested. Sentry documents `project:releases` for release operations and `org:read` for CLI release management: [permissions and scopes](https://docs.sentry.io/api/permissions/). Once available, replace the invalid CI secret, register/finalize `gnosis-tms@0.8.120` using the verified release commit/publication date, then resolve 39 in that exact version and verify the stored status. Current-release source maps also remain unpublished. Do not claim 37/38 resolved without the production evidence described above.
