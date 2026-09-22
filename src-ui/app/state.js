@@ -259,6 +259,7 @@ export function createRepoOldLayoutDiscardState() {
 export function createProjectsSearchState() {
   return {
     query: "",
+    caseSensitive: false,
     status: "idle",
     error: "",
     results: [],

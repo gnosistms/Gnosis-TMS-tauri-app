@@ -6927,3 +6927,35 @@ test("connected row remains selected when soft deletion joins an expanded sectio
   await page.locator("[data-editor-deleted-group] .section-separator").click();
   await expect.poll(() => page.evaluate(() => window.__gnosisDebug.readEditorState().activeRowId)).toBeNull();
 });
+
+test("AI review remains visible and diffs successive editor edits", async ({ page }) => {
+  await mountEditorFixture(page, { rowCount: 6, chapterStatus: "ready" }, { mockTauri: true });
+  const rowId = "fixture-row-0001";
+  await activateMainEditorField(page, rowId, "vi");
+  await page.evaluate(async (activeRowId) => {
+    const { state } = await import(new URL("/app/state.js", window.location.href).href);
+    state.editorChapter.aiReview = {
+      status: "ready", rowId: activeRowId, languageCode: "vi",
+      sourceText: state.editorChapter.rows.find((row) => row.rowId === activeRowId).fields.vi,
+      suggestedText: "Reviewed translation",
+      promptText: "Review this translation",
+    };
+  }, rowId);
+  await page.locator('[data-action="switch-editor-sidebar-tab:review"]').click();
+  const review = page.locator(".history-group").filter({
+    has: page.locator('[data-action="toggle-editor-review-section:ai-review"]'),
+  });
+  await expect(review.locator('[data-action="apply-editor-ai-review"]')).toBeVisible();
+  await activateMainEditorField(page, rowId, "vi");
+  const input = page.locator(`[data-editor-row-field][data-row-id="${rowId}"][data-language-code="vi"]`);
+  for (const addition of [" edited", " edited again"]) {
+    await input.fill(`Reviewed translation${addition}`);
+    await expect(review.locator(".history-diff__delete")).toHaveText(addition);
+    await expect(review.locator(".history-item__content")).toContainText("Reviewed translation");
+    await expect(review.getByText("Compared with the current text in the editor.", { exact: true })).toBeVisible();
+    await expect(review.getByText("The text changed since the last AI review.")).toHaveCount(0);
+    await expect(input).toBeFocused();
+  }
+  await expect(review.locator('[data-action="apply-editor-ai-review"]')).toHaveCount(0);
+  await expect(review.locator('[data-action="review-editor-text-now:meaning"]')).toBeVisible();
+});

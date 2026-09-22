@@ -32,6 +32,22 @@ async function dismissTelemetryDisclosureModal(page) {
   }
 }
 
+test("project search case toggle updates through the action dispatcher", async ({ page }) => {
+  await mountProjectsFixture(page, { projectCount: 2 });
+  const toggle = page.locator("[data-project-search-case-toggle]");
+  await expect(toggle).toHaveText("aA");
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await expect(toggle).toHaveClass(/search-field__action--active/);
+  await page.locator("[data-project-search-input]").fill("D");
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await page.locator("[data-project-search-input]").fill("");
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+});
+
 function renderedItemKeys(page) {
   return page.evaluate(() =>
     [...document.querySelectorAll("[data-projects-item-key]")].map(

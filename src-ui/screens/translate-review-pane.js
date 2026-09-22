@@ -66,23 +66,31 @@ function renderAiReviewModeButton({ label, action, reviewMode, tooltip, isLoadin
   `;
 }
 
-function renderAiReviewSuggestionSections(aiReview, currentEntry, activeLanguage) {
+function renderAiReviewSuggestionSections(aiReview, currentEntry, activeLanguage, includeReviewedSnapshot = false) {
+  // A clean review has no suggestion. Its input is the reviewed snapshot to
+  // compare with later edits; omitted suggestion fields retain that input too.
+  const reviewedText = (suggestion, source) => suggestion?.trim()
+    ? suggestion
+    : includeReviewedSnapshot ? source ?? "" : "";
+  const text = reviewedText(aiReview.suggestedText, aiReview.sourceText);
+  const footnote = reviewedText(aiReview.suggestedFootnote, aiReview.sourceFootnote);
+  const imageCaption = reviewedText(aiReview.suggestedImageCaption, aiReview.sourceImageCaption);
   const sections = [];
-  if (aiReview.suggestedText?.trim()) {
+  if (text.trim() || (includeReviewedSnapshot && currentEntry?.plainText?.trim())) {
     sections.push(`
-      <p class="history-item__content" lang="${escapeHtml(activeLanguage.code)}">${renderHistoryContent({ plainText: aiReview.suggestedText }, currentEntry)}</p>
+      <p class="history-item__content" lang="${escapeHtml(activeLanguage.code)}">${renderHistoryContent({ plainText: text }, currentEntry)}</p>
     `);
   }
-  if (aiReview.suggestedFootnote?.trim()) {
+  if (footnote.trim() || (includeReviewedSnapshot && currentEntry?.footnote?.trim())) {
     sections.push(`
       <p class="history-item__meta">Footnote</p>
-      <p class="history-item__content history-item__content--footnote" lang="${escapeHtml(activeLanguage.code)}">${renderHistoryContent({ plainText: aiReview.suggestedFootnote }, { plainText: currentEntry?.footnote ?? "" })}</p>
+      <p class="history-item__content history-item__content--footnote" lang="${escapeHtml(activeLanguage.code)}">${renderHistoryContent({ plainText: footnote }, { plainText: currentEntry?.footnote ?? "" })}</p>
     `);
   }
-  if (aiReview.suggestedImageCaption?.trim()) {
+  if (imageCaption.trim() || (includeReviewedSnapshot && currentEntry?.imageCaption?.trim())) {
     sections.push(`
       <p class="history-item__meta">Image caption</p>
-      <p class="history-item__content" lang="${escapeHtml(activeLanguage.code)}">${renderHistoryContent({ plainText: aiReview.suggestedImageCaption }, { plainText: currentEntry?.imageCaption ?? "" })}</p>
+      <p class="history-item__content" lang="${escapeHtml(activeLanguage.code)}">${renderHistoryContent({ plainText: imageCaption }, { plainText: currentEntry?.imageCaption ?? "" })}</p>
     `);
   }
   return sections.join("");
@@ -260,12 +268,11 @@ export function renderReviewPane(editorChapter, rows, languages, offlineMode = f
         : aiReview.status === "error"
           ? "Error"
           : "Review now";
-  const aiReviewMessage = aiReview.isStale
-    ? renderInlineStateBox({
-      tone: "warning",
-      message: "The text changed since the last AI review.",
-    })
-    : aiReview.status === "error"
+  // Keep old results available for comparison without making them applicable
+  // or treating a previously clean review as approval of the user's new edits.
+  const showStaleReview = aiReview.isStale
+    && (aiReview.status === "ready" || aiReview.status === "applying");
+  const aiReviewMessage = aiReview.status === "error"
       ? renderInlineStateBox({
         tone: "error",
         message: aiReview.error,
@@ -399,16 +406,17 @@ export function renderReviewPane(editorChapter, rows, languages, offlineMode = f
               <div class="history-group__entries">
                 <article class="history-item">
                   ${
-                    aiReview.showSuggestion
+                    aiReview.showSuggestion || showStaleReview
                       ? `
-                        ${renderAiReviewSuggestionSections(aiReview, currentEntry, activeLanguage)}
-                        <div class="history-item__footer">
+                        ${renderAiReviewSuggestionSections(aiReview, currentEntry, activeLanguage, showStaleReview)}
+                        ${aiReview.showSuggestion ? `<div class="history-item__footer">
                           <div class="history-item__actions">
                             ${applyButton}
                           </div>
-                          <p class="history-item__meta">Compared with the current text</p>
-                        </div>
+                        </div>` : ""}
+                        <p class="history-item__meta">Compared with the current text in the editor.</p>
                         ${renderAiReviewPromptDetails(aiReview)}
+                        ${showStaleReview ? reviewModeButtonsFooter : ""}
                       `
                       : aiReview.showLooksGoodMessage
                         ? `
