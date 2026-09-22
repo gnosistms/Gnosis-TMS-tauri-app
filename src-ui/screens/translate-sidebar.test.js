@@ -1512,7 +1512,7 @@ test("review sidebar hides review buttons after clean full review", () => {
   assert.doesNotMatch(html, /data-action="review-editor-text-now:grammar"/);
 });
 
-test("review sidebar reopens both review actions when a clean review is stale", () => {
+test("review sidebar compares a stale clean review with current text and reopens review actions", () => {
   const html = renderTranslateSidebar(
     activeEditorChapter({
       sidebarTab: "review",
@@ -1540,9 +1540,80 @@ test("review sidebar reopens both review actions when a clean review is stale", 
     createAiActionConfigurationState(),
   );
 
-  assert.match(html, /The text changed since the last AI review\./);
+  const reviewHtml = html.slice(html.indexOf('data-action="toggle-editor-review-section:ai-review"'));
+  assert.match(reviewHtml, /Xin chao<span class="history-diff__delete"> da sua<\/span>/);
+  assert.match(reviewHtml, /class="history-item__meta">Compared with the current text in the editor\.<\/p>/);
+  assert.doesNotMatch(reviewHtml, /The text changed since the last AI review\.|Your translation looks good!|apply-editor-ai-review/);
   assert.match(html, /data-action="review-editor-text-now:meaning"/);
   assert.match(html, /data-action="review-editor-text-now:grammar"/);
+});
+
+test("review sidebar keeps suggestions visible against each successive edit", () => {
+  const chapter = activeEditorChapter({
+    sidebarTab: "review",
+    aiReview: {
+      rowId: "row-1",
+      languageCode: "vi",
+      status: "ready",
+      sourceText: "Xin chau",
+      suggestedText: "Xin chao",
+      promptText: "Check spelling and grammar on Xin chau",
+    },
+  });
+  for (const addition of [" ban", " ban than"]) {
+    const html = renderTranslateSidebar(
+      chapter,
+      [{ id: "row-1", sections: [{ code: "vi", text: `Xin chao${addition}` }] }],
+      languages, "es", "vi", createAiActionConfigurationState(),
+    );
+    const reviewHtml = html.slice(html.indexOf('data-action="toggle-editor-review-section:ai-review"'));
+    assert.ok(reviewHtml.includes(`Xin chao<span class="history-diff__delete">${addition}</span>`));
+    assert.match(reviewHtml, /Compared with the current text in the editor\./);
+    assert.match(reviewHtml, /Check spelling and grammar on Xin chau/);
+    assert.match(reviewHtml, /data-action="review-editor-text-now:meaning"/);
+    assert.match(reviewHtml, /data-action="review-editor-text-now:grammar"/);
+    assert.doesNotMatch(reviewHtml, /The text changed since the last AI review\.|apply-editor-ai-review/);
+  }
+});
+
+test("stale review compares footnotes and captions against the editor, including unsuggested text", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter({
+      sidebarTab: "review",
+      aiReview: {
+        rowId: "row-1", languageCode: "vi", status: "ready",
+        sourceText: "Reviewed text",
+        sourceFootnote: "Old note",
+        suggestedFootnote: "Reviewed note",
+        sourceImageCaption: "Reviewed caption",
+      },
+    }),
+    [{ id: "row-1", sections: [{
+      code: "vi", text: "Reviewed text edited",
+      footnotes: [{ marker: 1, text: "Reviewed note edited" }],
+      imageCaption: "Reviewed caption edited",
+    }] }],
+    languages, "es", "vi", createAiActionConfigurationState(),
+  );
+  const reviewHtml = html.slice(html.indexOf('data-action="toggle-editor-review-section:ai-review"'));
+  for (const text of ["Reviewed text", "Reviewed note", "Reviewed caption"]) {
+    assert.ok(reviewHtml.includes(`${text}<span class="history-diff__delete"> edited</span>`), reviewHtml);
+  }
+  assert.match(reviewHtml, />Footnote<\/p>/);
+  assert.match(reviewHtml, />Image caption<\/p>/);
+});
+
+test("review sidebar does not show another selection's stale review", () => {
+  for (const selection of [{ rowId: "row-2", languageCode: "vi" }, { rowId: "row-1", languageCode: "es" }]) {
+    const html = renderTranslateSidebar(
+      activeEditorChapter({
+        sidebarTab: "review",
+        aiReview: { ...selection, status: "ready", sourceText: "Old text", suggestedText: "Other suggestion" },
+      }),
+      rows, languages, "es", "vi", createAiActionConfigurationState(),
+    );
+    assert.doesNotMatch(html, /Other suggestion|Compared with the current text in the editor/);
+  }
 });
 
 test("review sidebar does not mark a review stale for unchanged multi-footnote rows", () => {
