@@ -245,3 +245,25 @@ test("reports ordinary failures unchanged at the default level", () => {
   assert.equal(report.error, error);
   assert.equal(report.options, undefined);
 });
+
+test("access diagnostics preserve the issue message and expose only bounded categories", () => {
+  const message = "Could not verify write access for this team. Refresh team access and try again.";
+  for (const category of ["snapshot_storage", "session_storage", "membership_unverified", "broker_response_parse"]) {
+    const result = resolveCommandFailureReport("update_gtms_editor_row_fields", `ACCESS_VERIFICATION_FAILED:${JSON.stringify({ message, category })}`);
+    assert.equal(result.error, message);
+    assert.deepEqual(result.options, { tags: { access_failure: category } });
+  }
+  const result = resolveCommandFailureReport("update_gtms_editor_row_text_style", 'ACCESS_VERIFICATION_FAILED:{"category":"secret response content","message":"private path"}');
+  assert.equal(result.error, message);
+  assert.equal(result.options.tags.access_failure, "unexpected");
+  assert.equal(resolveCommandFailureReport("cmd", "ACCESS_VERIFICATION_FAILED:malformed").error, message);
+});
+
+test("classified access transport and permission failures follow operational telemetry policy", () => {
+  for (const category of ["broker_transport", "broker_http_403"]) {
+    assert.equal(resolveCommandFailureReport("update_gtms_editor_row_fields", `ACCESS_VERIFICATION_FAILED:${JSON.stringify({ category })}`), null);
+  }
+  const result = resolveCommandFailureReport("update_gtms_editor_row_fields", 'ACCESS_VERIFICATION_FAILED:{"category":"broker_http_503"}');
+  assert.equal(result.options.level, "warning");
+  assert.equal(result.options.tags.access_failure, "broker_http_503");
+});
