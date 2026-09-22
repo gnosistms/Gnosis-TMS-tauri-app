@@ -255,7 +255,7 @@ export function resolveCommandFailureReport(command, error) {
   }
   const rawMessage = String(error?.message ?? error ?? "").trim();
   const normalizedMessage = rawMessage.toLowerCase();
-  if (normalizedMessage.startsWith("auth_required:")) {
+  if (normalizedMessage.startsWith("auth_required:") || normalizedMessage.startsWith("auth_session_changed:")) {
     return null;
   }
   // Forced-update control flow; updater-flow.js owns the user-facing handling.

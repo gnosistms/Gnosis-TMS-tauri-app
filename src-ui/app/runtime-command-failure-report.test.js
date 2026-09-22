@@ -48,11 +48,13 @@ test("recognizes provider-key rejection failures from team AI commands", () => {
   );
 });
 
-test("skips the expected session-expired path", () => {
-  assert.equal(
-    resolveCommandFailureReport("any_command", new Error("AUTH_REQUIRED:Your GitHub session expired.")),
-    null,
-  );
+test("skips expected session-expired and native login-changed paths", () => {
+  for (const message of [
+    "AUTH_REQUIRED:Your GitHub session expired.",
+    "AUTH_SESSION_CHANGED:The saved GitHub login has changed.",
+  ]) {
+    assert.equal(resolveCommandFailureReport("any_command", new Error(message)), null);
+  }
 });
 
 test("expected glossary/QA validation stays visible to callers without becoming telemetry", () => {
