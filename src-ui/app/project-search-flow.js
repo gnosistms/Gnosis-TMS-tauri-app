@@ -20,9 +20,10 @@ function clearPendingProjectSearchTimeout() {
   }
 }
 
-function setProjectSearchIdle(query = "") {
+function setProjectSearchIdle(query = "", caseSensitive = false) {
   state.projectsSearch = {
     ...createProjectsSearchState(),
+    caseSensitive,
     query,
   };
 }
@@ -35,16 +36,17 @@ function projectSearchRequestIsCurrent(selectedTeam, query, searchVersion) {
   );
 }
 
-function invokeProjectSearch(installationId, query) {
+function invokeProjectSearch(installationId, query, caseSensitive) {
   return invoke("search_projects", {
     input: {
       installationId,
       query,
+      caseSensitive,
     },
   });
 }
 
-async function runProjectSearch(render, query, searchVersion) {
+async function runProjectSearch(render, query, searchVersion, caseSensitive) {
   const selectedTeam = selectedProjectsTeam();
   if (!selectedTeam?.installationId) {
     state.projectsSearch = {
@@ -76,7 +78,7 @@ async function runProjectSearch(render, query, searchVersion) {
       }
     }
 
-    let response = await invokeProjectSearch(selectedTeam.installationId, query);
+    let response = await invokeProjectSearch(selectedTeam.installationId, query, caseSensitive);
 
     if (!projectSearchRequestIsCurrent(selectedTeam, query, searchVersion)) {
       return;
@@ -93,7 +95,7 @@ async function runProjectSearch(render, query, searchVersion) {
       if (!projectSearchRequestIsCurrent(selectedTeam, query, searchVersion)) {
         return;
       }
-      response = await invokeProjectSearch(selectedTeam.installationId, query);
+      response = await invokeProjectSearch(selectedTeam.installationId, query, caseSensitive);
     }
 
     if (!projectSearchRequestIsCurrent(selectedTeam, query, searchVersion)) {
@@ -208,6 +210,7 @@ export function refreshProjectSearchIndex(render, teamId = state.selectedTeamId)
 }
 
 export function updateProjectSearchQuery(render, query) {
+  const caseSensitive = state.projectsSearch?.caseSensitive === true;
   clearPendingProjectSearchTimeout();
   activeProjectSearchVersion += 1;
 
@@ -219,7 +222,7 @@ export function updateProjectSearchQuery(render, query) {
 
   const normalizedQuery = String(query ?? "").trim();
   if (!normalizedQuery) {
-    setProjectSearchIdle("");
+    setProjectSearchIdle("", caseSensitive);
     render();
     return;
   }
@@ -227,6 +230,7 @@ export function updateProjectSearchQuery(render, query) {
   if (Array.from(normalizedQuery).length < MIN_PROJECT_SEARCH_QUERY_LENGTH) {
     state.projectsSearch = {
       ...createProjectsSearchState(),
+      caseSensitive,
       query,
       status: "too-short",
       queryTooShort: true,
@@ -238,6 +242,7 @@ export function updateProjectSearchQuery(render, query) {
 
   state.projectsSearch = {
     ...createProjectsSearchState(),
+    caseSensitive,
     query,
     status: "searching",
     requestId: activeProjectSearchVersion,
@@ -247,14 +252,22 @@ export function updateProjectSearchQuery(render, query) {
   const searchVersion = activeProjectSearchVersion;
   pendingProjectSearchTimeout = window.setTimeout(() => {
     pendingProjectSearchTimeout = null;
-    void runProjectSearch(render, normalizedQuery, searchVersion);
+    void runProjectSearch(render, normalizedQuery, searchVersion, caseSensitive);
   }, PROJECT_SEARCH_DEBOUNCE_MS);
+}
+
+export function toggleProjectSearchCaseSensitive(render) {
+  state.projectsSearch = {
+    ...state.projectsSearch,
+    caseSensitive: state.projectsSearch?.caseSensitive !== true,
+  };
+  updateProjectSearchQuery(render, state.projectsSearch.query);
 }
 
 export function clearProjectSearch(render) {
   clearPendingProjectSearchTimeout();
   activeProjectSearchVersion += 1;
-  setProjectSearchIdle("");
+  setProjectSearchIdle("", state.projectsSearch?.caseSensitive === true);
   render();
 }
 
@@ -309,12 +322,13 @@ export async function openProjectSearchChapter(render, chapterId, operations = {
   const searchQuery = typeof state.projectsSearch?.query === "string"
     ? state.projectsSearch.query
     : "";
+  const caseSensitive = state.projectsSearch?.caseSensitive === true;
   const openChapter = operations.openTranslateChapter ?? openTranslateChapter;
   const applySearch = operations.applyProjectSearchToEditor ?? applyProjectSearchToEditor;
   const opened = await openChapter(render, normalizedChapterId);
   if (opened !== true) {
     return false;
   }
-  applySearch(render, searchQuery);
+  applySearch(render, searchQuery, { caseSensitive });
   return true;
 }
