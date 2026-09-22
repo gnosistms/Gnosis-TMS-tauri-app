@@ -317,3 +317,91 @@ test("a failed command retry stops after one refresh and surfaces the final erro
   assert.equal(calls.filter((entry) => entry.command === "refresh_broker_auth_session").length, 1);
   assert.equal(calls.filter((entry) => entry.command === "sync_gtms_project_editor_repo").length, 2);
 });
+
+for (const command of ["update_gtms_editor_row_fields", "update_gtms_editor_row_text_style"]) {
+  test(`${command} refreshes its native stored session once without a payload token`, async () => {
+    let writes = 0;
+    let refreshes = 0;
+    let nativeToken = "stale-token";
+    const payload = { input: { installationId: 42, rowId: "row-1" } };
+    invokeHandler = async (name, args) => {
+      if (name === "refresh_broker_auth_session") {
+        refreshes += 1;
+        assert.equal(args.sessionToken, "stale-token");
+        return { sessionToken: "fresh-token", login: "owner" };
+      }
+      if (name === "save_broker_auth_session") {
+        nativeToken = args.session.sessionToken;
+        return;
+      }
+      assert.equal(name, command);
+      assert.deepEqual(args, payload);
+      if (nativeToken === "stale-token") throw new Error("AUTH_REQUIRED:Your GitHub session expired.");
+      writes += 1;
+      return "saved";
+    };
+    assert.equal(await invoke(command, payload), "saved");
+    assert.equal(refreshes, 1);
+    assert.equal(writes, 1);
+  });
+}
+
+for (const change of ["sign-out", "account-switch", "team-switch"]) {
+  test(`native editor recovery cannot replay after ${change}`, async () => {
+    const refresh = deferred();
+    const started = deferred();
+    let attempts = 0;
+    state.selectedTeamId = "team-a";
+    invokeHandler = async (command) => {
+      if (command === "refresh_broker_auth_session") { started.resolve(); return refresh.promise; }
+      if (command === "save_broker_auth_session") return;
+      attempts += 1;
+      throw new Error("AUTH_REQUIRED:Expired");
+    };
+    const request = invoke("update_gtms_editor_row_fields", { input: { installationId: 42 } });
+    const rejected = assert.rejects(request, { code: change === "team-switch" ? "EDITOR_CONTEXT_CHANGED" : "AUTH_SESSION_CHANGED" });
+    await started.promise;
+    if (change === "team-switch") state.selectedTeamId = "team-b";
+    else {
+      resetSessionState();
+      if (change === "account-switch") state.auth.session = { login: "bob", sessionToken: "bob-token" };
+    }
+    refresh.resolve({ login: "owner", sessionToken: "fresh-token" });
+    await rejected;
+    assert.equal(attempts, 1);
+  });
+}
+
+test("native editor retries stop after one failed recovery attempt", async () => {
+  let attempts = 0;
+  let refreshes = 0;
+  invokeHandler = async (command) => {
+    if (command === "refresh_broker_auth_session") { refreshes += 1; return { login: "owner", sessionToken: "fresh-token" }; }
+    if (command === "save_broker_auth_session") return;
+    attempts += 1;
+    throw new Error("AUTH_REQUIRED:Expired");
+  };
+  await assert.rejects(invoke("update_gtms_editor_row_text_style", { input: {} }), /AUTH_REQUIRED/);
+  assert.equal(attempts, 2);
+  assert.equal(refreshes, 1);
+});
+
+test("unverified access and ambiguous write failures are never blindly retried", async () => {
+  for (const message of [
+    'ACCESS_VERIFICATION_FAILED:{"category":"snapshot_storage","message":"ignored"}',
+    "git commit failed: ambiguous result",
+    "Your account type cannot edit shared content.",
+  ]) {
+    let attempts = 0;
+    invokeHandler = async () => { attempts += 1; throw message; };
+    await assert.rejects(invoke("update_gtms_editor_row_fields", { input: {} }));
+    assert.equal(attempts, 1);
+  }
+});
+
+test("an unrelated tokenless command cannot acquire editor retry privileges", async () => {
+  let attempts = 0;
+  invokeHandler = async () => { attempts += 1; throw new Error("AUTH_REQUIRED:Expired"); };
+  await assert.rejects(invoke("delete_gnosis_project_repo", {}), /AUTH_REQUIRED/);
+  assert.equal(attempts, 1);
+});
