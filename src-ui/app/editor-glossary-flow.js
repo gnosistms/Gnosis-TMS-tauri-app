@@ -17,6 +17,13 @@ import { editorFootnotesPlainText, findEditorRowById } from "./editor-utils.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import { invoke } from "./runtime.js";
 import { createEditorChapterGlossaryState, state } from "./state.js";
+import { EDITOR_ROW_FILTER_MODE_HAS_GLOSSARY_ERROR } from "./editor-filters.js";
+
+const localGlossaryRevisions = new Map();
+
+function localGlossaryKey(team, link) {
+  return `${team.installationId}:${link.repoName}:${link.glossaryId}`;
+}
 
 export function normalizeEditorGlossaryLink(link) {
   if (!link || typeof link !== "object") {
@@ -82,28 +89,65 @@ export async function loadEditorGlossaryState(team, chapter) {
     return createEditorChapterGlossaryState();
   }
 
-  try {
-    await waitForGlossaryTermWritesToSettle(team, linkedGlossary.repoName);
-    const payload = await invoke("load_gtms_glossary_editor_data", {
-      input: {
-        installationId: team.installationId,
+  const key = localGlossaryKey(team, linkedGlossary);
+  for (;;) {
+    await waitForGlossaryTermWritesToSettle(team, linkedGlossary.repoName, { localOnly: true });
+    const revision = localGlossaryRevisions.get(key);
+    try {
+      const payload = await invoke("load_gtms_glossary_editor_data", {
+        input: {
+          installationId: team.installationId,
+          glossaryId: linkedGlossary.glossaryId,
+          repoName: linkedGlossary.repoName,
+        },
+      });
+      // A rollback or a later save may have overtaken this disk read.
+      if (revision === localGlossaryRevisions.get(key)) {
+        return buildEditorGlossaryStateFromPayload(payload, linkedGlossary);
+      }
+    } catch (error) {
+      // A failed read can also belong to an obsolete snapshot (for example,
+      // while rollback replaces term files). Retry the current revision.
+      if (revision !== localGlossaryRevisions.get(key)) continue;
+      return {
+        ...createEditorChapterGlossaryState(),
+        status: "error",
+        error: error?.message ?? String(error),
         glossaryId: linkedGlossary.glossaryId,
         repoName: linkedGlossary.repoName,
-      },
-    });
-    return buildEditorGlossaryStateFromPayload(payload, linkedGlossary);
-  } catch (error) {
-    return {
-      ...createEditorChapterGlossaryState(),
-      status: "error",
-      error: error?.message ?? String(error),
-      glossaryId: linkedGlossary.glossaryId,
-      repoName: linkedGlossary.repoName,
-    };
+      };
+    }
   }
 }
 
-// A chapter's linked glossary loads asynchronously in the background when the
+export async function refreshEditorGlossaryAfterLocalChange(render, team, link) {
+  const linkedGlossary = normalizeEditorGlossaryLink(link);
+  if (!linkedGlossary || !Number.isFinite(team?.installationId)) return;
+  const key = localGlossaryKey(team, linkedGlossary);
+  const revision = (localGlossaryRevisions.get(key) ?? 0) + 1;
+  localGlossaryRevisions.set(key, revision);
+  const chapterId = state.editorChapter?.chapterId;
+  const matchesContext = () => state.screen === "translate"
+    && selectedProjectsTeam()?.id === team.id
+    && selectedProjectsTeam()?.installationId === team.installationId
+    && state.editorChapter?.chapterId === chapterId
+    && state.editorChapter?.status === "ready"
+    && editorGlossaryStateMatchesLink(state.editorChapter.glossary, linkedGlossary)
+    && editorGlossaryStateMatchesLink(linkedGlossary, findChapterContextById(chapterId)?.chapter?.linkedGlossary);
+  if (!matchesContext()) return;
+  const glossary = await loadEditorGlossaryState(team, { linkedGlossary });
+  if (!matchesContext() || localGlossaryRevisions.get(key) !== revision) return;
+  state.editorChapter = { ...state.editorChapter, glossary };
+  // Matcher identity invalidates highlight caches; derived entries already check
+  // the glossary content revision. Patch mounted highlights without remounting inputs.
+  if (typeof document !== "undefined") syncMountedEditorGlossaryHighlightRows();
+  if (state.editorChapter.filters?.rowFilterMode === EDITOR_ROW_FILTER_MODE_HAS_GLOSSARY_ERROR) {
+    render?.({ scope: "translate-body" });
+  }
+  render?.({ scope: "translate-sidebar" });
+}
+
+// A chapter's linked glossary loads asynchronously from local storage when the
 // chapter opens (`editor-chapter-load-flow.js`); until that resolves (or if it
 // previously failed), `chapterState.glossary` is a placeholder with no matcher
 // model. AI features that can be invoked immediately after a chapter opens
@@ -125,7 +169,10 @@ export async function ensureEditorGlossaryReady(chapterState, chapterId) {
   }
 
   const freshGlossaryState = await loadEditorGlossaryState(team, chapterContext.chapter);
-  if (state.editorChapter?.chapterId === chapterId) {
+  if (state.editorChapter?.chapterId === chapterId
+    && selectedProjectsTeam()?.id === team.id
+    && selectedProjectsTeam()?.installationId === team.installationId
+    && editorGlossaryStateMatchesLink(freshGlossaryState, findChapterContextById(chapterId)?.chapter?.linkedGlossary)) {
     state.editorChapter = { ...state.editorChapter, glossary: freshGlossaryState };
   }
   return freshGlossaryState;
