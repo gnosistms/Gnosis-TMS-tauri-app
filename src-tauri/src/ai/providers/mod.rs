@@ -2,6 +2,7 @@ pub mod claude;
 pub mod deepseek;
 pub mod gemini;
 pub mod openai;
+mod schemas;
 
 use std::sync::OnceLock;
 use std::time::Duration;

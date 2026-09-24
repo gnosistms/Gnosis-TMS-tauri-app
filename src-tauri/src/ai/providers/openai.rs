@@ -27,6 +27,10 @@ struct OpenAiResponsesRequest<'a> {
     previous_response_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_output_tokens: Option<u32>,
+    // Unset in the app: models run at their default reasoning effort
+    // (`none` on gpt-5.4). The effort-calibration harness sets it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning: Option<Value>,
     text: OpenAiTextConfig,
 }
 
@@ -264,6 +268,7 @@ fn build_probe_request(model_id: &str) -> OpenAiResponsesRequest<'_> {
         store: false,
         previous_response_id: None,
         max_output_tokens: Some(OPENAI_PROBE_MAX_OUTPUT_TOKENS),
+        reasoning: None,
         text: OpenAiTextConfig {
             format: openai_text_format(AiPromptOutputFormat::Text),
         },
@@ -277,6 +282,7 @@ fn build_prompt_request(request: &AiPromptRequest) -> OpenAiResponsesRequest<'_>
         store: false,
         previous_response_id: request.previous_response_id.clone(),
         max_output_tokens: None,
+        reasoning: None,
         text: OpenAiTextConfig {
             format: openai_text_format(request.output_format.clone()),
         },
@@ -284,198 +290,13 @@ fn build_prompt_request(request: &AiPromptRequest) -> OpenAiResponsesRequest<'_>
 }
 
 fn openai_text_format(output_format: AiPromptOutputFormat) -> Value {
-    match output_format {
-        AiPromptOutputFormat::Text => json!({ "type": "text" }),
-        AiPromptOutputFormat::AssistantTurnJson => json!({
+    match super::schemas::output_schema(&output_format) {
+        None => json!({ "type": "text" }),
+        Some(output) => json!({
             "type": "json_schema",
-            "name": "assistant_turn_response",
+            "name": output.name,
             "strict": true,
-            "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["responseKind", "assistantText", "draftTranslationText"],
-                "properties": {
-                    "responseKind": {
-                        "type": "string",
-                        "enum": ["translation_draft", "commentary", "mixed", "error"]
-                    },
-                    "assistantText": {
-                        "type": "string"
-                    },
-                    "draftTranslationText": {
-                        "anyOf": [
-                            { "type": "string" },
-                            { "type": "null" }
-                        ]
-                    }
-                }
-            }
-        }),
-        AiPromptOutputFormat::TranslationSectionsJson => json!({
-            "type": "json_schema",
-            "name": "ai_translation_sections_response",
-            "strict": true,
-            "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["translatedText", "translatedFootnote", "translatedImageCaption"],
-                "properties": {
-                    "translatedText": {
-                        "type": "string"
-                    },
-                    "translatedFootnote": {
-                        "type": "string"
-                    },
-                    "translatedImageCaption": {
-                        "type": "string"
-                    }
-                }
-            }
-        }),
-        AiPromptOutputFormat::ReviewJson => json!({
-            "type": "json_schema",
-            "name": "ai_review_response",
-            "strict": true,
-            "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["suggestedText", "suggestedFootnotes", "suggestedImageCaption", "reviewed"],
-                "properties": {
-                    "suggestedText": {
-                        "type": "string"
-                    },
-                    "suggestedFootnotes": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "additionalProperties": false,
-                            "required": ["marker", "text"],
-                            "properties": {
-                                "marker": { "type": "integer", "minimum": 1 },
-                                "text": { "type": "string" }
-                            }
-                        }
-                    },
-                    "suggestedImageCaption": {
-                        "type": "string"
-                    },
-                    "reviewed": {
-                        "type": "boolean"
-                    }
-                }
-            }
-        }),
-        AiPromptOutputFormat::TranslationBatchJson => json!({
-            "type": "json_schema",
-            "name": "ai_translation_batch_response",
-            "strict": true,
-            "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["rows"],
-                "properties": {
-                    "rows": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "additionalProperties": false,
-                            "required": [
-                                "rowId",
-                                "translatedText",
-                                "translatedFootnote",
-                                "translatedImageCaption"
-                            ],
-                            "properties": {
-                                "rowId": { "type": "string" },
-                                "translatedText": { "type": "string" },
-                                "translatedFootnote": { "type": "string" },
-                                "translatedImageCaption": { "type": "string" }
-                            }
-                        }
-                    }
-                }
-            }
-        }),
-        AiPromptOutputFormat::ReviewBatchJson => json!({
-            "type": "json_schema",
-            "name": "ai_review_batch_response",
-            "strict": true,
-            "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["rows"],
-                "properties": {
-                    "rows": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "additionalProperties": false,
-                            "required": [
-                                "rowId",
-                                "suggestedText",
-                                "suggestedFootnotes",
-                                "suggestedImageCaption",
-                                "reviewed"
-                            ],
-                            "properties": {
-                                "rowId": { "type": "string" },
-                                "suggestedText": { "type": "string" },
-                                "suggestedFootnotes": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "object",
-                                        "additionalProperties": false,
-                                        "required": ["marker", "text"],
-                                        "properties": {
-                                            "marker": { "type": "integer", "minimum": 1 },
-                                            "text": { "type": "string" }
-                                        }
-                                    }
-                                },
-                                "suggestedImageCaption": { "type": "string" },
-                                "reviewed": { "type": "boolean" }
-                            }
-                        }
-                    }
-                }
-            }
-        }),
-        AiPromptOutputFormat::GlossaryAlignmentJson => json!({
-            "type": "json_schema",
-            "name": "glossary_alignment_response",
-            "strict": true,
-            "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["mappings"],
-                "properties": {
-                    "mappings": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "additionalProperties": false,
-                            "required": ["id", "translationSourceTerm"],
-                            "properties": {
-                                "id": {
-                                    "type": "string"
-                                },
-                                "translationSourceTerm": {
-                                    "anyOf": [
-                                        { "type": "string" },
-                                        { "type": "null" }
-                                    ]
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }),
-        AiPromptOutputFormat::JsonSchema { name, schema } => json!({
-            "type": "json_schema",
-            "name": name,
-            "strict": true,
-            "schema": schema
+            "schema": output.schema
         }),
     }
 }
@@ -489,6 +310,26 @@ pub(crate) fn run_prompt(
 
 pub(crate) fn run_prompt_with_usage(
     request: &AiPromptRequest,
+    api_key: &str,
+) -> Result<(AiPromptResponse, Option<OpenAiUsage>), String> {
+    send_prompt_request(&build_prompt_request(request), api_key)
+}
+
+/// Runs a prompt at a forced reasoning effort. Used by the effort-calibration
+/// harness (`ai::effort_eval`).
+#[cfg(test)]
+pub(crate) fn run_prompt_with_reasoning_effort(
+    request: &AiPromptRequest,
+    api_key: &str,
+    effort: &str,
+) -> Result<(AiPromptResponse, Option<OpenAiUsage>), String> {
+    let mut body = build_prompt_request(request);
+    body.reasoning = Some(json!({ "effort": effort }));
+    send_prompt_request(&body, api_key)
+}
+
+fn send_prompt_request(
+    body: &OpenAiResponsesRequest<'_>,
     api_key: &str,
 ) -> Result<(AiPromptResponse, Option<OpenAiUsage>), String> {
     let normalized_key = api_key.trim();
@@ -505,7 +346,7 @@ pub(crate) fn run_prompt_with_usage(
         .header("Authorization", format!("Bearer {normalized_key}"))
         .header("Content-Type", "application/json")
         .header("User-Agent", "gnosis-tms")
-        .json(&build_prompt_request(request))
+        .json(body)
         .send()
         .map_err(normalize_transport_error)?;
 
