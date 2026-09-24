@@ -19,6 +19,7 @@ const DEFAULT_PROVIDER_ID = DEFAULT_AI_PROVIDER_ID;
 const DEFAULT_MODEL_ID_BY_PROVIDER = {
   openai: "gpt-5.4",
   gemini: "gemini-3-flash-preview",
+  claude: "claude-opus-5-5",
 };
 
 function isPlainObject(value) {
@@ -448,6 +449,17 @@ export function pickPreferredAiModelId(providerId, options = [], fallbackModelId
 
   if (normalizedProviderId === "gemini") {
     return "";
+  }
+
+  if (normalizedProviderId === "claude") {
+    // The Models API lists newest first, so this is the newest Opus. The
+    // list's first entry could be a far pricier Fable model.
+    const newestOpus = normalizedOptions.find(
+      (option) => typeof option?.id === "string" && option.id.startsWith("claude-opus-"),
+    );
+    if (newestOpus) {
+      return newestOpus.id;
+    }
   }
 
   return typeof normalizedOptions[0]?.id === "string" ? normalizedOptions[0].id : "";
