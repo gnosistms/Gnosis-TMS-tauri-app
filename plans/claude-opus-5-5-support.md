@@ -193,3 +193,7 @@ data, and spend approval. Phase 3 not started.
   extension) is running; unconfirmed whether it or something upstream causes
   it. Dropped requests are probably still billed by the provider. Streaming
   fixes it regardless of cause.
+- Final effort settings (with streaming in place, plans/ai-prompt-streaming.md):
+  translation `high` (batch, sectioned, and plain `Text`, which also covers
+  plain-mode review and glossary preparation), review `medium`, assistant
+  and glossary alignment `medium` (not calibrated).

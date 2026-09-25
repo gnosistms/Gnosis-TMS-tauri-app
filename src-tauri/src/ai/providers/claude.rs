@@ -38,19 +38,23 @@ const UNSUPPORTED_SCHEMA_KEYWORDS: [&str; 8] = [
     "maxItems",
 ];
 
-/// Thinking depth per AI action. Opus 5.5 defaults to `medium` when omitted, so
-/// the level is always sent explicitly. See plans/claude-opus-5-5-support.md
-/// (Phase 2) for how these values are calibrated.
+/// Thinking depth per AI action, sent explicitly (Opus 5.5 defaults to
+/// `medium`). Calibrated on HNHH ch. 3, es→vi (plans/claude-opus-5-5-support.md):
+/// translation at `low`/`medium` did no thinking and ranked below `high` in a
+/// blind comparison; review at `low` skipped thinking and missed 8 of 9 planted
+/// errors, while `medium` fixed all 9 at lower cost than `high`. `Text` covers
+/// plain translation, plain-mode review, and glossary preparation. The
+/// assistant and glossary alignment were not calibrated.
 fn effort_for(output_format: &AiPromptOutputFormat) -> &'static str {
     match output_format {
         AiPromptOutputFormat::Text
         | AiPromptOutputFormat::TranslationSectionsJson
-        | AiPromptOutputFormat::TranslationBatchJson => "medium",
-        AiPromptOutputFormat::ReviewJson | AiPromptOutputFormat::ReviewBatchJson => "medium",
-        AiPromptOutputFormat::AssistantTurnJson => "medium",
-        AiPromptOutputFormat::GlossaryAlignmentJson | AiPromptOutputFormat::JsonSchema { .. } => {
-            "medium"
-        }
+        | AiPromptOutputFormat::TranslationBatchJson => "high",
+        AiPromptOutputFormat::ReviewJson
+        | AiPromptOutputFormat::ReviewBatchJson
+        | AiPromptOutputFormat::AssistantTurnJson
+        | AiPromptOutputFormat::GlossaryAlignmentJson
+        | AiPromptOutputFormat::JsonSchema { .. } => "medium",
     }
 }
 
@@ -723,10 +727,15 @@ mod tests {
                 Some(false),
                 "{output_format:?}"
             );
+            let expected_effort = match output_format {
+                AiPromptOutputFormat::TranslationSectionsJson
+                | AiPromptOutputFormat::TranslationBatchJson => "high",
+                _ => "medium",
+            };
             assert_eq!(
                 body.pointer("/output_config/effort")
                     .and_then(Value::as_str),
-                Some("medium"),
+                Some(expected_effort),
                 "{output_format:?}"
             );
             assert_eq!(
@@ -752,7 +761,7 @@ mod tests {
         assert_eq!(
             body.pointer("/output_config/effort")
                 .and_then(Value::as_str),
-            Some("medium")
+            Some("high")
         );
     }
 
