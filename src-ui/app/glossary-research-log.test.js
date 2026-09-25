@@ -9,6 +9,7 @@ const { appendResearchLogEvent } = await import("./glossary-research-flow.js");
 const {
   batchProgressText,
   buildLogView,
+  collapseRepeatedBlocks,
   isRequestOpen,
   readableAnswer,
   requestState,
@@ -82,4 +83,14 @@ test("logs saved in fragments read as one request", () => {
   assert.equal(item.request.answer, '{"items":[]}');
   assert.equal(item.request.text, "Texts");
   assert.equal(requestState(item.request), "done");
+});
+
+test("identical repeated blocks are shown once with a count", () => {
+  const review = [{ type: "heading", text: "Review" }, { type: "fact", text: "Waiting for you to review." }];
+  const log = [{ type: "heading", text: "Proposal" }, { type: "fact", text: "1 entry" }, ...review, ...review, ...review,
+    { type: "heading", text: "Counting" }, { type: "request", requestId: "c1", stage: "counting", text: "…" }];
+  const shown = collapseRepeatedBlocks(buildLogView(log));
+  assert.deepEqual(shown.filter((i) => i.kind === "line").map((i) => i.entry.text),
+    ["Proposal", "1 entry", "Review (×3)", "Waiting for you to review.", "Counting"]);
+  assert.equal(shown.filter((i) => i.kind === "request").length, 1);
 });

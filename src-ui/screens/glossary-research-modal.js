@@ -16,6 +16,7 @@ import { quotationMarksFor, usesGuillemets } from "../app/glossary-research-prom
 import {
   batchProgressText,
   buildLogView,
+  collapseRepeatedBlocks,
   isRequestOpen,
   isRequestRunning,
   readableAnswer,
@@ -265,7 +266,7 @@ function renderRequest(request, openChoices) {
 }
 
 function renderLog(log, openChoices) {
-  return buildLogView(log).map((item) => {
+  return collapseRepeatedBlocks(buildLogView(log)).map((item) => {
     if (item.kind === "line") return renderLogLine(item.entry);
     if (item.kind === "request") return renderRequest(item.request, openChoices);
     return `<div class="research-batch">

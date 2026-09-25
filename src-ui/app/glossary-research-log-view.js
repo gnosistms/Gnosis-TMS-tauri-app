@@ -134,6 +134,38 @@ export function buildLogView(log) {
   return items;
 }
 
+/**
+ * A heading and its lines that repeat the block just before them exactly
+ * (e.g. "Review" written again each time an old run was reopened) are shown
+ * once, with the heading marked "(×n)". Blocks with AI requests are kept.
+ */
+export function collapseRepeatedBlocks(items) {
+  const blocks = [];
+  for (const item of items) {
+    const isHeading = item.kind === "line" && item.entry.type === "heading";
+    if (isHeading || !blocks.length) blocks.push({ items: [], repeats: 1 });
+    blocks.at(-1).items.push(item);
+  }
+  const key = (block) => block.items.every((item) => item.kind === "line")
+    ? JSON.stringify(block.items.map((item) => [item.entry.type, item.entry.text]))
+    : null;
+  const kept = [];
+  for (const block of blocks) {
+    const previous = kept.at(-1);
+    const blockKey = key(block);
+    if (previous && blockKey !== null && blockKey === key(previous)) {
+      previous.repeats += 1;
+    } else {
+      kept.push(block);
+    }
+  }
+  return kept.flatMap((block) => block.items.map((item, index) => (
+    index === 0 && block.repeats > 1 && item.kind === "line"
+      ? { ...item, entry: { ...item.entry, text: `${item.entry.text} (×${block.repeats})` } }
+      : item
+  )));
+}
+
 // Request events used to carry "→ stage: purpose" as their first line.
 function stripRequestHeader(text) {
   const value = String(text ?? "");
