@@ -20,10 +20,11 @@ import {
   RESEARCH_PROVIDERS,
   researchProviderSupported,
 } from "./glossary-research-budget.js";
-import { createResearchEngine, RESEARCH_DEFAULTS, ResearchStop } from "./glossary-research-engine.js";
+import { createResearchEngine, ResearchStop } from "./glossary-research-engine.js";
 import { createProjectsCorpus, createSamaelCorpus } from "./glossary-research-corpus.js";
 import { createDictionary, DICTIONARY_DOMAINS } from "./glossary-research-dictionary.js";
 import { fold } from "./glossary-research-occurrences.js";
+import { parseMoneyValue } from "./money-input.js";
 
 export const RESEARCH_STREAM_EVENT = "glossary-research-stream";
 const MAX_LOG_EVENTS = 4000;
@@ -160,9 +161,9 @@ export function closeGlossaryResearch(render) {
 export function updateResearchField(field, value) {
   const draft = research();
   if (!draft?.isOpen) return;
-  if (field === "raiseLimitTo") draft.raiseLimitTo = Number.parseFloat(value) || 0;
+  if (field === "raiseLimitTo") draft.raiseLimitTo = parseMoneyValue(value) ?? draft.raiseLimitTo;
   else if (field === "sampleSize") draft.sampleSize = Math.max(1, Math.min(1000, Number.parseInt(value, 10) || 100));
-  else if (field === "spendingLimitUsd") draft.spendingLimitUsd = Math.max(0.1, Number.parseFloat(value) || RESEARCH_DEFAULTS.spendingLimitUsd);
+  else if (field === "spendingLimitUsd") draft.spendingLimitUsd = parseMoneyValue(value) ?? draft.spendingLimitUsd;
   else draft[field] = value;
   draft.formError = "";
 }

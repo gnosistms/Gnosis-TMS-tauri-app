@@ -6,6 +6,7 @@ import {
 } from "../lib/ui.js";
 import { findIsoLanguageOption } from "../lib/language-options.js";
 import { renderLanguagePickerModal } from "./language-picker-modal.js";
+import { renderMoneyInput } from "./money-input.js";
 import {
   researchableProjects,
   supportedResearchProviderNames,
@@ -113,8 +114,8 @@ function renderAdvanced(research) {
             <input class="field__input" type="number" min="1" max="1000" value="${esc(research.sampleSize)}" data-research-field="sampleSize" />
           </label>
           <label class="field">
-            <span class="field__label">Spending limit (US$)</span>
-            <input class="field__input" type="number" min="0.1" step="0.01" value="${esc(Number(research.spendingLimitUsd).toFixed(2))}" data-research-field="spendingLimitUsd" />
+            <span class="field__label">Spending limit</span>
+            ${renderMoneyInput({ value: research.spendingLimitUsd, inputAttributes: 'data-research-field="spendingLimitUsd"', ariaLabel: "Spending limit in US dollars" })}
           </label>
         </div>
         <p class="modal__supporting research-small">Sample size is the maximum number of paragraphs of source text containing the research term to be considered for research. The run stops before any AI request that could go over the spending limit.</p>` : ""}
@@ -287,8 +288,8 @@ function renderRun(state) {
          ${budgetStop ? `
            <div class="research-stopped__raise">
              <label class="research-stopped__limit">
-               <span>New spending limit (US$)</span>
-               <input class="field__input" type="number" min="0.01" step="0.01" value="${esc(Number(research.raiseLimitTo ?? 0).toFixed(2))}" data-research-field="raiseLimitTo" />
+               <span>New spending limit</span>
+               ${renderMoneyInput({ value: research.raiseLimitTo, inputAttributes: 'data-research-field="raiseLimitTo"', ariaLabel: "New spending limit in US dollars" })}
              </label>
              ${primaryButton("Raise limit and continue", "raise-research-limit")}
            </div>
