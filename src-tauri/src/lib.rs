@@ -644,6 +644,7 @@ pub fn run() {
             run_ai_translation_batch,
             run_glossary_research_request,
             project_search::research_sample::glossary_research_project_passages,
+            project_search::research_sample::glossary_research_list_projects,
             glossary_research_dle::glossary_research_fetch_dle,
             glossary_research_storage::save_glossary_research_stage,
             glossary_research_storage::load_glossary_research_run,

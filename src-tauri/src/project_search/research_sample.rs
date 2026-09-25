@@ -175,6 +175,63 @@ pub(crate) fn research_passages(
     Ok(response)
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ResearchProjectsInput {
+    pub installation_id: i64,
+    pub language_code: String,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ResearchProjectOption {
+    pub project_id: String,
+    pub title: String,
+    /// Whether any file of the project contains the research language.
+    pub has_language: bool,
+}
+
+/// The team's locally stored projects, from the search index (refreshed first),
+/// so the research picker does not depend on which page loaded projects.
+#[tauri::command]
+pub(crate) async fn glossary_research_list_projects(
+    app: AppHandle,
+    input: ResearchProjectsInput,
+) -> Result<Vec<ResearchProjectOption>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let db_path = project_search_db_path(&app, input.installation_id)?;
+        let mut connection = open_project_search_db(&db_path)?;
+        ensure_project_search_schema(&connection)?;
+        refresh_project_index_current(&app, input.installation_id, &mut connection)?;
+        research_projects(&connection, &input.language_code)
+    })
+    .await
+    .map_err(|error| format!("The research project list worker failed: {error}"))?
+}
+
+pub(crate) fn research_projects(
+    connection: &Connection,
+    language_code: &str,
+) -> Result<Vec<ResearchProjectOption>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT project_id, max(project_title), max(language_code = ?1) FROM search_documents \
+             WHERE snippet_source = 'field' GROUP BY project_id ORDER BY lower(max(project_title))",
+        )
+        .map_err(|error| format!("Could not read the search index: {error}"))?;
+    let rows = statement
+        .query_map([language_code], |row| {
+            Ok(ResearchProjectOption {
+                project_id: row.get(0)?,
+                title: row.get(1)?,
+                has_language: row.get::<_, i64>(2)? == 1,
+            })
+        })
+        .map_err(|error| format!("Could not read the search index: {error}"))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Could not read the search index: {error}"))
+}
+
 fn sample_order(seed: &str, key: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(format!("{seed}:{key}").as_bytes());
@@ -608,6 +665,17 @@ mod tests {
         );
         let occurrence = &single.occurrences[0];
         assert_eq!(&single.text[occurrence.start..occurrence.end], "fatal");
+    }
+
+    #[test]
+    fn projects_are_listed_with_their_research_language() {
+        let projects = research_projects(&db(), "es").unwrap();
+        assert_eq!(projects.len(), 2);
+        assert!(projects.iter().all(|p| p.has_language));
+        assert!(research_projects(&db(), "ja")
+            .unwrap()
+            .iter()
+            .all(|p| !p.has_language));
     }
 
     #[test]

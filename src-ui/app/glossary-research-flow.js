@@ -8,8 +8,6 @@ import { getAiProviderConfig } from "./ai-provider-config.js";
 import { resolveAiActionProviderAndModel } from "./ai-settings-flow.js";
 import { canManageGlossaries, selectedTeam } from "./glossary-shared.js";
 import { selectedProjectsTeamInstallationId } from "./project-context.js";
-import { loadTeamProjects } from "./project-flow.js";
-import { projectKeys, queryClient } from "./query-client.js";
 import { findIsoLanguageOption } from "../lib/language-options.js";
 import {
   createGlossaryResearchReportState,
@@ -54,37 +52,45 @@ function glossaryLanguages() {
   };
 }
 
-/**
- * The team's projects. state.projects belongs to the Projects page and can be
- * cleared when another screen is showing, so read the projects query cache
- * first and remember the last non-empty list for this research session.
- */
-// Last non-empty project list per team, kept for the whole app session.
-const knownProjectsByTeam = new Map();
+// Project choices come from the app's search index of the projects stored on
+// this Mac (the same texts research searches), not from the Projects page.
+const projectOptionsByTeam = new Map();
 
-function rememberProjects(teamId, list) {
-  const live = (list ?? []).filter((project) => project && project.id);
-  if (teamId != null && live.length) knownProjectsByTeam.set(teamId, live);
-}
-
-function teamProjectList() {
-  const teamId = state.selectedTeamId ?? null;
-  const cached = queryClient.getQueryData(projectKeys.byTeam(teamId))?.snapshot?.items;
-  rememberProjects(teamId, Array.isArray(cached) ? cached : []);
-  rememberProjects(teamId, Array.isArray(state.projects) ? state.projects : []);
-  return knownProjectsByTeam.get(teamId) ?? [];
-}
-
-/** Projects of the team that have the glossary's source language somewhere. */
+/** Projects of the team, with whether any file has the glossary's source language. */
 export function researchableProjects(sourceCode = glossaryLanguages().sourceCode) {
-  return teamProjectList()
-    .filter((project) => project.lifecycleState !== "deleted" && project.status !== "deleted")
-    .map((project) => ({
-      id: project.id,
-      title: project.title || project.name,
-      hasLanguage: (project.chapters ?? []).some((chapter) =>
-        (chapter.languages ?? []).some((language) => language.code === sourceCode)),
-    }));
+  const known = projectOptionsByTeam.get(`${state.selectedTeamId}:${sourceCode}`) ?? [];
+  return known.map((project) => ({ id: project.projectId, title: project.title, hasLanguage: project.hasLanguage }));
+}
+
+let projectsLoad = null;
+
+export function ensureResearchProjectsLoaded(render, { force = false } = {}) {
+  const teamId = state.selectedTeamId;
+  const installationId = selectedProjectsTeamInstallationId() ?? selectedTeam()?.installationId;
+  const sourceCode = glossaryLanguages().sourceCode;
+  const key = `${teamId}:${sourceCode}`;
+  if (installationId == null || !sourceCode) return Promise.resolve();
+  if (!force && projectOptionsByTeam.has(key)) return Promise.resolve();
+  if (projectsLoad?.key === key) return projectsLoad.promise;
+  const draft = research();
+  if (draft) {
+    draft.projectsLoading = true;
+    draft.projectsError = "";
+  }
+  const promise = invoke("glossary_research_list_projects", { input: { installationId, languageCode: sourceCode } })
+    .then((projects) => {
+      projectOptionsByTeam.set(key, Array.isArray(projects) ? projects : []);
+    })
+    .catch((error) => {
+      if (research()) research().projectsError = error?.message ?? String(error);
+    })
+    .finally(() => {
+      if (research()) research().projectsLoading = false;
+      projectsLoad = null;
+      render();
+    });
+  projectsLoad = { key, promise };
+  return promise;
 }
 
 /** The provider/model Research would use, or why it can't run. */
@@ -130,27 +136,6 @@ export function openGlossaryResearch(render, { term = "", origin = null } = {}) 
   render();
   void loadPastRuns(render);
   void ensureResearchProjectsLoaded(render);
-}
-
-let projectsLoad = null;
-
-/** The glossary page doesn't load the team's projects; the picker needs them. */
-export function ensureResearchProjectsLoaded(render) {
-  const teamId = state.selectedTeamId;
-  if (teamProjectList().length || !teamId) return Promise.resolve();
-  if (projectsLoad?.teamId === teamId) return projectsLoad.promise;
-  const draft = research();
-  if (draft) draft.projectsLoading = true;
-  const promise = loadTeamProjects(render, teamId)
-    .then((projects) => rememberProjects(teamId, projects))
-    .catch(() => {})
-    .finally(() => {
-      if (research()) research().projectsLoading = false;
-      projectsLoad = null;
-      render();
-    });
-  projectsLoad = { teamId, promise };
-  return promise;
 }
 
 export function closeGlossaryResearch(render) {
@@ -238,7 +223,7 @@ export function openResearchProjectPicker(render) {
   draft.projectPickerOpen = true;
   draft.projectPickerDraft = [...draft.selectedProjectIds];
   render();
-  void ensureResearchProjectsLoaded(render);
+  void ensureResearchProjectsLoaded(render, { force: true });
 }
 
 export function toggleResearchPickerProject(render, projectId) {

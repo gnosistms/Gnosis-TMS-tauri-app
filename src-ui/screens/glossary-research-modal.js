@@ -328,10 +328,12 @@ function renderProjectPicker(state) {
       </label>`).join("")
     : research.projectsLoading
       ? `<div class="research-projects-loading" aria-busy="true" aria-live="polite">
-          <div class="navigation-loading-modal__spinner" aria-hidden="true"></div>
           <p class="modal__supporting">Loading the list of projects.</p>
+          <div class="navigation-loading-modal__spinner research-projects-loading__spinner" aria-hidden="true"></div>
         </div>`
-      : `<p class="modal__supporting">This team has no projects yet.</p>`;
+      : research.projectsError
+        ? `<p class="modal__error" role="alert">${esc(research.projectsError)}</p>`
+        : `<p class="modal__supporting">No projects are stored on this computer for this team yet. Open a project once so its files are downloaded, then try again.</p>`;
   return `
     <div class="modal-backdrop modal-backdrop--nested-picker">
       <section class="card modal-card research-modal" role="dialog" aria-modal="true" aria-label="Select projects" data-modal-dialog="glossary-research-projects" tabindex="-1">

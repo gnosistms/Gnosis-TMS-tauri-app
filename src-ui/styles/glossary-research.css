@@ -523,6 +523,12 @@
 .research-projects-loading {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
   padding: 8px 0;
+}
+
+.research-projects-loading__spinner {
+  width: 25px;
+  height: 25px;
+  border-width: 2px;
 }
