@@ -1249,3 +1249,14 @@ test("an empty local project stays usable while background sync is running", () 
     assert.doesNotMatch(actionButtonHtml(html, action), /disabled/, action);
   }
 });
+
+
+test("project search renders the editor-style case toggle with its current state", () => {
+  for (const caseSensitive of [false, true]) {
+    const html = renderProjectsScreen(projectsState({ projectsSearch: { query: "", caseSensitive } }));
+    assert.match(html, /data-action="toggle-project-search-case-sensitive"/);
+    assert.match(html, new RegExp(`aria-pressed="${caseSensitive}"`));
+    assert.match(html, new RegExp(`aria-label="${caseSensitive ? "Disable" : "Enable"} case-sensitive search"`));
+    assert.equal(html.includes('search-field__action--active'), caseSensitive);
+  }
+});

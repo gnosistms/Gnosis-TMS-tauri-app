@@ -19,6 +19,20 @@ test("known updates survive an offline reload and appear on the start screen", a
   await expect(page.locator('[data-modal-dialog^="app-update:"]')).toHaveCount(0);
 });
 
+test("a saved required update cannot lock the app before platform availability is rechecked", async ({ page }) => {
+  await boot(page);
+  await page.evaluate(async () => {
+    const { storeKnownAppUpdate } = await import("/app/app-update-storage.js");
+    storeKnownAppUpdate({ available: true, required: true, version: "99.0.0", currentVersion: "1.0.0" });
+  });
+  await page.reload();
+  await page.waitForFunction(() => typeof window.__gnosisDebug?.waitForBootstrap === "function");
+  await page.evaluate(() => window.__gnosisDebug.waitForBootstrap());
+  await expect(page.locator('[data-modal-dialog^="app-update:"]')).toHaveCount(0);
+  await expect(page.locator(".app-update-pill")).toHaveCount(0);
+  await expect(page.locator('[data-action="login-with-github"]')).toBeEnabled();
+});
+
 test("all screens have a single pill and progress never replaces focused editor content", async ({ page }) => {
   await boot(page);
   const results = await page.evaluate(async () => {

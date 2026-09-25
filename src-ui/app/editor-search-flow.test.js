@@ -218,6 +218,9 @@ test("applyProjectSearchToEditor resets editor filters and replace selection", a
     assert.deepEqual([...state.editorChapter.replace.selectedRowIds], []);
     assert.equal(state.editorChapter.replace.status, "idle");
     assert.equal(state.editorChapter.replace.error, "");
+    applyProjectSearchToEditor(() => {}, "Drukpa", { caseSensitive: true });
+    await flushPaintWork();
+    assert.equal(state.editorChapter.filters.caseSensitive, true);
   } finally {
     state.editorChapter = previousEditorChapter;
     dom.restore();

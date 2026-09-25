@@ -8,6 +8,7 @@ import {
   clearProjectSearch,
   openProjectSearchChapter,
   toggleProjectSearchChapter,
+  toggleProjectSearchCaseSensitive,
   toggleProjectSearchProject,
   toggleProjectSearchWeakerMatches,
 } from "../project-search-flow.js";
@@ -254,6 +255,7 @@ export function createProjectActions(render) {
     "cancel-project-transfer": () => cancelProjectTransfer(render),
     "cancel-chapter-permanent-deletion": () => cancelChapterPermanentDeletion(render),
     "cancel-chapter-rename": () => cancelChapterRename(render),
+    "toggle-project-search-case-sensitive": () => toggleProjectSearchCaseSensitive(render),
     "clear-project-search": () => clearProjectSearch(render),
     "toggle-project-search-weaker": () => toggleProjectSearchWeakerMatches(render),
     "cancel-project-import": () => cancelProjectImportModal(render),

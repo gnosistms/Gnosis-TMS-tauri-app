@@ -122,12 +122,37 @@ async function attemptTeamAiCredentialRecovery(command, payload, error) {
   }
 }
 
+// These two native commands check access before writes and roll back a later
+// access failure. Unlike API commands they load the saved session on the Rust side.
+const NATIVE_SESSION_RETRY_COMMANDS = new Set([
+  "update_gtms_editor_row_fields",
+  "update_gtms_editor_row_text_style",
+]);
+
+function normalizeAccessFailure(error) {
+  const raw = String(error?.message ?? error ?? "");
+  if (!raw.startsWith("ACCESS_VERIFICATION_FAILED:")) return error;
+  let payload;
+  try { payload = JSON.parse(raw.slice("ACCESS_VERIFICATION_FAILED:".length)); } catch {}
+  const message = payload?.message === "Could not verify active access for this team. Refresh team access and try again."
+    ? payload.message
+    : "Could not verify write access for this team. Refresh team access and try again.";
+  const category = /^(?:session_storage|snapshot_storage|membership_unverified|unexpected|broker_(?:config|client|transport|response_read|response_parse|http_[1-5]\d{2}))$/.test(payload?.category ?? "")
+    ? payload.category : "unexpected";
+  return Object.assign(new Error(message), { accessFailureCategory: category });
+}
+
 export const invoke = rawInvoke
   ? async function invoke(command, payload = {}) {
       const generation = authSessionGeneration;
+      const nativeTeamId = state.selectedTeamId;
+      const nativeSessionToken = NATIVE_SESSION_RETRY_COMMANDS.has(command)
+        ? state.auth.session?.sessionToken : null;
+      const currentSessionToken = extractBrokerSessionToken(payload) ?? nativeSessionToken;
       try {
         return await rawInvoke(command, payload);
       } catch (error) {
+        error = normalizeAccessFailure(error);
         if (await attemptTeamAiCredentialRecovery(command, payload, error)) {
           try {
             return await rawInvoke(command, payload);
@@ -136,12 +161,11 @@ export const invoke = rawInvoke
             throw retryError;
           }
         }
-        if (!shouldAttemptBrokerSessionRefresh(command, payload, error)) {
+        if (!shouldAttemptBrokerSessionRefresh(command, currentSessionToken, error)) {
           maybeReportCommandFailure(command, error);
           throw error;
         }
 
-        const currentSessionToken = extractBrokerSessionToken(payload);
         let refreshedSession = null;
         let refreshFailure = null;
         try {
@@ -166,12 +190,18 @@ export const invoke = rawInvoke
         }
 
         assertCurrentBrokerSession(refreshedSession.sessionToken, generation);
+        if (nativeSessionToken && state.selectedTeamId !== nativeTeamId) {
+          throw Object.assign(new Error("The selected team changed. Retry saving in the original team."), {
+            code: "EDITOR_CONTEXT_CHANGED",
+          });
+        }
         try {
           return await rawInvoke(
             command,
             updatePayloadSessionToken(payload, refreshedSession.sessionToken),
           );
         } catch (retryError) {
+          retryError = normalizeAccessFailure(retryError);
           // A refreshed broker session may still yield a rejected installation token
           // or a genuinely non-auth command failure. Preserve that final failure in
           // telemetry instead of letting the retry bypass the normal report boundary.
@@ -209,9 +239,23 @@ const LOCAL_TEAM_METADATA_LIST_COMMANDS = new Set([
  * are routine, not defects, and drown real signal (plans/sentry-triage-plan.md, W2).
  */
 export function resolveCommandFailureReport(command, error) {
+  error = normalizeAccessFailure(error);
+  if (error?.accessFailureCategory) {
+    const category = error.accessFailureCategory;
+    // Keep expected connectivity/auth/permission handling consistent with other
+    // commands. Storage, malformed responses and unverified membership still report.
+    if (category === "broker_transport" || category === "broker_http_403") return null;
+    return {
+      error: error.message,
+      options: {
+        ...(/^broker_http_5\d{2}$/.test(category) ? { level: "warning" } : {}),
+        tags: { access_failure: category },
+      },
+    };
+  }
   const rawMessage = String(error?.message ?? error ?? "").trim();
   const normalizedMessage = rawMessage.toLowerCase();
-  if (normalizedMessage.startsWith("auth_required:")) {
+  if (normalizedMessage.startsWith("auth_required:") || normalizedMessage.startsWith("auth_session_changed:")) {
     return null;
   }
   // Forced-update control flow; updater-flow.js owns the user-facing handling.
@@ -379,7 +423,7 @@ export async function initializeWindowPresentation() {
   });
 }
 
-function shouldAttemptBrokerSessionRefresh(command, payload, error) {
+function shouldAttemptBrokerSessionRefresh(command, sessionToken, error) {
   if (!rawInvoke) {
     return false;
   }
@@ -394,7 +438,7 @@ function shouldAttemptBrokerSessionRefresh(command, payload, error) {
     return false;
   }
 
-  if (!extractBrokerSessionToken(payload)) {
+  if (!sessionToken) {
     return false;
   }
 

@@ -53,8 +53,45 @@ pub(crate) fn broker_get_json_with_session<T: DeserializeOwned>(
     path: &str,
     session_token: &str,
 ) -> Result<T, String> {
-    let response = broker_send(client.get(broker_path_url(path)?), session_token)?;
-    parse_json_response(response)
+    broker_get_json_with_session_detailed(client, path, session_token)
+        .map_err(|error| error.message)
+}
+
+pub(crate) struct BrokerReadError {
+    pub(crate) message: String,
+    pub(crate) category: String,
+}
+
+/// Preserve a bounded diagnostic category without exposing response bodies to telemetry.
+pub(crate) fn broker_get_json_with_session_detailed<T: DeserializeOwned>(
+    client: &Client,
+    path: &str,
+    session_token: &str,
+) -> Result<T, BrokerReadError> {
+    let url = broker_path_url(path).map_err(|message| BrokerReadError {
+        message,
+        category: "broker_config".into(),
+    })?;
+    let response =
+        broker_send(client.get(url), session_token).map_err(|message| BrokerReadError {
+            message,
+            category: "broker_transport".into(),
+        })?;
+    let status = response.status();
+    let body = response.text().map_err(|error| BrokerReadError {
+        message: format!("Could not read the GitHub App broker response: {error}"),
+        category: "broker_response_read".into(),
+    })?;
+    if !status.is_success() {
+        return Err(BrokerReadError {
+            message: broker_error_string(status, &body),
+            category: format!("broker_http_{}", status.as_u16()),
+        });
+    }
+    serde_json::from_str(&body).map_err(|error| BrokerReadError {
+        message: format!("Could not parse the GitHub App broker response: {error}"),
+        category: "broker_response_parse".into(),
+    })
 }
 
 pub(crate) fn broker_post_json_with_session<T: DeserializeOwned>(

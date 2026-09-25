@@ -20,3 +20,9 @@ test("buildProjectSearchSnippetMarkup escapes snippet html when there is no exac
 
   assert.equal(markup, "&lt;b&gt;see&lt;/b&gt;");
 });
+
+
+test("case-sensitive snippets highlight only matching capitalization", () => {
+  const markup = buildProjectSearchSnippetMarkup("Drukpa drukpa DRUKPA", "Drukpa", "en", { caseSensitive: true });
+  assert.equal(markup, '<mark class="translation-language-panel__search-match">Drukpa</mark> drukpa DRUKPA');
+});

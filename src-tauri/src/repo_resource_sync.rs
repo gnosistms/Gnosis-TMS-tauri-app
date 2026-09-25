@@ -257,7 +257,6 @@ pub(crate) fn sync_repos(
                 app,
                 &resource,
                 &repo_path,
-                inspected.remote_head_oid.as_deref().unwrap_or_default(),
                 git_transport_token.as_deref().unwrap_or_default(),
             );
 
@@ -312,14 +311,7 @@ pub(crate) fn sync_editor_repo(
     ensure_editor_repo_clean_if_present(&repo_path)?;
 
     let git_transport_token = load_git_transport_token(input.installation_id, session_token)?;
-    let new_head_sha = sync_repo(
-        domain,
-        app,
-        &resource,
-        &repo_path,
-        input.default_branch_head_oid.as_deref().unwrap_or_default(),
-        &git_transport_token,
-    )?;
+    let new_head_sha = sync_repo(domain, app, &resource, &repo_path, &git_transport_token)?;
     let terms_path = repo_path.join("terms");
     let terms_relative_path = terms_path
         .strip_prefix(&repo_path)
@@ -754,7 +746,6 @@ fn sync_repo(
     app: &AppHandle,
     resource: &RepoResourceSyncDescriptor,
     repo_path: &Path,
-    remote_head_oid: &str,
     git_transport_token: &str,
 ) -> Result<Option<String>, String> {
     if descriptor_is_deleted(resource) {
@@ -762,14 +753,7 @@ fn sync_repo(
     }
 
     if !repo_path.exists() {
-        return clone_repo(
-            domain,
-            app,
-            resource,
-            repo_path,
-            remote_head_oid,
-            git_transport_token,
-        );
+        return clone_repo(domain, app, resource, repo_path, git_transport_token);
     }
 
     ensure_origin_remote(domain, resource, repo_path)?;
@@ -780,51 +764,82 @@ fn sync_repo(
         .as_deref()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("main");
-    let local_head_oid = read_current_head_oid(repo_path);
     let git_transport_auth = GitTransportAuth::from_token(git_transport_token)?;
-    enforce_remote_app_version(
+    sync_resource_checkout(
         domain,
-        repo_path,
         resource,
+        repo_path,
         branch_name,
         &git_transport_auth,
-    )?;
-    run_pending_repo_migrations(
-        app,
-        repo_path,
-        domain.repo_kind(),
-        branch_name,
-        remote_head_oid,
-    )?;
+        |head| run_pending_repo_migrations(app, repo_path, domain.repo_kind(), branch_name, head),
+    )
+}
 
-    if remote_head_oid.trim().is_empty() {
-        if local_head_oid.is_some() {
-            git_output(
-                repo_path,
-                &["push", "-u", "origin", branch_name],
-                Some(&git_transport_auth),
-            )?;
-        }
-        let current_head_oid = read_current_head_oid(repo_path);
-        mark_repo_synced(domain, resource, repo_path)?;
-        return Ok(current_head_oid);
-    }
-
-    if let Err(error) = git_output(
-        repo_path,
-        &["pull", "--rebase", "origin", branch_name],
-        Some(&git_transport_auth),
-    ) {
-        return Err(abort_rebase_after_failed_pull(repo_path, error));
-    }
+fn sync_resource_checkout(
+    domain: &dyn RepoResourceDomain,
+    resource: &RepoResourceSyncDescriptor,
+    repo_path: &Path,
+    branch_name: &str,
+    git_transport_auth: &GitTransportAuth,
+    mut prepare: impl FnMut(&str) -> Result<(), String>,
+) -> Result<Option<String>, String> {
     git_output(
         repo_path,
-        &["push", "origin", branch_name],
-        Some(&git_transport_auth),
+        &["check-ref-format", &format!("refs/heads/{branch_name}")],
+        None,
     )?;
-    let current_head_oid = read_current_head_oid(repo_path);
-    mark_repo_synced(domain, resource, repo_path)?;
-    Ok(current_head_oid)
+    let branch = git_output(repo_path, &["symbolic-ref", "--short", "HEAD"], None)?;
+    if branch != branch_name {
+        return Err("The local repository is on a different branch. Refresh repository details before syncing.".into());
+    }
+    // The caller holds the repository lock. Retry only a definite remote advancement,
+    // never an ambiguous transport failure or a permission/hook rejection.
+    for attempt in 0..2 {
+        let remote_head = enforce_remote_app_version(
+            domain,
+            repo_path,
+            resource,
+            branch_name,
+            git_transport_auth,
+        )?;
+        prepare(remote_head.as_deref().unwrap_or_default())?;
+        if let Some(remote_head) = remote_head {
+            if read_current_head_oid(repo_path).is_some() {
+                // Rebase would otherwise graft unrelated histories. Preserve both
+                // histories and ask for explicit recovery instead.
+                git_output(repo_path, &["merge-base", "HEAD", &remote_head], None)
+                    .map_err(|_| "The local and remote repository histories are unrelated. Local commits were preserved; review the repository before syncing.".to_string())?;
+                // Rebase exactly the commit whose compatibility we verified. A pull
+                // would fetch again and could integrate newer, unchecked content.
+                if let Err(error) = git_output(repo_path, &["rebase", &remote_head], None) {
+                    return Err(abort_rebase_after_failed_pull(repo_path, error));
+                }
+            } else {
+                git_output(repo_path, &["checkout", branch_name], None)?;
+            }
+        }
+        if read_current_head_oid(repo_path).is_some() {
+            match git_output(
+                repo_path,
+                &["push", "-u", "origin", branch_name],
+                Some(git_transport_auth),
+            ) {
+                Ok(_) => {}
+                Err(error) if attempt == 0 && push_rejected_for_remote_advance(&error) => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        mark_repo_synced(domain, resource, repo_path)?;
+        return Ok(read_current_head_oid(repo_path));
+    }
+    Err("The remote repository kept changing. Retry syncing; local commits were preserved.".into())
+}
+
+fn push_rejected_for_remote_advance(error: &str) -> bool {
+    error.lines().any(|line| {
+        line.contains("[rejected]")
+            && (line.contains("(non-fast-forward)") || line.contains("(fetch first)"))
+    })
 }
 
 fn ensure_origin_remote(
@@ -864,7 +879,6 @@ fn clone_repo(
     app: &AppHandle,
     resource: &RepoResourceSyncDescriptor,
     repo_path: &Path,
-    remote_head_oid: &str,
     git_transport_token: &str,
 ) -> Result<Option<String>, String> {
     let repo_parent = repo_path.parent().ok_or_else(|| {
@@ -882,57 +896,56 @@ fn clone_repo(
 
     let repo_url = format!("https://github.com/{}.git", resource.full_name);
     let git_transport_auth = GitTransportAuth::from_token(git_transport_token)?;
-    let mut clone_args = vec!["clone"];
-    if !remote_head_oid.trim().is_empty() {
-        if let Some(branch_name) = resource
-            .default_branch_name
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-        {
-            clone_args.extend(["--branch", branch_name, "--single-branch"]);
-        }
-    }
-    clone_args.push(repo_url.as_str());
-    let repo_path_string = repo_path.display().to_string();
-    clone_args.push(repo_path_string.as_str());
-    git_output(repo_parent, &clone_args, Some(&git_transport_auth))?;
+    // Clone without trusting the descriptor's cached head. Normal clone handles
+    // an empty remote as well as a remote that acquired commits since discovery.
+    git_output(
+        repo_parent,
+        &["clone", &repo_url, &repo_path.display().to_string()],
+        Some(&git_transport_auth),
+    )?;
     ensure_repo_local_git_identity(app, repo_path)?;
     let branch_name = resource
         .default_branch_name
         .as_deref()
-        .filter(|value| !value.trim().is_empty())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
         .unwrap_or("main");
-    enforce_remote_app_version(
+    let remote_head = enforce_remote_app_version(
         domain,
         repo_path,
         resource,
         branch_name,
         &git_transport_auth,
     )?;
-    if !pending_repo_migrations(repo_path, &domain.repo_kind())?.is_empty() {
-        run_pending_repo_migrations(
-            app,
+    select_cloned_resource_branch(repo_path, branch_name, remote_head.as_deref())?;
+    sync_resource_checkout(
+        domain,
+        resource,
+        repo_path,
+        branch_name,
+        &git_transport_auth,
+        |head| run_pending_repo_migrations(app, repo_path, domain.repo_kind(), branch_name, head),
+    )
+}
+
+// Only called for a newly cloned checkout, before any local mutation/migration.
+fn select_cloned_resource_branch(
+    repo_path: &Path,
+    branch_name: &str,
+    remote_head: Option<&str>,
+) -> Result<(), String> {
+    if remote_head.is_some() {
+        git_output(repo_path, &["checkout", branch_name], None)?;
+    } else if read_current_head_oid(repo_path).is_none() {
+        git_output(
             repo_path,
-            domain.repo_kind(),
-            branch_name,
-            remote_head_oid,
+            &["symbolic-ref", "HEAD", &format!("refs/heads/{branch_name}")],
+            None,
         )?;
-        if !remote_head_oid.trim().is_empty() {
-            git_output(
-                repo_path,
-                &["push", "origin", branch_name],
-                Some(&git_transport_auth),
-            )?;
-        }
+    } else {
+        return Err("The requested remote branch no longer exists. Refresh repository details before syncing.".into());
     }
-
-    if remote_head_oid.trim().is_empty() {
-        let _ = git_output(repo_path, &["checkout", "-B", branch_name], None);
-    }
-
-    let current_head_oid = read_current_head_oid(repo_path);
-    mark_repo_synced(domain, resource, repo_path)?;
-    Ok(current_head_oid)
+    Ok(())
 }
 
 fn enforce_remote_app_version(
@@ -941,31 +954,42 @@ fn enforce_remote_app_version(
     resource: &RepoResourceSyncDescriptor,
     branch_name: &str,
     git_transport_auth: &GitTransportAuth,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
+    let remote_ref = format!("refs/heads/{branch_name}");
+    git_output(repo_path, &["check-ref-format", &remote_ref], None)?;
+    let tracking_ref = format!("refs/remotes/origin/{branch_name}");
+    // An explicit refspec updates the tracking ref even in a single-branch clone.
+    // '+' permits tracking a remote history rewrite, never rewriting the remote.
+    let refspec = format!("+{remote_ref}:{tracking_ref}");
     match git_output(
         repo_path,
-        &["fetch", "origin", branch_name],
+        &["fetch", "origin", &refspec],
         Some(git_transport_auth),
     ) {
         Ok(_) => {}
-        Err(error) if git_error_indicates_missing_remote_ref(&error) => return Ok(()),
+        Err(error) if git_error_indicates_missing_remote_ref(&error) => return Ok(None),
         Err(error) => return Err(error),
     }
-    let remote_tracking_ref = format!("origin/{branch_name}");
+    let head = git_output(
+        repo_path,
+        &[
+            "rev-parse",
+            "--verify",
+            &format!("{tracking_ref}^{{commit}}"),
+        ],
+        None,
+    )?;
     let resource_name = if resource.repo_name.trim().is_empty() {
         resource.resource_id.as_deref().unwrap_or_default().trim()
     } else {
         resource.repo_name.trim()
     };
-    if let Some(requirement) = remote_ref_requires_newer_app(
-        repo_path,
-        &remote_tracking_ref,
-        domain.state_kind(),
-        resource_name,
-    )? {
+    if let Some(requirement) =
+        remote_ref_requires_newer_app(repo_path, &head, domain.state_kind(), resource_name)?
+    {
         return Err(encode_repo_app_update_requirement(&requirement));
     }
-    Ok(())
+    Ok(Some(head))
 }
 
 fn mark_repo_synced(
@@ -1236,3 +1260,7 @@ mod tests {
         assert_eq!(QaListDomain.display_noun(), "QA list");
     }
 }
+
+#[cfg(test)]
+#[path = "repo_resource_sync_tests.rs"]
+mod git_regression_tests;

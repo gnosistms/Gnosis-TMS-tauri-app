@@ -47,8 +47,12 @@ pub(super) fn search_projects_sync(
         return Ok(response);
     }
 
-    let mut response =
-        search_projects_in_connection(&connection, &normalized_query, query_character_count)?;
+    let mut response = search_projects_in_connection(
+        &connection,
+        &normalized_query,
+        query_character_count,
+        input.case_sensitive.then_some(input.query.trim()),
+    )?;
     if requires_refresh {
         response.index_status = "stale".to_string();
     }
@@ -59,6 +63,7 @@ pub(super) fn search_projects_in_connection(
     connection: &rusqlite::Connection,
     normalized_query: &str,
     query_character_count: usize,
+    case_sensitive_query: Option<&str>,
 ) -> Result<SearchProjectsResponse, String> {
     let use_bigram_index = query_character_count == MIN_SEARCH_QUERY_LENGTH;
     let query_tokens = if use_bigram_index {
@@ -138,6 +143,25 @@ pub(super) fn search_projects_in_connection(
         *preliminary_candidates.entry(*doc_id).or_insert(0) += count.saturating_mul(10);
     }
 
+    // Match original text before the row cap so differently cased rows cannot
+    // crowd out valid matches. SQLite instr is literal and case-sensitive.
+    if let Some(query) = case_sensitive_query {
+        let mut statement = connection
+            .prepare("SELECT doc_id FROM search_documents WHERE instr(plain_text, ?1) > 0")
+            .map_err(|error| format!("Could not prepare case-sensitive project search: {error}"))?;
+        let rows = statement
+            .query_map([query], |row| row.get::<_, i64>(0))
+            .map_err(|error| format!("Could not run case-sensitive project search: {error}"))?;
+        let mut matching_candidates = HashMap::new();
+        for row in rows {
+            let doc_id = row.map_err(|error| {
+                format!("Could not decode a case-sensitive project search hit: {error}")
+            })?;
+            matching_candidates.insert(doc_id, *preliminary_candidates.get(&doc_id).unwrap_or(&0));
+        }
+        preliminary_candidates = matching_candidates;
+    }
+
     if preliminary_candidates.is_empty() {
         return Ok(empty_search_response(false, false));
     }
@@ -214,7 +238,11 @@ pub(super) fn search_projects_in_connection(
                 language_code: candidate.document.language_code.clone(),
                 language_name: candidate.document.language_name.clone(),
                 snippet_source: candidate.document.snippet_source.clone(),
-                snippet: build_plain_text_snippet(&candidate.document.plain_text, normalized_query),
+                snippet: build_plain_text_snippet(
+                    &candidate.document.plain_text,
+                    normalized_query,
+                    case_sensitive_query,
+                ),
                 exact_phrase: score.exact_phrase,
                 score: score_to_number(score),
                 match_band,
