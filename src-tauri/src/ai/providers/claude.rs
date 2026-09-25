@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use crate::ai::{
-    providers::{schemas, shared_http_client},
+    providers::{schemas, shared_http_client, sse},
     types::{AiPromptOutputFormat, AiPromptRequest, AiPromptResponse, AiProviderModel},
 };
 
@@ -170,6 +170,10 @@ struct ClaudeMessagesRequest<'a> {
     output_config: Option<ClaudeOutputConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     fallbacks: Option<&'static str>,
+    // Prompt runs stream so response bytes keep flowing; a connection that
+    // receives nothing for 60 s can be cut off (plans/ai-prompt-streaming.md).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    stream: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -186,7 +190,7 @@ struct ClaudeMessage<'a> {
     content: &'a str,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 struct ClaudeMessagesResponse {
     #[serde(default)]
     content: Vec<ClaudeContentBlock>,
@@ -198,7 +202,7 @@ struct ClaudeMessagesResponse {
     usage: Option<Value>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 struct ClaudeContentBlock {
     #[serde(default, rename = "type")]
     kind: String,
@@ -206,7 +210,7 @@ struct ClaudeContentBlock {
     text: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 struct ClaudeStopDetails {
     #[serde(default)]
     category: Option<String>,
@@ -355,6 +359,7 @@ fn build_prompt_request<'a>(
         }],
         output_config,
         fallbacks: supports_refusal_fallback(model_id).then_some(CLAUDE_FALLBACK_MODE),
+        stream: true,
     })
 }
 
@@ -425,12 +430,103 @@ fn execute_prompt(
         return Err(normalize_http_error(status, &body));
     }
 
-    normalize_messages_response(&body)
+    // A plain JSON body means the stream was not honored; parse it as-is.
+    if body.trim_start().starts_with('{') {
+        return normalize_messages_response(&body);
+    }
+    interpret_messages_response(assemble_streamed_response(&body)?)
+}
+
+/// Rebuilds the response a non-streaming call would return from the event
+/// stream: text per content block (thinking and fallback blocks keep their
+/// type and no text), stop reason and details, and the final usage report.
+/// After a mid-answer safety decline with server-side fallback, the stream
+/// keeps the partial text and the fallback model continues it, so the text
+/// blocks joined in order are the complete answer.
+fn assemble_streamed_response(body: &str) -> Result<ClaudeMessagesResponse, String> {
+    let mut response = ClaudeMessagesResponse::default();
+    let mut blocks: Vec<ClaudeContentBlock> = Vec::new();
+    let mut finished = false;
+
+    for event in sse::parse_events(body) {
+        let Ok(data) = serde_json::from_str::<Value>(&event.data) else {
+            continue;
+        };
+        match data.get("type").and_then(Value::as_str).unwrap_or_default() {
+            "message_start" => {
+                response.usage = data.pointer("/message/usage").cloned();
+            }
+            "content_block_start" => {
+                let index = data.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
+                if blocks.len() <= index {
+                    blocks.resize_with(index + 1, ClaudeContentBlock::default);
+                }
+                blocks[index].kind = data
+                    .pointer("/content_block/type")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+            }
+            "content_block_delta" => {
+                let index = data.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
+                if data.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta") {
+                    if let (Some(block), Some(text)) = (
+                        blocks.get_mut(index),
+                        data.pointer("/delta/text").and_then(Value::as_str),
+                    ) {
+                        block.text.push_str(text);
+                    }
+                }
+            }
+            "message_delta" => {
+                response.stop_reason = data
+                    .pointer("/delta/stop_reason")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                response.stop_details = data
+                    .pointer("/delta/stop_details")
+                    .filter(|details| !details.is_null())
+                    .and_then(|details| serde_json::from_value(details.clone()).ok());
+                if let Some(usage) = data.get("usage").filter(|usage| !usage.is_null()) {
+                    response.usage = Some(usage.clone());
+                }
+            }
+            "message_stop" => finished = true,
+            "error" => {
+                let kind = data.pointer("/error/type").and_then(Value::as_str);
+                let message = data
+                    .pointer("/error/message")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .trim();
+                return Err(match kind {
+                    Some("overloaded_error") | Some("api_error") => {
+                        "Claude is temporarily unavailable. Try again in a moment.".to_string()
+                    }
+                    _ if !message.is_empty() => format!("Claude returned an error: {message}"),
+                    _ => "Claude returned an unexpected error.".to_string(),
+                });
+            }
+            _ => {}
+        }
+    }
+
+    if !finished {
+        return Err("Claude's response ended before it was complete. Try again.".to_string());
+    }
+    response.content = blocks;
+    Ok(response)
 }
 
 fn normalize_messages_response(body: &str) -> Result<(String, Option<Value>), String> {
     let payload: ClaudeMessagesResponse = serde_json::from_str(body)
         .map_err(|_| "Claude returned a malformed response.".to_string())?;
+    interpret_messages_response(payload)
+}
+
+fn interpret_messages_response(
+    payload: ClaudeMessagesResponse,
+) -> Result<(String, Option<Value>), String> {
     // A safety-classifier decline is an HTTP 200; any content is partial and
     // will not match the requested format.
     if payload.stop_reason.as_deref() == Some("refusal") {
@@ -503,6 +599,7 @@ pub(crate) fn probe_model(model_id: &str, api_key: &str) -> Result<(), String> {
             }],
             output_config: None,
             fallbacks: None,
+            stream: false,
         })
         .send()
         .map_err(normalize_transport_error)?;
@@ -572,8 +669,9 @@ mod tests {
     use serde_json::{json, Value};
 
     use super::{
-        build_prompt_request, claude_compatible_schema, normalize_messages_response,
-        ClaudeModelCapabilities, CLAUDE_MAX_OUTPUT_TOKENS,
+        assemble_streamed_response, build_prompt_request, claude_compatible_schema,
+        interpret_messages_response, normalize_messages_response, ClaudeModelCapabilities,
+        CLAUDE_MAX_OUTPUT_TOKENS,
     };
     use crate::ai::types::{AiPromptOutputFormat, AiPromptRequest, AiProviderId};
 
@@ -844,5 +942,107 @@ mod tests {
         let error = normalize_messages_response(body).unwrap_err();
 
         assert_eq!(error, "Claude returned an empty response.");
+    }
+
+    fn sse(events: &[Value]) -> String {
+        events
+            .iter()
+            .map(|event| {
+                format!(
+                    "event: {}\ndata: {}\n\n",
+                    event["type"].as_str().unwrap(),
+                    event
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn prompt_requests_stream() {
+        let body = request_body(
+            "claude-opus-5-5",
+            AiPromptOutputFormat::Text,
+            ClaudeModelCapabilities::CURRENT,
+        );
+
+        assert_eq!(body.get("stream").and_then(Value::as_bool), Some(true));
+    }
+
+    #[test]
+    fn streamed_response_joins_text_blocks_across_a_fallback() {
+        let body = sse(&[
+            json!({"type": "message_start", "message": {"usage": {"input_tokens": 216}}}),
+            json!({"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": ""}}),
+            json!({"type": "content_block_delta", "index": 0, "delta": {"type": "signature_delta", "signature": "sig"}}),
+            json!({"type": "content_block_start", "index": 1, "content_block": {"type": "text", "text": ""}}),
+            json!({"type": "ping"}),
+            json!({"type": "content_block_delta", "index": 1, "delta": {"type": "text_delta", "text": "{\"translatedText\":\"Ánh "}}),
+            json!({"type": "content_block_start", "index": 2, "content_block": {"type": "fallback"}}),
+            json!({"type": "content_block_start", "index": 3, "content_block": {"type": "text", "text": ""}}),
+            json!({"type": "content_block_delta", "index": 3, "delta": {"type": "text_delta", "text": "sáng.\"}"}}),
+            json!({"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_details": null},
+                   "usage": {"input_tokens": 216, "output_tokens": 24, "output_tokens_details": {"thinking_tokens": 3}}}),
+            json!({"type": "message_stop"}),
+        ]);
+
+        let (text, usage) =
+            interpret_messages_response(assemble_streamed_response(&body).unwrap()).unwrap();
+
+        assert_eq!(text, "{\"translatedText\":\"Ánh sáng.\"}");
+        let usage = usage.unwrap();
+        assert_eq!(usage["output_tokens"], json!(24));
+        assert_eq!(usage["output_tokens_details"]["thinking_tokens"], json!(3));
+    }
+
+    #[test]
+    fn streamed_refusal_is_reported_with_its_category() {
+        let body = sse(&[
+            json!({"type": "message_start", "message": {"usage": {"input_tokens": 10}}}),
+            json!({"type": "message_delta", "delta": {"stop_reason": "refusal",
+                   "stop_details": {"type": "refusal", "category": "bio"}}, "usage": {"output_tokens": 0}}),
+            json!({"type": "message_stop"}),
+        ]);
+
+        let error =
+            interpret_messages_response(assemble_streamed_response(&body).unwrap()).unwrap_err();
+
+        assert!(error.contains("safety filter"), "got: {error}");
+        assert!(error.contains("bio"), "got: {error}");
+    }
+
+    #[test]
+    fn streamed_max_tokens_stop_is_an_error() {
+        let body = sse(&[
+            json!({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}),
+            json!({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "{\"rows\":["}}),
+            json!({"type": "message_delta", "delta": {"stop_reason": "max_tokens"}, "usage": {"output_tokens": 32000}}),
+            json!({"type": "message_stop"}),
+        ]);
+
+        let error =
+            interpret_messages_response(assemble_streamed_response(&body).unwrap()).unwrap_err();
+
+        assert!(error.contains("output limit"), "got: {error}");
+    }
+
+    #[test]
+    fn streamed_error_events_and_cut_off_streams_fail() {
+        let overloaded = sse(&[
+            json!({"type": "message_start", "message": {"usage": {}}}),
+            json!({"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}}),
+        ]);
+        assert_eq!(
+            assemble_streamed_response(&overloaded).unwrap_err(),
+            "Claude is temporarily unavailable. Try again in a moment."
+        );
+
+        let cut_off = sse(&[
+            json!({"type": "message_start", "message": {"usage": {}}}),
+            json!({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}),
+            json!({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "partial"}}),
+        ]);
+        assert!(assemble_streamed_response(&cut_off)
+            .unwrap_err()
+            .contains("ended before it was complete"));
     }
 }

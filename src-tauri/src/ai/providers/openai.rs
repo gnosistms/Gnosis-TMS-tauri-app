@@ -1,9 +1,12 @@
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
+
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::ai::{
-    providers::shared_http_client,
+    providers::{shared_http_client, sse},
     types::{
         AiPromptOutputFormat, AiPromptRequest, AiPromptResponse, AiProviderModel, AiReviewResponse,
     },
@@ -340,27 +343,21 @@ fn send_prompt_request(
     let client = shared_http_client()
         .map_err(|error| format!("Could not start the OpenAI request: {error}"))?;
 
-    let started = std::time::Instant::now();
-    let response = client
-        .post(OPENAI_RESPONSES_API_URL)
-        .timeout(super::AI_PROMPT_TIMEOUT)
-        .header("Authorization", format!("Bearer {normalized_key}"))
-        .header("Content-Type", "application/json")
-        .header("User-Agent", "gnosis-tms")
-        .json(body)
-        .send()
-        .map_err(|error| prompt_transport_error(error, started.elapsed()))?;
+    let stream = !refuses_streaming(body.model);
+    let response_json = match post_prompt(client, normalized_key, body, stream)? {
+        PromptReply::Complete(response_json) => response_json,
+        PromptReply::StreamRefused => {
+            remember_refuses_streaming(body.model);
+            match post_prompt(client, normalized_key, body, false)? {
+                PromptReply::Complete(response_json) => response_json,
+                PromptReply::StreamRefused => {
+                    return Err("OpenAI returned an unexpected error.".to_string())
+                }
+            }
+        }
+    };
 
-    let status = response.status();
-    let body = response
-        .text()
-        .map_err(|error| format!("Could not read the OpenAI response: {error}"))?;
-
-    if !status.is_success() {
-        return Err(normalize_http_error(status, &body));
-    }
-
-    let payload: OpenAiResponsesCreateResponse = serde_json::from_str(&body)
+    let payload: OpenAiResponsesCreateResponse = serde_json::from_str(&response_json)
         .map_err(|_| "OpenAI returned a malformed response.".to_string())?;
     let provider_response_id = if payload.id.trim().is_empty() {
         None
@@ -377,6 +374,122 @@ fn send_prompt_request(
         },
         usage,
     ))
+}
+
+enum PromptReply {
+    /// A complete Responses API response object, as JSON.
+    Complete(String),
+    /// OpenAI declined to stream this model for this account.
+    StreamRefused,
+}
+
+// Models OpenAI declined to stream for this account (e.g. an organization
+// verification rule); they fall back to plain requests for the session.
+static NON_STREAMING_MODELS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+fn non_streaming_models() -> &'static Mutex<HashSet<String>> {
+    NON_STREAMING_MODELS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn refuses_streaming(model_id: &str) -> bool {
+    non_streaming_models()
+        .lock()
+        .map(|models| models.contains(model_id))
+        .unwrap_or(false)
+}
+
+fn remember_refuses_streaming(model_id: &str) {
+    if let Ok(mut models) = non_streaming_models().lock() {
+        models.insert(model_id.to_string());
+    }
+}
+
+/// Sends a prompt, streaming by default so response bytes keep flowing; a
+/// connection that receives nothing for 60 s can be cut off
+/// (plans/ai-prompt-streaming.md). Either way the result is the complete
+/// response object the non-streaming API returns.
+fn post_prompt(
+    client: &reqwest::blocking::Client,
+    api_key: &str,
+    body: &OpenAiResponsesRequest<'_>,
+    stream: bool,
+) -> Result<PromptReply, String> {
+    let mut payload = serde_json::to_value(body)
+        .map_err(|error| format!("Could not prepare the OpenAI request: {error}"))?;
+    if stream {
+        payload["stream"] = json!(true);
+    }
+
+    let started = std::time::Instant::now();
+    let response = client
+        .post(OPENAI_RESPONSES_API_URL)
+        .timeout(super::AI_PROMPT_TIMEOUT)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Content-Type", "application/json")
+        .header("User-Agent", "gnosis-tms")
+        .json(&payload)
+        .send()
+        .map_err(|error| prompt_transport_error(error, started.elapsed()))?;
+
+    let status = response.status();
+    let text = response
+        .text()
+        .map_err(|error| format!("Could not read the OpenAI response: {error}"))?;
+
+    if !status.is_success() {
+        if stream && status == StatusCode::BAD_REQUEST && is_stream_refusal(&text) {
+            return Ok(PromptReply::StreamRefused);
+        }
+        return Err(normalize_http_error(status, &text));
+    }
+    // A plain JSON body means the stream was not honored; use it as-is.
+    if !stream || text.trim_start().starts_with('{') {
+        return Ok(PromptReply::Complete(text));
+    }
+    completed_response_from_stream(&text).map(PromptReply::Complete)
+}
+
+/// The terminal event of a Responses stream carries the full response object.
+fn completed_response_from_stream(body: &str) -> Result<String, String> {
+    let mut completed = None;
+    for event in sse::parse_events(body) {
+        let Ok(data) = serde_json::from_str::<Value>(&event.data) else {
+            continue;
+        };
+        match data.get("type").and_then(Value::as_str).unwrap_or_default() {
+            "response.completed" | "response.incomplete" => {
+                completed = data.get("response").map(Value::to_string);
+            }
+            "response.failed" => {
+                return Err(stream_error_message(
+                    data.pointer("/response/error/message"),
+                ));
+            }
+            "error" => return Err(stream_error_message(data.get("message"))),
+            _ => {}
+        }
+    }
+    completed
+        .ok_or_else(|| "OpenAI's response ended before it was complete. Try again.".to_string())
+}
+
+fn stream_error_message(message: Option<&Value>) -> String {
+    message
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|message| !message.is_empty())
+        .map(|message| format!("OpenAI returned an error: {message}"))
+        .unwrap_or_else(|| "OpenAI returned an unexpected error.".to_string())
+}
+
+fn is_stream_refusal(body: &str) -> bool {
+    let message = extract_api_error_message(body)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    message.contains("stream")
+        && ["verif", "not supported", "unsupported", "not allowed"]
+            .iter()
+            .any(|marker| message.contains(marker))
 }
 
 fn prompt_transport_error(error: reqwest::Error, elapsed: std::time::Duration) -> String {
@@ -667,8 +780,10 @@ mod tests {
     }
 
     use super::{
-        build_probe_request, build_prompt_request, is_hidden_gpt_pro_model, normalize_http_error,
-        normalize_review_response, shortlist_recommended_models, OPENAI_PROBE_MAX_OUTPUT_TOKENS,
+        build_probe_request, build_prompt_request, completed_response_from_stream,
+        extract_suggested_text, is_hidden_gpt_pro_model, is_stream_refusal, normalize_http_error,
+        normalize_review_response, shortlist_recommended_models, OpenAiResponsesCreateResponse,
+        OPENAI_PROBE_MAX_OUTPUT_TOKENS,
     };
     use crate::ai::types::{AiPromptOutputFormat, AiPromptRequest, AiProviderId, AiProviderModel};
     use reqwest::StatusCode;
@@ -1284,5 +1399,80 @@ mod tests {
         assert!(is_hidden_gpt_pro_model("gpt-5.4-pro"));
         assert!(!is_hidden_gpt_pro_model("gpt-5.4"));
         assert!(!is_hidden_gpt_pro_model("o3-pro"));
+    }
+
+    fn sse(events: &[serde_json::Value]) -> String {
+        events
+            .iter()
+            .map(|event| {
+                format!(
+                    "event: {}\ndata: {}\n\n",
+                    event["type"].as_str().unwrap(),
+                    event
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn streamed_response_yields_the_completed_response_object() {
+        let completed = serde_json::json!({
+            "id": "resp_1",
+            "status": "completed",
+            "output": [{"type": "message", "content": [
+                {"type": "output_text", "text": "{\"translatedText\":\"Ánh sáng.\"}"}
+            ]}],
+            "usage": {"input_tokens": 37, "output_tokens": 18,
+                      "input_tokens_details": {"cached_tokens": 0},
+                      "output_tokens_details": {"reasoning_tokens": 0}}
+        });
+        let body = sse(&[
+            serde_json::json!({"type": "response.created", "response": {"id": "resp_1", "status": "in_progress"}}),
+            serde_json::json!({"type": "response.output_text.delta", "delta": "{\"translated"}),
+            serde_json::json!({"type": "response.completed", "response": completed}),
+        ]);
+
+        let response_json = completed_response_from_stream(&body).unwrap();
+        let payload: OpenAiResponsesCreateResponse = serde_json::from_str(&response_json).unwrap();
+
+        assert_eq!(payload.usage.as_ref().unwrap().output_tokens, Some(18));
+        assert_eq!(
+            extract_suggested_text(payload, "empty").unwrap(),
+            "{\"translatedText\":\"Ánh sáng.\"}"
+        );
+    }
+
+    #[test]
+    fn streamed_failures_and_cut_off_streams_are_errors() {
+        let failed = sse(&[serde_json::json!({
+            "type": "response.failed",
+            "response": {"status": "failed", "error": {"code": "server_error", "message": "The server had an error."}}
+        })]);
+        assert_eq!(
+            completed_response_from_stream(&failed).unwrap_err(),
+            "OpenAI returned an error: The server had an error."
+        );
+
+        let error =
+            sse(&[serde_json::json!({"type": "error", "code": "x", "message": "Bad things."})]);
+        assert_eq!(
+            completed_response_from_stream(&error).unwrap_err(),
+            "OpenAI returned an error: Bad things."
+        );
+
+        let cut_off =
+            sse(&[serde_json::json!({"type": "response.output_text.delta", "delta": "par"})]);
+        assert!(completed_response_from_stream(&cut_off)
+            .unwrap_err()
+            .contains("ended before it was complete"));
+    }
+
+    #[test]
+    fn stream_refusals_are_recognised_but_other_bad_requests_are_not() {
+        let verification = r#"{"error":{"message":"Your organization must be verified to stream this model. Please go to: https://platform.openai.com/settings/organization/general and click on Verify Organization.","type":"invalid_request_error","param":"stream","code":"unsupported_value"}}"#;
+        assert!(is_stream_refusal(verification));
+
+        let other = r#"{"error":{"message":"Invalid schema for response_format 't'.","type":"invalid_request_error"}}"#;
+        assert!(!is_stream_refusal(other));
     }
 }

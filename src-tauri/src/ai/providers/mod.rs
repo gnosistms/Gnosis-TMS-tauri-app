@@ -3,6 +3,7 @@ pub mod deepseek;
 pub mod gemini;
 pub mod openai;
 mod schemas;
+mod sse;
 
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -19,8 +20,9 @@ pub(crate) const AI_PROMPT_TIMEOUT: Duration = Duration::from_secs(300);
 /// A non-streaming prompt that has sent no response bytes for about 60 s can be
 /// dropped before our own timeout (observed with OpenAI, 2026-09-25: "peer
 /// closed connection without sending TLS close_notify"). reqwest reports it as
-/// a generic request error, so it is recognised by elapsed time. Streaming
-/// would avoid it; see plans/claude-opus-5-5-support.md.
+/// a generic request error, so it is recognised by elapsed time. Claude and
+/// OpenAI prompt calls now stream (plans/ai-prompt-streaming.md), so this is a
+/// backstop for a stream that goes silent or a plain-request fallback.
 const SILENT_DROP_MIN_ELAPSED: Duration = Duration::from_secs(55);
 
 /// The message for a prompt request that failed without a timeout or connect
@@ -57,23 +59,6 @@ pub(crate) fn shared_http_client() -> Result<&'static reqwest::blocking::Client,
         .ok_or_else(|| "Could not access the shared AI HTTP client.".to_string())
 }
 
-#[cfg(test)]
-mod tests {
-    use std::time::Duration;
-
-    use super::silent_drop_message;
-
-    #[test]
-    fn silent_drop_is_reported_only_for_long_generic_failures() {
-        let message = silent_drop_message("OpenAI", false, false, Duration::from_secs(61)).unwrap();
-        assert!(message.starts_with("OpenAI stopped responding after about a minute"));
-
-        assert!(silent_drop_message("OpenAI", false, false, Duration::from_secs(20)).is_none());
-        assert!(silent_drop_message("OpenAI", true, false, Duration::from_secs(61)).is_none());
-        assert!(silent_drop_message("OpenAI", false, true, Duration::from_secs(61)).is_none());
-    }
-}
-
 pub(crate) fn list_models(
     provider_id: AiProviderId,
     api_key: &str,
@@ -108,5 +93,22 @@ pub(crate) fn probe_model(
         AiProviderId::Gemini => gemini::probe_model(model_id, api_key),
         AiProviderId::Claude => claude::probe_model(model_id, api_key),
         AiProviderId::DeepSeek => deepseek::probe_model(model_id, api_key),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::silent_drop_message;
+
+    #[test]
+    fn silent_drop_is_reported_only_for_long_generic_failures() {
+        let message = silent_drop_message("OpenAI", false, false, Duration::from_secs(61)).unwrap();
+        assert!(message.starts_with("OpenAI stopped responding after about a minute"));
+
+        assert!(silent_drop_message("OpenAI", false, false, Duration::from_secs(20)).is_none());
+        assert!(silent_drop_message("OpenAI", true, false, Duration::from_secs(61)).is_none());
+        assert!(silent_drop_message("OpenAI", false, true, Duration::from_secs(61)).is_none());
     }
 }
