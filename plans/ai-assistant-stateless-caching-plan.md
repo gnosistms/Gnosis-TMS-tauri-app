@@ -25,8 +25,9 @@ digest and the whole transcript (`build_assistant_prompt`,
    retention) and a second, delta-only prompt builder used by OpenAI alone.
    It would not be cheaper: OpenAI bills the chained history as input on every
    turn, and cached-prefix discounts apply equally to a stateless prompt. The
-   only loss is carried-over reasoning on reasoning models, and the default
-   `gpt-5.4` runs at reasoning effort `none`.
+   only loss is carried-over reasoning on reasoning models. The model the
+   team uses, `gpt-6-astra`, barely reasons at the app's default effort
+   (≤491 reasoning tokens per 2 batches in the calibration run).
 
 2. **No turn can reuse the previous turn's prompt cache.** Parts that change
    every turn (the JSON-shape instruction, which differs between chat and
@@ -117,8 +118,8 @@ Commit: "Remove unused AI provider continuation metadata".
   a strict prefix-extension between consecutive turns; joined text equals the
   prompt sent to non-Claude providers.
 
-This step alone lets OpenAI (≥1,024-token prefixes), DeepSeek and Gemini
-reuse the repeated part automatically.
+This step was expected to let OpenAI, DeepSeek and Gemini reuse the repeated
+part automatically. Step 6 found OpenAI does not (see Status).
 
 Commit: "Order AI Assistant prompt from stable context to per-turn input".
 
@@ -168,7 +169,9 @@ Commit: "Log AI Assistant cache usage".
 
 ### 6. Live verification (needs API keys and spend approval, ~$0.20)
 
-In `npm run tauri:dev`, on one row, Claude Opus 5.5 then OpenAI `gpt-5.4`:
+In `npm run tauri:dev`, on one row, Claude Opus 5.5 then OpenAI
+`gpt-6-astra` (the model the app picks; `gpt-5.4` in
+`ai-action-config.js` is only a fallback that newer model lists never reach):
 
 1. Ask a question, ask a follow-up, apply a refinement draft, ask again.
 2. Expected on Claude: turn 1 writes; turn 2 reads part 1 and writes the
@@ -214,7 +217,8 @@ Steps 1–5 implemented (2026-09-25): `b1adb585`, `14fe6a6b`, `ea045a60`,
 Step 6 run 2026-09-25 as an ignored Rust test instead of clicking through
 `tauri:dev` (`ai/assistant_cache_eval.rs`): four scripted turns on HNHH ch. 3
 row 8 (es→vi, 4 glossary hints, 7-row source window) through the app's prompt
-builder, provider code and parser. Total spend ≈ $0.25.
+builder, provider code and parser. Total spend ≈ $0.70 including the OpenAI
+follow-up checks.
 
 Claude Opus 5.5 (effort `medium`):
 
@@ -232,18 +236,23 @@ Claude Opus 5.5 (effort `medium`):
   the Assistant's Claude cost and is unaffected.
 - The row context was ~2,270 tokens, above the minimum, so it cached.
 
-OpenAI `gpt-5.4`: 0 cached tokens on all four turns. Direct checks: an
-identical 1,674-token prompt sent twice (with and without `prompt_cache_key`)
-got 0 cached; an identical 3,468-token prompt got 2,816 cached on the repeat;
-`gpt-6-astra` cached 1,671 of 1,674 on a repeat. OpenAI's automatic caching is
-best-effort and on `gpt-5.4` does not reliably apply at these sizes; nothing
-in the request changes that. No OpenAI turn was retried (no
-`previous_response_id`).
+OpenAI `gpt-6-astra` (the team's model): 0 cached tokens on all four turns.
+Direct checks showed it caches only exact repeats of a whole prompt:
+
+- an identical prompt sent again: 1,671 of 1,674 cached, and 1,878 of 1,881;
+- turn 2 after turn 1 (first 4,514 characters, ~1,100+ tokens, identical): 0;
+- the turn-1 prompt plus one trailing space: 0;
+- the prompt as separate content parts, as separate user messages, or with
+  `prompt_cache_key` and `prompt_cache_retention: "24h"`: 0 across turns.
+
+So no request shape tried gets OpenAI to reuse a shared opening between
+turns; only resending an identical prompt hits. Nothing more to do on the
+OpenAI side. No OpenAI turn was retried (no `previous_response_id`).
+(The first run used `gpt-5.4` by mistake; the team does not use it.)
 
 Quality: on both models the turn after the apply judged the applied draft
 (quoting its wording), and the next refinement built on the editor text.
-`gpt-5.4` answered English questions in Vietnamese; the old prompt order does
-the same (3/3 runs each), so that predates this change.
+Both answered in the user's language.
 
 Usage context from the user: the Assistant is used far less than batch
 review and add-translation alignment. When a conversation gets one follow-up,
@@ -254,10 +263,11 @@ Notes from checking the two most-used features:
 - **Add-translation alignment** (`aligned_translation.rs`, OpenAI only) already
   keeps a per-job cache of AI results. Its section-matching prompt puts the full
   source-summary list (repeated for every target section) before the changing
-  target section. That happens only because `serde_json` sorts object keys
-  (`sourceCandidates` < `targetSection`), but it means OpenAI's automatic prefix
-  cache can already reuse that list. The only usage log on hand (4 requests,
-  2026-09-07) showed a rerun reading 1,225 of 1,228 input tokens from cache.
+  target section (only because `serde_json` sorts object keys,
+  `sourceCandidates` < `targetSection`). Given the step 6 finding, OpenAI
+  will not reuse that list across calls, since each call's prompt differs. Only
+  an exact rerun hits: the one usage log on hand (4 requests, 2026-09-07) shows
+  a rerun reading 1,225 of 1,228 input tokens from cache.
 - **Batch review**: unchanged conclusion. Only the ~700–800-token instruction
   block repeats across batches. On Claude that would save ~$0.03 on a
   300-row chapter, a few percent of the run's cost.

@@ -15,8 +15,8 @@
 //!
 //! The input is one `AiAssistantTurnRequest` in the app's IPC shape; the harness
 //! sets the provider, model, kind, message and transcript for each turn.
-//! Optional: `GNOSIS_CACHE_EVAL_CLAUDE_MODEL` (default `claude-opus-5-5`),
-//! `GNOSIS_CACHE_EVAL_OPENAI_MODEL` (default `gpt-5.4`, empty to skip).
+//! Optional: `GNOSIS_CACHE_EVAL_CLAUDE_MODEL` (default `claude-opus-5-5`) and
+//! `GNOSIS_CACHE_EVAL_OPENAI_MODEL` (default `gpt-6-astra`); empty skips one.
 
 use std::env;
 use std::fs;
@@ -245,9 +245,12 @@ fn assistant_cache_eval() {
     let claude_model = env::var("GNOSIS_CACHE_EVAL_CLAUDE_MODEL")
         .unwrap_or_else(|_| "claude-opus-5-5".to_string());
     let openai_model =
-        env::var("GNOSIS_CACHE_EVAL_OPENAI_MODEL").unwrap_or_else(|_| "gpt-5.4".to_string());
+        env::var("GNOSIS_CACHE_EVAL_OPENAI_MODEL").unwrap_or_else(|_| "gpt-6-astra".to_string());
 
-    let mut results = run_conversation(&base, AiProviderId::Claude, &claude_model);
+    let mut results = Vec::new();
+    if !claude_model.trim().is_empty() {
+        results.extend(run_conversation(&base, AiProviderId::Claude, &claude_model));
+    }
     if !openai_model.trim().is_empty() {
         results.extend(run_conversation(&base, AiProviderId::OpenAi, &openai_model));
     }
