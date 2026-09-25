@@ -115,3 +115,64 @@ stage is a meaningful share of cost.
 2. Claude out-of-credits message (step 3).
 3. Live tests and results (step 5), recorded here.
 4. Section-matching cache, only if step 4 is justified.
+
+## Results (2026-09-25)
+
+Steps 1–3 and 5 are done. Step 4 was skipped: section matching is 3 of 15 calls per
+chapter, and its repeated source-summary list is about 1K tokens, so caching
+it would save cents.
+
+### Bug found: Claude received schemas with fields in alphabetical order
+
+`serde_json` sorts object keys, so every structured-output schema reached the
+providers with its properties in alphabetical order instead of the order they
+were written in. Claude generates structured output field by field in schema
+order. Section matching therefore had to state `isMatch` before naming the
+`sourceSectionId`, and in 5 of 10 replays of one real prompt Claude ended the
+list after a single entry. Sent in written order, the same prompt was complete
+10 of 10 times, and 16 of 16 through the app. The same sorting put `sourceIds`
+before `targetId` in row alignment, the `reviewed` verdict before `rowId` and
+the suggestions in Review All, and `translatedText` after the footnote and
+caption in Translate All.
+
+Fix: Claude requests serialize each schema's `properties` in the order of its
+`required` list (`schemas::InAuthoredOrder`). OpenAI still receives the
+alphabetical order it has always had. Changing that would change its outputs,
+so it needs its own evaluation (open question).
+
+Also added:
+- Alignment asks once more when a response parses but fails validation
+  (for example an incomplete list) before showing "Retry alignment". This
+  applies to every provider; request errors are not retried.
+- Section-matching and row-alignment prompts state the exact number of
+  entries expected.
+
+### Live results
+
+HNHH chapter 3 (es source, en translation pasted as 91 paragraphs, 18 of
+them two rows merged), every alignment stage through the app's prompt
+builders, schemas and validators:
+
+| | Claude Opus 5.5 (3 runs) | gpt-6-astra (1 run) |
+|---|---|---|
+| Row alignment correct | 91/91 each run | 91/91 |
+| Rows with the correct text after splitting | 109/109 each run | 109/109 |
+| Section-match agreement with the true overlap | 11/12 | 11/12 |
+| Validation retries needed | 0 | 0 |
+| Time | 91–94 s | 137 s |
+| Tokens (input / output) | 112K / 8.2K | 66K / 5.4K |
+| Cost | ≈ $0.61 | ≈ $0.93 |
+
+Before the field-order fix, 3 of 5 Claude chapter runs failed at section
+matching, even with the explicit count and one retry.
+
+Synthetic live tests (`live_alignment_and_split_batch_evaluation`,
+`live_alignment_boundary_evaluation`) pass on Claude, 2 of 2 runs each.
+
+Regression check of the field-order change on the other Claude features
+(`effort_eval`, HNHH ch. 3 input, Claude `medium`, 1 run): Review All caught
+9/9 planted errors (before: 9/9), fixed 5/9 correctly (before: 6/9), edited
+5/21 clean rows (before: 4/21); both Translate All batches returned valid
+output. The differences are within single-run noise.
+
+Total live spend for this work: ≈ $9.
