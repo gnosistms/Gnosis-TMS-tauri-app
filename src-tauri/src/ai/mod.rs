@@ -1215,7 +1215,7 @@ fn format_glossary_target_variant_value(
     Some(serde_json::Value::Object(object))
 }
 
-fn format_assistant_transcript(entries: &[AiAssistantTranscriptEntry]) -> String {
+fn format_assistant_transcript_entries(entries: &[AiAssistantTranscriptEntry]) -> Vec<String> {
     entries
         .iter()
         .filter_map(|entry| {
@@ -1227,8 +1227,7 @@ fn format_assistant_transcript(entries: &[AiAssistantTranscriptEntry]) -> String
 
             Some(format!("- {role}: {text}"))
         })
-        .collect::<Vec<_>>()
-        .join("\n")
+        .collect()
 }
 
 fn format_language_ref(label: &str, code: &str) -> String {
@@ -1468,7 +1467,54 @@ fn format_assistant_user_action(request: &AiAssistantTurnRequest) -> String {
     "<instruction>\nTranslate source_text to target_language, taking into account the source_context and glossary information provided above.\n</instruction>".to_string()
 }
 
-fn build_assistant_prompt(request: &AiAssistantTurnRequest, draft_response: bool) -> String {
+/// An assistant prompt in three parts, ordered from most to least stable so
+/// consecutive turns in a row thread share a cacheable prefix
+/// (plans/ai-assistant-stateless-caching-plan.md):
+/// - `context`: instructions and row context that stay fixed while the user
+///   chats about one row;
+/// - `history`: one `- role: text` line per transcript entry, append-only
+///   across turns;
+/// - `turn`: everything that can change from one turn to the next, including
+///   the current target text, so applying a draft does not invalidate the
+///   earlier parts.
+struct AssistantPromptParts {
+    context: String,
+    history: Vec<String>,
+    turn: String,
+}
+
+impl AssistantPromptParts {
+    /// Text segments whose concatenation is the prompt. Separators lead each
+    /// segment so every earlier segment stays byte-identical when the history
+    /// grows; `<conversation_history>` closes in the turn segment for the same
+    /// reason.
+    fn segments(&self) -> Vec<String> {
+        let mut segments = vec![self.context.clone()];
+        for (index, entry) in self.history.iter().enumerate() {
+            segments.push(if index == 0 {
+                format!("\n\n<conversation_history>\n{entry}")
+            } else {
+                format!("\n{entry}")
+            });
+        }
+        let turn_separator = if self.history.is_empty() {
+            "\n\n"
+        } else {
+            "\n</conversation_history>\n\n"
+        };
+        segments.push(format!("{turn_separator}{}", self.turn));
+        segments
+    }
+
+    fn text(&self) -> String {
+        self.segments().concat()
+    }
+}
+
+fn build_assistant_prompt_parts(
+    request: &AiAssistantTurnRequest,
+    draft_response: bool,
+) -> AssistantPromptParts {
     let row = &request.row;
     let glossary_hints = format_translation_glossary_hints(&request.glossary_hints);
     let source_context = format_assistant_source_context(&request.row_window, &row.source_text);
@@ -1476,18 +1522,48 @@ fn build_assistant_prompt(request: &AiAssistantTurnRequest, draft_response: bool
         format_language_ref(&row.source_language_label, &row.source_language_code);
     let target_language =
         format_language_ref(&row.target_language_label, &row.target_language_code);
-    let conversation_history = format_assistant_transcript(&request.transcript);
 
-    let mut sections = Vec::new();
-    sections.push(
+    let mut context = Vec::new();
+    context.push(
         "You are an AI assistant inside a translation editor.\n\
 Use the supplied source context, target-language history, reference translations, glossary, and conversation history when relevant.\n\
 Be direct and useful. If the answer depends on ambiguity in the source text, say so."
             .to_string(),
     );
-    sections.push(reply_language_instruction(&request.reply_language_hint));
+    push_tagged_prompt_section(
+        &mut context,
+        "source_context",
+        format!(
+            "This is the source text in context, provided to help you understand source_text more clearly:\n{source_context}"
+        ),
+    );
+    push_tagged_prompt_section(
+        &mut context,
+        "languages",
+        format!("source: {source_language}\ntarget: {target_language}"),
+    );
+    push_tagged_prompt_section(
+        &mut context,
+        "reference_translations",
+        format_assistant_reference_translations(row),
+    );
+    if !glossary_hints.trim().is_empty() {
+        context.push(format!(
+            "<glossary_info format=\"json\">\n{glossary_hints}\n</glossary_info>"
+        ));
+    }
+    push_tagged_prompt_section(&mut context, "source_text", &row.source_text);
+    push_tagged_prompt_section(&mut context, "source_footnote", &row.source_footnote);
+    push_tagged_prompt_section(
+        &mut context,
+        "source_image_caption",
+        &row.source_image_caption,
+    );
+
+    let mut turn = Vec::new();
+    turn.push(reply_language_instruction(&request.reply_language_hint));
     if draft_response {
-        sections.push(
+        turn.push(
             "Return JSON only with this shape:\n\
 {\"assistantText\":\"...\",\"draftTranslationText\":\"...\"}\n\
 assistantText should be a short explanation for the user.\n\
@@ -1496,72 +1572,32 @@ Do not repeat draftTranslationText inside assistantText."
                 .to_string(),
         );
     } else {
-        sections.push(
+        turn.push(
             "Return JSON only with this shape:\n\
 {\"assistantText\":\"...\",\"draftTranslationText\":null}\n\
 If your answer includes a complete proposed or revised target-language translation that the user could apply to the row, set draftTranslationText to only that translation text and do not repeat it inside assistantText. Otherwise set draftTranslationText to null."
                 .to_string(),
         );
     }
-
     push_tagged_prompt_section(
-        &mut sections,
-        "source_context",
-        format!(
-            "This is the source text in context, provided to help you understand source_text more clearly:\n{source_context}"
-        ),
-    );
-    push_tagged_prompt_section(
-        &mut sections,
-        "languages",
-        format!("source: {source_language}\ntarget: {target_language}"),
-    );
-    push_tagged_prompt_section(
-        &mut sections,
+        &mut turn,
         "target_language_history",
         format_assistant_target_language_history(&row.target_language_history, &row.target_text),
     );
-    push_tagged_prompt_section(
-        &mut sections,
-        "reference_translations",
-        format_assistant_reference_translations(row),
-    );
-    if !glossary_hints.trim().is_empty() {
-        sections.push(format!(
-            "<glossary_info format=\"json\">\n{glossary_hints}\n</glossary_info>"
-        ));
-    }
-    push_tagged_prompt_section(&mut sections, "document_digest", &request.document_digest);
-    push_tagged_prompt_section(
-        &mut sections,
-        "document_revision_key",
-        &request.document_revision_key,
-    );
+    push_optional_tagged_prompt_section(&mut turn, "updated_source_text", &row.updated_source_text);
+    push_optional_tagged_prompt_section(&mut turn, "updated_target_text", &row.updated_target_text);
+    push_tagged_prompt_section(&mut turn, "document_digest", &request.document_digest);
     let concordance_hits = format_assistant_concordance_hits(&request.concordance_hits);
     if concordance_hits != "None." {
-        push_tagged_prompt_section(&mut sections, "concordance_hits", concordance_hits);
+        push_tagged_prompt_section(&mut turn, "concordance_hits", concordance_hits);
     }
-    push_tagged_prompt_section(&mut sections, "source_text", &row.source_text);
-    push_tagged_prompt_section(&mut sections, "source_footnote", &row.source_footnote);
-    push_tagged_prompt_section(
-        &mut sections,
-        "source_image_caption",
-        &row.source_image_caption,
-    );
-    push_optional_tagged_prompt_section(
-        &mut sections,
-        "updated_source_text",
-        &row.updated_source_text,
-    );
-    push_optional_tagged_prompt_section(
-        &mut sections,
-        "updated_target_text",
-        &row.updated_target_text,
-    );
-    push_tagged_prompt_section(&mut sections, "conversation_history", conversation_history);
-    sections.push(format_assistant_user_action(request));
+    turn.push(format_assistant_user_action(request));
 
-    sections.join("\n\n")
+    AssistantPromptParts {
+        context: context.join("\n\n"),
+        history: format_assistant_transcript_entries(&request.transcript),
+        turn: turn.join("\n\n"),
+    }
 }
 
 fn format_assistant_concordance_hits(values: &[AiAssistantConcordanceHit]) -> String {
@@ -1612,11 +1648,11 @@ fn reply_language_instruction(reply_language_hint: &str) -> String {
 }
 
 fn build_assistant_chat_prompt(request: &AiAssistantTurnRequest) -> String {
-    build_assistant_prompt(request, false)
+    build_assistant_prompt_parts(request, false).text()
 }
 
 fn build_assistant_translate_refinement_prompt(request: &AiAssistantTurnRequest) -> String {
-    build_assistant_prompt(request, true)
+    build_assistant_prompt_parts(request, true).text()
 }
 
 fn strip_markdown_code_fence(text: &str) -> &str {
@@ -2617,9 +2653,9 @@ pub(crate) fn probe_ai_model(app: &AppHandle, request: AiModelProbeRequest) -> R
 #[cfg(test)]
 mod tests {
     use super::{
-        build_assistant_chat_prompt, build_glossary_alignment_prompt_request,
-        build_review_batch_prompt, build_review_prompt, build_translation_batch_prompt,
-        build_translation_prompt, find_matched_glossary_terms,
+        build_assistant_chat_prompt, build_assistant_prompt_parts,
+        build_glossary_alignment_prompt_request, build_review_batch_prompt, build_review_prompt,
+        build_translation_batch_prompt, build_translation_prompt, find_matched_glossary_terms,
         find_matched_glossary_terms_in_texts, parse_assistant_structured_response,
         parse_review_batch_response, parse_review_structured_response,
         parse_translation_batch_response, parse_translation_sections_response,
@@ -2627,10 +2663,11 @@ mod tests {
         PreparedGlossaryMatch,
     };
     use crate::ai::types::{
-        AiAssistantRowContext, AiAssistantRowLanguageText, AiAssistantRowWindowEntry,
-        AiAssistantTargetLanguageHistoryEntry, AiAssistantTranscriptEntry, AiAssistantTurnKind,
-        AiAssistantTurnRequest, AiPromptOutputFormat, AiProviderId, AiReviewBatchRequest,
-        AiReviewBatchRowInput, AiReviewFootnote, AiReviewQaHint, AiReviewQaMatch, AiReviewRequest,
+        AiAssistantConcordanceHit, AiAssistantRowContext, AiAssistantRowLanguageText,
+        AiAssistantRowWindowEntry, AiAssistantTargetLanguageHistoryEntry,
+        AiAssistantTranscriptEntry, AiAssistantTurnKind, AiAssistantTurnRequest,
+        AiPromptOutputFormat, AiProviderId, AiReviewBatchRequest, AiReviewBatchRowInput,
+        AiReviewFootnote, AiReviewQaHint, AiReviewQaMatch, AiReviewRequest,
         AiTranslatedGlossaryPreparationRequest, AiTranslatedGlossaryTermInput,
         AiTranslationBatchRequest, AiTranslationBatchRowInput, AiTranslationGlossaryHint,
         AiTranslationGlossaryTargetVariant, AiTranslationNoTranslationHint, AiTranslationRequest,
@@ -3525,11 +3562,10 @@ mod tests {
         assert!(prompt.contains(
             "<source_context>\nThis is the source text in context, provided to help you understand source_text more clearly:\nLinea anterior 3\nLinea anterior 2\nLinea anterior 1\nFuente actual\nLinea siguiente 1\n</source_context>"
         ));
-        assert!(
-            prompt.contains(
-                "<source_text>\nFuente actual\n</source_text>\n\n<conversation_history>\n- assistant: Earlier answer.\n</conversation_history>\n\n<user_request>\nMake it more natural.\n</user_request>"
-            )
-        );
+        assert!(prompt.contains(
+            "<source_text>\nFuente actual\n</source_text>\n\n<conversation_history>\n- assistant: Earlier answer.\n</conversation_history>\n\n"
+        ));
+        assert!(prompt.ends_with("<user_request>\nMake it more natural.\n</user_request>"));
         assert!(!prompt.contains("previous_row_1"));
         assert!(!prompt.contains("Row window context: None."));
     }
@@ -3799,15 +3835,17 @@ mod tests {
     }
 
     #[test]
-    fn assistant_prompt_includes_updated_row_text_before_conversation_history() {
+    fn assistant_prompt_includes_updated_row_text_after_conversation_history() {
         let mut request = assistant_request_for_prompt();
         request.row.updated_source_text = Some("Fuente actualizada".to_string());
         request.row.updated_target_text = Some("Ban dich moi".to_string());
         let prompt = build_assistant_chat_prompt(&request);
 
         assert!(prompt.contains(
-            "<source_text>\nFuente actual\n</source_text>\n\n<updated_source_text>\nFuente actualizada\n</updated_source_text>\n\n<updated_target_text>\nBan dich moi\n</updated_target_text>\n\n<conversation_history>\n- assistant: Earlier answer.\n</conversation_history>\n\n<user_request>\nMake it more natural.\n</user_request>"
+            "</target_language_history>\n\n<updated_source_text>\nFuente actualizada\n</updated_source_text>\n\n<updated_target_text>\nBan dich moi\n</updated_target_text>\n\n<user_request>\nMake it more natural.\n</user_request>"
         ));
+        let history_end = prompt.find("</conversation_history>").unwrap();
+        assert!(prompt.find("<updated_source_text>").unwrap() > history_end);
     }
 
     #[test]
@@ -3816,9 +3854,89 @@ mod tests {
         request.row.updated_target_text = Some(String::new());
         let prompt = build_assistant_chat_prompt(&request);
 
-        assert!(prompt.contains(
-            "<source_text>\nFuente actual\n</source_text>\n\n<updated_target_text>\n(empty)\n</updated_target_text>\n\n<conversation_history>\n- assistant: Earlier answer.\n</conversation_history>"
-        ));
+        assert!(prompt
+            .contains("<updated_target_text>\n(empty)\n</updated_target_text>\n\n<user_request>"));
+    }
+
+    #[test]
+    fn assistant_prompt_omits_document_revision_key() {
+        let mut request = assistant_request_for_prompt();
+        request.document_digest = "Chapter summary".to_string();
+        request.document_revision_key = "rev-123".to_string();
+        let prompt = build_assistant_chat_prompt(&request);
+
+        assert!(prompt.contains("<document_digest>\nChapter summary\n</document_digest>"));
+        assert!(!prompt.contains("rev-123"));
+    }
+
+    #[test]
+    fn assistant_prompt_context_is_unchanged_by_per_turn_input() {
+        let first = assistant_request_for_prompt();
+        let mut second = assistant_request_for_prompt();
+        second.kind = AiAssistantTurnKind::TranslateRefinement;
+        second.user_message = "Shorter, please.".to_string();
+        second.row.target_text = "Ban dich da ap dung".to_string();
+        second.row.updated_target_text = Some("Ban dich da ap dung".to_string());
+        second.document_digest = "Chapter summary".to_string();
+        second.concordance_hits = vec![AiAssistantConcordanceHit {
+            row_id: "row-9".to_string(),
+            source_snippet: "Fuente".to_string(),
+            target_snippet: "nguon".to_string(),
+        }];
+
+        let first_parts = build_assistant_prompt_parts(&first, false);
+        let second_parts = build_assistant_prompt_parts(&second, true);
+
+        assert_eq!(first_parts.context, second_parts.context);
+        assert_eq!(first_parts.history, second_parts.history);
+        assert_ne!(first_parts.turn, second_parts.turn);
+    }
+
+    #[test]
+    fn assistant_prompt_segments_extend_the_previous_turn() {
+        let mut first = assistant_request_for_prompt();
+        first.transcript = vec![AiAssistantTranscriptEntry {
+            role: "user".to_string(),
+            text: "What does this mean?".to_string(),
+        }];
+        let mut second = first.clone();
+        second.transcript.push(AiAssistantTranscriptEntry {
+            role: "assistant".to_string(),
+            text: "It means the source.".to_string(),
+        });
+        second.transcript.push(AiAssistantTranscriptEntry {
+            role: "user".to_string(),
+            text: "Make it more natural.".to_string(),
+        });
+
+        let first_segments = build_assistant_prompt_parts(&first, false).segments();
+        let second_segments = build_assistant_prompt_parts(&second, false).segments();
+
+        // Everything before the turn segment is reused unchanged by the next turn.
+        let reused = first_segments.len() - 1;
+        assert_eq!(first_segments[..reused], second_segments[..reused]);
+        assert_eq!(second_segments.len(), first_segments.len() + 2);
+        assert!(second_segments
+            .iter()
+            .all(|segment| !segment.trim().is_empty()));
+    }
+
+    #[test]
+    fn assistant_prompt_segments_join_to_the_prompt_text() {
+        let mut request = assistant_request_for_prompt();
+        let parts = build_assistant_prompt_parts(&request, false);
+        assert_eq!(
+            parts.segments().concat(),
+            build_assistant_chat_prompt(&request)
+        );
+        assert_eq!(parts.segments().len(), 3);
+
+        request.transcript.clear();
+        let parts = build_assistant_prompt_parts(&request, false);
+        let prompt = parts.text();
+        assert_eq!(parts.segments().len(), 2);
+        assert!(!prompt.contains("conversation_history"));
+        assert!(prompt.contains("</source_text>\n\nReply in the same language"));
     }
 
     fn translation_batch_row(id: &str, source: &str) -> AiTranslationBatchRowInput {
