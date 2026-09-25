@@ -25,6 +25,7 @@ import { createProjectsCorpus, createSamaelCorpus } from "./glossary-research-co
 import { createDictionary, DICTIONARY_DOMAINS } from "./glossary-research-dictionary.js";
 import { fold } from "./glossary-research-occurrences.js";
 import { parseMoneyValue } from "./money-input.js";
+import { maybeStartGlossaryBackgroundSync } from "./glossary-background-sync.js";
 
 export const RESEARCH_STREAM_EVENT = "glossary-research-stream";
 const MAX_LOG_EVENTS = 4000;
@@ -154,6 +155,8 @@ export function closeGlossaryResearch(render) {
     return;
   }
   render();
+  // Glossary sync is held while research is open; catch up now.
+  void maybeStartGlossaryBackgroundSync(render);
 }
 
 // --- form fields (no re-render while typing) -----------------------------------

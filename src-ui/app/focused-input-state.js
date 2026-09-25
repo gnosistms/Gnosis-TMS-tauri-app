@@ -84,6 +84,24 @@ function focusSnapshotSelector(activeElement) {
     return `[data-glossary-term-variant-note-input][data-variant-index="${activeElement.dataset.variantIndex}"]`;
   }
 
+  // Glossary Research fields: qualified by field name / index so a render
+  // returns focus (and the caret) to the field being edited.
+  if (activeElement.matches("[data-research-field]")) {
+    return `[data-research-field="${activeElement.dataset.researchField}"]`;
+  }
+  if (activeElement.matches("[data-research-variant-input]")) {
+    return `[data-research-variant-input][data-variant-index="${activeElement.dataset.variantIndex}"]`;
+  }
+  if (activeElement.matches("[data-research-proposal]")) {
+    return `[data-research-proposal="${activeElement.dataset.researchProposal}"]`;
+  }
+  if (activeElement.matches("[data-research-entry]")) {
+    return `[data-research-entry="${activeElement.dataset.researchEntry}"]`;
+  }
+  if (activeElement.matches("[data-research-prep-term]")) {
+    return "[data-research-prep-term]";
+  }
+
   return SUPPORTED_FOCUSED_INPUT_SELECTORS.find((candidate) => activeElement.matches(candidate)) ?? null;
 }
 

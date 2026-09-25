@@ -629,6 +629,26 @@ test("glossary background sync skips non-forced sync while the term editor is op
   assert.equal(syncInvocationCount("sync_gtms_glossary_editor_repo"), 0);
 });
 
+test("glossary background sync is held while a research window is open, even when forced", async () => {
+  installGlossaryEditorFixture();
+  invokeHandler = async (command) => (command === "sync_gtms_glossary_editor_repo"
+    ? { oldHeadSha: "head-1", newHeadSha: "head-1", changedTermIds: [], insertedTermIds: [], deletedTermIds: [] }
+    : null);
+
+  startGlossaryBackgroundSyncSession(() => {});
+  await flushAsyncWork();
+  invokeLog.length = 0;
+  currentTime = 20_000;
+  state.glossaryResearch = { ...state.glossaryResearch, isOpen: true };
+
+  assert.equal(await maybeStartGlossaryBackgroundSync(() => {}, { force: true }), false);
+  assert.equal(syncInvocationCount("sync_gtms_glossary_editor_repo"), 0);
+
+  state.glossaryResearch = { ...state.glossaryResearch, isOpen: false };
+  assert.equal(await maybeStartGlossaryBackgroundSync(() => {}), true);
+  assert.equal(syncInvocationCount("sync_gtms_glossary_editor_repo"), 1);
+});
+
 test("glossary exit sync stays inactive when the session has no local edits", async () => {
   installGlossaryEditorFixture();
   invokeHandler = async (command) => {

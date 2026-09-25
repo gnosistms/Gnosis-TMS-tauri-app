@@ -148,6 +148,12 @@ export async function maybeStartGlossaryBackgroundSync(render, options = {}) {
     return glossaryBackgroundSyncSession.pendingSync;
   }
 
+  // The page behind the Research windows does not need refreshing while they
+  // are open; the interval resumes syncing once they close.
+  if (state.glossaryResearch?.isOpen === true || state.glossaryResearchPrep?.isOpen === true) {
+    return false;
+  }
+
   if (
     options.force !== true
     && (
