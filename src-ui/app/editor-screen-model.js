@@ -1,4 +1,5 @@
 import { buildEditorCommentsButtonState, normalizeEditorSidebarTab } from "./editor-comments.js";
+import { canManageGlossaries } from "./glossary-shared.js";
 import {
   conflictedLanguageCodesForRow,
   rowHasUnresolvedEditorConflict,
@@ -585,6 +586,8 @@ export function buildEditorScreenViewModel(appState) {
             targetLanguageCode: targetCode,
             seenRevisions: commentSeenRevisions,
           }),
+          showResearchButton:
+            section.code === sourceCode && Boolean(row?.rowId) && canManageGlossaries(),
           isAiTranslating,
           isSelectedCommentsRow:
             normalizeEditorSidebarTab(editorChapter?.sidebarTab) === "comments"

@@ -50,6 +50,7 @@ import {
   renderPreviewToolbar,
   renderTranslateToolbar,
 } from "./translate-toolbar.js";
+import { renderGlossaryResearchPrepModal } from "./glossary-research-prep-modal.js";
 
 function middleTruncateTitle(value, maxLength = 34) {
   const text = String(value ?? "");
@@ -362,5 +363,6 @@ export function renderTranslateScreen(state) {
     + renderEditorWordPressExportSuccessModal(state)
     + renderEditorReplaceUndoModal(state)
     + renderAiReviewMissingKeyModal(state)
+    + renderGlossaryResearchPrepModal(state)
     + renderEditorCloseWaitModal(state);
 }

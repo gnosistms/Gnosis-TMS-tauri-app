@@ -8,11 +8,14 @@ import {
   pageShell,
   primaryButton,
   renderStateCard,
+  secondaryButton,
   textAction,
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { getNoticeBadgeText, getStatusSurfaceItems } from "../app/status-feedback.js";
 import { renderGlossaryTermEditorModal } from "./glossary-term-editor-modal.js";
+import { renderGlossaryResearchModal } from "./glossary-research-modal.js";
+import { renderGlossaryResearchPrepModal } from "./glossary-research-prep-modal.js";
 import { canManageGlossaries, selectedTeam } from "../app/glossary-shared.js";
 import { anyGlossaryTermWriteIsActive } from "../app/glossary-term-write-coordinator.js";
 import { findChapterContextById } from "../app/project-context.js";
@@ -135,7 +138,12 @@ export function renderGlossaryEditorScreen(state) {
       }),
       navButtons,
       leftTools: searchField,
-      tools: canManageTerms ? primaryButton("+ New Term", "open-new-term") : "",
+      tools: canManageTerms
+        ? `${secondaryButton("Research", "open-glossary-research", {
+          tooltip: "Research the meaning of a word in the source language and suggest translations in the target language.",
+          tooltipOptions: { align: "end", side: "bottom" },
+        })}${primaryButton("+ New Term", "open-new-term")}`
+        : "",
       pageSync: state.pageSync,
       noticeText: getNoticeBadgeText(),
       statusItems: getStatusSurfaceItems("glossaryEditor"),
@@ -143,6 +151,8 @@ export function renderGlossaryEditorScreen(state) {
       offlineReconnectState: state.offline?.reconnecting === true,
       body,
     }) +
-    renderGlossaryTermEditorModal(state)
+    renderGlossaryTermEditorModal(state) +
+    renderGlossaryResearchModal(state) +
+    renderGlossaryResearchPrepModal(state)
   );
 }

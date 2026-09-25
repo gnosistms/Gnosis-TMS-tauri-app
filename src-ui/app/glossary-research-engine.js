@@ -140,7 +140,7 @@ export function createModelClient({ model, prices, budget, log, isCancelled, max
       budget.reserve(reserve);
       sequence += 1;
       const requestId = `${request.stage}-${sequence}-${Date.now().toString(36)}`;
-      log({ type: "request", stage: request.stage, requestId, text: request.content, purpose: request.purpose });
+      log({ type: "request", stage: request.stage, requestId, text: request.content, instructions: request.instructions, purpose: request.purpose });
       const started = Date.now();
       let outcome;
       try {
@@ -353,7 +353,7 @@ export function createResearchEngine(deps) {
       fact(`Forms: ${inTexts.join(", ") || "none found"}${notFound.length ? `; kept though not in the texts: ${notFound.join(", ")}` : ""}`);
       const dropped = confirmed.forms.filter((f) => !f.keep);
       if (dropped.length) info(`dropped: ${dropped.map((f) => `${f.form} (${f.reason})`).join("; ")}`);
-      return { confirmed: forms.map((f) => f.form), searched: inTexts, notFound, candidates: counted.map(({ examples, ...rest }) => rest), decisions: confirmed.forms, related: hint?.related ?? [] };
+      return { confirmed: forms.map((f) => f.form), searched: inTexts, notFound, candidates: counted.map((c) => ({ form: c.form, kind: c.kind, confidence: c.confidence, rows: c.rows })), decisions: confirmed.forms, related: hint?.related ?? [] };
     });
   }
 
@@ -590,7 +590,7 @@ export function createResearchEngine(deps) {
       stage: "summary", purpose: "report summary",
       instructions: prompts.proseInstructions(ctx()),
       content: JSON.stringify({
-        entries: frozen.entries.map(({ displayOrder, match, ...entry }) => entry),
+        entries: frozen.entries.map((entry) => ({ id: entry.id, kind: entry.kind, sourceTerms: entry.sourceTerms, generalNote: entry.generalNote, variants: entry.variants })),
         counts: aggregate.entries, totals: aggregate.totals,
         otherRenderings: aggregate.otherRenderings.slice(0, 15),
         unresolved: aggregate.unresolvedNotes.slice(0, 12),

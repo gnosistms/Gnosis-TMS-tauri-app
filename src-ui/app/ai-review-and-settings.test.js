@@ -6422,6 +6422,10 @@ test("AI action preferences round-trip through persistent storage", () => {
         providerId: "deepseek",
         modelId: "deepseek-chat",
       },
+      research: {
+        providerId: "claude",
+        modelId: "claude-opus-5-5",
+      },
     },
   }, "tester");
 
@@ -6449,6 +6453,10 @@ test("AI action preferences round-trip through persistent storage", () => {
         discuss: {
           providerId: "deepseek",
           modelId: "deepseek-chat",
+        },
+        research: {
+          providerId: "claude",
+          modelId: "claude-opus-5-5",
         },
       },
     },

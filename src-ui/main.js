@@ -130,6 +130,7 @@ import { renderEditorImagePreviewOverlay } from "./screens/editor-image-preview-
 import { renderEditorInsertLinkModal } from "./screens/editor-insert-link-modal.js";
 import { renderGlossariesScreen } from "./screens/glossaries.js";
 import { renderGlossaryEditorScreen } from "./screens/glossary-editor.js";
+import { renderGlossaryResearchReportScreen } from "./screens/glossary-research-report.js";
 import { renderNavigationLoadingModal } from "./screens/navigation-loading-modal.js";
 import { buildProjectsScreenListState, renderProjectsScreen } from "./screens/projects.js";
 import { renderProjectsListItemsRange } from "./screens/project-list-flat-render.js";
@@ -190,6 +191,7 @@ const screenRenderers = {
   qa: () => renderQaScreen(state),
   qaListEditor: () => renderQaListEditorScreen(state),
   glossaryEditor: () => renderGlossaryEditorScreen(state),
+  glossaryResearchReport: () => renderGlossaryResearchReportScreen(state),
   translate: () => renderTranslateScreen(state),
 };
 
@@ -203,6 +205,7 @@ const titles = {
   qa: "QA Lists - Gnosis TMS",
   qaListEditor: "QA List Editor - Gnosis TMS",
   glossaryEditor: "Glossary Editor - Gnosis TMS",
+  glossaryResearchReport: "Research Report - Gnosis TMS",
   translate: "Translate - Gnosis TMS",
 };
 

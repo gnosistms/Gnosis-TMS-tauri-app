@@ -35,6 +35,12 @@ export function invalidateAuthSession() {
   authSessionGeneration += 1;
 }
 
+import {
+  createGlossaryResearchPrepState,
+  createGlossaryResearchReportState,
+  createGlossaryResearchState,
+} from "./glossary-research-state.js";
+
 export const state = {
   screen: "start",
   expandedProjects: new Set(),
@@ -126,6 +132,9 @@ export const state = {
   glossaryPermanentDeletion: createGlossaryPermanentDeletionState(),
   qaListPermanentDeletion: createQaListPermanentDeletionState(),
   glossaryTermEditor: createGlossaryTermEditorState(),
+  glossaryResearch: createGlossaryResearchState(),
+  glossaryResearchPrep: createGlossaryResearchPrepState(),
+  glossaryResearchReport: createGlossaryResearchReportState(),
   qaTermEditor: createQaTermEditorState(),
   aiReviewMissingKeyModal: createAiReviewMissingKeyModalState(),
   showDeletedProjects: false,

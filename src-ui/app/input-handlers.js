@@ -115,6 +115,7 @@ import {
   updateProjectTransferName,
 } from "./project-transfer-flow.js";
 import { normalizedConfirmationValue } from "./resource-entity-modal.js";
+import { handleGlossaryResearchInput } from "./glossary-research-input.js";
 
 let liveReviewSidebarRenderPending = false;
 
@@ -1226,6 +1227,7 @@ const inputHandlers = [
   handleGlossaryTermVariantNoteInput,
   handleGlossaryTermNotesInput,
   handleGlossaryTermFootnoteInput,
+  handleGlossaryResearchInput,
   handleQaListTitleInput,
   handleQaListLanguageInput,
   handleQaListRenameInput,
