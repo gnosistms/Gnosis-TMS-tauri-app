@@ -205,7 +205,24 @@ struct ClaudeOutputConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     effort: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    format: Option<Value>,
+    format: Option<ClaudeOutputFormat>,
+}
+
+#[derive(Debug, Serialize)]
+struct ClaudeOutputFormat {
+    #[serde(rename = "type")]
+    format_type: &'static str,
+    // Claude writes structured output fields in schema order, so the schema is
+    // sent in the order it was written, not serde_json's sorted order.
+    #[serde(serialize_with = "serialize_schema_in_authored_order")]
+    schema: Value,
+}
+
+fn serialize_schema_in_authored_order<S: serde::Serializer>(
+    schema: &Value,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    schemas::InAuthoredOrder(schema).serialize(serializer)
 }
 
 #[derive(Debug, Serialize)]
@@ -383,10 +400,10 @@ fn build_prompt_request<'a>(
     effort_override: Option<&'static str>,
 ) -> Result<ClaudeMessagesRequest<'a>, String> {
     let format = match schemas::output_schema(&request.output_format) {
-        Some(output) if capabilities.structured_outputs => Some(json!({
-            "type": "json_schema",
-            "schema": claude_compatible_schema(&output.schema),
-        })),
+        Some(output) if capabilities.structured_outputs => Some(ClaudeOutputFormat {
+            format_type: "json_schema",
+            schema: claude_compatible_schema(&output.schema),
+        }),
         // Built-in JSON formats fall back to the prompt's JSON instructions and
         // the tolerant parsers; a caller-supplied schema has no such fallback.
         Some(_)
@@ -769,6 +786,58 @@ mod tests {
         let request = prompt_request(model_id, output_format);
         serde_json::to_value(build_prompt_request(&request, model_id, capabilities, None).unwrap())
             .unwrap()
+    }
+
+    #[test]
+    fn structured_output_schemas_keep_their_written_field_order() {
+        let body = |output_format: AiPromptOutputFormat| {
+            let request = prompt_request("claude-opus-5-5", output_format);
+            serde_json::to_string(
+                &build_prompt_request(
+                    &request,
+                    "claude-opus-5-5",
+                    ClaudeModelCapabilities::CURRENT,
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap()
+        };
+        let in_order = |text: &str, names: &[&str]| {
+            let positions = names
+                .iter()
+                .map(|name| text.find(&format!("\"{name}\":{{")).unwrap())
+                .collect::<Vec<_>>();
+            positions.windows(2).all(|pair| pair[0] < pair[1])
+        };
+
+        let review = body(AiPromptOutputFormat::ReviewBatchJson);
+        assert!(in_order(
+            &review,
+            &["rowId", "suggestedText", "suggestedFootnotes", "reviewed"]
+        ));
+        let translation = body(AiPromptOutputFormat::TranslationBatchJson);
+        assert!(in_order(
+            &translation,
+            &["rowId", "translatedText", "translatedFootnote"]
+        ));
+
+        let section_matches = body(AiPromptOutputFormat::JsonSchema {
+            name: "section_overlap_matches".to_string(),
+            schema: json!({
+                "type": "object",
+                "required": ["sourceSectionId", "isMatch", "overlapPercent"],
+                "properties": {
+                    "sourceSectionId": { "type": "integer" },
+                    "isMatch": { "type": "boolean" },
+                    "overlapPercent": { "type": "number" }
+                }
+            }),
+        });
+        assert!(in_order(
+            &section_matches,
+            &["sourceSectionId", "isMatch", "overlapPercent"]
+        ));
     }
 
     #[test]
