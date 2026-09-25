@@ -7,7 +7,9 @@ use serde_json::{json, Map, Value};
 
 use crate::ai::{
     providers::{schemas, shared_http_client, sse},
-    types::{AiPromptOutputFormat, AiPromptRequest, AiPromptResponse, AiProviderModel},
+    types::{
+        AiPromptBlock, AiPromptOutputFormat, AiPromptRequest, AiPromptResponse, AiProviderModel,
+    },
 };
 
 const CLAUDE_API_VERSION: &str = "2023-06-01";
@@ -209,7 +211,41 @@ struct ClaudeOutputConfig {
 #[derive(Debug, Serialize)]
 struct ClaudeMessage<'a> {
     role: &'a str,
-    content: &'a str,
+    content: ClaudeMessageContent<'a>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum ClaudeMessageContent<'a> {
+    Text(&'a str),
+    Blocks(Vec<ClaudeTextBlock<'a>>),
+}
+
+#[derive(Debug, Serialize)]
+struct ClaudeTextBlock<'a> {
+    #[serde(rename = "type")]
+    block_type: &'static str,
+    text: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_control: Option<Value>,
+}
+
+/// Prompt blocks marked `cache` get a 5-minute cache breakpoint. Callers mark
+/// at most two, inside the API's limit of four.
+fn prompt_content(request: &AiPromptRequest) -> ClaudeMessageContent<'_> {
+    match &request.prompt_blocks {
+        Some(blocks) if !blocks.is_empty() => ClaudeMessageContent::Blocks(
+            blocks
+                .iter()
+                .map(|AiPromptBlock { text, cache }| ClaudeTextBlock {
+                    block_type: "text",
+                    text,
+                    cache_control: cache.then(|| json!({ "type": "ephemeral" })),
+                })
+                .collect(),
+        ),
+        _ => ClaudeMessageContent::Text(&request.prompt),
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -377,7 +413,7 @@ fn build_prompt_request<'a>(
         max_tokens: CLAUDE_MAX_OUTPUT_TOKENS,
         messages: vec![ClaudeMessage {
             role: "user",
-            content: &request.prompt,
+            content: prompt_content(request),
         }],
         output_config,
         fallbacks: supports_refusal_fallback(model_id).then_some(CLAUDE_FALLBACK_MODE),
@@ -618,7 +654,7 @@ pub(crate) fn probe_model(model_id: &str, api_key: &str) -> Result<(), String> {
             max_tokens: CLAUDE_PROBE_MAX_OUTPUT_TOKENS,
             messages: vec![ClaudeMessage {
                 role: "user",
-                content: "Reply with OK.",
+                content: ClaudeMessageContent::Text("Reply with OK."),
             }],
             output_config: None,
             fallbacks: None,
@@ -691,7 +727,7 @@ mod tests {
         interpret_messages_response, normalize_messages_response, ClaudeModelCapabilities,
         CLAUDE_MAX_OUTPUT_TOKENS,
     };
-    use crate::ai::types::{AiPromptOutputFormat, AiPromptRequest, AiProviderId};
+    use crate::ai::types::{AiPromptBlock, AiPromptOutputFormat, AiPromptRequest, AiProviderId};
 
     fn prompt_request(model_id: &str, output_format: AiPromptOutputFormat) -> AiPromptRequest {
         AiPromptRequest {
@@ -699,6 +735,7 @@ mod tests {
             model_id: model_id.to_string(),
             prompt: "Translate this.".to_string(),
             output_format,
+            prompt_blocks: None,
         }
     }
 
@@ -710,6 +747,68 @@ mod tests {
         let request = prompt_request(model_id, output_format);
         serde_json::to_value(build_prompt_request(&request, model_id, capabilities, None).unwrap())
             .unwrap()
+    }
+
+    #[test]
+    fn plain_prompts_send_string_content_without_cache_control() {
+        let body = request_body(
+            "claude-opus-5-5",
+            AiPromptOutputFormat::TranslationBatchJson,
+            ClaudeModelCapabilities::CURRENT,
+        );
+
+        assert_eq!(body["messages"][0]["content"], json!("Translate this."));
+        assert!(!body.to_string().contains("cache_control"));
+    }
+
+    #[test]
+    fn prompt_blocks_send_text_blocks_with_cache_breakpoints() {
+        let mut request =
+            prompt_request("claude-opus-5-5", AiPromptOutputFormat::AssistantTurnJson);
+        request.prompt =
+            "Context\n\n<conversation_history>\n- user: Hi\n</conversation_history>\n\nAsk"
+                .to_string();
+        request.prompt_blocks = Some(vec![
+            AiPromptBlock {
+                text: "Context".to_string(),
+                cache: true,
+            },
+            AiPromptBlock {
+                text: "\n\n<conversation_history>\n- user: Hi".to_string(),
+                cache: true,
+            },
+            AiPromptBlock {
+                text: "\n</conversation_history>\n\nAsk".to_string(),
+                cache: false,
+            },
+        ]);
+        let body = serde_json::to_value(
+            build_prompt_request(
+                &request,
+                "claude-opus-5-5",
+                ClaudeModelCapabilities::CURRENT,
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let ephemeral = json!({"type": "ephemeral"});
+        assert_eq!(
+            body["messages"][0]["content"],
+            json!([
+                {"type": "text", "text": "Context", "cache_control": ephemeral},
+                {"type": "text", "text": "\n\n<conversation_history>\n- user: Hi", "cache_control": ephemeral},
+                {"type": "text", "text": "\n</conversation_history>\n\nAsk"},
+            ])
+        );
+        let joined = body["messages"][0]["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|block| block["text"].as_str().unwrap())
+            .collect::<String>();
+        assert_eq!(joined, request.prompt);
     }
 
     #[test]

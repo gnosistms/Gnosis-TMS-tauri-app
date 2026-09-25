@@ -13,15 +13,15 @@ use crate::ai::types::{
     AiAssistantConcordanceHit, AiAssistantRowContext, AiAssistantRowLanguageText,
     AiAssistantRowWindowEntry, AiAssistantTargetLanguageHistoryEntry, AiAssistantTranscriptEntry,
     AiAssistantTurnKind, AiAssistantTurnRequest, AiAssistantTurnResponse, AiModelProbeRequest,
-    AiPromptOutputFormat, AiPromptRequest, AiProviderId, AiProviderModel, AiReviewBatchRequest,
-    AiReviewBatchResponse, AiReviewBatchRowInput, AiReviewBatchRowResult, AiReviewFootnote,
-    AiReviewQaHint, AiReviewRequest, AiReviewResponse, AiTranslatedGlossaryBatchPreparationRequest,
-    AiTranslatedGlossaryEntry, AiTranslatedGlossaryPreparationRequest,
-    AiTranslatedGlossaryPreparationResponse, AiTranslatedGlossaryTermInput,
-    AiTranslationBatchRequest, AiTranslationBatchResponse, AiTranslationBatchRowInput,
-    AiTranslationBatchRowResult, AiTranslationGlossaryHint, AiTranslationGlossaryTargetVariant,
-    AiTranslationGlossaryTargetVariantObject, AiTranslationNoTranslationHint, AiTranslationRequest,
-    AiTranslationResponse,
+    AiPromptBlock, AiPromptOutputFormat, AiPromptRequest, AiProviderId, AiProviderModel,
+    AiReviewBatchRequest, AiReviewBatchResponse, AiReviewBatchRowInput, AiReviewBatchRowResult,
+    AiReviewFootnote, AiReviewQaHint, AiReviewRequest, AiReviewResponse,
+    AiTranslatedGlossaryBatchPreparationRequest, AiTranslatedGlossaryEntry,
+    AiTranslatedGlossaryPreparationRequest, AiTranslatedGlossaryPreparationResponse,
+    AiTranslatedGlossaryTermInput, AiTranslationBatchRequest, AiTranslationBatchResponse,
+    AiTranslationBatchRowInput, AiTranslationBatchRowResult, AiTranslationGlossaryHint,
+    AiTranslationGlossaryTargetVariant, AiTranslationGlossaryTargetVariantObject,
+    AiTranslationNoTranslationHint, AiTranslationRequest, AiTranslationResponse,
 };
 use crate::ai_secret_storage::load_ai_provider_secret;
 use crate::project_import::unescaped_footnote_marker_sequence;
@@ -964,6 +964,7 @@ pub(crate) fn run_ai_translation_batch(
             model_id: request.model_id.clone(),
             prompt: prompt.clone(),
             output_format: AiPromptOutputFormat::TranslationBatchJson,
+            prompt_blocks: None,
         },
         &api_key,
     )?;
@@ -999,6 +1000,7 @@ pub(crate) fn run_ai_review_batch(
             model_id: request.model_id.clone(),
             prompt: prompt.clone(),
             output_format: AiPromptOutputFormat::ReviewBatchJson,
+            prompt_blocks: None,
         },
         &api_key,
     )?;
@@ -1509,6 +1511,22 @@ impl AssistantPromptParts {
     fn text(&self) -> String {
         self.segments().concat()
     }
+
+    /// Segments as prompt blocks, with cache breakpoints after the row context
+    /// and after the last history entry. The next turn repeats both prefixes;
+    /// the turn segment never is.
+    fn blocks(&self) -> Vec<AiPromptBlock> {
+        let segments = self.segments();
+        let last_history_index = (!self.history.is_empty()).then_some(self.history.len());
+        segments
+            .into_iter()
+            .enumerate()
+            .map(|(index, text)| AiPromptBlock {
+                text,
+                cache: index == 0 || Some(index) == last_history_index,
+            })
+            .collect()
+    }
 }
 
 fn build_assistant_prompt_parts(
@@ -1647,12 +1665,9 @@ fn reply_language_instruction(reply_language_hint: &str) -> String {
     }
 }
 
+#[cfg(test)]
 fn build_assistant_chat_prompt(request: &AiAssistantTurnRequest) -> String {
     build_assistant_prompt_parts(request, false).text()
-}
-
-fn build_assistant_translate_refinement_prompt(request: &AiAssistantTurnRequest) -> String {
-    build_assistant_prompt_parts(request, true).text()
 }
 
 fn strip_markdown_code_fence(text: &str) -> &str {
@@ -2202,6 +2217,7 @@ fn build_glossary_alignment_prompt_request(
         model_id: request.model_id.clone(),
         prompt: build_glossary_alignment_prompt(request, glossary_source_text, matches),
         output_format: AiPromptOutputFormat::GlossaryAlignmentJson,
+        prompt_blocks: None,
     }
 }
 
@@ -2333,6 +2349,7 @@ pub(crate) fn run_ai_review(
             } else {
                 AiPromptOutputFormat::Text
             },
+            prompt_blocks: None,
         },
         &api_key,
     )?;
@@ -2399,6 +2416,7 @@ fn prepare_ai_translated_glossary_with_rows(
                 model_id: request.model_id.clone(),
                 prompt: build_translation_prompt(&build_pivot_translation_request(&request)),
                 output_format: AiPromptOutputFormat::Text,
+                prompt_blocks: None,
             },
             &api_key,
         )?
@@ -2563,6 +2581,7 @@ pub(crate) fn run_ai_translation(
             } else {
                 AiPromptOutputFormat::Text
             },
+            prompt_blocks: None,
         },
         &api_key,
     )?;
@@ -2599,12 +2618,11 @@ pub(crate) fn run_ai_assistant_turn(
     }
 
     let api_key = load_ai_provider_api_key(app, request.provider_id, request.installation_id)?;
-    let prompt = match request.kind {
-        AiAssistantTurnKind::Chat => build_assistant_chat_prompt(&request),
-        AiAssistantTurnKind::TranslateRefinement => {
-            build_assistant_translate_refinement_prompt(&request)
-        }
-    };
+    let prompt_parts = build_assistant_prompt_parts(
+        &request,
+        request.kind == AiAssistantTurnKind::TranslateRefinement,
+    );
+    let prompt = prompt_parts.text();
     // Every turn sends the full prompt (row context and transcript); turns are
     // not chained through provider-side state (plans/ai-assistant-stateless-caching-plan.md).
     let response = providers::run_prompt(
@@ -2613,6 +2631,7 @@ pub(crate) fn run_ai_assistant_turn(
             model_id: request.model_id.clone(),
             prompt: prompt.clone(),
             output_format: AiPromptOutputFormat::AssistantTurnJson,
+            prompt_blocks: Some(prompt_parts.blocks()),
         },
         &api_key,
     )?;
@@ -3919,6 +3938,42 @@ mod tests {
         assert!(second_segments
             .iter()
             .all(|segment| !segment.trim().is_empty()));
+    }
+
+    #[test]
+    fn assistant_prompt_blocks_mark_context_and_last_history_entry() {
+        let mut request = assistant_request_for_prompt();
+        request.transcript = vec![
+            AiAssistantTranscriptEntry {
+                role: "user".to_string(),
+                text: "What does this mean?".to_string(),
+            },
+            AiAssistantTranscriptEntry {
+                role: "assistant".to_string(),
+                text: "It means the source.".to_string(),
+            },
+        ];
+        let parts = build_assistant_prompt_parts(&request, false);
+        let blocks = parts.blocks();
+
+        assert_eq!(
+            blocks.iter().map(|block| block.cache).collect::<Vec<_>>(),
+            vec![true, false, true, false]
+        );
+        assert_eq!(
+            blocks
+                .iter()
+                .map(|block| block.text.as_str())
+                .collect::<String>(),
+            parts.text()
+        );
+
+        request.transcript.clear();
+        let blocks = build_assistant_prompt_parts(&request, false).blocks();
+        assert_eq!(
+            blocks.iter().map(|block| block.cache).collect::<Vec<_>>(),
+            vec![true, false]
+        );
     }
 
     #[test]

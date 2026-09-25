@@ -967,6 +967,7 @@ mod tests {
             model_id: "gpt-5.4".to_string(),
             prompt: "Translate this.".to_string(),
             output_format: AiPromptOutputFormat::Text,
+            prompt_blocks: None,
         };
         let payload = serde_json::to_value(build_prompt_request(&request)).unwrap();
 
@@ -986,6 +987,7 @@ mod tests {
             model_id: "gpt-5.4".to_string(),
             prompt: "Return assistant JSON.".to_string(),
             output_format: AiPromptOutputFormat::AssistantTurnJson,
+            prompt_blocks: None,
         };
         let payload = serde_json::to_value(build_prompt_request(&request)).unwrap();
 
@@ -1033,6 +1035,7 @@ mod tests {
             model_id: "gpt-5.4".to_string(),
             prompt: "Return glossary alignment JSON.".to_string(),
             output_format: AiPromptOutputFormat::GlossaryAlignmentJson,
+            prompt_blocks: None,
         };
         let payload = serde_json::to_value(build_prompt_request(&request)).unwrap();
 
@@ -1087,6 +1090,7 @@ mod tests {
             model_id: "gpt-5.5".to_string(),
             prompt: "Return batch translation JSON.".to_string(),
             output_format: AiPromptOutputFormat::TranslationBatchJson,
+            prompt_blocks: None,
         };
         let payload = serde_json::to_value(build_prompt_request(&request)).unwrap();
 
@@ -1126,6 +1130,7 @@ mod tests {
             model_id: "gpt-5.5".to_string(),
             prompt: "Return batch review JSON.".to_string(),
             output_format: AiPromptOutputFormat::ReviewBatchJson,
+            prompt_blocks: None,
         };
         let payload = serde_json::to_value(build_prompt_request(&request)).unwrap();
 

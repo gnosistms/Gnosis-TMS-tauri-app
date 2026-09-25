@@ -181,6 +181,7 @@ fn call(
         model_id: config.model.clone(),
         prompt,
         output_format,
+        prompt_blocks: None,
     };
     let started = Instant::now();
     let outcome = match config.provider {
