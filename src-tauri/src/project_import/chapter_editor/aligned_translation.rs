@@ -2613,6 +2613,7 @@ fn run_json_prompt(
                     name: schema_name.to_string(),
                     schema,
                 },
+                prompt_blocks: None,
             },
             api_key,
         )

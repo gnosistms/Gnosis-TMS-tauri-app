@@ -436,6 +436,18 @@ pub struct AiPromptRequest {
     pub model_id: String,
     pub prompt: String,
     pub output_format: AiPromptOutputFormat,
+    /// The prompt split at cache boundaries. Claude sends these as separate
+    /// content blocks; every other provider sends `prompt`, which they
+    /// concatenate to.
+    pub prompt_blocks: Option<Vec<AiPromptBlock>>,
+}
+
+/// One segment of a prompt. `cache` marks the end of a prefix that is worth
+/// caching because later requests repeat it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AiPromptBlock {
+    pub text: String,
+    pub cache: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
