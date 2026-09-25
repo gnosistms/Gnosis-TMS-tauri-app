@@ -662,7 +662,7 @@ test("runEditorAiReview translation mode uses the same review request shape as R
   await runEditorAiReview(() => {}, "meaning");
 
   assert.equal(reviewPayload.request.providerId, "openai");
-  assert.equal(reviewPayload.request.modelId, "gpt-5.4");
+  assert.equal(reviewPayload.request.modelId, "gpt-6-astra");
   assert.equal(reviewPayload.request.reviewMode, "meaning");
   assert.equal(reviewPayload.request.text, "Ban dich hien tai");
   assert.equal(reviewPayload.request.latestTranslation, "Ban dich hien tai");
@@ -5112,14 +5112,28 @@ test("model list refresh keeps a chosen OpenAI model that is no longer listed", 
 test("model list refresh repicks the never-configured default to the newest flagship", async () => {
   resetSessionState();
   state.screen = "aiKey";
-  assert.equal(state.aiSettings.actionConfig.unified.modelId, "gpt-5.4");
-  installOpenAiAstraModelListHandler();
+  assert.equal(state.aiSettings.actionConfig.unified.modelId, "gpt-6-astra");
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_ai_provider_secret") {
+      return payload.providerId === "openai" ? "sk-openai" : null;
+    }
+    if (command === "validate_ai_provider_secret" || command === "list_ai_provider_models") {
+      // The default is no longer listed, as happens once newer models ship.
+      return [
+        { id: "gpt-6.1-astra", label: "gpt-6.1-astra" },
+        { id: "gpt-6.1-terra", label: "gpt-6.1-terra" },
+        { id: "gpt-5.6-sol", label: "gpt-5.6-sol" },
+      ];
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
 
   await refreshAiSavedProviders(() => {});
 
   assert.deepEqual(state.aiSettings.actionConfig.unified, {
     providerId: "openai",
-    modelId: "gpt-6-astra",
+    modelId: "gpt-6.1-astra",
   });
 });
 
