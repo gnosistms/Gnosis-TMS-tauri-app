@@ -13,6 +13,7 @@
 import {
   BudgetExceededError,
   createBudget,
+  formatUsd,
   usageCost,
   worstCaseCost,
 } from "./glossary-research-budget.js";
@@ -526,7 +527,7 @@ export function createResearchEngine(deps) {
       });
       store.save("prose", prose);
       heading("Done");
-      fact(`Spent $${budget.spent.toFixed(3)} of $${budget.limit.toFixed(2)}.`);
+      fact(`Spent ${formatUsd(budget.spent)} of ${formatUsd(budget.limit)}.`);
       return { status: "done", frozen, aggregate, prose, spent: budget.spent };
     } finally {
       saveUsage();

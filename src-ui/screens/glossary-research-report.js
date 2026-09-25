@@ -6,6 +6,7 @@ import {
   renderStateCard,
   secondaryButton,
 } from "../lib/ui.js";
+import { formatUsd } from "../app/glossary-research-budget.js";
 
 const esc = escapeHtml;
 const EXAMPLES_SHOWN = 5;
@@ -173,7 +174,7 @@ function renderSecondary(run) {
       ${dictionary.status === "found" ? `<p class="muted">${esc(dictionary.sourceName)}${dictionary.url ? ` — ${esc(dictionary.url)}` : ""}</p><pre class="research-dictionary" lang="${esc(meta.sourceLanguage.code)}">${esc(dictionary.text)}</pre>` : `<p>No dictionary entry was found (${esc((dictionary.tried ?? []).join(", "))}).</p>`}
       ${(dictionary.notes ?? []).map((note) => `<p>${esc(note)}</p>`).join("")}
       <h2>Cost</h2>
-      <p>${usage.length} AI requests, US$${cost.toFixed(3)} (limit US$${Number(meta.spendingLimitUsd).toFixed(2)}).</p>
+      <p>${usage.length} AI requests, US${formatUsd(cost)} (limit US${formatUsd(meta.spendingLimitUsd)}).</p>
     </section>`;
 }
 

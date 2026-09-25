@@ -9,7 +9,7 @@ import {
   researchableProjects,
   supportedResearchProviderNames,
 } from "../app/glossary-research-flow.js";
-import { researchModelsWithPrices } from "../app/glossary-research-budget.js";
+import { formatUsd, researchModelsWithPrices } from "../app/glossary-research-budget.js";
 
 const esc = escapeHtml;
 
@@ -113,11 +113,7 @@ function renderAdvanced(research) {
           </label>
           <label class="field">
             <span class="field__label">Spending limit (US$)</span>
-            <input class="field__input" type="number" min="0.1" step="0.5" value="${esc(research.spendingLimitUsd)}" data-research-field="spendingLimitUsd" />
-          </label>
-          <label class="field">
-            <span class="field__label">Random seed</span>
-            <input class="field__input" type="text" value="${esc(research.seed)}" data-research-field="seed" />
+            <input class="field__input" type="number" min="0.1" step="0.01" value="${esc(Number(research.spendingLimitUsd).toFixed(2))}" data-research-field="spendingLimitUsd" />
           </label>
         </div>
         <p class="modal__supporting research-small">Sample size is the maximum number of paragraphs of source text containing the research term to be considered for research. The run stops before any AI request that could go over the spending limit.</p>` : ""}
@@ -135,7 +131,7 @@ function renderPastRuns(research) {
           const meta = run.meta;
           const done = meta.status === "done";
           return `<li>
-            <span><strong>${esc(meta.term)}</strong> → ${esc(meta.targetLanguage?.name ?? "")} · ${esc((meta.startedAt ?? "").slice(0, 10))} · ${esc(meta.status)}${meta.spentUsd != null ? ` · $${Number(meta.spentUsd).toFixed(2)}` : ""}</span>
+            <span><strong>${esc(meta.term)}</strong> → ${esc(meta.targetLanguage?.name ?? "")} · ${esc((meta.startedAt ?? "").slice(0, 10))} · ${esc(meta.status)}${meta.spentUsd != null ? ` · ${formatUsd(meta.spentUsd)}` : ""}</span>
             ${done
               ? `<button type="button" class="button button--secondary button--compact" data-action="open-research-report:${esc(run.runId)}">Open report</button>`
               : `<button type="button" class="button button--secondary button--compact" data-action="resume-research-run:${esc(run.runId)}">Resume</button>`}
@@ -280,7 +276,7 @@ function renderRun(state) {
   }[research.runStatus] ?? research.runStatus;
   const head = `
     <div class="research-run__head">
-      <div class="research-run__status"><strong>${esc(statusText)}</strong> · $${Number(research.spent ?? 0).toFixed(3)} of $${Number(research.limit ?? 0).toFixed(2)}</div>
+      <div class="research-run__status"><strong>${esc(statusText)}</strong> · ${formatUsd(research.spent)} of ${formatUsd(research.limit)}</div>
       <div class="research-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><span style="width:${pct}%"></span></div>
     </div>`;
   const stoppedPanel = (research.runStatus === "failed" || research.runStatus === "stopped")
@@ -289,7 +285,7 @@ function renderRun(state) {
          ${research.stopKind === "budget" ? `
            <label class="field research-stopped__limit">
              <span class="field__label">New spending limit (US$)</span>
-             <input class="field__input" type="number" min="0.1" step="0.5" value="${esc(research.spendingLimitUsd)}" data-research-field="spendingLimitUsd" />
+             <input class="field__input" type="number" min="0.1" step="0.01" value="${esc(Number(research.spendingLimitUsd).toFixed(2))}" data-research-field="spendingLimitUsd" />
            </label>` : ""}
        </div>`
     : "";

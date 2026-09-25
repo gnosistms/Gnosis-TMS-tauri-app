@@ -16,6 +16,11 @@
 
 export const PRICES_CHECKED = "2026-09-25";
 
+/** US dollars with two decimals, e.g. "$0.29". */
+export function formatUsd(value) {
+  return `$${(Number(value) || 0).toFixed(2)}`;
+}
+
 const PRICES = {
   claude: {
     "claude-opus-5-5": { input: 4, cached: 0.2, cacheWrite: 5, output: 20 },
@@ -90,8 +95,8 @@ export function usageCost(prices, usage) {
 export class BudgetExceededError extends Error {
   constructor(needed, spent, reserved, limit) {
     super(
-      `The next request could cost up to $${needed.toFixed(4)}; $${spent.toFixed(4)} is spent, `
-        + `$${reserved.toFixed(4)} is in flight, and the limit is $${limit.toFixed(2)}.`,
+      `The next request could cost up to ${formatUsd(needed)}; ${formatUsd(spent)} is spent, `
+        + `${formatUsd(reserved)} is in flight, and the limit is ${formatUsd(limit)}.`,
     );
     this.name = "BudgetExceededError";
     this.needed = needed;

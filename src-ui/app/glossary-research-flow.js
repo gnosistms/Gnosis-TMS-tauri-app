@@ -14,6 +14,7 @@ import {
   createGlossaryResearchState,
 } from "./glossary-research-state.js";
 import {
+  formatUsd,
   modelPrices,
   RESEARCH_PROVIDERS,
   researchProviderSupported,
@@ -494,8 +495,8 @@ function appendLog(event) {
   if (event.type === "usage") {
     const r = event.record;
     entry.text = `${r.stage}: ${r.status}, ${r.inputTokens ?? "?"} in (${r.cachedTokens ?? 0} cached), `
-      + `${r.outputTokens ?? "?"} out (${r.reasoningTokens ?? 0} thinking), $${r.costUsd.toFixed(4)}`
-      + `${r.costIsEstimate ? " (reserved; outcome unknown)" : ""}, ${r.seconds.toFixed(1)} s — total $${event.spent.toFixed(3)} of $${event.limit.toFixed(2)}`;
+      + `${r.outputTokens ?? "?"} out (${r.reasoningTokens ?? 0} thinking), ${formatUsd(r.costUsd)}`
+      + `${r.costIsEstimate ? " (reserved; outcome unknown)" : ""}, ${r.seconds.toFixed(1)} s — total ${formatUsd(event.spent)} of ${formatUsd(event.limit)}`;
     draft.spent = event.spent;
   }
   if (event.type === "request") entry.text = `→ ${event.stage}${event.purpose ? `: ${event.purpose}` : ""}\n${entry.text}`;
