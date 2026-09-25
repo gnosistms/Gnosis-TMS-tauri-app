@@ -4,7 +4,8 @@ import {
   secondaryButton,
   tooltipAttributes,
 } from "../lib/ui.js";
-import { isoLanguageOptions, findIsoLanguageOption } from "../lib/language-options.js";
+import { findIsoLanguageOption } from "../lib/language-options.js";
+import { renderLanguagePickerModal } from "./language-picker-modal.js";
 import {
   researchableProjects,
   supportedResearchProviderNames,
@@ -353,23 +354,22 @@ function renderProjectPicker(state) {
 
 function renderLanguagePicker(state) {
   const research = state.glossaryResearch;
-  const selected = research.reportLanguagePickerSelection;
-  const options = isoLanguageOptions.map((language) => `
-    <button type="button" class="research-language-option${language.code === selected ? " is-selected" : ""}" role="option"
-      aria-selected="${language.code === selected}" data-action="select-research-picker-language:${esc(language.code)}">${esc(language.name)}</button>`).join("");
-  return `
-    <div class="modal-backdrop modal-backdrop--nested-picker">
-      <section class="card modal-card research-modal" role="dialog" aria-modal="true" aria-label="Report language" data-modal-dialog="glossary-research-language" tabindex="-1">
-        <div class="card__body modal-card__body">
-        <h2 class="modal__title">Report language</h2>
-        <div class="research-language-list" role="listbox" aria-label="Languages">${options}</div>
-        <div class="modal__actions">
-          ${secondaryButton("Cancel", "cancel-research-language-picker", { modalCancel: true })}
-          ${primaryButton("Select", "confirm-research-language-picker", { modalDefault: true })}
-        </div>
-        </div>
-      </section>
-    </div>`;
+  const targetName = state.glossaryEditor?.targetLanguage?.name ?? "the target language";
+  return renderLanguagePickerModal({
+    dialogName: "glossary-research-language",
+    titleId: "glossary-research-language-title",
+    eyebrow: "REPORT LANGUAGE",
+    title: "Choose the report language",
+    supporting: `The report's headings, explanations and recommendations are written in this language. Proposed translations and usage notes stay in ${targetName}.`,
+    listLabel: "Report language",
+    listAttribute: "data-research-language-list",
+    selectedCode: research.reportLanguagePickerSelection,
+    selectAction: "select-research-picker-language",
+    nested: true,
+    actionsHtml: `
+      ${secondaryButton("Cancel", "cancel-research-language-picker", { modalCancel: true })}
+      ${primaryButton("Select", "confirm-research-language-picker", { modalDefault: true, disabled: !research.reportLanguagePickerSelection })}`,
+  });
 }
 
 export function renderGlossaryResearchModal(state) {

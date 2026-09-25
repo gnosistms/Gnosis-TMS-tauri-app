@@ -169,7 +169,12 @@ pub(crate) fn research_passages(
                 .map(|(key, group)| passage(connection, input, key, group, true))
                 .collect::<Result<_, _>>()?;
         }
-        "neighbours" => response.neighbours = neighbours(&groups),
+        "neighbours" => {
+            response.neighbours = neighbours(
+                &groups,
+                is_non_space_delimited_language(&input.language_code),
+            )
+        }
         other => return Err(format!("Unknown research search mode '{other}'.")),
     }
     Ok(response)
@@ -215,7 +220,7 @@ pub(crate) fn research_projects(
 ) -> Result<Vec<ResearchProjectOption>, String> {
     let mut statement = connection
         .prepare(
-            "SELECT project_id, max(project_title), max(language_code = ?1) FROM search_documents \
+            "SELECT project_id, max(project_title), max(language_code = ?1 COLLATE NOCASE) FROM search_documents \
              WHERE snippet_source = 'field' GROUP BY project_id ORDER BY lower(max(project_title))",
         )
         .map_err(|error| format!("Could not read the search index: {error}"))?;
@@ -248,7 +253,7 @@ fn count_matching_chapters(
 ) -> Result<usize, String> {
     let sql = format!(
         "SELECT count(DISTINCT project_id || '/' || chapter_id) FROM search_documents \
-         WHERE language_code = ? AND snippet_source = 'field' AND project_id IN ({})",
+         WHERE language_code = ? COLLATE NOCASE AND snippet_source = 'field' AND project_id IN ({})",
         placeholders(input.project_ids.len())
     );
     let mut values = vec![input.language_code.clone()];
@@ -261,18 +266,42 @@ fn count_matching_chapters(
         .map_err(|error| format!("Could not read the search index: {error}"))
 }
 
-/// Case-insensitive whole-word pattern for one form (words joined by any
-/// run of non-word characters). Accents are kept: forms are exact spellings.
-fn form_pattern(form: &str) -> Option<Regex> {
+/// Languages written without spaces between words (same list as the
+/// editor's glossary matcher). Their forms match anywhere inside the text.
+pub(crate) fn is_non_space_delimited_language(language_code: &str) -> bool {
+    let primary = language_code
+        .trim()
+        .split(['-', '_'])
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    matches!(
+        primary.as_str(),
+        "zh" | "ja" | "th" | "lo" | "km" | "my" | "bo" | "dz"
+    )
+}
+
+/// Case-insensitive pattern for one form. Space-delimited languages match
+/// whole words (joined by any run of non-word characters); languages written
+/// without spaces match the form anywhere. Accents are kept.
+fn form_pattern(form: &str, no_spaces: bool) -> Option<Regex> {
     let words: Vec<String> = collect_unique_tokens_in_order(form);
     if words.is_empty() {
         return None;
     }
+    let separator = if no_spaces {
+        r"[^\p{L}\p{N}_]*"
+    } else {
+        r"[^\p{L}\p{N}_]+"
+    };
     let body = words
         .iter()
         .map(|word| regex::escape(word))
         .collect::<Vec<_>>()
-        .join(r"[^\p{L}\p{N}_]+");
+        .join(separator);
+    if no_spaces {
+        return Regex::new(&format!(r"(?i)({body})")).ok();
+    }
     Regex::new(&format!(
         r"(?i)(?:^|[^\p{{L}}\p{{N}}_])({body})(?:$|[^\p{{L}}\p{{N}}_])"
     ))
@@ -315,9 +344,37 @@ fn population(
     connection: &Connection,
     input: &ResearchPassagesInput,
 ) -> Result<BTreeMap<String, Group>, String> {
-    let patterns: Vec<Regex> = input.forms.iter().filter_map(|f| form_pattern(f)).collect();
+    let no_spaces = is_non_space_delimited_language(&input.language_code);
+    let patterns: Vec<Regex> = input
+        .forms
+        .iter()
+        .filter_map(|f| form_pattern(f, no_spaces))
+        .collect();
     let mut candidate_ids: HashSet<i64> = HashSet::new();
     for form in &input.forms {
+        if no_spaces {
+            // The token index splits on spaces, so a Chinese word is not a
+            // token of its sentence: find candidate rows by substring.
+            let sql = format!(
+                "SELECT doc_id FROM search_documents \
+                 WHERE instr(lower(plain_text), lower(?)) > 0 \
+                   AND language_code = ? COLLATE NOCASE AND snippet_source = 'field' \
+                   AND project_id IN ({})",
+                placeholders(input.project_ids.len())
+            );
+            let mut values = vec![form.trim().to_string(), input.language_code.clone()];
+            values.extend(input.project_ids.iter().cloned());
+            let mut statement = connection
+                .prepare(&sql)
+                .map_err(|error| format!("Could not query the search index: {error}"))?;
+            let ids = statement
+                .query_map(params_from_iter(values.iter()), |row| row.get::<_, i64>(0))
+                .map_err(|error| format!("Could not query the search index: {error}"))?;
+            for id in ids {
+                candidate_ids.insert(id.map_err(|error| error.to_string())?);
+            }
+            continue;
+        }
         let tokens = collect_unique_tokens(form);
         if tokens.is_empty() {
             continue;
@@ -325,7 +382,7 @@ fn population(
         let sql = format!(
             "SELECT t.doc_id FROM search_document_tokens t \
              JOIN search_documents d ON d.doc_id = t.doc_id \
-             WHERE t.token IN ({}) AND d.language_code = ? AND d.snippet_source = 'field' \
+             WHERE t.token IN ({}) AND d.language_code = ? COLLATE NOCASE AND d.snippet_source = 'field' \
                AND d.project_id IN ({}) \
              GROUP BY t.doc_id HAVING count(DISTINCT t.token) = {}",
             placeholders(tokens.len()),
@@ -403,11 +460,11 @@ fn neighbour_text(
 ) -> Result<Option<String>, String> {
     let sql = if before {
         "SELECT plain_text FROM search_documents WHERE project_id = ?1 AND chapter_id = ?2 \
-         AND language_code = ?3 AND snippet_source = 'field' AND row_order_key < ?4 \
+         AND language_code = ?3 COLLATE NOCASE AND snippet_source = 'field' AND row_order_key < ?4 \
          ORDER BY row_order_key DESC LIMIT 1"
     } else {
         "SELECT plain_text FROM search_documents WHERE project_id = ?1 AND chapter_id = ?2 \
-         AND language_code = ?3 AND snippet_source = 'field' AND row_order_key > ?4 \
+         AND language_code = ?3 COLLATE NOCASE AND snippet_source = 'field' AND row_order_key > ?4 \
          ORDER BY row_order_key ASC LIMIT 1"
     };
     match connection.query_row(
@@ -467,7 +524,7 @@ fn passage(
             existing_translation = connection
                 .query_row(
                     "SELECT plain_text FROM search_documents WHERE project_id = ?1 AND chapter_id = ?2 \
-                     AND row_id = ?3 AND language_code = ?4 AND snippet_source = 'field' LIMIT 1",
+                     AND row_id = ?3 AND language_code = ?4 COLLATE NOCASE AND snippet_source = 'field' LIMIT 1",
                     [&first.project_id, &first.chapter_id, &first.row_id, &target.to_string()],
                     |r| r.get::<_, String>(0),
                 )
@@ -507,8 +564,14 @@ fn passage(
 
 /// One- and two-word neighbours of every occurrence, over the whole
 /// population (occurrences and distinct passages).
-fn neighbours(groups: &BTreeMap<String, Group>) -> Vec<Neighbour> {
-    let word = Regex::new(r"[\p{L}\p{N}_]+").expect("word regex");
+fn neighbours(groups: &BTreeMap<String, Group>, no_spaces: bool) -> Vec<Neighbour> {
+    // Without spaces there are no words to count, so neighbours are the one
+    // or two characters on each side.
+    let word = if no_spaces {
+        Regex::new(r"[\p{L}\p{N}_]").expect("character regex")
+    } else {
+        Regex::new(r"[\p{L}\p{N}_]+").expect("word regex")
+    };
     let mut counts: HashMap<String, (usize, HashSet<&str>)> = HashMap::new();
     for (key, group) in groups {
         let words: Vec<(usize, usize, String)> = word
@@ -525,11 +588,12 @@ fn neighbours(groups: &BTreeMap<String, Group>) -> Vec<Neighbour> {
             if last < first {
                 continue;
             }
+            let sep = if no_spaces { "" } else { " " };
             let core = words[first..=last]
                 .iter()
                 .map(|w| w.2.as_str())
                 .collect::<Vec<_>>()
-                .join(" ");
+                .join(sep);
             let mut phrases = Vec::new();
             for size in 1..=2 {
                 if first >= size {
@@ -537,16 +601,16 @@ fn neighbours(groups: &BTreeMap<String, Group>) -> Vec<Neighbour> {
                         .iter()
                         .map(|w| w.2.as_str())
                         .collect::<Vec<_>>()
-                        .join(" ");
-                    phrases.push(format!("{left} {core}"));
+                        .join(sep);
+                    phrases.push(format!("{left}{sep}{core}"));
                 }
                 if last + size < words.len() {
                     let right = words[last + 1..=last + size]
                         .iter()
                         .map(|w| w.2.as_str())
                         .collect::<Vec<_>>()
-                        .join(" ");
-                    phrases.push(format!("{core} {right}"));
+                        .join(sep);
+                    phrases.push(format!("{core}{sep}{right}"));
                 }
             }
             for phrase in phrases {
@@ -665,6 +729,37 @@ mod tests {
         );
         let occurrence = &single.occurrences[0];
         assert_eq!(&single.text[occurrence.start..occurrence.end], "fatal");
+    }
+
+    #[test]
+    fn chinese_forms_match_inside_text_and_codes_ignore_case() {
+        let connection = db();
+        connection.execute(
+            "INSERT INTO search_documents (doc_id, result_id, repo_key, project_id, repo_name, project_title, \
+             chapter_id, chapter_title, row_id, row_order_key, language_code, language_name, plain_text, \
+             search_text, trigram_count, text_hash, updated_at_unix) \
+             VALUES (100, 'z', 'k', 'p1', 'repo', 'Project', 'c1', 'Chapter', 'r1', 'a', 'zh-hant', 'zh', \
+             '這是存在層次的教義。', '', 0, '', 0)",
+            [],
+        ).unwrap();
+        let mut chinese = input("sample", 5);
+        chinese.language_code = "zh-Hant".into();
+        chinese.forms = vec!["存在".into()];
+        chinese.target_language_code = None;
+        let response = research_passages(&connection, &chinese).unwrap();
+        assert_eq!(response.distinct, 1);
+        let passage = &response.items[0];
+        let occurrence = &passage.occurrences[0];
+        let units: Vec<u16> = passage.text.encode_utf16().collect();
+        assert_eq!(
+            String::from_utf16(&units[occurrence.start..occurrence.end]).unwrap(),
+            "存在"
+        );
+        let mut neighbours = chinese;
+        neighbours.mode = "neighbours".into();
+        let _ = research_passages(&connection, &neighbours).unwrap();
+        assert!(is_non_space_delimited_language("zh-Hans"));
+        assert!(!is_non_space_delimited_language("es"));
     }
 
     #[test]

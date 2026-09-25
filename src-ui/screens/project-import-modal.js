@@ -1,5 +1,5 @@
 import { escapeHtml, primaryButton, secondaryButton } from "../lib/ui.js";
-import { findIsoLanguageOption, isoLanguageOptions } from "../lib/language-options.js";
+import { pickerSelectedCode, renderLanguagePickerModal } from "./language-picker-modal.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { isProjectImportFormatError, renderProjectImportFormatWarning } from "../app/project-import-format.js";
 import {
@@ -8,56 +8,28 @@ import {
   renderProjectDocumentLinkError,
 } from "../app/project-document-input.js";
 
-function renderSourceLanguageOption(language, selectedCode) {
-  const isSelected = language.code === selectedCode;
-  return `
-    <button
-      class="language-picker-modal__option${isSelected ? " is-selected" : ""}"
-      type="button"
-      data-action="select-project-import-source-language:${escapeHtml(language.code)}"
-      data-roving-choice-option
-      role="option"
-      aria-selected="${isSelected ? "true" : "false"}"
-      aria-pressed="${isSelected ? "true" : "false"}"
-      tabindex="${isSelected ? "0" : "-1"}"
-    >
-      <span>${escapeHtml(language.name)}</span>
-      <span class="language-picker-modal__code">${escapeHtml(language.code)}</span>
-    </button>
-  `;
-}
-
 function renderSourceLanguageStep(modal) {
-  const selectedCode = findIsoLanguageOption(modal.selectedSourceLanguageCode)?.code ?? "";
+  const selectedCode = pickerSelectedCode(modal.selectedSourceLanguageCode);
   const isBatch = modal.isBatch === true;
   const fileLabel = isBatch ? "these files" : "this file";
-  const languages = isoLanguageOptions
-    .slice()
-    .sort((left, right) => left.name.localeCompare(right.name));
 
-  return `
-    <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact modal-card--language-picker" role="dialog" aria-modal="true" aria-labelledby="project-import-source-language-modal-title" data-modal-dialog="project-import:source-language" tabindex="-1">
-        <div class="card__body modal-card__body language-picker-modal">
-          <p class="card__eyebrow">SOURCE LANGUAGE</p>
-          <h2 class="modal__title" id="project-import-source-language-modal-title">What is the language of ${fileLabel}?</h2>
-          <p class="modal__supporting">Select the language of ${fileLabel} from the list below. This will be the source language.</p>
-          <div class="language-picker-modal__list-frame">
-            <div class="language-picker-modal__list" role="listbox" aria-label="Source language" data-project-import-source-language-list data-roving-choice-group data-roving-choice-axis="vertical">
-              ${languages.map((language) => renderSourceLanguageOption(language, selectedCode)).join("")}
-            </div>
-          </div>
-          <div class="modal__actions">
+  return renderLanguagePickerModal({
+    dialogName: "project-import:source-language",
+    titleId: "project-import-source-language-modal-title",
+    eyebrow: "SOURCE LANGUAGE",
+    title: `What is the language of ${fileLabel}?`,
+    supporting: `Select the language of ${fileLabel} from the list below. This will be the source language.`,
+    listLabel: "Source language",
+    listAttribute: "data-project-import-source-language-list",
+    selectedCode,
+    selectAction: "select-project-import-source-language",
+    actionsHtml: `
             ${secondaryButton("Cancel", "cancel-project-import", { modalCancel: true })}
             ${primaryButton("Continue", "continue-project-import-text", {
               disabled: !selectedCode,
               modalDefault: true,
-            })}
-          </div>
-        </div>
-      </section>
-    </div>
-  `;
+            })}`,
+  });
 }
 
 function renderProjectImportBatchErrorModal(modal) {

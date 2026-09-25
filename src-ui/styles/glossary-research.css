@@ -284,8 +284,7 @@
 
 /* pickers */
 
-.research-project-list,
-.research-language-list {
+.research-project-list {
   max-height: 50vh;
   overflow-y: auto;
   display: flex;
@@ -305,20 +304,7 @@
   opacity: 0.6;
 }
 
-.research-language-option {
-  text-align: left;
-  padding: 6px 10px;
-  border: 0;
-  border-radius: var(--radius-control);
-  background: transparent;
-  color: var(--text);
-  cursor: pointer;
-}
 
-.research-language-option.is-selected {
-  background: var(--control-selected-surface);
-  color: var(--accent-text);
-}
 
 /* editor flow */
 

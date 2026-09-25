@@ -1,6 +1,6 @@
 import { escapeHtml, primaryButton, secondaryButton } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
-import { findIsoLanguageOption, isoLanguageOptions } from "../lib/language-options.js";
+import { pickerSelectedCode, renderLanguagePickerModal } from "./language-picker-modal.js";
 import {
   renderProjectDocumentInputModal,
   renderProjectDocumentLinkError,
@@ -47,54 +47,26 @@ function renderInputModal(modal) {
   });
 }
 
-function renderLanguageOption(language, selectedCode) {
-  const isSelected = language.code === selectedCode;
-  return `
-    <button
-      class="language-picker-modal__option${isSelected ? " is-selected" : ""}"
-      type="button"
-      data-action="select-project-add-translation-language:${escapeHtml(language.code)}"
-      data-roving-choice-option
-      role="option"
-      aria-selected="${isSelected ? "true" : "false"}"
-      aria-pressed="${isSelected ? "true" : "false"}"
-      tabindex="${isSelected ? "0" : "-1"}"
-    >
-      <span>${escapeHtml(language.name)}</span>
-      <span class="language-picker-modal__code">${escapeHtml(language.code)}</span>
-    </button>
-  `;
-}
-
 function renderLanguageModal(modal) {
-  const selectedCode = findIsoLanguageOption(modal.targetLanguageCode)?.code ?? "";
-  const languages = isoLanguageOptions
-    .slice()
-    .sort((left, right) => left.name.localeCompare(right.name));
-  return `
-    <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact modal-card--language-picker" role="dialog" aria-modal="true" aria-labelledby="project-add-translation-language-modal-title" data-modal-dialog="project-add-translation:language" tabindex="-1">
-        <div class="card__body modal-card__body language-picker-modal">
-          <p class="card__eyebrow">TRANSLATION LANGUAGE</p>
-          <h2 class="modal__title" id="project-add-translation-language-modal-title">What language is this translation?</h2>
-          <p class="modal__supporting">Select the language of the translation text.</p>
-          ${renderError(modal.error)}
-          <div class="language-picker-modal__list-frame">
-            <div class="language-picker-modal__list" role="listbox" aria-label="Translation language" data-project-add-translation-language-list data-roving-choice-group data-roving-choice-axis="vertical">
-              ${languages.map((language) => renderLanguageOption(language, selectedCode)).join("")}
-            </div>
-          </div>
-          <div class="modal__actions">
+  const selectedCode = pickerSelectedCode(modal.targetLanguageCode);
+  return renderLanguagePickerModal({
+    dialogName: "project-add-translation:language",
+    titleId: "project-add-translation-language-modal-title",
+    eyebrow: "TRANSLATION LANGUAGE",
+    title: "What language is this translation?",
+    supporting: "Select the language of the translation text.",
+    beforeListHtml: renderError(modal.error),
+    listLabel: "Translation language",
+    listAttribute: "data-project-add-translation-language-list",
+    selectedCode,
+    selectAction: "select-project-add-translation-language",
+    actionsHtml: `
             ${secondaryButton("Cancel", "cancel-project-add-translation", { modalCancel: true })}
             ${primaryButton("Continue", "continue-project-add-translation-language", {
               disabled: !selectedCode,
               modalDefault: true,
-            })}
-          </div>
-        </div>
-      </section>
-    </div>
-  `;
+            })}`,
+  });
 }
 
 function progressLabel(progress) {

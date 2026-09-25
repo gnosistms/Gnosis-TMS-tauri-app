@@ -394,7 +394,7 @@ export function createResearchEngine(deps) {
       heading("Discovery");
       const sample = store.load("sample");
       const items = sample.discoveryIds.map((id) => sample.items[id]);
-      const occurrences = buildOccurrences(items, [], "d");
+      const occurrences = buildOccurrences(items, [], "d", settings.sourceLanguageCode);
       const instructions = prompts.discoveryInstructions(ctx());
       const keyed = batchOccurrences(items, occurrences, settings.discoveryBatch).map((batch, index) => [index, {
         stage: "discovery", purpose: `open reading of ${batch.occurrences.length} occurrences`,
@@ -538,7 +538,7 @@ export function createResearchEngine(deps) {
     heading("Counting");
     const sample = store.load("sample");
     const items = sample.measuredIds.map((id) => sample.items[id]);
-    const occurrences = buildOccurrences(items, frozen.entries);
+    const occurrences = buildOccurrences(items, frozen.entries, "o", settings.sourceLanguageCode);
     const unassigned = occurrences.filter((o) => o.entryId === "unassigned");
     if (unassigned.length) info(`${unassigned.length} occurrences match no entry's forms: ${[...new Set(unassigned.map((o) => o.surface))].join(", ")}`);
     const entryById = Object.fromEntries(frozen.entries.map((e) => [e.id, e]));

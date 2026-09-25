@@ -1,6 +1,8 @@
 // Occurrences inside sampled passages: which proposed entry each belongs to,
 // the sentence around it, and the marked passage text shown to the model.
 
+import { isNonSpaceDelimitedLanguage } from "./language-word-boundaries.js";
+
 const WORD_RE = /[\p{L}\p{N}_]+/gu;
 const SENTENCE_END_RE = /[.!?…。！？]+["'»”)\]]*(?=\s|$)|[。！？]/gu;
 
@@ -47,25 +49,31 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function surfacePattern(surface) {
+/**
+ * Pattern for one surface form. Space-delimited languages match whole words;
+ * languages written without spaces (Chinese, Japanese, Thai…) match the form
+ * anywhere in the text, like the editor's glossary matcher.
+ */
+function surfacePattern(surface, languageCode = "") {
+  const noSpaces = isNonSpaceDelimitedLanguage(languageCode);
   const words = fold(surface).match(WORD_RE) ?? [];
   if (!words.length) {
     return null;
   }
-  return new RegExp(
-    `(?<![\\p{L}\\p{N}_])${words.map(escapeRegExp).join("[^\\p{L}\\p{N}_]+")}(?![\\p{L}\\p{N}_])`,
-    "gu",
-  );
+  const body = words.map(escapeRegExp).join(noSpaces ? "[^\\p{L}\\p{N}_]*" : "[^\\p{L}\\p{N}_]+");
+  return noSpaces
+    ? new RegExp(body, "gu")
+    : new RegExp(`(?<![\\p{L}\\p{N}_])${body}(?![\\p{L}\\p{N}_])`, "gu");
 }
 
 /** [{start, end, entryId}] for every expression-entry match in the text. */
-export function expressionSpans(text, entries) {
+export function expressionSpans(text, entries, languageCode = "") {
   const folded = foldKeepingOffsets(text);
   const spans = [];
   for (const entry of entries) {
     if (entry.kind !== "expression") continue;
     for (const surface of entry.match?.length ? entry.match : entry.sourceTerms) {
-      const pattern = surfacePattern(surface);
+      const pattern = surfacePattern(surface, languageCode);
       if (!pattern) continue;
       for (const match of folded.matchAll(pattern)) {
         spans.push({ start: match.index, end: match.index + match[0].length, entryId: entry.id });
@@ -90,11 +98,11 @@ function wordEntryFor(surface, entries) {
  * longest-match glossary matcher; otherwise to the word entry that lists its
  * surface form; otherwise it is "unassigned" and reported, never guessed.
  */
-export function buildOccurrences(items, entries, idPrefix = "o") {
+export function buildOccurrences(items, entries, idPrefix = "o", languageCode = "") {
   const occurrences = [];
   items.forEach((item, itemIndex) => {
     const text = item.text;
-    const spans = expressionSpans(text, entries);
+    const spans = expressionSpans(text, entries, languageCode);
     item.occurrences.forEach((occurrence, occurrenceIndex) => {
       let entryId = wordEntryFor(occurrence.surface, entries)?.id ?? "unassigned";
       let markStart = occurrence.start;

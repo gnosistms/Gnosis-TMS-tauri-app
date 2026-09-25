@@ -84,3 +84,33 @@ test("DLE complex forms are read from their own pages", async () => {
   assert.match(result.text, /Sin\.: forzoso/);
   assert.match(dleText(result.articles), /Forma compleja: mujer fatal\n {4}1\. f\. mujer seductora/);
 });
+
+test("Chinese research terms match inside text; Spanish ones only as whole words", async () => {
+  const { buildOccurrences } = await import("./glossary-research-occurrences.js");
+  const text = "這是存在層次的教義。存在就是存在。";
+  const start = text.indexOf("存在層次");
+  const occurrences = buildOccurrences(
+    [{ itemId: "z", text, occurrences: [{ start, end: start + 2, surface: "存在" }] }],
+    [{ id: "x", kind: "expression", sourceTerms: ["存在層次"], match: ["存在層次"], variants: [] },
+      { id: "w", kind: "word", sourceTerms: ["存在"], variants: [] }],
+    "o",
+    "zh-Hant",
+  );
+  assert.equal(occurrences[0].entryId, "x");
+  assert.equal(occurrences[0].marked, "存在層次");
+  const spanish = buildOccurrences(
+    [{ itemId: "s", text: "La ruedafatal y la rueda fatal.", occurrences: [{ start: 24, end: 29, surface: "fatal" }] }],
+    [{ id: "x", kind: "expression", sourceTerms: ["rueda fatal"], match: ["rueda fatal"], variants: [] },
+      { id: "w", kind: "word", sourceTerms: ["fatal"], variants: [] }],
+    "o",
+    "es",
+  );
+  assert.equal(spanish[0].entryId, "x");
+});
+
+test("Chinese dictionary lookups use Wiktionary's zh section", async () => {
+  const fetchImpl = async () => jsonResponse({ zh: [{ partOfSpeech: "Verb", definitions: [{ definition: "to exist" }] }] });
+  const result = await createDictionary({ languageCode: "zh-Hant", invoke: async () => ({}), fetchImpl }).lookup("存在");
+  assert.equal(result.status, "found");
+  assert.match(result.text, /to exist/);
+});

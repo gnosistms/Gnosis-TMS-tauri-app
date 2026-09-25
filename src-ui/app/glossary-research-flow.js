@@ -8,7 +8,7 @@ import { getAiProviderConfig } from "./ai-provider-config.js";
 import { resolveAiActionProviderAndModel } from "./ai-settings-flow.js";
 import { canManageGlossaries, selectedTeam } from "./glossary-shared.js";
 import { selectedProjectsTeamInstallationId } from "./project-context.js";
-import { findIsoLanguageOption } from "../lib/language-options.js";
+import { findIsoLanguageOption, normalizeSupportedLanguageCode } from "../lib/language-options.js";
 import {
   createGlossaryResearchReportState,
   createGlossaryResearchState,
@@ -45,10 +45,12 @@ function languageName(code, fallback = "") {
 
 function glossaryLanguages() {
   const editor = state.glossaryEditor ?? {};
+  // Canonical codes ("zh-hant" -> "zh-Hant") so comparisons and lookups agree.
+  const canonical = (code) => normalizeSupportedLanguageCode(code) || String(code ?? "");
   return {
-    sourceCode: editor.sourceLanguage?.code ?? "",
+    sourceCode: canonical(editor.sourceLanguage?.code),
     sourceName: editor.sourceLanguage?.name ?? languageName(editor.sourceLanguage?.code),
-    targetCode: editor.targetLanguage?.code ?? "",
+    targetCode: canonical(editor.targetLanguage?.code),
     targetName: editor.targetLanguage?.name ?? languageName(editor.targetLanguage?.code),
   };
 }
@@ -375,6 +377,7 @@ function engineSettings(draft, languages) {
       targetVariantNotes: term.targetVariantNotes ?? [], notesToTranslators: term.notesToTranslators ?? "",
     })),
     sourceLanguageName: languages.sourceName,
+    sourceLanguageCode: languages.sourceCode,
     targetLanguageName: languages.targetName,
     targetLanguageCode: languages.targetCode,
     reportLanguageName: languageName(draft.reportLanguageCode, draft.reportLanguageCode),

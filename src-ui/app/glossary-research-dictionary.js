@@ -82,7 +82,10 @@ async function lookUpWiktionary(term, languageCode, { fetchImpl }) {
   if (response.status === 404) return { status: "not_found", url };
   if (!response.ok) return { status: "unreachable", url, message: `HTTP ${response.status}` };
   const data = await response.json();
-  const sections = data[languageCode] ?? [];
+  // Wiktionary groups entries by base language: Chinese is "zh" for both
+  // zh-Hans and zh-Hant.
+  const baseCode = String(languageCode ?? "").split(/[-_]/)[0].toLowerCase();
+  const sections = data[languageCode] ?? data[baseCode] ?? [];
   if (!sections.length) return { status: "not_found", url };
   let number = 0;
   const lines = [`Wiktionary (English edition, CC BY-SA 4.0): ${term}`];
