@@ -17,7 +17,7 @@ const UNIFIED_TRANSLATE_ACTION_LABEL = "Translate";
 
 const DEFAULT_PROVIDER_ID = DEFAULT_AI_PROVIDER_ID;
 const DEFAULT_MODEL_ID_BY_PROVIDER = {
-  openai: "gpt-5.4",
+  openai: "gpt-6-astra",
   gemini: "gemini-3-flash-preview",
   claude: "claude-opus-5-5",
 };
