@@ -13,15 +13,15 @@ use crate::ai::types::{
     AiAssistantConcordanceHit, AiAssistantRowContext, AiAssistantRowLanguageText,
     AiAssistantRowWindowEntry, AiAssistantTargetLanguageHistoryEntry, AiAssistantTranscriptEntry,
     AiAssistantTurnKind, AiAssistantTurnRequest, AiAssistantTurnResponse, AiModelProbeRequest,
-    AiPromptOutputFormat, AiPromptRequest, AiProviderContinuationMetadata, AiProviderId,
-    AiProviderModel, AiReviewBatchRequest, AiReviewBatchResponse, AiReviewBatchRowInput,
-    AiReviewBatchRowResult, AiReviewFootnote, AiReviewQaHint, AiReviewRequest, AiReviewResponse,
-    AiTranslatedGlossaryBatchPreparationRequest, AiTranslatedGlossaryEntry,
-    AiTranslatedGlossaryPreparationRequest, AiTranslatedGlossaryPreparationResponse,
-    AiTranslatedGlossaryTermInput, AiTranslationBatchRequest, AiTranslationBatchResponse,
-    AiTranslationBatchRowInput, AiTranslationBatchRowResult, AiTranslationGlossaryHint,
-    AiTranslationGlossaryTargetVariant, AiTranslationGlossaryTargetVariantObject,
-    AiTranslationNoTranslationHint, AiTranslationRequest, AiTranslationResponse,
+    AiPromptOutputFormat, AiPromptRequest, AiProviderId, AiProviderModel, AiReviewBatchRequest,
+    AiReviewBatchResponse, AiReviewBatchRowInput, AiReviewBatchRowResult, AiReviewFootnote,
+    AiReviewQaHint, AiReviewRequest, AiReviewResponse, AiTranslatedGlossaryBatchPreparationRequest,
+    AiTranslatedGlossaryEntry, AiTranslatedGlossaryPreparationRequest,
+    AiTranslatedGlossaryPreparationResponse, AiTranslatedGlossaryTermInput,
+    AiTranslationBatchRequest, AiTranslationBatchResponse, AiTranslationBatchRowInput,
+    AiTranslationBatchRowResult, AiTranslationGlossaryHint, AiTranslationGlossaryTargetVariant,
+    AiTranslationGlossaryTargetVariantObject, AiTranslationNoTranslationHint, AiTranslationRequest,
+    AiTranslationResponse,
 };
 use crate::ai_secret_storage::load_ai_provider_secret;
 use crate::project_import::unescaped_footnote_marker_sequence;
@@ -377,7 +377,6 @@ fn parse_translation_sections_response(text: &str) -> Result<AiTranslationRespon
                 translated_footnote: parsed.translated_footnote,
                 translated_image_caption: parsed.translated_image_caption,
                 prompt_text: String::new(),
-                provider_continuation: None,
             });
         }
     }
@@ -964,7 +963,6 @@ pub(crate) fn run_ai_translation_batch(
             provider_id: request.provider_id,
             model_id: request.model_id.clone(),
             prompt: prompt.clone(),
-            previous_response_id: None,
             output_format: AiPromptOutputFormat::TranslationBatchJson,
         },
         &api_key,
@@ -1000,7 +998,6 @@ pub(crate) fn run_ai_review_batch(
             provider_id: request.provider_id,
             model_id: request.model_id.clone(),
             prompt: prompt.clone(),
-            previous_response_id: None,
             output_format: AiPromptOutputFormat::ReviewBatchJson,
         },
         &api_key,
@@ -2168,7 +2165,6 @@ fn build_glossary_alignment_prompt_request(
         provider_id: request.provider_id,
         model_id: request.model_id.clone(),
         prompt: build_glossary_alignment_prompt(request, glossary_source_text, matches),
-        previous_response_id: None,
         output_format: AiPromptOutputFormat::GlossaryAlignmentJson,
     }
 }
@@ -2296,7 +2292,6 @@ pub(crate) fn run_ai_review(
             provider_id: request.provider_id,
             model_id: request.model_id.clone(),
             prompt: prompt.clone(),
-            previous_response_id: None,
             output_format: if structured_review_mode.is_some() {
                 AiPromptOutputFormat::ReviewJson
             } else {
@@ -2367,7 +2362,6 @@ fn prepare_ai_translated_glossary_with_rows(
                 provider_id: request.provider_id,
                 model_id: request.model_id.clone(),
                 prompt: build_translation_prompt(&build_pivot_translation_request(&request)),
-                previous_response_id: None,
                 output_format: AiPromptOutputFormat::Text,
             },
             &api_key,
@@ -2528,7 +2522,6 @@ pub(crate) fn run_ai_translation(
             provider_id: request.provider_id,
             model_id: request.model_id.clone(),
             prompt: prompt.clone(),
-            previous_response_id: None,
             output_format: if sectioned_output {
                 AiPromptOutputFormat::TranslationSectionsJson
             } else {
@@ -2541,10 +2534,6 @@ pub(crate) fn run_ai_translation(
     if sectioned_output {
         let mut parsed = parse_translation_sections_response(&response.text)?;
         parsed.prompt_text = prompt;
-        parsed.provider_continuation = Some(AiProviderContinuationMetadata {
-            previous_response_id: None,
-            provider_response_id: response.provider_response_id,
-        });
         return Ok(parsed);
     }
 
@@ -2553,10 +2542,6 @@ pub(crate) fn run_ai_translation(
         translated_footnote: String::new(),
         translated_image_caption: String::new(),
         prompt_text: prompt,
-        provider_continuation: Some(AiProviderContinuationMetadata {
-            previous_response_id: None,
-            provider_response_id: response.provider_response_id,
-        }),
     })
 }
 
@@ -2591,7 +2576,6 @@ pub(crate) fn run_ai_assistant_turn(
             provider_id: request.provider_id,
             model_id: request.model_id.clone(),
             prompt: prompt.clone(),
-            previous_response_id: None,
             output_format: AiPromptOutputFormat::AssistantTurnJson,
         },
         &api_key,
@@ -2614,10 +2598,6 @@ pub(crate) fn run_ai_assistant_turn(
         draft_translation_text: structured_response.draft_translation_text,
         prompt_text: prompt,
         raw_response: response.text,
-        provider_continuation: Some(AiProviderContinuationMetadata {
-            previous_response_id: None,
-            provider_response_id: response.provider_response_id,
-        }),
     })
 }
 
@@ -3535,7 +3515,6 @@ mod tests {
             concordance_hits: vec![],
             reply_language_hint: String::new(),
             installation_id: None,
-            provider_continuation: None,
         }
     }
 

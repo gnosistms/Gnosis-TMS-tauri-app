@@ -31,7 +31,6 @@ import {
   applyEditorAssistantItemApplyFailed,
   applyEditorAssistantPending,
   applyEditorAssistantPromptedRowTextSnapshot,
-  applyEditorAssistantProviderContinuity,
   applyEditorAssistantThinking,
   clearEditorAssistantPending,
   updateEditorAssistantItem,
@@ -1084,14 +1083,6 @@ async function resolveAssistantGlossaryHints(context, providerId, modelId, allow
   };
 }
 
-function resolveProviderModelKey(providerId, modelId) {
-  const normalizedProviderId = typeof providerId === "string" ? providerId.trim() : "";
-  const normalizedModelId = typeof modelId === "string" ? modelId.trim() : "";
-  return normalizedProviderId && normalizedModelId
-    ? `${normalizedProviderId}::${normalizedModelId}`
-    : "";
-}
-
 function rowTextUpdatesSinceLastAssistantPrompt(thread, context) {
   if (thread?.hasPromptedRowTextSnapshot !== true) {
     return {};
@@ -1359,16 +1350,6 @@ export async function runEditorAiAssistant(render) {
       requestPayload.row?.sourceText ?? "",
       requestPayload.row?.targetText ?? "",
     );
-
-    if (payload?.providerContinuation) {
-      const providerModelKey = resolveProviderModelKey(providerId, modelId);
-      state.editorChapter = applyEditorAssistantProviderContinuity(
-        state.editorChapter,
-        context.threadKey,
-        providerModelKey,
-        payload.providerContinuation,
-      );
-    }
 
     if (intent.includeDocumentDigest && payload?.assistantText && documentDigest?.revisionKey) {
       state.editorChapter = applyEditorAssistantDocumentDigest(
@@ -1644,15 +1625,6 @@ export function logEditorAssistantTranslation(payload = {}, options = {}) {
       targetLanguageCode: payload.targetLanguageCode,
     },
   );
-  if (payload.providerContinuation) {
-    const providerModelKey = resolveProviderModelKey(payload.providerId, payload.modelId);
-    state.editorChapter = applyEditorAssistantProviderContinuity(
-      state.editorChapter,
-      threadKey,
-      providerModelKey,
-      payload.providerContinuation,
-    );
-  }
   if (options.persist !== false) {
     persistAssistantState();
   }
@@ -1703,14 +1675,5 @@ export function logEditorAssistantTranslationDraft(payload = {}) {
       targetLanguageCode: payload.targetLanguageCode,
     },
   );
-  if (payload.providerContinuation) {
-    const providerModelKey = resolveProviderModelKey(payload.providerId, payload.modelId);
-    state.editorChapter = applyEditorAssistantProviderContinuity(
-      state.editorChapter,
-      threadKey,
-      providerModelKey,
-      payload.providerContinuation,
-    );
-  }
   persistAssistantState();
 }

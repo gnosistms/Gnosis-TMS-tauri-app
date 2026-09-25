@@ -708,7 +708,6 @@ export function createEditorAssistantThreadState() {
     sourceLanguageCode: null,
     targetLanguageCode: null,
     items: [],
-    providerContinuityByModelKey: {},
     lastPromptedSourceText: "",
     lastPromptedTargetText: "",
     hasPromptedRowTextSnapshot: false,
