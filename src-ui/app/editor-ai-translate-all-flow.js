@@ -634,7 +634,6 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
       translatedFootnote: translatedSectionValue(rowResult, "translatedFootnote"),
       translatedImageCaption: translatedSectionValue(rowResult, "translatedImageCaption"),
       appliedText: translatedSectionValue(rowResult, "translatedText"),
-      providerContinuation: null,
       summary: `${AI_ACTION_LABELS[BATCH_TRANSLATE_ACTION_ID]} applied to ${context.targetLanguageLabel}.`,
     }, {
       // Persisting the assistant cache clones and IPCs the whole cross-chapter

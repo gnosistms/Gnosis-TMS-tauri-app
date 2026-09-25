@@ -1,19 +1,37 @@
-const OPENAI_BILLING_URL = "https://platform.openai.com/settings/organization/billing/";
+// Out-of-credits errors per provider: the phrases the provider's message
+// contains, and where the account owner adds credits. Anthropic returns
+// "Your credit balance is too low to access the Anthropic API…" (HTTP 400).
+const NO_CREDITS_BY_PROVIDER = {
+  openai: {
+    label: "OpenAI",
+    billingUrl: "https://platform.openai.com/settings/organization/billing/",
+    phrases: ["no credits remaining", "run out of credits", "add credits to continue"],
+  },
+  claude: {
+    label: "Claude",
+    billingUrl: "https://platform.claude.com/settings/billing",
+    phrases: ["credit balance is too low"],
+  },
+};
 
 function normalizedErrorText(message) {
   return String(message ?? "").trim().toLowerCase();
 }
 
-export function isOpenAiNoCreditsError(providerId, message) {
-  if (String(providerId ?? "").trim().toLowerCase() !== "openai") {
-    return false;
+/** Label and billing URL when `message` is this provider's out-of-credits error, else null. */
+export function aiProviderNoCreditsInfo(providerId, message) {
+  const entry = NO_CREDITS_BY_PROVIDER[String(providerId ?? "").trim().toLowerCase()];
+  if (!entry) {
+    return null;
   }
   const normalized = normalizedErrorText(message);
-  return (
-    normalized.includes("no credits remaining")
-    || normalized.includes("run out of credits")
-    || normalized.includes("add credits to continue")
-  );
+  return entry.phrases.some((phrase) => normalized.includes(phrase))
+    ? { label: entry.label, billingUrl: entry.billingUrl }
+    : null;
+}
+
+export function isAiProviderNoCreditsError(providerId, message) {
+  return aiProviderNoCreditsInfo(providerId, message) !== null;
 }
 
 export function isAiProviderAuthenticationError(message) {
@@ -42,9 +60,8 @@ export function classifyAiProviderOperationalError(message) {
     return "rate_limited";
   }
   if (
-    normalized.includes("no credits remaining")
-    || normalized.includes("run out of credits")
-    || normalized.includes("add credits to continue")
+    Object.values(NO_CREDITS_BY_PROVIDER)
+      .some((entry) => entry.phrases.some((phrase) => normalized.includes(phrase)))
   ) {
     return "quota_exhausted";
   }
@@ -53,8 +70,9 @@ export function classifyAiProviderOperationalError(message) {
 
 export function formatAiProviderActionError(providerId, message) {
   const fallback = String(message ?? "").trim();
-  if (!isOpenAiNoCreditsError(providerId, fallback)) {
+  const noCredits = aiProviderNoCreditsInfo(providerId, fallback);
+  if (!noCredits) {
     return fallback;
   }
-  return `Your OpenAI account has run out of credits. Add credits at ${OPENAI_BILLING_URL} and try again.`;
+  return `Your ${noCredits.label} account has run out of credits. Add credits at ${noCredits.billingUrl} and try again.`;
 }

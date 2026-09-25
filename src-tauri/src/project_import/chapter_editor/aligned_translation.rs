@@ -305,11 +305,11 @@ pub(crate) fn preflight_aligned_translation_to_gtms_chapter_sync(
     input: AlignedTranslationPreflightInput,
 ) -> Result<AlignedTranslationPreflightResponse, String> {
     let mut input = input;
-    if input.provider_id != AiProviderId::OpenAi {
-        return Err("Add translation currently requires OpenAI.".to_string());
+    if !alignment_supports_provider(input.provider_id) {
+        return Err("Add translation currently requires OpenAI or Claude.".to_string());
     }
     if input.model_id.trim().is_empty() {
-        return Err("Select an OpenAI model before adding translation.".to_string());
+        return Err("Select an AI model before adding translation.".to_string());
     }
     prune_stale_alignment_jobs(app, input.installation_id);
 
@@ -1057,14 +1057,7 @@ fn short_text_compatibility(
     job: &AlignmentJob,
     api_key: &str,
 ) -> Result<bool, String> {
-    let prompt_input = json!({
-        "sourceUnits": prompt_units(&job.source_units),
-        "targetUnits": prompt_units(&job.target_units),
-    });
-    let prompt = format!(
-        "Determine whether the target text is a translation or partial translation of the source text. Return only the schema fields.\n\nInput:\n{}",
-        serde_json::to_string(&prompt_input).unwrap_or_default()
-    );
+    let prompt = build_compatibility_prompt(&job.source_units, &job.target_units);
     let response: CompatibilityResponse = run_cached_json_prompt(
         app,
         job,
@@ -1122,16 +1115,7 @@ fn summarize_sections(
         } else {
             &job.target_base_language_code
         };
-        let input = json!({
-            "docRole": doc_role,
-            "sectionId": section.section_id,
-            "language": language,
-            "units": prompt_units(&units),
-        });
-        let prompt = format!(
-            "Summarize this {language} document section in approximately 100 words in {language}. Do not translate the summary to another language.\n\nInput:\n{}",
-            serde_json::to_string(&input).unwrap_or_default()
-        );
+        let prompt = build_section_summary_prompt(doc_role, section.section_id, language, &units);
         let response: SummaryResponse = run_cached_json_prompt(
             app,
             job,
@@ -1207,14 +1191,7 @@ fn find_section_matches(
                 "Comparing section summaries",
             ),
         );
-        let input = json!({
-            "targetSection": prompt_summary(target),
-            "sourceCandidates": source_summaries.iter().map(prompt_summary).collect::<Vec<_>>(),
-        });
-        let prompt = format!(
-            "A match means the target section and source section contain overlapping rows. Because sections overlap by 50%, each target section typically has about three matches. Return every source candidate with match/no-match and estimated percent overlap. Do not explain.\n\nInput:\n{}",
-            serde_json::to_string(&input).unwrap_or_default()
-        );
+        let prompt = build_section_match_prompt(target, &source_summaries);
         let response: SectionMatchResponse = run_cached_json_prompt(
             app,
             job,
@@ -2490,7 +2467,7 @@ fn run_cached_json_prompt<T: for<'de> Deserialize<'de>>(
         cached_validated_response(&cache_dir.join(format!("{key}.json")), validate, || {
             cache_hit = false;
             let (value, measured_usage) =
-                run_json_prompt(job, api_key, schema_name, schema, prompt)?;
+                run_json_prompt(job, api_key, schema_name, schema.clone(), prompt)?;
             usage = measured_usage;
             Ok(value)
         });
@@ -2507,18 +2484,32 @@ fn run_cached_json_prompt<T: for<'de> Deserialize<'de>>(
     result
 }
 
+/// A response that parses but fails validation (for example a list that stops
+/// before every item) is requested once more before the error reaches the
+/// user; models occasionally return such a list. Request failures are not
+/// retried here.
 fn cached_validated_response<T: for<'de> Deserialize<'de>>(
     path: &Path,
     validate: impl Fn(&T) -> Result<(), String>,
-    request: impl FnOnce() -> Result<Value, String>,
+    mut request: impl FnMut() -> Result<Value, String>,
 ) -> Result<T, String> {
     if let Some(response) = read_validated_response(path, &validate)? {
         return Ok(response);
     }
-    let value = request()?;
-    let response: T = serde_json::from_value(value.clone())
-        .map_err(|error| format!("The alignment response was invalid: {error}"))?;
-    validate(&response)?;
+    let checked = |value: &Value| -> Result<T, String> {
+        let response: T = serde_json::from_value(value.clone())
+            .map_err(|error| format!("The alignment response was invalid: {error}"))?;
+        validate(&response)?;
+        Ok(response)
+    };
+    let mut value = request()?;
+    let response = match checked(&value) {
+        Ok(response) => response,
+        Err(_) => {
+            value = request()?;
+            checked(&value)?
+        }
+    };
     write_alignment_json_atomic(path, &value)?;
     Ok(response)
 }
@@ -2589,31 +2580,36 @@ impl From<AlignmentPromptError> for String {
 fn parse_alignment_json(text: &str, schema_name: &str) -> Result<Value, AlignmentPromptError> {
     serde_json::from_str(text).map_err(|_| {
         AlignmentPromptError::InvalidJson(format!(
-            "OpenAI returned invalid {schema_name} JSON. Retry alignment."
+            "The AI model returned invalid {schema_name} JSON. Retry alignment."
         ))
     })
 }
 
-// Alignment is OpenAI-only. Keep usage local to this workflow instead of changing
-// the response contract for unrelated AI actions/providers.
+/// Providers whose structured JSON output alignment has been verified with
+/// (plans/claude-ai-parity-plan.md). Every alignment stage needs output that
+/// matches a caller-supplied schema.
+fn alignment_supports_provider(provider_id: AiProviderId) -> bool {
+    matches!(provider_id, AiProviderId::OpenAi | AiProviderId::Claude)
+}
+
 fn run_json_prompt(
     job: &AlignmentJob,
     api_key: &str,
     schema_name: &str,
     schema: Value,
     prompt: &str,
-) -> Result<(Value, Option<providers::openai::OpenAiUsage>), AlignmentPromptError> {
+) -> Result<(Value, Option<Value>), AlignmentPromptError> {
     let (response, usage) = splits::with_request_slot(|| {
-        providers::openai::run_prompt_with_usage(
+        providers::run_prompt_with_usage(
             &AiPromptRequest {
                 provider_id: job.provider_id,
                 model_id: job.model_id.clone(),
                 prompt: prompt.to_string(),
-                previous_response_id: None,
                 output_format: AiPromptOutputFormat::JsonSchema {
                     name: schema_name.to_string(),
                     schema,
                 },
+                prompt_blocks: None,
             },
             api_key,
         )
@@ -2631,7 +2627,7 @@ fn log_alignment_request(
     started: Instant,
     cache_hit: bool,
     status: &str,
-    usage: Option<&providers::openai::OpenAiUsage>,
+    usage: Option<&Value>,
 ) {
     let metadata = json!({"stage":stage, "model":job.model_id,
         "sourceUnits":job.source_units.len(), "targetUnits":job.target_units.len(),
@@ -2646,6 +2642,53 @@ fn prompt_unit(unit: &AlignmentUnit) -> Value {
 
 fn prompt_units(units: &[AlignmentUnit]) -> Vec<Value> {
     units.iter().map(prompt_unit).collect()
+}
+
+fn build_compatibility_prompt(
+    source_units: &[AlignmentUnit],
+    target_units: &[AlignmentUnit],
+) -> String {
+    let prompt_input = json!({
+        "sourceUnits": prompt_units(source_units),
+        "targetUnits": prompt_units(target_units),
+    });
+    format!(
+        "Determine whether the target text is a translation or partial translation of the source text. Return only the schema fields.\n\nInput:\n{}",
+        serde_json::to_string(&prompt_input).unwrap_or_default()
+    )
+}
+
+fn build_section_summary_prompt(
+    doc_role: &str,
+    section_id: usize,
+    language: &str,
+    units: &[AlignmentUnit],
+) -> String {
+    let input = json!({
+        "docRole": doc_role,
+        "sectionId": section_id,
+        "language": language,
+        "units": prompt_units(units),
+    });
+    format!(
+        "Summarize this {language} document section in approximately 100 words in {language}. Do not translate the summary to another language.\n\nInput:\n{}",
+        serde_json::to_string(&input).unwrap_or_default()
+    )
+}
+
+fn build_section_match_prompt(
+    target: &SectionSummary,
+    source_summaries: &[SectionSummary],
+) -> String {
+    let input = json!({
+        "targetSection": prompt_summary(target),
+        "sourceCandidates": source_summaries.iter().map(prompt_summary).collect::<Vec<_>>(),
+    });
+    format!(
+        "A match means the target section and source section contain overlapping rows. Because sections overlap by 50%, each target section typically has about three matches. Return every source candidate with match/no-match and estimated percent overlap: exactly {} entries, one per sourceCandidates item. Do not explain.\n\nInput:\n{}",
+        source_summaries.len(),
+        serde_json::to_string(&input).unwrap_or_default()
+    )
 }
 
 fn prompt_summary(summary: &SectionSummary) -> Value {
@@ -2685,7 +2728,8 @@ fn build_row_alignment_prompt(
         "targetUnits": prompt_units(target_units),
     });
     Ok(format!(
-        "You align translated target-language text units to authoritative source-language text units.\n\nRules:\n- Return every target unit exactly once.\n- Return only targetId and sourceIds.\n- Use sourceIds: [] when no source text matches.\n- One target can match multiple source ids.\n- Multiple targets can reference the same source id.\n- Never copy text in the response.\n\nInput:\n{}",
+        "You align translated target-language text units to authoritative source-language text units.\n\nRules:\n- Return every target unit exactly once: {} alignments in total.\n- Return only targetId and sourceIds.\n- Use sourceIds: [] when no source text matches.\n- One target can match multiple source ids.\n- Multiple targets can reference the same source id.\n- Never copy text in the response.\n\nInput:\n{}",
+        target_units.len(),
         serde_json::to_string(&input).map_err(|error| format!("Could not serialize prompt input: {error}"))?
     ))
 }
@@ -2708,20 +2752,20 @@ fn validate_alignments(
     for alignment in response.alignments {
         if !target_ids.contains(&alignment.target_id) {
             return Err(format!(
-                "GPT returned target id {}, but that target unit is not in the input.",
+                "The AI model returned target id {}, but that target unit is not in the input.",
                 alignment.target_id
             ));
         }
         if !seen.insert(alignment.target_id) {
             return Err(format!(
-                "GPT returned target id {} more than once.",
+                "The AI model returned target id {} more than once.",
                 alignment.target_id
             ));
         }
         for source_id in &alignment.source_ids {
             if !source_ids.contains(source_id) {
                 return Err(format!(
-                    "GPT aligned target id {} to unknown source id {}.",
+                    "The AI model aligned target id {} to unknown source id {}.",
                     alignment.target_id, source_id
                 ));
             }
@@ -2731,7 +2775,7 @@ fn validate_alignments(
     for target_id in target_ids {
         if !seen.contains(&target_id) {
             return Err(format!(
-                "GPT did not return alignment for target id {target_id}."
+                "The AI model did not return alignment for target id {target_id}."
             ));
         }
     }
@@ -3103,6 +3147,55 @@ fn split_schema() -> Value {
 mod tests {
     use super::*;
 
+    #[test]
+    fn alignment_runs_on_openai_and_claude_only() {
+        assert!(alignment_supports_provider(AiProviderId::OpenAi));
+        assert!(alignment_supports_provider(AiProviderId::Claude));
+        assert!(!alignment_supports_provider(AiProviderId::Gemini));
+        assert!(!alignment_supports_provider(AiProviderId::DeepSeek));
+    }
+
+    fn schema_keys(value: &Value, keys: &mut Vec<String>) {
+        match value {
+            Value::Object(object) => {
+                for (key, child) in object {
+                    keys.push(key.clone());
+                    schema_keys(child, keys);
+                }
+            }
+            Value::Array(items) => items.iter().for_each(|item| schema_keys(item, keys)),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn every_alignment_schema_converts_for_claude_structured_output() {
+        for schema in [
+            compatibility_schema(),
+            summary_schema(),
+            section_match_schema(),
+            alignment_schema(),
+            split_schema(),
+        ] {
+            let converted = providers::claude::claude_compatible_schema(&schema);
+            let mut keys = Vec::new();
+            schema_keys(&converted, &mut keys);
+            for rejected in ["minimum", "maximum", "minLength"] {
+                assert!(
+                    !keys.iter().any(|key| key == rejected),
+                    "{rejected} left in {converted}"
+                );
+            }
+            // Only range and length limits are removed; the validators check
+            // them after parsing. Structure and required fields stay.
+            let mut original_keys = Vec::new();
+            schema_keys(&schema, &mut original_keys);
+            original_keys
+                .retain(|key| !["minimum", "maximum", "minLength"].contains(&key.as_str()));
+            assert_eq!(keys, original_keys);
+        }
+    }
+
     fn alignment_test_context() -> AlignmentContext {
         let rows = ["We left early.", "We arrived on time."].iter().enumerate().map(|(index, text)| {
             serde_json::from_value(json!({
@@ -3352,6 +3445,43 @@ mod tests {
             "after sync; translation"
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn invalid_responses_are_requested_once_more_and_request_errors_are_not() {
+        let root = std::env::temp_dir().join(format!("alignment-retry-{}", uuid::Uuid::now_v7()));
+        let validate = |value: &Value| {
+            if value.get("ok").and_then(Value::as_bool) == Some(true) {
+                Ok(())
+            } else {
+                Err("incomplete".to_string())
+            }
+        };
+        let calls = std::cell::Cell::new(0);
+        let recovered = cached_validated_response::<Value>(&root.join("a.json"), validate, || {
+            calls.set(calls.get() + 1);
+            Ok(json!({"ok": calls.get() == 2}))
+        })
+        .unwrap();
+        assert_eq!((recovered, calls.get()), (json!({"ok": true}), 2));
+
+        calls.set(0);
+        let error = cached_validated_response::<Value>(&root.join("b.json"), validate, || {
+            calls.set(calls.get() + 1);
+            Ok(json!({"ok": false}))
+        })
+        .unwrap_err();
+        assert_eq!((error.as_str(), calls.get()), ("incomplete", 2));
+        assert!(!root.join("b.json").exists());
+
+        calls.set(0);
+        cached_validated_response::<Value>(&root.join("c.json"), validate, || {
+            calls.set(calls.get() + 1);
+            Err("provider failed".to_string())
+        })
+        .unwrap_err();
+        assert_eq!(calls.get(), 1);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

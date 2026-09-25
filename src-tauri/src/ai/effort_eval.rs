@@ -27,7 +27,8 @@
 //! Optional environment: `GNOSIS_EVAL_CLAUDE_MODEL` (default `claude-opus-5-5`),
 //! `GNOSIS_EVAL_CLAUDE_EFFORTS` (default `low,medium,high`),
 //! `GNOSIS_EVAL_OPENAI_MODEL` (default `gpt-5.4`), `GNOSIS_EVAL_OPENAI_EFFORTS`
-//! (default `none,low`; empty to skip OpenAI), `GNOSIS_EVAL_REPEATS` (default 1).
+//! (default `none,low`; `default` sends no reasoning parameter, as the app does;
+//! empty to skip OpenAI), `GNOSIS_EVAL_REPEATS` (default 1).
 
 use std::collections::{BTreeMap, HashMap};
 use std::env;
@@ -111,6 +112,8 @@ struct CallResult {
 
 fn static_effort(value: &str) -> Option<&'static str> {
     match value.trim() {
+        // No reasoning parameter: the model's default, as the app sends it.
+        "default" => Some("default"),
         "none" => Some("none"),
         "minimal" => Some("minimal"),
         "low" => Some("low"),
@@ -180,8 +183,8 @@ fn call(
         provider_id: config.provider_id(),
         model_id: config.model.clone(),
         prompt,
-        previous_response_id: None,
         output_format,
+        prompt_blocks: None,
     };
     let started = Instant::now();
     let outcome = match config.provider {

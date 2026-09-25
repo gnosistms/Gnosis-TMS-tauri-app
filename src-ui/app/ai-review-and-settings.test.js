@@ -662,7 +662,7 @@ test("runEditorAiReview translation mode uses the same review request shape as R
   await runEditorAiReview(() => {}, "meaning");
 
   assert.equal(reviewPayload.request.providerId, "openai");
-  assert.equal(reviewPayload.request.modelId, "gpt-5.4");
+  assert.equal(reviewPayload.request.modelId, "gpt-6-astra");
   assert.equal(reviewPayload.request.reviewMode, "meaning");
   assert.equal(reviewPayload.request.text, "Ban dich hien tai");
   assert.equal(reviewPayload.request.latestTranslation, "Ban dich hien tai");
@@ -881,9 +881,6 @@ test("runEditorAiTranslate uses the configured translate action and creates an a
       });
       return {
         translatedText: "Xin chao",
-        providerContinuation: {
-          providerResponseId: "resp_translate_1",
-        },
       };
     }
 
@@ -913,12 +910,6 @@ test("runEditorAiTranslate uses the configured translate action and creates an a
   assert.equal(draft?.draftTranslationText, "Xin chao");
   assert.equal(draft?.sourceLanguageCode, "es");
   assert.equal(draft?.targetLanguageCode, "vi");
-  assert.equal(
-    state.editorChapter.assistant.threadsByKey["row-1::es::vi"]
-      .providerContinuityByModelKey["openai::gpt-5.4-mini"]
-      .providerResponseId,
-    "resp_translate_1",
-  );
   assert.equal(state.editorChapter.aiTranslate.translate1.status, "idle");
 });
 
@@ -5121,14 +5112,28 @@ test("model list refresh keeps a chosen OpenAI model that is no longer listed", 
 test("model list refresh repicks the never-configured default to the newest flagship", async () => {
   resetSessionState();
   state.screen = "aiKey";
-  assert.equal(state.aiSettings.actionConfig.unified.modelId, "gpt-5.4");
-  installOpenAiAstraModelListHandler();
+  assert.equal(state.aiSettings.actionConfig.unified.modelId, "gpt-6-astra");
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_ai_provider_secret") {
+      return payload.providerId === "openai" ? "sk-openai" : null;
+    }
+    if (command === "validate_ai_provider_secret" || command === "list_ai_provider_models") {
+      // The default is no longer listed, as happens once newer models ship.
+      return [
+        { id: "gpt-6.1-astra", label: "gpt-6.1-astra" },
+        { id: "gpt-6.1-terra", label: "gpt-6.1-terra" },
+        { id: "gpt-5.6-sol", label: "gpt-5.6-sol" },
+      ];
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
 
   await refreshAiSavedProviders(() => {});
 
   assert.deepEqual(state.aiSettings.actionConfig.unified, {
     providerId: "openai",
-    modelId: "gpt-6-astra",
+    modelId: "gpt-6.1-astra",
   });
 });
 
@@ -6584,6 +6589,53 @@ test("OpenAI no-credit model probes show billing guidance instead of model advic
   assert.equal(
     state.aiSettings.modelErrorModal.message,
     "Add credits at https://platform.openai.com/settings/organization/billing/ and try again.",
+  );
+});
+
+test("Claude no-credit model probes show billing guidance instead of model advice", async () => {
+  resetSessionState();
+  state.screen = "aiKey";
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      savedProviderIds: ["claude"],
+      unified: {
+        providerId: "claude",
+        modelId: "claude-opus-5-5",
+      },
+      modelOptionsByProvider: {
+        ...state.aiSettings.actionConfig.modelOptionsByProvider,
+        claude: {
+          status: "ready",
+          error: "",
+          options: [{ id: "claude-opus-5-5", label: "claude-opus-5-5" }],
+          hasLoaded: true,
+        },
+      },
+    },
+  };
+
+  invokeHandler = async (command) => {
+    if (command === "probe_ai_provider_model") {
+      throw new Error(
+        "Claude returned an error: Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+      );
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await updateAiActionModel(() => {}, "unified", "claude-opus-5-5");
+
+  assert.equal(state.aiSettings.modelErrorModal.eyebrow, "CLAUDE BILLING");
+  assert.equal(
+    state.aiSettings.modelErrorModal.title,
+    "Your Claude account has run out of credits.",
+  );
+  assert.equal(state.aiSettings.modelErrorModal.banner, "");
+  assert.equal(
+    state.aiSettings.modelErrorModal.message,
+    "Add credits at https://platform.claude.com/settings/billing and try again.",
   );
 });
 

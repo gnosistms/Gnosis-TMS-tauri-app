@@ -8,6 +8,8 @@ mod sse;
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use serde_json::Value;
+
 use crate::ai::types::{AiPromptRequest, AiPromptResponse, AiProviderId, AiProviderModel};
 
 static SHARED_HTTP_CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
@@ -78,6 +80,31 @@ fn read_failure_message(provider_name: &str, is_timeout: bool) -> String {
     }
 }
 
+/// Debug builds log token and cache counts for prompts sent with cache
+/// boundaries (`prompt_blocks`, currently only AI Assistant turns), so cache
+/// hits can be checked in `npm run tauri:dev`. No prompt text is logged.
+/// Claude reports uncached input, cache reads and cache writes separately;
+/// OpenAI reports total input including cached tokens, and no writes.
+pub(crate) fn log_prompt_cache_usage(
+    provider_name: &str,
+    request: &AiPromptRequest,
+    input_tokens: Option<u64>,
+    cache_read_tokens: Option<u64>,
+    cache_write_tokens: Option<u64>,
+) {
+    if !cfg!(debug_assertions) || request.prompt_blocks.is_none() {
+        return;
+    }
+    let count = |value: Option<u64>| value.map_or_else(|| "-".to_string(), |n| n.to_string());
+    eprintln!(
+        "[gtms ai-cache] provider={provider_name} model={} input={} cache_read={} cache_write={}",
+        request.model_id.trim(),
+        count(input_tokens),
+        count(cache_read_tokens),
+        count(cache_write_tokens),
+    );
+}
+
 pub(crate) fn shared_http_client() -> Result<&'static reqwest::blocking::Client, String> {
     if let Some(client) = SHARED_HTTP_CLIENT.get() {
         return Ok(client);
@@ -115,6 +142,29 @@ pub(crate) fn run_prompt(
         AiProviderId::Gemini => gemini::run_prompt(request, api_key),
         AiProviderId::Claude => claude::run_prompt(request, api_key),
         AiProviderId::DeepSeek => deepseek::run_prompt(request, api_key),
+    }
+}
+
+/// Runs a prompt and returns the provider's token-usage report as JSON, for
+/// providers that supply one (OpenAI and Claude; `None` otherwise). Used by
+/// add-translation alignment, which logs usage per request.
+pub(crate) fn run_prompt_with_usage(
+    request: &AiPromptRequest,
+    api_key: &str,
+) -> Result<(AiPromptResponse, Option<Value>), String> {
+    match request.provider_id {
+        AiProviderId::OpenAi => {
+            openai::run_prompt_with_usage(request, api_key).map(|(response, usage)| {
+                (
+                    response,
+                    usage.and_then(|usage| serde_json::to_value(usage).ok()),
+                )
+            })
+        }
+        AiProviderId::Claude => claude::run_prompt_with_usage(request, api_key),
+        AiProviderId::Gemini | AiProviderId::DeepSeek => {
+            run_prompt(request, api_key).map(|response| (response, None))
+        }
     }
 }
 

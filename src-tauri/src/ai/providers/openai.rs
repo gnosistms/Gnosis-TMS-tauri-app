@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::ai::{
-    providers::{shared_http_client, sse},
+    providers::{log_prompt_cache_usage, shared_http_client, sse},
     types::{
         AiPromptOutputFormat, AiPromptRequest, AiPromptResponse, AiProviderModel, AiReviewResponse,
     },
@@ -29,8 +29,6 @@ struct OpenAiResponsesRequest<'a> {
     input: String,
     store: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    previous_response_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     max_output_tokens: Option<u32>,
     // Unset in the app: models run at their default reasoning effort
     // (`none` on gpt-5.4). The effort-calibration harness sets it.
@@ -41,13 +39,21 @@ struct OpenAiResponsesRequest<'a> {
 
 #[derive(Debug, Serialize)]
 struct OpenAiTextConfig {
+    // Structured output is generated in schema order, so the schema is sent
+    // in the order it was written, not serde_json's sorted order.
+    #[serde(serialize_with = "serialize_format_in_authored_order")]
     format: Value,
+}
+
+fn serialize_format_in_authored_order<S: serde::Serializer>(
+    format: &Value,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    super::schemas::InAuthoredOrder(format).serialize(serializer)
 }
 
 #[derive(Debug, Deserialize)]
 struct OpenAiResponsesCreateResponse {
-    #[serde(default)]
-    id: String,
     #[serde(default)]
     output_text: String,
     #[serde(default)]
@@ -275,7 +281,6 @@ fn build_probe_request(model_id: &str) -> OpenAiResponsesRequest<'_> {
         model: model_id,
         input: "Reply with OK.".to_string(),
         store: false,
-        previous_response_id: None,
         max_output_tokens: Some(OPENAI_PROBE_MAX_OUTPUT_TOKENS),
         reasoning: None,
         text: OpenAiTextConfig {
@@ -289,7 +294,6 @@ fn build_prompt_request(request: &AiPromptRequest) -> OpenAiResponsesRequest<'_>
         model: request.model_id.trim(),
         input: request.prompt.clone(),
         store: false,
-        previous_response_id: request.previous_response_id.clone(),
         max_output_tokens: None,
         reasoning: None,
         text: OpenAiTextConfig {
@@ -314,7 +318,18 @@ pub(crate) fn run_prompt(
     request: &AiPromptRequest,
     api_key: &str,
 ) -> Result<AiPromptResponse, String> {
-    run_prompt_with_usage(request, api_key).map(|(response, _)| response)
+    let (response, usage) = run_prompt_with_usage(request, api_key)?;
+    log_prompt_cache_usage(
+        "OpenAI",
+        request,
+        usage.as_ref().and_then(|usage| usage.input_tokens),
+        usage
+            .as_ref()
+            .and_then(|usage| usage.input_tokens_details.as_ref())
+            .and_then(|details| details.cached_tokens),
+        None,
+    );
+    Ok(response)
 }
 
 pub(crate) fn run_prompt_with_usage(
@@ -333,7 +348,9 @@ pub(crate) fn run_prompt_with_reasoning_effort(
     effort: &str,
 ) -> Result<(AiPromptResponse, Option<OpenAiUsage>), String> {
     let mut body = build_prompt_request(request);
-    body.reasoning = Some(json!({ "effort": effort }));
+    if effort != "default" {
+        body.reasoning = Some(json!({ "effort": effort }));
+    }
     send_prompt_request(&body, api_key)
 }
 
@@ -353,21 +370,10 @@ fn send_prompt_request(
     if let Some(error) = incomplete_response_error(&payload) {
         return Err(error);
     }
-    let provider_response_id = if payload.id.trim().is_empty() {
-        None
-    } else {
-        Some(payload.id.clone())
-    };
     let usage = payload.usage.clone();
     let text = extract_suggested_text(payload, "OpenAI returned an empty response.")?;
 
-    Ok((
-        AiPromptResponse {
-            text,
-            provider_response_id,
-        },
-        usage,
-    ))
+    Ok((AiPromptResponse { text }, usage))
 }
 
 /// A response that stopped early carries partial output; returning it would
@@ -983,8 +989,8 @@ mod tests {
             provider_id: AiProviderId::OpenAi,
             model_id: "gpt-5.4".to_string(),
             prompt: "Translate this.".to_string(),
-            previous_response_id: None,
             output_format: AiPromptOutputFormat::Text,
+            prompt_blocks: None,
         };
         let payload = serde_json::to_value(build_prompt_request(&request)).unwrap();
 
@@ -998,13 +1004,45 @@ mod tests {
     }
 
     #[test]
+    fn structured_output_schemas_keep_their_written_field_order() {
+        let body = |output_format: AiPromptOutputFormat| {
+            let request = AiPromptRequest {
+                provider_id: AiProviderId::OpenAi,
+                model_id: "gpt-6-astra".to_string(),
+                prompt: "Review these rows.".to_string(),
+                output_format,
+                prompt_blocks: None,
+            };
+            serde_json::to_string(&build_prompt_request(&request)).unwrap()
+        };
+        let in_order = |text: &str, names: &[&str]| {
+            let positions = names
+                .iter()
+                .map(|name| text.find(&format!("\"{name}\":{{")).unwrap())
+                .collect::<Vec<_>>();
+            positions.windows(2).all(|pair| pair[0] < pair[1])
+        };
+
+        let review = body(AiPromptOutputFormat::ReviewBatchJson);
+        assert!(in_order(
+            &review,
+            &["rowId", "suggestedText", "suggestedFootnotes", "reviewed"]
+        ));
+        let translation = body(AiPromptOutputFormat::TranslationBatchJson);
+        assert!(in_order(
+            &translation,
+            &["rowId", "translatedText", "translatedFootnote"]
+        ));
+    }
+
+    #[test]
     fn openai_assistant_prompt_request_uses_strict_json_schema_output_format() {
         let request = AiPromptRequest {
             provider_id: AiProviderId::OpenAi,
             model_id: "gpt-5.4".to_string(),
             prompt: "Return assistant JSON.".to_string(),
-            previous_response_id: Some("resp_123".to_string()),
             output_format: AiPromptOutputFormat::AssistantTurnJson,
+            prompt_blocks: None,
         };
         let payload = serde_json::to_value(build_prompt_request(&request)).unwrap();
 
@@ -1042,12 +1080,7 @@ mod tests {
                 "draftTranslationText"
             ])
         );
-        assert_eq!(
-            payload
-                .pointer("/previous_response_id")
-                .and_then(serde_json::Value::as_str),
-            Some("resp_123")
-        );
+        assert!(payload.get("previous_response_id").is_none());
     }
 
     #[test]
@@ -1056,8 +1089,8 @@ mod tests {
             provider_id: AiProviderId::OpenAi,
             model_id: "gpt-5.4".to_string(),
             prompt: "Return glossary alignment JSON.".to_string(),
-            previous_response_id: None,
             output_format: AiPromptOutputFormat::GlossaryAlignmentJson,
+            prompt_blocks: None,
         };
         let payload = serde_json::to_value(build_prompt_request(&request)).unwrap();
 
@@ -1111,8 +1144,8 @@ mod tests {
             provider_id: AiProviderId::OpenAi,
             model_id: "gpt-5.5".to_string(),
             prompt: "Return batch translation JSON.".to_string(),
-            previous_response_id: None,
             output_format: AiPromptOutputFormat::TranslationBatchJson,
+            prompt_blocks: None,
         };
         let payload = serde_json::to_value(build_prompt_request(&request)).unwrap();
 
@@ -1151,8 +1184,8 @@ mod tests {
             provider_id: AiProviderId::OpenAi,
             model_id: "gpt-5.5".to_string(),
             prompt: "Return batch review JSON.".to_string(),
-            previous_response_id: None,
             output_format: AiPromptOutputFormat::ReviewBatchJson,
+            prompt_blocks: None,
         };
         let payload = serde_json::to_value(build_prompt_request(&request)).unwrap();
 

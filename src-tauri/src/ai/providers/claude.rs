@@ -6,8 +6,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use crate::ai::{
-    providers::{schemas, shared_http_client, sse},
-    types::{AiPromptOutputFormat, AiPromptRequest, AiPromptResponse, AiProviderModel},
+    providers::{log_prompt_cache_usage, schemas, shared_http_client, sse},
+    types::{
+        AiPromptBlock, AiPromptOutputFormat, AiPromptRequest, AiPromptResponse, AiProviderModel,
+    },
 };
 
 const CLAUDE_API_VERSION: &str = "2023-06-01";
@@ -203,13 +205,64 @@ struct ClaudeOutputConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     effort: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    format: Option<Value>,
+    format: Option<ClaudeOutputFormat>,
+}
+
+#[derive(Debug, Serialize)]
+struct ClaudeOutputFormat {
+    #[serde(rename = "type")]
+    format_type: &'static str,
+    // Claude writes structured output fields in schema order, so the schema is
+    // sent in the order it was written, not serde_json's sorted order.
+    #[serde(serialize_with = "serialize_schema_in_authored_order")]
+    schema: Value,
+}
+
+fn serialize_schema_in_authored_order<S: serde::Serializer>(
+    schema: &Value,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    schemas::InAuthoredOrder(schema).serialize(serializer)
 }
 
 #[derive(Debug, Serialize)]
 struct ClaudeMessage<'a> {
     role: &'a str,
-    content: &'a str,
+    content: ClaudeMessageContent<'a>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum ClaudeMessageContent<'a> {
+    Text(&'a str),
+    Blocks(Vec<ClaudeTextBlock<'a>>),
+}
+
+#[derive(Debug, Serialize)]
+struct ClaudeTextBlock<'a> {
+    #[serde(rename = "type")]
+    block_type: &'static str,
+    text: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_control: Option<Value>,
+}
+
+/// Prompt blocks marked `cache` get a 5-minute cache breakpoint. Callers mark
+/// at most two, inside the API's limit of four.
+fn prompt_content(request: &AiPromptRequest) -> ClaudeMessageContent<'_> {
+    match &request.prompt_blocks {
+        Some(blocks) if !blocks.is_empty() => ClaudeMessageContent::Blocks(
+            blocks
+                .iter()
+                .map(|AiPromptBlock { text, cache }| ClaudeTextBlock {
+                    block_type: "text",
+                    text,
+                    cache_control: cache.then(|| json!({ "type": "ephemeral" })),
+                })
+                .collect(),
+        ),
+        _ => ClaudeMessageContent::Text(&request.prompt),
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -307,7 +360,7 @@ pub(crate) fn list_models(api_key: &str) -> Result<Vec<AiProviderModel>, String>
 
 /// Removes schema keywords Claude's structured outputs reject. Keys of a
 /// `properties` map are field names, not keywords, so they are never stripped.
-fn claude_compatible_schema(schema: &Value) -> Value {
+pub(crate) fn claude_compatible_schema(schema: &Value) -> Value {
     match schema {
         Value::Object(object) => {
             let mut cleaned = Map::new();
@@ -347,10 +400,10 @@ fn build_prompt_request<'a>(
     effort_override: Option<&'static str>,
 ) -> Result<ClaudeMessagesRequest<'a>, String> {
     let format = match schemas::output_schema(&request.output_format) {
-        Some(output) if capabilities.structured_outputs => Some(json!({
-            "type": "json_schema",
-            "schema": claude_compatible_schema(&output.schema),
-        })),
+        Some(output) if capabilities.structured_outputs => Some(ClaudeOutputFormat {
+            format_type: "json_schema",
+            schema: claude_compatible_schema(&output.schema),
+        }),
         // Built-in JSON formats fall back to the prompt's JSON instructions and
         // the tolerant parsers; a caller-supplied schema has no such fallback.
         Some(_)
@@ -377,7 +430,7 @@ fn build_prompt_request<'a>(
         max_tokens: CLAUDE_MAX_OUTPUT_TOKENS,
         messages: vec![ClaudeMessage {
             role: "user",
-            content: &request.prompt,
+            content: prompt_content(request),
         }],
         output_config,
         fallbacks: supports_refusal_fallback(model_id).then_some(CLAUDE_FALLBACK_MODE),
@@ -389,12 +442,31 @@ pub(crate) fn run_prompt(
     request: &AiPromptRequest,
     api_key: &str,
 ) -> Result<AiPromptResponse, String> {
-    let (text, _usage) = execute_prompt(request, api_key, None)?;
+    run_prompt_with_usage(request, api_key).map(|(response, _)| response)
+}
 
-    Ok(AiPromptResponse {
-        text,
-        provider_response_id: None,
-    })
+/// Runs a prompt and also returns Claude's usage report (input, output, cache
+/// read and cache write token counts).
+pub(crate) fn run_prompt_with_usage(
+    request: &AiPromptRequest,
+    api_key: &str,
+) -> Result<(AiPromptResponse, Option<Value>), String> {
+    let (text, usage) = execute_prompt(request, api_key, None)?;
+    let usage_count = |pointer: &str| {
+        usage
+            .as_ref()
+            .and_then(|usage| usage.pointer(pointer))
+            .and_then(Value::as_u64)
+    };
+    log_prompt_cache_usage(
+        "Claude",
+        request,
+        usage_count("/input_tokens"),
+        usage_count("/cache_read_input_tokens"),
+        usage_count("/cache_creation_input_tokens"),
+    );
+
+    Ok((AiPromptResponse { text }, usage))
 }
 
 /// Runs a prompt at a forced effort level and returns the provider's usage
@@ -621,7 +693,7 @@ pub(crate) fn probe_model(model_id: &str, api_key: &str) -> Result<(), String> {
             max_tokens: CLAUDE_PROBE_MAX_OUTPUT_TOKENS,
             messages: vec![ClaudeMessage {
                 role: "user",
-                content: "Reply with OK.",
+                content: ClaudeMessageContent::Text("Reply with OK."),
             }],
             output_config: None,
             fallbacks: None,
@@ -694,15 +766,15 @@ mod tests {
         interpret_messages_response, normalize_messages_response, ClaudeModelCapabilities,
         CLAUDE_MAX_OUTPUT_TOKENS,
     };
-    use crate::ai::types::{AiPromptOutputFormat, AiPromptRequest, AiProviderId};
+    use crate::ai::types::{AiPromptBlock, AiPromptOutputFormat, AiPromptRequest, AiProviderId};
 
     fn prompt_request(model_id: &str, output_format: AiPromptOutputFormat) -> AiPromptRequest {
         AiPromptRequest {
             provider_id: AiProviderId::Claude,
             model_id: model_id.to_string(),
             prompt: "Translate this.".to_string(),
-            previous_response_id: None,
             output_format,
+            prompt_blocks: None,
         }
     }
 
@@ -714,6 +786,120 @@ mod tests {
         let request = prompt_request(model_id, output_format);
         serde_json::to_value(build_prompt_request(&request, model_id, capabilities, None).unwrap())
             .unwrap()
+    }
+
+    #[test]
+    fn structured_output_schemas_keep_their_written_field_order() {
+        let body = |output_format: AiPromptOutputFormat| {
+            let request = prompt_request("claude-opus-5-5", output_format);
+            serde_json::to_string(
+                &build_prompt_request(
+                    &request,
+                    "claude-opus-5-5",
+                    ClaudeModelCapabilities::CURRENT,
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap()
+        };
+        let in_order = |text: &str, names: &[&str]| {
+            let positions = names
+                .iter()
+                .map(|name| text.find(&format!("\"{name}\":{{")).unwrap())
+                .collect::<Vec<_>>();
+            positions.windows(2).all(|pair| pair[0] < pair[1])
+        };
+
+        let review = body(AiPromptOutputFormat::ReviewBatchJson);
+        assert!(in_order(
+            &review,
+            &["rowId", "suggestedText", "suggestedFootnotes", "reviewed"]
+        ));
+        let translation = body(AiPromptOutputFormat::TranslationBatchJson);
+        assert!(in_order(
+            &translation,
+            &["rowId", "translatedText", "translatedFootnote"]
+        ));
+
+        let section_matches = body(AiPromptOutputFormat::JsonSchema {
+            name: "section_overlap_matches".to_string(),
+            schema: json!({
+                "type": "object",
+                "required": ["sourceSectionId", "isMatch", "overlapPercent"],
+                "properties": {
+                    "sourceSectionId": { "type": "integer" },
+                    "isMatch": { "type": "boolean" },
+                    "overlapPercent": { "type": "number" }
+                }
+            }),
+        });
+        assert!(in_order(
+            &section_matches,
+            &["sourceSectionId", "isMatch", "overlapPercent"]
+        ));
+    }
+
+    #[test]
+    fn plain_prompts_send_string_content_without_cache_control() {
+        let body = request_body(
+            "claude-opus-5-5",
+            AiPromptOutputFormat::TranslationBatchJson,
+            ClaudeModelCapabilities::CURRENT,
+        );
+
+        assert_eq!(body["messages"][0]["content"], json!("Translate this."));
+        assert!(!body.to_string().contains("cache_control"));
+    }
+
+    #[test]
+    fn prompt_blocks_send_text_blocks_with_cache_breakpoints() {
+        let mut request =
+            prompt_request("claude-opus-5-5", AiPromptOutputFormat::AssistantTurnJson);
+        request.prompt =
+            "Context\n\n<conversation_history>\n- user: Hi\n</conversation_history>\n\nAsk"
+                .to_string();
+        request.prompt_blocks = Some(vec![
+            AiPromptBlock {
+                text: "Context".to_string(),
+                cache: true,
+            },
+            AiPromptBlock {
+                text: "\n\n<conversation_history>\n- user: Hi".to_string(),
+                cache: true,
+            },
+            AiPromptBlock {
+                text: "\n</conversation_history>\n\nAsk".to_string(),
+                cache: false,
+            },
+        ]);
+        let body = serde_json::to_value(
+            build_prompt_request(
+                &request,
+                "claude-opus-5-5",
+                ClaudeModelCapabilities::CURRENT,
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let ephemeral = json!({"type": "ephemeral"});
+        assert_eq!(
+            body["messages"][0]["content"],
+            json!([
+                {"type": "text", "text": "Context", "cache_control": ephemeral},
+                {"type": "text", "text": "\n\n<conversation_history>\n- user: Hi", "cache_control": ephemeral},
+                {"type": "text", "text": "\n</conversation_history>\n\nAsk"},
+            ])
+        );
+        let joined = body["messages"][0]["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|block| block["text"].as_str().unwrap())
+            .collect::<String>();
+        assert_eq!(joined, request.prompt);
     }
 
     #[test]
