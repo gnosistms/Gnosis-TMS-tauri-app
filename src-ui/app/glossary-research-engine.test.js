@@ -224,3 +224,12 @@ test("sentences and expression spans", () => {
   const [s, e] = sentenceBounds(text, j, j + 5);
   assert.equal(text.slice(s, e), "Es un resultado fatal y funesto.");
 });
+
+test("forms differing only in capitals are merged, keeping the lowercase spelling", async () => {
+  const { mergeCaseVariants } = await import("./glossary-research-engine.js");
+  const merged = mergeCaseVariants(
+    ["Íntimo", "íntimo", "ÍNTIMO", "Intimo", "intimo", "íntimas"].map((form) => ({ form })),
+    (item) => item.form,
+  ).map((item) => item.form);
+  assert.deepEqual(merged, ["íntimo", "intimo", "íntimas"]);
+});

@@ -225,40 +225,58 @@ function renderLogEntry(entry) {
 function renderReview(research, targetName) {
   const proposal = research.proposalDraft;
   if (!proposal) return "";
-  const entries = proposal.entries.map((entry, entryIndex) => `
-    <section class="research-review__entry">
-      <header class="research-review__entry-head">
-        <span class="research-tag">${entry.kind === "expression" ? "Expression entry" : "Entry"}</span>
-        <button type="button" class="text-action" data-action="remove-research-entry:${entryIndex}">Remove entry</button>
-      </header>
-      <label class="field">
-        <span class="field__label">Source terms (comma-separated)</span>
-        <input class="field__input" type="text" value="${esc(entry.sourceTerms.join(", "))}" data-research-proposal="${entryIndex}:sourceTerms" />
-      </label>
-      <label class="field">
-        <span class="field__label">General note (${esc(targetName)})</span>
-        <textarea class="field__input" rows="2" data-research-proposal="${entryIndex}:generalNote">${esc(entry.generalNote)}</textarea>
-      </label>
-      <div class="research-review__variants">
-        ${entry.variants.map((variant, variantIndex) => `
-          <div class="research-review__variant">
-            <input class="field__input" type="text" value="${esc(variant.target)}" aria-label="Translation" data-research-proposal="${entryIndex}:variants:${variantIndex}:target" />
-            <textarea class="field__input" rows="2" aria-label="Usage note" data-research-proposal="${entryIndex}:variants:${variantIndex}:note">${esc(variant.note)}</textarea>
-            <button class="term-variant-row__action-button term-variant-row__action-button--remove" type="button"
-              data-action="remove-research-proposal-variant:${entryIndex}:${variantIndex}" aria-label="Remove this translation">
-              <span class="term-variant-row__remove-icon" aria-hidden="true"></span>
-            </button>
-            ${variant.fromExisting ? `<span class="research-tag research-tag--existing">existing</span>` : ""}
-            ${variant.rationale ? `<p class="research-review__why">${esc(variant.rationale)}</p>` : ""}
-          </div>`).join("")}
-        <div class="research-add-variant">
-          <button class="term-lane__add-button" type="button" data-action="add-research-proposal-variant:${entryIndex}" aria-label="Add translation">
-            <span class="term-lane__add-icon" aria-hidden="true"></span>
+  let wordNumber = 0;
+  let expressionNumber = 0;
+  const entries = proposal.entries.map((entry, entryIndex) => {
+    const isExpression = entry.kind === "expression";
+    const heading = isExpression ? `Expression entry ${++expressionNumber}` : `Entry ${++wordNumber}`;
+    const variants = entry.variants.map((variant, variantIndex) => `
+      <div class="research-review__variant">
+        <div class="research-review__variant-row">
+          <input class="field__input" type="text" value="${esc(variant.target)}" aria-label="Translation ${variantIndex + 1}"
+            data-research-proposal="${entryIndex}:variants:${variantIndex}:target" />
+          <textarea class="field__input research-autosize" rows="1" aria-label="Usage note for translation ${variantIndex + 1}"
+            data-research-autosize data-research-proposal="${entryIndex}:variants:${variantIndex}:note">${esc(variant.note)}</textarea>
+          <button class="term-variant-row__action-button term-variant-row__action-button--remove" type="button"
+            data-action="remove-research-proposal-variant:${entryIndex}:${variantIndex}" aria-label="Remove this translation"
+            ${tooltipAttributes("Remove this translation", { align: "end" })}>
+            <span class="term-variant-row__remove-icon" aria-hidden="true"></span>
           </button>
-          <span class="research-add-variant__label">add translation</span>
         </div>
-      </div>
-    </section>`).join("");
+        ${variant.fromExisting || variant.rationale ? `
+          <p class="research-review__meta">
+            ${variant.fromExisting ? `<span class="research-badge">In the current glossary</span>` : ""}
+            ${variant.rationale ? `<span>${esc(variant.rationale)}</span>` : ""}
+          </p>` : ""}
+      </div>`).join("");
+    return `
+      <section class="research-review__entry">
+        <header class="research-review__entry-head">
+          <h3 class="research-review__entry-title">${esc(heading)}</h3>
+          <button type="button" class="text-action" data-action="remove-research-entry:${entryIndex}">Remove entry</button>
+        </header>
+        <label class="field">
+          <span class="field__label">Source terms <span class="research-review__hint">separate with commas</span></span>
+          <input class="field__input" type="text" value="${esc(entry.sourceTerms.join(", "))}" data-research-proposal="${entryIndex}:sourceTerms" />
+        </label>
+        <label class="field">
+          <span class="field__label">General note <span class="research-review__hint">in ${esc(targetName)}</span></span>
+          <textarea class="field__input research-autosize" rows="1" data-research-autosize data-research-proposal="${entryIndex}:generalNote">${esc(entry.generalNote)}</textarea>
+        </label>
+        <div class="research-review__translations">
+          <div class="research-review__columns" aria-hidden="true">
+            <span>Translation</span><span>When to use it (${esc(targetName)})</span>
+          </div>
+          ${variants}
+          <div class="research-add-variant">
+            <button class="term-lane__add-button" type="button" data-action="add-research-proposal-variant:${entryIndex}" aria-label="Add translation">
+              <span class="term-lane__add-icon" aria-hidden="true"></span>
+            </button>
+            <span class="research-add-variant__label">add translation</span>
+          </div>
+        </div>
+      </section>`;
+  }).join("");
   return `
     <div class="research-review">
       <p class="modal__supporting"><strong>Review the proposed translations.</strong> Edit, add or remove them; notes must stay in ${esc(targetName)}. Counting starts only when you click Count.</p>
@@ -301,7 +319,16 @@ function renderRun(state) {
        </div>`
     : "";
   const review = research.runStatus === "review" ? renderReview(research, targetName) : "";
-  const log = `<div class="research-log" data-research-log aria-live="off">${research.log.map(renderLogEntry).join("")}</div>`;
+  const logLines = `<div class="research-log" data-research-log aria-live="off">${research.log.map(renderLogEntry).join("")}</div>`;
+  // While research runs the log is the main view; afterwards it folds away.
+  const log = running
+    ? logLines
+    : `<div class="research-disclosure${research.logOpen ? " is-open" : ""}">
+        <button type="button" class="research-disclosure__toggle" data-action="toggle-research-log" aria-expanded="${research.logOpen === true}">
+          <svg class="research-disclosure__chevron" viewBox="0 0 10 10" aria-hidden="true"><path d="M3 1.5 6.5 5 3 8.5" /></svg>Research log
+        </button>
+        ${research.logOpen ? logLines : ""}
+      </div>`;
   let actions;
   if (running) {
     actions = secondaryButton("Cancel", "cancel-glossary-research-run", { modalCancel: true });

@@ -18,6 +18,7 @@ import {
 } from "./app/editor-virtualization.js";
 import { loadUserTeams, setGithubAppInstallation } from "./app/team-setup-flow.js";
 import { syncLanguagePickerAlphabetIndexes } from "./app/language-picker-alphabet-index.js";
+import { syncResearchTextareaHeights } from "./app/glossary-research-flow.js";
 import { initializeConnectivity } from "./app/offline-connectivity.js";
 import { registerLoadingSpinnerContinuity } from "./app/loading-spinner-continuity.js";
 import {
@@ -811,6 +812,7 @@ function renderWithOptionsImpl(options = {}) {
     app.firstElementChild.inert = ["preparing", "restarting"].includes(state.appUpdate.status);
   }
   syncGlossaryVariantTextareaHeights(app);
+  syncResearchTextareaHeights(app);
   if (app.firstElementChild instanceof HTMLElement) {
     app.firstElementChild.dataset.screen = state.screen;
   }

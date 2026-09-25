@@ -32,6 +32,10 @@ export function handleGlossaryResearchInput(event, render) {
   }
   const proposal = target.closest("[data-research-proposal]");
   if (proposal) {
+    if (proposal.matches("[data-research-autosize]")) {
+      proposal.style.height = "auto";
+      proposal.style.height = `${proposal.scrollHeight + 2}px`;
+    }
     const [entryIndex, fieldName, variantIndex, variantField] = proposal.dataset.researchProposal.split(":");
     updateResearchProposalField(
       [Number.parseInt(entryIndex, 10), fieldName, variantIndex == null ? null : Number.parseInt(variantIndex, 10), variantField],

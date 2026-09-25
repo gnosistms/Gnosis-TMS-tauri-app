@@ -261,6 +261,34 @@ export function closeResearchProjectPicker(render, apply) {
   render();
 }
 
+export function toggleResearchLog(render) {
+  research().logOpen = !research().logOpen;
+  renderKeepingLogPinned(render);
+}
+
+/** Grow note boxes to fit their text (called after renders and while typing). */
+function sizeResearchTextareas(root) {
+  for (const textarea of root?.querySelectorAll?.("[data-research-autosize]") ?? []) {
+    textarea.style.height = "auto";
+    textarea.style.height = `${textarea.scrollHeight + 2}px`;
+  }
+}
+
+let resizeListening = false;
+
+export function syncResearchTextareaHeights(root = globalThis.document) {
+  if (!root?.querySelector?.("[data-research-autosize]")) return;
+  sizeResearchTextareas(root);
+  // Wrapping changes once web fonts finish loading, after layout settles, and
+  // when the window is resized; measure again then.
+  globalThis.requestAnimationFrame?.(() => sizeResearchTextareas(root));
+  globalThis.document?.fonts?.ready?.then(() => sizeResearchTextareas(root));
+  if (!resizeListening && globalThis.window?.addEventListener) {
+    resizeListening = true;
+    globalThis.window.addEventListener("resize", () => sizeResearchTextareas(globalThis.document));
+  }
+}
+
 export function toggleResearchAdvanced(render) {
   research().advancedOpen = !research().advancedOpen;
   render();

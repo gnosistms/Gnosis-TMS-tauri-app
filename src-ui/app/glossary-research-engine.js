@@ -47,6 +47,24 @@ export class ResearchStop extends Error {
   }
 }
 
+/**
+ * One item per case-insensitive spelling, keeping the lowercase spelling when
+ * it is present (so "Íntimo", "ÍNTIMO" and "íntimo" become "íntimo").
+ */
+export function mergeCaseVariants(items, spelling) {
+  const groups = new Map();
+  for (const item of items) {
+    const text = String(spelling(item) ?? "").trim();
+    if (!text) continue;
+    const key = text.toLowerCase();
+    const current = groups.get(key);
+    if (!current || (text === key && String(spelling(current)).trim() !== key)) {
+      groups.set(key, { ...item, form: text === key ? text : spelling(current ?? item) });
+    }
+  }
+  return [...groups.values()];
+}
+
 /** Stable 53-bit string hash (cyrb53), hex. Used for versions and seeds. */
 export function stableHash(value) {
   const text = typeof value === "string" ? value : JSON.stringify(value);
@@ -325,10 +343,12 @@ export function createResearchEngine(deps) {
         schema: prompts.FORMS_PROPOSE_SCHEMA, schemaName: "forms",
         maxOutputTokens: 3000, effort: settings.effortLight,
       });
-      const candidates = [...new Map(
-        [...proposed.forms, { form: settings.term, kind: "user", confidence: "high" }]
-          .map((f) => [fold(f.form).trim(), f]),
-      ).values()];
+      // Matching ignores case, so forms differing only in capitals are one
+      // form (the lowercase spelling is kept); accent variants stay separate.
+      const candidates = mergeCaseVariants(
+        [{ form: settings.term, kind: "user", confidence: "high" }, ...proposed.forms],
+        (f) => f.form,
+      );
       const counted = [];
       for (const candidate of candidates) {
         const count = await corpus.countForm(candidate.form);
@@ -346,9 +366,9 @@ export function createResearchEngine(deps) {
         schema: prompts.FORMS_CONFIRM_SCHEMA, schemaName: "forms_confirm",
         maxOutputTokens: 3000, effort: settings.effortLight,
       });
-      const keep = new Set(confirmed.forms.filter((f) => f.keep).map((f) => fold(f.form).trim()));
-      keep.add(fold(settings.term).trim());
-      const forms = counted.filter((c) => keep.has(fold(c.form).trim()));
+      const keep = new Set(confirmed.forms.filter((f) => f.keep).map((f) => f.form.trim().toLowerCase()));
+      keep.add(settings.term.trim().toLowerCase());
+      const forms = counted.filter((c) => keep.has(c.form.trim().toLowerCase()));
       const inTexts = forms.filter((f) => f.rows > 0).map((f) => f.form);
       const notFound = forms.filter((f) => f.rows === 0).map((f) => f.form);
       fact(`Forms: ${inTexts.join(", ") || "none found"}${notFound.length ? `; kept though not in the texts: ${notFound.join(", ")}` : ""}`);
