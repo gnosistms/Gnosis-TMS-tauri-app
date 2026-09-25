@@ -120,7 +120,7 @@ function renderAdvanced(research) {
             <input class="field__input" type="text" value="${esc(research.seed)}" data-research-field="seed" />
           </label>
         </div>
-        <p class="modal__supporting research-small">Sample size is the number of passages judged (all of them when there are fewer). The run stops before any AI request that could go over the spending limit.</p>` : ""}
+        <p class="modal__supporting research-small">Sample size is the maximum number of paragraphs of source text containing the research term to be considered for research. The run stops before any AI request that could go over the spending limit.</p>` : ""}
     </div>`;
 }
 
