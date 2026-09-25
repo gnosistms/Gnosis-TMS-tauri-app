@@ -1057,14 +1057,7 @@ fn short_text_compatibility(
     job: &AlignmentJob,
     api_key: &str,
 ) -> Result<bool, String> {
-    let prompt_input = json!({
-        "sourceUnits": prompt_units(&job.source_units),
-        "targetUnits": prompt_units(&job.target_units),
-    });
-    let prompt = format!(
-        "Determine whether the target text is a translation or partial translation of the source text. Return only the schema fields.\n\nInput:\n{}",
-        serde_json::to_string(&prompt_input).unwrap_or_default()
-    );
+    let prompt = build_compatibility_prompt(&job.source_units, &job.target_units);
     let response: CompatibilityResponse = run_cached_json_prompt(
         app,
         job,
@@ -1122,16 +1115,7 @@ fn summarize_sections(
         } else {
             &job.target_base_language_code
         };
-        let input = json!({
-            "docRole": doc_role,
-            "sectionId": section.section_id,
-            "language": language,
-            "units": prompt_units(&units),
-        });
-        let prompt = format!(
-            "Summarize this {language} document section in approximately 100 words in {language}. Do not translate the summary to another language.\n\nInput:\n{}",
-            serde_json::to_string(&input).unwrap_or_default()
-        );
+        let prompt = build_section_summary_prompt(doc_role, section.section_id, language, &units);
         let response: SummaryResponse = run_cached_json_prompt(
             app,
             job,
@@ -1207,14 +1191,7 @@ fn find_section_matches(
                 "Comparing section summaries",
             ),
         );
-        let input = json!({
-            "targetSection": prompt_summary(target),
-            "sourceCandidates": source_summaries.iter().map(prompt_summary).collect::<Vec<_>>(),
-        });
-        let prompt = format!(
-            "A match means the target section and source section contain overlapping rows. Because sections overlap by 50%, each target section typically has about three matches. Return every source candidate with match/no-match and estimated percent overlap. Do not explain.\n\nInput:\n{}",
-            serde_json::to_string(&input).unwrap_or_default()
-        );
+        let prompt = build_section_match_prompt(target, &source_summaries);
         let response: SectionMatchResponse = run_cached_json_prompt(
             app,
             job,
@@ -2490,7 +2467,7 @@ fn run_cached_json_prompt<T: for<'de> Deserialize<'de>>(
         cached_validated_response(&cache_dir.join(format!("{key}.json")), validate, || {
             cache_hit = false;
             let (value, measured_usage) =
-                run_json_prompt(job, api_key, schema_name, schema, prompt)?;
+                run_json_prompt(job, api_key, schema_name, schema.clone(), prompt)?;
             usage = measured_usage;
             Ok(value)
         });
@@ -2507,18 +2484,32 @@ fn run_cached_json_prompt<T: for<'de> Deserialize<'de>>(
     result
 }
 
+/// A response that parses but fails validation (for example a list that stops
+/// before every item) is requested once more before the error reaches the
+/// user; models occasionally return such a list. Request failures are not
+/// retried here.
 fn cached_validated_response<T: for<'de> Deserialize<'de>>(
     path: &Path,
     validate: impl Fn(&T) -> Result<(), String>,
-    request: impl FnOnce() -> Result<Value, String>,
+    mut request: impl FnMut() -> Result<Value, String>,
 ) -> Result<T, String> {
     if let Some(response) = read_validated_response(path, &validate)? {
         return Ok(response);
     }
-    let value = request()?;
-    let response: T = serde_json::from_value(value.clone())
-        .map_err(|error| format!("The alignment response was invalid: {error}"))?;
-    validate(&response)?;
+    let checked = |value: &Value| -> Result<T, String> {
+        let response: T = serde_json::from_value(value.clone())
+            .map_err(|error| format!("The alignment response was invalid: {error}"))?;
+        validate(&response)?;
+        Ok(response)
+    };
+    let mut value = request()?;
+    let response = match checked(&value) {
+        Ok(response) => response,
+        Err(_) => {
+            value = request()?;
+            checked(&value)?
+        }
+    };
     write_alignment_json_atomic(path, &value)?;
     Ok(response)
 }
@@ -2653,6 +2644,53 @@ fn prompt_units(units: &[AlignmentUnit]) -> Vec<Value> {
     units.iter().map(prompt_unit).collect()
 }
 
+fn build_compatibility_prompt(
+    source_units: &[AlignmentUnit],
+    target_units: &[AlignmentUnit],
+) -> String {
+    let prompt_input = json!({
+        "sourceUnits": prompt_units(source_units),
+        "targetUnits": prompt_units(target_units),
+    });
+    format!(
+        "Determine whether the target text is a translation or partial translation of the source text. Return only the schema fields.\n\nInput:\n{}",
+        serde_json::to_string(&prompt_input).unwrap_or_default()
+    )
+}
+
+fn build_section_summary_prompt(
+    doc_role: &str,
+    section_id: usize,
+    language: &str,
+    units: &[AlignmentUnit],
+) -> String {
+    let input = json!({
+        "docRole": doc_role,
+        "sectionId": section_id,
+        "language": language,
+        "units": prompt_units(units),
+    });
+    format!(
+        "Summarize this {language} document section in approximately 100 words in {language}. Do not translate the summary to another language.\n\nInput:\n{}",
+        serde_json::to_string(&input).unwrap_or_default()
+    )
+}
+
+fn build_section_match_prompt(
+    target: &SectionSummary,
+    source_summaries: &[SectionSummary],
+) -> String {
+    let input = json!({
+        "targetSection": prompt_summary(target),
+        "sourceCandidates": source_summaries.iter().map(prompt_summary).collect::<Vec<_>>(),
+    });
+    format!(
+        "A match means the target section and source section contain overlapping rows. Because sections overlap by 50%, each target section typically has about three matches. Return every source candidate with match/no-match and estimated percent overlap: exactly {} entries, one per sourceCandidates item. Do not explain.\n\nInput:\n{}",
+        source_summaries.len(),
+        serde_json::to_string(&input).unwrap_or_default()
+    )
+}
+
 fn prompt_summary(summary: &SectionSummary) -> Value {
     json!({"sectionId":summary.section_id, "language":summary.language, "summary":summary.summary})
 }
@@ -2690,7 +2728,8 @@ fn build_row_alignment_prompt(
         "targetUnits": prompt_units(target_units),
     });
     Ok(format!(
-        "You align translated target-language text units to authoritative source-language text units.\n\nRules:\n- Return every target unit exactly once.\n- Return only targetId and sourceIds.\n- Use sourceIds: [] when no source text matches.\n- One target can match multiple source ids.\n- Multiple targets can reference the same source id.\n- Never copy text in the response.\n\nInput:\n{}",
+        "You align translated target-language text units to authoritative source-language text units.\n\nRules:\n- Return every target unit exactly once: {} alignments in total.\n- Return only targetId and sourceIds.\n- Use sourceIds: [] when no source text matches.\n- One target can match multiple source ids.\n- Multiple targets can reference the same source id.\n- Never copy text in the response.\n\nInput:\n{}",
+        target_units.len(),
         serde_json::to_string(&input).map_err(|error| format!("Could not serialize prompt input: {error}"))?
     ))
 }
@@ -3406,6 +3445,43 @@ mod tests {
             "after sync; translation"
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn invalid_responses_are_requested_once_more_and_request_errors_are_not() {
+        let root = std::env::temp_dir().join(format!("alignment-retry-{}", uuid::Uuid::now_v7()));
+        let validate = |value: &Value| {
+            if value.get("ok").and_then(Value::as_bool) == Some(true) {
+                Ok(())
+            } else {
+                Err("incomplete".to_string())
+            }
+        };
+        let calls = std::cell::Cell::new(0);
+        let recovered = cached_validated_response::<Value>(&root.join("a.json"), validate, || {
+            calls.set(calls.get() + 1);
+            Ok(json!({"ok": calls.get() == 2}))
+        })
+        .unwrap();
+        assert_eq!((recovered, calls.get()), (json!({"ok": true}), 2));
+
+        calls.set(0);
+        let error = cached_validated_response::<Value>(&root.join("b.json"), validate, || {
+            calls.set(calls.get() + 1);
+            Ok(json!({"ok": false}))
+        })
+        .unwrap_err();
+        assert_eq!((error.as_str(), calls.get()), ("incomplete", 2));
+        assert!(!root.join("b.json").exists());
+
+        calls.set(0);
+        cached_validated_response::<Value>(&root.join("c.json"), validate, || {
+            calls.set(calls.get() + 1);
+            Err("provider failed".to_string())
+        })
+        .unwrap_err();
+        assert_eq!(calls.get(), 1);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
