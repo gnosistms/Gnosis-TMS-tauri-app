@@ -22,6 +22,7 @@ import {
   toggleAllResearchPickerProjects,
   toggleResearchAdvanced,
   toggleResearchLog,
+  toggleResearchRequest,
   toggleResearchPickerProject,
 } from "../glossary-research-flow.js";
 import {
@@ -94,6 +95,7 @@ export function createGlossaryResearchActions(render) {
     }],
     ["add-research-entry-variant:", (rest) => addResearchEntryVariant(render, rest)],
     ["save-research-entry:", (rest) => saveResearchEntry(render, rest)],
+    ["toggle-research-request:", (rest) => toggleResearchRequest(render, rest)],
     ["open-research-source:", (rest) => openExternalUrl(rest)],
     ["select-research-prep-language:", (rest) => selectResearchPrepLanguage(render, rest)],
   ];

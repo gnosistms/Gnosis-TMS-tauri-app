@@ -159,7 +159,7 @@ export function createModelClient({ model, prices, budget, log, isCancelled, max
       budget.reserve(reserve);
       sequence += 1;
       const requestId = `${request.stage}-${sequence}-${Date.now().toString(36)}`;
-      log({ type: "request", stage: request.stage, requestId, text: request.content, instructions: request.instructions, purpose: request.purpose });
+      log({ type: "request", stage: request.stage, requestId, text: request.content, instructions: request.instructions, purpose: request.purpose, batch: request.batch ?? null });
       const started = Date.now();
       let outcome;
       try {
@@ -206,7 +206,11 @@ export function createModelClient({ model, prices, budget, log, isCancelled, max
   /** Run requests concurrently inside the budget; returns results by key. */
   async function callMany(keyed, workers) {
     const results = new Map();
-    const pending = [...keyed];
+    // Requests of one call run side by side; the log groups them by this key.
+    const batchKey = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+    const pending = keyed.map(([key, request], index) => [key, {
+      ...request, batch: { key: batchKey, number: index + 1, total: keyed.length },
+    }]);
     const running = new Set();
     let stop = null;
     const launch = ([key, request]) => {

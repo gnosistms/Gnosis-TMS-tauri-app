@@ -204,21 +204,6 @@
   margin: 1px 0;
 }
 
-.research-log__line--request {
-  color: #0969da;
-  opacity: 0.85;
-}
-
-.research-log__line--thinking {
-  font-style: italic;
-  opacity: 0.55;
-}
-
-.research-log__instructions summary {
-  cursor: pointer;
-  opacity: 0.8;
-}
-
 .research-stopped {
   display: grid;
   white-space: normal;
@@ -518,19 +503,6 @@
 }
 
 
-.research-log__stream-label {
-  font-style: normal;
-  font-weight: 700;
-  opacity: 0.8;
-}
-
-.research-log__line--thinking,
-.research-log__line--answer-delta {
-  margin: 4px 0 6px;
-  padding-left: 8px;
-  border-left: 2px solid var(--surface-border);
-}
-
 /* Review of the proposed entries */
 .research-review {
   display: grid;
@@ -641,12 +613,107 @@
   }
 }
 
-.research-log__line--thinking,
-.research-log__line--answer-delta {
-  white-space: normal;
+/* One item per AI request in the research log */
+.research-batch {
+  margin: 4px 0 8px;
 }
 
-.research-log__stream-text {
+.research-batch__head {
+  color: #57606a;
+  margin: 2px 0 4px;
+}
+
+.research-batch .research-request {
+  margin-left: 12px;
+}
+
+.research-request {
+  margin: 2px 0;
+}
+
+.research-request__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: #0969da;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.research-request__head:hover {
+  background: rgba(9, 105, 218, 0.07);
+}
+
+.research-request__head .research-disclosure__chevron {
+  flex: none;
+  align-self: center;
+}
+
+.research-request.is-open > .research-request__head .research-disclosure__chevron {
+  transform: rotate(90deg);
+}
+
+.research-request__title {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.research-request__status {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: #57606a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.research-request--done .research-request__status {
+  color: #1a7f37;
+}
+
+.research-request--failed .research-request__status {
+  color: #cf222e;
+}
+
+.research-request__spinner {
+  flex: none;
+  align-self: center;
+  width: 12px;
+  height: 12px;
+  border-width: 2px;
+}
+
+.research-request__body {
+  margin: 2px 0 8px 22px;
+  padding-left: 10px;
+  border-left: 2px solid var(--surface-border);
+}
+
+.research-request__label {
+  margin-top: 6px;
+  color: #57606a;
+  font-weight: 700;
+}
+
+.research-request__text {
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.research-request__text--thinking {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-style: italic;
+  color: #57606a;
+}
+
+.research-request__sent summary {
+  cursor: pointer;
+  color: #57606a;
 }

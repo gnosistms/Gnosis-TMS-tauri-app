@@ -21,6 +21,12 @@ import {
   researchProviderSupported,
 } from "./glossary-research-budget.js";
 import { createResearchEngine, ResearchStop } from "./glossary-research-engine.js";
+import {
+  buildLogView,
+  isRequestOpen,
+  requestState,
+  requestStatusText,
+} from "./glossary-research-log-view.js";
 import { createProjectsCorpus, createSamaelCorpus } from "./glossary-research-corpus.js";
 import { createDictionary, DICTIONARY_DOMAINS } from "./glossary-research-dictionary.js";
 import { fold } from "./glossary-research-occurrences.js";
@@ -527,13 +533,18 @@ export function appendResearchLogEvent(event) {
   return appendLog(event);
 }
 
+/** Exported for tests: handle one engine log event as a running research does. */
+export function receiveResearchLogEvent(render, event) {
+  onEngineLog(render, event);
+}
+
 function appendLog(event) {
   const draft = research();
   if (!draft) return null;
   const isDelta = event.type === "answer-delta" || event.type === "thinking";
   if (isDelta) {
-    // Several requests stream at once: each request keeps one thinking line
-    // and one answer line, and new text is added to that line wherever it is.
+    // Several requests stream at once: each request keeps one thinking entry
+    // and one answer entry, and new text is added to that entry.
     const existing = findStreamEntry(draft.log, event.requestId, event.type);
     if (existing) {
       existing.text += event.text;
@@ -545,22 +556,19 @@ function appendLog(event) {
   }
   const entry = { type: event.type, text: String(event.text ?? ""), requestId: event.requestId ?? null, at: Date.now() };
   if (event.instructions) entry.instructions = event.instructions;
-  if (isDelta) {
-    const request = draft.log.find((item) => item.type === "request" && item.requestId === event.requestId);
-    entry.label = `${event.type === "thinking" ? "thinking" : "answer"}${request?.purpose ? ` · ${request.stage}: ${request.purpose}` : ""}`;
-  }
   if (event.type === "request") {
     entry.stage = event.stage;
     entry.purpose = event.purpose ?? "";
+    if (event.batch) entry.batch = event.batch;
   }
   if (event.type === "usage") {
     const r = event.record;
+    entry.record = r;
     entry.text = `${r.stage}: ${r.status}, ${r.inputTokens ?? "?"} in (${r.cachedTokens ?? 0} cached), `
       + `${r.outputTokens ?? "?"} out (${r.reasoningTokens ?? 0} thinking), ${formatUsd(r.costUsd)}`
       + `${r.costIsEstimate ? " (reserved; outcome unknown)" : ""}, ${r.seconds.toFixed(1)} s — total ${formatUsd(event.spent)} of ${formatUsd(event.limit)}`;
     draft.spent = event.spent;
   }
-  if (event.type === "request") entry.text = `→ ${event.stage}${event.purpose ? `: ${event.purpose}` : ""}\n${entry.text}`;
   draft.log.push(entry);
   if (draft.log.length > MAX_LOG_EVENTS) draft.log.splice(0, draft.log.length - MAX_LOG_EVENTS);
   return entry;
@@ -576,7 +584,7 @@ function onEngineLog(render, event) {
   }
   // Streamed text goes straight into the visible log; everything else
   // re-renders at most ~8 times a second.
-  if (entry && appendLogToDom(entry)) return;
+  if (entry && updateStreamInDom(entry)) return;
   if (pendingRender) return;
   pendingRender = setTimeout(() => {
     pendingRender = null;
@@ -596,28 +604,40 @@ function findStreamEntry(log, requestId, type) {
   return null;
 }
 
-function appendLogToDom(entry) {
+function findLogRequest(requestId) {
+  const own = research().log.filter((item) => item.requestId === requestId);
+  return buildLogView(own)
+    .flatMap((item) => (item.kind === "batch" ? item.requests : item.kind === "request" ? [item.request] : []))[0] ?? null;
+}
+
+/**
+ * Update one request's status line (and its text, when it is open) without a
+ * full render. Returns false when the page must render instead: the request
+ * is not on screen yet, its state just changed, or an open request has just
+ * started a new kind of text.
+ */
+function updateStreamInDom(entry) {
   const container = logContainer();
   if (!container || !(entry.type === "answer-delta" || entry.type === "thinking")) return false;
+  const card = container.querySelector(`[data-log-request-card="${CSS.escape(String(entry.requestId))}"]`);
+  const request = card ? findLogRequest(entry.requestId) : null;
+  if (!request || card.dataset.logRequestState !== requestState(request)) return false;
+  const block = card.querySelector(`[data-log-type="${entry.type}"]`);
+  if (!block && card.dataset.logRequestOpen === "true") return false;
   const pinned = container.scrollTop + container.clientHeight >= container.scrollHeight - 24;
-  const selector = `[data-log-request="${CSS.escape(String(entry.requestId))}"][data-log-type="${entry.type}"]`;
-  let block = container.querySelector(selector);
-  if (!block) {
-    block = document.createElement("div");
-    block.className = `research-log__line research-log__line--${entry.type}`;
-    block.dataset.logRequest = String(entry.requestId);
-    block.dataset.logType = entry.type;
-    const label = document.createElement("div");
-    label.className = "research-log__stream-label";
-    label.textContent = entry.label ?? "";
-    const text = document.createElement("div");
-    text.className = "research-log__stream-text";
-    block.append(label, text);
-    container.appendChild(block);
-  }
-  block.querySelector(".research-log__stream-text").textContent = entry.text;
+  const status = card.querySelector("[data-log-request-status]");
+  if (status) status.textContent = requestStatusText(request, formatUsd);
+  if (block) block.textContent = entry.text;
   if (pinned) container.scrollTop = container.scrollHeight;
   return true;
+}
+
+export function toggleResearchRequest(render, requestId) {
+  const draft = research();
+  const request = findLogRequest(requestId);
+  if (!request) return;
+  draft.requestOpen = { ...(draft.requestOpen ?? {}), [requestId]: !isRequestOpen(request, draft.requestOpen) };
+  render();
 }
 
 export function renderKeepingLogPinned(render) {

@@ -12,6 +12,16 @@ import {
   supportedResearchProviderNames,
 } from "../app/glossary-research-flow.js";
 import { formatUsd, researchModelsWithPrices } from "../app/glossary-research-budget.js";
+import {
+  batchProgressText,
+  buildLogView,
+  isRequestOpen,
+  isRequestRunning,
+  readableAnswer,
+  requestState,
+  requestStatusText,
+  requestTitle,
+} from "../app/glossary-research-log-view.js";
 
 const esc = escapeHtml;
 
@@ -195,7 +205,7 @@ function renderExisting(state) {
 
 // --- run view -----------------------------------------------------------------------
 
-function renderLogEntry(entry) {
+function renderLogLine(entry) {
   const text = esc(entry.text);
   switch (entry.type) {
     case "heading":
@@ -206,46 +216,58 @@ function renderLogEntry(entry) {
       return `<div class="research-log__problem"><strong>${text}</strong></div>`;
     case "usage":
       return `<div class="research-log__usage">${text}</div>`;
-    case "request":
-      return `<div class="research-log__line research-log__line--request">${text}${entry.instructions ? `<details class="research-log__instructions"><summary>instructions sent with this request</summary>${esc(entry.instructions)}</details>` : ""}</div>`;
-    case "thinking":
-    case "answer-delta":
-    case "answer": {
-      const type = entry.type === "thinking" ? "thinking" : "answer-delta";
-      // No whitespace between tags: the log keeps line breaks as written.
-      return `<div class="research-log__line research-log__line--${type}" data-log-request="${esc(entry.requestId)}" data-log-type="${type}">`
-        + `<div class="research-log__stream-label">${esc(entry.label ?? (type === "thinking" ? "thinking" : "answer"))}</div>`
-        + `<div class="research-log__stream-text">${text}</div></div>`;
-    }
     default:
       return `<div class="research-log__line">${text}</div>`;
   }
 }
 
-/**
- * Logs saved before streamed text was kept per request hold one entry per
- * fragment. Show each request's thinking and answer as one block.
- */
-function mergeStreamFragments(log) {
-  const merged = [];
-  const blocks = new Map();
-  for (const entry of log) {
-    const isStream = entry.type === "thinking" || entry.type === "answer-delta";
-    if (!isStream) {
-      merged.push(entry);
-      continue;
-    }
-    const key = `${entry.requestId}\u0000${entry.type}`;
-    const block = blocks.get(key);
-    if (block) {
-      block.text += entry.text;
-    } else {
-      const copy = { ...entry };
-      blocks.set(key, copy);
-      merged.push(copy);
-    }
-  }
-  return merged;
+function usageLine(usage) {
+  if (usage.line) return usage.line;
+  return `${(usage.inputTokens ?? 0).toLocaleString("en-US")} tokens in (${(usage.cachedTokens ?? 0).toLocaleString("en-US")} cached), `
+    + `${(usage.outputTokens ?? 0).toLocaleString("en-US")} out (${(usage.reasoningTokens ?? 0).toLocaleString("en-US")} thinking) · `
+    + `${formatUsd(usage.costUsd)}${usage.costIsEstimate ? " (reserved; outcome unknown)" : ""} · ${usage.seconds.toFixed(1)} s`;
+}
+
+// Text blocks carry no whitespace between tags: they keep line breaks as written.
+function requestText(label, type, text, extraClass = "") {
+  return `<div class="research-request__label">${label}</div>`
+    + `<div class="research-request__text${extraClass}" data-log-type="${type}">${esc(text)}</div>`;
+}
+
+function renderRequest(request, openChoices) {
+  const current = requestState(request);
+  const running = isRequestRunning(request);
+  const open = isRequestOpen(request, openChoices);
+  const id = esc(request.requestId);
+  const body = !open ? "" : `<div class="research-request__body">
+      ${request.text || request.instructions ? `<details class="research-request__sent"><summary>What was sent</summary>`
+        + `${request.instructions ? requestText("Instructions", "instructions", request.instructions) : ""}`
+        + `${request.text ? requestText("Texts and question", "content", request.text) : ""}</details>` : ""}
+      ${request.thinking ? requestText("Thinking", "thinking", request.thinking, " research-request__text--thinking") : ""}
+      ${request.answer ? requestText("Answer", "answer-delta", running ? request.answer : readableAnswer(request.answer)) : ""}
+      ${request.problem ? `<div class="research-log__problem">${esc(request.problem)}</div>` : ""}
+      ${request.usage ? `<div class="research-log__usage">${esc(usageLine(request.usage))}</div>` : ""}
+    </div>`;
+  return `<div class="research-request research-request--${current}${open ? " is-open" : ""}" data-log-request-card="${id}" data-log-request-state="${current}" data-log-request-open="${open}">
+      <button type="button" class="research-request__head" data-action="toggle-research-request:${id}" aria-expanded="${open}">
+        <svg class="research-disclosure__chevron" viewBox="0 0 10 10" aria-hidden="true"><path d="M3 1.5 6.5 5 3 8.5" /></svg>
+        <span class="research-request__title">${esc(requestTitle(request))}</span>
+        <span class="research-request__status" data-log-request-status>${esc(requestStatusText(request, formatUsd))}</span>
+        ${running ? '<span class="navigation-loading-modal__spinner research-request__spinner" aria-hidden="true"></span>' : ""}
+      </button>
+      ${body}
+    </div>`;
+}
+
+function renderLog(log, openChoices) {
+  return buildLogView(log).map((item) => {
+    if (item.kind === "line") return renderLogLine(item.entry);
+    if (item.kind === "request") return renderRequest(item.request, openChoices);
+    return `<div class="research-batch">
+        <div class="research-batch__head">${item.total} requests side by side · ${esc(batchProgressText(item))}</div>
+        ${item.requests.map((request) => renderRequest(request, openChoices)).join("")}
+      </div>`;
+  }).join("");
 }
 
 function renderReview(research, targetName) {
@@ -345,7 +367,7 @@ function renderRun(state) {
        </div>`
     : "";
   const review = research.runStatus === "review" ? renderReview(research, targetName) : "";
-  const logLines = `<div class="research-log" data-research-log aria-live="off">${mergeStreamFragments(research.log).map(renderLogEntry).join("")}</div>`;
+  const logLines = `<div class="research-log" data-research-log aria-live="off">${renderLog(research.log, research.requestOpen)}</div>`;
   // While research runs the log is the main view; afterwards it folds away.
   const log = running
     ? logLines
