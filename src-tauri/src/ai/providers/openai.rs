@@ -340,6 +340,7 @@ fn send_prompt_request(
     let client = shared_http_client()
         .map_err(|error| format!("Could not start the OpenAI request: {error}"))?;
 
+    let started = std::time::Instant::now();
     let response = client
         .post(OPENAI_RESPONSES_API_URL)
         .timeout(super::AI_PROMPT_TIMEOUT)
@@ -348,7 +349,7 @@ fn send_prompt_request(
         .header("User-Agent", "gnosis-tms")
         .json(body)
         .send()
-        .map_err(normalize_transport_error)?;
+        .map_err(|error| prompt_transport_error(error, started.elapsed()))?;
 
     let status = response.status();
     let body = response
@@ -376,6 +377,11 @@ fn send_prompt_request(
         },
         usage,
     ))
+}
+
+fn prompt_transport_error(error: reqwest::Error, elapsed: std::time::Duration) -> String {
+    super::silent_drop_message("OpenAI", error.is_timeout(), error.is_connect(), elapsed)
+        .unwrap_or_else(|| normalize_transport_error(error))
 }
 
 fn normalize_transport_error(error: reqwest::Error) -> String {

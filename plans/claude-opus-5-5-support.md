@@ -175,3 +175,9 @@ data, and spend approval. Phase 3 not started.
   close_notify"); a curl reproduction completed at 59.2 s. This affects the
   shipping app for any OpenAI call over 60 s. Fix is streaming (or
   background mode) — tracked separately, not part of this plan.
+- 60-second cutoff: per the user, not fixed yet (never seen in practice; the
+  app's default gpt-5.4 at `none` finishes batches in ~15 s). Prompt calls on
+  OpenAI and Claude now recognise it (generic request error after ≥55 s) and
+  return "<Provider> stopped responding after about a minute…", which the
+  invoke wrapper reports to Sentry as a command failure. Revisit with
+  streaming if it shows up in Sentry.

@@ -245,3 +245,14 @@ test("reports ordinary failures unchanged at the default level", () => {
   assert.equal(report.error, error);
   assert.equal(report.options, undefined);
 });
+
+test("reports AI requests the provider dropped after a minute", () => {
+  for (const provider of ["OpenAI", "Claude"]) {
+    const error = new Error(
+      `${provider} stopped responding after about a minute without returning a result. `
+        + "Very long AI requests can end this way. Try again with fewer rows or a faster model.",
+    );
+    const report = resolveCommandFailureReport("run_ai_translation_batch", error);
+    assert.equal(report?.error, error, provider);
+  }
+});

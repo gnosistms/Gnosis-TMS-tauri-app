@@ -410,10 +410,11 @@ fn execute_prompt(
     if body.fallbacks.is_some() {
         http_request = http_request.header("anthropic-beta", CLAUDE_FALLBACK_BETA);
     }
+    let started = std::time::Instant::now();
     let response = http_request
         .json(&body)
         .send()
-        .map_err(normalize_transport_error)?;
+        .map_err(|error| prompt_transport_error(error, started.elapsed()))?;
 
     let status = response.status();
     let body = response
@@ -515,6 +516,11 @@ pub(crate) fn probe_model(model_id: &str, api_key: &str) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn prompt_transport_error(error: reqwest::Error, elapsed: std::time::Duration) -> String {
+    super::silent_drop_message("Claude", error.is_timeout(), error.is_connect(), elapsed)
+        .unwrap_or_else(|| normalize_transport_error(error))
 }
 
 fn normalize_transport_error(error: reqwest::Error) -> String {
