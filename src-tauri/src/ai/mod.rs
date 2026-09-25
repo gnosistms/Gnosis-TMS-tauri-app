@@ -1,4 +1,6 @@
 #[cfg(test)]
+mod assistant_cache_eval;
+#[cfg(test)]
 mod effort_eval;
 pub(crate) mod glossary_matcher;
 pub mod providers;

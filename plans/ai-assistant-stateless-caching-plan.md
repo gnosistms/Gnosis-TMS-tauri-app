@@ -211,7 +211,39 @@ In `npm run tauri:dev`, on one row, Claude Opus 5.5 then OpenAI `gpt-5.4`:
 
 Steps 1–5 implemented (2026-09-25): `b1adb585`, `14fe6a6b`, `ea045a60`,
 `30e5e598`, `2c5c1277`. Rust lib 717 passed; frontend unit 2,295 passed.
-Step 6 (live verification) not run yet: needs API keys and spend approval.
+Step 6 run 2026-09-25 as an ignored Rust test instead of clicking through
+`tauri:dev` (`ai/assistant_cache_eval.rs`): four scripted turns on HNHH ch. 3
+row 8 (es→vi, 4 glossary hints, 7-row source window) through the app's prompt
+builder, provider code and parser. Total spend ≈ $0.25.
+
+Claude Opus 5.5 (effort `medium`):
+
+| Turn | Uncached input | Cache read | Cache write | Output | Cost |
+|---|---|---|---|---|---|
+| 1 question | 817 | 0 | 2,269 | 2,128 | $0.057 |
+| 2 refinement | 813 | 2,269 | 1,194 | 1,593 | $0.042 |
+| 3 after applying the draft | 1,456 | 3,463 | 721 | 2,993 | $0.070 |
+| 4 follow-up | 1,172 | 4,184 | 1,280 | 1,198 | $0.036 |
+
+- Every follow-up read the full row context and history from cache,
+  including the turn right after the draft was applied.
+- Input cost over the four turns: $0.046, against $0.079 uncached (−41%). The
+  saving grows with each further turn. Output (mostly thinking) is ~80% of
+  the Assistant's Claude cost and is unaffected.
+- The row context was ~2,270 tokens, above the minimum, so it cached.
+
+OpenAI `gpt-5.4`: 0 cached tokens on all four turns. Direct checks: an
+identical 1,674-token prompt sent twice (with and without `prompt_cache_key`)
+got 0 cached; an identical 3,468-token prompt got 2,816 cached on the repeat;
+`gpt-6-astra` cached 1,671 of 1,674 on a repeat. OpenAI's automatic caching is
+best-effort and on `gpt-5.4` does not reliably apply at these sizes; nothing
+in the request changes that. No OpenAI turn was retried (no
+`previous_response_id`).
+
+Quality: on both models the turn after the apply judged the applied draft
+(quoting its wording), and the next refinement built on the editor text.
+`gpt-5.4` answered English questions in Vietnamese; the old prompt order does
+the same (3/3 runs each), so that predates this change.
 
 Usage context from the user: the Assistant is used far less than batch
 review and add-translation alignment. When a conversation gets one follow-up,
