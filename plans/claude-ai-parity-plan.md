@@ -75,11 +75,11 @@ low to access the Anthropic API…". The app shows it as a raw "Claude returned
 an error: …". OpenAI's equivalent gets a clear message, a billing link and a
 billing modal.
 
-- `ai-provider-config.js`: add `billingUrl` for OpenAI (existing URL) and
-  Claude (`https://platform.claude.com/settings/billing`).
-- `ai-provider-error.js`: `isOpenAiNoCreditsError` becomes
-  `isAiProviderNoCreditsError(providerId, message)`, which also recognises
-  Claude's "credit balance is too low". `formatAiProviderActionError` and
+- `ai-provider-error.js`: a per-provider table of out-of-credits phrases,
+  label and billing URL (OpenAI's existing URL; Claude
+  `https://platform.claude.com/settings/billing`). `isOpenAiNoCreditsError`
+  becomes `aiProviderNoCreditsInfo` / `isAiProviderNoCreditsError(providerId,
+  message)`, which also recognise Claude's "credit balance is too low". `formatAiProviderActionError` and
   `classifyAiProviderOperationalError` ("quota_exhausted") use it with the
   provider's name and billing URL.
 - `ai-settings-flow.js`: `explainAiModelProbeError` and the model-error modal

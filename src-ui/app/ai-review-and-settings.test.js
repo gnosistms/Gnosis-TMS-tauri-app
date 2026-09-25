@@ -6592,6 +6592,53 @@ test("OpenAI no-credit model probes show billing guidance instead of model advic
   );
 });
 
+test("Claude no-credit model probes show billing guidance instead of model advice", async () => {
+  resetSessionState();
+  state.screen = "aiKey";
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      savedProviderIds: ["claude"],
+      unified: {
+        providerId: "claude",
+        modelId: "claude-opus-5-5",
+      },
+      modelOptionsByProvider: {
+        ...state.aiSettings.actionConfig.modelOptionsByProvider,
+        claude: {
+          status: "ready",
+          error: "",
+          options: [{ id: "claude-opus-5-5", label: "claude-opus-5-5" }],
+          hasLoaded: true,
+        },
+      },
+    },
+  };
+
+  invokeHandler = async (command) => {
+    if (command === "probe_ai_provider_model") {
+      throw new Error(
+        "Claude returned an error: Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+      );
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await updateAiActionModel(() => {}, "unified", "claude-opus-5-5");
+
+  assert.equal(state.aiSettings.modelErrorModal.eyebrow, "CLAUDE BILLING");
+  assert.equal(
+    state.aiSettings.modelErrorModal.title,
+    "Your Claude account has run out of credits.",
+  );
+  assert.equal(state.aiSettings.modelErrorModal.banner, "");
+  assert.equal(
+    state.aiSettings.modelErrorModal.message,
+    "Add credits at https://platform.claude.com/settings/billing and try again.",
+  );
+});
+
 test("AI action controls stay disabled with a badge while model validation is running", async () => {
   resetSessionState();
   state.screen = "aiKey";

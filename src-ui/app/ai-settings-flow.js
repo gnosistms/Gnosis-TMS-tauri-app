@@ -29,8 +29,8 @@ import {
   normalizeAiProviderId,
 } from "./ai-provider-config.js";
 import {
+  aiProviderNoCreditsInfo,
   formatAiProviderActionError,
-  isOpenAiNoCreditsError,
 } from "./ai-provider-error.js";
 import {
   ensureSelectedTeamAiProviderReady,
@@ -398,8 +398,9 @@ function aiProbeErrorLooksModelAccessRelated(message) {
 
 export function explainAiModelProbeError(providerId, errorMessage) {
   const normalizedProviderId = normalizeAiProviderId(providerId);
-  if (isOpenAiNoCreditsError(normalizedProviderId, errorMessage)) {
-    return "Add credits at https://platform.openai.com/settings/organization/billing/ and try again.";
+  const noCredits = aiProviderNoCreditsInfo(normalizedProviderId, errorMessage);
+  if (noCredits) {
+    return `Add credits at ${noCredits.billingUrl} and try again.`;
   }
   if (normalizedProviderId === "gemini" && aiProbeErrorLooksRateLimited(errorMessage)) {
     return "A rate limit on Gemini indicates that either you have not set up billing for your Google AI account or you have set up billing but you used up all the tokens that your usage plan allows in a given time period.";
@@ -422,7 +423,7 @@ export function explainAiModelProbeError(providerId, errorMessage) {
 
 function openAiModelErrorModal(providerId, bannerMessage) {
   const normalizedProviderId = normalizeAiProviderId(providerId);
-  const noCredits = isOpenAiNoCreditsError(normalizedProviderId, bannerMessage);
+  const noCredits = aiProviderNoCreditsInfo(normalizedProviderId, bannerMessage);
   const displayBanner = noCredits
     ? ""
     : formatAiProviderActionError(normalizedProviderId, bannerMessage);
@@ -431,9 +432,9 @@ function openAiModelErrorModal(providerId, bannerMessage) {
     modelErrorModal: {
       ...createAiModelErrorModalState(),
       isOpen: true,
-      eyebrow: noCredits ? "OPENAI BILLING" : "AI MODEL ERROR",
+      eyebrow: noCredits ? `${noCredits.label.toUpperCase()} BILLING` : "AI MODEL ERROR",
       title: noCredits
-        ? "Your OpenAI account has run out of credits."
+        ? `Your ${noCredits.label} account has run out of credits.`
         : "The AI model you selected is not working",
       banner: displayBanner,
       message: explainAiModelProbeError(normalizedProviderId, bannerMessage),
