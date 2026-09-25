@@ -12,6 +12,7 @@ import {
   supportedResearchProviderNames,
 } from "../app/glossary-research-flow.js";
 import { formatUsd, researchModelsWithPrices } from "../app/glossary-research-budget.js";
+import { quotationMarksFor, usesGuillemets } from "../app/glossary-research-prompts.js";
 import {
   batchProgressText,
   buildLogView,
@@ -128,6 +129,10 @@ function renderAdvanced(research) {
             ${renderMoneyInput({ value: research.spendingLimitUsd, inputAttributes: 'data-research-field="spendingLimitUsd"', ariaLabel: "Spending limit in US dollars" })}
           </label>
         </div>
+        <label class="research-checkbox">
+          <input type="checkbox" data-research-field="pauseForReview" ${research.pauseForReview ? "checked" : ""} />
+          <span>Pause to review the proposed translations before counting</span>
+        </label>
         <p class="modal__supporting research-small">Sample size is the maximum number of paragraphs of source text containing the research term to be considered for research. The run stops before any AI request that could go over the spending limit.</p>` : ""}
     </div>`;
 }
@@ -270,7 +275,14 @@ function renderLog(log, openChoices) {
   }).join("");
 }
 
-function renderReview(research, targetName) {
+/** A warning when a note uses «» but the target language quotes with other marks. */
+function quotationWarning(text, targetCode, targetName) {
+  if (!/[«»]/.test(text ?? "") || usesGuillemets(targetCode)) return "";
+  const marks = quotationMarksFor(targetCode);
+  return `<span class="research-tag research-tag--warn">uses « » quotation marks${marks ? `; ${esc(targetName)} uses ${esc(marks)}` : ""}</span>`;
+}
+
+function renderReview(research, targetName, targetCode) {
   const proposal = research.proposalDraft;
   if (!proposal) return "";
   let wordNumber = 0;
@@ -291,9 +303,10 @@ function renderReview(research, targetName) {
             <span class="term-variant-row__remove-icon" aria-hidden="true"></span>
           </button>
         </div>
-        ${variant.fromExisting || variant.rationale ? `
+        ${variant.fromExisting || variant.rationale || quotationWarning(variant.note, targetCode, targetName) ? `
           <p class="research-review__meta">
             ${variant.fromExisting ? `<span class="research-badge">In the current glossary</span>` : ""}
+            ${quotationWarning(variant.note, targetCode, targetName)}
             ${variant.rationale ? `<span>${esc(variant.rationale)}</span>` : ""}
           </p>` : ""}
       </div>`).join("");
@@ -310,6 +323,7 @@ function renderReview(research, targetName) {
         <label class="field">
           <span class="field__label">General note <span class="research-review__hint">in ${esc(targetName)}</span></span>
           <textarea class="field__input research-autosize" rows="1" data-research-autosize data-research-proposal="${entryIndex}:generalNote">${esc(entry.generalNote)}</textarea>
+          ${quotationWarning(entry.generalNote, targetCode, targetName)}
         </label>
         <div class="research-review__translations">
           <div class="research-review__columns" aria-hidden="true">
@@ -366,7 +380,7 @@ function renderRun(state) {
            ${research.raiseLimitError ? `<p class="research-stopped__message">${esc(research.raiseLimitError)}</p>` : ""}` : ""}
        </div>`
     : "";
-  const review = research.runStatus === "review" ? renderReview(research, targetName) : "";
+  const review = research.runStatus === "review" ? renderReview(research, targetName, state.glossaryEditor?.targetLanguage?.code ?? "") : "";
   const logLines = `<div class="research-log" data-research-log aria-live="off">${renderLog(research.log, research.requestOpen)}</div>`;
   // While research runs the log is the main view; afterwards it folds away.
   const log = running

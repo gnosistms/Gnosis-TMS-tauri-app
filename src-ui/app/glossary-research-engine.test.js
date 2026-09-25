@@ -2,9 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  accentCounterparts,
   createResearchEngine,
+  transferAccents,
+  unmeasuredRenderings,
   validateProposal,
 } from "./glossary-research-engine.js";
+import { quotationMarksFor, usesGuillemets } from "./glossary-research-prompts.js";
 import {
   createBudget,
   modelPrices,
@@ -55,6 +59,19 @@ function fakeCorpus(items) {
     async collocations() {
       return [{ phrase: "rueda fatal", occurrences: 6, paragraphs: 6 }];
     },
+    authorName: "the author",
+    async sourceBooks() {
+      return [{ title: "Libro fuente — M.", translated: true, originalLanguage: "en", originalTitle: "The Source Book", originalAuthor: "M.", originalFirstPrinting: "1933", firstSpanishTranslation: "1950", headwordPairs: [{ source: "Fatal", original: "Fateful One" }] }];
+    },
+    async sourceUsage() {
+      return [0, 1, 2].map((i) => ({
+        itemId: `s${i}`, text: `El Fatal nos guía ${i}.`, occurrences: [{ start: 3, end: 8, surface: "Fatal" }],
+        reference: { title: "Libro fuente — M." },
+      }));
+    },
+    async authorMentions(phrase) {
+      return [{ itemId: "m1", text: `Como dice ${phrase}, el Fatal guía.`, occurrences: [{ start: 10, end: 10 + phrase.length, surface: phrase }], reference: { title: "Obra del autor" } }];
+    },
   };
 }
 
@@ -78,7 +95,7 @@ const PROPOSAL = {
       variants: [{ id: "e3v1", target: "wheel of fate", note: "Samsara", senses: [], corpusSense: null, fromExisting: false, rationale: "r" }] },
   ],
   rejectedExpressions: [], derivativeStudies: [{ source: "fatalmente", reason: "adverb" }],
-  existingComparison: [{ existing: "fateful", verdict: "count", proposed: "fateful", reason: "measure it" }],
+  leftOutRenderings: [],
   sensesOutsideDictionary: [], openQuestions: [],
 };
 
@@ -99,6 +116,12 @@ function fakeModel({ failFirstCounting = false } = {}) {
         out = { forms: [{ form: "fatal", keep: true, reason: "ok" }, { form: "fatales", keep: true, reason: "ok" }, { form: "fatalmente", keep: false, reason: "derived adverb" }] };
       } else if (request.stage === "discovery") {
         out = { items: unique.map((occId) => ({ occId, sense: "2", corpusSense: null, rendering: "disastrous", phraseTranslation: "a disastrous result", expressionCandidate: null, reason: "fake" })) };
+      } else if (request.stage === "sources") {
+        out = { summary: "From the source book.", senses: [{ sense: "the Fatal (noun)", inDictionary: false, sourceBook: "Libro fuente — M.", evidence: "named by the author", originalLanguage: "en", originalTerm: "Fateful One", originalTermBasis: "the book's glossary pairs", meaningInSource: "a guide", authorUsage: "follows it", equivalences: [] }] };
+      } else if (request.stage === "candidates") {
+        out = { senses: [{ sense: "the Fatal (noun)", candidates: [{ target: "the Fateful One", recommended: true, note: "noun", rationale: "original term" }] }] };
+      } else if (request.stage === "comparison") {
+        out = { items: [{ existing: "fateful", verdict: "proposed", proposedVariantId: "e1v2", reason: "same" }] };
       } else if (request.stage === "proposal") {
         out = PROPOSAL;
       } else if (request.stage === "counting") {
@@ -167,6 +190,29 @@ test("research pauses for review, then counts and reconciles every occurrence", 
   assert.ok(logs.some((event) => event.type === "thinking"));
 });
 
+test("the proposal is made without the glossary, from the source study and the candidate study", async () => {
+  const requests = [];
+  const model = fakeModel();
+  const call = model.call;
+  model.call = (request, onDelta) => {
+    requests.push(request);
+    return call(request, onDelta);
+  };
+  const { engine: research, store } = engine({ model });
+  const review = await research.runToReview();
+  const byStage = Object.fromEntries(requests.map((r) => [r.stage, r]));
+  assert.match(byStage.sources.content, /The Source Book/);
+  assert.match(byStage.sources.content, /Fatal = Fateful One/);
+  assert.match(byStage.sources.content, /Como dice ⟦Libro fuente⟧/);
+  assert.match(byStage.candidates.content, /Fateful One/, "the candidate study sees the source study");
+  assert.match(byStage.proposal.content, /the Fateful One/, "the proposal sees the candidate study");
+  assert.doesNotMatch(byStage.proposal.content, /Existing glossary/);
+  assert.equal(byStage.comparison.stage, "comparison", "the existing entry is compared afterwards");
+  assert.equal(review.proposal.existingComparison[0].proposed, "fateful");
+  assert.equal(review.proposal.entries[0].variants.find((v) => v.target === "fateful").fromExisting, true);
+  assert.equal(store.data.sources.topBooks[0], "Libro fuente — M.");
+});
+
 test("an edited proposal gets a new version and earlier counts are not reused", async () => {
   const { engine: research } = engine();
   const review = await research.runToReview();
@@ -232,4 +278,28 @@ test("forms differing only in capitals are merged, keeping the lowercase spellin
     (item) => item.form,
   ).map((item) => item.form);
   assert.deepEqual(merged, ["íntimo", "intimo", "íntimas"]);
+});
+
+test("accented and unaccented spellings are both searched", () => {
+  assert.equal(transferAccents("Íntimo", "intimas"), "íntimas");
+  assert.equal(transferAccents("Íntimo", "INTIMOS"), "ÍNTIMOS");
+  const found = accentCounterparts(["Íntimo", "intima", "intimos", "intimas"]).map((f) => f.toLowerCase()).sort();
+  assert.deepEqual(found, ["intimo", "íntima", "íntimas", "íntimos"]);
+});
+
+test("frequent readings must be measured or explained; case variants in one entry are not duplicates", () => {
+  const proposal = structuredClone(PROPOSAL);
+  const discovery = { readings: { a: { rendering: "Chân ngã" }, b: { rendering: "chân ngã" }, c: { rendering: "disastrous" }, d: { rendering: "once" } } };
+  assert.deepEqual(unmeasuredRenderings(proposal, discovery), ["“Chân ngã” (2 readings) is neither measured nor explained"]);
+  proposal.leftOutRenderings = [{ rendering: "chân ngã", count: 2, reason: "synonym" }];
+  assert.deepEqual(unmeasuredRenderings(proposal, discovery), []);
+  proposal.entries[0].sourceTerms = ["Fatal", "fatal"];
+  assert.doesNotMatch(validateProposal(proposal, ["fatal", "fatales"]).join(" "), /in entries e1 and e1/);
+});
+
+test("quotation marks follow the target language", () => {
+  assert.equal(quotationMarksFor("vi"), "“…”");
+  assert.equal(usesGuillemets("vi"), false);
+  assert.equal(usesGuillemets("en-US"), false);
+  assert.equal(usesGuillemets("fr"), true);
 });

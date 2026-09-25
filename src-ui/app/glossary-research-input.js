@@ -17,7 +17,7 @@ export function handleGlossaryResearchInput(event, render) {
 
   const field = target.closest("[data-research-field]");
   if (field) {
-    updateResearchField(field.dataset.researchField, field.value);
+    updateResearchField(field.dataset.researchField, field.type === "checkbox" ? field.checked : field.value);
     return true;
   }
   const variant = target.closest("[data-research-variant-input]");

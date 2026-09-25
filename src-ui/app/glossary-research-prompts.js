@@ -1,7 +1,7 @@
 // Prompt texts and strict JSON schemas for Glossary Research.
 // Bump RESEARCH_PROMPT_VERSION on any change that could alter a judgment.
 
-export const RESEARCH_PROMPT_VERSION = "2026-09-25.1";
+export const RESEARCH_PROMPT_VERSION = "2026-09-26.1";
 
 const STR = { type: "string" };
 const NSTR = { anyOf: [{ type: "string" }, { type: "null" }] };
@@ -22,6 +22,32 @@ function dictionaryBlock(ctx) {
   return ctx.dictionaryText
     ? `Dictionary evidence (verbatim, cite by sense number):\n${ctx.dictionaryText}`
     : "Dictionary evidence: none was found for this word; rely on the texts and say so.";
+}
+
+// Quotation marks as each language writes them. Models copy the «» of the
+// Spanish texts into other languages unless told otherwise.
+const QUOTATION_MARKS = {
+  en: "“…” (and ‘…’ inside)", vi: "“…”", es: "«…» or “…”", pt: "“…” or «…»", fr: "« … »",
+  it: "«…» or “…”", de: "„…“", nl: "“…” or ‘…’", ru: "«…»", uk: "«…»", pl: "„…”",
+  zh: "“…” (Simplified) or 「…」 (Traditional)", "zh-Hans": "“…”", "zh-Hant": "「…」 (and 『…』 inside)",
+  ja: "「…」 (and 『…』 inside)", ko: "“…”", th: "“…”", id: "“…”", tr: "“…”", ar: "«…» or “…”", he: "\"…\"",
+};
+
+export function quotationMarksFor(languageCode) {
+  const code = String(languageCode ?? "");
+  return QUOTATION_MARKS[code] ?? QUOTATION_MARKS[code.split("-")[0]] ?? null;
+}
+
+/** Languages whose own quotation marks include «», where «» in a note is normal. */
+export function usesGuillemets(languageCode) {
+  return /«/.test(quotationMarksFor(languageCode) ?? "");
+}
+
+function quotationRule(languageName, languageCode) {
+  const marks = quotationMarksFor(languageCode);
+  return marks
+    ? `Text written in ${languageName} uses ${languageName} quotation marks: ${marks}. Do not copy the quotation marks of the source texts.`
+    : `Text written in ${languageName} uses ${languageName}'s own quotation marks, not those of the source texts.`;
 }
 
 // --- editor flow: find the source-language term ------------------------------
@@ -56,8 +82,8 @@ export const FORMS_PROPOSE_SCHEMA = object({
 });
 
 export function formsProposeInstructions(ctx) {
-  return `You prepare a corpus study of the ${ctx.sourceName} word «${ctx.headword}». ${corpusLine(ctx)}
-List every surface form a search should include: the headword, its grammatical inflections (number, gender, and other inflections the word really has), and alternative spellings (accented/unaccented, old or variant spellings, capitalised forms only if they differ as words). Include every form the user typed and every source term of the existing glossary entry, marked "user" / "existing", unless it is clearly a different word. Do NOT include derived words with their own dictionary entry (adverbs in -mente, nouns in -idad, etc.). confidence: how sure you are that the form is the same word with the same meaning.`;
+  return `You prepare a corpus study of the ${ctx.sourceName} word “${ctx.headword}”. ${corpusLine(ctx)}
+List every surface form a search should include: the headword, its grammatical inflections (number, gender, and other inflections the word really has), and alternative spellings (old or variant spellings, capitalised forms only if they differ as words). The text search ignores capital letters but NOT accents: "íntima" and "intima" are different searches. So list every inflection both with and without its accent marks whenever the texts might spell it either way, and include every form of the word from the texts' word list. Include every form the user typed and every source term of the existing glossary entry, marked "user" / "existing", unless it is clearly a different word. Do NOT include derived words with their own dictionary entry (adverbs in -mente, nouns in -idad, etc.). confidence: how sure you are that the form is the same word with the same meaning.`;
 }
 
 export function formsProposeContent(ctx) {
@@ -77,7 +103,7 @@ export const FORMS_CONFIRM_SCHEMA = object({
 });
 
 export function formsConfirmInstructions(ctx) {
-  return `You confirm which surface forms belong to a corpus study of the ${ctx.sourceName} word «${ctx.headword}». ${corpusLine(ctx)}
+  return `You confirm which surface forms belong to a corpus study of the ${ctx.sourceName} word “${ctx.headword}”. ${corpusLine(ctx)}
 For each candidate you get its number of passages in the texts and a few example passages. Keep a form when the examples show it is the same word in the same range of meanings. Drop it when the examples are a different word (a homograph, a name, another lemma). A form with no passages may be kept only if you are highly confident it is a valid form of the same word (e.g. a regular plural). Reasons at most 12 words, in ${ctx.reportName}.`;
 }
 
@@ -96,7 +122,7 @@ export const DISCOVERY_SCHEMA = object({
 });
 
 export function discoveryInstructions(ctx) {
-  return `You are a terminologist preparing a ${ctx.targetName} glossary (TMX) entry for the ${ctx.sourceName} word «${ctx.headword}». ${corpusLine(ctx)}
+  return `You are a terminologist preparing a ${ctx.targetName} glossary (TMX) entry for the ${ctx.sourceName} word “${ctx.headword}”. ${corpusLine(ctx)}
 Forms in this study: ${ctx.forms.join(", ")}.
 
 ${dictionaryBlock(ctx)}
@@ -111,6 +137,57 @@ Each passage marks occurrences as ⟦…⟧ [id]. For EVERY marked occurrence re
 An "existing translation" line, when present, is only a hint and may be wrong.`;
 }
 
+// --- where the term comes from (reference books) ------------------------------
+
+export const SOURCES_SCHEMA = object({
+  summary: STR,
+  senses: arrayOf(object({
+    sense: STR,
+    inDictionary: { type: "boolean" },
+    sourceBook: NSTR,
+    evidence: STR,
+    originalLanguage: NSTR,
+    originalTerm: NSTR,
+    originalTermBasis: STR,
+    meaningInSource: STR,
+    authorUsage: STR,
+    equivalences: arrayOf(object({ term: STR, relation: oneOf("identity", "related", "symbol", "part"), evidence: STR })),
+  })),
+});
+
+export function sourcesInstructions(ctx) {
+  return `You research where a term used by an author comes from, before anyone translates it. The author is ${ctx.authorName}; the texts are ${ctx.corpusDescription}. The author drew on the reference books listed below (the ${ctx.sourceName} editions he used).
+
+You receive: the dictionary entry for the term; how often the term occurs in each reference book; passages from the books that use it most; passages where the author names those books; a sample of the author's own uses; and records of the reference books (original language, first printings, original titles and the book's own glossary pairs where researched). In passages the term is marked ⟦like this⟧.
+
+Work out:
+1. Which senses the author uses that the dictionary does not cover (also list the dictionary senses he uses, briefly, with inDictionary true). For each non-dictionary sense, where it comes from: which book or tradition, with evidence from the passages. Frequency alone is not evidence of borrowing: look for the author naming or quoting the book, and for the same distinctive usage.
+2. If that book is a translation, the original-language word or phrase that the ${ctx.sourceName} term translates. Use only the records given (e.g. the book's glossary pairs) and say what they are; if the records do not settle it, give your belief and say it is unverified in originalTermBasis. Never invent a record.
+3. What the term means in the source book: what it is, what it does, how it relates to the neighbouring concepts of that system. Quote the book.
+4. How the author uses it: whether he follows the source, and which other terms he equates it with. relation "identity" only for explicit statements that X is Y; say whether the equated terms are names for the same thing in other systems.
+Do not discuss translating the term. Write summary, evidence, originalTermBasis, meaningInSource, authorUsage and relations in ${ctx.reportName}; keep quotations as they are.`;
+}
+
+// --- candidate translations of the whole term --------------------------------
+
+export const CANDIDATES_SCHEMA = object({
+  senses: arrayOf(object({
+    sense: STR,
+    candidates: arrayOf(object({ target: STR, recommended: { type: "boolean" }, note: STR, rationale: STR })),
+  })),
+});
+
+export function candidatesInstructions(ctx) {
+  return `You propose candidate ${ctx.targetName} translations of the ${ctx.sourceName} term “${ctx.headword}” for a translators' glossary. ${corpusLine(ctx)} Translators will choose among the candidates passage by passage, so the list must contain every rendering a careful translator could reasonably need, and each candidate needs a note saying when to use it.
+
+Rules:
+- Work sense by sense. A candidate must render the meaning the term has in these texts (the study of where the term comes from, when given, explains special senses).
+- Prefer renderings that translate the term's own meaning over substituting another term the author equates it with. A synonym names the same thing with a different word; list it only if a translator might really need it, and say in its note that it is a synonym and what is lost.
+- If a sense of the term is a translation of an original-language term and ${ctx.targetName} IS that original language, the original term must be one of the candidates for that sense.
+- Notes are written in ${ctx.targetName}, at most 40 words. Rationales are in ${ctx.reportName}. ${quotationRule(ctx.targetName, ctx.targetCode)}
+- Mark at most one candidate per sense as recommended.`;
+}
+
 // --- proposal ------------------------------------------------------------
 
 const VARIANT = object({
@@ -119,7 +196,6 @@ const VARIANT = object({
   note: STR,
   senses: arrayOf(STR),
   corpusSense: NSTR,
-  fromExisting: { type: "boolean" },
   rationale: STR,
 });
 
@@ -136,31 +212,45 @@ export const PROPOSAL_SCHEMA = object({
   })),
   rejectedExpressions: arrayOf(object({ source: STR, reason: STR })),
   derivativeStudies: arrayOf(object({ source: STR, reason: STR })),
-  existingComparison: arrayOf(object({
-    existing: STR,
-    verdict: oneOf("keep", "revise", "remove", "count"),
-    proposed: NSTR,
-    reason: STR,
-  })),
+  leftOutRenderings: arrayOf(object({ rendering: STR, count: { type: "integer" }, reason: STR })),
   sensesOutsideDictionary: arrayOf(object({ gloss: STR, evidence: STR })),
   openQuestions: arrayOf(STR),
 });
 
 export function proposalInstructions(ctx) {
-  return `You are a senior terminologist. Consolidate research into proposed ${ctx.targetName} glossary (TMX) entries for the ${ctx.sourceName} word «${ctx.headword}». ${corpusLine(ctx)}
+  return `You are a senior terminologist. Consolidate research into proposed ${ctx.targetName} glossary (TMX) entries for the ${ctx.sourceName} word “${ctx.headword}”. ${corpusLine(ctx)}
 
 Principles:
 - The dictionary sense inventory (below) is the starting lexical source; the texts decide which senses are attested. A meaning outside the dictionary goes in sensesOutsideDictionary, never presented as a dictionary sense.
 - ENTRIES. An entry is one TMX unit: a group of ${ctx.sourceName} source terms that share one set of ${ctx.targetName} translations. Group source forms together only when ${ctx.targetName} does not need to distinguish them; split them when ${ctx.targetName} keeps the distinction. Example: Spanish negro/negra/negros/negras → English "black" is one entry; Spanish llave → English "key" and llaves → "keys" are two entries, because English never renders a plural as a singular; Spanish llave/llaves → Vietnamese "chìa khóa" is one entry, because Vietnamese nouns do not mark number. Every confirmed form belongs to exactly one word entry.
 - Variants are distinct ${ctx.targetName} choices a translator picks between. Merge near-synonyms that serve the same contexts; keep variants that serve genuinely different contexts or collocations. Typically 2–7 per entry, ordered by how broadly they apply.
-- Existing glossary translations are suggestions, not authorities. Include EVERY existing target variant among the candidates (fromExisting: true) with verdict "count" in existingComparison so its use is measured, unless it is plainly wrong for the whole word (verdict "remove", with reason). Existing translations found in the texts are hints, not authorities.
+- START FROM THE CANDIDATE STUDY: its candidates were chosen for the term as a whole, from the study of where the term comes from. Keep its recommended candidates unless the readings show they fail.
+- Every rendering the open reading used two or more times (see the rendering tally) must be a variant, or be listed in leftOutRenderings with its count and the reason it should not be measured (e.g. it is a synonym the author equates the term with, not a translation of it).
+- Prefer renderings of the term's own meaning over another term the author equates it with; such a synonym is a variant only if translators really need it, and its note says so.
+- If the term translates an original-language term and ${ctx.targetName} is that original language, the original term must be a variant.
+- Existing translations found in the texts (when shown) are hints, not authorities.
 - EXPRESSIONS. Propose a separate expression entry (kind "expression") only for a recurring fixed expression (normally ≥3 occurrences in the whole population, or a listed dictionary complex form that is attested) whose translation cannot be composed from the word variants. Its sourceTerms list every surface spelling to match, lower case. Recurring combinations that need no entry go in rejectedExpressions.
 - Derived words (other lemmas sharing the stem) are not part of this study; list those worth separate studies in derivativeStudies.
-- LANGUAGE: target, every note, and every generalNote are TMX fields and MUST be in ${ctx.targetName}; each note says when to choose the variant (contexts, collocations, what to avoid), at most 40 words. rationale, reason, evidence, and openQuestions are in ${ctx.reportName}. Source-language quotations stay as they are.
+- LANGUAGE: target, every note, and every generalNote are TMX fields and MUST be in ${ctx.targetName}; each note says when to choose the variant (contexts, collocations, what to avoid), at most 40 words. rationale, reason, evidence, and openQuestions are in ${ctx.reportName}. Source-language quotations stay as they are. ${quotationRule(ctx.targetName, ctx.targetCode)}
 - Ids: entries "e1", "e2", …; variants "e1v1", "e1v2", ….
 - populationOccurrencesCited: an expression's whole-population occurrence count from the neighbour table (0 for word entries).
 
 ${dictionaryBlock(ctx)}`;
+}
+
+// --- comparison with the existing glossary entry -----------------------------
+
+export const COMPARE_SCHEMA = object({
+  items: arrayOf(object({
+    existing: STR,
+    verdict: oneOf("proposed", "left_out"),
+    proposedVariantId: NSTR,
+    reason: STR,
+  })),
+});
+
+export function compareInstructions(ctx) {
+  return `The research proposal below was made without looking at the glossary. Compare it with the ${ctx.targetName} translations in the glossary's existing entry for “${ctx.headword}”, one item per existing translation. verdict "proposed": the proposal has the same translation or one with the same wording apart from capitals or inflection; give its variant id. "left_out": the proposal does not include it; say in one sentence why, judging from the proposal and its evidence (e.g. a synonym the author equates the term with, a sense the texts do not use, a wrong sense). Do not change the proposal. Reasons in ${ctx.reportName}, at most 30 words.`;
 }
 
 // --- counting (configuration A) -------------------------------------------
@@ -168,7 +258,7 @@ ${dictionaryBlock(ctx)}`;
 export function frozenEntryText(frozen, targetName) {
   const lines = [];
   for (const entry of frozen.entries) {
-    lines.push(`${entry.kind === "expression" ? "EXPRESSION ENTRY" : "ENTRY"} [${entry.id}] «${entry.sourceTerms.join(" / ")}»`);
+    lines.push(`${entry.kind === "expression" ? "EXPRESSION ENTRY" : "ENTRY"} [${entry.id}] “${entry.sourceTerms.join(" / ")}”`);
     lines.push(`General note (${targetName}): ${entry.generalNote}`);
     for (const variant of entry.displayOrder ?? entry.variants) {
       lines.push(`  [${variant.id}] ${variant.target} — ${variant.note}`);
@@ -193,7 +283,7 @@ export const TRANSLATE_SCHEMA = object({
 });
 
 export function translateInstructions(ctx, frozenText) {
-  return `You check how occurrences of the ${ctx.sourceName} word «${ctx.headword}» should be translated into ${ctx.targetName}, using fixed glossary entries. ${corpusLine(ctx)} Judge each occurrence on its own merits: what a skilled ${ctx.targetName} translator would actually write in this passage.
+  return `You check how occurrences of the ${ctx.sourceName} word “${ctx.headword}” should be translated into ${ctx.targetName}, using fixed glossary entries. ${corpusLine(ctx)} Judge each occurrence on its own merits: what a skilled ${ctx.targetName} translator would actually write in this passage.
 
 The glossary entries (frozen; do not change them):
 ${frozenText}
@@ -216,7 +306,7 @@ export const PROSE_SCHEMA = object({
 });
 
 export function proseInstructions(ctx) {
-  return `Write the opening summary of a research report about translating the ${ctx.sourceName} word «${ctx.headword}» into ${ctx.targetName} for a glossary. Write in ${ctx.reportName}. Keep proposed ${ctx.targetName} wording and source-language quotations as they are. Summary at most 120 words; at most 6 recommendations of at most 30 words; unresolvedExplanation at most 80 words. The counts measure which proposed variant was judged most appropriate in each sampled context: contextual preference, not frequency in ${ctx.targetName} or exclusive correctness. Use only the data given.`;
+  return `Write the opening summary of a research report about translating the ${ctx.sourceName} word “${ctx.headword}” into ${ctx.targetName} for a glossary. Write in ${ctx.reportName}. Keep proposed ${ctx.targetName} wording and source-language quotations as they are. Summary at most 120 words; at most 6 recommendations of at most 30 words; unresolvedExplanation at most 80 words. The counts measure which proposed variant was judged most appropriate in each sampled context: contextual preference, not frequency in ${ctx.targetName} or exclusive correctness. Use only the data given.`;
 }
 
 // --- dictionary fallback via web search -------------------------------------

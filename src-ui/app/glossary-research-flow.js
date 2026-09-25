@@ -36,8 +36,9 @@ import { maybeStartGlossaryBackgroundSync } from "./glossary-background-sync.js"
 export const RESEARCH_STREAM_EVENT = "glossary-research-stream";
 const MAX_LOG_EVENTS = 4000;
 const STAGE_PROGRESS = {
-  Dictionary: 0.05, "Word forms": 0.12, Sampling: 0.2, Discovery: 0.3,
-  Proposal: 0.45, Review: 0.5, Counting: 0.55, Summary: 0.95, Done: 1,
+  Dictionary: 0.04, "Word forms": 0.1, Sampling: 0.15, "Where the term comes from": 0.2,
+  "Candidate translations": 0.27, Discovery: 0.33, Proposal: 0.42, "Existing glossary entry": 0.47,
+  Review: 0.5, Counting: 0.52, Summary: 0.95, Done: 1,
 };
 
 let activeRun = null; // { engine, requestIds:Set, unlisten, store, context }
@@ -431,6 +432,7 @@ function engineSettings(draft, languages) {
     sampleSize: draft.sampleSize,
     spendingLimitUsd: draft.spendingLimitUsd,
     seed: draft.seed || "1",
+    pauseForReview: draft.pauseForReview === true,
     webDictionaryDomains: DICTIONARY_DOMAINS,
   };
 }
@@ -500,6 +502,11 @@ async function beginResearchRun(render, resume = null) {
   draft.spent = engine.budget.spent;
   store.save("log", draft.log);
   render();
+  // Counting follows straight away unless the person asked to review first.
+  // Runs saved before this setting existed always paused, and still do.
+  if (draft.runStatus === "review" && meta.settings?.pauseForReview === false && !resume?.stages?.confirmedProposal) {
+    await countGlossaryResearch(render);
+  }
 }
 
 function handleRunStop(render, error, store, meta) {

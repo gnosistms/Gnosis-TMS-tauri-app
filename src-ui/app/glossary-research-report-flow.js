@@ -188,7 +188,7 @@ export function researchMarkdown(run) {
   const sample = run.sample;
   const judgments = run.counting.judgments;
   const lines = [
-    `# Translation research: «${meta.term}» (${meta.sourceLanguage.name} → ${meta.targetLanguage.name})`, "",
+    `# Translation research: “${meta.term}” (${meta.sourceLanguage.name} → ${meta.targetLanguage.name})`, "",
     "A self-contained research record for discussing proposed glossary (TMX) entries with an AI assistant or a colleague. It was produced by Gnosis TMS Glossary Research; nothing here has been written to a glossary unless the user saved it.", "",
     "## How to read the counts", "",
     "Counts show which proposed translation was judged most appropriate in each sampled context: contextual preference, not frequency in the target language or exclusive correctness.",
@@ -208,7 +208,9 @@ export function researchMarkdown(run) {
     lines.push("");
   }
   const proposal = run.confirmedProposal ?? run.proposal;
-  for (const [key, label] of [["existingComparison", "Existing entries compared"], ["rejectedExpressions", "Recurring combinations without their own entry"], ["derivativeStudies", "Suggested separate studies"], ["sensesOutsideDictionary", "Senses outside the dictionary"], ["openQuestions", "Open questions"]]) {
+  if (run.sources?.study) lines.push("## Where the term comes from", "", "```json", JSON.stringify(run.sources.study, null, 1), "```", "");
+  if (run.candidates) lines.push("## Candidate translations for the whole term (before the passage readings)", "", "```json", JSON.stringify(run.candidates, null, 1), "```", "");
+  for (const [key, label] of [["existingComparison", "Existing entries compared"], ["leftOutRenderings", "Readings not measured"], ["rejectedExpressions", "Recurring combinations without their own entry"], ["derivativeStudies", "Suggested separate studies"], ["sensesOutsideDictionary", "Senses outside the dictionary"], ["openQuestions", "Open questions"]]) {
     if (proposal?.[key]?.length) {
       lines.push(`## ${label}`, "", ...proposal[key].map((item) => `- ${typeof item === "string" ? item : JSON.stringify(item)}`), "");
     }

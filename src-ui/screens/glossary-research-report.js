@@ -102,10 +102,22 @@ function renderEntryCard(report, run, entry) {
   }).join("");
   const unresolved = Object.values(counts.unresolved).reduce((a, b) => a + b, 0);
   const otherKey = `${entry.id}:__other`;
+  const comparison = (run.confirmedProposal ?? run.proposal)?.existingComparison ?? [];
+  const compared = (target) => comparison.find((item) => item.existing?.trim().toLowerCase() === target.trim().toLowerCase());
   const existing = draft.existing ? `
     <div class="research-existing-box">
       <div class="research-existing-box__title">Existing entry</div>
-      <div><strong>${esc(draft.existing.sourceTerms.join(" / "))}</strong> → ${esc(draft.existing.targetTerms.join(", "))}</div>
+      <div><strong>${esc(draft.existing.sourceTerms.join(" / "))}</strong></div>
+      <ul class="research-existing-box__list">
+        ${draft.existing.targetTerms.map((target) => {
+          const item = compared(target);
+          const status = !item ? ""
+            : item.verdict === "proposed" ? `<span class="research-tag research-tag--existing">also proposed by the research${item.proposed && item.proposed !== target ? `: ${esc(item.proposed)}` : ""}</span>`
+            : item.verdict === "left_out" ? `<span class="research-tag research-tag--warn">not proposed by the research</span> <span class="muted">${esc(item.reason)}</span>`
+            : `<span class="muted">${esc(item.reason ?? "")}</span>`;
+          return `<li><span lang="${esc(meta.targetLanguage.code)}">${esc(target)}</span> ${status}</li>`;
+        }).join("")}
+      </ul>
       ${draft.existing.notesToTranslators ? `<div class="muted">${esc(draft.existing.notesToTranslators)}</div>` : ""}
     </div>` : "";
   return `
@@ -154,7 +166,23 @@ function renderSecondary(run) {
   const usage = run.usage ?? [];
   const cost = usage.reduce((sum, record) => sum + (record.costUsd ?? 0), 0);
   const dictionary = run.dictionary ?? {};
+  const study = run.sources?.study;
+  const origins = study?.senses?.filter((sense) => !sense.inDictionary) ?? [];
+  const sources = study ? `
+    <section class="card research-section">
+      <h2>Where the term comes from</h2>
+      <p>${esc(study.summary)}</p>
+      ${origins.map((sense) => `
+        <h3>${esc(sense.sense)}</h3>
+        <ul>
+          ${sense.sourceBook ? `<li>Source: ${esc(sense.sourceBook)}${sense.originalTerm ? ` — original ${esc(sense.originalLanguage ?? "")} term “${esc(sense.originalTerm)}” (${esc(sense.originalTermBasis)})` : ""}</li>` : ""}
+          <li>Meaning there: ${esc(sense.meaningInSource)}</li>
+          <li>How the author uses it: ${esc(sense.authorUsage)}</li>
+          ${sense.equivalences?.length ? `<li>Equated with: ${sense.equivalences.map((e) => `${esc(e.term)} (${esc(e.relation)})`).join(", ")}</li>` : ""}
+        </ul>`).join("")}
+    </section>` : "";
   return `
+    ${sources}
     ${run.prose ? `<section class="card research-section"><h2>Summary</h2><p>${esc(run.prose.summary)}</p>
       ${run.prose.recommendations?.length ? `<ul>${run.prose.recommendations.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>` : ""}</section>` : ""}
     <section class="card research-section">

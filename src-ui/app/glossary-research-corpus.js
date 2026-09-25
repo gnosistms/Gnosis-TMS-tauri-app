@@ -143,6 +143,35 @@ export function createSamaelCorpus({ baseUrl = samaelCorpusUrl(), fetchImpl = gl
       const result = await get("/api/sample/collocations", { forms: forms.join(","), kind: "samael", min_count: 2 });
       return contentNeighbours(result.collocations ?? [], forms, "es").slice(0, 60);
     },
+    authorName: "Samael Aun Weor",
+    /** The reference books the author read, with what is known of their originals. */
+    async sourceBooks() {
+      try {
+        const result = await get("/api/sample/source-books", {});
+        return (result.books ?? []).map((book) => ({
+          title: book.title,
+          translated: book.translated === true,
+          originalLanguage: book.original_language ?? null,
+          originalTitle: book.original_title ?? null,
+          originalAuthor: book.original_author ?? null,
+          originalFirstPrinting: book.original_first_printing ?? null,
+          firstSpanishTranslation: book.first_spanish_translation ?? null,
+          headwordPairs: book.headword_pairs ?? [],
+        }));
+      } catch {
+        return []; // an older site without book records: the study works from the passages alone
+      }
+    },
+    /** Every passage of the reference books that uses the forms, in seeded random order. */
+    async sourceUsage(forms, seed) {
+      const result = await get("/api/sample", { forms: forms.join(","), n: 2000, seed, kind: "source", context: 0 });
+      return result.items.map(toPassage);
+    },
+    /** A seeded random sample of the author's passages containing a phrase (e.g. a book title). */
+    async authorMentions(phrase, seed, n = 8) {
+      const result = await get("/api/sample", { forms: phrase, n, seed, kind: "samael", context: 0 });
+      return result.items.map(toPassage);
+    },
   };
 }
 

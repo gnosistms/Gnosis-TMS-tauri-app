@@ -717,3 +717,15 @@
   cursor: pointer;
   color: #57606a;
 }
+
+.research-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.research-existing-box__list {
+  margin: 4px 0;
+  padding-left: 18px;
+}

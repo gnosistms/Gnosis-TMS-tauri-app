@@ -36,6 +36,8 @@ export const RESEARCH_DEFAULTS = {
   countBatch: 8,
   effortLight: "low",
   effortProposal: "medium",
+  effortStudy: "high",
+  pauseForReview: false,
   maxRetries: 2,
 };
 
@@ -63,6 +65,42 @@ export function mergeCaseVariants(items, spelling) {
     }
   }
   return [...groups.values()];
+}
+
+export function stripAccents(text) {
+  return String(text).normalize("NFD").replace(/\p{Mn}/gu, "").normalize("NFC");
+}
+
+/** `form` with the accents `model` has at the same letters (the case of `form` kept). */
+export function transferAccents(model, form) {
+  const m = [...String(model).normalize("NFC")];
+  const f = [...String(form).normalize("NFC")];
+  return f.map((letter, index) => {
+    const source = m[index];
+    const plain = stripAccents(letter);
+    if (!source || plain !== letter || stripAccents(source) === source) return letter;
+    if (stripAccents(source).toLowerCase() !== plain.toLowerCase()) return letter;
+    return letter === letter.toUpperCase() ? source.toUpperCase() : source.toLowerCase();
+  }).join("");
+}
+
+/**
+ * The same spellings with and without accents: each form stripped of its
+ * accents, and each form given the accents another form has. The search
+ * treats accented and unaccented spellings as different words.
+ */
+export function accentCounterparts(forms) {
+  const known = new Set(forms.map((form) => form.toLowerCase()));
+  const found = new Map();
+  const add = (form) => {
+    const key = form.toLowerCase();
+    if (!known.has(key) && !found.has(key)) found.set(key, form);
+  };
+  for (const a of forms) {
+    add(stripAccents(a));
+    for (const b of forms) if (a !== b) add(transferAccents(a, b));
+  }
+  return [...found.values()];
 }
 
 /** Stable 53-bit string hash (cyrb53), hex. Used for versions and seeds. */
@@ -272,6 +310,8 @@ export function createResearchEngine(deps) {
     corpusDescription: corpus.description,
     dictionaryText: store.load("dictionary")?.text ?? "",
     forms: store.load("forms")?.confirmed ?? [settings.term],
+    targetCode: settings.targetLanguageCode,
+    authorName: corpus.authorName ?? "the author",
     ...extra,
   });
 
@@ -292,7 +332,7 @@ export function createResearchEngine(deps) {
         info("No dictionary entry yet; asking the AI to search dictionary sites.");
         const found = await client.callJson({
           stage: "dictionary", purpose: "search dictionary sites for definitions",
-          instructions: `You look up the ${settings.sourceLanguageName} word «${settings.term}» in published dictionaries using web search, only on dictionary sites. Copy each sense's definition faithfully (in the dictionary's own language), with its number and grammatical labels, and give the page address. Never write definitions from memory: if the search finds no dictionary entry for this exact word, return found=false and no entries.`,
+          instructions: `You look up the ${settings.sourceLanguageName} word “${settings.term}” in published dictionaries using web search, only on dictionary sites. Copy each sense's definition faithfully (in the dictionary's own language), with its number and grammatical labels, and give the page address. Never write definitions from memory: if the search finds no dictionary entry for this exact word, return found=false and no entries.`,
           content: `Word: ${settings.term}\nLanguage: ${settings.sourceLanguageName}`,
           schema: prompts.WEB_DICTIONARY_SCHEMA, schemaName: "web_dictionary",
           maxOutputTokens: 6000, effort: settings.effortLight,
@@ -349,19 +389,28 @@ export function createResearchEngine(deps) {
       });
       // Matching ignores case, so forms differing only in capitals are one
       // form (the lowercase spelling is kept); accent variants stay separate.
-      const candidates = mergeCaseVariants(
+      const proposedForms = mergeCaseVariants(
         [{ form: settings.term, kind: "user", confidence: "high" }, ...proposed.forms],
         (f) => f.form,
       );
+      // The AI can overlook spellings, so every form in the texts' word list
+      // and every accented/unaccented counterpart is checked too; the confirm
+      // step decides whether each is the same word.
+      const extra = mergeCaseVariants([
+        ...(hint?.forms ?? []).map((f) => ({ form: f.form, kind: "text", confidence: "medium" })),
+        ...accentCounterparts(proposedForms.map((f) => f.form)).map((form) => ({ form, kind: "spelling", confidence: "medium" })),
+      ], (f) => f.form).filter((f) => !proposedForms.some((p) => p.form.toLowerCase() === f.form.toLowerCase()));
       const counted = [];
-      for (const candidate of candidates) {
+      for (const candidate of [...proposedForms, ...extra]) {
         const count = await corpus.countForm(candidate.form);
+        const added = !proposedForms.includes(candidate);
+        if (added && !count.rows) continue;
         counted.push({ ...candidate, rows: count.rows, examples: count.examples });
-        info(`search «${candidate.form}»: ${count.rows} passages`);
+        info(`search “${candidate.form}”: ${count.rows} passages${added ? " (added: word list or accent spelling)" : ""}`);
       }
       const confirmCtx = ctx();
       const content = counted.map((c) => [
-        `«${c.form}» (${c.kind}, confidence ${c.confidence}): ${c.rows} passages`,
+        `“${c.form}” (${c.kind}, confidence ${c.confidence}): ${c.rows} passages`,
         ...c.examples.slice(0, 2).map((e) => `   ${snippet(e.text, e.start, e.end, 90)}`),
       ].join("\n")).join("\n");
       const confirmed = await client.callJson({
@@ -387,7 +436,7 @@ export function createResearchEngine(deps) {
       heading("Sampling");
       const forms = store.load("forms").searched;
       if (!forms.length) {
-        throw new ResearchStop(`«${settings.term}» does not occur in the selected texts.`, "no-texts");
+        throw new ResearchStop(`“${settings.term}” does not occur in the selected texts.`, "no-texts");
       }
       const population = await corpus.population(forms);
       const n = Math.min(settings.sampleSize, population.distinct);
@@ -410,6 +459,123 @@ export function createResearchEngine(deps) {
         items: Object.fromEntries(pool.items.map((i) => [i.itemId, i])),
         neighbours,
       };
+    });
+  }
+
+  function passageSnippet(item, radius = 380) {
+    const first = item.occurrences[0];
+    const body = first ? snippet(item.text, first.start, first.end, radius) : item.text.slice(0, 2 * radius);
+    return `[${item.reference?.title ?? ""}]\n${body}`;
+  }
+
+  function authorPassages() {
+    const sample = store.load("sample");
+    return sample.discoveryIds.map((id) => passageSnippet(sample.items[id]));
+  }
+
+  /** Where the term comes from: the reference books the author read. */
+  async function traceSources() {
+    return stage("sources", async () => {
+      heading("Where the term comes from");
+      if (!corpus.sourceUsage) {
+        info("The selected texts have no reference books to trace the term in.");
+        return { skipped: true };
+      }
+      const forms = store.load("forms").searched;
+      const usage = await corpus.sourceUsage(forms, settings.seed);
+      if (!usage.length) {
+        fact("None of the reference books uses the term.");
+        return { skipped: true, counts: [] };
+      }
+      const byBook = new Map();
+      for (const item of usage) {
+        const title = item.reference?.title ?? "";
+        const book = byBook.get(title) ?? { title, occurrences: 0, passages: 0, items: [] };
+        book.occurrences += item.occurrences.length;
+        book.passages += 1;
+        book.items.push(item);
+        byBook.set(title, book);
+      }
+      const ranked = [...byBook.values()].sort((a, b) => b.occurrences - a.occurrences);
+      const total = ranked.reduce((sum, book) => sum + book.occurrences, 0) || 1;
+      const top = ranked.filter((book) => book.occurrences / total >= 0.1).slice(0, 3);
+      if (!top.length) top.push(ranked[0]);
+      const others = ranked.filter((book) => !top.includes(book)).slice(0, 8);
+      const mentions = [];
+      for (const book of top) {
+        const name = book.title.split(" — ")[0];
+        const phrases = new Set([name.replace(/\s*\([^)]*\)\s*/g, " ").trim(), ...[...name.matchAll(/\(([^)]+)\)/g)].map((m) => m[1].trim())]);
+        for (const phrase of [...phrases].filter((p) => p.length > 3)) {
+          const found = corpus.authorMentions ? await corpus.authorMentions(phrase, settings.seed) : [];
+          mentions.push(...found.map((item) => passageSnippet(item, 900)));
+        }
+      }
+      const records = (corpus.sourceBooks ? await corpus.sourceBooks() : [])
+        .filter((record) => ranked.slice(0, 11).some((book) => book.title === record.title));
+      const recordLines = records.map((record) => {
+        const parts = [record.title];
+        if (record.translated) {
+          parts.push(`translated from ${record.originalLanguage ?? "another language"}${record.originalTitle ? `: “${record.originalTitle}”${record.originalAuthor ? ` by ${record.originalAuthor}` : ""}` : ""}`);
+          if (record.originalFirstPrinting) parts.push(`original first printed ${record.originalFirstPrinting}`);
+          if (record.firstSpanishTranslation) parts.push(`first Spanish translation ${record.firstSpanishTranslation}`);
+        } else {
+          parts.push("written in Spanish");
+        }
+        const pairs = record.headwordPairs.length
+          ? `\n  The book's own glossary pairs (${settings.sourceLanguageName} = original): ${record.headwordPairs.map((pair) => `${pair.source} = ${pair.original}`).join("; ")}`
+          : "";
+        return `- ${parts.join("; ")}${pairs}`;
+      });
+      const section = (title, lines) => `## ${title}\n${lines.length ? lines.join("\n\n") : "(none)"}`;
+      const content = [
+        `# Term: ${settings.term}\nSpellings searched: ${forms.join(", ")}`,
+        section("Dictionary entry", [ctx().dictionaryText || "(none found)"]),
+        section("Occurrences in the reference books", [ranked.map((book) => `- ${book.title}: ${book.occurrences} occurrences in ${book.passages} passages`).join("\n")]),
+        section("Records of the reference books", [recordLines.join("\n") || "(no records)"]),
+        section(`Passages from the books that use it most (${top.map((book) => book.title).join("; ")})`, top.flatMap((book) => book.items.slice(0, 14).map((item) => passageSnippet(item)))),
+        section("One passage from each of the other books", others.map((book) => passageSnippet(book.items[0]))),
+        section("Where the author names those books", mentions),
+        section("A sample of the author's own uses", authorPassages()),
+      ].join("\n\n");
+      const study = await client.callJson({
+        stage: "sources", purpose: "trace where the term comes from",
+        instructions: prompts.sourcesInstructions(ctx()), content,
+        schema: prompts.SOURCES_SCHEMA, schemaName: "sources",
+        maxOutputTokens: 16000, effort: settings.effortStudy,
+      });
+      for (const sense of study.senses.filter((item) => !item.inDictionary)) {
+        fact(`${sense.sense}${sense.sourceBook ? ` — from ${sense.sourceBook}` : ""}${sense.originalTerm ? ` (original ${sense.originalLanguage ?? ""} term “${sense.originalTerm}”)` : ""}`);
+      }
+      return {
+        counts: ranked.map((book) => ({ title: book.title, occurrences: book.occurrences, passages: book.passages })),
+        topBooks: top.map((book) => book.title),
+        study,
+      };
+    });
+  }
+
+  /** Candidate translations for the term as a whole, before any passage-by-passage reading. */
+  async function proposeCandidates() {
+    return stage("candidates", async () => {
+      heading("Candidate translations");
+      const sources = store.load("sources");
+      const content = [
+        `# Term: ${settings.term}`,
+        `## Dictionary entry\n${ctx().dictionaryText || "(none found)"}`,
+        sources?.study ? `## Study of where the term comes from\n${JSON.stringify(sources.study, null, 1)}` : "",
+        `## Passages from the texts\n${authorPassages().join("\n\n")}`,
+      ].filter(Boolean).join("\n\n");
+      const result = await client.callJson({
+        stage: "candidates", purpose: "propose candidate translations for the whole term",
+        instructions: prompts.candidatesInstructions(ctx()), content,
+        schema: prompts.CANDIDATES_SCHEMA, schemaName: "candidates",
+        maxOutputTokens: 16000, effort: settings.effortStudy,
+      });
+      for (const sense of result.senses) {
+        const recommended = sense.candidates.find((c) => c.recommended);
+        fact(`${sense.sense}: ${recommended ? `${recommended.target} (recommended)` : "no recommendation"}${sense.candidates.filter((c) => !c.recommended).length ? `; also ${sense.candidates.filter((c) => !c.recommended).map((c) => c.target).join(", ")}` : ""}`);
+      }
+      return result;
     });
   }
 
@@ -453,10 +619,11 @@ export function createResearchEngine(deps) {
       "Recurring neighbours across the whole population (occurrences / passages):",
       ...(sample.neighbours ?? []).slice(0, 40).map((n) => `- ${n.phrase}: ${n.occurrences} / ${n.paragraphs}`),
       "",
-      "Existing glossary entries (suggestions; include their targets as candidates):",
-      ...(settings.existingEntries.length
-        ? settings.existingEntries.map((entry) => `- ${entry.sourceTerms.join(" / ")} → ${entry.targetTerms.map((t, i) => `${t}${entry.targetVariantNotes?.[i] ? ` (${entry.targetVariantNotes[i]})` : ""}`).join("; ")}${entry.notesToTranslators ? ` | note: ${entry.notesToTranslators}` : ""}`)
-        : ["(none)"]),
+      "Study of where the term comes from:",
+      store.load("sources")?.study ? JSON.stringify(store.load("sources").study, null, 1) : "(not available for these texts)",
+      "",
+      "Candidate study (translations proposed for the term as a whole):",
+      JSON.stringify(store.load("candidates") ?? {}, null, 1),
       "",
       "Existing translations seen in the texts (hints only):",
       ...Object.values(sample.items).filter((i) => i.existingTranslation).slice(0, 12)
@@ -485,23 +652,74 @@ export function createResearchEngine(deps) {
         schema: prompts.PROPOSAL_SCHEMA, schemaName: "proposal",
         maxOutputTokens: 24000, effort: settings.effortProposal,
       });
+      for (const entry of proposal.entries) {
+        // Matching ignores case: one spelling per word.
+        entry.sourceTerms = mergeCaseVariants(entry.sourceTerms.map((form) => ({ form })), (f) => f.form).map((f) => f.form);
+      }
+      const existingTargets = settings.existingEntries.flatMap((entry) => entry.targetTerms);
+      for (const entry of proposal.entries) {
+        for (const variant of entry.variants) {
+          variant.fromExisting = existingTargets.some((target) => fold(target).trim() === fold(variant.target).trim());
+        }
+      }
       const problems = validateProposal(proposal, store.load("forms").confirmed);
+      problems.push(...unmeasuredRenderings(proposal, store.load("discovery")));
       if (problems.length) info(`proposal notes: ${problems.join("; ")}`);
       fact(`${proposal.entries.length} proposed entr${proposal.entries.length === 1 ? "y" : "ies"}: ${proposal.entries.map((e) => `${e.sourceTerms.join("/")} → ${e.variants.map((v) => v.target).join(", ")}`).join(" | ")}`);
+      for (const item of proposal.leftOutRenderings ?? []) info(`not measured: ${item.rendering} (${item.count}) — ${item.reason}`);
+      proposal.existingComparison = await compareWithExisting(proposal);
       return proposal;
     });
   }
 
-  /** Research up to the review pause. */
+  /** The existing glossary entry, compared only after the proposal was made without it. */
+  async function compareWithExisting(proposal) {
+    const existing = settings.existingEntries.flatMap((entry) => entry.targetTerms.map((target, index) => ({
+      target, note: entry.targetVariantNotes?.[index] ?? "",
+    })));
+    if (!existing.length) return [];
+    heading("Existing glossary entry");
+    const variants = proposal.entries.flatMap((entry) => entry.variants.map((v) => `[${v.id}] ${v.target} — ${v.note}`));
+    const result = await client.callJson({
+      stage: "comparison", purpose: "compare with the existing glossary entry",
+      instructions: prompts.compareInstructions(ctx()),
+      content: [
+        "Proposal (variant id, translation, note):", ...variants, "",
+        "Senses and synonyms found:", JSON.stringify({ sensesOutsideDictionary: proposal.sensesOutsideDictionary, leftOutRenderings: proposal.leftOutRenderings, sources: store.load("sources")?.study?.senses?.map((sense) => ({ sense: sense.sense, equivalences: sense.equivalences })) ?? [] }, null, 1), "",
+        "Existing glossary translations:", ...existing.map((item) => `- ${item.target}${item.note ? ` (${item.note})` : ""}`),
+      ].join("\n"),
+      schema: prompts.COMPARE_SCHEMA, schemaName: "comparison",
+      maxOutputTokens: 4000, effort: settings.effortLight,
+    });
+    const byId = Object.fromEntries(proposal.entries.flatMap((entry) => entry.variants.map((v) => [v.id, v.target])));
+    const items = result.items.map((item) => ({
+      existing: item.existing,
+      verdict: item.verdict,
+      proposed: item.proposedVariantId ? byId[item.proposedVariantId] ?? null : null,
+      reason: item.reason,
+    }));
+    const leftOut = items.filter((item) => item.verdict === "left_out");
+    fact(leftOut.length
+      ? `Existing translations not in the proposal: ${leftOut.map((item) => item.existing).join(", ")}`
+      : "Every existing translation is in the proposal.");
+    return items;
+  }
+
+  /** Research up to the proposal (the review pause, when asked for). */
   async function runToReview() {
     try {
       await lookUpDictionary();
       await findForms();
       await drawSample();
+      await traceSources();
+      await proposeCandidates();
       await discover();
+      const fresh = store.load("proposal") == null;
       const proposal = await propose();
-      heading("Review");
-      fact("Waiting for you to review the proposed translations before counting.");
+      if (fresh && settings.pauseForReview) {
+        heading("Review");
+        fact("Waiting for you to review the proposed translations before counting.");
+      }
       return { status: "review", proposal, spent: budget.spent };
     } finally {
       saveUsage();
@@ -567,7 +785,7 @@ export function createResearchEngine(deps) {
     if (unassigned.length) info(`${unassigned.length} occurrences match no entry's forms: ${[...new Set(unassigned.map((o) => o.surface))].join(", ")}`);
     const entryById = Object.fromEntries(frozen.entries.map((e) => [e.id, e]));
     const label = (entryId) => entryById[entryId]
-      ? `${entryById[entryId].kind === "expression" ? "expression " : ""}entry [${entryId}] «${entryById[entryId].sourceTerms.join(" / ")}»`
+      ? `${entryById[entryId].kind === "expression" ? "expression " : ""}entry [${entryId}] “${entryById[entryId].sourceTerms.join(" / ")}”`
       : "no entry (report status unresolved/not_this_word if it is not the headword)";
     const instructions = prompts.translateInstructions(ctx(), prompts.frozenEntryText(frozen, settings.targetLanguageName));
     const judgments = {};
@@ -605,7 +823,7 @@ export function createResearchEngine(deps) {
       judgments[occurrence.occId] = { occId: occurrence.occId, status: "failed", variantId: null, note: occurrence.problem };
     }
     for (const occurrence of unassigned) {
-      judgments[occurrence.occId] = { occId: occurrence.occId, status: "unresolved", unresolvedReason: "no_entry", variantId: null, note: `form «${occurrence.surface}» is in no entry` };
+      judgments[occurrence.occId] = { occId: occurrence.occId, status: "unresolved", unresolvedReason: "no_entry", variantId: null, note: `form “${occurrence.surface}” is in no entry` };
     }
     return { frozenVersion: frozen.version, occurrences, judgments };
   }
@@ -660,7 +878,7 @@ export function validateProposal(proposal, confirmedForms, { strict = false } = 
   for (const entry of wordEntries) {
     for (const term of entry.sourceTerms) {
       const key = fold(term).trim();
-      if (covered.has(key)) problems.push(`«${term}» is in entries ${covered.get(key)} and ${entry.id}`);
+      if (covered.has(key) && covered.get(key) !== entry.id) problems.push(`“${term}” is in entries ${covered.get(key)} and ${entry.id}`);
       covered.set(key, entry.id);
     }
   }
@@ -669,6 +887,24 @@ export function validateProposal(proposal, confirmedForms, { strict = false } = 
     if (missing.length) problems.push(`forms in no entry: ${missing.join(", ")}`);
   }
   return problems;
+}
+
+/**
+ * Renderings the open reading used two or more times that are neither a
+ * variant nor explained in leftOutRenderings.
+ */
+export function unmeasuredRenderings(proposal, discovery) {
+  if (!discovery) return [];
+  const tally = new Map();
+  for (const reading of Object.values(discovery.readings ?? {})) {
+    const key = fold(reading.rendering).trim();
+    if (key) tally.set(key, { text: tally.get(key)?.text ?? reading.rendering, count: (tally.get(key)?.count ?? 0) + 1 });
+  }
+  const targets = new Set(proposal.entries.flatMap((entry) => entry.variants.map((v) => fold(v.target).trim())));
+  const explained = new Set((proposal.leftOutRenderings ?? []).map((item) => fold(item.rendering).trim()));
+  return [...tally.entries()]
+    .filter(([key, value]) => value.count >= 2 && !targets.has(key) && !explained.has(key))
+    .map(([, value]) => `“${value.text}” (${value.count} readings) is neither measured nor explained`);
 }
 
 /** Normalize an answer; returns a problem string or null. */
