@@ -133,7 +133,7 @@ export function createModelClient({ model, prices, budget, log, isCancelled, max
     let maxOutputTokens = request.maxOutputTokens;
     for (;;) {
       if (isCancelled()) throw new ResearchStop("Research was cancelled.", "cancelled");
-      const reserve = worstCaseCost(prices, request.instructions, request.content, maxOutputTokens);
+      const reserve = worstCaseCost(prices, request.instructions, request.content, maxOutputTokens, request.webSearchDomains?.length ? 4 : 0);
       if (!budget.fitsAtAll(reserve)) {
         throw new BudgetExceededError(reserve, budget.spent, budget.reserved, budget.limit);
       }
@@ -203,7 +203,7 @@ export function createModelClient({ model, prices, budget, log, isCancelled, max
     while (pending.length || running.size) {
       while (pending.length && running.size < workers && !stop) {
         const [, request] = pending[0];
-        const need = worstCaseCost(prices, request.instructions, request.content, request.maxOutputTokens);
+        const need = worstCaseCost(prices, request.instructions, request.content, request.maxOutputTokens, request.webSearchDomains?.length ? 4 : 0);
         if (!budget.fitsAtAll(need)) {
           stop = new BudgetExceededError(need, budget.spent, budget.reserved, budget.limit);
           break;
@@ -264,7 +264,38 @@ export function createResearchEngine(deps) {
   async function lookUpDictionary() {
     return stage("dictionary", async () => {
       heading("Dictionary");
-      const result = await dictionary.lookup(settings.term, (line) => info(line));
+      let result = await dictionary.lookup(settings.term, (line) => info(line));
+      if (result.status !== "found" && settings.webDictionaryDomains?.length) {
+        info("No dictionary entry yet; asking the AI to search dictionary sites.");
+        const found = await client.callJson({
+          stage: "dictionary", purpose: "search dictionary sites for definitions",
+          instructions: `You look up the ${settings.sourceLanguageName} word «${settings.term}» in published dictionaries using web search, only on dictionary sites. Copy each sense's definition faithfully (in the dictionary's own language), with its number and grammatical labels, and give the page address. Never write definitions from memory: if the search finds no dictionary entry for this exact word, return found=false and no entries.`,
+          content: `Word: ${settings.term}\nLanguage: ${settings.sourceLanguageName}`,
+          schema: prompts.WEB_DICTIONARY_SCHEMA, schemaName: "web_dictionary",
+          maxOutputTokens: 6000, effort: settings.effortLight,
+          webSearchDomains: settings.webDictionaryDomains,
+        }).catch((error) => {
+          info(`dictionary search failed: ${error.message}`);
+          return null;
+        });
+        if (found?.found && found.entries.some((entry) => entry.senses.length)) {
+          const lines = [];
+          for (const entry of found.entries) {
+            lines.push(`${entry.sourceName} (${entry.url}):`);
+            for (const sense of entry.senses) lines.push(`  ${sense.number}. ${sense.labels} ${sense.definition}`.trimEnd());
+          }
+          result = {
+            status: "found", sourceName: found.entries.map((entry) => entry.sourceName).join("; "),
+            url: found.entries[0].url, text: lines.join("\n"),
+            senseCount: found.entries.reduce((sum, entry) => sum + entry.senses.length, 0),
+            complexFormCount: 0, tried: [...result.tried, "AI web search"], notes: result.notes,
+            webEntries: found.entries,
+          };
+        } else {
+          result = { ...result, tried: [...result.tried, "AI web search"] };
+        }
+      }
+      for (const note of result.notes ?? []) fact(note);
       fact(result.status === "found"
         ? `${result.sourceName}: found (${result.senseCount} senses${result.complexFormCount ? `, ${result.complexFormCount} complex forms` : ""})`
         : result.status === "not_found"

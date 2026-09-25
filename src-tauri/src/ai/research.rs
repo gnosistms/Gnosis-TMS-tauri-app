@@ -51,7 +51,13 @@ pub(crate) struct ResearchModelRequest {
     pub schema: Value,
     pub effort: String,
     pub max_output_tokens: u32,
+    /// When set, the model may search the web, only on these domains
+    /// (dictionary fallback). At most `WEB_SEARCH_MAX_USES` searches.
+    #[serde(default)]
+    pub web_search_domains: Option<Vec<String>>,
 }
+
+pub(crate) const WEB_SEARCH_MAX_USES: u32 = 4;
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -63,6 +69,8 @@ pub(crate) struct ResearchUsage {
     /// All output tokens, including thinking.
     pub output_tokens: u64,
     pub reasoning_tokens: u64,
+    /// Billed separately per search by both providers.
+    pub web_searches: u64,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -211,7 +219,7 @@ pub(crate) fn run_research_request(
 // --- request bodies ------------------------------------------------------------
 
 pub(crate) fn claude_body(request: &ResearchModelRequest) -> Value {
-    json!({
+    let mut body = json!({
         "model": request.model_id.trim(),
         "max_tokens": request.max_output_tokens,
         "stream": true,
@@ -231,11 +239,20 @@ pub(crate) fn claude_body(request: &ResearchModelRequest) -> Value {
             },
         },
         // No refusal fallback: a study must not silently switch models.
-    })
+    });
+    if let Some(domains) = request.web_search_domains.as_ref().filter(|d| !d.is_empty()) {
+        body["tools"] = json!([{
+            "type": "web_search_20260209",
+            "name": "web_search",
+            "max_uses": WEB_SEARCH_MAX_USES,
+            "allowed_domains": domains,
+        }]);
+    }
+    body
 }
 
 pub(crate) fn openai_body(request: &ResearchModelRequest) -> Value {
-    json!({
+    let mut body = json!({
         "model": request.model_id.trim(),
         "store": false,
         "stream": true,
@@ -262,7 +279,12 @@ pub(crate) fn openai_body(request: &ResearchModelRequest) -> Value {
                 "text": request.content,
             }]},
         ],
-    })
+    });
+    if let Some(domains) = request.web_search_domains.as_ref().filter(|d| !d.is_empty()) {
+        body["tools"] = json!([{"type": "web_search", "filters": {"allowed_domains": domains}}]);
+        body["max_tool_calls"] = json!(WEB_SEARCH_MAX_USES);
+    }
+    body
 }
 
 // --- stream reading ----------------------------------------------------------
@@ -378,6 +400,8 @@ pub(crate) fn claude_event(
                 state.usage.output_tokens = number(usage, "/output_tokens");
                 state.usage.reasoning_tokens =
                     number(usage, "/output_tokens_details/thinking_tokens");
+                state.usage.web_searches =
+                    number(usage, "/server_tool_use/web_search_requests");
             }
         }
         "message_stop" => {
@@ -418,6 +442,9 @@ pub(crate) fn openai_event(
         "response.reasoning_summary_text.delta" => {
             let delta = value.get("delta").and_then(Value::as_str).unwrap_or("");
             emit("thinking", delta);
+        }
+        "response.web_search_call.completed" => {
+            state.usage.web_searches += 1;
         }
         "response.refusal.delta" => {
             state.stop_reason = Some("refusal".to_string());
@@ -509,6 +536,12 @@ fn finish(provider_id: AiProviderId, state: StreamState, end: ReadEnd) -> Resear
                 usage,
             }
         }
+        Some("pause_turn") => {
+            return ResearchOutcome::Incomplete {
+                reason: "pause_turn".to_string(),
+                usage,
+            }
+        }
         Some("max_tokens") | Some("max_output_tokens") => {
             return ResearchOutcome::Incomplete {
                 reason: "max_tokens".to_string(),
@@ -592,6 +625,7 @@ mod tests {
                            "required": ["a"], "additionalProperties": false}),
             effort: "low".into(),
             max_output_tokens: 900,
+            web_search_domains: None,
         }
     }
 
@@ -619,6 +653,19 @@ mod tests {
     }
 
     #[test]
+    fn web_search_is_limited_to_the_given_domains() {
+        let mut with_search = request(AiProviderId::Claude);
+        with_search.web_search_domains = Some(vec!["wiktionary.org".into()]);
+        let body = claude_body(&with_search);
+        assert_eq!(body.pointer("/tools/0/allowed_domains/0"), Some(&json!("wiktionary.org")));
+        assert_eq!(body.pointer("/tools/0/max_uses"), Some(&json!(WEB_SEARCH_MAX_USES)));
+        with_search.provider_id = AiProviderId::OpenAi;
+        let body = openai_body(&with_search);
+        assert_eq!(body.pointer("/tools/0/filters/allowed_domains/0"), Some(&json!("wiktionary.org")));
+        assert!(claude_body(&request(AiProviderId::Claude)).get("tools").is_none());
+    }
+
+    #[test]
     fn openai_body_uses_an_explicit_breakpoint_and_strict_schema() {
         let body = openai_body(&request(AiProviderId::OpenAi));
         assert_eq!(body.pointer("/input/0/content/0/prompt_cache_breakpoint/mode"), Some(&json!("explicit")));
@@ -638,7 +685,7 @@ event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
         assert_eq!(outcome, ResearchOutcome::Ok {
             text: "{\"a\":\"x\"}".into(),
             usage: ResearchUsage { input_tokens: 1060, cached_tokens: 1000, cache_write_tokens: 50,
-                                   output_tokens: 42, reasoning_tokens: 0 },
+                                   output_tokens: 42, reasoning_tokens: 0, web_searches: 0 },
         });
         assert_eq!(emitted[0], ("thinking".to_string(), "hmm".to_string()));
     }
@@ -673,7 +720,7 @@ event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{
         assert_eq!(outcome, ResearchOutcome::Ok {
             text: "{}".into(),
             usage: ResearchUsage { input_tokens: 100, cached_tokens: 60, cache_write_tokens: 20,
-                                   output_tokens: 30, reasoning_tokens: 12 },
+                                   output_tokens: 30, reasoning_tokens: 12, web_searches: 0 },
         });
         assert_eq!(emitted[0].0, "thinking");
     }

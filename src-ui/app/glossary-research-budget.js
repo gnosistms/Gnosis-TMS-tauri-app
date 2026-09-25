@@ -63,9 +63,13 @@ export function estimateTokens(text) {
   return Math.ceil(Math.max(value.length / 2.8, bytes / 3.2)) + 16;
 }
 
-export function worstCaseCost(prices, instructions, content, maxOutputTokens) {
+// Both providers bill web searches separately: $10 per 1,000.
+export const WEB_SEARCH_PRICE_USD = 0.01;
+
+export function worstCaseCost(prices, instructions, content, maxOutputTokens, maxWebSearches = 0) {
   const tokensIn = estimateTokens(instructions) + estimateTokens(content);
-  return (tokensIn * prices.cacheWrite + maxOutputTokens * prices.output) / 1_000_000;
+  return (tokensIn * prices.cacheWrite + maxOutputTokens * prices.output) / 1_000_000
+    + maxWebSearches * WEB_SEARCH_PRICE_USD;
 }
 
 export function usageCost(prices, usage) {
@@ -73,13 +77,14 @@ export function usageCost(prices, usage) {
   const cached = Number(usage?.cachedTokens) || 0;
   const written = Number(usage?.cacheWriteTokens) || 0;
   const output = Number(usage?.outputTokens) || 0;
+  const searches = Number(usage?.webSearches) || 0;
   const ordinary = Math.max(0, input - cached - written);
   return (
     ordinary * prices.input
     + cached * prices.cached
     + written * prices.cacheWrite
     + output * prices.output
-  ) / 1_000_000;
+  ) / 1_000_000 + searches * WEB_SEARCH_PRICE_USD;
 }
 
 export class BudgetExceededError extends Error {
