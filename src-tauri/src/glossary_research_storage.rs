@@ -65,7 +65,8 @@ pub(crate) struct ResearchRunSummary {
 
 pub(crate) fn save_stage(root: &Path, input: &ResearchStageInput) -> Result<(), String> {
     let dir = run_dir(root, &input.glossary_id, &input.run_id)?;
-    fs::create_dir_all(&dir).map_err(|error| format!("Could not create the research folder: {error}"))?;
+    fs::create_dir_all(&dir)
+        .map_err(|error| format!("Could not create the research folder: {error}"))?;
     let path = dir.join(format!("{}.json", safe_name(&input.stage, "stage")?));
     match &input.value {
         Some(value) => write_atomically(&path, value),
@@ -83,7 +84,9 @@ pub(crate) fn load_run(root: &Path, glossary_id: &str, run_id: &str) -> Result<V
     let mut stages = serde_json::Map::new();
     let entries = match fs::read_dir(&dir) {
         Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Value::Object(stages)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Value::Object(stages))
+        }
         Err(error) => return Err(format!("Could not read the research folder: {error}")),
     };
     for entry in entries.flatten() {
@@ -91,8 +94,11 @@ pub(crate) fn load_run(root: &Path, glossary_id: &str, run_id: &str) -> Result<V
         if path.extension().and_then(|e| e.to_str()) != Some("json") {
             continue;
         }
-        let Some(stage) = path.file_stem().and_then(|s| s.to_str()) else { continue };
-        let text = fs::read_to_string(&path).map_err(|error| format!("Could not read research data: {error}"))?;
+        let Some(stage) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let text = fs::read_to_string(&path)
+            .map_err(|error| format!("Could not read research data: {error}"))?;
         if let Ok(value) = serde_json::from_str::<Value>(&text) {
             stages.insert(stage.to_string(), value);
         }
@@ -104,9 +110,13 @@ pub(crate) fn load_run(root: &Path, glossary_id: &str, run_id: &str) -> Result<V
 pub(crate) fn list_runs(root: &Path, glossary_id: &str) -> Result<Vec<ResearchRunSummary>, String> {
     let dir = root.join(safe_name(glossary_id, "glossary id")?);
     let mut runs = Vec::new();
-    let Ok(entries) = fs::read_dir(&dir) else { return Ok(runs) };
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return Ok(runs);
+    };
     for entry in entries.flatten() {
-        let Some(run_id) = entry.file_name().to_str().map(str::to_string) else { continue };
+        let Some(run_id) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
         if safe_name(&run_id, "run id").is_err() {
             continue;
         }
@@ -130,7 +140,10 @@ pub(crate) fn delete_run(root: &Path, glossary_id: &str, run_id: &str) -> Result
 }
 
 #[tauri::command]
-pub(crate) fn save_glossary_research_stage(app: AppHandle, input: ResearchStageInput) -> Result<(), String> {
+pub(crate) fn save_glossary_research_stage(
+    app: AppHandle,
+    input: ResearchStageInput,
+) -> Result<(), String> {
     save_stage(&research_root(&app, input.installation_id)?, &input)
 }
 
@@ -141,7 +154,11 @@ pub(crate) fn load_glossary_research_run(
     glossary_id: String,
     run_id: String,
 ) -> Result<Value, String> {
-    load_run(&research_root(&app, installation_id)?, &glossary_id, &run_id)
+    load_run(
+        &research_root(&app, installation_id)?,
+        &glossary_id,
+        &run_id,
+    )
 }
 
 #[tauri::command]
@@ -160,7 +177,11 @@ pub(crate) fn delete_glossary_research_run(
     glossary_id: String,
     run_id: String,
 ) -> Result<(), String> {
-    delete_run(&research_root(&app, installation_id)?, &glossary_id, &run_id)
+    delete_run(
+        &research_root(&app, installation_id)?,
+        &glossary_id,
+        &run_id,
+    )
 }
 
 #[cfg(test)]
@@ -182,7 +203,11 @@ mod tests {
     fn stages_round_trip_list_and_clear() {
         let root = std::env::temp_dir().join(format!("gtms-research-{}", std::process::id()));
         save_stage(&root, &input("meta", Some(json!({"term": "fatal"})))).unwrap();
-        save_stage(&root, &input("forms", Some(json!({"confirmed": ["fatal"]})))).unwrap();
+        save_stage(
+            &root,
+            &input("forms", Some(json!({"confirmed": ["fatal"]}))),
+        )
+        .unwrap();
         let run = load_run(&root, "g-1", "2026-09-25T10-00-00_fatal").unwrap();
         assert_eq!(run["forms"]["confirmed"][0], "fatal");
         save_stage(&root, &input("forms", None)).unwrap();

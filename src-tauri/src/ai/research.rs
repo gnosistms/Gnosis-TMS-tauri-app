@@ -74,10 +74,17 @@ pub(crate) struct ResearchUsage {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase", tag = "status")]
+#[serde(
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "status"
+)]
 pub(crate) enum ResearchOutcome {
     /// Complete answer (the JSON text) with its usage.
-    Ok { text: String, usage: ResearchUsage },
+    Ok {
+        text: String,
+        usage: ResearchUsage,
+    },
     /// The provider answered but the answer is unusable (output cap reached,
     /// safety refusal, empty). It was billed per `usage`.
     Incomplete {
@@ -240,7 +247,11 @@ pub(crate) fn claude_body(request: &ResearchModelRequest) -> Value {
         },
         // No refusal fallback: a study must not silently switch models.
     });
-    if let Some(domains) = request.web_search_domains.as_ref().filter(|d| !d.is_empty()) {
+    if let Some(domains) = request
+        .web_search_domains
+        .as_ref()
+        .filter(|d| !d.is_empty())
+    {
         body["tools"] = json!([{
             "type": "web_search_20260209",
             "name": "web_search",
@@ -280,7 +291,11 @@ pub(crate) fn openai_body(request: &ResearchModelRequest) -> Value {
             }]},
         ],
     });
-    if let Some(domains) = request.web_search_domains.as_ref().filter(|d| !d.is_empty()) {
+    if let Some(domains) = request
+        .web_search_domains
+        .as_ref()
+        .filter(|d| !d.is_empty())
+    {
         body["tools"] = json!([{"type": "web_search", "filters": {"allowed_domains": domains}}]);
         body["max_tool_calls"] = json!(WEB_SEARCH_MAX_USES);
     }
@@ -372,7 +387,10 @@ pub(crate) fn claude_event(
         }
         "content_block_delta" => match value.pointer("/delta/type").and_then(Value::as_str) {
             Some("text_delta") => {
-                let delta = value.pointer("/delta/text").and_then(Value::as_str).unwrap_or("");
+                let delta = value
+                    .pointer("/delta/text")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
                 state.text.push_str(delta);
                 emit("text", delta);
             }
@@ -400,8 +418,7 @@ pub(crate) fn claude_event(
                 state.usage.output_tokens = number(usage, "/output_tokens");
                 state.usage.reasoning_tokens =
                     number(usage, "/output_tokens_details/thinking_tokens");
-                state.usage.web_searches =
-                    number(usage, "/server_tool_use/web_search_requests");
+                state.usage.web_searches = number(usage, "/server_tool_use/web_search_requests");
             }
         }
         "message_stop" => {
@@ -593,7 +610,9 @@ fn http_failure(provider_id: AiProviderId, status: u16, body: &str) -> ResearchO
         })
         .unwrap_or_default();
     let message = match status {
-        401 | 403 => format!("{name} rejected the saved API key. Check it on the AI Settings page."),
+        401 | 403 => {
+            format!("{name} rejected the saved API key. Check it on the AI Settings page.")
+        }
         429 => format!("{name} is rate-limiting requests. {detail}"),
         _ if detail.is_empty() => format!("{name} returned HTTP {status}."),
         // Error messages never include key material from our side.
@@ -629,14 +648,25 @@ mod tests {
         }
     }
 
-    fn run_stream(provider: AiProviderId, stream: &str) -> (ResearchOutcome, Vec<(String, String)>) {
+    fn run_stream(
+        provider: AiProviderId,
+        stream: &str,
+    ) -> (ResearchOutcome, Vec<(String, String)>) {
         let emitted = std::cell::RefCell::new(Vec::new());
-        let emit = |kind: &str, delta: &str| emitted.borrow_mut().push((kind.to_string(), delta.to_string()));
+        let emit = |kind: &str, delta: &str| {
+            emitted
+                .borrow_mut()
+                .push((kind.to_string(), delta.to_string()))
+        };
         let mut state = StreamState::default();
         let flag = AtomicBool::new(false);
         let end = match provider {
-            AiProviderId::Claude => read_sse(Cursor::new(stream), &flag, |e, d| claude_event(&mut state, e, d, &emit)),
-            _ => read_sse(Cursor::new(stream), &flag, |e, d| openai_event(&mut state, e, d, &emit)),
+            AiProviderId::Claude => read_sse(Cursor::new(stream), &flag, |e, d| {
+                claude_event(&mut state, e, d, &emit)
+            }),
+            _ => read_sse(Cursor::new(stream), &flag, |e, d| {
+                openai_event(&mut state, e, d, &emit)
+            }),
         };
         (finish(provider, state, end), emitted.into_inner())
     }
@@ -644,11 +674,19 @@ mod tests {
     #[test]
     fn claude_body_caches_the_prefix_and_sends_schema_effort_and_cap() {
         let body = claude_body(&request(AiProviderId::Claude));
-        assert_eq!(body.pointer("/system/0/cache_control/type"), Some(&json!("ephemeral")));
+        assert_eq!(
+            body.pointer("/system/0/cache_control/type"),
+            Some(&json!("ephemeral"))
+        );
         assert_eq!(body.pointer("/output_config/effort"), Some(&json!("low")));
         assert_eq!(body.pointer("/max_tokens"), Some(&json!(900)));
-        assert_eq!(body.pointer("/thinking/display"), Some(&json!("summarized")));
-        assert!(body.pointer("/output_config/format/schema/properties/a/maxLength").is_none());
+        assert_eq!(
+            body.pointer("/thinking/display"),
+            Some(&json!("summarized"))
+        );
+        assert!(body
+            .pointer("/output_config/format/schema/properties/a/maxLength")
+            .is_none());
         assert!(body.get("fallbacks").is_none());
     }
 
@@ -657,18 +695,32 @@ mod tests {
         let mut with_search = request(AiProviderId::Claude);
         with_search.web_search_domains = Some(vec!["wiktionary.org".into()]);
         let body = claude_body(&with_search);
-        assert_eq!(body.pointer("/tools/0/allowed_domains/0"), Some(&json!("wiktionary.org")));
-        assert_eq!(body.pointer("/tools/0/max_uses"), Some(&json!(WEB_SEARCH_MAX_USES)));
+        assert_eq!(
+            body.pointer("/tools/0/allowed_domains/0"),
+            Some(&json!("wiktionary.org"))
+        );
+        assert_eq!(
+            body.pointer("/tools/0/max_uses"),
+            Some(&json!(WEB_SEARCH_MAX_USES))
+        );
         with_search.provider_id = AiProviderId::OpenAi;
         let body = openai_body(&with_search);
-        assert_eq!(body.pointer("/tools/0/filters/allowed_domains/0"), Some(&json!("wiktionary.org")));
-        assert!(claude_body(&request(AiProviderId::Claude)).get("tools").is_none());
+        assert_eq!(
+            body.pointer("/tools/0/filters/allowed_domains/0"),
+            Some(&json!("wiktionary.org"))
+        );
+        assert!(claude_body(&request(AiProviderId::Claude))
+            .get("tools")
+            .is_none());
     }
 
     #[test]
     fn openai_body_uses_an_explicit_breakpoint_and_strict_schema() {
         let body = openai_body(&request(AiProviderId::OpenAi));
-        assert_eq!(body.pointer("/input/0/content/0/prompt_cache_breakpoint/mode"), Some(&json!("explicit")));
+        assert_eq!(
+            body.pointer("/input/0/content/0/prompt_cache_breakpoint/mode"),
+            Some(&json!("explicit"))
+        );
         assert_eq!(body.pointer("/text/format/strict"), Some(&json!(true)));
         assert_eq!(body.pointer("/reasoning/summary"), Some(&json!("auto")));
     }
@@ -682,11 +734,20 @@ event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\
 event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":42}}\n\n\
 event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
         let (outcome, emitted) = run_stream(AiProviderId::Claude, stream);
-        assert_eq!(outcome, ResearchOutcome::Ok {
-            text: "{\"a\":\"x\"}".into(),
-            usage: ResearchUsage { input_tokens: 1060, cached_tokens: 1000, cache_write_tokens: 50,
-                                   output_tokens: 42, reasoning_tokens: 0, web_searches: 0 },
-        });
+        assert_eq!(
+            outcome,
+            ResearchOutcome::Ok {
+                text: "{\"a\":\"x\"}".into(),
+                usage: ResearchUsage {
+                    input_tokens: 1060,
+                    cached_tokens: 1000,
+                    cache_write_tokens: 50,
+                    output_tokens: 42,
+                    reasoning_tokens: 0,
+                    web_searches: 0
+                },
+            }
+        );
         assert_eq!(emitted[0], ("thinking".to_string(), "hmm".to_string()));
     }
 
@@ -706,9 +767,15 @@ data: {\"type\":\"message_stop\"}\n\n";
 
     #[test]
     fn a_stream_that_stops_early_may_have_been_billed() {
-        let cut = "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":5}}}\n\n";
-        assert!(matches!(run_stream(AiProviderId::Claude, cut).0,
-                         ResearchOutcome::Failed { billed_unknown: true, .. }));
+        let cut =
+            "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":5}}}\n\n";
+        assert!(matches!(
+            run_stream(AiProviderId::Claude, cut).0,
+            ResearchOutcome::Failed {
+                billed_unknown: true,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -717,25 +784,45 @@ data: {\"type\":\"message_stop\"}\n\n";
 event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"{}\"}\n\n\
 event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":100,\"input_tokens_details\":{\"cached_tokens\":60,\"cache_write_tokens\":20},\"output_tokens\":30,\"output_tokens_details\":{\"reasoning_tokens\":12}}}}\n\n";
         let (outcome, emitted) = run_stream(AiProviderId::OpenAi, stream);
-        assert_eq!(outcome, ResearchOutcome::Ok {
-            text: "{}".into(),
-            usage: ResearchUsage { input_tokens: 100, cached_tokens: 60, cache_write_tokens: 20,
-                                   output_tokens: 30, reasoning_tokens: 12, web_searches: 0 },
-        });
+        assert_eq!(
+            outcome,
+            ResearchOutcome::Ok {
+                text: "{}".into(),
+                usage: ResearchUsage {
+                    input_tokens: 100,
+                    cached_tokens: 60,
+                    cache_write_tokens: 20,
+                    output_tokens: 30,
+                    reasoning_tokens: 12,
+                    web_searches: 0
+                },
+            }
+        );
         assert_eq!(emitted[0].0, "thinking");
     }
 
     #[test]
     fn http_errors_never_echo_keys_and_classify_retries() {
-        let outcome = http_failure(AiProviderId::Claude, 401, "{\"error\":{\"message\":\"invalid x-api-key sk-ant-XYZ\"}}");
+        let outcome = http_failure(
+            AiProviderId::Claude,
+            401,
+            "{\"error\":{\"message\":\"invalid x-api-key sk-ant-XYZ\"}}",
+        );
         match outcome {
-            ResearchOutcome::Failed { message, retryable, .. } => {
+            ResearchOutcome::Failed {
+                message, retryable, ..
+            } => {
                 assert!(!message.contains("sk-ant"));
                 assert!(!retryable);
             }
             _ => panic!(),
         }
-        assert!(matches!(http_failure(AiProviderId::OpenAi, 529, ""),
-                         ResearchOutcome::Failed { retryable: true, .. }));
+        assert!(matches!(
+            http_failure(AiProviderId::OpenAi, 529, ""),
+            ResearchOutcome::Failed {
+                retryable: true,
+                ..
+            }
+        ));
     }
 }

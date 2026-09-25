@@ -185,7 +185,10 @@ fn placeholders(count: usize) -> String {
     vec!["?"; count].join(", ")
 }
 
-fn count_matching_chapters(connection: &Connection, input: &ResearchPassagesInput) -> Result<usize, String> {
+fn count_matching_chapters(
+    connection: &Connection,
+    input: &ResearchPassagesInput,
+) -> Result<usize, String> {
     let sql = format!(
         "SELECT count(DISTINCT project_id || '/' || chapter_id) FROM search_documents \
          WHERE language_code = ? AND snippet_source = 'field' AND project_id IN ({})",
@@ -194,7 +197,9 @@ fn count_matching_chapters(connection: &Connection, input: &ResearchPassagesInpu
     let mut values = vec![input.language_code.clone()];
     values.extend(input.project_ids.iter().cloned());
     connection
-        .query_row(&sql, params_from_iter(values.iter()), |row| row.get::<_, i64>(0))
+        .query_row(&sql, params_from_iter(values.iter()), |row| {
+            row.get::<_, i64>(0)
+        })
         .map(|count| count as usize)
         .map_err(|error| format!("Could not read the search index: {error}"))
 }
@@ -211,7 +216,10 @@ fn form_pattern(form: &str) -> Option<Regex> {
         .map(|word| regex::escape(word))
         .collect::<Vec<_>>()
         .join(r"[^\p{L}\p{N}_]+");
-    Regex::new(&format!(r"(?i)(?:^|[^\p{{L}}\p{{N}}_])({body})(?:$|[^\p{{L}}\p{{N}}_])")).ok()
+    Regex::new(&format!(
+        r"(?i)(?:^|[^\p{{L}}\p{{N}}_])({body})(?:$|[^\p{{L}}\p{{N}}_])"
+    ))
+    .ok()
 }
 
 fn collect_unique_tokens_in_order(value: &str) -> Vec<String> {
@@ -226,7 +234,9 @@ fn find_spans(text: &str, patterns: &[Regex]) -> Vec<(usize, usize)> {
     for pattern in patterns {
         let mut from = 0;
         while from <= text.len() {
-            let Some(captures) = pattern.captures_at(text, from) else { break };
+            let Some(captures) = pattern.captures_at(text, from) else {
+                break;
+            };
             let group = captures.get(1).expect("group 1");
             spans.push((group.start(), group.end()));
             // Continue just after the match so adjacent occurrences are found.
@@ -345,7 +355,12 @@ fn neighbour_text(
     };
     match connection.query_row(
         sql,
-        [&row.project_id, &row.chapter_id, &language.to_string(), &row.row_order_key],
+        [
+            &row.project_id,
+            &row.chapter_id,
+            &language.to_string(),
+            &row.row_order_key,
+        ],
         |r| r.get::<_, String>(0),
     ) {
         Ok(text) => Ok(Some(text)),
@@ -360,7 +375,10 @@ fn clip(text: String, max_chars: usize, keep_end: bool) -> String {
         return text;
     }
     if keep_end {
-        format!("…{}", text.chars().skip(count - max_chars).collect::<String>())
+        format!(
+            "…{}",
+            text.chars().skip(count - max_chars).collect::<String>()
+        )
     } else {
         format!("{}…", text.chars().take(max_chars).collect::<String>())
     }
@@ -384,7 +402,11 @@ fn passage(
         if let Some(text) = neighbour_text(connection, &input.language_code, first, false)? {
             context_after.push(clip(text, 600, false));
         }
-        if let Some(target) = input.target_language_code.as_deref().filter(|t| !t.is_empty()) {
+        if let Some(target) = input
+            .target_language_code
+            .as_deref()
+            .filter(|t| !t.is_empty())
+        {
             existing_translation = connection
                 .query_row(
                     "SELECT plain_text FROM search_documents WHERE project_id = ?1 AND chapter_id = ?2 \
@@ -437,20 +459,36 @@ fn neighbours(groups: &BTreeMap<String, Group>) -> Vec<Neighbour> {
             .map(|m| (m.start(), m.end(), m.as_str().to_lowercase()))
             .collect();
         for (start, end) in &group.spans {
-            let Some(first) = words.iter().position(|w| w.0 >= *start) else { continue };
-            let Some(last) = words.iter().rposition(|w| w.1 <= *end) else { continue };
+            let Some(first) = words.iter().position(|w| w.0 >= *start) else {
+                continue;
+            };
+            let Some(last) = words.iter().rposition(|w| w.1 <= *end) else {
+                continue;
+            };
             if last < first {
                 continue;
             }
-            let core = words[first..=last].iter().map(|w| w.2.as_str()).collect::<Vec<_>>().join(" ");
+            let core = words[first..=last]
+                .iter()
+                .map(|w| w.2.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
             let mut phrases = Vec::new();
             for size in 1..=2 {
                 if first >= size {
-                    let left = words[first - size..first].iter().map(|w| w.2.as_str()).collect::<Vec<_>>().join(" ");
+                    let left = words[first - size..first]
+                        .iter()
+                        .map(|w| w.2.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" ");
                     phrases.push(format!("{left} {core}"));
                 }
                 if last + size < words.len() {
-                    let right = words[last + 1..=last + size].iter().map(|w| w.2.as_str()).collect::<Vec<_>>().join(" ");
+                    let right = words[last + 1..=last + size]
+                        .iter()
+                        .map(|w| w.2.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" ");
                     phrases.push(format!("{core} {right}"));
                 }
             }
@@ -470,7 +508,11 @@ fn neighbours(groups: &BTreeMap<String, Group>) -> Vec<Neighbour> {
             paragraphs: paragraphs.len(),
         })
         .collect();
-    result.sort_by(|a, b| b.occurrences.cmp(&a.occurrences).then(a.phrase.cmp(&b.phrase)));
+    result.sort_by(|a, b| {
+        b.occurrences
+            .cmp(&a.occurrences)
+            .then(a.phrase.cmp(&b.phrase))
+    });
     result.truncate(200);
     result
 }
@@ -485,7 +527,14 @@ mod tests {
         let rows = [
             ("p1", "c1", "r1", "a", "es", "Fue un resultado fatal."),
             ("p1", "c1", "r1", "a", "en", "It was a disastrous result."),
-            ("p1", "c1", "r2", "b", "es", "La rueda fatal gira. Errores fatales."),
+            (
+                "p1",
+                "c1",
+                "r2",
+                "b",
+                "es",
+                "La rueda fatal gira. Errores fatales.",
+            ),
             ("p1", "c1", "r3", "c", "es", "Nada que ver aquí."),
             ("p1", "c2", "r4", "a", "es", "Fue un resultado fatal."),
             ("p1", "c3", "r5", "a", "en", "fatal in English only"),
@@ -500,8 +549,12 @@ mod tests {
                 rusqlite::params![i as i64, format!("r{i}"), project, chapter, row, order, language, text],
             ).unwrap();
             for token in collect_unique_tokens(text) {
-                connection.execute("INSERT INTO search_document_tokens (doc_id, token) VALUES (?1, ?2)",
-                                   rusqlite::params![i as i64, token]).unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO search_document_tokens (doc_id, token) VALUES (?1, ?2)",
+                        rusqlite::params![i as i64, token],
+                    )
+                    .unwrap();
             }
         }
         connection
@@ -524,7 +577,10 @@ mod tests {
     #[test]
     fn population_is_complete_language_filtered_and_deduplicated() {
         let response = research_passages(&db(), &input("count", 0)).unwrap();
-        assert_eq!(response.rows, 3, "two identical rows plus one; English rows ignored");
+        assert_eq!(
+            response.rows, 3,
+            "two identical rows plus one; English rows ignored"
+        );
         assert_eq!(response.distinct, 2);
         assert_eq!(response.duplicate_groups, 1);
         assert_eq!(response.matching_chapter_count, 2);
@@ -535,11 +591,21 @@ mod tests {
         let one = research_passages(&db(), &input("sample", 1)).unwrap();
         let two = research_passages(&db(), &input("sample", 2)).unwrap();
         assert_eq!(one.items[0].item_id, two.items[0].item_id);
-        let plural = two.items.iter().find(|i| i.text.contains("fatales")).unwrap();
+        let plural = two
+            .items
+            .iter()
+            .find(|i| i.text.contains("fatales"))
+            .unwrap();
         assert_eq!(plural.occurrences.len(), 2);
         let single = two.items.iter().find(|i| i.copy_count == 2).unwrap();
-        assert_eq!(single.existing_translation.as_deref(), Some("It was a disastrous result."));
-        assert_eq!(single.context_after, vec!["La rueda fatal gira. Errores fatales.".to_string()]);
+        assert_eq!(
+            single.existing_translation.as_deref(),
+            Some("It was a disastrous result.")
+        );
+        assert_eq!(
+            single.context_after,
+            vec!["La rueda fatal gira. Errores fatales.".to_string()]
+        );
         let occurrence = &single.occurrences[0];
         assert_eq!(&single.text[occurrence.start..occurrence.end], "fatal");
     }
@@ -548,7 +614,10 @@ mod tests {
     fn neighbours_count_distinct_passages_and_need_two_occurrences() {
         let response = research_passages(&db(), &input("neighbours", 0)).unwrap();
         // "resultado fatal" is in two identical rows: one passage, one occurrence.
-        assert!(!response.neighbours.iter().any(|n| n.phrase == "resultado fatal"));
+        assert!(!response
+            .neighbours
+            .iter()
+            .any(|n| n.phrase == "resultado fatal"));
         let mut with_projects = input("neighbours", 0);
         with_projects.project_ids = vec!["p1".into(), "p2".into()];
         with_projects.forms = vec!["fatal".into()];

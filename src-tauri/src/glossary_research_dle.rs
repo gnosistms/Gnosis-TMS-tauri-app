@@ -127,14 +127,19 @@ fn decode_result(url: &tauri::Url) -> Option<Value> {
 }
 
 #[tauri::command]
-pub(crate) async fn glossary_research_fetch_dle(app: AppHandle, path: String) -> Result<DleLookup, String> {
+pub(crate) async fn glossary_research_fetch_dle(
+    app: AppHandle,
+    path: String,
+) -> Result<DleLookup, String> {
     // `path` is a word ("fatal") or a DLE link ("/?id=Q1vMnRp#2iTe0wR").
     let url = if path.starts_with("/?") || path.starts_with('?') {
         format!("https://dle.rae.es/{}", path.trim_start_matches('/'))
     } else {
         format!("https://dle.rae.es/{}", urlencoding_path(&path))
     };
-    let parsed: tauri::Url = url.parse().map_err(|error| format!("Invalid DLE address: {error}"))?;
+    let parsed: tauri::Url = url
+        .parse()
+        .map_err(|error| format!("Invalid DLE address: {error}"))?;
     let (sender, receiver) = mpsc::channel::<Value>();
     let label = format!("dle-{}", uuid::Uuid::now_v7().simple());
     let window = WebviewWindowBuilder::new(&app, &label, WebviewUrl::External(parsed))
@@ -159,7 +164,9 @@ pub(crate) async fn glossary_research_fetch_dle(app: AppHandle, path: String) ->
         loop {
             let remaining = deadline.saturating_sub(started.elapsed());
             match receiver.recv_timeout(remaining.max(Duration::from_millis(1))) {
-                Ok(value) if value.get("status").and_then(Value::as_str) == Some("needs_person") => {
+                Ok(value)
+                    if value.get("status").and_then(Value::as_str) == Some("needs_person") =>
+                {
                     needed_person = true;
                     deadline = AUTOMATIC_WAIT + PERSON_WAIT;
                     let _ = window.show();
@@ -182,10 +189,21 @@ pub(crate) async fn glossary_research_fetch_dle(app: AppHandle, path: String) ->
     let (value, needed_person) = result;
     Ok(match value {
         Some(value) => DleLookup {
-            status: value.get("status").and_then(Value::as_str).unwrap_or("unreachable").to_string(),
-            url: value.get("url").and_then(Value::as_str).unwrap_or(&url).to_string(),
+            status: value
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("unreachable")
+                .to_string(),
+            url: value
+                .get("url")
+                .and_then(Value::as_str)
+                .unwrap_or(&url)
+                .to_string(),
             entry: value.get("entry").cloned(),
-            message: value.get("message").and_then(Value::as_str).map(str::to_string),
+            message: value
+                .get("message")
+                .and_then(Value::as_str)
+                .map(str::to_string),
             needed_person,
         },
         None => DleLookup {
@@ -202,7 +220,9 @@ fn urlencoding_path(word: &str) -> String {
     word.trim()
         .bytes()
         .map(|byte| match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (byte as char).to_string(),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (byte as char).to_string()
+            }
             _ => format!("%{byte:02X}"),
         })
         .collect()
@@ -214,7 +234,10 @@ mod tests {
 
     #[test]
     fn only_the_result_address_carries_data() {
-        let good: tauri::Url = "https://gnosis-research.invalid/?data=%7B%22status%22%3A%22found%22%7D".parse().unwrap();
+        let good: tauri::Url =
+            "https://gnosis-research.invalid/?data=%7B%22status%22%3A%22found%22%7D"
+                .parse()
+                .unwrap();
         assert_eq!(decode_result(&good).unwrap()["status"], "found");
         let other: tauri::Url = "https://dle.rae.es/?data=%7B%7D".parse().unwrap();
         assert!(decode_result(&other).is_none());
