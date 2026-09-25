@@ -36,7 +36,7 @@ pub(crate) fn silent_drop_message(
     (!is_timeout && !is_connect && elapsed >= SILENT_DROP_MIN_ELAPSED).then(|| {
         format!(
             "{provider_name} stopped responding after about a minute without returning a result. \
-             Very long AI requests can end this way. Try again with fewer rows or a faster model."
+             If this error persists, please report it to the Gnosis TMS development team."
         )
     })
 }

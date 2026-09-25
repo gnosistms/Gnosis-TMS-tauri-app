@@ -178,6 +178,7 @@ data, and spend approval. Phase 3 not started.
 - 60-second cutoff: per the user, not fixed yet (never seen in practice; the
   app's default gpt-5.4 at `none` finishes batches in ~15 s). Prompt calls on
   OpenAI and Claude now recognise it (generic request error after ≥55 s) and
-  return "<Provider> stopped responding after about a minute…", which the
+  return "<Provider> stopped responding after about a minute… please report it to
+  the Gnosis TMS development team.", which the
   invoke wrapper reports to Sentry as a command failure. Revisit with
   streaming if it shows up in Sentry.

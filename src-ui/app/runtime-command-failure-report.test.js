@@ -250,7 +250,7 @@ test("reports AI requests the provider dropped after a minute", () => {
   for (const provider of ["OpenAI", "Claude"]) {
     const error = new Error(
       `${provider} stopped responding after about a minute without returning a result. `
-        + "Very long AI requests can end this way. Try again with fewer rows or a faster model.",
+        + "If this error persists, please report it to the Gnosis TMS development team.",
     );
     const report = resolveCommandFailureReport("run_ai_translation_batch", error);
     assert.equal(report?.error, error, provider);
