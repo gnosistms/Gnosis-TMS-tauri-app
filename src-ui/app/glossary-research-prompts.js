@@ -50,6 +50,13 @@ function quotationRule(languageName, languageCode) {
     : `Text written in ${languageName} uses ${languageName}'s own quotation marks, not those of the source texts.`;
 }
 
+/** Quotation-mark rules for the target language and, if different, the report language. */
+function quotationRules(ctx) {
+  const rules = [quotationRule(ctx.targetName, ctx.targetCode)];
+  if (ctx.reportName && ctx.reportName !== ctx.targetName) rules.push(quotationRule(ctx.reportName, ctx.reportCode));
+  return rules.join(" ");
+}
+
 // --- editor flow: find the source-language term ------------------------------
 
 export const PIVOT_SCHEMA = object({
@@ -165,7 +172,7 @@ Work out:
 2. If that book is a translation, the original-language word or phrase that the ${ctx.sourceName} term translates. Use only the records given (e.g. the book's glossary pairs) and say what they are; if the records do not settle it, give your belief and say it is unverified in originalTermBasis. Never invent a record.
 3. What the term means in the source book: what it is, what it does, how it relates to the neighbouring concepts of that system. Quote the book.
 4. How the author uses it: whether he follows the source, and which other terms he equates it with. relation "identity" only for explicit statements that X is Y; say whether the equated terms are names for the same thing in other systems.
-Do not discuss translating the term. Write summary, evidence, originalTermBasis, meaningInSource, authorUsage and relations in ${ctx.reportName}; keep quotations as they are.`;
+Do not discuss translating the term. Write summary, evidence, originalTermBasis, meaningInSource, authorUsage and relations in ${ctx.reportName}; keep the wording of quotations. ${quotationRule(ctx.reportName, ctx.reportCode)}`;
 }
 
 // --- candidate translations of the whole term --------------------------------
@@ -184,7 +191,7 @@ Rules:
 - Work sense by sense. A candidate must render the meaning the term has in these texts (the study of where the term comes from, when given, explains special senses).
 - Prefer renderings that translate the term's own meaning over substituting another term the author equates it with. A synonym names the same thing with a different word; list it only if a translator might really need it, and say in its note that it is a synonym and what is lost.
 - If a sense of the term is a translation of an original-language term and ${ctx.targetName} IS that original language, the original term must be one of the candidates for that sense.
-- Notes are written in ${ctx.targetName}, at most 40 words. Rationales are in ${ctx.reportName}. ${quotationRule(ctx.targetName, ctx.targetCode)}
+- Notes are written in ${ctx.targetName}, at most 40 words. Rationales are in ${ctx.reportName}. ${quotationRules(ctx)}
 - Mark at most one candidate per sense as recommended.`;
 }
 
@@ -231,7 +238,7 @@ Principles:
 - Existing translations found in the texts (when shown) are hints, not authorities.
 - EXPRESSIONS. Propose a separate expression entry (kind "expression") only for a recurring fixed expression (normally ≥3 occurrences in the whole population, or a listed dictionary complex form that is attested) whose translation cannot be composed from the word variants. Its sourceTerms list every surface spelling to match, lower case. Recurring combinations that need no entry go in rejectedExpressions.
 - Derived words (other lemmas sharing the stem) are not part of this study; list those worth separate studies in derivativeStudies.
-- LANGUAGE: target, every note, and every generalNote are TMX fields and MUST be in ${ctx.targetName}; each note says when to choose the variant (contexts, collocations, what to avoid), at most 40 words. rationale, reason, evidence, and openQuestions are in ${ctx.reportName}. Source-language quotations stay as they are. ${quotationRule(ctx.targetName, ctx.targetCode)}
+- LANGUAGE: target, every note, and every generalNote are TMX fields and MUST be in ${ctx.targetName}; each note says when to choose the variant (contexts, collocations, what to avoid), at most 40 words. rationale, reason, evidence, and openQuestions are in ${ctx.reportName}. Source-language quotations keep their wording. ${quotationRules(ctx)}
 - Ids: entries "e1", "e2", …; variants "e1v1", "e1v2", ….
 - populationOccurrencesCited: an expression's whole-population occurrence count from the neighbour table (0 for word entries).
 
@@ -250,7 +257,7 @@ export const COMPARE_SCHEMA = object({
 });
 
 export function compareInstructions(ctx) {
-  return `The research proposal below was made without looking at the glossary. Compare it with the ${ctx.targetName} translations in the glossary's existing entry for “${ctx.headword}”, one item per existing translation. verdict "proposed": the proposal has the same translation or one with the same wording apart from capitals or inflection; give its variant id. "left_out": the proposal does not include it; say in one sentence why, judging from the proposal and its evidence (e.g. a synonym the author equates the term with, a sense the texts do not use, a wrong sense). Do not change the proposal. Reasons in ${ctx.reportName}, at most 30 words.`;
+  return `The research proposal below was made without looking at the glossary. Compare it with the ${ctx.targetName} translations in the glossary's existing entry for “${ctx.headword}”, one item per existing translation. verdict "proposed": the proposal has the same translation or one with the same wording apart from capitals or inflection; give its variant id. "left_out": the proposal does not include it; say in one sentence why, judging from the proposal and its evidence (e.g. a synonym the author equates the term with, a sense the texts do not use, a wrong sense). Do not change the proposal. Reasons in ${ctx.reportName}, at most 30 words. ${quotationRule(ctx.reportName, ctx.reportCode)}`;
 }
 
 // --- counting (configuration A) -------------------------------------------
@@ -306,7 +313,7 @@ export const PROSE_SCHEMA = object({
 });
 
 export function proseInstructions(ctx) {
-  return `Write the opening summary of a research report about translating the ${ctx.sourceName} word “${ctx.headword}” into ${ctx.targetName} for a glossary. Write in ${ctx.reportName}. Keep proposed ${ctx.targetName} wording and source-language quotations as they are. Summary at most 120 words; at most 6 recommendations of at most 30 words; unresolvedExplanation at most 80 words. The counts measure which proposed variant was judged most appropriate in each sampled context: contextual preference, not frequency in ${ctx.targetName} or exclusive correctness. Use only the data given.`;
+  return `Write the opening summary of a research report about translating the ${ctx.sourceName} word “${ctx.headword}” into ${ctx.targetName} for a glossary. Write in ${ctx.reportName}. Keep proposed ${ctx.targetName} wording and the wording of source-language quotations. ${quotationRule(ctx.reportName, ctx.reportCode)} Summary at most 120 words; at most 6 recommendations of at most 30 words; unresolvedExplanation at most 80 words. The counts measure which proposed variant was judged most appropriate in each sampled context: contextual preference, not frequency in ${ctx.targetName} or exclusive correctness. Use only the data given.`;
 }
 
 // --- dictionary fallback via web search -------------------------------------

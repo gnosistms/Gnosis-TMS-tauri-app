@@ -429,6 +429,7 @@ function engineSettings(draft, languages) {
     targetLanguageName: languages.targetName,
     targetLanguageCode: languages.targetCode,
     reportLanguageName: languageName(draft.reportLanguageCode, draft.reportLanguageCode),
+    reportLanguageCode: draft.reportLanguageCode,
     sampleSize: draft.sampleSize,
     spendingLimitUsd: draft.spendingLimitUsd,
     seed: draft.seed || "1",

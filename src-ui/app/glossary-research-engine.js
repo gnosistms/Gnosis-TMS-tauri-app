@@ -311,6 +311,7 @@ export function createResearchEngine(deps) {
     dictionaryText: store.load("dictionary")?.text ?? "",
     forms: store.load("forms")?.confirmed ?? [settings.term],
     targetCode: settings.targetLanguageCode,
+    reportCode: settings.reportLanguageCode ?? "",
     authorName: corpus.authorName ?? "the author",
     ...extra,
   });

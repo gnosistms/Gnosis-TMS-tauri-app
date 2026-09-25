@@ -163,7 +163,7 @@ function renderForm(state) {
   const sourceCode = state.glossaryEditor?.sourceLanguage?.code ?? "";
   const targetCode = state.glossaryEditor?.targetLanguage?.code ?? "";
   const body = `
-    <p class="modal__supporting">Find what a ${esc(languageName(sourceCode))} word means in your texts and which ${esc(languageName(targetCode))} translations fit. You review the proposed translations before anything is counted, and nothing changes in the glossary until you save an entry.</p>
+    <p class="modal__supporting">Find what a ${esc(languageName(sourceCode))} word means in your texts and which ${esc(languageName(targetCode))} translations fit. Nothing changes in the glossary until you save an entry from the report.</p>
     <div class="modal__form">
       <div class="field">
         <label class="field__label" for="research-term-input">Enter the term to research</label>
