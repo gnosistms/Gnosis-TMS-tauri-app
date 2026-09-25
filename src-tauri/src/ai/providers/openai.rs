@@ -39,7 +39,17 @@ struct OpenAiResponsesRequest<'a> {
 
 #[derive(Debug, Serialize)]
 struct OpenAiTextConfig {
+    // Structured output is generated in schema order, so the schema is sent
+    // in the order it was written, not serde_json's sorted order.
+    #[serde(serialize_with = "serialize_format_in_authored_order")]
     format: Value,
+}
+
+fn serialize_format_in_authored_order<S: serde::Serializer>(
+    format: &Value,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    super::schemas::InAuthoredOrder(format).serialize(serializer)
 }
 
 #[derive(Debug, Deserialize)]
@@ -338,7 +348,9 @@ pub(crate) fn run_prompt_with_reasoning_effort(
     effort: &str,
 ) -> Result<(AiPromptResponse, Option<OpenAiUsage>), String> {
     let mut body = build_prompt_request(request);
-    body.reasoning = Some(json!({ "effort": effort }));
+    if effort != "default" {
+        body.reasoning = Some(json!({ "effort": effort }));
+    }
     send_prompt_request(&body, api_key)
 }
 
@@ -989,6 +1001,38 @@ mod tests {
             Some("text")
         );
         assert!(payload.pointer("/text/format/schema").is_none());
+    }
+
+    #[test]
+    fn structured_output_schemas_keep_their_written_field_order() {
+        let body = |output_format: AiPromptOutputFormat| {
+            let request = AiPromptRequest {
+                provider_id: AiProviderId::OpenAi,
+                model_id: "gpt-6-astra".to_string(),
+                prompt: "Review these rows.".to_string(),
+                output_format,
+                prompt_blocks: None,
+            };
+            serde_json::to_string(&build_prompt_request(&request)).unwrap()
+        };
+        let in_order = |text: &str, names: &[&str]| {
+            let positions = names
+                .iter()
+                .map(|name| text.find(&format!("\"{name}\":{{")).unwrap())
+                .collect::<Vec<_>>();
+            positions.windows(2).all(|pair| pair[0] < pair[1])
+        };
+
+        let review = body(AiPromptOutputFormat::ReviewBatchJson);
+        assert!(in_order(
+            &review,
+            &["rowId", "suggestedText", "suggestedFootnotes", "reviewed"]
+        ));
+        let translation = body(AiPromptOutputFormat::TranslationBatchJson);
+        assert!(in_order(
+            &translation,
+            &["rowId", "translatedText", "translatedFootnote"]
+        ));
     }
 
     #[test]

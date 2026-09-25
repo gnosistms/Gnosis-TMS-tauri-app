@@ -135,10 +135,26 @@ before `targetId` in row alignment, the `reviewed` verdict before `rowId` and
 the suggestions in Review All, and `translatedText` after the footnote and
 caption in Translate All.
 
-Fix: Claude requests serialize each schema's `properties` in the order of its
-`required` list (`schemas::InAuthoredOrder`). OpenAI still receives the
-alphabetical order it has always had. Changing that would change its outputs,
-so it needs its own evaluation (open question).
+Fix: Claude and OpenAI requests serialize each schema's `properties` in the
+order of its `required` list (`schemas::InAuthoredOrder`).
+
+OpenAI was changed after an A/B check on `gpt-6-astra` as the app calls it (no
+reasoning parameter; `effort_eval` gained a `default` effort for this), with
+2 runs per order of HNHH ch. 3's Review All batches (9 planted errors, 21
+clean rows) and Translate All batches:
+
+| Review All | Alphabetical (before) | Written order (after) |
+|---|---|---|
+| Planted errors caught | 9/9, 9/9 | 9/9, 9/9 |
+| Fixed with the original wording | 7/9, 7/9 | 7/9, 7/9 |
+| Unneeded edits to clean rows | 8/21, 8/21 | 7/21, 7/21 |
+| Failed batches | 0 | 0 |
+
+Translate All: all batches valid; before/after text similarity 0.91, against
+0.89 between two runs in the same order, so the change is within normal
+variation. Main benefit: the model now writes its suggestions before the
+`reviewed` verdict (with the verdict first, a `reviewed: true` answer
+discards any suggestion that follows it) and states the row ID first.
 
 Also added:
 - Alignment asks once more when a response parses but fails validation
@@ -175,4 +191,4 @@ Regression check of the field-order change on the other Claude features
 5/21 clean rows (before: 4/21); both Translate All batches returned valid
 output. The differences are within single-run noise.
 
-Total live spend for this work: ≈ $9.
+Total live spend for this work: ≈ $12.
