@@ -280,14 +280,19 @@ function renderRun(state) {
       <div class="research-run__status"><strong>${esc(statusText)}</strong> · ${formatUsd(research.spent)} of ${formatUsd(research.limit)}</div>
       <div class="research-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><span style="width:${pct}%"></span></div>
     </div>`;
+  const budgetStop = research.stopKind === "budget";
   const stoppedPanel = (research.runStatus === "failed" || research.runStatus === "stopped")
-    ? `<div class="research-stopped">
-         <p class="modal__error" role="alert">${esc(research.runError || "Research was stopped.")}</p>
-         ${research.stopKind === "budget" ? `
-           <label class="field research-stopped__limit">
-             <span class="field__label">New spending limit (US$)</span>
-             <input class="field__input" type="number" min="0.1" step="0.01" value="${esc(Number(research.spendingLimitUsd).toFixed(2))}" data-research-field="spendingLimitUsd" />
-           </label>` : ""}
+    ? `<div class="modal__error research-stopped" role="alert">
+         <p class="research-stopped__message">${esc(research.runError || "Research was stopped.")}</p>
+         ${budgetStop ? `
+           <div class="research-stopped__raise">
+             <label class="research-stopped__limit">
+               <span>New spending limit (US$)</span>
+               <input class="field__input" type="number" min="0.01" step="0.01" value="${esc(Number(research.raiseLimitTo ?? 0).toFixed(2))}" data-research-field="raiseLimitTo" />
+             </label>
+             ${primaryButton("Raise limit and continue", "raise-research-limit")}
+           </div>
+           ${research.raiseLimitError ? `<p class="research-stopped__message">${esc(research.raiseLimitError)}</p>` : ""}` : ""}
        </div>`
     : "";
   const review = research.runStatus === "review" ? renderReview(research, targetName) : "";
@@ -301,6 +306,8 @@ function renderRun(state) {
   } else if (research.runStatus === "done") {
     actions = `${secondaryButton("Close", "close-glossary-research", { modalCancel: true })}
       ${primaryButton("Open report", `open-research-report:${research.runId}`, { modalDefault: true })}`;
+  } else if (budgetStop) {
+    actions = secondaryButton("Close", "close-glossary-research", { modalCancel: true });
   } else {
     actions = `${secondaryButton("Close", "close-glossary-research", { modalCancel: true })}
       ${primaryButton("Resume", `resume-research-run:${research.runId}`, { modalDefault: true })}`;

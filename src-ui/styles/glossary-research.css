@@ -220,11 +220,31 @@
 }
 
 .research-stopped {
+  display: grid;
+  white-space: normal;
+  gap: 12px;
   margin-bottom: 10px;
 }
 
+.research-stopped__message {
+  margin: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.research-stopped__raise {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
 .research-stopped__limit {
-  max-width: 220px;
+  display: grid;
+  gap: 6px;
+  width: 220px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .research-review {

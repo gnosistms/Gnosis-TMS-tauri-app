@@ -14,6 +14,7 @@ import {
   createGlossaryResearchState,
 } from "./glossary-research-state.js";
 import {
+  BudgetExceededError,
   formatUsd,
   modelPrices,
   RESEARCH_PROVIDERS,
@@ -159,7 +160,8 @@ export function closeGlossaryResearch(render) {
 export function updateResearchField(field, value) {
   const draft = research();
   if (!draft?.isOpen) return;
-  if (field === "sampleSize") draft.sampleSize = Math.max(1, Math.min(1000, Number.parseInt(value, 10) || 100));
+  if (field === "raiseLimitTo") draft.raiseLimitTo = Number.parseFloat(value) || 0;
+  else if (field === "sampleSize") draft.sampleSize = Math.max(1, Math.min(1000, Number.parseInt(value, 10) || 100));
   else if (field === "spendingLimitUsd") draft.spendingLimitUsd = Math.max(0.1, Number.parseFloat(value) || RESEARCH_DEFAULTS.spendingLimitUsd);
   else draft[field] = value;
   draft.formError = "";
@@ -416,6 +418,7 @@ async function beginResearchRun(render, resume = null) {
     startedAt: new Date().toISOString(), status: "running",
   };
   meta.settings.spendingLimitUsd = draft.spendingLimitUsd;
+  meta.spendingLimitUsd = draft.spendingLimitUsd;
   store.save("meta", meta);
 
   const projects = researchableProjects().filter((project) => meta.projectIds.includes(project.id));
@@ -456,12 +459,18 @@ async function beginResearchRun(render, resume = null) {
 
 function handleRunStop(render, error, store, meta) {
   const draft = research();
-  const kind = error instanceof ResearchStop || error?.kind ? error.kind : "failed";
+  const kind = error instanceof BudgetExceededError
+    ? "budget"
+    : error instanceof ResearchStop || error?.kind ? error.kind : "failed";
   draft.runStatus = kind === "cancelled" ? "stopped" : "failed";
   draft.stopKind = kind;
   draft.runError = kind === "budget"
-    ? `The spending limit was reached. ${error.message} Finished work is saved; raise the limit to continue.`
+    ? `The spending limit was reached. ${error.message} Finished work is saved.`
     : error.message ?? String(error);
+  if (kind === "budget") {
+    const limit = Number(draft.spendingLimitUsd) || Number(draft.limit) || 0;
+    draft.raiseLimitTo = Math.round(limit * 2 * 100) / 100;
+  }
   appendLog({ type: "problem", text: draft.runError });
   meta.status = draft.runStatus;
   meta.error = draft.runError;
@@ -657,12 +666,28 @@ export async function resumeGlossaryResearchRun(render, runId) {
     spendingLimitUsd: Math.max(draft.spendingLimitUsd, meta.spendingLimitUsd ?? 0), seed: meta.seed,
     existingMatches: (state.glossaryEditor?.terms ?? []).filter((term) => (meta.existingTermIds ?? []).includes(term.termId)),
   });
-  if (stages.proposal && !stages.aggregate) {
-    await beginResearchRun(render, { runId, stages });
-    if (stages.confirmedProposal) research().proposalDraft = structuredClone(stages.confirmedProposal);
+  const wasCounting = meta.status === "counting" || Boolean(stages.frozen && !stages.aggregate);
+  await beginResearchRun(render, { runId, stages });
+  if (stages.confirmedProposal && research()?.runStatus === "review") {
+    research().proposalDraft = structuredClone(stages.confirmedProposal);
+    // A run stopped during counting continues counting after a resume.
+    if (wasCounting) await countGlossaryResearch(render);
+  }
+}
+
+/** Raise the spending limit from the stop banner and continue the run. */
+export async function raiseResearchLimitAndContinue(render) {
+  const draft = research();
+  const current = Number(draft.spendingLimitUsd) || 0;
+  const next = Math.round((Number(draft.raiseLimitTo) || 0) * 100) / 100;
+  if (!(next > current)) {
+    draft.raiseLimitError = `Enter a limit above ${formatUsd(current)}.`;
+    render();
     return;
   }
-  await beginResearchRun(render, { runId, stages });
+  draft.raiseLimitError = "";
+  draft.spendingLimitUsd = next;
+  await resumeGlossaryResearchRun(render, draft.runId);
 }
 
 export function resetGlossaryResearchReport() {
