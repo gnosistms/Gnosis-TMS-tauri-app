@@ -248,6 +248,17 @@ test("reports ordinary failures unchanged at the default level", () => {
   assert.equal(report.options, undefined);
 });
 
+test("reports AI requests the provider dropped after a minute", () => {
+  for (const provider of ["OpenAI", "Claude"]) {
+    const error = new Error(
+      `${provider} stopped responding after about a minute without returning a result. `
+        + "If this error persists, please report it to the Gnosis TMS development team.",
+    );
+    const report = resolveCommandFailureReport("run_ai_translation_batch", error);
+    assert.equal(report?.error, error, provider);
+  }
+});
+
 test("access diagnostics preserve the issue message and expose only bounded categories", () => {
   const message = "Could not verify write access for this team. Refresh team access and try again.";
   for (const category of ["snapshot_storage", "session_storage", "membership_unverified", "broker_response_parse"]) {
@@ -268,4 +279,28 @@ test("classified access transport and permission failures follow operational tel
   const result = resolveCommandFailureReport("update_gtms_editor_row_fields", 'ACCESS_VERIFICATION_FAILED:{"category":"broker_http_503"}');
   assert.equal(result.options.level, "warning");
   assert.equal(result.options.tags.access_failure, "broker_http_503");
+});
+
+test("reports AI safety-filter declines as tagged warnings", () => {
+  const withCategory = resolveCommandFailureReport(
+    "run_ai_translation_batch",
+    new Error(
+      "Claude's safety filter declined this request (category: bio). "
+        + "Try again, or choose a different AI model for this text.",
+    ),
+  );
+  assert.deepEqual(withCategory, {
+    error: "Claude safety filter declined a request",
+    options: {
+      level: "warning",
+      fingerprint: ["command-failure", "run_ai_translation_batch", "ai-safety-refusal"],
+      tags: { ai_refusal_category: "bio" },
+    },
+  });
+
+  const withoutCategory = resolveCommandFailureReport(
+    "run_ai_review",
+    "Claude's safety filter declined this request. Try again, or choose a different AI model for this text.",
+  );
+  assert.equal(withoutCategory.options.tags.ai_refusal_category, "unspecified");
 });

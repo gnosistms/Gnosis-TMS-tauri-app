@@ -13,6 +13,21 @@ test("OpenAI picker prefers Astra and preserves explicit model selections", () =
   }
 });
 
+test("Claude picker defaults to Opus 5.5 and preserves explicit model selections", () => {
+  const options = ["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5"]
+    .map((id) => ({ id, label: id }));
+
+  assert.equal(pickPreferredAiModelId("claude", options), "claude-opus-5-5");
+  assert.equal(pickPreferredAiModelId("claude", options, "claude-sonnet-5"), "claude-sonnet-5");
+});
+
+test("Claude picker falls back to the newest Opus, not the first listed model", () => {
+  const options = ["claude-fable-5-1", "claude-opus-5", "claude-opus-4-8", "claude-haiku-4-5"]
+    .map((id) => ({ id, label: id }));
+
+  assert.equal(pickPreferredAiModelId("claude", options), "claude-opus-5");
+});
+
 test("resolveVisibleAiTranslateActions returns one unified translate action by default", () => {
   const actions = resolveVisibleAiTranslateActions({
     detailedConfiguration: false,

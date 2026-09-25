@@ -1,9 +1,14 @@
+use std::collections::hash_map::DefaultHasher;
+use std::collections::HashSet;
+use std::hash::{Hash, Hasher};
+use std::sync::{Mutex, OnceLock};
+
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::ai::{
-    providers::shared_http_client,
+    providers::{shared_http_client, sse},
     types::{
         AiPromptOutputFormat, AiPromptRequest, AiPromptResponse, AiProviderModel, AiReviewResponse,
     },
@@ -27,6 +32,10 @@ struct OpenAiResponsesRequest<'a> {
     previous_response_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_output_tokens: Option<u32>,
+    // Unset in the app: models run at their default reasoning effort
+    // (`none` on gpt-5.4). The effort-calibration harness sets it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning: Option<Value>,
     text: OpenAiTextConfig,
 }
 
@@ -45,6 +54,10 @@ struct OpenAiResponsesCreateResponse {
     output: Vec<OpenAiOutputItem>,
     #[serde(default)]
     usage: Option<OpenAiUsage>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    incomplete_details: Option<Value>,
 }
 
 /// Optional provider-reported counts. Missing fields are unavailable, not zero.
@@ -264,6 +277,7 @@ fn build_probe_request(model_id: &str) -> OpenAiResponsesRequest<'_> {
         store: false,
         previous_response_id: None,
         max_output_tokens: Some(OPENAI_PROBE_MAX_OUTPUT_TOKENS),
+        reasoning: None,
         text: OpenAiTextConfig {
             format: openai_text_format(AiPromptOutputFormat::Text),
         },
@@ -277,6 +291,7 @@ fn build_prompt_request(request: &AiPromptRequest) -> OpenAiResponsesRequest<'_>
         store: false,
         previous_response_id: request.previous_response_id.clone(),
         max_output_tokens: None,
+        reasoning: None,
         text: OpenAiTextConfig {
             format: openai_text_format(request.output_format.clone()),
         },
@@ -284,198 +299,13 @@ fn build_prompt_request(request: &AiPromptRequest) -> OpenAiResponsesRequest<'_>
 }
 
 fn openai_text_format(output_format: AiPromptOutputFormat) -> Value {
-    match output_format {
-        AiPromptOutputFormat::Text => json!({ "type": "text" }),
-        AiPromptOutputFormat::AssistantTurnJson => json!({
+    match super::schemas::output_schema(&output_format) {
+        None => json!({ "type": "text" }),
+        Some(output) => json!({
             "type": "json_schema",
-            "name": "assistant_turn_response",
+            "name": output.name,
             "strict": true,
-            "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["responseKind", "assistantText", "draftTranslationText"],
-                "properties": {
-                    "responseKind": {
-                        "type": "string",
-                        "enum": ["translation_draft", "commentary", "mixed", "error"]
-                    },
-                    "assistantText": {
-                        "type": "string"
-                    },
-                    "draftTranslationText": {
-                        "anyOf": [
-                            { "type": "string" },
-                            { "type": "null" }
-                        ]
-                    }
-                }
-            }
-        }),
-        AiPromptOutputFormat::TranslationSectionsJson => json!({
-            "type": "json_schema",
-            "name": "ai_translation_sections_response",
-            "strict": true,
-            "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["translatedText", "translatedFootnote", "translatedImageCaption"],
-                "properties": {
-                    "translatedText": {
-                        "type": "string"
-                    },
-                    "translatedFootnote": {
-                        "type": "string"
-                    },
-                    "translatedImageCaption": {
-                        "type": "string"
-                    }
-                }
-            }
-        }),
-        AiPromptOutputFormat::ReviewJson => json!({
-            "type": "json_schema",
-            "name": "ai_review_response",
-            "strict": true,
-            "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["suggestedText", "suggestedFootnotes", "suggestedImageCaption", "reviewed"],
-                "properties": {
-                    "suggestedText": {
-                        "type": "string"
-                    },
-                    "suggestedFootnotes": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "additionalProperties": false,
-                            "required": ["marker", "text"],
-                            "properties": {
-                                "marker": { "type": "integer", "minimum": 1 },
-                                "text": { "type": "string" }
-                            }
-                        }
-                    },
-                    "suggestedImageCaption": {
-                        "type": "string"
-                    },
-                    "reviewed": {
-                        "type": "boolean"
-                    }
-                }
-            }
-        }),
-        AiPromptOutputFormat::TranslationBatchJson => json!({
-            "type": "json_schema",
-            "name": "ai_translation_batch_response",
-            "strict": true,
-            "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["rows"],
-                "properties": {
-                    "rows": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "additionalProperties": false,
-                            "required": [
-                                "rowId",
-                                "translatedText",
-                                "translatedFootnote",
-                                "translatedImageCaption"
-                            ],
-                            "properties": {
-                                "rowId": { "type": "string" },
-                                "translatedText": { "type": "string" },
-                                "translatedFootnote": { "type": "string" },
-                                "translatedImageCaption": { "type": "string" }
-                            }
-                        }
-                    }
-                }
-            }
-        }),
-        AiPromptOutputFormat::ReviewBatchJson => json!({
-            "type": "json_schema",
-            "name": "ai_review_batch_response",
-            "strict": true,
-            "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["rows"],
-                "properties": {
-                    "rows": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "additionalProperties": false,
-                            "required": [
-                                "rowId",
-                                "suggestedText",
-                                "suggestedFootnotes",
-                                "suggestedImageCaption",
-                                "reviewed"
-                            ],
-                            "properties": {
-                                "rowId": { "type": "string" },
-                                "suggestedText": { "type": "string" },
-                                "suggestedFootnotes": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "object",
-                                        "additionalProperties": false,
-                                        "required": ["marker", "text"],
-                                        "properties": {
-                                            "marker": { "type": "integer", "minimum": 1 },
-                                            "text": { "type": "string" }
-                                        }
-                                    }
-                                },
-                                "suggestedImageCaption": { "type": "string" },
-                                "reviewed": { "type": "boolean" }
-                            }
-                        }
-                    }
-                }
-            }
-        }),
-        AiPromptOutputFormat::GlossaryAlignmentJson => json!({
-            "type": "json_schema",
-            "name": "glossary_alignment_response",
-            "strict": true,
-            "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["mappings"],
-                "properties": {
-                    "mappings": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "additionalProperties": false,
-                            "required": ["id", "translationSourceTerm"],
-                            "properties": {
-                                "id": {
-                                    "type": "string"
-                                },
-                                "translationSourceTerm": {
-                                    "anyOf": [
-                                        { "type": "string" },
-                                        { "type": "null" }
-                                    ]
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }),
-        AiPromptOutputFormat::JsonSchema { name, schema } => json!({
-            "type": "json_schema",
-            "name": name,
-            "strict": true,
-            "schema": schema
+            "schema": output.schema
         }),
     }
 }
@@ -491,6 +321,26 @@ pub(crate) fn run_prompt_with_usage(
     request: &AiPromptRequest,
     api_key: &str,
 ) -> Result<(AiPromptResponse, Option<OpenAiUsage>), String> {
+    send_prompt_request(&build_prompt_request(request), api_key)
+}
+
+/// Runs a prompt at a forced reasoning effort. Used by the effort-calibration
+/// harness (`ai::effort_eval`).
+#[cfg(test)]
+pub(crate) fn run_prompt_with_reasoning_effort(
+    request: &AiPromptRequest,
+    api_key: &str,
+    effort: &str,
+) -> Result<(AiPromptResponse, Option<OpenAiUsage>), String> {
+    let mut body = build_prompt_request(request);
+    body.reasoning = Some(json!({ "effort": effort }));
+    send_prompt_request(&body, api_key)
+}
+
+fn send_prompt_request(
+    body: &OpenAiResponsesRequest<'_>,
+    api_key: &str,
+) -> Result<(AiPromptResponse, Option<OpenAiUsage>), String> {
     let normalized_key = api_key.trim();
     if normalized_key.is_empty() {
         return Err("No OpenAI API key is saved yet.".to_string());
@@ -499,27 +349,10 @@ pub(crate) fn run_prompt_with_usage(
     let client = shared_http_client()
         .map_err(|error| format!("Could not start the OpenAI request: {error}"))?;
 
-    let response = client
-        .post(OPENAI_RESPONSES_API_URL)
-        .timeout(super::AI_PROMPT_TIMEOUT)
-        .header("Authorization", format!("Bearer {normalized_key}"))
-        .header("Content-Type", "application/json")
-        .header("User-Agent", "gnosis-tms")
-        .json(&build_prompt_request(request))
-        .send()
-        .map_err(normalize_transport_error)?;
-
-    let status = response.status();
-    let body = response
-        .text()
-        .map_err(|error| format!("Could not read the OpenAI response: {error}"))?;
-
-    if !status.is_success() {
-        return Err(normalize_http_error(status, &body));
+    let payload = post_prompt(client, normalized_key, body)?;
+    if let Some(error) = incomplete_response_error(&payload) {
+        return Err(error);
     }
-
-    let payload: OpenAiResponsesCreateResponse = serde_json::from_str(&body)
-        .map_err(|_| "OpenAI returned a malformed response.".to_string())?;
     let provider_response_id = if payload.id.trim().is_empty() {
         None
     } else {
@@ -535,6 +368,169 @@ pub(crate) fn run_prompt_with_usage(
         },
         usage,
     ))
+}
+
+/// A response that stopped early carries partial output; returning it would
+/// hand the user a truncated translation (or unparsable JSON).
+fn incomplete_response_error(payload: &OpenAiResponsesCreateResponse) -> Option<String> {
+    if payload.status.as_deref() != Some("incomplete") {
+        return None;
+    }
+    let reason = payload
+        .incomplete_details
+        .as_ref()
+        .and_then(|details| details.get("reason"))
+        .and_then(Value::as_str);
+    Some(match reason {
+        Some("content_filter") => {
+            "OpenAI's content filter stopped this response before it was complete.".to_string()
+        }
+        _ => "OpenAI stopped before finishing because the response hit the output limit. \
+              Try a shorter text."
+            .to_string(),
+    })
+}
+
+// (API key, model) pairs OpenAI declined to stream (e.g. an organization
+// verification rule, which depends on the account); they use plain requests
+// for the rest of the session. Keys are stored only as hashes.
+static NON_STREAMING_MODELS: OnceLock<Mutex<HashSet<(u64, String)>>> = OnceLock::new();
+
+fn non_streaming_key(api_key: &str, model_id: &str) -> (u64, String) {
+    let mut hasher = DefaultHasher::new();
+    api_key.hash(&mut hasher);
+    (hasher.finish(), model_id.to_string())
+}
+
+fn refuses_streaming(api_key: &str, model_id: &str) -> bool {
+    NON_STREAMING_MODELS
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .map(|models| models.contains(&non_streaming_key(api_key, model_id)))
+        .unwrap_or(false)
+}
+
+fn remember_refuses_streaming(api_key: &str, model_id: &str) {
+    if let Ok(mut models) = NON_STREAMING_MODELS
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+    {
+        models.insert(non_streaming_key(api_key, model_id));
+    }
+}
+
+/// Sends a prompt, streaming unless this account refused to stream the model,
+/// so response bytes keep flowing; a connection that receives nothing for 60 s
+/// can be cut off (plans/ai-prompt-streaming.md). A refusal to stream retries
+/// once as a plain request.
+fn post_prompt(
+    client: &reqwest::blocking::Client,
+    api_key: &str,
+    body: &OpenAiResponsesRequest<'_>,
+) -> Result<OpenAiResponsesCreateResponse, String> {
+    if !refuses_streaming(api_key, body.model) {
+        if let Some(payload) = post_prompt_once(client, api_key, body, true)? {
+            return Ok(payload);
+        }
+        remember_refuses_streaming(api_key, body.model);
+    }
+    post_prompt_once(client, api_key, body, false)?
+        .ok_or_else(|| "OpenAI returned an unexpected error.".to_string())
+}
+
+/// One request. `Ok(None)` means OpenAI refused to stream (only when `stream`).
+fn post_prompt_once(
+    client: &reqwest::blocking::Client,
+    api_key: &str,
+    body: &OpenAiResponsesRequest<'_>,
+    stream: bool,
+) -> Result<Option<OpenAiResponsesCreateResponse>, String> {
+    let mut payload = serde_json::to_value(body)
+        .map_err(|error| format!("Could not prepare the OpenAI request: {error}"))?;
+    if stream {
+        payload["stream"] = json!(true);
+    }
+
+    let started = std::time::Instant::now();
+    let response = client
+        .post(OPENAI_RESPONSES_API_URL)
+        .timeout(super::AI_PROMPT_TIMEOUT)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Content-Type", "application/json")
+        .header("User-Agent", "gnosis-tms")
+        .json(&payload)
+        .send()
+        .map_err(|error| {
+            super::prompt_send_error(
+                "OpenAI",
+                error,
+                started.elapsed(),
+                normalize_transport_error,
+            )
+        })?;
+
+    let status = response.status();
+    let text = response
+        .text()
+        .map_err(|error| super::prompt_read_error("OpenAI", &error))?;
+
+    if !status.is_success() {
+        if stream && status == StatusCode::BAD_REQUEST && is_stream_refusal(&text) {
+            return Ok(None);
+        }
+        return Err(normalize_http_error(status, &text));
+    }
+    let malformed = |_| "OpenAI returned a malformed response.".to_string();
+    // A plain JSON body means the stream was not honored; parse it as-is.
+    if !stream || text.trim_start().starts_with('{') {
+        return serde_json::from_str(&text).map(Some).map_err(malformed);
+    }
+    serde_json::from_value(completed_response_from_stream(&text)?)
+        .map(Some)
+        .map_err(malformed)
+}
+
+/// The terminal event of a Responses stream carries the full response object.
+fn completed_response_from_stream(body: &str) -> Result<Value, String> {
+    let mut completed = None;
+    for event in sse::parse_events(body) {
+        let Ok(mut data) = serde_json::from_str::<Value>(&event.data) else {
+            continue;
+        };
+        match data.get("type").and_then(Value::as_str).unwrap_or_default() {
+            "response.completed" | "response.incomplete" => {
+                completed = data.get_mut("response").map(Value::take);
+            }
+            "response.failed" => {
+                return Err(stream_error_message(
+                    data.pointer("/response/error/message"),
+                ));
+            }
+            "error" => return Err(stream_error_message(data.get("message"))),
+            _ => {}
+        }
+    }
+    completed
+        .ok_or_else(|| "OpenAI's response ended before it was complete. Try again.".to_string())
+}
+
+fn stream_error_message(message: Option<&Value>) -> String {
+    message
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|message| !message.is_empty())
+        .map(|message| format!("OpenAI returned an error: {message}"))
+        .unwrap_or_else(|| "OpenAI returned an unexpected error.".to_string())
+}
+
+fn is_stream_refusal(body: &str) -> bool {
+    let message = extract_api_error_message(body)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    message.contains("stream")
+        && ["verif", "not supported", "unsupported", "not allowed"]
+            .iter()
+            .any(|marker| message.contains(marker))
 }
 
 fn normalize_transport_error(error: reqwest::Error) -> String {
@@ -820,8 +816,11 @@ mod tests {
     }
 
     use super::{
-        build_probe_request, build_prompt_request, is_hidden_gpt_pro_model, normalize_http_error,
-        normalize_review_response, shortlist_recommended_models, OPENAI_PROBE_MAX_OUTPUT_TOKENS,
+        build_probe_request, build_prompt_request, completed_response_from_stream,
+        extract_suggested_text, incomplete_response_error, is_hidden_gpt_pro_model,
+        is_stream_refusal, normalize_http_error, normalize_review_response, refuses_streaming,
+        remember_refuses_streaming, shortlist_recommended_models, OpenAiResponsesCreateResponse,
+        OPENAI_PROBE_MAX_OUTPUT_TOKENS,
     };
     use crate::ai::types::{AiPromptOutputFormat, AiPromptRequest, AiProviderId, AiProviderModel};
     use reqwest::StatusCode;
@@ -1437,5 +1436,115 @@ mod tests {
         assert!(is_hidden_gpt_pro_model("gpt-5.4-pro"));
         assert!(!is_hidden_gpt_pro_model("gpt-5.4"));
         assert!(!is_hidden_gpt_pro_model("o3-pro"));
+    }
+
+    fn sse(events: &[serde_json::Value]) -> String {
+        events
+            .iter()
+            .map(|event| {
+                format!(
+                    "event: {}\ndata: {}\n\n",
+                    event["type"].as_str().unwrap(),
+                    event
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn streamed_response_yields_the_completed_response_object() {
+        let completed = serde_json::json!({
+            "id": "resp_1",
+            "status": "completed",
+            "output": [{"type": "message", "content": [
+                {"type": "output_text", "text": "{\"translatedText\":\"Ánh sáng.\"}"}
+            ]}],
+            "usage": {"input_tokens": 37, "output_tokens": 18,
+                      "input_tokens_details": {"cached_tokens": 0},
+                      "output_tokens_details": {"reasoning_tokens": 0}}
+        });
+        let body = sse(&[
+            serde_json::json!({"type": "response.created", "response": {"id": "resp_1", "status": "in_progress"}}),
+            serde_json::json!({"type": "response.output_text.delta", "delta": "{\"translated"}),
+            serde_json::json!({"type": "response.completed", "response": completed}),
+        ]);
+
+        let payload: OpenAiResponsesCreateResponse =
+            serde_json::from_value(completed_response_from_stream(&body).unwrap()).unwrap();
+
+        assert_eq!(payload.usage.as_ref().unwrap().output_tokens, Some(18));
+        assert_eq!(
+            extract_suggested_text(payload, "empty").unwrap(),
+            "{\"translatedText\":\"Ánh sáng.\"}"
+        );
+    }
+
+    #[test]
+    fn streamed_failures_and_cut_off_streams_are_errors() {
+        let failed = sse(&[serde_json::json!({
+            "type": "response.failed",
+            "response": {"status": "failed", "error": {"code": "server_error", "message": "The server had an error."}}
+        })]);
+        assert_eq!(
+            completed_response_from_stream(&failed).unwrap_err(),
+            "OpenAI returned an error: The server had an error."
+        );
+
+        let error =
+            sse(&[serde_json::json!({"type": "error", "code": "x", "message": "Bad things."})]);
+        assert_eq!(
+            completed_response_from_stream(&error).unwrap_err(),
+            "OpenAI returned an error: Bad things."
+        );
+
+        let cut_off =
+            sse(&[serde_json::json!({"type": "response.output_text.delta", "delta": "par"})]);
+        assert!(completed_response_from_stream(&cut_off)
+            .unwrap_err()
+            .contains("ended before it was complete"));
+    }
+
+    #[test]
+    fn stream_refusals_are_recognised_but_other_bad_requests_are_not() {
+        let verification = r#"{"error":{"message":"Your organization must be verified to stream this model. Please go to: https://platform.openai.com/settings/organization/general and click on Verify Organization.","type":"invalid_request_error","param":"stream","code":"unsupported_value"}}"#;
+        assert!(is_stream_refusal(verification));
+
+        let other = r#"{"error":{"message":"Invalid schema for response_format 't'.","type":"invalid_request_error"}}"#;
+        assert!(!is_stream_refusal(other));
+    }
+
+    #[test]
+    fn incomplete_responses_are_errors_not_truncated_text() {
+        let incomplete = |reason: &str| -> OpenAiResponsesCreateResponse {
+            serde_json::from_value(serde_json::json!({
+                "status": "incomplete",
+                "incomplete_details": {"reason": reason},
+                "output": [{"type": "message", "content": [{"type": "output_text", "text": "Half a transl"}]}]
+            }))
+            .unwrap()
+        };
+
+        assert!(incomplete_response_error(&incomplete("max_output_tokens"))
+            .unwrap()
+            .contains("output limit"));
+        assert!(incomplete_response_error(&incomplete("content_filter"))
+            .unwrap()
+            .contains("content filter"));
+
+        let completed: OpenAiResponsesCreateResponse =
+            serde_json::from_value(serde_json::json!({"status": "completed"})).unwrap();
+        assert!(incomplete_response_error(&completed).is_none());
+        let unknown: OpenAiResponsesCreateResponse =
+            serde_json::from_value(serde_json::json!({})).unwrap();
+        assert!(incomplete_response_error(&unknown).is_none());
+    }
+
+    #[test]
+    fn stream_refusals_are_remembered_per_api_key_and_model() {
+        remember_refuses_streaming("sk-team-a", "gpt-test-refusal-memory");
+
+        assert!(refuses_streaming("sk-team-a", "gpt-test-refusal-memory"));
+        assert!(!refuses_streaming("sk-team-b", "gpt-test-refusal-memory"));
+        assert!(!refuses_streaming("sk-team-a", "gpt-test-other-model"));
     }
 }

@@ -279,6 +279,22 @@ export function resolveCommandFailureReport(command, error) {
   ) {
     return null;
   }
+  // AI provider safety-filter declines are content policy, not app defects.
+  // Keep them countable (false-positive rates matter) under one fingerprint per
+  // command, tagged by category, without error-level noise.
+  const aiSafetyRefusal = rawMessage.match(
+    /^(\w+)'s safety filter declined this request(?: \(category: ([^)]+)\))?/,
+  );
+  if (aiSafetyRefusal) {
+    return {
+      error: `${aiSafetyRefusal[1]} safety filter declined a request`,
+      options: {
+        level: "warning",
+        fingerprint: ["command-failure", String(command ?? "unknown"), "ai-safety-refusal"],
+        tags: { ai_refusal_category: aiSafetyRefusal[2] ?? "unspecified" },
+      },
+    };
+  }
   // GitHub 5xx: transient upstream outage. Worth counting, not an app defect —
   // report as warning under one stable fingerprint per command, and drop the
   // response body (an HTML error page with no diagnostic value).

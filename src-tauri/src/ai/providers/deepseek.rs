@@ -133,7 +133,8 @@ pub(crate) fn run_prompt(
         crate::ai::types::AiPromptOutputFormat::JsonSchema { .. }
     ) {
         return Err(
-            "Strict JSON schema output is only available with OpenAI in this version.".to_string(),
+            "Strict JSON schema output is only available with OpenAI and Claude in this version."
+                .to_string(),
         );
     }
 
