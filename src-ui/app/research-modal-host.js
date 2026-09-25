@@ -12,6 +12,9 @@ import { captureModalRenderState, reconcileModalRenderState } from "./events/mod
 import { syncLanguagePickerAlphabetIndexes } from "./language-picker-alphabet-index.js";
 import { syncResearchTextareaHeights } from "./glossary-research-flow.js";
 
+// Parts of the research windows that scroll; their positions survive a redraw.
+const SCROLLED_PARTS = [".modal-card", "[data-research-log]", ".language-picker-modal__list"];
+
 let host = null;
 let lastHtml = "";
 
@@ -46,8 +49,13 @@ export function renderResearchModals(state) {
   const root = ensureHost();
   const focus = root.contains(document.activeElement) ? captureFocusedInputState() : null;
   const modal = captureModalRenderState(root);
+  const scrolls = SCROLLED_PARTS.map((selector) => root.querySelector(selector)?.scrollTop ?? 0);
   root.innerHTML = html;
   lastHtml = html;
+  SCROLLED_PARTS.forEach((selector, index) => {
+    const element = root.querySelector(selector);
+    if (element && scrolls[index]) element.scrollTop = scrolls[index];
+  });
   syncResearchTextareaHeights(root);
   syncLanguagePickerAlphabetIndexes(root);
   if (focus) restoreFocusedInputState(focus);
