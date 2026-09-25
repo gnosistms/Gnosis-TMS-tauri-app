@@ -8,6 +8,7 @@ import { getAiProviderConfig } from "./ai-provider-config.js";
 import { resolveAiActionProviderAndModel } from "./ai-settings-flow.js";
 import { canManageGlossaries, selectedTeam } from "./glossary-shared.js";
 import { selectedProjectsTeamInstallationId } from "./project-context.js";
+import { loadTeamProjects } from "./project-flow.js";
 import { findIsoLanguageOption } from "../lib/language-options.js";
 import {
   createGlossaryResearchReportState,
@@ -106,6 +107,27 @@ export function openGlossaryResearch(render, { term = "", origin = null } = {}) 
   };
   render();
   void loadPastRuns(render);
+  void ensureResearchProjectsLoaded(render);
+}
+
+let projectsLoad = null;
+
+/** The glossary page doesn't load the team's projects; the picker needs them. */
+export function ensureResearchProjectsLoaded(render) {
+  const teamId = state.selectedTeamId;
+  if ((Array.isArray(state.projects) && state.projects.length) || !teamId) return Promise.resolve();
+  if (projectsLoad?.teamId === teamId) return projectsLoad.promise;
+  const draft = research();
+  if (draft) draft.projectsLoading = true;
+  const promise = loadTeamProjects(render, teamId)
+    .catch(() => {})
+    .finally(() => {
+      if (research()) research().projectsLoading = false;
+      projectsLoad = null;
+      render();
+    });
+  projectsLoad = { teamId, promise };
+  return promise;
 }
 
 export function closeGlossaryResearch(render) {
@@ -193,6 +215,7 @@ export function openResearchProjectPicker(render) {
   draft.projectPickerOpen = true;
   draft.projectPickerDraft = [...draft.selectedProjectIds];
   render();
+  void ensureResearchProjectsLoaded(render);
 }
 
 export function toggleResearchPickerProject(render, projectId) {

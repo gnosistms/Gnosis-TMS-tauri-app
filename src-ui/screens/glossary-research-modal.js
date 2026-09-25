@@ -326,7 +326,9 @@ function renderProjectPicker(state) {
         <span>${esc(project.title)}</span>
         ${project.hasLanguage ? "" : `<span class="muted">no ${esc(languageName(sourceCode))} files</span>`}
       </label>`).join("")
-    : `<p class="modal__supporting">This team has no projects yet.</p>`;
+    : research.projectsLoading
+      ? `<p class="modal__supporting">Loading the team's projects…</p>`
+      : `<p class="modal__supporting">This team has no projects yet.</p>`;
   return `
     <div class="modal-backdrop modal-backdrop--nested-picker">
       <section class="card modal-card research-modal" role="dialog" aria-modal="true" aria-label="Select projects" data-modal-dialog="glossary-research-projects" tabindex="-1">
