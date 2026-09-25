@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::ai::{
-    providers::{shared_http_client, sse},
+    providers::{log_prompt_cache_usage, shared_http_client, sse},
     types::{
         AiPromptOutputFormat, AiPromptRequest, AiPromptResponse, AiProviderModel, AiReviewResponse,
     },
@@ -308,7 +308,18 @@ pub(crate) fn run_prompt(
     request: &AiPromptRequest,
     api_key: &str,
 ) -> Result<AiPromptResponse, String> {
-    run_prompt_with_usage(request, api_key).map(|(response, _)| response)
+    let (response, usage) = run_prompt_with_usage(request, api_key)?;
+    log_prompt_cache_usage(
+        "OpenAI",
+        request,
+        usage.as_ref().and_then(|usage| usage.input_tokens),
+        usage
+            .as_ref()
+            .and_then(|usage| usage.input_tokens_details.as_ref())
+            .and_then(|details| details.cached_tokens),
+        None,
+    );
+    Ok(response)
 }
 
 pub(crate) fn run_prompt_with_usage(

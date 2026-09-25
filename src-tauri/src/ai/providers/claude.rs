@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use crate::ai::{
-    providers::{schemas, shared_http_client, sse},
+    providers::{log_prompt_cache_usage, schemas, shared_http_client, sse},
     types::{
         AiPromptBlock, AiPromptOutputFormat, AiPromptRequest, AiPromptResponse, AiProviderModel,
     },
@@ -425,7 +425,20 @@ pub(crate) fn run_prompt(
     request: &AiPromptRequest,
     api_key: &str,
 ) -> Result<AiPromptResponse, String> {
-    let (text, _usage) = execute_prompt(request, api_key, None)?;
+    let (text, usage) = execute_prompt(request, api_key, None)?;
+    let usage_count = |pointer: &str| {
+        usage
+            .as_ref()
+            .and_then(|usage| usage.pointer(pointer))
+            .and_then(Value::as_u64)
+    };
+    log_prompt_cache_usage(
+        "Claude",
+        request,
+        usage_count("/input_tokens"),
+        usage_count("/cache_read_input_tokens"),
+        usage_count("/cache_creation_input_tokens"),
+    );
 
     Ok(AiPromptResponse { text })
 }
