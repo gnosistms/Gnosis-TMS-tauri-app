@@ -2,10 +2,11 @@ use std::{fs, path::Path};
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tauri::AppHandle;
 
 use crate::{
-    broker::{broker_client, broker_get_json_with_session, BROKER_AUTH_REQUIRED_PREFIX},
+    broker::{broker_client, broker_get_json_with_session_detailed, BROKER_AUTH_REQUIRED_PREFIX},
     broker_auth_storage::load_broker_auth_session_internal,
     github::types::GithubAppInstallationInfo,
     storage_paths::installation_data_dir,
@@ -31,11 +32,14 @@ pub(crate) struct InstallationAccessSnapshot {
     pub(crate) can_manage_members: Option<bool>,
     pub(crate) can_manage_projects: Option<bool>,
     pub(crate) cached_at: Option<String>,
+    #[serde(default)]
+    session_key: Option<String>,
 }
 
 pub(crate) fn cache_installation_access(
     app: &AppHandle,
     installation: &GithubAppInstallationInfo,
+    session_token: &str,
 ) -> Result<(), String> {
     // A degraded listing entry (broker couldn't verify the installation against
     // GitHub) carries placeholder capabilities. Caching it would poison the
@@ -44,12 +48,13 @@ pub(crate) fn cache_installation_access(
     if installation.access_details_error.is_some() {
         return Ok(());
     }
-    let snapshot = installation_access_snapshot(installation);
+    let snapshot = installation_access_snapshot(installation, session_token);
     write_installation_access_snapshot(app, &snapshot)
 }
 
 fn installation_access_snapshot(
     installation: &GithubAppInstallationInfo,
+    session_token: &str,
 ) -> InstallationAccessSnapshot {
     InstallationAccessSnapshot {
         installation_id: installation.installation_id,
@@ -58,18 +63,36 @@ fn installation_access_snapshot(
         can_manage_members: installation.can_manage_members,
         can_manage_projects: installation.can_manage_projects,
         cached_at: Some(Utc::now().to_rfc3339()),
+        session_key: Some(access_session_key(session_token)),
     }
 }
 
-// Map an access-snapshot error to a user-facing string, but preserve broker
-// AUTH_REQUIRED: errors verbatim. The JS invoke wrapper only triggers a
-// transparent re-auth when the message still carries that prefix, so replacing
-// it with a generic message breaks silent session refresh.
+const ACCESS_ERROR_PREFIX: &str = "ACCESS_VERIFICATION_FAILED:";
+
+fn access_session_key(token: &str) -> String {
+    format!("{:x}", Sha256::digest(token.as_bytes()))
+}
+
+fn access_error(category: &str) -> String {
+    format!("{ACCESS_ERROR_PREFIX}{category}")
+}
+
+// Never return the original broker/storage error: it can contain local paths or
+// response content. AUTH_REQUIRED remains intact for the existing refresh path.
 fn map_access_error(error: String, generic: &str) -> String {
-    if error.starts_with(BROKER_AUTH_REQUIRED_PREFIX) {
+    if error.starts_with(BROKER_AUTH_REQUIRED_PREFIX) || error.starts_with("AUTH_SESSION_CHANGED:")
+    {
         error
     } else {
-        generic.to_string()
+        let category = error
+            .strip_prefix(ACCESS_ERROR_PREFIX)
+            .unwrap_or("unexpected");
+        format!(
+            "{ACCESS_ERROR_PREFIX}{}",
+            serde_json::json!({
+                "message": generic, "category": category,
+            })
+        )
     }
 }
 
@@ -169,31 +192,79 @@ fn refresh_installation_access_snapshot(
     app: &AppHandle,
     installation_id: i64,
 ) -> Result<InstallationAccessSnapshot, String> {
-    // Try cached snapshot first (TTL = 60 seconds).
-    if let Some(cached) = read_cached_installation_access(app, installation_id) {
-        if is_installation_snapshot_fresh(&cached) {
-            return Ok(cached);
-        }
+    let session = load_broker_auth_session_internal(app)
+        .map_err(|_| access_error("session_storage"))?
+        .ok_or_else(|| {
+            format!("{BROKER_AUTH_REQUIRED_PREFIX}Sign in with GitHub to save changes.")
+        })?;
+    let key = access_session_key(&session.session_token);
+    let snapshot = refresh_snapshot_with(
+        read_cached_installation_access(app, installation_id),
+        installation_id,
+        &key,
+        || {
+            let client = broker_client().map_err(|_| access_error("broker_client"))?;
+            let installation: GithubAppInstallationInfo = broker_get_json_with_session_detailed(
+                &client,
+                &format!("/api/github-app/installations/{installation_id}"),
+                &session.session_token,
+            )
+            .map_err(|error| {
+                if error.message.starts_with(BROKER_AUTH_REQUIRED_PREFIX) {
+                    error.message
+                } else {
+                    access_error(&error.category)
+                }
+            })?;
+            if installation.installation_id != installation_id
+                || installation.access_details_error.is_some()
+            {
+                return Err(access_error("membership_unverified"));
+            }
+            Ok(installation_access_snapshot(
+                &installation,
+                &session.session_token,
+            ))
+        },
+        |snapshot| {
+            write_installation_access_snapshot(app, snapshot)
+                .map_err(|_| access_error("snapshot_storage"))
+        },
+    )?;
+    // A slow refresh must not authorize a save after the native login changed.
+    let current =
+        load_broker_auth_session_internal(app).map_err(|_| access_error("session_storage"))?;
+    if current.is_none_or(|value| value.session_token != session.session_token) {
+        return Err("AUTH_SESSION_CHANGED:The saved GitHub login has changed.".into());
     }
-    // Cache is stale or absent — fetch fresh from the broker.
-    let snapshot = fetch_installation_access_from_broker(app, installation_id)?;
-    write_installation_access_snapshot(app, &snapshot)?;
     Ok(snapshot)
 }
 
-fn fetch_installation_access_from_broker(
-    app: &AppHandle,
+fn refresh_snapshot_with(
+    cached: Option<InstallationAccessSnapshot>,
     installation_id: i64,
+    session_key: &str,
+    fetch: impl FnOnce() -> Result<InstallationAccessSnapshot, String>,
+    persist: impl FnOnce(&InstallationAccessSnapshot) -> Result<(), String>,
 ) -> Result<InstallationAccessSnapshot, String> {
-    let session = load_broker_auth_session_internal(app)?
-        .ok_or_else(|| UNVERIFIED_ACCESS_ERROR.to_string())?;
-    let client = broker_client()?;
-    let installation: GithubAppInstallationInfo = broker_get_json_with_session(
-        &client,
-        &format!("/api/github-app/installations/{installation_id}"),
-        &session.session_token,
-    )?;
-    Ok(installation_access_snapshot(&installation))
+    if let Some(cached) = cached {
+        if cached.installation_id == installation_id
+            && cached.session_key.as_deref() == Some(session_key)
+            && snapshot_has_verified_membership(&cached)
+            && is_installation_snapshot_fresh(&cached)
+        {
+            return Ok(cached);
+        }
+    }
+    let snapshot = fetch()?;
+    if snapshot.installation_id != installation_id
+        || snapshot.session_key.as_deref() != Some(session_key)
+        || !snapshot_has_verified_membership(&snapshot)
+    {
+        return Err(access_error("membership_unverified"));
+    }
+    persist(&snapshot)?;
+    Ok(snapshot)
 }
 
 fn read_cached_installation_access(
@@ -201,7 +272,11 @@ fn read_cached_installation_access(
     installation_id: i64,
 ) -> Option<InstallationAccessSnapshot> {
     let path = installation_access_path(app, installation_id).ok()?;
-    let bytes = fs::read(&path).ok()?;
+    read_access_snapshot_at(&path)
+}
+
+fn read_access_snapshot_at(path: &Path) -> Option<InstallationAccessSnapshot> {
+    let bytes = fs::read(path).ok()?;
     // Fail soft: old caches may have a numeric cachedAt field that won't
     // deserialize into Option<String>. Treat any parse failure as a cache miss.
     serde_json::from_slice(&bytes).ok()
@@ -270,7 +345,10 @@ fn ensure_snapshot_allows_content_writes(
     snapshot: &InstallationAccessSnapshot,
 ) -> Result<(), String> {
     if !snapshot_has_verified_membership(snapshot) {
-        return Err(UNVERIFIED_ACCESS_ERROR.to_string());
+        return Err(map_access_error(
+            access_error("membership_unverified"),
+            UNVERIFIED_ACCESS_ERROR,
+        ));
     }
     if !snapshot_can_write_content(snapshot) {
         return Err(CONTENT_WRITE_ERROR.to_string());
@@ -282,7 +360,10 @@ fn ensure_snapshot_allows_resource_management(
     snapshot: &InstallationAccessSnapshot,
 ) -> Result<(), String> {
     if !snapshot_has_verified_membership(snapshot) {
-        return Err(UNVERIFIED_ACCESS_ERROR.to_string());
+        return Err(map_access_error(
+            access_error("membership_unverified"),
+            UNVERIFIED_ACCESS_ERROR,
+        ));
     }
     if !snapshot_can_manage_resources(snapshot) {
         return Err(RESOURCE_MANAGEMENT_ERROR.to_string());
@@ -294,7 +375,10 @@ fn ensure_snapshot_allows_member_management(
     snapshot: &InstallationAccessSnapshot,
 ) -> Result<(), String> {
     if !snapshot_has_verified_membership(snapshot) {
-        return Err(UNVERIFIED_ACCESS_ERROR.to_string());
+        return Err(map_access_error(
+            access_error("membership_unverified"),
+            UNVERIFIED_ACCESS_ERROR,
+        ));
     }
     if !snapshot_is_owner(snapshot) {
         return Err(MEMBER_MANAGEMENT_ERROR.to_string());
@@ -306,7 +390,10 @@ fn ensure_snapshot_allows_team_management(
     snapshot: &InstallationAccessSnapshot,
 ) -> Result<(), String> {
     if !snapshot_has_verified_membership(snapshot) {
-        return Err(UNVERIFIED_ACCESS_ERROR.to_string());
+        return Err(map_access_error(
+            access_error("membership_unverified"),
+            UNVERIFIED_ACCESS_ERROR,
+        ));
     }
     if !snapshot_is_owner(snapshot) {
         return Err(TEAM_MANAGEMENT_ERROR.to_string());
@@ -318,7 +405,10 @@ fn ensure_snapshot_allows_team_ai_access(
     snapshot: &InstallationAccessSnapshot,
 ) -> Result<(), String> {
     if !snapshot_has_verified_membership(snapshot) {
-        return Err(UNVERIFIED_TEAM_ACCESS_ERROR.to_string());
+        return Err(map_access_error(
+            access_error("membership_unverified"),
+            UNVERIFIED_TEAM_ACCESS_ERROR,
+        ));
     }
     match normalized_membership_role(snapshot.membership_role.as_deref()) {
         Some("translator" | "member" | "admin" | "owner") => Ok(()),
@@ -338,6 +428,14 @@ fn write_installation_access_snapshot(
     snapshot: &InstallationAccessSnapshot,
 ) -> Result<(), String> {
     let path = installation_access_path(app, snapshot.installation_id)?;
+    write_installation_access_snapshot_at(&path, snapshot, crate::util::atomic_replace)
+}
+
+fn write_installation_access_snapshot_at(
+    path: &Path,
+    snapshot: &InstallationAccessSnapshot,
+    replace: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
+) -> Result<(), String> {
     let parent = path
         .parent()
         .ok_or_else(|| "Could not resolve the installation access folder.".to_string())?;
@@ -347,19 +445,23 @@ fn write_installation_access_snapshot(
         .map_err(|error| format!("Could not encode the installation access snapshot: {error}"))?;
     // Atomic write: write to a sibling .tmp file first, then rename into place.
     // This prevents a partial read if the process is interrupted mid-write.
-    let tmp_path = path.with_extension("json.tmp");
+    let tmp_path = path.with_extension(format!("json.{}.tmp", crate::util::random_token(16)));
     fs::write(&tmp_path, &bytes).map_err(|error| {
         format!(
             "Could not write the installation access snapshot '{}': {error}",
             tmp_path.display()
         )
     })?;
-    crate::util::atomic_replace(&tmp_path, &path).map_err(|error| {
+    let result = replace(&tmp_path, path).map_err(|error| {
         format!(
             "Could not finalize the installation access snapshot '{}': {error}",
             path.display()
         )
-    })
+    });
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp_path);
+    }
+    result
 }
 
 fn installation_access_path(
@@ -387,6 +489,207 @@ mod tests {
     use crate::broker::BROKER_AUTH_REQUIRED_PREFIX;
     use std::path::Path;
 
+    fn fresh_snapshot(role: &str) -> InstallationAccessSnapshot {
+        InstallationAccessSnapshot {
+            installation_id: 42,
+            membership_role: Some(role.into()),
+            cached_at: Some(chrono::Utc::now().to_rfc3339()),
+            session_key: Some(super::access_session_key("session-a")),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn malformed_and_missing_cache_files_are_refreshable_misses() {
+        let root =
+            std::env::temp_dir().join(format!("access-cache-{}", crate::util::random_token(16)));
+        let path = root.join("installation-access.json");
+        std::fs::create_dir_all(&root).unwrap();
+        assert!(super::read_access_snapshot_at(&path).is_none());
+        for content in ["partial json", r#"{"installationId":42,"cachedAt":123}"#] {
+            std::fs::write(&path, content).unwrap();
+            assert!(super::read_access_snapshot_at(&path).is_none());
+        }
+        let original = fresh_snapshot("translator");
+        super::write_installation_access_snapshot_at(&path, &original, crate::util::atomic_replace)
+            .unwrap();
+        let failure = super::write_installation_access_snapshot_at(
+            &path,
+            &fresh_snapshot("viewer"),
+            |_, _| Err(std::io::Error::other("replacement failed")),
+        );
+        assert!(failure.is_err());
+        assert_eq!(
+            super::read_access_snapshot_at(&path)
+                .unwrap()
+                .membership_role
+                .as_deref(),
+            Some("translator")
+        );
+        assert_eq!(
+            std::fs::read_dir(&root).unwrap().count(),
+            1,
+            "failed replacement should clean its own temporary file"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn refresh_reuses_only_fresh_verified_access_for_the_same_session_and_installation() {
+        let key = super::access_session_key("session-a");
+        let valid = fresh_snapshot("translator");
+        let snapshot = super::refresh_snapshot_with(
+            Some(valid.clone()),
+            42,
+            &key,
+            || panic!("fresh access must not fetch"),
+            |_| panic!("fresh access must not persist"),
+        )
+        .unwrap();
+        assert!(ensure_snapshot_allows_content_writes(&snapshot).is_ok());
+        let mut stale = valid.clone();
+        stale.cached_at = Some((chrono::Utc::now() - chrono::Duration::seconds(61)).to_rfc3339());
+        let mut wrong_session = valid.clone();
+        wrong_session.session_key = Some(super::access_session_key("session-b"));
+        let mut legacy = valid.clone();
+        legacy.session_key = None;
+        let mut wrong_installation = valid.clone();
+        wrong_installation.installation_id = 99;
+        let mut unverified = valid.clone();
+        unverified.membership_role = None;
+        for cached in [
+            None,
+            Some(stale),
+            Some(wrong_session),
+            Some(legacy),
+            Some(wrong_installation),
+            Some(unverified),
+        ] {
+            let persisted = std::cell::Cell::new(false);
+            let snapshot = super::refresh_snapshot_with(
+                cached,
+                42,
+                &key,
+                || Ok(fresh_snapshot("viewer")),
+                |_| {
+                    persisted.set(true);
+                    Ok(())
+                },
+            )
+            .unwrap();
+            assert!(persisted.get());
+            assert!(
+                ensure_snapshot_allows_content_writes(&snapshot).is_err(),
+                "revocation must replace cached permission"
+            );
+        }
+    }
+
+    #[test]
+    fn refresh_failures_do_not_grant_access_or_cache_unverified_results() {
+        let key = super::access_session_key("session-a");
+        for error in [
+            "AUTH_REQUIRED:expired",
+            "ACCESS_VERIFICATION_FAILED:broker_transport",
+            "ACCESS_VERIFICATION_FAILED:broker_http_503",
+        ] {
+            let result = super::refresh_snapshot_with(
+                None,
+                42,
+                &key,
+                || Err(error.into()),
+                |_| panic!("failed fetch must not persist"),
+            );
+            assert_eq!(result.err().as_deref(), Some(error));
+        }
+        for mut invalid in [fresh_snapshot(""), fresh_snapshot("owner")] {
+            if invalid.membership_role.as_deref() == Some("owner") {
+                invalid.session_key = None;
+            }
+            let result = super::refresh_snapshot_with(
+                None,
+                42,
+                &key,
+                || Ok(invalid),
+                |_| panic!("unverified access must not persist"),
+            );
+            assert_eq!(
+                result.err().as_deref(),
+                Some("ACCESS_VERIFICATION_FAILED:membership_unverified")
+            );
+        }
+        let result = super::refresh_snapshot_with(
+            None,
+            42,
+            &key,
+            || Ok(fresh_snapshot("owner")),
+            |_| Err(super::access_error("snapshot_storage")),
+        );
+        assert_eq!(
+            result.err().as_deref(),
+            Some("ACCESS_VERIFICATION_FAILED:snapshot_storage")
+        );
+    }
+
+    #[test]
+    fn diagnostic_errors_drop_raw_content_but_preserve_authentication_control_flow() {
+        let private = map_access_error(
+            "private path and response body".into(),
+            UNVERIFIED_ACCESS_ERROR,
+        );
+        assert!(!private.contains("private path"));
+        assert!(private.contains("unexpected"));
+        let changed = "AUTH_SESSION_CHANGED:login changed";
+        assert_eq!(
+            map_access_error(changed.into(), UNVERIFIED_ACCESS_ERROR),
+            changed
+        );
+        let diagnostic = map_access_error(
+            super::access_error("snapshot_storage"),
+            UNVERIFIED_ACCESS_ERROR,
+        );
+        assert!(diagnostic.contains("snapshot_storage"));
+    }
+
+    #[test]
+    fn concurrent_access_cache_writers_both_complete_without_stealing_temp_files() {
+        let root =
+            std::env::temp_dir().join(format!("access-race-{}", crate::util::random_token(16)));
+        let path = root.join("installation-access.json");
+        let barrier = std::sync::Barrier::new(2);
+        let results = std::thread::scope(|scope| {
+            let writers: Vec<_> = ["translator", "owner"]
+                .into_iter()
+                .map(|role| {
+                    let path = &path;
+                    let barrier = &barrier;
+                    scope.spawn(move || {
+                        let snapshot = InstallationAccessSnapshot {
+                            membership_role: Some(role.into()),
+                            ..Default::default()
+                        };
+                        super::write_installation_access_snapshot_at(
+                            path,
+                            &snapshot,
+                            |tmp, dest| {
+                                barrier.wait();
+                                crate::util::atomic_replace(tmp, dest)
+                            },
+                        )
+                    })
+                })
+                .collect();
+            writers
+                .into_iter()
+                .map(|writer| writer.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        let final_snapshot = std::fs::read(&path).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+        assert!(results.iter().all(Result::is_ok), "{results:?}");
+        assert!(serde_json::from_slice::<InstallationAccessSnapshot>(&final_snapshot).is_ok());
+    }
+
     #[test]
     fn map_access_error_preserves_broker_auth_required() {
         // AUTH_REQUIRED: errors must pass through so the JS invoke wrapper can
@@ -399,7 +702,7 @@ mod tests {
         // Any other error collapses to the generic user-facing message.
         assert_eq!(
             map_access_error("network timeout".to_string(), UNVERIFIED_ACCESS_ERROR),
-            UNVERIFIED_ACCESS_ERROR
+            map_access_error(super::access_error("unexpected"), UNVERIFIED_ACCESS_ERROR)
         );
     }
 

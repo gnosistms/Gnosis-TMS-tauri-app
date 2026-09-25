@@ -11,6 +11,7 @@ globalThis.document = {
 };
 
 const invokedCommands = [];
+const searchInputs = [];
 let searchResponses = [];
 let refreshError = null;
 const readySearchResponse = () => ({
@@ -35,9 +36,10 @@ const readySearchResponse = () => ({
 globalThis.window = {
   __TAURI__: {
     core: {
-      async invoke(command) {
+      async invoke(command, args) {
         invokedCommands.push(command);
         if (command === "search_projects") {
+          searchInputs.push(args.input);
           return searchResponses.length > 0 ? searchResponses.shift() : readySearchResponse();
         }
         if (command === "refresh_project_search_index") {
@@ -61,6 +63,9 @@ globalThis.window = {
 
 const {
   openProjectSearchChapter,
+  clearProjectSearch,
+  resetProjectSearchState,
+  toggleProjectSearchCaseSensitive,
   toggleProjectSearchChapter,
   toggleProjectSearchProject,
   toggleProjectSearchWeakerMatches,
@@ -239,23 +244,66 @@ test("chapter search transfer only runs after navigation succeeds", async () => 
     state.projectsSearch = {
       ...createProjectsSearchState(),
       query: "Raw Query",
+      caseSensitive: true,
       results: [{ chapterId: "chapter-1" }],
     };
     const appliedQueries = [];
 
     const failed = await openProjectSearchChapter(() => {}, "chapter-1", {
       openTranslateChapter: async () => false,
-      applyProjectSearchToEditor: (_render, query) => appliedQueries.push(query),
+      applyProjectSearchToEditor: (_render, query, options) => appliedQueries.push({ query, ...options }),
     });
     const opened = await openProjectSearchChapter(() => {}, "chapter-1", {
       openTranslateChapter: async () => true,
-      applyProjectSearchToEditor: (_render, query) => appliedQueries.push(query),
+      applyProjectSearchToEditor: (_render, query, options) => appliedQueries.push({ query, ...options }),
     });
 
     assert.equal(failed, false);
     assert.equal(opened, true);
-    assert.deepEqual(appliedQueries, ["Raw Query"]);
+    assert.deepEqual(appliedQueries, [{ query: "Raw Query", caseSensitive: true }]);
   } finally {
     state.projectsSearch = previousSearch;
+  }
+});
+
+
+test("case toggle reruns search, rejects stale results, and persists through query edits", async () => {
+  const previousSearch = state.projectsSearch;
+  const previousTeams = state.teams;
+  const previousSelectedTeamId = state.selectedTeamId;
+  let resolveOldSearch;
+  try {
+    state.teams = [{ id: "team-1", installationId: 125730441 }];
+    state.selectedTeamId = "team-1";
+    state.projectsSearch = createProjectsSearchState();
+    searchInputs.length = 0;
+    searchResponses = [new Promise((resolve) => { resolveOldSearch = resolve; })];
+    updateProjectSearchQuery(() => {}, "Drukpa");
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    toggleProjectSearchCaseSensitive(() => {});
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.deepEqual(searchInputs.map(({ caseSensitive }) => caseSensitive), [false, true]);
+    assert.equal(searchInputs[1].query, "Drukpa");
+    resolveOldSearch({ ...readySearchResponse(), results: [], total: 0 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(state.projectsSearch.total, 1);
+    assert.equal(state.projectsSearch.caseSensitive, true);
+    updateProjectSearchQuery(() => {}, "D");
+    assert.equal(state.projectsSearch.caseSensitive, true);
+    updateProjectSearchQuery(() => {}, "");
+    assert.equal(state.projectsSearch.caseSensitive, true);
+    clearProjectSearch(() => {});
+    assert.equal(state.projectsSearch.caseSensitive, true);
+    toggleProjectSearchCaseSensitive(() => {});
+    assert.equal(state.projectsSearch.caseSensitive, false);
+    resetProjectSearchState();
+    assert.equal(state.projectsSearch.caseSensitive, false);
+  } finally {
+    resolveOldSearch?.(readySearchResponse());
+    resetProjectSearchState();
+    searchResponses = [];
+    state.projectsSearch = previousSearch;
+    state.teams = previousTeams;
+    state.selectedTeamId = previousSelectedTeamId;
   }
 });

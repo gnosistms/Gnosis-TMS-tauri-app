@@ -118,6 +118,7 @@ installMockNavigator(globalThis.window.navigator);
 const {
   createEditorChapterState,
   resetSessionState,
+  createAppUpdateState,
   state,
 } = await import("./state.js");
 const { queryClient } = await import("./query-client.js");
@@ -1377,30 +1378,37 @@ test("background sync skips skipDirtyFlush requests while editor rows are dirty 
   );
 });
 
-test("background sync opens a required update prompt when the repo was saved by a newer app", async () => {
-  installEditorFixture();
+for (const available of [true, false]) {
+  test(`background sync keeps sync paused and gates the update prompt on platform availability (${available})`, async () => {
+    installEditorFixture();
 
-  invokeHandler = async (command) => {
-    if (command === "sync_gtms_project_editor_repo") {
-      throw new Error(
-        "APP_UPDATE_REQUIRED:{\"requiredVersion\":\"0.1.36\",\"currentVersion\":\"0.1.35\",\"message\":\"Update before syncing this project.\"}",
-      );
-    }
-    throw new Error(`Unexpected command: ${command}`);
-  };
+    state.appUpdate = createAppUpdateState();
+    invokeHandler = async (command) => {
+      if (command === "check_for_app_update") {
+        return { available, version: available ? "0.1.36" : null, currentVersion: "0.1.35" };
+      }
+      if (command === "sync_gtms_project_editor_repo") {
+        throw new Error(
+          "APP_UPDATE_REQUIRED:{\"requiredVersion\":\"0.1.36\",\"currentVersion\":\"0.1.35\",\"message\":\"Update before syncing this project.\"}",
+        );
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    };
 
-  startEditorBackgroundSyncSession(() => {});
-  await Promise.resolve();
+    startEditorBackgroundSyncSession(() => {});
+    await Promise.resolve();
 
-  await syncEditorBackgroundNow(() => {}, { skipDirtyFlush: true });
+    await syncEditorBackgroundNow(() => {}, { skipDirtyFlush: true });
 
-  assert.equal(state.editorChapter.backgroundSyncStatus, "error");
-  assert.equal(state.appUpdate.required, true);
-  assert.equal(state.appUpdate.promptVisible, true);
-  assert.equal(state.appUpdate.version, "0.1.36");
-  assert.equal(state.appUpdate.currentVersion, "0.1.35");
-  assert.equal(state.appUpdate.message, "Update before syncing this project.");
-});
+    assert.equal(state.editorChapter.backgroundSyncStatus, "error");
+    await new Promise(setImmediate);
+    assert.equal(state.appUpdate.required, available);
+    assert.equal(state.appUpdate.promptVisible, available);
+    assert.equal(state.appUpdate.version, "0.1.36");
+    assert.equal(state.appUpdate.currentVersion, "0.1.35");
+    assert.equal(state.appUpdate.requirement.message, "Update before syncing this project.");
+  });
+}
 
 
 test("periodic sync leaves an open dirty row unsaved", async (t) => {

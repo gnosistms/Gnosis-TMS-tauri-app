@@ -38,6 +38,8 @@ const PROJECT_SEARCH_CONTENT_VERSION: i64 = 2;
 pub(crate) struct SearchProjectsInput {
     installation_id: i64,
     query: String,
+    #[serde(default)]
+    case_sensitive: bool,
 }
 
 #[derive(Deserialize)]
@@ -454,6 +456,86 @@ mod tests {
         }
     }
 
+    fn insert_case_search_document(connection: &rusqlite::Connection, id: i64, text: &str) {
+        let normalized = normalize_search_text(text);
+        let trigrams = collect_unique_trigrams(&normalized);
+        connection
+            .execute(
+                "INSERT INTO search_documents (doc_id, result_id, repo_key, project_id, repo_name,
+             project_title, chapter_id, chapter_title, row_id, row_order_key, language_code,
+             language_name, plain_text, search_text, trigram_count, text_hash, updated_at_unix)
+             VALUES (?1, ?1, 'repo', 'project', 'repo', 'Project', 'chapter', 'Chapter',
+             ?1, ?1, 'en', 'English', ?2, ?3, ?4, '', 0)",
+                rusqlite::params![id, text, normalized, trigrams.len() as i64],
+            )
+            .unwrap();
+        for token in collect_unique_tokens(&normalized) {
+            connection
+                .execute(
+                    "INSERT INTO search_document_tokens VALUES (?1, ?2)",
+                    rusqlite::params![id, token],
+                )
+                .unwrap();
+        }
+        for trigram in trigrams {
+            connection
+                .execute(
+                    "INSERT INTO search_document_trigrams VALUES (?1, ?2)",
+                    rusqlite::params![id, trigram],
+                )
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn project_search_case_sensitive_matching_precedes_the_result_cap() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        ensure_project_search_schema(&connection).unwrap();
+        for id in 1..=501 {
+            insert_case_search_document(&connection, id, "drukpa");
+        }
+        insert_case_search_document(&connection, 502, "Drukpa");
+        let insensitive = search_projects_in_connection(&connection, "drukpa", 6, None).unwrap();
+        assert_eq!(insensitive.total, 500);
+        assert!(insensitive.total_capped);
+        let sensitive =
+            search_projects_in_connection(&connection, "drukpa", 6, Some("Drukpa")).unwrap();
+        assert_eq!(sensitive.total, 1);
+        assert_eq!(sensitive.results[0].row_id, "502");
+        assert!(!sensitive.total_capped);
+        assert_eq!(sensitive.strong_total, 1);
+        let no_match =
+            search_projects_in_connection(&connection, "drukpa", 6, Some("DRUKPA")).unwrap();
+        assert_eq!(no_match.total, 0);
+    }
+
+    #[test]
+    fn project_search_case_sensitive_unicode_and_excerpts() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        ensure_project_search_schema(&connection).unwrap();
+        insert_case_search_document(&connection, 1, "École école");
+        insert_case_search_document(&connection, 2, "école");
+        connection
+            .execute(
+                "UPDATE search_documents SET row_id = '1' WHERE doc_id = 2",
+                [],
+            )
+            .unwrap();
+        let response =
+            search_projects_in_connection(&connection, "école", 5, Some("École")).unwrap();
+        assert_eq!(response.total, 1);
+        assert_eq!(response.results[0].excerpts.len(), 1);
+        assert_eq!(response.results[0].excerpts[0].snippet, "École école");
+    }
+
+    #[test]
+    fn project_search_case_sensitive_snippet_centers_on_matching_case() {
+        let text = format!("needle {} Needle {}", "あ".repeat(400), "後".repeat(400));
+        let snippet = build_plain_text_snippet(&text, "needle", Some("Needle"));
+        assert!(snippet.contains("Needle"));
+        assert!(!snippet.contains("needle"));
+    }
+
     #[test]
     fn normalize_search_text_collapses_punctuation_and_spacing() {
         assert_eq!(normalize_search_text("  Hello,\nWorld!  "), "hello world");
@@ -706,6 +788,7 @@ mod tests {
                 &connection,
                 &normalized_query,
                 normalized_query.chars().count(),
+                None,
             )
             .unwrap();
             let mut band_counts = std::collections::BTreeMap::<String, usize>::new();
@@ -749,7 +832,7 @@ mod tests {
 
     #[test]
     fn build_plain_text_snippet_truncates_long_text() {
-        let snippet = build_plain_text_snippet(&"a".repeat(400), "");
+        let snippet = build_plain_text_snippet(&"a".repeat(400), "", None);
         assert!(snippet.ends_with("..."));
         assert!(snippet.len() <= PROJECT_SEARCH_SNIPPET_CHAR_LIMIT + 3);
     }
@@ -757,7 +840,7 @@ mod tests {
     #[test]
     fn build_plain_text_snippet_keeps_short_text_whole() {
         let text = "a".repeat(PROJECT_SEARCH_SNIPPET_CHAR_LIMIT);
-        assert_eq!(build_plain_text_snippet(&text, "needle"), text);
+        assert_eq!(build_plain_text_snippet(&text, "needle", None), text);
     }
 
     #[test]
@@ -767,7 +850,7 @@ mod tests {
             "a".repeat(PROJECT_SEARCH_SNIPPET_CHAR_LIMIT),
             "b".repeat(PROJECT_SEARCH_SNIPPET_CHAR_LIMIT),
         );
-        let snippet = build_plain_text_snippet(&text, &normalize_search_text("search term"));
+        let snippet = build_plain_text_snippet(&text, &normalize_search_text("search term"), None);
         assert!(snippet.starts_with("..."));
         assert!(snippet.ends_with("..."));
         assert!(snippet.contains("search term"));

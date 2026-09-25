@@ -279,7 +279,7 @@ export function updateEditorSearchFilterQuery(render, nextValue) {
   renderEditorFilterChange(render, viewportTransition);
 }
 
-export function applyProjectSearchToEditor(render, nextValue) {
+export function applyProjectSearchToEditor(render, nextValue, options = {}) {
   if (!state.editorChapter?.chapterId) {
     return;
   }
@@ -288,7 +288,7 @@ export function applyProjectSearchToEditor(render, nextValue) {
   const nextFilters = normalizeEditorChapterFilters({
     ...currentFilters,
     searchQuery: typeof nextValue === "string" ? nextValue : String(nextValue ?? ""),
-    caseSensitive: false,
+    caseSensitive: options.caseSensitive === true,
     rowFilterMode: EDITOR_ROW_FILTER_MODE_SHOW_ALL,
   });
   const viewportTransition = prepareEditorFilterViewportTransition(currentFilters, nextFilters);

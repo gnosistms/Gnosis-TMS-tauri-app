@@ -44,9 +44,11 @@ import {
   getGlossaryTermWriteIntent,
   glossaryTermSaveIntentKey,
   glossaryTermWriteScope,
+  markGlossaryTermWriteLocallySaved,
   requestGlossaryTermWriteIntent,
 } from "./glossary-term-write-coordinator.js";
 import { removeGlossaryEditorQuery } from "./glossary-editor-query.js";
+import { refreshEditorGlossaryAfterLocalChange } from "./editor-glossary-flow.js";
 
 const SOURCE_TERM_DUPLICATE_WARNING =
   "Some source variants are duplicated within this term or elsewhere in the glossary. Remove or change the marked variants before saving.";
@@ -376,6 +378,8 @@ async function runGlossaryTermSaveIntent(render, intent) {
       },
     });
     previousHeadSha = upsertPayload?.previousHeadSha ?? null;
+    markGlossaryTermWriteLocallySaved(intent);
+    void refreshEditorGlossaryAfterLocalChange(render, team, repoInput);
     try {
       showGlossaryEditorStatus(render, "Syncing glossary repo...");
       const syncIssue = getGlossarySyncIssueMessage(await syncSingleGlossaryForTeam(team, glossary));
@@ -420,6 +424,8 @@ async function runGlossaryTermSaveIntent(render, intent) {
     throw error;
   } finally {
     removeGlossaryEditorQuery(intent.value?.team, intent.value?.glossary);
+    // Sync may merge remote terms; a failed push may restore the old local term.
+    void refreshEditorGlossaryAfterLocalChange(render, intent.value?.team, intent.value?.repoInput);
   }
 }
 

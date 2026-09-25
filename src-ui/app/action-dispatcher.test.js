@@ -156,7 +156,7 @@ test("required updates block non-update actions at dispatch time", async () => {
     renderCount += 1;
   });
 
-  const handled = await dispatchAction("dismiss-connection-failure");
+  const handled = await dispatchAction("go-offline-from-connection-failure");
 
   assert.equal(handled, true);
   assert.equal(state.connectionFailure.isOpen, true);
@@ -164,7 +164,7 @@ test("required updates block non-update actions at dispatch time", async () => {
   assert.deepEqual(invokeLog, []);
 });
 
-test("required updates still allow explicit update checks", async () => {
+test("an explicit check unlocks normal actions when the required platform build is unavailable", async () => {
   state.appUpdate = {
     ...state.appUpdate,
     required: true,
@@ -172,6 +172,7 @@ test("required updates still allow explicit update checks", async () => {
     version: "0.1.36",
     currentVersion: "0.1.35",
     message: "A newer version is required.",
+    requirement: { requiredVersion: "0.1.36", currentVersion: "0.1.35", message: "A newer version is required." },
     promptVisible: true,
   };
   invokeHandler = async (command) => {
@@ -193,12 +194,16 @@ test("required updates still allow explicit update checks", async () => {
     invokeLog.map((entry) => entry.command),
     ["check_for_app_update"],
   );
-  assert.equal(state.appUpdate.required, true);
-  assert.equal(state.appUpdate.available, true);
-  assert.equal(state.appUpdate.promptVisible, true);
+  assert.equal(state.appUpdate.required, false);
+  assert.equal(state.appUpdate.available, false);
+  assert.equal(state.appUpdate.promptVisible, false);
   assert.equal(state.appUpdate.version, "0.1.36");
   assert.equal(state.appUpdate.currentVersion, "0.1.35");
-  assert.equal(state.appUpdate.message, "A newer version is required.");
+  assert.equal(state.appUpdate.requirement.requiredVersion, "0.1.36");
+  state.connectionFailure.isOpen = true;
+  await dispatchAction("go-offline-from-connection-failure");
+  assert.equal(state.connectionFailure.isOpen, false);
+  assert.equal(state.offline.isEnabled, true);
 });
 
 test("glossary permanent-delete confirmation bypasses deleted-resource read-only policy", async () => {

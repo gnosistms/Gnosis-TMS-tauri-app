@@ -189,15 +189,26 @@ pub(super) fn empty_search_response(
     }
 }
 
-pub(super) fn build_plain_text_snippet(plain_text: &str, normalized_query: &str) -> String {
+pub(super) fn build_plain_text_snippet(
+    plain_text: &str,
+    normalized_query: &str,
+    case_sensitive_query: Option<&str>,
+) -> String {
     let trimmed = plain_text.trim();
     let text_char_count = trimmed.chars().count();
     if text_char_count <= PROJECT_SEARCH_SNIPPET_CHAR_LIMIT {
         return trimmed.to_string();
     }
 
-    let (match_start, match_end) =
-        resolve_plain_text_match_char_range(trimmed, normalized_query).unwrap_or((0, 0));
+    let match_range = if let Some(query) = case_sensitive_query {
+        trimmed.find(query).map(|byte_start| {
+            let start = trimmed[..byte_start].chars().count();
+            (start, start + query.chars().count())
+        })
+    } else {
+        resolve_plain_text_match_char_range(trimmed, normalized_query)
+    };
+    let (match_start, match_end) = match_range.unwrap_or((0, 0));
     let match_center = match_start + (match_end.saturating_sub(match_start) / 2);
     let half_limit = PROJECT_SEARCH_SNIPPET_CHAR_LIMIT / 2;
     let mut start = match_center.saturating_sub(half_limit);

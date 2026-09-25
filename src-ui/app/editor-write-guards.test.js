@@ -2383,3 +2383,54 @@ test("target language manager queues after dirty row saves", async () => {
   assert.deepEqual(invokeLog[1].payload.input.languages.map((language) => language.code), ["es", "fr"]);
   assert.equal(state.targetLanguageManager.isOpen, false);
 });
+
+test("a failed access check retains dirty row text and a later save persists it", async () => {
+  installEditorFixture();
+  state.auth.session = { login: "owner", sessionToken: "stale-token" };
+  state.editorChapter.dirtyRowIds = new Set(["row-1"]);
+  state.editorChapter.rows[0].fields.es = "latest translation";
+  state.editorChapter.rows[0].saveStatus = "dirty";
+  let available = false;
+  let commits = 0;
+  invokeHandler = async (command, payload) => {
+    if (command !== "update_gtms_editor_row_fields") return null;
+    if (!available) throw 'ACCESS_VERIFICATION_FAILED:{"category":"snapshot_storage"}';
+    commits += 1;
+    return {
+      status: "saved", row: { rowId: "row-1", textStyle: "paragraph", fields: payload.input.fields },
+      wordCounts: {}, chapterBaseCommitSha: "head-2",
+    };
+  };
+  const operations = { updateEditorChapterRow, applyEditorSelectionsToProjectState };
+  await flushDirtyEditorRows(() => {}, operations);
+  assert.equal(state.editorChapter.rows[0].fields.es, "latest translation");
+  assert.equal(state.editorChapter.rows[0].persistedFields.es, "hola");
+  assert.equal(state.editorChapter.rows[0].saveStatus, "error");
+  assert.equal(commits, 0);
+  available = true;
+  await flushDirtyEditorRows(() => {}, operations);
+  assert.equal(state.editorChapter.rows[0].persistedFields.es, "latest translation");
+  assert.equal(state.editorChapter.rows[0].saveStatus, "idle");
+  assert.equal(commits, 1);
+});
+
+test("a style save recovers its expired native session before committing once", async () => {
+  installEditorFixture();
+  state.auth.session = { login: "owner", sessionToken: "stale-token" };
+  let nativeToken = "stale-token";
+  let commits = 0;
+  invokeHandler = async (command, payload) => {
+    if (command === "refresh_broker_auth_session") return { login: "owner", sessionToken: "fresh-token" };
+    if (command === "save_broker_auth_session") { nativeToken = payload.session.sessionToken; return; }
+    if (command !== "update_gtms_editor_row_text_style") return null;
+    if (nativeToken === "stale-token") throw "AUTH_REQUIRED:Expired";
+    commits += 1;
+    return { textStyle: payload.input.textStyle, chapterBaseCommitSha: "head-2" };
+  };
+  await updateEditorRowTextStyle(() => {}, "row-1", "heading1", { updateEditorChapterRow, applyEditorSelectionsToProjectState });
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+  assert.equal(commits, 1);
+  assert.equal(state.editorChapter.rows[0].textStyle, "heading1");
+  assert.equal(state.editorChapter.rows[0].persistedTextStyle, "heading1");
+  assert.equal(state.editorChapter.rows[0].textStyleSaveState.error, "");
+});
