@@ -327,7 +327,10 @@ function renderProjectPicker(state) {
         ${project.hasLanguage ? "" : `<span class="muted">no ${esc(languageName(sourceCode))} files</span>`}
       </label>`).join("")
     : research.projectsLoading
-      ? `<p class="modal__supporting">Loading the team's projects…</p>`
+      ? `<div class="research-projects-loading" aria-busy="true" aria-live="polite">
+          <div class="navigation-loading-modal__spinner" aria-hidden="true"></div>
+          <p class="modal__supporting">Loading the list of projects.</p>
+        </div>`
       : `<p class="modal__supporting">This team has no projects yet.</p>`;
   return `
     <div class="modal-backdrop modal-backdrop--nested-picker">
