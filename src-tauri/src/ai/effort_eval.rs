@@ -380,9 +380,9 @@ fn write_summary(results: &[CallResult], configs: &[RunConfig]) -> String {
         "Output tokens include thinking / reasoning. Claude cost uses Opus 5.5 list prices."
             .to_string(),
         String::new(),
-        "| Config | Kind | Calls | Failed | Avg latency (s) | Input tok | Cached tok | Output tok | Est. cost (USD) |"
+        "| Config | Kind | Calls | Failed | Avg latency (s) | Input tok | Cached tok | Output tok | Thinking tok | Est. cost (USD) |"
             .to_string(),
-        "|---|---|---|---|---|---|---|---|---|".to_string(),
+        "|---|---|---|---|---|---|---|---|---|---|".to_string(),
     ];
     for config in configs {
         let label = config.label();
@@ -423,8 +423,11 @@ fn write_summary(results: &[CallResult], configs: &[RunConfig]) -> String {
                     "(see OpenAI pricing)".to_string(),
                 ),
             };
+            // Claude reports thinking_tokens, OpenAI reasoning_tokens.
+            let thinking = sum("/output_tokens_details/thinking_tokens")
+                + sum("/output_tokens_details/reasoning_tokens");
             lines.push(format!(
-                "| {label} | {kind} | {} | {failed} | {avg_latency:.1} | {} | {cached} | {} | {cost} |",
+                "| {label} | {kind} | {} | {failed} | {avg_latency:.1} | {} | {cached} | {} | {thinking} | {cost} |",
                 calls.len(),
                 sum("/input_tokens"),
                 sum("/output_tokens"),
@@ -462,11 +465,14 @@ fn write_blind_review(results: &[CallResult], input: &EvalInput) -> (String, Val
             .to_string(),
     ];
 
-    let mut cases = results
-        .iter()
-        .map(|result| (result.kind, result.case.clone()))
-        .collect::<Vec<_>>();
-    cases.dedup();
+    // Results are ordered config-first; list each case once, in first-seen order.
+    let mut cases: Vec<(&'static str, String)> = Vec::new();
+    for result in results {
+        let case = (result.kind, result.case.clone());
+        if !cases.contains(&case) {
+            cases.push(case);
+        }
+    }
     for (kind, case) in cases {
         let case_results = results
             .iter()

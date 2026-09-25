@@ -148,3 +148,21 @@ data, and spend approval. Phase 3 not started.
 - Phase 2: `claude::run_prompt_with_effort` and
   `openai::run_prompt_with_reasoning_effort` are test-only hooks; OpenAI's
   request gained an unset `reasoning` field.
+- Phase 2, run 1 (2026-09-25, HNHH ch. 3, es→vi, 851-term glossary; ~$2.05
+  Claude spend). All 50 calls returned valid JSON; no refusals. Opus 5.5
+  accepted `fallbacks: "default"` + structured output + effort.
+  - Review (8 planted errors + 1 natural typo, 21 clean rows): Claude `low`
+    used 0 thinking tokens and caught 1/9 (it marked almost every row
+    reviewed). `medium` and `high` both caught and fixed 9/9 with 4 light
+    edits on clean rows; `high` cost ~13% more and took ~30% longer.
+    gpt-5.4 (`none`/`low`) also fixed 9/9 but rewrote 12/21 clean rows,
+    some for the worse. Decision: review effort `medium`.
+  - Translation: `low` and `medium` both used 0 thinking tokens and produce
+    near-identical text; `high` thought ~5.7K tokens per 2 batches, ~1.8×
+    latency, ~1.5× cost. Glossary adherence 98% for every Claude level
+    (gpt-5.4 98–99%, human 90%). Character similarity to the human
+    Vietnamese: Claude 0.64–0.66 at all levels, gpt-5.4 0.58–0.60. Pending
+    the user's blind comparison of `low` vs `high`.
+  - Claude's tokenizer used ~1.7× the input tokens gpt-5.4 did for the same
+    prompts. No cached tokens on either provider: batch prompts share only a
+    short preamble, confirming the Phase 3 note.
