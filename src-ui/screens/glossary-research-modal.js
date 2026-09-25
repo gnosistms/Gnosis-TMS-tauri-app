@@ -9,6 +9,7 @@ import {
   researchableProjects,
   supportedResearchProviderNames,
 } from "../app/glossary-research-flow.js";
+import { researchModelsWithPrices } from "../app/glossary-research-budget.js";
 
 const esc = escapeHtml;
 
@@ -170,8 +171,11 @@ function renderForm(state) {
 function renderUnsupported(state) {
   const research = state.glossaryResearch;
   const providers = supportedResearchProviderNames().join(", ");
-  const body = `<p class="modal__supporting">${esc(research.unsupportedProviderName)} does not support this feature. To use this glossary research tool, please use one of the following AI providers: ${esc(providers)}</p>`;
-  return modal("glossary-research", "Research isn’t available", body, primaryButton("OK", "close-glossary-research", { modalDefault: true }));
+  const text = research.unsupportedReason === "provider"
+    ? `${research.unsupportedProviderName} does not support this feature. To use this glossary research tool, please use one of the following AI providers: ${providers}`
+    : `${research.unsupportedProviderName} can't be used for research: Gnosis TMS doesn't know this model's prices, so it can't keep research within its spending limit. On the AI Settings page, choose one of these models for Research: ${researchModelsWithPrices("claude").concat(researchModelsWithPrices("openai")).join(", ")}.`;
+  return modal("glossary-research", "Research isn\u2019t available", `<p class="modal__supporting">${esc(text)}</p>`,
+    primaryButton("OK", "close-glossary-research", { modalDefault: true }));
 }
 
 function renderExisting(state) {
