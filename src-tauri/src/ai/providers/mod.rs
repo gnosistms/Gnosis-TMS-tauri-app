@@ -12,17 +12,19 @@ use crate::ai::types::{AiPromptRequest, AiPromptResponse, AiProviderId, AiProvid
 
 static SHARED_HTTP_CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
 
-/// Per-request override for prompt runs. The shared client's 45s default fits model
-/// listings and probes, but long generations on reasoning-heavy models routinely need
-/// more; without streaming the whole response must finish inside this window.
-pub(crate) const AI_PROMPT_TIMEOUT: Duration = Duration::from_secs(300);
+/// Total limit for a prompt run, including reading a streamed body (the blocking
+/// client has no per-read idle timeout). Claude and OpenAI stream, so bytes keep
+/// flowing and this only needs to exceed the longest legitimate generation: up
+/// to 32K output tokens at high effort can take several minutes. The shared
+/// client's 45 s default still fits model listings and probes.
+pub(crate) const AI_PROMPT_TIMEOUT: Duration = Duration::from_secs(600);
 
-/// A non-streaming prompt that has sent no response bytes for about 60 s can be
-/// dropped before our own timeout (observed with OpenAI, 2026-09-25: "peer
-/// closed connection without sending TLS close_notify"). reqwest reports it as
-/// a generic request error, so it is recognised by elapsed time. Claude and
-/// OpenAI prompt calls now stream (plans/ai-prompt-streaming.md), so this is a
-/// backstop for a stream that goes silent or a plain-request fallback.
+/// A non-streaming request that has received no response bytes for about 60 s
+/// can be dropped before our own timeout (observed 2026-09-25 with OpenAI and
+/// Claude, via reqwest and curl alike: "peer closed connection without sending
+/// TLS close_notify"). reqwest reports it as a generic request error, so it is
+/// recognised by elapsed time. Claude and OpenAI stream
+/// (plans/ai-prompt-streaming.md), so this mainly covers plain requests.
 const SILENT_DROP_MIN_ELAPSED: Duration = Duration::from_secs(55);
 
 /// The message for a prompt request that failed without a timeout or connect
@@ -41,6 +43,39 @@ pub(crate) fn silent_drop_message(
              If this error persists, please report it to the Gnosis TMS development team."
         )
     })
+}
+
+/// Maps a failure to send a prompt request (before any response arrived).
+pub(crate) fn prompt_send_error(
+    provider_name: &str,
+    error: reqwest::Error,
+    elapsed: Duration,
+    normalize: fn(reqwest::Error) -> String,
+) -> String {
+    silent_drop_message(
+        provider_name,
+        error.is_timeout(),
+        error.is_connect(),
+        elapsed,
+    )
+    .unwrap_or_else(|| normalize(error))
+}
+
+/// Maps a failure while reading a prompt response, such as a stream cut off
+/// partway or the overall time limit expiring mid-stream.
+pub(crate) fn prompt_read_error(provider_name: &str, error: &reqwest::Error) -> String {
+    read_failure_message(provider_name, error.is_timeout())
+}
+
+fn read_failure_message(provider_name: &str, is_timeout: bool) -> String {
+    if is_timeout {
+        format!("The {provider_name} request timed out. Try again.")
+    } else {
+        format!(
+            "{provider_name} stopped responding before its response was complete. \
+             If this error persists, please report it to the Gnosis TMS development team."
+        )
+    }
 }
 
 pub(crate) fn shared_http_client() -> Result<&'static reqwest::blocking::Client, String> {
@@ -100,7 +135,7 @@ pub(crate) fn probe_model(
 mod tests {
     use std::time::Duration;
 
-    use super::silent_drop_message;
+    use super::{read_failure_message, silent_drop_message};
 
     #[test]
     fn silent_drop_is_reported_only_for_long_generic_failures() {
@@ -110,5 +145,15 @@ mod tests {
         assert!(silent_drop_message("OpenAI", false, false, Duration::from_secs(20)).is_none());
         assert!(silent_drop_message("OpenAI", true, false, Duration::from_secs(61)).is_none());
         assert!(silent_drop_message("OpenAI", false, true, Duration::from_secs(61)).is_none());
+    }
+
+    #[test]
+    fn read_failures_distinguish_timeouts_from_cut_off_streams() {
+        assert_eq!(
+            read_failure_message("Claude", true),
+            "The Claude request timed out. Try again."
+        );
+        assert!(read_failure_message("Claude", false)
+            .starts_with("Claude stopped responding before its response was complete."));
     }
 }

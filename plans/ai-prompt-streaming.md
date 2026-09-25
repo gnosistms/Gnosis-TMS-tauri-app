@@ -59,3 +59,23 @@ Status: implemented and verified live (2026-09-25).
 - With streaming in place, Claude translation effort is set to `high`
   (review, assistant, and glossary alignment stay `medium`).
 - Tests: Rust AI suite 118 passed (10 new); clippy clean on changed files.
+
+## Review follow-up (2026-09-25)
+
+- Prompt time limit raised to 600 s: reqwest's blocking client only has a
+  total timeout (it covers reading the body), and 32K output tokens at high
+  effort can exceed 300 s.
+- Mid-stream read failures now say "<Provider> stopped responding before its
+  response was complete…" (or the timeout message) instead of raw reqwest
+  text; send/read error mapping is shared in `providers/mod.rs`.
+- OpenAI `status: "incomplete"` (output limit, content filter) is an error,
+  matching Claude's `max_tokens` handling, instead of returning partial text.
+- OpenAI stream refusals are remembered per (API-key hash, model), not per
+  model, so one team's unverified org does not disable streaming for another.
+- A failed Claude capability lookup sends a plain request (no effort/schema)
+  instead of assuming current-model support; concurrent cache misses share
+  one lookup.
+- Safety refusals go to Sentry as warnings with an `ai_refusal_category` tag
+  and one fingerprint per command.
+- Live smoke test after the changes: Claude and gpt-5.4 single + batch calls
+  all succeeded.

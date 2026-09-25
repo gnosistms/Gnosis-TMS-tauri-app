@@ -90,6 +90,13 @@ impl ClaudeModelCapabilities {
         effort: true,
         structured_outputs: true,
     };
+    // Used when the capability lookup fails: a plain request every Claude model
+    // accepts. Built-in JSON formats still work through the prompt's JSON
+    // instructions and the tolerant parsers.
+    const BASIC: Self = Self {
+        effort: false,
+        structured_outputs: false,
+    };
 
     fn from_capabilities(capabilities: Option<&Value>) -> Self {
         let Some(capabilities) = capabilities else {
@@ -110,6 +117,9 @@ impl ClaudeModelCapabilities {
 
 static MODEL_CAPABILITIES: OnceLock<Mutex<HashMap<String, ClaudeModelCapabilities>>> =
     OnceLock::new();
+// Serializes cache-miss lookups so concurrent batch calls fetch a model's
+// capabilities once instead of each issuing the same request.
+static CAPABILITY_LOOKUP: Mutex<()> = Mutex::new(());
 
 fn capability_cache() -> &'static Mutex<HashMap<String, ClaudeModelCapabilities>> {
     MODEL_CAPABILITIES.get_or_init(|| Mutex::new(HashMap::new()))
@@ -136,6 +146,12 @@ fn model_capabilities(
     if let Some(capabilities) = cached_capabilities(model_id) {
         return capabilities;
     }
+    let _lookup_guard = CAPABILITY_LOOKUP
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(capabilities) = cached_capabilities(model_id) {
+        return capabilities;
+    }
 
     let lookup = client
         .get(format!("{CLAUDE_MODELS_API_URL}/{model_id}"))
@@ -153,9 +169,11 @@ fn model_capabilities(
             remember_capabilities(model_id, capabilities);
             capabilities
         }
-        // A failed lookup is not cached; the prompt request itself reports any
-        // real connectivity or key problem.
-        None => ClaudeModelCapabilities::CURRENT,
+        // A failed lookup is not cached, so the next request retries it. Until
+        // then, send only what every model accepts rather than risk a 400 on an
+        // older model; the prompt request itself reports any real connectivity
+        // or key problem.
+        None => ClaudeModelCapabilities::BASIC,
     }
 }
 
@@ -420,15 +438,19 @@ fn execute_prompt(
         http_request = http_request.header("anthropic-beta", CLAUDE_FALLBACK_BETA);
     }
     let started = std::time::Instant::now();
-    let response = http_request
-        .json(&body)
-        .send()
-        .map_err(|error| prompt_transport_error(error, started.elapsed()))?;
+    let response = http_request.json(&body).send().map_err(|error| {
+        super::prompt_send_error(
+            "Claude",
+            error,
+            started.elapsed(),
+            normalize_transport_error,
+        )
+    })?;
 
     let status = response.status();
     let body = response
         .text()
-        .map_err(|error| format!("Could not read the Claude response: {error}"))?;
+        .map_err(|error| super::prompt_read_error("Claude", &error))?;
 
     if !status.is_success() {
         return Err(normalize_http_error(status, &body));
@@ -617,11 +639,6 @@ pub(crate) fn probe_model(model_id: &str, api_key: &str) -> Result<(), String> {
     }
 
     Ok(())
-}
-
-fn prompt_transport_error(error: reqwest::Error, elapsed: std::time::Duration) -> String {
-    super::silent_drop_message("Claude", error.is_timeout(), error.is_connect(), elapsed)
-        .unwrap_or_else(|| normalize_transport_error(error))
 }
 
 fn normalize_transport_error(error: reqwest::Error) -> String {
