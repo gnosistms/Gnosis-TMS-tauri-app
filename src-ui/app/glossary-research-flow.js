@@ -491,20 +491,37 @@ export function cancelGlossaryResearchRun(render) {
 
 // --- live log --------------------------------------------------------------------
 
+/** Exported for tests: add one engine log event to the research log. */
+export function appendResearchLogEvent(event) {
+  return appendLog(event);
+}
+
 function appendLog(event) {
   const draft = research();
   if (!draft) return null;
-  const last = draft.log.at(-1);
   const isDelta = event.type === "answer-delta" || event.type === "thinking";
-  if (isDelta && last && last.type === event.type && last.requestId === event.requestId) {
-    last.text += event.text;
-    return last;
+  if (isDelta) {
+    // Several requests stream at once: each request keeps one thinking line
+    // and one answer line, and new text is added to that line wherever it is.
+    const existing = findStreamEntry(draft.log, event.requestId, event.type);
+    if (existing) {
+      existing.text += event.text;
+      return existing;
+    }
   }
   if (event.type === "answer" && draft.log.some((item) => item.type === "answer-delta" && item.requestId === event.requestId)) {
     return null; // already streamed
   }
   const entry = { type: event.type, text: String(event.text ?? ""), requestId: event.requestId ?? null, at: Date.now() };
   if (event.instructions) entry.instructions = event.instructions;
+  if (isDelta) {
+    const request = draft.log.find((item) => item.type === "request" && item.requestId === event.requestId);
+    entry.label = `${event.type === "thinking" ? "thinking" : "answer"}${request?.purpose ? ` · ${request.stage}: ${request.purpose}` : ""}`;
+  }
+  if (event.type === "request") {
+    entry.stage = event.stage;
+    entry.purpose = event.purpose ?? "";
+  }
   if (event.type === "usage") {
     const r = event.record;
     entry.text = `${r.stage}: ${r.status}, ${r.inputTokens ?? "?"} in (${r.cachedTokens ?? 0} cached), `
@@ -540,19 +557,34 @@ function logContainer() {
   return typeof document !== "undefined" ? document.querySelector("[data-research-log]") : null;
 }
 
+function findStreamEntry(log, requestId, type) {
+  for (let index = log.length - 1; index >= 0; index -= 1) {
+    const item = log[index];
+    if (item.requestId === requestId && item.type === type) return item;
+  }
+  return null;
+}
+
 function appendLogToDom(entry) {
   const container = logContainer();
   if (!container || !(entry.type === "answer-delta" || entry.type === "thinking")) return false;
   const pinned = container.scrollTop + container.clientHeight >= container.scrollHeight - 24;
-  let line = container.lastElementChild;
-  if (!line || line.dataset.logRequest !== String(entry.requestId) || line.dataset.logType !== entry.type) {
-    line = document.createElement("div");
-    line.className = `research-log__line research-log__line--${entry.type}`;
-    line.dataset.logRequest = String(entry.requestId);
-    line.dataset.logType = entry.type;
-    container.appendChild(line);
+  const selector = `[data-log-request="${CSS.escape(String(entry.requestId))}"][data-log-type="${entry.type}"]`;
+  let block = container.querySelector(selector);
+  if (!block) {
+    block = document.createElement("div");
+    block.className = `research-log__line research-log__line--${entry.type}`;
+    block.dataset.logRequest = String(entry.requestId);
+    block.dataset.logType = entry.type;
+    const label = document.createElement("div");
+    label.className = "research-log__stream-label";
+    label.textContent = entry.label ?? "";
+    const text = document.createElement("div");
+    text.className = "research-log__stream-text";
+    block.append(label, text);
+    container.appendChild(block);
   }
-  line.textContent = entry.text;
+  block.querySelector(".research-log__stream-text").textContent = entry.text;
   if (pinned) container.scrollTop = container.scrollHeight;
   return true;
 }

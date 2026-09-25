@@ -546,3 +546,16 @@
   flex-wrap: wrap;
 }
 
+
+.research-log__stream-label {
+  font-style: normal;
+  font-weight: 700;
+  opacity: 0.8;
+}
+
+.research-log__line--thinking,
+.research-log__line--answer-delta {
+  margin: 4px 0 6px;
+  padding-left: 8px;
+  border-left: 2px solid var(--surface-border);
+}

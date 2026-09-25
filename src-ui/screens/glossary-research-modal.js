@@ -209,10 +209,14 @@ function renderLogEntry(entry) {
     case "request":
       return `<div class="research-log__line research-log__line--request">${text}${entry.instructions ? `<details class="research-log__instructions"><summary>instructions sent with this request</summary>${esc(entry.instructions)}</details>` : ""}</div>`;
     case "thinking":
-      return `<div class="research-log__line research-log__line--thinking" data-log-request="${esc(entry.requestId)}" data-log-type="thinking">${text}</div>`;
     case "answer-delta":
-    case "answer":
-      return `<div class="research-log__line research-log__line--answer-delta" data-log-request="${esc(entry.requestId)}" data-log-type="answer-delta">${text}</div>`;
+    case "answer": {
+      const type = entry.type === "thinking" ? "thinking" : "answer-delta";
+      return `<div class="research-log__line research-log__line--${type}" data-log-request="${esc(entry.requestId)}" data-log-type="${type}">
+        <div class="research-log__stream-label">${esc(entry.label ?? (type === "thinking" ? "thinking" : "answer"))}</div>
+        <div class="research-log__stream-text">${text}</div>
+      </div>`;
+    }
     default:
       return `<div class="research-log__line">${text}</div>`;
   }
