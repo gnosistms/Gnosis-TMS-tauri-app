@@ -343,7 +343,7 @@ pub(crate) fn list_models(api_key: &str) -> Result<Vec<AiProviderModel>, String>
 
 /// Removes schema keywords Claude's structured outputs reject. Keys of a
 /// `properties` map are field names, not keywords, so they are never stripped.
-fn claude_compatible_schema(schema: &Value) -> Value {
+pub(crate) fn claude_compatible_schema(schema: &Value) -> Value {
     match schema {
         Value::Object(object) => {
             let mut cleaned = Map::new();
@@ -425,6 +425,15 @@ pub(crate) fn run_prompt(
     request: &AiPromptRequest,
     api_key: &str,
 ) -> Result<AiPromptResponse, String> {
+    run_prompt_with_usage(request, api_key).map(|(response, _)| response)
+}
+
+/// Runs a prompt and also returns Claude's usage report (input, output, cache
+/// read and cache write token counts).
+pub(crate) fn run_prompt_with_usage(
+    request: &AiPromptRequest,
+    api_key: &str,
+) -> Result<(AiPromptResponse, Option<Value>), String> {
     let (text, usage) = execute_prompt(request, api_key, None)?;
     let usage_count = |pointer: &str| {
         usage
@@ -440,7 +449,7 @@ pub(crate) fn run_prompt(
         usage_count("/cache_creation_input_tokens"),
     );
 
-    Ok(AiPromptResponse { text })
+    Ok((AiPromptResponse { text }, usage))
 }
 
 /// Runs a prompt at a forced effort level and returns the provider's usage

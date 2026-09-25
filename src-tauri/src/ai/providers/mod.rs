@@ -8,6 +8,8 @@ mod sse;
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use serde_json::Value;
+
 use crate::ai::types::{AiPromptRequest, AiPromptResponse, AiProviderId, AiProviderModel};
 
 static SHARED_HTTP_CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
@@ -140,6 +142,29 @@ pub(crate) fn run_prompt(
         AiProviderId::Gemini => gemini::run_prompt(request, api_key),
         AiProviderId::Claude => claude::run_prompt(request, api_key),
         AiProviderId::DeepSeek => deepseek::run_prompt(request, api_key),
+    }
+}
+
+/// Runs a prompt and returns the provider's token-usage report as JSON, for
+/// providers that supply one (OpenAI and Claude; `None` otherwise). Used by
+/// add-translation alignment, which logs usage per request.
+pub(crate) fn run_prompt_with_usage(
+    request: &AiPromptRequest,
+    api_key: &str,
+) -> Result<(AiPromptResponse, Option<Value>), String> {
+    match request.provider_id {
+        AiProviderId::OpenAi => {
+            openai::run_prompt_with_usage(request, api_key).map(|(response, usage)| {
+                (
+                    response,
+                    usage.and_then(|usage| serde_json::to_value(usage).ok()),
+                )
+            })
+        }
+        AiProviderId::Claude => claude::run_prompt_with_usage(request, api_key),
+        AiProviderId::Gemini | AiProviderId::DeepSeek => {
+            run_prompt(request, api_key).map(|response| (response, None))
+        }
     }
 }
 

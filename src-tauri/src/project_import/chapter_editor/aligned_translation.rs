@@ -305,11 +305,11 @@ pub(crate) fn preflight_aligned_translation_to_gtms_chapter_sync(
     input: AlignedTranslationPreflightInput,
 ) -> Result<AlignedTranslationPreflightResponse, String> {
     let mut input = input;
-    if input.provider_id != AiProviderId::OpenAi {
-        return Err("Add translation currently requires OpenAI.".to_string());
+    if !alignment_supports_provider(input.provider_id) {
+        return Err("Add translation currently requires OpenAI or Claude.".to_string());
     }
     if input.model_id.trim().is_empty() {
-        return Err("Select an OpenAI model before adding translation.".to_string());
+        return Err("Select an AI model before adding translation.".to_string());
     }
     prune_stale_alignment_jobs(app, input.installation_id);
 
@@ -2589,22 +2589,27 @@ impl From<AlignmentPromptError> for String {
 fn parse_alignment_json(text: &str, schema_name: &str) -> Result<Value, AlignmentPromptError> {
     serde_json::from_str(text).map_err(|_| {
         AlignmentPromptError::InvalidJson(format!(
-            "OpenAI returned invalid {schema_name} JSON. Retry alignment."
+            "The AI model returned invalid {schema_name} JSON. Retry alignment."
         ))
     })
 }
 
-// Alignment is OpenAI-only. Keep usage local to this workflow instead of changing
-// the response contract for unrelated AI actions/providers.
+/// Providers whose structured JSON output alignment has been verified with
+/// (plans/claude-ai-parity-plan.md). Every alignment stage needs output that
+/// matches a caller-supplied schema.
+fn alignment_supports_provider(provider_id: AiProviderId) -> bool {
+    matches!(provider_id, AiProviderId::OpenAi | AiProviderId::Claude)
+}
+
 fn run_json_prompt(
     job: &AlignmentJob,
     api_key: &str,
     schema_name: &str,
     schema: Value,
     prompt: &str,
-) -> Result<(Value, Option<providers::openai::OpenAiUsage>), AlignmentPromptError> {
+) -> Result<(Value, Option<Value>), AlignmentPromptError> {
     let (response, usage) = splits::with_request_slot(|| {
-        providers::openai::run_prompt_with_usage(
+        providers::run_prompt_with_usage(
             &AiPromptRequest {
                 provider_id: job.provider_id,
                 model_id: job.model_id.clone(),
@@ -2631,7 +2636,7 @@ fn log_alignment_request(
     started: Instant,
     cache_hit: bool,
     status: &str,
-    usage: Option<&providers::openai::OpenAiUsage>,
+    usage: Option<&Value>,
 ) {
     let metadata = json!({"stage":stage, "model":job.model_id,
         "sourceUnits":job.source_units.len(), "targetUnits":job.target_units.len(),
@@ -2708,20 +2713,20 @@ fn validate_alignments(
     for alignment in response.alignments {
         if !target_ids.contains(&alignment.target_id) {
             return Err(format!(
-                "GPT returned target id {}, but that target unit is not in the input.",
+                "The AI model returned target id {}, but that target unit is not in the input.",
                 alignment.target_id
             ));
         }
         if !seen.insert(alignment.target_id) {
             return Err(format!(
-                "GPT returned target id {} more than once.",
+                "The AI model returned target id {} more than once.",
                 alignment.target_id
             ));
         }
         for source_id in &alignment.source_ids {
             if !source_ids.contains(source_id) {
                 return Err(format!(
-                    "GPT aligned target id {} to unknown source id {}.",
+                    "The AI model aligned target id {} to unknown source id {}.",
                     alignment.target_id, source_id
                 ));
             }
@@ -2731,7 +2736,7 @@ fn validate_alignments(
     for target_id in target_ids {
         if !seen.contains(&target_id) {
             return Err(format!(
-                "GPT did not return alignment for target id {target_id}."
+                "The AI model did not return alignment for target id {target_id}."
             ));
         }
     }
@@ -3102,6 +3107,55 @@ fn split_schema() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn alignment_runs_on_openai_and_claude_only() {
+        assert!(alignment_supports_provider(AiProviderId::OpenAi));
+        assert!(alignment_supports_provider(AiProviderId::Claude));
+        assert!(!alignment_supports_provider(AiProviderId::Gemini));
+        assert!(!alignment_supports_provider(AiProviderId::DeepSeek));
+    }
+
+    fn schema_keys(value: &Value, keys: &mut Vec<String>) {
+        match value {
+            Value::Object(object) => {
+                for (key, child) in object {
+                    keys.push(key.clone());
+                    schema_keys(child, keys);
+                }
+            }
+            Value::Array(items) => items.iter().for_each(|item| schema_keys(item, keys)),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn every_alignment_schema_converts_for_claude_structured_output() {
+        for schema in [
+            compatibility_schema(),
+            summary_schema(),
+            section_match_schema(),
+            alignment_schema(),
+            split_schema(),
+        ] {
+            let converted = providers::claude::claude_compatible_schema(&schema);
+            let mut keys = Vec::new();
+            schema_keys(&converted, &mut keys);
+            for rejected in ["minimum", "maximum", "minLength"] {
+                assert!(
+                    !keys.iter().any(|key| key == rejected),
+                    "{rejected} left in {converted}"
+                );
+            }
+            // Only range and length limits are removed; the validators check
+            // them after parsing. Structure and required fields stay.
+            let mut original_keys = Vec::new();
+            schema_keys(&schema, &mut original_keys);
+            original_keys
+                .retain(|key| !["minimum", "maximum", "minLength"].contains(&key.as_str()));
+            assert_eq!(keys, original_keys);
+        }
+    }
 
     fn alignment_test_context() -> AlignmentContext {
         let rows = ["We left early.", "We arrived on time."].iter().enumerate().map(|(index, text)| {
