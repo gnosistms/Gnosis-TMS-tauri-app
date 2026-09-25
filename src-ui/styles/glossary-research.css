@@ -640,3 +640,13 @@
     grid-column: 1 / 2;
   }
 }
+
+.research-log__line--thinking,
+.research-log__line--answer-delta {
+  white-space: normal;
+}
+
+.research-log__stream-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}

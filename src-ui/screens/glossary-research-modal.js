@@ -212,14 +212,40 @@ function renderLogEntry(entry) {
     case "answer-delta":
     case "answer": {
       const type = entry.type === "thinking" ? "thinking" : "answer-delta";
-      return `<div class="research-log__line research-log__line--${type}" data-log-request="${esc(entry.requestId)}" data-log-type="${type}">
-        <div class="research-log__stream-label">${esc(entry.label ?? (type === "thinking" ? "thinking" : "answer"))}</div>
-        <div class="research-log__stream-text">${text}</div>
-      </div>`;
+      // No whitespace between tags: the log keeps line breaks as written.
+      return `<div class="research-log__line research-log__line--${type}" data-log-request="${esc(entry.requestId)}" data-log-type="${type}">`
+        + `<div class="research-log__stream-label">${esc(entry.label ?? (type === "thinking" ? "thinking" : "answer"))}</div>`
+        + `<div class="research-log__stream-text">${text}</div></div>`;
     }
     default:
       return `<div class="research-log__line">${text}</div>`;
   }
+}
+
+/**
+ * Logs saved before streamed text was kept per request hold one entry per
+ * fragment. Show each request's thinking and answer as one block.
+ */
+function mergeStreamFragments(log) {
+  const merged = [];
+  const blocks = new Map();
+  for (const entry of log) {
+    const isStream = entry.type === "thinking" || entry.type === "answer-delta";
+    if (!isStream) {
+      merged.push(entry);
+      continue;
+    }
+    const key = `${entry.requestId}\u0000${entry.type}`;
+    const block = blocks.get(key);
+    if (block) {
+      block.text += entry.text;
+    } else {
+      const copy = { ...entry };
+      blocks.set(key, copy);
+      merged.push(copy);
+    }
+  }
+  return merged;
 }
 
 function renderReview(research, targetName) {
@@ -319,7 +345,7 @@ function renderRun(state) {
        </div>`
     : "";
   const review = research.runStatus === "review" ? renderReview(research, targetName) : "";
-  const logLines = `<div class="research-log" data-research-log aria-live="off">${research.log.map(renderLogEntry).join("")}</div>`;
+  const logLines = `<div class="research-log" data-research-log aria-live="off">${mergeStreamFragments(research.log).map(renderLogEntry).join("")}</div>`;
   // While research runs the log is the main view; afterwards it folds away.
   const log = running
     ? logLines
