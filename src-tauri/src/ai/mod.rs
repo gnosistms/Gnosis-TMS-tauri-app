@@ -2,6 +2,7 @@
 mod effort_eval;
 pub(crate) mod glossary_matcher;
 pub mod providers;
+pub(crate) mod research;
 pub mod types;
 
 use regex::Regex;

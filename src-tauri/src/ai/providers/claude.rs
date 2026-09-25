@@ -281,7 +281,7 @@ pub(crate) fn list_models(api_key: &str) -> Result<Vec<AiProviderModel>, String>
 
 /// Removes schema keywords Claude's structured outputs reject. Keys of a
 /// `properties` map are field names, not keywords, so they are never stripped.
-fn claude_compatible_schema(schema: &Value) -> Value {
+pub(crate) fn claude_compatible_schema(schema: &Value) -> Value {
     match schema {
         Value::Object(object) => {
             let mut cleaned = Map::new();

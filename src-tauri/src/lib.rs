@@ -290,6 +290,21 @@ async fn run_ai_translation(
 }
 
 #[tauri::command]
+async fn run_glossary_research_request(
+    app: tauri::AppHandle,
+    request: ai::research::ResearchModelRequest,
+) -> Result<ai::research::ResearchOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || ai::research::run_research_request(&app, request))
+        .await
+        .map_err(|error| format!("The glossary research worker failed: {error}"))?
+}
+
+#[tauri::command]
+fn cancel_glossary_research_request(request_id: String) {
+    ai::research::cancel_research_request(&request_id);
+}
+
+#[tauri::command]
 async fn run_ai_translation_batch(
     app: tauri::AppHandle,
     request: AiTranslationBatchRequest,
@@ -625,6 +640,8 @@ pub fn run() {
             prepare_editor_ai_translated_glossary_batch,
             run_ai_translation,
             run_ai_translation_batch,
+            run_glossary_research_request,
+            cancel_glossary_research_request,
             run_ai_review_batch,
             run_ai_assistant_turn,
             probe_ai_provider_model,
