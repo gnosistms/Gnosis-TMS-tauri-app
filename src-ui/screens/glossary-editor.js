@@ -14,8 +14,6 @@ import {
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { getNoticeBadgeText, getStatusSurfaceItems } from "../app/status-feedback.js";
 import { renderGlossaryTermEditorModal } from "./glossary-term-editor-modal.js";
-import { renderGlossaryResearchModal } from "./glossary-research-modal.js";
-import { renderGlossaryResearchPrepModal } from "./glossary-research-prep-modal.js";
 import { canManageGlossaries, selectedTeam } from "../app/glossary-shared.js";
 import { anyGlossaryTermWriteIsActive } from "../app/glossary-term-write-coordinator.js";
 import { findChapterContextById } from "../app/project-context.js";
@@ -151,8 +149,6 @@ export function renderGlossaryEditorScreen(state) {
       offlineReconnectState: state.offline?.reconnecting === true,
       body,
     }) +
-    renderGlossaryTermEditorModal(state) +
-    renderGlossaryResearchModal(state) +
-    renderGlossaryResearchPrepModal(state)
+    renderGlossaryTermEditorModal(state)
   );
 }
