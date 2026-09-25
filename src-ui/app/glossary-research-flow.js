@@ -9,6 +9,7 @@ import { resolveAiActionProviderAndModel } from "./ai-settings-flow.js";
 import { canManageGlossaries, selectedTeam } from "./glossary-shared.js";
 import { selectedProjectsTeamInstallationId } from "./project-context.js";
 import { loadTeamProjects } from "./project-flow.js";
+import { projectKeys, queryClient } from "./query-client.js";
 import { findIsoLanguageOption } from "../lib/language-options.js";
 import {
   createGlossaryResearchReportState,
@@ -53,9 +54,26 @@ function glossaryLanguages() {
   };
 }
 
+/**
+ * The team's projects. state.projects belongs to the Projects page and can be
+ * cleared when another screen is showing, so read the projects query cache
+ * first and remember the last non-empty list for this research session.
+ */
+function teamProjectList() {
+  const cached = queryClient.getQueryData(projectKeys.byTeam(state.selectedTeamId ?? null))?.snapshot?.items;
+  const fromState = Array.isArray(state.projects) ? state.projects : [];
+  const list = Array.isArray(cached) && cached.length ? cached : fromState;
+  const draft = state.glossaryResearch;
+  if (list.length) {
+    if (draft) draft.knownProjects = { teamId: state.selectedTeamId, list };
+    return list;
+  }
+  return draft?.knownProjects?.teamId === state.selectedTeamId ? draft.knownProjects.list : [];
+}
+
 /** Projects of the team that have the glossary's source language somewhere. */
 export function researchableProjects(sourceCode = glossaryLanguages().sourceCode) {
-  return (Array.isArray(state.projects) ? state.projects : [])
+  return teamProjectList()
     .filter((project) => project.lifecycleState !== "deleted" && project.status !== "deleted")
     .map((project) => ({
       id: project.id,
@@ -115,7 +133,7 @@ let projectsLoad = null;
 /** The glossary page doesn't load the team's projects; the picker needs them. */
 export function ensureResearchProjectsLoaded(render) {
   const teamId = state.selectedTeamId;
-  if ((Array.isArray(state.projects) && state.projects.length) || !teamId) return Promise.resolve();
+  if (teamProjectList().length || !teamId) return Promise.resolve();
   if (projectsLoad?.teamId === teamId) return projectsLoad.promise;
   const draft = research();
   if (draft) draft.projectsLoading = true;
