@@ -331,3 +331,11 @@ test("quotation marks follow the target language", () => {
   assert.equal(usesGuillemets("en-US"), false);
   assert.equal(usesGuillemets("fr"), true);
 });
+
+test("a resumed run that already has a proposal does not run the new studies", async () => {
+  const store = memoryStore({ proposal: structuredClone(PROPOSAL) });
+  const { engine: research, model } = engine({ store });
+  await research.runToReview();
+  assert.ok(!model.calls.includes("sources"));
+  assert.ok(!model.calls.includes("candidates"));
+});

@@ -778,10 +778,14 @@ export function createResearchEngine(deps) {
       await lookUpDictionary();
       await findForms();
       await drawSample();
-      await traceSources();
-      await proposeCandidates();
-      await discover();
       const fresh = store.load("proposal") == null;
+      // Runs saved before these steps existed already have a proposal: the
+      // studies would feed nothing, so they are not run for them.
+      if (fresh) {
+        await traceSources();
+        await proposeCandidates();
+      }
+      await discover();
       const proposal = await propose();
       if (fresh && settings.pauseForReview) {
         heading("Review");
