@@ -532,3 +532,10 @@
   height: 25px;
   border-width: 2px;
 }
+
+.research-project-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}

@@ -18,6 +18,7 @@ import {
   setResearchReportLanguage,
   setResearchSourceMode,
   startGlossaryResearch,
+  toggleAllResearchPickerProjects,
   toggleResearchAdvanced,
   toggleResearchPickerProject,
 } from "../glossary-research-flow.js";
@@ -56,6 +57,7 @@ export function createGlossaryResearchActions(render) {
     "cancel-research-project-picker": () => closeResearchProjectPicker(render, false),
     "confirm-research-project-picker": () => closeResearchProjectPicker(render, true),
     "toggle-research-advanced": () => toggleResearchAdvanced(render),
+    "toggle-all-research-picker-projects": () => toggleAllResearchPickerProjects(render),
     "cancel-glossary-research-run": () => cancelGlossaryResearchRun(render),
     "count-glossary-research": () => countGlossaryResearch(render),
     "close-research-report": () => closeResearchReport(render),

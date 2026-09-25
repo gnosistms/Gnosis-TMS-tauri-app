@@ -340,6 +340,11 @@ function renderProjectPicker(state) {
         <div class="card__body modal-card__body">
         <h2 class="modal__title">Select projects</h2>
         <p class="modal__supporting">Research searches the ${esc(languageName(sourceCode))} text of the projects you select. Files without ${esc(languageName(sourceCode))} are ignored.</p>
+        ${projects.length ? `
+          <div class="research-project-toolbar">
+            <button type="button" class="button button--secondary button--compact" data-action="toggle-all-research-picker-projects">${projects.every((project) => selected.has(project.id)) ? "Deselect all" : "Select all"}</button>
+            ${projects.some((project) => !project.hasLanguage) ? `<span class="muted">Projects without ${esc(languageName(sourceCode))} files are skipped.</span>` : ""}
+          </div>` : ""}
         <div class="research-project-list">${rows}</div>
         <div class="modal__actions">
           ${secondaryButton("Cancel", "cancel-research-project-picker", { modalCancel: true })}

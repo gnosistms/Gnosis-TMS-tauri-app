@@ -235,6 +235,15 @@ export function toggleResearchPickerProject(render, projectId) {
   render();
 }
 
+/** Select every project, or clear the selection when all are already selected. */
+export function toggleAllResearchPickerProjects(render) {
+  const draft = research();
+  const ids = researchableProjects().map((project) => project.id);
+  const allSelected = ids.length > 0 && ids.every((id) => draft.projectPickerDraft.includes(id));
+  draft.projectPickerDraft = allSelected ? [] : ids;
+  render();
+}
+
 export function closeResearchProjectPicker(render, apply) {
   const draft = research();
   if (apply) draft.selectedProjectIds = [...draft.projectPickerDraft];
