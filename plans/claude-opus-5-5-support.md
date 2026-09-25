@@ -182,3 +182,14 @@ data, and spend approval. Phase 3 not started.
   the Gnosis TMS development team.", which the
   invoke wrapper reports to Sentry as a command failure. Revisit with
   streaming if it shows up in Sentry.
+- Blind translation ranking (user, 11 of 12 rows): gpt-6-astra@medium 5,
+  Claude high 3, gpt-5.4@none 2, Claude low 1.
+- 60-second cutoff is not provider- or library-specific: a 30-row Claude
+  `high` batch dropped at 61.5 s through reqwest (TCP keepalive 15 s made no
+  difference) and a plain non-streaming curl to Anthropic dropped at 60.7 s
+  ("HTTP2 framing layer"). The same request streamed ran 131 s to completion.
+  So the cut applies to connections that have received no response bytes for
+  60 s. On the user's Mac, NordVPN (with its Threat Protection network
+  extension) is running; unconfirmed whether it or something upstream causes
+  it. Dropped requests are probably still billed by the provider. Streaming
+  fixes it regardless of cause.
