@@ -1668,11 +1668,6 @@ fn parse_assistant_structured_response(
     Err(AI_ASSISTANT_MALFORMED_RESPONSE_MESSAGE.to_string())
 }
 
-fn is_missing_previous_response_error(message: &str) -> bool {
-    let normalized = message.trim().to_ascii_lowercase();
-    normalized.contains("previous response") && normalized.contains("not found")
-}
-
 const GLOSSARY_ALIGNMENT_BATCH_SIZE: usize = 8;
 const GLOSSARY_CONTEXT_RADIUS_BYTES: usize = 72;
 
@@ -2589,37 +2584,18 @@ pub(crate) fn run_ai_assistant_turn(
             build_assistant_translate_refinement_prompt(&request)
         }
     };
-    let previous_response_id = request
-        .provider_continuation
-        .as_ref()
-        .and_then(|metadata| metadata.previous_response_id.clone());
-    let response = match providers::run_prompt(
+    // Every turn sends the full prompt (row context and transcript); turns are
+    // not chained through provider-side state (plans/ai-assistant-stateless-caching-plan.md).
+    let response = providers::run_prompt(
         &AiPromptRequest {
             provider_id: request.provider_id,
             model_id: request.model_id.clone(),
             prompt: prompt.clone(),
-            previous_response_id: previous_response_id.clone(),
+            previous_response_id: None,
             output_format: AiPromptOutputFormat::AssistantTurnJson,
         },
         &api_key,
-    ) {
-        Ok(response) => response,
-        Err(error)
-            if previous_response_id.is_some() && is_missing_previous_response_error(&error) =>
-        {
-            providers::run_prompt(
-                &AiPromptRequest {
-                    provider_id: request.provider_id,
-                    model_id: request.model_id.clone(),
-                    prompt: prompt.clone(),
-                    previous_response_id: None,
-                    output_format: AiPromptOutputFormat::AssistantTurnJson,
-                },
-                &api_key,
-            )?
-        }
-        Err(error) => return Err(error),
-    };
+    )?;
     let structured_response =
         match parse_assistant_structured_response(&response.text, request.kind) {
             Ok(response) => response,
