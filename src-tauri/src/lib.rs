@@ -1,4 +1,6 @@
 mod ai;
+mod glossary_research_dle;
+mod glossary_research_storage;
 mod ai_secret_storage;
 mod broker;
 mod broker_auth;
@@ -641,6 +643,12 @@ pub fn run() {
             run_ai_translation,
             run_ai_translation_batch,
             run_glossary_research_request,
+            project_search::research_sample::glossary_research_project_passages,
+            glossary_research_dle::glossary_research_fetch_dle,
+            glossary_research_storage::save_glossary_research_stage,
+            glossary_research_storage::load_glossary_research_run,
+            glossary_research_storage::list_glossary_research_runs,
+            glossary_research_storage::delete_glossary_research_run,
             cancel_glossary_research_request,
             run_ai_review_batch,
             run_ai_assistant_turn,
