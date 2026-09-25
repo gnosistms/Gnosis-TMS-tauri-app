@@ -206,3 +206,26 @@ In `npm run tauri:dev`, on one row, Claude Opus 5.5 then OpenAI `gpt-5.4`:
 - Batch Translate/Review preambles (~500–800 tokens, shared only across
   parallel batches that start together): not worth caching.
 - OpenAI `prompt_cache_key`: revisit after step 5 shows real hit rates.
+
+## Status
+
+Steps 1–5 implemented (2026-09-25): `b1adb585`, `14fe6a6b`, `ea045a60`,
+`30e5e598`, `2c5c1277`. Rust lib 717 passed; frontend unit 2,295 passed.
+Step 6 (live verification) not run yet: needs API keys and spend approval.
+
+Usage context from the user: the Assistant is used far less than batch
+review and add-translation alignment. When a conversation gets one follow-up,
+it usually gets many, so caching from the first turn is the right default.
+
+Notes from checking the two most-used features:
+
+- **Add-translation alignment** (`aligned_translation.rs`, OpenAI only) already
+  keeps a per-job cache of AI results. Its section-matching prompt puts the full
+  source-summary list (repeated for every target section) before the changing
+  target section. That happens only because `serde_json` sorts object keys
+  (`sourceCandidates` < `targetSection`), but it means OpenAI's automatic prefix
+  cache can already reuse that list. The only usage log on hand (4 requests,
+  2026-09-07) showed a rerun reading 1,225 of 1,228 input tokens from cache.
+- **Batch review**: unchanged conclusion. Only the ~700–800-token instruction
+  block repeats across batches. On Claude that would save ~$0.03 on a
+  300-row chapter, a few percent of the run's cost.
