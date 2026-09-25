@@ -59,16 +59,20 @@ function glossaryLanguages() {
  * cleared when another screen is showing, so read the projects query cache
  * first and remember the last non-empty list for this research session.
  */
+// Last non-empty project list per team, kept for the whole app session.
+const knownProjectsByTeam = new Map();
+
+function rememberProjects(teamId, list) {
+  const live = (list ?? []).filter((project) => project && project.id);
+  if (teamId != null && live.length) knownProjectsByTeam.set(teamId, live);
+}
+
 function teamProjectList() {
-  const cached = queryClient.getQueryData(projectKeys.byTeam(state.selectedTeamId ?? null))?.snapshot?.items;
-  const fromState = Array.isArray(state.projects) ? state.projects : [];
-  const list = Array.isArray(cached) && cached.length ? cached : fromState;
-  const draft = state.glossaryResearch;
-  if (list.length) {
-    if (draft) draft.knownProjects = { teamId: state.selectedTeamId, list };
-    return list;
-  }
-  return draft?.knownProjects?.teamId === state.selectedTeamId ? draft.knownProjects.list : [];
+  const teamId = state.selectedTeamId ?? null;
+  const cached = queryClient.getQueryData(projectKeys.byTeam(teamId))?.snapshot?.items;
+  rememberProjects(teamId, Array.isArray(cached) ? cached : []);
+  rememberProjects(teamId, Array.isArray(state.projects) ? state.projects : []);
+  return knownProjectsByTeam.get(teamId) ?? [];
 }
 
 /** Projects of the team that have the glossary's source language somewhere. */
@@ -138,6 +142,7 @@ export function ensureResearchProjectsLoaded(render) {
   const draft = research();
   if (draft) draft.projectsLoading = true;
   const promise = loadTeamProjects(render, teamId)
+    .then((projects) => rememberProjects(teamId, projects))
     .catch(() => {})
     .finally(() => {
       if (research()) research().projectsLoading = false;
