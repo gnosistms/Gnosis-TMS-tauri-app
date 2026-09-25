@@ -166,3 +166,12 @@ data, and spend approval. Phase 3 not started.
   - Claude's tokenizer used ~1.7× the input tokens gpt-5.4 did for the same
     prompts. No cached tokens on either provider: batch prompts share only a
     short preamble, confirming the Phase 3 note.
+- Phase 2, run 2 (gpt-6-astra, $10/$50 per MTok; ~$2.20 incl. diagnosis).
+  `low`/`medium` fixed 9/9 planted review errors with 8/21 clean-row edits
+  (more literal wording); it barely reasons at either level (≤491 reasoning
+  tokens per 2 batches). Cost per task ≈1.3× Claude at the same level.
+  `high` failed every batch: OpenAI closes a non-streaming connection that
+  has sent no bytes after 60 s ("peer closed connection without sending TLS
+  close_notify"); a curl reproduction completed at 59.2 s. This affects the
+  shipping app for any OpenAI call over 60 s. Fix is streaming (or
+  background mode) — tracked separately, not part of this plan.
