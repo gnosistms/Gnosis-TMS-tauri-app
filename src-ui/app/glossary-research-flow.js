@@ -274,10 +274,17 @@ export function toggleResearchLog(render) {
 
 /** Grow note boxes to fit their text (called after renders and while typing). */
 function sizeResearchTextareas(root) {
-  for (const textarea of root?.querySelectorAll?.("[data-research-autosize]") ?? []) {
+  const textareas = [...(root?.querySelectorAll?.("[data-research-autosize]") ?? [])];
+  if (!textareas.length) return;
+  // Measuring briefly shrinks each box, which shortens the window and would
+  // pull its scroll position up; put the scroll position back afterwards.
+  const scroller = textareas[0].closest(".modal-card");
+  const scrollTop = scroller?.scrollTop ?? 0;
+  for (const textarea of textareas) {
     textarea.style.height = "auto";
     textarea.style.height = `${textarea.scrollHeight + 2}px`;
   }
+  if (scroller && scroller.scrollTop !== scrollTop) scroller.scrollTop = scrollTop;
 }
 
 let resizeListening = false;

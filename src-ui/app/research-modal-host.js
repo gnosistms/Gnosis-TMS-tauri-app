@@ -52,13 +52,15 @@ export function renderResearchModals(state) {
   const scrolls = SCROLLED_PARTS.map((selector) => root.querySelector(selector)?.scrollTop ?? 0);
   root.innerHTML = html;
   lastHtml = html;
-  SCROLLED_PARTS.forEach((selector, index) => {
-    const element = root.querySelector(selector);
-    if (element && scrolls[index]) element.scrollTop = scrolls[index];
-  });
+  // Scroll positions go back last, once boxes have their heights and focus
+  // is restored, so nothing afterwards shortens the window under them.
   syncResearchTextareaHeights(root);
   syncLanguagePickerAlphabetIndexes(root);
   if (focus) restoreFocusedInputState(focus);
   reconcileModalRenderState(root, modal);
+  SCROLLED_PARTS.forEach((selector, index) => {
+    const element = root.querySelector(selector);
+    if (element && scrolls[index]) element.scrollTop = scrolls[index];
+  });
   return true;
 }
