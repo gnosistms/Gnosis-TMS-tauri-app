@@ -5,10 +5,13 @@ const esc = escapeHtml;
 function frame(title, body, actions) {
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card research-modal" role="dialog" aria-modal="true" aria-label="${esc(title)}" data-modal-dialog="glossary-research-prep" tabindex="-1">
-        <h2 class="modal__title">${esc(title)}</h2>
-        ${body}
-        <div class="modal__actions">${actions}</div>
+      <section class="card modal-card modal-card--compact research-modal" role="dialog" aria-modal="true" aria-label="${esc(title)}" data-modal-dialog="glossary-research-prep" tabindex="-1">
+        <div class="card__body modal-card__body">
+          <p class="card__eyebrow">Glossary research</p>
+          <h2 class="modal__title">${esc(title)}</h2>
+          ${body}
+          <div class="modal__actions">${actions}</div>
+        </div>
       </section>
     </div>`;
 }

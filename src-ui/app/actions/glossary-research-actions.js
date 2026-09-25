@@ -16,6 +16,7 @@ import {
   resumeGlossaryResearchRun,
   selectResearchPickerLanguage,
   setResearchReportLanguage,
+  setResearchSourceMode,
   startGlossaryResearch,
   toggleResearchAdvanced,
   toggleResearchPickerProject,
@@ -68,6 +69,7 @@ export function createGlossaryResearchActions(render) {
   const prefixes = [
     ["remove-research-variant:", (rest) => removeResearchVariant(render, Number.parseInt(rest, 10))],
     ["set-research-report-language:", (rest) => setResearchReportLanguage(render, rest)],
+    ["set-research-source-mode:", (rest) => setResearchSourceMode(render, rest)],
     ["select-research-picker-language:", (rest) => selectResearchPickerLanguage(render, rest)],
     ["toggle-research-picker-project:", (rest) => toggleResearchPickerProject(render, rest)],
     ["open-research-report:", (rest) => openResearchReport(render, rest)],

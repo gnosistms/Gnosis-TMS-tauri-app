@@ -16,13 +16,16 @@ function languageName(code) {
   return findIsoLanguageOption(code)?.name ?? code;
 }
 
-function modal(name, title, body, actions, extraClass = "") {
+function modal(name, title, body, actions, extraClass = "", eyebrow = "Glossary research") {
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card research-modal ${extraClass}" role="dialog" aria-modal="true" aria-label="${esc(title)}" data-modal-dialog="${esc(name)}" tabindex="-1">
-        <h2 class="modal__title">${esc(title)}</h2>
-        ${body}
-        <div class="modal__actions">${actions}</div>
+      <section class="card modal-card research-modal ${extraClass}" role="dialog" aria-modal="true" aria-labelledby="${esc(name)}-title" data-modal-dialog="${esc(name)}" tabindex="-1">
+        <div class="card__body modal-card__body">
+          <p class="card__eyebrow">${esc(eyebrow)}</p>
+          <h2 class="modal__title" id="${esc(name)}-title">${esc(title)}</h2>
+          ${body}
+          <div class="modal__actions">${actions}</div>
+        </div>
       </section>
     </div>`;
 }
@@ -31,19 +34,15 @@ function modal(name, title, body, actions, extraClass = "") {
 
 function renderVariantRows(research) {
   const rows = research.variants.map((value, index) => `
-    <div class="term-variant-row research-variant-row">
-      <div class="term-variant-row__shell">
-        <input class="field__input term-variant-row__input" type="text" value="${esc(value)}"
-          data-research-variant-input data-variant-index="${index}"
-          aria-label="Variant or alternative spelling ${index + 1}" />
-      </div>
-      <div class="term-variant-row__actions">
-        <button class="term-variant-row__action-button term-variant-row__action-button--remove" type="button"
-          data-action="remove-research-variant:${index}" aria-label="Remove this variant"
-          ${tooltipAttributes("Remove this variant")}>
-          <span class="term-variant-row__remove-icon" aria-hidden="true"></span>
-        </button>
-      </div>
+    <div class="research-variant-row">
+      <input class="field__input" type="text" value="${esc(value)}"
+        data-research-variant-input data-variant-index="${index}"
+        aria-label="Variant or alternative spelling ${index + 1}" />
+      <button class="term-variant-row__action-button term-variant-row__action-button--remove" type="button"
+        data-action="remove-research-variant:${index}" aria-label="Remove this variant"
+        ${tooltipAttributes("Remove this variant")}>
+        <span class="term-variant-row__remove-icon" aria-hidden="true"></span>
+      </button>
     </div>`).join("");
   return `
     ${rows}
@@ -59,18 +58,18 @@ function renderVariantRows(research) {
 function renderReportLanguage(research, targetCode) {
   const quick = [...new Set([targetCode, "es", "en"].filter(Boolean))];
   const current = research.reportLanguageCode;
-  const chips = quick.map((code) => `
-    <button type="button" class="research-chip${code === current ? " is-selected" : ""}"
-      data-action="set-research-report-language:${esc(code)}" aria-pressed="${code === current}">${esc(languageName(code))}</button>`).join("");
-  const extra = quick.includes(current)
-    ? ""
-    : `<button type="button" class="research-chip is-selected" aria-pressed="true">${esc(languageName(current))}</button>`;
+  const codes = quick.includes(current) ? quick : [...quick, current];
+  const segments = codes.map((code) => {
+    const active = code === current;
+    return `<button type="button" class="segmented-control__button${active ? " is-active" : ""}" role="radio"
+      aria-checked="${active}" data-action="set-research-report-language:${esc(code)}">${esc(languageName(code))}</button>`;
+  }).join("");
   return `
     <div class="field">
       <span class="field__label">Report language</span>
-      <div class="research-chips" role="group" aria-label="Report language">
-        ${chips}${extra}
-        <button type="button" class="research-chip research-chip--more" data-action="open-research-language-picker">Show all…</button>
+      <div class="research-inline">
+        <div class="segmented-control" role="radiogroup" aria-label="Report language">${segments}</div>
+        <button type="button" class="text-action" data-action="open-research-language-picker">Show all…</button>
       </div>
     </div>`;
 }
@@ -79,51 +78,49 @@ function renderSourceTexts(research, sourceCode) {
   const samaelAllowed = sourceCode === "es";
   const projects = researchableProjects(sourceCode);
   const chosen = projects.filter((project) => research.selectedProjectIds.includes(project.id));
-  const summary = chosen.length
-    ? `<span class="research-projects-summary" title="${esc(chosen.map((p) => p.title).join(", "))}">${esc(chosen.map((p) => p.title).join(", "))}</span>`
-    : `<span class="research-projects-summary is-empty">No projects selected</span>`;
+  const names = chosen.map((project) => project.title).join(", ");
+  const option = (mode, label) => {
+    const active = research.sourceMode === mode;
+    return `<button type="button" class="segmented-control__button${active ? " is-active" : ""}" role="radio"
+      aria-checked="${active}" data-action="set-research-source-mode:${mode}">${esc(label)}</button>`;
+  };
   return `
     <div class="field">
       <span class="field__label">Source texts</span>
-      <div class="research-radio-group" role="radiogroup" aria-label="Source texts">
-        ${samaelAllowed ? `
-        <label class="research-radio">
-          <input type="radio" name="research-source" value="samael" data-research-source-mode ${research.sourceMode === "samael" ? "checked" : ""} />
-          <span>Complete works of Samael Aun Weor</span>
-        </label>` : ""}
-        <label class="research-radio">
-          <input type="radio" name="research-source" value="projects" data-research-source-mode ${research.sourceMode === "projects" ? "checked" : ""} />
-          <span>Select projects</span>
-        </label>
+      <div class="segmented-control research-source-control" role="radiogroup" aria-label="Source texts">
+        ${samaelAllowed ? option("samael", "Complete works of Samael Aun Weor") : ""}
+        ${option("projects", "Select projects")}
       </div>
       ${research.sourceMode === "projects" ? `
         <div class="research-projects-line">
-          ${summary}
-          <button type="button" class="button button--secondary button--compact" data-action="open-research-project-picker">Choose…</button>
+          <span class="research-projects-summary${chosen.length ? "" : " is-empty"}" title="${esc(names)}">${esc(names || "No projects selected")}</span>
+          <button type="button" class="text-action" data-action="open-research-project-picker">${chosen.length ? "Change…" : "Choose projects…"}</button>
         </div>` : ""}
     </div>`;
 }
 
 function renderAdvanced(research) {
+  const chevron = `<svg class="research-disclosure__chevron" viewBox="0 0 10 10" aria-hidden="true"><path d="M3 1.5 6.5 5 3 8.5" /></svg>`;
   return `
-    <details class="research-advanced" ${research.advancedOpen ? "open" : ""}>
-      <summary data-action="toggle-research-advanced">Advanced</summary>
-      <div class="research-advanced__grid">
-        <label class="field">
-          <span class="field__label">Sample size (passages)</span>
-          <input class="field__input" type="number" min="1" max="1000" value="${esc(research.sampleSize)}" data-research-field="sampleSize" />
-        </label>
-        <label class="field">
-          <span class="field__label">Spending limit (US$)</span>
-          <input class="field__input" type="number" min="0.1" step="0.5" value="${esc(research.spendingLimitUsd)}" data-research-field="spendingLimitUsd" />
-        </label>
-        <label class="field">
-          <span class="field__label">Random seed</span>
-          <input class="field__input" type="text" value="${esc(research.seed)}" data-research-field="seed" />
-        </label>
-      </div>
-      <p class="modal__supporting">All passages are used when fewer exist than the sample size. The run stops before any request that could exceed the spending limit.</p>
-    </details>`;
+    <div class="research-disclosure${research.advancedOpen ? " is-open" : ""}">
+      <button type="button" class="research-disclosure__toggle" data-action="toggle-research-advanced" aria-expanded="${research.advancedOpen}">${chevron}Advanced</button>
+      ${research.advancedOpen ? `
+        <div class="research-advanced__grid">
+          <label class="field">
+            <span class="field__label">Sample size</span>
+            <input class="field__input" type="number" min="1" max="1000" value="${esc(research.sampleSize)}" data-research-field="sampleSize" />
+          </label>
+          <label class="field">
+            <span class="field__label">Spending limit (US$)</span>
+            <input class="field__input" type="number" min="0.1" step="0.5" value="${esc(research.spendingLimitUsd)}" data-research-field="spendingLimitUsd" />
+          </label>
+          <label class="field">
+            <span class="field__label">Random seed</span>
+            <input class="field__input" type="text" value="${esc(research.seed)}" data-research-field="seed" />
+          </label>
+        </div>
+        <p class="modal__supporting research-small">Sample size is the number of passages judged (all of them when there are fewer). The run stops before any AI request that could go over the spending limit.</p>` : ""}
+    </div>`;
 }
 
 function renderPastRuns(research) {
@@ -152,27 +149,29 @@ function renderForm(state) {
   const sourceCode = state.glossaryEditor?.sourceLanguage?.code ?? "";
   const targetCode = state.glossaryEditor?.targetLanguage?.code ?? "";
   const body = `
-    <p class="modal__supporting">Research the meaning of a word in ${esc(languageName(sourceCode))} and suggest ${esc(languageName(targetCode))} translations. You will review the proposed translations before anything is counted, and nothing is saved to the glossary until you save an entry.</p>
-    <label class="field">
-      <span class="field__label">enter the term to research</span>
-      <input class="field__input" type="text" value="${esc(research.term)}" data-research-field="term" data-modal-initial-focus />
-    </label>
-    <div class="research-variants">${renderVariantRows(research)}</div>
-    ${renderReportLanguage(research, targetCode)}
-    ${renderSourceTexts(research, sourceCode)}
-    ${renderAdvanced(research)}
-    ${research.formError ? `<p class="form-error" role="alert">${esc(research.formError)}</p>` : ""}
-    ${renderPastRuns(research)}`;
-  return modal("glossary-research", "Research", body,
+    <p class="modal__supporting">Find what a ${esc(languageName(sourceCode))} word means in your texts and which ${esc(languageName(targetCode))} translations fit. You review the proposed translations before anything is counted, and nothing changes in the glossary until you save an entry.</p>
+    <div class="modal__form">
+      <div class="field">
+        <label class="field__label" for="research-term-input">Enter the term to research</label>
+        <input id="research-term-input" class="field__input" type="text" value="${esc(research.term)}" data-research-field="term" data-modal-initial-focus />
+        <div class="research-variants">${renderVariantRows(research)}</div>
+      </div>
+      ${renderReportLanguage(research, targetCode)}
+      ${renderSourceTexts(research, sourceCode)}
+      ${renderAdvanced(research)}
+      ${research.formError ? `<p class="modal__error" role="alert">${esc(research.formError)}</p>` : ""}
+      ${renderPastRuns(research)}
+    </div>`;
+  return modal("glossary-research", "Research a term", body,
     `${secondaryButton("Cancel", "close-glossary-research", { modalCancel: true })}
-     ${primaryButton("Start", "start-glossary-research", { modalDefault: true })}`);
+     ${primaryButton("Start research", "start-glossary-research", { modalDefault: true })}`);
 }
 
 function renderUnsupported(state) {
   const research = state.glossaryResearch;
   const providers = supportedResearchProviderNames().join(", ");
   const body = `<p class="modal__supporting">${esc(research.unsupportedProviderName)} does not support this feature. To use this glossary research tool, please use one of the following AI providers: ${esc(providers)}</p>`;
-  return modal("glossary-research", "Research", body, primaryButton("OK", "close-glossary-research", { modalDefault: true }));
+  return modal("glossary-research", "Research isn’t available", body, primaryButton("OK", "close-glossary-research", { modalDefault: true }));
 }
 
 function renderExisting(state) {
@@ -258,7 +257,7 @@ function renderReview(research, targetName) {
     <div class="research-review">
       <p class="modal__supporting"><strong>Review the proposed translations.</strong> Edit, add or remove them; notes must stay in ${esc(targetName)}. Counting starts only when you click Count.</p>
       ${entries}
-      ${research.reviewError ? `<p class="form-error" role="alert">${esc(research.reviewError)}</p>` : ""}
+      ${research.reviewError ? `<p class="modal__error" role="alert">${esc(research.reviewError)}</p>` : ""}
     </div>`;
 }
 
@@ -282,7 +281,7 @@ function renderRun(state) {
     </div>`;
   const stoppedPanel = (research.runStatus === "failed" || research.runStatus === "stopped")
     ? `<div class="research-stopped">
-         <p class="form-error" role="alert">${esc(research.runError || "Research was stopped.")}</p>
+         <p class="modal__error" role="alert">${esc(research.runError || "Research was stopped.")}</p>
          ${research.stopKind === "budget" ? `
            <label class="field research-stopped__limit">
              <span class="field__label">New spending limit (US$)</span>
@@ -327,12 +326,14 @@ function renderProjectPicker(state) {
   return `
     <div class="modal-backdrop modal-backdrop--nested-picker">
       <section class="card modal-card research-modal" role="dialog" aria-modal="true" aria-label="Select projects" data-modal-dialog="glossary-research-projects" tabindex="-1">
+        <div class="card__body modal-card__body">
         <h2 class="modal__title">Select projects</h2>
         <p class="modal__supporting">Research searches the ${esc(languageName(sourceCode))} text of the projects you select. Files without ${esc(languageName(sourceCode))} are ignored.</p>
         <div class="research-project-list">${rows}</div>
         <div class="modal__actions">
           ${secondaryButton("Cancel", "cancel-research-project-picker", { modalCancel: true })}
           ${primaryButton("Done", "confirm-research-project-picker", { modalDefault: true })}
+        </div>
         </div>
       </section>
     </div>`;
@@ -347,11 +348,13 @@ function renderLanguagePicker(state) {
   return `
     <div class="modal-backdrop modal-backdrop--nested-picker">
       <section class="card modal-card research-modal" role="dialog" aria-modal="true" aria-label="Report language" data-modal-dialog="glossary-research-language" tabindex="-1">
+        <div class="card__body modal-card__body">
         <h2 class="modal__title">Report language</h2>
         <div class="research-language-list" role="listbox" aria-label="Languages">${options}</div>
         <div class="modal__actions">
           ${secondaryButton("Cancel", "cancel-research-language-picker", { modalCancel: true })}
           ${primaryButton("Select", "confirm-research-language-picker", { modalDefault: true })}
+        </div>
         </div>
       </section>
     </div>`;
