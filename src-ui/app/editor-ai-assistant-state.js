@@ -84,9 +84,13 @@ export function normalizeEditorAssistantItem(item) {
 }
 
 export function normalizeEditorAssistantThreadState(thread) {
+  const persistedThread = thread && typeof thread === "object" ? { ...thread } : {};
+  // Retired field: threads saved before turns stopped chaining through
+  // provider response IDs still carry it.
+  delete persistedThread.providerContinuityByModelKey;
   return {
     ...createEditorAssistantThreadState(),
-    ...(thread && typeof thread === "object" ? thread : {}),
+    ...persistedThread,
     rowId: typeof thread?.rowId === "string" && thread.rowId.trim() ? thread.rowId.trim() : null,
     sourceLanguageCode:
       typeof thread?.sourceLanguageCode === "string" && thread.sourceLanguageCode.trim()
@@ -99,7 +103,6 @@ export function normalizeEditorAssistantThreadState(thread) {
     items: (Array.isArray(thread?.items) ? thread.items : []).map((item) =>
       normalizeEditorAssistantItem(item),
     ),
-    providerContinuityByModelKey: normalizePersistedObject(thread?.providerContinuityByModelKey),
     lastPromptedSourceText:
       typeof thread?.lastPromptedSourceText === "string"
         ? thread.lastPromptedSourceText
@@ -392,34 +395,6 @@ export function applyEditorAssistantItemApplyFailed(chapterState, threadKey, ite
     status: "idle",
     applyingItemId: null,
     error: typeof error === "string" ? error : "",
-  });
-}
-
-export function applyEditorAssistantProviderContinuity(
-  chapterState,
-  threadKey,
-  providerModelKey,
-  continuity,
-) {
-  if (!threadKey || !providerModelKey) {
-    return chapterState;
-  }
-
-  const assistant = normalizeEditorAssistantState(chapterState?.assistant);
-  const existingThread = currentEditorAssistantThread(chapterState, threadKey);
-  const thread = nextThreadState(threadKey, existingThread, {
-    providerContinuityByModelKey: {
-      ...existingThread.providerContinuityByModelKey,
-      [providerModelKey]: normalizePersistedObject(continuity),
-    },
-  });
-
-  return replaceAssistantState(chapterState, {
-    ...assistant,
-    threadsByKey: {
-      ...assistant.threadsByKey,
-      [threadKey]: thread,
-    },
   });
 }
 

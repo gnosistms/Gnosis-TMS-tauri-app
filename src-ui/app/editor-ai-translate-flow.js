@@ -744,7 +744,6 @@ export async function runEditorAiTranslateForContext(
           translatedFootnote: translatedSectionValue(payload, "translatedFootnote"),
           translatedImageCaption: translatedSectionValue(payload, "translatedImageCaption"),
           appliedText: translatedSectionValue(payload, "translatedText"),
-          providerContinuation: payload?.providerContinuation ?? null,
           summary: `${AI_ACTION_LABELS[actionId]} applied to ${context.targetLanguageLabel}.`,
         });
 
@@ -763,7 +762,6 @@ export async function runEditorAiTranslateForContext(
           ok: true,
           translated: true,
           applied: true,
-          providerContinuation: payload?.providerContinuation ?? null,
           translatedText: translatedSectionValue(payload, "translatedText"),
           translatedFootnote: translatedSectionValue(payload, "translatedFootnote"),
           translatedImageCaption: translatedSectionValue(payload, "translatedImageCaption"),
@@ -789,7 +787,6 @@ export async function runEditorAiTranslateForContext(
         draftTranslationText: translatedSectionValue(payload, "translatedText"),
         draftTranslationFootnote: translatedSectionValue(payload, "translatedFootnote"),
         draftTranslationImageCaption: translatedSectionValue(payload, "translatedImageCaption"),
-        providerContinuation: payload?.providerContinuation ?? null,
         summary: `${AI_ACTION_LABELS[actionId]} draft for ${context.targetLanguageLabel}.`,
       });
       state.editorChapter = clearEditorAiTranslateAction(state.editorChapter, actionId);
@@ -805,7 +802,6 @@ export async function runEditorAiTranslateForContext(
         ok: true,
         translated: true,
         drafted: true,
-        providerContinuation: payload?.providerContinuation ?? null,
         translatedText: translatedSectionValue(payload, "translatedText"),
         translatedFootnote: translatedSectionValue(payload, "translatedFootnote"),
         translatedImageCaption: translatedSectionValue(payload, "translatedImageCaption"),
@@ -859,7 +855,6 @@ export async function runEditorAiTranslateForContext(
       translatedFootnote: translatedSectionValue(payload, "translatedFootnote"),
       translatedImageCaption: translatedSectionValue(payload, "translatedImageCaption"),
       appliedText: translatedSectionValue(payload, "translatedText"),
-      providerContinuation: payload?.providerContinuation ?? null,
       summary: `${AI_ACTION_LABELS[actionId]} applied to ${context.targetLanguageLabel}.`,
     });
 
@@ -877,7 +872,6 @@ export async function runEditorAiTranslateForContext(
     return {
       ok: true,
       translated: true,
-      providerContinuation: payload?.providerContinuation ?? null,
       translatedText: translatedSectionValue(payload, "translatedText"),
       translatedFootnote: translatedSectionValue(payload, "translatedFootnote"),
       translatedImageCaption: translatedSectionValue(payload, "translatedImageCaption"),

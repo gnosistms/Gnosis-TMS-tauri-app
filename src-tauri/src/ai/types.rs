@@ -285,8 +285,6 @@ pub struct AiTranslationResponse {
     pub translated_image_caption: String,
     #[serde(default)]
     pub prompt_text: String,
-    #[serde(default)]
-    pub provider_continuation: Option<AiProviderContinuationMetadata>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -437,14 +435,12 @@ pub struct AiPromptRequest {
     pub provider_id: AiProviderId,
     pub model_id: String,
     pub prompt: String,
-    pub previous_response_id: Option<String>,
     pub output_format: AiPromptOutputFormat,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AiPromptResponse {
     pub text: String,
-    pub provider_response_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -460,15 +456,6 @@ pub enum AiPromptOutputFormat {
         name: String,
         schema: serde_json::Value,
     },
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct AiProviderContinuationMetadata {
-    #[serde(default)]
-    pub previous_response_id: Option<String>,
-    #[serde(default)]
-    pub provider_response_id: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -603,8 +590,6 @@ pub struct AiAssistantTurnRequest {
     pub reply_language_hint: String,
     #[serde(default)]
     pub installation_id: Option<i64>,
-    #[serde(default)]
-    pub provider_continuation: Option<AiProviderContinuationMetadata>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -617,8 +602,6 @@ pub struct AiAssistantTurnResponse {
     pub prompt_text: String,
     #[serde(default)]
     pub raw_response: String,
-    #[serde(default)]
-    pub provider_continuation: Option<AiProviderContinuationMetadata>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

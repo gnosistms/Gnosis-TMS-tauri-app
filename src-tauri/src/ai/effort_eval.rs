@@ -180,7 +180,6 @@ fn call(
         provider_id: config.provider_id(),
         model_id: config.model.clone(),
         prompt,
-        previous_response_id: None,
         output_format,
     };
     let started = Instant::now();

@@ -391,10 +391,7 @@ pub(crate) fn run_prompt(
 ) -> Result<AiPromptResponse, String> {
     let (text, _usage) = execute_prompt(request, api_key, None)?;
 
-    Ok(AiPromptResponse {
-        text,
-        provider_response_id: None,
-    })
+    Ok(AiPromptResponse { text })
 }
 
 /// Runs a prompt at a forced effort level and returns the provider's usage
@@ -701,7 +698,6 @@ mod tests {
             provider_id: AiProviderId::Claude,
             model_id: model_id.to_string(),
             prompt: "Translate this.".to_string(),
-            previous_response_id: None,
             output_format,
         }
     }

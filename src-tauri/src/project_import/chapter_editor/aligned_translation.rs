@@ -2609,7 +2609,6 @@ fn run_json_prompt(
                 provider_id: job.provider_id,
                 model_id: job.model_id.clone(),
                 prompt: prompt.to_string(),
-                previous_response_id: None,
                 output_format: AiPromptOutputFormat::JsonSchema {
                     name: schema_name.to_string(),
                     schema,

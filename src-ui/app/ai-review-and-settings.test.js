@@ -881,9 +881,6 @@ test("runEditorAiTranslate uses the configured translate action and creates an a
       });
       return {
         translatedText: "Xin chao",
-        providerContinuation: {
-          providerResponseId: "resp_translate_1",
-        },
       };
     }
 
@@ -913,12 +910,6 @@ test("runEditorAiTranslate uses the configured translate action and creates an a
   assert.equal(draft?.draftTranslationText, "Xin chao");
   assert.equal(draft?.sourceLanguageCode, "es");
   assert.equal(draft?.targetLanguageCode, "vi");
-  assert.equal(
-    state.editorChapter.assistant.threadsByKey["row-1::es::vi"]
-      .providerContinuityByModelKey["openai::gpt-5.4-mini"]
-      .providerResponseId,
-    "resp_translate_1",
-  );
   assert.equal(state.editorChapter.aiTranslate.translate1.status, "idle");
 });
 

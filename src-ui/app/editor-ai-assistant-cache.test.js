@@ -74,11 +74,6 @@ test("stored assistant chapter data round-trips per team/project/chapter", () =>
             sourceLanguageCode: "es",
             targetLanguageCode: "vi",
           }],
-          providerContinuityByModelKey: {
-            "openai::gpt-5.4": {
-              providerResponseId: "resp_1",
-            },
-          },
           lastPromptedSourceText: "",
           lastPromptedTargetText: "",
           hasPromptedRowTextSnapshot: false,
@@ -124,11 +119,6 @@ test("stored assistant chapter data round-trips per team/project/chapter", () =>
             appliedAt: null,
             details: {},
           }],
-          providerContinuityByModelKey: {
-            "openai::gpt-5.4": {
-              providerResponseId: "resp_1",
-            },
-          },
           lastPromptedSourceText: "",
           lastPromptedTargetText: "",
           hasPromptedRowTextSnapshot: false,
@@ -147,4 +137,34 @@ test("stored assistant chapter data round-trips per team/project/chapter", () =>
       },
     },
   );
+});
+
+test("stored assistant threads drop the retired provider continuity field on load", () => {
+  setActiveStorageLogin("tester");
+
+  saveStoredEditorAssistantChapterData(
+    fixtureTeam,
+    "project-1",
+    "chapter-legacy",
+    {
+      threadsByKey: {
+        "row-1::es::vi": {
+          rowId: "row-1",
+          sourceLanguageCode: "es",
+          targetLanguageCode: "vi",
+          items: [],
+          providerContinuityByModelKey: {
+            "openai::gpt-5.4": {
+              providerResponseId: "resp_1",
+            },
+          },
+        },
+      },
+    },
+  );
+
+  const thread = loadStoredEditorAssistantChapterData(fixtureTeam, "project-1", "chapter-legacy")
+    .threadsByKey["row-1::es::vi"];
+  assert.equal(thread.rowId, "row-1");
+  assert.equal("providerContinuityByModelKey" in thread, false);
 });
