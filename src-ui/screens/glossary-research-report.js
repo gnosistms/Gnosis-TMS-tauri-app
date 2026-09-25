@@ -177,6 +177,7 @@ function renderSecondary(run) {
         <ul>
           ${sense.sourceBook ? `<li>Source: ${esc(sense.sourceBook)}${sense.originalTerm ? ` — original ${esc(sense.originalLanguage ?? "")} term “${esc(sense.originalTerm)}” (${esc(sense.originalTermBasis)})` : ""}</li>` : ""}
           <li>Meaning there: ${esc(sense.meaningInSource)}</li>
+          ${sense.meaningInOriginal ? `<li>In the original text: ${esc(sense.meaningInOriginal)}</li>` : ""}
           <li>How the author uses it: ${esc(sense.authorUsage)}</li>
           ${sense.equivalences?.length ? `<li>Equated with: ${sense.equivalences.map((e) => `${esc(e.term)} (${esc(e.relation)})`).join(", ")}</li>` : ""}
         </ul>`).join("")}

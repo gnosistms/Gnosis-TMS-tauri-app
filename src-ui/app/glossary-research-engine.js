@@ -528,12 +528,34 @@ export function createResearchEngine(deps) {
         return `- ${parts.join("; ")}${pairs}`;
       });
       const section = (title, lines) => `## ${title}\n${lines.length ? lines.join("\n\n") : "(none)"}`;
+      // Where a book's own glossary pairs name the term's original word, read
+      // that word in the book's original text before writing the study.
+      const formKeys = new Set(forms.map((form) => fold(form).trim()));
+      const originalSections = [];
+      const searched = new Set();
+      for (const book of top) {
+        const record = records.find((item) => item.title === book.title);
+        if (!record?.originalBookId || !corpus.originalSample) continue;
+        const originals = [...new Set(record.headwordPairs
+          .filter((pair) => formKeys.has(fold(pair.source).trim()))
+          .map((pair) => pair.original))];
+        if (!originals.length) continue;
+        const found = await corpus.originalSample(record.originalBookId, originals, settings.seed);
+        searched.add(`${record.originalBookId}:${fold(originals.join(",")).trim()}`);
+        const name = record.originalTitle ?? book.title;
+        info(`original text of ${name}: ${found.occurrences} occurrences of ${originals.map((o) => `“${o}”`).join(", ")} in ${found.paragraphs} passages`);
+        originalSections.push(section(
+          `The original text of ${name}: ${found.occurrences} occurrences of ${originals.map((o) => `“${o}”`).join(", ")} in ${found.paragraphs} passages (a sample)`,
+          found.items.map((item) => passageSnippet({ ...item, reference: { title: name } })),
+        ));
+      }
       const content = [
         `# Term: ${settings.term}\nSpellings searched: ${forms.join(", ")}`,
         section("Dictionary entry", [ctx().dictionaryText || "(none found)"]),
         section("Occurrences in the reference books", [ranked.map((book) => `- ${book.title}: ${book.occurrences} occurrences in ${book.passages} passages`).join("\n")]),
         section("Records of the reference books", [recordLines.join("\n") || "(no records)"]),
         section(`Passages from the books that use it most (${top.map((book) => book.title).join("; ")})`, top.flatMap((book) => book.items.slice(0, 14).map((item) => passageSnippet(item)))),
+        ...originalSections,
         section("One passage from each of the other books", others.map((book) => passageSnippet(book.items[0]))),
         section("Where the author names those books", mentions),
         section("A sample of the author's own uses", authorPassages()),
@@ -544,6 +566,7 @@ export function createResearchEngine(deps) {
         schema: prompts.SOURCES_SCHEMA, schemaName: "sources",
         maxOutputTokens: 16000, effort: settings.effortStudy,
       });
+      await checkOriginalTerms(study, top, records, searched);
       for (const sense of study.senses.filter((item) => !item.inDictionary)) {
         fact(`${sense.sense}${sense.sourceBook ? ` — from ${sense.sourceBook}` : ""}${sense.originalTerm ? ` (original ${sense.originalLanguage ?? ""} term “${sense.originalTerm}”)` : ""}`);
       }
@@ -553,6 +576,49 @@ export function createResearchEngine(deps) {
         study,
       };
     });
+  }
+
+  /**
+   * When the study only believes it knows the original word of a sense from a
+   * translated book, check that word against the book's original text.
+   */
+  async function checkOriginalTerms(study, top, records, searched) {
+    if (!corpus.originalSample) return;
+    for (const sense of study.senses) {
+      if (sense.inDictionary || !sense.originalTerm || !sense.sourceBook) continue;
+      const book = top.find((item) => {
+        const name = item.title.split(" — ")[0].replace(/\s*\([^)]*\)\s*/g, " ").trim().toLowerCase();
+        return name && sense.sourceBook.toLowerCase().includes(name);
+      });
+      const record = book && records.find((item) => item.title === book.title);
+      if (!record?.originalBookId || searched.has(`${record.originalBookId}:${fold(sense.originalTerm).trim()}`)) continue;
+      const found = await corpus.originalSample(record.originalBookId, [sense.originalTerm], settings.seed, 10);
+      const name = record.originalTitle ?? book.title;
+      info(`original text of ${name}: ${found.occurrences} occurrences of “${sense.originalTerm}” in ${found.paragraphs} passages`);
+      const content = [
+        `Term: ${settings.term}. Proposed original word: “${sense.originalTerm}” (${sense.originalTermBasis}).`,
+        `## The original text (${name}): ${found.occurrences} occurrences in ${found.paragraphs} passages (a sample)`,
+        found.items.map((item) => passageSnippet({ ...item, reference: { title: name } })).join("\n\n") || "(no passage contains the proposed word)",
+        `## The ${settings.sourceLanguageName} edition (${book.title})`,
+        book.items.slice(0, 8).map((item) => passageSnippet(item)).join("\n\n"),
+      ].join("\n\n");
+      const check = await client.callJson({
+        stage: "sources", purpose: `check the original word “${sense.originalTerm}”`,
+        instructions: prompts.originalCheckInstructions(ctx()), content,
+        schema: prompts.ORIGINAL_CHECK_SCHEMA, schemaName: "original_check",
+        maxOutputTokens: 4000, effort: settings.effortProposal,
+      });
+      sense.originalCheck = { ...check, occurrences: found.occurrences, paragraphs: found.paragraphs };
+      if (check.confirmed) {
+        sense.originalTermBasis = `${check.basis} (checked in the original text)`;
+      } else if (check.originalTerm) {
+        sense.originalTerm = check.originalTerm;
+        sense.originalTermBasis = `${check.basis} (corrected from the original text)`;
+      } else {
+        sense.originalTermBasis = `${sense.originalTermBasis}; not confirmed by the original text: ${check.basis}`;
+      }
+      if (check.meaningInOriginal) sense.meaningInOriginal = check.meaningInOriginal;
+    }
   }
 
   /** Candidate translations for the term as a whole, before any passage-by-passage reading. */

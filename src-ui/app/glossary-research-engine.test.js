@@ -39,7 +39,7 @@ function passages(count) {
   return items;
 }
 
-function fakeCorpus(items) {
+function fakeCorpus(items, pairs = [{ source: "Fatal", original: "Fateful One" }]) {
   return {
     description: "test texts",
     async formsHint() {
@@ -61,7 +61,12 @@ function fakeCorpus(items) {
     },
     authorName: "the author",
     async sourceBooks() {
-      return [{ title: "Libro fuente — M.", translated: true, originalLanguage: "en", originalTitle: "The Source Book", originalAuthor: "M.", originalFirstPrinting: "1933", firstSpanishTranslation: "1950", headwordPairs: [{ source: "Fatal", original: "Fateful One" }] }];
+      return [{ title: "Libro fuente — M.", translated: true, originalLanguage: "en", originalTitle: "The Source Book", originalAuthor: "M.", originalFirstPrinting: "1933", firstSpanishTranslation: "1950", headwordPairs: pairs, originalBookId: "fuente", originalAccess: "passages_only" }];
+    },
+    originalSearches: [],
+    async originalSample(bookId, forms) {
+      this.originalSearches.push({ bookId, forms });
+      return { paragraphs: 1, occurrences: 1, items: [{ itemId: "en.p1", text: `The ${forms[0]} guides us.`, occurrences: [{ start: 4, end: 4 + forms[0].length, surface: forms[0] }] }] };
     },
     async sourceUsage() {
       return [0, 1, 2].map((i) => ({
@@ -116,6 +121,8 @@ function fakeModel({ failFirstCounting = false } = {}) {
         out = { forms: [{ form: "fatal", keep: true, reason: "ok" }, { form: "fatales", keep: true, reason: "ok" }, { form: "fatalmente", keep: false, reason: "derived adverb" }] };
       } else if (request.stage === "discovery") {
         out = { items: unique.map((occId) => ({ occId, sense: "2", corpusSense: null, rendering: "disastrous", phraseTranslation: "a disastrous result", expressionCandidate: null, reason: "fake" })) };
+      } else if (request.schemaName === "original_check") {
+        out = { confirmed: true, originalTerm: null, basis: "the original uses it the same way", meaningInOriginal: "a guide" };
       } else if (request.stage === "sources") {
         out = { summary: "From the source book.", senses: [{ sense: "the Fatal (noun)", inDictionary: false, sourceBook: "Libro fuente — M.", evidence: "named by the author", originalLanguage: "en", originalTerm: "Fateful One", originalTermBasis: "the book's glossary pairs", meaningInSource: "a guide", authorUsage: "follows it", equivalences: [] }] };
       } else if (request.stage === "candidates") {
@@ -152,11 +159,11 @@ function memoryStore(initial = {}) {
   return { data, load: (name) => data[name], save: (name, value) => { data[name] = value; } };
 }
 
-function engine({ model = fakeModel(), store = memoryStore(), limit = 4, items = passages(40), log = () => {} } = {}) {
+function engine({ model = fakeModel(), store = memoryStore(), limit = 4, items = passages(40), log = () => {}, corpus = fakeCorpus(items) } = {}) {
   return {
-    model, store,
+    model, store, corpus,
     engine: createResearchEngine({
-      model, prices: PRICES, corpus: fakeCorpus(items), dictionary, store, log,
+      model, prices: PRICES, corpus, dictionary, store, log,
       settings: {
         term: "fatal", variants: [], existingEntries: [{ sourceTerms: ["fatal"], targetTerms: ["fateful"], targetVariantNotes: [""], notesToTranslators: "" }],
         sourceLanguageName: "Spanish", targetLanguageName: "English", targetLanguageCode: "en", reportLanguageName: "English",
@@ -211,6 +218,27 @@ test("the proposal is made without the glossary, from the source study and the c
   assert.equal(review.proposal.existingComparison[0].proposed, "fateful");
   assert.equal(review.proposal.entries[0].variants.find((v) => v.target === "fateful").fromExisting, true);
   assert.equal(store.data.sources.topBooks[0], "Libro fuente — M.");
+  assert.match(byStage.sources.content, /The original text of The Source Book: 1 occurrences of “Fateful One”/, "the glossary pair is read in the original text");
+  assert.equal(requests.filter((r) => r.schemaName === "original_check").length, 0, "no check needed when the pair names the word");
+});
+
+test("a believed original word is checked against the original text", async () => {
+  const requests = [];
+  const model = fakeModel();
+  const call = model.call;
+  model.call = (request, onDelta) => {
+    requests.push(request);
+    return call(request, onDelta);
+  };
+  const corpus = fakeCorpus(passages(40), []);
+  const { engine: research, store } = engine({ model, corpus });
+  await research.runToReview();
+  assert.deepEqual(corpus.originalSearches, [{ bookId: "fuente", forms: ["Fateful One"] }]);
+  const check = requests.find((r) => r.schemaName === "original_check");
+  assert.match(check.content, /The ⟦Fateful One⟧ guides us/);
+  const sense = store.data.sources.study.senses[0];
+  assert.match(sense.originalTermBasis, /checked in the original text/);
+  assert.equal(sense.meaningInOriginal, "a guide");
 });
 
 test("an edited proposal gets a new version and earlier counts are not reused", async () => {

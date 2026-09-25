@@ -169,10 +169,21 @@ You receive: the dictionary entry for the term; how often the term occurs in eac
 
 Work out:
 1. Which senses the author uses that the dictionary does not cover (also list the dictionary senses he uses, briefly, with inDictionary true). For each non-dictionary sense, where it comes from: which book or tradition, with evidence from the passages. Frequency alone is not evidence of borrowing: look for the author naming or quoting the book, and for the same distinctive usage.
-2. If that book is a translation, the original-language word or phrase that the ${ctx.sourceName} term translates. Use only the records given (e.g. the book's glossary pairs) and say what they are; if the records do not settle it, give your belief and say it is unverified in originalTermBasis. Never invent a record.
+2. If that book is a translation, the original-language word or phrase that the ${ctx.sourceName} term translates. Use the records and the passages of the original text when given (e.g. the book's glossary pairs) and say what they are; if they do not settle it, give your belief and say it is unverified in originalTermBasis (it will be checked against the original text). Never invent a record.
 3. What the term means in the source book: what it is, what it does, how it relates to the neighbouring concepts of that system. Quote the book.
 4. How the author uses it: whether he follows the source, and which other terms he equates it with. relation "identity" only for explicit statements that X is Y; say whether the equated terms are names for the same thing in other systems.
 Do not discuss translating the term. Write summary, evidence, originalTermBasis, meaningInSource, authorUsage and relations in ${ctx.reportName}; keep the wording of quotations. ${quotationRule(ctx.reportName, ctx.reportCode)}`;
+}
+
+export const ORIGINAL_CHECK_SCHEMA = object({
+  confirmed: { type: "boolean" },
+  originalTerm: NSTR,
+  basis: STR,
+  meaningInOriginal: STR,
+});
+
+export function originalCheckInstructions(ctx) {
+  return `A study of the ${ctx.sourceName} term “${ctx.headword}” found that it comes from a book the author read in ${ctx.sourceName} translation, and proposed the original-language word it translates. You now see passages of that book's original text containing the proposed word, and passages of the ${ctx.sourceName} edition with the term. Decide whether the proposed word is indeed the original of the term (confirmed), or give the correct original word if the passages show another one (originalTerm; null if the passages do not settle it). basis: one sentence on the evidence. meaningInOriginal: what the word means in the original text, quoting it (at most 80 words). Write basis and meaningInOriginal in ${ctx.reportName}. ${quotationRule(ctx.reportName, ctx.reportCode)}`;
 }
 
 // --- candidate translations of the whole term --------------------------------

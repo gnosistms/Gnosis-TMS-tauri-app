@@ -157,6 +157,8 @@ export function createSamaelCorpus({ baseUrl = samaelCorpusUrl(), fetchImpl = gl
           originalFirstPrinting: book.original_first_printing ?? null,
           firstSpanishTranslation: book.first_spanish_translation ?? null,
           headwordPairs: book.headword_pairs ?? [],
+          originalBookId: book.original_book_id ?? null,
+          originalAccess: book.original_access ?? null,
         }));
       } catch {
         return []; // an older site without book records: the study works from the passages alone
@@ -166,6 +168,22 @@ export function createSamaelCorpus({ baseUrl = samaelCorpusUrl(), fetchImpl = gl
     async sourceUsage(forms, seed) {
       const result = await get("/api/sample", { forms: forms.join(","), n: 2000, seed, kind: "source", context: 0 });
       return result.items.map(toPassage);
+    },
+    /** Passages of a book's original-language text containing any of the forms. */
+    async originalSample(bookId, forms, seed, n = 12) {
+      const result = await get("/api/original/sample", { book_id: bookId, forms: forms.join(","), seed, n });
+      return {
+        paragraphs: result.paragraphs ?? 0,
+        occurrences: result.occurrences ?? 0,
+        items: (result.items ?? []).map((raw) => {
+          const occurrences = raw.occurrences.map((o) => {
+            const start = codePointToUtf16Offset(raw.text, o.start);
+            const end = codePointToUtf16Offset(raw.text, o.end);
+            return { start, end, surface: raw.text.slice(start, end) };
+          });
+          return { itemId: raw.paragraph_id, text: raw.text, occurrences, clipped: raw.clipped === true };
+        }),
+      };
     },
     /** A seeded random sample of the author's passages containing a phrase (e.g. a book title). */
     async authorMentions(phrase, seed, n = 8) {
