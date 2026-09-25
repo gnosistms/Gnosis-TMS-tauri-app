@@ -1092,20 +1092,6 @@ function resolveProviderModelKey(providerId, modelId) {
     : "";
 }
 
-function resolveAssistantProviderContinuation(thread, providerId, modelId) {
-  const providerModelKey = resolveProviderModelKey(providerId, modelId);
-  const continuity = providerModelKey
-    ? thread?.providerContinuityByModelKey?.[providerModelKey] ?? null
-    : null;
-  const previousResponseId =
-    typeof continuity?.providerResponseId === "string" && continuity.providerResponseId.trim()
-      ? continuity.providerResponseId.trim()
-      : typeof continuity?.previousResponseId === "string" && continuity.previousResponseId.trim()
-        ? continuity.previousResponseId.trim()
-        : "";
-  return previousResponseId ? { previousResponseId } : null;
-}
-
 function rowTextUpdatesSinceLastAssistantPrompt(thread, context) {
   if (thread?.hasPromptedRowTextSnapshot !== true) {
     return {};
@@ -1167,7 +1153,6 @@ function buildAssistantTurnRequestPayload(
     documentRevisionKey: documentDigest?.revisionKey ?? "",
     concordanceHits: intent.concordanceHits,
     replyLanguageHint: "",
-    providerContinuation: resolveAssistantProviderContinuation(thread, providerId, modelId),
   });
 }
 
