@@ -10,8 +10,17 @@ import {
 } from "./glossary-research-flow.js";
 import { updateResearchEntryField } from "./glossary-research-report-flow.js";
 import { updateResearchPrepTerm } from "./glossary-research-prep-flow.js";
+import { noteResearchModalsTyped } from "./research-modal-host.js";
+import { state } from "./state.js";
 
 export function handleGlossaryResearchInput(event, render) {
+  const handled = handleResearchInput(event, render);
+  // Typed text is already on screen; keep the window's drawing in step.
+  if (handled && event.type === "input") noteResearchModalsTyped(state);
+  return handled;
+}
+
+function handleResearchInput(event, render) {
   const target = event.target;
   if (!(target instanceof Element)) return false;
 

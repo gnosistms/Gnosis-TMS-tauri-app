@@ -42,6 +42,16 @@ export function researchModalsHtml(state) {
     + (onGlossary || state.screen === "translate" ? renderGlossaryResearchPrepModal(state) : "");
 }
 
+/**
+ * Typing updates state without a redraw; the window already shows the typed
+ * text. Record that as the current drawing, so a redraw that follows (e.g.
+ * on the box losing focus as a button is clicked) does not rebuild the window
+ * under the click.
+ */
+export function noteResearchModalsTyped(state) {
+  if (host) lastHtml = researchModalsHtml(state);
+}
+
 /** Redraw the research windows if, and only if, their HTML changed. */
 export function renderResearchModals(state) {
   const html = researchModalsHtml(state);
