@@ -9,9 +9,11 @@
 //! please check) and comments are not content. The commit that creates the row file
 //! (import, insert, split) is an edit.
 //!
-//! I last checked a row at my newest commit that either edits it or turns on its reviewed
-//! or please-check mark in any language: marking a row means I looked at it. Removing a
-//! mark does not count. Other people's marks never count — only their edits do.
+//! I last checked a row at my newest commit that edits it, flags it please-check, or
+//! marks it reviewed in any language: marking a row means I looked at it. My later
+//! un-review of a language (one row or "Mark all unreviewed") cancels my earlier
+//! reviewed marks in that language — the check falls back to my other checks. Other
+//! people's marks never count — only their edits do.
 //!
 //! Another person's edit counts when it is newer than my last check by history order OR by
 //! author date. Sync rebases, so neither alone is enough: an edit I never saw can land
@@ -196,15 +198,36 @@ impl ParsedRow {
         }
     }
 
-    /// Whether `self` turns on a reviewed or please-check mark that `previous` lacked.
-    fn turns_on_a_mark(&self, previous: Option<&ParsedRow>) -> bool {
-        self.marks.iter().any(|(code, marks)| {
+    /// The marks `self` turns on or off compared with `previous`.
+    fn mark_changes(&self, previous: Option<&ParsedRow>) -> MarkChanges {
+        let mut changes = MarkChanges::default();
+        let codes = self
+            .marks
+            .keys()
+            .chain(previous.into_iter().flat_map(|row| row.marks.keys()))
+            .collect::<BTreeSet<_>>();
+        for code in codes {
+            let now = self.marks.get(code).copied().unwrap_or_default();
             let before = previous
                 .and_then(|row| row.marks.get(code).copied())
                 .unwrap_or_default();
-            (marks.reviewed && !before.reviewed) || (marks.please_check && !before.please_check)
-        })
+            if now.reviewed && !before.reviewed {
+                changes.reviewed_on.push(code.clone());
+            }
+            if !now.reviewed && before.reviewed {
+                changes.reviewed_off.push(code.clone());
+            }
+            changes.please_check_on |= now.please_check && !before.please_check;
+        }
+        changes
     }
+}
+
+#[derive(Default)]
+struct MarkChanges {
+    reviewed_on: Vec<String>,
+    reviewed_off: Vec<String>,
+    please_check_on: bool,
 }
 
 #[derive(Clone)]
@@ -373,18 +396,15 @@ impl BlobContents {
         }
     }
 
-    /// Whether a commit of mine means I checked the row: it edits it, or turns on a
-    /// reviewed or please-check mark in any language. Blobs must already be loaded.
-    fn commit_is_my_check(&self, commit: &RowCommit) -> bool {
-        if self.commit_is_edit(commit) {
-            return true;
-        }
+    /// The marks a commit turns on or off. Blobs must already be loaded.
+    fn mark_changes(&self, commit: &RowCommit) -> MarkChanges {
         let previous = commit
             .old_blob
             .as_deref()
             .and_then(|blob| self.get_row(blob));
         self.get_row(&commit.new_blob)
-            .is_some_and(|row| row.turns_on_a_mark(previous))
+            .map(|row| row.mark_changes(previous))
+            .unwrap_or_default()
     }
 }
 
@@ -403,6 +423,9 @@ struct RowWalk {
     /// Index of the next commit whose classification is still unknown.
     cursor: usize,
     my_last_check: Option<usize>,
+    /// Languages I un-reviewed in a commit newer than the walk position: my older
+    /// reviewed marks in them are cancelled.
+    unreviewed_by_me: BTreeSet<String>,
     finished: bool,
 }
 
@@ -431,15 +454,17 @@ pub(super) fn find_rows_changed_after_my_edit(
             commits,
             cursor: 0,
             my_last_check: None,
+            unreviewed_by_me: BTreeSet::new(),
             finished: false,
         })
         .collect::<Vec<_>>();
     let mut blobs = BlobContents::new();
 
     // Rounds: each loads the blobs up to every unfinished row's next commit of mine, then
-    // advances. A row stops at my first commit that is a check (an edit or a mark turned
-    // on); other commits of mine (removing a mark, comments) send it into another round.
-    // Usually one or two rounds.
+    // advances. A row stops at my first commit that is a check (an edit, a please-check
+    // flag, or a reviewed mark I haven't since removed); other commits of mine (removing
+    // a mark, comments, cancelled reviewed marks) send it into another round. Usually one
+    // or two rounds.
     while walks.iter().any(|walk| !walk.finished) {
         let mut needed = BTreeSet::new();
         let mut batch_ends = Vec::with_capacity(walks.len());
@@ -468,7 +493,19 @@ pub(super) fn find_rows_changed_after_my_edit(
                 continue;
             }
             let mine = end > walk.cursor && is_mine(&walk.commits[end - 1]);
-            if mine && blobs.commit_is_my_check(&walk.commits[end - 1]) {
+            let is_check = mine && {
+                let commit = &walk.commits[end - 1];
+                let marks = blobs.mark_changes(commit);
+                let is_check = blobs.commit_is_edit(commit)
+                    || marks.please_check_on
+                    || marks
+                        .reviewed_on
+                        .iter()
+                        .any(|code| !walk.unreviewed_by_me.contains(code));
+                walk.unreviewed_by_me.extend(marks.reviewed_off);
+                is_check
+            };
+            if is_check {
                 walk.my_last_check = Some(end - 1);
                 walk.finished = true;
             } else if !mine || end >= walk.commits.len() {
@@ -857,6 +894,114 @@ mod tests {
         let rows = find_rows_changed_after_my_edit(&repo.path, ROWS_DIR, "me").expect("rows");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].baseline_fields["es"].plain_text, "uno");
+    }
+
+    fn two_language_row(
+        es: &str,
+        vi: &str,
+        es_reviewed: bool,
+        vi_reviewed: bool,
+    ) -> serde_json::Value {
+        json!({ "fields": {
+            "es": { "plain_text": es, "editor_flags": { "reviewed": es_reviewed } },
+            "vi": { "plain_text": vi, "editor_flags": { "reviewed": vi_reviewed } }
+        } })
+    }
+
+    #[test]
+    fn my_unreview_undoes_my_review() {
+        let mut repo = TestRepo::new();
+        repo.write_row("row-a", text("uno"));
+        repo.commit_as("me", "Import chapter", None);
+        repo.write_row("row-a", text("dos"));
+        repo.commit_as("other", "Update row", None);
+        repo.write_row("row-a", reviewed_text("dos"));
+        repo.commit_as("me", "Mark reviewed", None);
+        repo.write_row("row-a", text("dos"));
+        repo.commit_as("me", "Mark unreviewed", None);
+
+        let rows = find_rows_changed_after_my_edit(&repo.path, ROWS_DIR, "me").expect("rows");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].baseline_fields["es"].plain_text, "uno");
+    }
+
+    #[test]
+    fn reviewing_again_after_my_unreview_counts() {
+        let mut repo = TestRepo::new();
+        repo.write_row("row-a", text("uno"));
+        repo.commit_as("me", "Import chapter", None);
+        repo.write_row("row-a", text("dos"));
+        repo.commit_as("other", "Update row", None);
+        repo.write_row("row-a", reviewed_text("dos"));
+        repo.commit_as("me", "Mark reviewed", None);
+        repo.write_row("row-a", text("dos"));
+        repo.commit_as("me", "Mark unreviewed", None);
+        repo.write_row("row-a", reviewed_text("dos"));
+        repo.commit_as("me", "Mark reviewed", None);
+
+        assert!(repo.changed_row_ids("me").is_empty());
+    }
+
+    #[test]
+    fn other_persons_unreview_does_not_undo_my_review() {
+        let mut repo = TestRepo::new();
+        repo.write_row("row-a", text("uno"));
+        repo.commit_as("me", "Import chapter", None);
+        repo.write_row("row-a", text("dos"));
+        repo.commit_as("other", "Update row", None);
+        repo.write_row("row-a", reviewed_text("dos"));
+        repo.commit_as("me", "Mark reviewed", None);
+        repo.write_row("row-a", text("dos"));
+        repo.commit_as("other", "Mark unreviewed", None);
+
+        assert!(repo.changed_row_ids("me").is_empty());
+    }
+
+    #[test]
+    fn my_unreview_in_one_language_keeps_my_review_in_another() {
+        let mut repo = TestRepo::new();
+        repo.write_row("row-a", two_language_row("uno", "một", false, false));
+        repo.commit_as("me", "Import chapter", None);
+        repo.write_row("row-a", two_language_row("UNO", "một", false, false));
+        repo.commit_as("other", "Update source", None);
+        repo.write_row("row-a", two_language_row("UNO", "một", true, true));
+        repo.commit_as("me", "Mark reviewed", None);
+        repo.write_row("row-a", two_language_row("UNO", "một", true, false));
+        repo.commit_as("me", "Mark all vi translations unreviewed", None);
+
+        assert!(repo.changed_row_ids("me").is_empty());
+    }
+
+    #[test]
+    fn my_unreview_does_not_undo_my_edit() {
+        let mut repo = TestRepo::new();
+        repo.write_row("row-a", text("uno"));
+        repo.commit_as("other", "Import chapter", None);
+        repo.write_row("row-a", reviewed_text("dos"));
+        repo.commit_as("me", "Update row", None);
+        repo.write_row("row-a", text("dos"));
+        repo.commit_as("me", "Mark unreviewed", None);
+
+        assert!(repo.changed_row_ids("me").is_empty());
+    }
+
+    #[test]
+    fn unreview_all_reopens_every_row_i_had_only_reviewed() {
+        let mut repo = TestRepo::new();
+        repo.write_row("row-a", text("uno"));
+        repo.write_row("row-b", text("uno"));
+        repo.write_row("row-c", text("uno"));
+        repo.commit_as("other", "Import chapter", None);
+        repo.write_row("row-a", reviewed_text("uno"));
+        repo.write_row("row-b", reviewed_text("uno"));
+        repo.write_row("row-c", reviewed_text("tres"));
+        repo.commit_as("me", "Review rows; edit row c", None);
+        repo.write_row("row-a", text("uno"));
+        repo.write_row("row-b", text("uno"));
+        repo.write_row("row-c", text("tres"));
+        repo.commit_as("me", "Mark all es translations unreviewed", None);
+
+        assert_eq!(repo.changed_row_ids("me"), ["row-a", "row-b"]);
     }
 
     #[test]
