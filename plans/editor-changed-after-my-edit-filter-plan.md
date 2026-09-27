@@ -23,13 +23,15 @@ Rules (Hans, 2026-09-27):
 
 Revised (Hans, 2026-09-27, after 0.8.123): marking a row means I checked it.
 
-8. My last check of a row = my newest commit that edits it, flags it please-check, or
-   marks it reviewed in any language. A mark AI Review sets for me is mine. Comments
+8. My last check of a row = my newest commit that edits it, flags it please-check or
+   removes that flag (I finished checking), or marks it reviewed in any language. A mark AI Review sets for me is mine. Comments
    are not checks.
 8a. My own un-review (one row, or "Mark all unreviewed") undoes my earlier reviewed
    marks in that language; the check falls back to my other checks (edits,
    please-check flags, reviewed marks in other languages). Other people's un-reviews
    undo nothing. Going by the action, not guessing the intention (Hans).
+8b. Other people removing a please-check flag never lists a row: they checked, but
+   nothing changed that I would need to re-check (Hans).
 9. A mark in one language covers the whole row.
 10. Other people's marks still never count; only their edits after my last check do.
 11. The diff baseline is the row at my last check.

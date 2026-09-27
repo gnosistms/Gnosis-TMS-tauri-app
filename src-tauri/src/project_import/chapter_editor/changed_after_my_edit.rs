@@ -9,8 +9,9 @@
 //! please check) and comments are not content. The commit that creates the row file
 //! (import, insert, split) is an edit.
 //!
-//! I last checked a row at my newest commit that edits it, flags it please-check, or
-//! marks it reviewed in any language: marking a row means I looked at it. My later
+//! I last checked a row at my newest commit that edits it, flags it please-check or
+//! removes that flag (I finished checking), or marks it reviewed in any language:
+//! marking a row means I looked at it. My later
 //! un-review of a language (one row or "Mark all unreviewed") cancels my earlier
 //! reviewed marks in that language — the check falls back to my other checks. Other
 //! people's marks never count — only their edits do.
@@ -217,7 +218,7 @@ impl ParsedRow {
             if !now.reviewed && before.reviewed {
                 changes.reviewed_off.push(code.clone());
             }
-            changes.please_check_on |= now.please_check && !before.please_check;
+            changes.please_check_changed |= now.please_check != before.please_check;
         }
         changes
     }
@@ -227,7 +228,8 @@ impl ParsedRow {
 struct MarkChanges {
     reviewed_on: Vec<String>,
     reviewed_off: Vec<String>,
-    please_check_on: bool,
+    /// Flagged or unflagged: either way I looked at the row.
+    please_check_changed: bool,
 }
 
 #[derive(Clone)]
@@ -497,7 +499,7 @@ pub(super) fn find_rows_changed_after_my_edit(
                 let commit = &walk.commits[end - 1];
                 let marks = blobs.mark_changes(commit);
                 let is_check = blobs.commit_is_edit(commit)
-                    || marks.please_check_on
+                    || marks.please_check_changed
                     || marks
                         .reviewed_on
                         .iter()
@@ -1002,6 +1004,32 @@ mod tests {
         repo.commit_as("me", "Mark all es translations unreviewed", None);
 
         assert_eq!(repo.changed_row_ids("me"), ["row-a", "row-b"]);
+    }
+
+    #[test]
+    fn removing_my_please_check_flag_counts_as_checking_the_row() {
+        let mut repo = TestRepo::new();
+        repo.write_row("row-a", please_check_text("uno"));
+        repo.commit_as("me", "Import chapter", None);
+        repo.write_row("row-a", please_check_text("dos"));
+        repo.commit_as("other", "Update row", None);
+        repo.write_row("row-a", text("dos"));
+        repo.commit_as("me", "Remove please check", None);
+
+        assert!(repo.changed_row_ids("me").is_empty());
+    }
+
+    #[test]
+    fn other_persons_removal_of_please_check_does_not_list_the_row() {
+        let mut repo = TestRepo::new();
+        repo.write_row("row-a", text("uno"));
+        repo.commit_as("me", "Import chapter", None);
+        repo.write_row("row-a", please_check_text("uno"));
+        repo.commit_as("me", "Mark please check", None);
+        repo.write_row("row-a", text("uno"));
+        repo.commit_as("other", "Remove please check", None);
+
+        assert!(repo.changed_row_ids("me").is_empty());
     }
 
     #[test]
