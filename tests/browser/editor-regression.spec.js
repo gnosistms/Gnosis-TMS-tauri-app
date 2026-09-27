@@ -6992,7 +6992,7 @@ test("changed-after-my-edit filter shows other people's changes as diffs on the 
             {
               rowId: "fixture-row-0001",
               baselineCommitSha: "base-1",
-              baselineIsMyEdit: true,
+              baselineIsMine: true,
               baselineTextStyle: "paragraph",
               baselineFields: { es: field("Yo leí el artículo"), fa: field("من کتاب را خواندم") },
               edits: [],
@@ -7000,7 +7000,7 @@ test("changed-after-my-edit filter shows other people's changes as diffs on the 
             {
               rowId: "fixture-row-0002",
               baselineCommitSha: "base-2",
-              baselineIsMyEdit: true,
+              baselineIsMine: true,
               baselineTextStyle: "heading1",
               baselineFields: { es: field("El gato blanco"), fa: field("گربه سیاه") },
               edits: [],
@@ -7008,7 +7008,7 @@ test("changed-after-my-edit filter shows other people's changes as diffs on the 
             {
               rowId: "fixture-row-0003",
               baselineCommitSha: "base-3",
-              baselineIsMyEdit: false,
+              baselineIsMine: false,
               baselineTextStyle: "paragraph",
               baselineFields: {
                 es: field("Una imagen"),
