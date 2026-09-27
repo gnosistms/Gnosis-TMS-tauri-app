@@ -6959,3 +6959,97 @@ test("AI review remains visible and diffs successive editor edits", async ({ pag
   await expect(review.locator('[data-action="apply-editor-ai-review"]')).toHaveCount(0);
   await expect(review.locator('[data-action="review-editor-text-now:meaning"]')).toBeVisible();
 });
+
+test("changed-after-my-edit filter shows other people's changes as diffs on the static fields", async ({ page }) => {
+  const svgImage = (color) =>
+    `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80"><rect width="120" height="80" fill="${color}"/></svg>`)}`;
+  await mountEditorFixture(page, {
+    rowCount: 4,
+    chapterStatus: "ready",
+    languages: [
+      { code: "es", name: "Spanish", role: "source" },
+      { code: "fa", name: "Persian", role: "target" },
+    ],
+    fieldsByRowId: {
+      "fixture-row-0001": { es: "Yo leí el artículo", fa: "من مقاله را خواندم" },
+      "fixture-row-0002": { es: "El <strong>gato</strong> negro", fa: "گربه سیاه" },
+      "fixture-row-0003": { es: "Una imagen", fa: "یک تصویر" },
+    },
+    imagesByRowId: {
+      "fixture-row-0003": { fa: { kind: "url", url: svgImage("#6aa84f") } },
+    },
+  }, { mockTauri: true });
+
+  const oldImage = svgImage("#cc4125");
+  await page.evaluate((previousImageUrl) => {
+    const field = (plainText, extra = {}) => ({ plainText, footnote: "", imageCaption: "", image: null, imageDataUrl: null, ...extra });
+    globalThis.__gnosisMockTauriHandlers = {
+      ...(globalThis.__gnosisMockTauriHandlers ?? {}),
+      async load_gtms_editor_changed_after_my_edit() {
+        return {
+          chapterId: "fixture-chapter",
+          rows: [
+            {
+              rowId: "fixture-row-0001",
+              baselineCommitSha: "base-1",
+              baselineIsMyEdit: true,
+              baselineTextStyle: "paragraph",
+              baselineFields: { es: field("Yo leí el artículo"), fa: field("من کتاب را خواندم") },
+              edits: [],
+            },
+            {
+              rowId: "fixture-row-0002",
+              baselineCommitSha: "base-2",
+              baselineIsMyEdit: true,
+              baselineTextStyle: "heading1",
+              baselineFields: { es: field("El gato blanco"), fa: field("گربه سیاه") },
+              edits: [],
+            },
+            {
+              rowId: "fixture-row-0003",
+              baselineCommitSha: "base-3",
+              baselineIsMyEdit: false,
+              baselineTextStyle: "paragraph",
+              baselineFields: {
+                es: field("Una imagen"),
+                fa: field("یک تصویر", { image: { kind: "url", url: previousImageUrl } }),
+              },
+              edits: [],
+            },
+          ],
+        };
+      },
+    };
+  }, oldImage);
+
+  await page.locator("[data-editor-filter-select]").selectOption("changed-after-my-edit");
+  await expect(page.locator("[data-editor-row-card]")).toHaveCount(3);
+  await expect(page.locator('[data-editor-row-card][data-row-id="fixture-row-0004"]')).toHaveCount(0);
+
+  const persianRow = page.locator('[data-editor-row-card][data-row-id="fixture-row-0001"]');
+  await expect(persianRow.locator(".history-diff__delete")).toHaveText("کتاب");
+  await expect(persianRow.locator(".history-diff__insert")).toHaveText("مقاله");
+
+  const spanishRow = page.locator('[data-editor-row-card][data-row-id="fixture-row-0002"]');
+  await expect(spanishRow.locator("strong .history-diff__format")).toHaveText("gato");
+  await expect(spanishRow.locator(".history-diff__delete")).toHaveText("blanco");
+  await expect(spanishRow.locator(".history-diff__insert")).toHaveText("negro");
+  const styleButtons = spanishRow.locator('[data-language-code="es"] [data-editor-row-text-style-button]');
+  await expect(styleButtons.locator('xpath=self::*[@data-text-style="paragraph"]')).toHaveClass(/change-insert/);
+  await expect(styleButtons.locator('xpath=self::*[@data-text-style="heading1"]')).toHaveClass(/change-delete/);
+  await expect(spanishRow.locator('[data-language-code="es"] [data-editor-row-text-style-button]').first()).toBeVisible();
+
+  const imageRow = page.locator('[data-editor-row-card][data-row-id="fixture-row-0003"]');
+  await expect(imageRow.locator(".translation-language-panel__image-preview--change-insert")).toHaveCount(1);
+  await expect(imageRow.locator(".translation-language-panel__image-preview--change-previous img"))
+    .toHaveAttribute("src", oldImage);
+
+  // Clicking a changed field opens the normal editor on the current text.
+  await persianRow.locator('[data-editor-display-field][data-language-code="fa"]').click();
+  const editor = persianRow.locator('[data-editor-row-field][data-language-code="fa"]');
+  await expect(editor).toBeFocused();
+  await expect(editor).toHaveValue("من مقاله را خواندم");
+
+  await page.locator("[data-editor-filter-select]").selectOption("show-all");
+  await expect(page.locator(".history-diff__insert")).toHaveCount(0);
+});
