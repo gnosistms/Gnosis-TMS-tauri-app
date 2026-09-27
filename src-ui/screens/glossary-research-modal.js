@@ -12,7 +12,6 @@ import {
   supportedResearchProviderNames,
 } from "../app/glossary-research-flow.js";
 import { formatUsd, researchModelsWithPrices } from "../app/glossary-research-budget.js";
-import { quotationMarksFor, usesGuillemets } from "../app/glossary-research-prompts.js";
 import {
   batchProgressText,
   buildLogView,
@@ -276,73 +275,33 @@ function renderLog(log, openChoices) {
   }).join("");
 }
 
-/** A warning when a note uses «» but the target language quotes with other marks. */
-function quotationWarning(text, targetCode, targetName) {
-  if (!/[«»]/.test(text ?? "") || usesGuillemets(targetCode)) return "";
-  const marks = quotationMarksFor(targetCode);
-  return `<span class="research-tag research-tag--warn">uses « » quotation marks${marks ? `; ${esc(targetName)} uses ${esc(marks)}` : ""}</span>`;
-}
-
 function renderReview(research, targetName, targetCode) {
   const proposal = research.proposalDraft;
   if (!proposal) return "";
-  let wordNumber = 0;
-  let expressionNumber = 0;
-  const entries = proposal.entries.map((entry, entryIndex) => {
-    const isExpression = entry.kind === "expression";
-    const heading = isExpression ? `Expression entry ${++expressionNumber}` : `Entry ${++wordNumber}`;
-    const variants = entry.variants.map((variant, variantIndex) => `
-      <div class="research-review__variant">
-        <div class="research-review__variant-row">
-          <input class="field__input" type="text" value="${esc(variant.target)}" aria-label="Translation ${variantIndex + 1}"
-            data-research-proposal="${entryIndex}:variants:${variantIndex}:target" />
-          <textarea class="field__input research-autosize" rows="1" aria-label="Usage note for translation ${variantIndex + 1}"
-            data-research-autosize data-research-proposal="${entryIndex}:variants:${variantIndex}:note">${esc(variant.note)}</textarea>
-          <button class="term-variant-row__action-button term-variant-row__action-button--remove" type="button"
-            data-action="remove-research-proposal-variant:${entryIndex}:${variantIndex}" aria-label="Remove this translation"
-            ${tooltipAttributes("Remove this translation", { align: "end" })}>
-            <span class="term-variant-row__remove-icon" aria-hidden="true"></span>
-          </button>
-        </div>
-        ${variant.fromExisting || variant.rationale || quotationWarning(variant.note, targetCode, targetName) ? `
-          <p class="research-review__meta">
-            ${variant.fromExisting ? `<span class="research-badge">In the current glossary</span>` : ""}
-            ${quotationWarning(variant.note, targetCode, targetName)}
-            ${variant.rationale ? `<span>${esc(variant.rationale)}</span>` : ""}
-          </p>` : ""}
-      </div>`).join("");
-    return `
-      <section class="research-review__entry">
-        <header class="research-review__entry-head">
-          <h3 class="research-review__entry-title">${esc(heading)}</h3>
-          <button type="button" class="text-action" data-action="remove-research-entry:${entryIndex}">Remove entry</button>
-        </header>
-        <label class="field">
-          <span class="field__label">Source terms <span class="research-review__hint">separate with commas</span></span>
-          <input class="field__input" type="text" value="${esc(entry.sourceTerms.join(", "))}" data-research-proposal="${entryIndex}:sourceTerms" />
-        </label>
-        <label class="field">
-          <span class="field__label">General note <span class="research-review__hint">in ${esc(targetName)}</span></span>
-          <textarea class="field__input research-autosize" rows="1" data-research-autosize data-research-proposal="${entryIndex}:generalNote">${esc(entry.generalNote)}</textarea>
-          ${quotationWarning(entry.generalNote, targetCode, targetName)}
-        </label>
-        <div class="research-review__translations">
-          <div class="research-review__columns" aria-hidden="true">
-            <span>Translation</span><span>When to use it (${esc(targetName)})</span>
-          </div>
-          ${variants}
-          <div class="research-add-variant">
-            <button class="term-lane__add-button" type="button" data-action="add-research-proposal-variant:${entryIndex}" aria-label="Add translation">
-              <span class="term-lane__add-icon" aria-hidden="true"></span>
+  const several = proposal.entries.length > 1;
+  const entries = proposal.entries.map((entry, entryIndex) => `
+    <section class="research-review__entry">
+      ${several ? `<h3 class="research-review__entry-title">${esc(entry.sourceTerms[0] ?? "")}${entry.kind === "expression" ? ' <span class="research-review__hint">expression</span>' : ""}</h3>` : ""}
+      <ul class="research-review__list">
+        ${entry.variants.map((variant, variantIndex) => `
+          <li class="research-review__item">
+            <span lang="${esc(targetCode)}">${esc(variant.target)}</span>
+            <button class="term-variant-row__action-button term-variant-row__action-button--remove" type="button"
+              data-action="remove-research-proposal-variant:${entryIndex}:${variantIndex}" aria-label="Remove ${esc(variant.target)}"
+              ${tooltipAttributes("Remove", { align: "end" })}>
+              <span class="term-variant-row__remove-icon" aria-hidden="true"></span>
             </button>
-            <span class="research-add-variant__label">add translation</span>
-          </div>
-        </div>
-      </section>`;
-  }).join("");
+          </li>`).join("")}
+      </ul>
+      <div class="research-review__add" data-modal-enter-action="add-research-variant-text:${entryIndex}">
+        <input class="field__input" type="text" placeholder="Add a translation" aria-label="Add a translation"
+          value="${esc(entry.addDraft ?? "")}" data-research-proposal="${entryIndex}:addDraft" />
+        ${secondaryButton("Add", `add-research-variant-text:${entryIndex}`)}
+      </div>
+    </section>`).join("");
   return `
     <div class="research-review">
-      <p class="modal__supporting"><strong>Review the proposed translations.</strong> Edit, add or remove them; notes must stay in ${esc(targetName)}. Counting starts only when you click Count.</p>
+      <p class="modal__supporting">These ${esc(targetName)} translations will be counted. Remove any that should not be, or add missing ones.</p>
       ${entries}
       ${research.reviewError ? `<p class="modal__error" role="alert">${esc(research.reviewError)}</p>` : ""}
     </div>`;

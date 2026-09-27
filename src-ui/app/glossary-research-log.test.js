@@ -94,3 +94,18 @@ test("identical repeated blocks are shown once with a count", () => {
     ["Proposal", "1 entry", "Review (×3)", "Waiting for you to review.", "Counting"]);
   assert.equal(shown.filter((i) => i.kind === "request").length, 1);
 });
+
+test("the review list adds a typed translation once and clears the box", async () => {
+  const { addResearchProposalVariantText, updateResearchProposalField } = await import("./glossary-research-flow.js");
+  state.glossaryResearch.proposalDraft = { entries: [{ id: "e1", kind: "word", sourceTerms: ["astral"], variants: [{ id: "e1v1", target: "thể vía", note: "n" }] }] };
+  updateResearchProposalField([0, "addDraft"], "  cơ thể cảm xúc ");
+  let renders = 0;
+  addResearchProposalVariantText(() => { renders += 1; }, 0);
+  updateResearchProposalField([0, "addDraft"], "Cơ thể cảm xúc");
+  addResearchProposalVariantText(() => { renders += 1; }, 0);
+  const entry = state.glossaryResearch.proposalDraft.entries[0];
+  assert.deepEqual(entry.variants.map((v) => v.target), ["thể vía", "cơ thể cảm xúc"]);
+  assert.equal(entry.variants[1].note, "");
+  assert.equal(entry.addDraft, "");
+  assert.equal(renders, 2);
+});

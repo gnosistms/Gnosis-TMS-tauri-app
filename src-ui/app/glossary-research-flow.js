@@ -675,10 +675,28 @@ export function updateResearchProposalField(path, value) {
     entry.sourceTerms = value.split(/[,;\n]/).map((item) => item.trim()).filter(Boolean);
   } else if (field === "generalNote") {
     entry.generalNote = value;
+  } else if (field === "addDraft") {
+    entry.addDraft = value;
   } else if (field === "variants" && entry.variants[variantIndex]) {
     entry.variants[variantIndex][variantField] = value;
   }
   research().reviewError = "";
+}
+
+/** Add the translation typed in an entry's "Add a translation" box. */
+export function addResearchProposalVariantText(render, entryIndex) {
+  const entry = research().proposalDraft?.entries[entryIndex];
+  const target = String(entry?.addDraft ?? "").trim();
+  if (!entry || !target) return;
+  if (!entry.variants.some((variant) => variant.target.trim().toLowerCase() === target.toLowerCase())) {
+    const used = new Set(entry.variants.map((variant) => variant.id));
+    let n = entry.variants.length + 1;
+    while (used.has(`${entry.id}v${n}`)) n += 1;
+    entry.variants.push({ id: `${entry.id}v${n}`, target, note: "", senses: [], corpusSense: null, fromExisting: false, rationale: "Added during review." });
+  }
+  entry.addDraft = "";
+  render();
+  globalThis.requestAnimationFrame?.(() => globalThis.document?.querySelector(`[data-research-proposal="${entryIndex}:addDraft"]`)?.focus());
 }
 
 export function addResearchProposalVariant(render, entryIndex) {
@@ -706,7 +724,10 @@ export async function countGlossaryResearch(render) {
   const proposal = structuredClone(draft.proposalDraft);
   for (const entry of proposal.entries) {
     entry.variants = entry.variants.filter((variant) => variant.target.trim());
+    delete entry.addDraft;
   }
+  // An entry whose translations were all removed is not counted.
+  proposal.entries = proposal.entries.filter((entry) => entry.variants.length);
   const { engine, store, meta } = activeRun;
   draft.runStatus = "counting";
   draft.reviewError = "";

@@ -19,7 +19,7 @@ export function createGlossaryResearchState() {
     sampleSize: 100,
     spendingLimitUsd: 4,
     seed: "1",
-    pauseForReview: false,
+    pauseForReview: true,
     formError: "",
     existingMatches: [],
     unsupportedProviderName: "",

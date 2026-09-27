@@ -729,3 +729,32 @@
   margin: 4px 0;
   padding-left: 18px;
 }
+
+/* Review before counting: just the translations to count */
+.research-review__list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.research-review__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 10px;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-control);
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.research-review__add {
+  display: flex;
+  gap: 8px;
+}
+
+.research-review__add .field__input {
+  flex: 1;
+}

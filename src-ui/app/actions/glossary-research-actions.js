@@ -1,5 +1,6 @@
 import {
   addResearchProposalVariant,
+  addResearchProposalVariantText,
   addResearchVariant,
   backToResearchForm,
   cancelGlossaryResearchRun,
@@ -82,6 +83,7 @@ export function createGlossaryResearchActions(render) {
     ["open-research-report:", (rest) => openResearchReport(render, rest)],
     ["resume-research-run:", (rest) => resumeGlossaryResearchRun(render, rest)],
     ["remove-research-entry:", (rest) => removeResearchProposalEntry(render, Number.parseInt(rest, 10))],
+    ["add-research-variant-text:", (rest) => addResearchProposalVariantText(render, Number.parseInt(rest, 10))],
     ["add-research-proposal-variant:", (rest) => addResearchProposalVariant(render, Number.parseInt(rest, 10))],
     ["remove-research-proposal-variant:", (rest) => {
       const [entryIndex, variantIndex] = rest.split(":").map((value) => Number.parseInt(value, 10));

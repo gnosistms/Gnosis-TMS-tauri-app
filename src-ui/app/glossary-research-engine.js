@@ -37,7 +37,7 @@ export const RESEARCH_DEFAULTS = {
   effortLight: "low",
   effortProposal: "medium",
   effortStudy: "high",
-  pauseForReview: false,
+  pauseForReview: true,
   maxRetries: 2,
 };
 
