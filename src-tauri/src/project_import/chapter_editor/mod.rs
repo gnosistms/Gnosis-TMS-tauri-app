@@ -35,6 +35,7 @@ use super::{
 };
 
 mod aligned_translation;
+mod changed_after_my_edit;
 mod chapter_export;
 mod chapter_selection;
 mod git_conflicts;
@@ -53,6 +54,10 @@ pub(crate) use self::aligned_translation::{
     preflight_aligned_translation_to_gtms_chapter_sync, AlignedTranslationApplyInput,
     AlignedTranslationApplyResponse, AlignedTranslationPreflightInput,
     AlignedTranslationPreflightResponse,
+};
+pub(super) use self::changed_after_my_edit::{
+    load_gtms_editor_changed_after_my_edit_sync, LoadEditorChangedAfterMyEditInput,
+    LoadEditorChangedAfterMyEditResponse,
 };
 pub(crate) use self::chapter_export::{
     export_gtms_chapter_file_sync, fetch_public_image_dimensions, ExportChapterFileInput,
