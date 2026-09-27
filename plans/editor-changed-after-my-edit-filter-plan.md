@@ -133,3 +133,24 @@ B. Image changes are edits. New image: green outline. Old image: shown as well, 
 C. Footnote and image caption changes are edits. Added footnote/caption: whole text
    green (diffed against ""). Deleted footnote/caption: its box still shown, whole text
    red strike-through (diffed against "").
+
+## Status (2026-09-27)
+
+Implemented on the branch; not yet run in the Tauri app against a real project.
+
+- Rust: `changed_after_my_edit.rs` + 10 tests on real git repos (authors, AI trailers,
+  marker/comment-only commits, style change, import by someone else, rebased-below-mine
+  edit newer by the clock, empty language column).
+- JS: `editor-inline-markup/diff.js` (word tokens via `Intl.Segmenter`, per-character
+  formatting; tests incl. Persian), `editor-change-view.js`, filter flow, screen-model
+  and row-render hooks; browser test in `editor-regression.spec.js` (all 178 pass).
+- The glossary/search highlight pass skips fields showing a diff
+  (`data-editor-change-diff`), as it skips custom-HTML rows.
+
+Known limits:
+
+- Subtitle timing changes count as edits but have no mark of their own.
+- A deleted or added separator (`<hr>`) has zero visible width, so it gets no mark.
+- Users without edit rights see no text-style buttons, so a style change is not marked
+  for them.
+- Glossary and search highlights are not drawn on a field while it shows a diff.
