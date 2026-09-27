@@ -84,3 +84,32 @@ test("text without spaces is still diffed by word, not by letter", () => {
   assert.equal(extractInlineMarkupVisibleText(diff.markup).length, 5);
   assert.deepEqual(changedText(diff).map(([change]) => change), ["delete", "insert"]);
 });
+
+test("Persian: a replaced word reads as one deleted and one inserted word", () => {
+  const diff = buildInlineMarkupDiff("من کتاب را خواندم", "من مقاله را خواندم");
+  assert.deepEqual(changedText(diff), [["delete", "کتاب", ""], ["insert", "مقاله", ""]]);
+});
+
+test("Persian: a word joined with a zero-width non-joiner stays one word", () => {
+  const diff = buildInlineMarkupDiff("من می‌خواهم بروم", "من نمی‌خواهم بروم");
+  assert.deepEqual(changedText(diff), [
+    ["delete", "می‌خواهم", ""],
+    ["insert", "نمی‌خواهم", ""],
+  ]);
+});
+
+test("Persian: an added short-vowel mark replaces the whole word, never a stray mark", () => {
+  const diff = buildInlineMarkupDiff("کتاب", "کِتاب");
+  assert.deepEqual(changedText(diff), [["delete", "کتاب", ""], ["insert", "کِتاب", ""]]);
+});
+
+test("Persian: formatting a word and changing Persian numerals", () => {
+  assert.deepEqual(
+    changedText(buildInlineMarkupDiff("کتاب خوب", "کتاب <strong>خوب</strong>")),
+    [["format", "خوب", "was: no formatting"]],
+  );
+  assert.deepEqual(
+    changedText(buildInlineMarkupDiff("سال ۱۴۰۲", "سال ۱۴۰۳")),
+    [["delete", "۱۴۰۲", ""], ["insert", "۱۴۰۳", ""]],
+  );
+});
