@@ -1,15 +1,19 @@
 //! "Changed after my last edit" editor filter: which rows of a chapter someone else
-//! changed after the signed-in user's last edit, and what each row looked like before those
-//! changes (the baseline the editor diffs against).
+//! changed after the signed-in user last checked them, and what each row looked like then
+//! (the baseline the editor diffs against).
 //!
-//! Who made an edit is the commit author — every app commit is authored by the signed-in
-//! user who started it, AI edits included. A commit is an edit of a row when the row's
-//! content (text, footnote, image caption, image and timing in any language, plus the row
-//! text style) differs from the row's previous version; editor flags (reviewed, please
-//! check) and comments are not content. The commit that creates the row file (import,
-//! insert, split) is an edit.
+//! Who made a commit is its author — every app commit is authored by the signed-in user
+//! who started it, AI edits and AI Review included. A commit is an edit of a row when the
+//! row's content (text, footnote, image caption, image and timing in any language, plus
+//! the row text style) differs from the row's previous version; editor flags (reviewed,
+//! please check) and comments are not content. The commit that creates the row file
+//! (import, insert, split) is an edit.
 //!
-//! Another person's edit counts when it is newer than my last edit by history order OR by
+//! I last checked a row at my newest commit that either edits it or turns on its reviewed
+//! or please-check mark in any language: marking a row means I looked at it. Removing a
+//! mark does not count. Other people's marks never count — only their edits do.
+//!
+//! Another person's edit counts when it is newer than my last check by history order OR by
 //! author date. Sync rebases, so neither alone is enough: an edit I never saw can land
 //! before my rebased commit in history while being newer by the clock, and an offline
 //! edit rebased on top of mine can be older by the clock.
@@ -43,9 +47,9 @@ pub(crate) struct LoadEditorChangedAfterMyEditResponse {
 pub(crate) struct ChangedAfterMyEditRow {
     row_id: String,
     baseline_commit_sha: String,
-    /// True when the baseline is my last edit; false when I never edited the row and the
-    /// baseline is the row as created.
-    baseline_is_my_edit: bool,
+    /// True when the baseline is my last check (edit or mark); false when I never checked
+    /// the row and the baseline is the row as created.
+    baseline_is_mine: bool,
     baseline_text_style: String,
     baseline_fields: BTreeMap<String, ChangedAfterMyEditBaselineField>,
     /// The other people's edits after the baseline, newest first.
@@ -159,6 +163,50 @@ impl RowContent {
     }
 }
 
+/// A field's reviewed / please-check marks. Not content: they only matter for deciding
+/// whether a commit of mine is a check.
+#[derive(Clone, Copy, Default)]
+struct FieldMarks {
+    reviewed: bool,
+    please_check: bool,
+}
+
+struct ParsedRow {
+    content: RowContent,
+    marks: BTreeMap<String, FieldMarks>,
+}
+
+impl ParsedRow {
+    fn from_row_file(row: &StoredRowFile) -> Self {
+        Self {
+            content: RowContent::from_row_file(row),
+            marks: row
+                .fields
+                .iter()
+                .map(|(code, field)| {
+                    (
+                        code.clone(),
+                        FieldMarks {
+                            reviewed: field.editor_flags.reviewed,
+                            please_check: field.editor_flags.please_check,
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    /// Whether `self` turns on a reviewed or please-check mark that `previous` lacked.
+    fn turns_on_a_mark(&self, previous: Option<&ParsedRow>) -> bool {
+        self.marks.iter().any(|(code, marks)| {
+            let before = previous
+                .and_then(|row| row.marks.get(code).copied())
+                .unwrap_or_default();
+            (marks.reviewed && !before.reviewed) || (marks.please_check && !before.please_check)
+        })
+    }
+}
+
 #[derive(Clone)]
 struct RowCommit {
     commit_sha: String,
@@ -243,10 +291,10 @@ fn load_row_commits_by_path(
     Ok(commits_by_path)
 }
 
-/// Parsed row contents by blob id. An unparseable blob maps to None, which never equals
-/// anything, so a commit touching it counts as an edit.
+/// Parsed rows by blob id. An unparseable blob maps to None, which never equals anything,
+/// so a commit touching it counts as an edit.
 struct BlobContents {
-    by_blob: HashMap<String, Option<RowContent>>,
+    by_blob: HashMap<String, Option<ParsedRow>>,
 }
 
 impl BlobContents {
@@ -295,7 +343,7 @@ impl BlobContents {
             let content = str::from_utf8(&output[cursor..body_end])
                 .ok()
                 .and_then(|text| serde_json::from_str::<StoredRowFile>(text).ok())
-                .map(|row| RowContent::from_row_file(&row));
+                .map(|row| ParsedRow::from_row_file(&row));
             cursor = body_end;
             if output.get(cursor) == Some(&b'\n') {
                 cursor += 1;
@@ -306,8 +354,12 @@ impl BlobContents {
         Ok(())
     }
 
-    fn get(&self, blob: &str) -> Option<&RowContent> {
+    fn get_row(&self, blob: &str) -> Option<&ParsedRow> {
         self.by_blob.get(blob).and_then(Option::as_ref)
+    }
+
+    fn get(&self, blob: &str) -> Option<&RowContent> {
+        self.get_row(blob).map(|row| &row.content)
     }
 
     /// Whether the commit changed the row's content. Blobs must already be loaded.
@@ -320,6 +372,20 @@ impl BlobContents {
             _ => true,
         }
     }
+
+    /// Whether a commit of mine means I checked the row: it edits it, or turns on a
+    /// reviewed or please-check mark in any language. Blobs must already be loaded.
+    fn commit_is_my_check(&self, commit: &RowCommit) -> bool {
+        if self.commit_is_edit(commit) {
+            return true;
+        }
+        let previous = commit
+            .old_blob
+            .as_deref()
+            .and_then(|blob| self.get_row(blob));
+        self.get_row(&commit.new_blob)
+            .is_some_and(|row| row.turns_on_a_mark(previous))
+    }
 }
 
 fn commit_blobs(commit: &RowCommit) -> impl Iterator<Item = String> + '_ {
@@ -330,13 +396,13 @@ fn commit_blobs(commit: &RowCommit) -> impl Iterator<Item = String> + '_ {
         .chain(std::iter::once(commit.new_blob.clone()))
 }
 
-/// Per-row walk state. The walk goes newest → oldest until it reaches my newest edit.
+/// Per-row walk state. The walk goes newest → oldest until it reaches my newest check.
 struct RowWalk {
     path: String,
     commits: Vec<RowCommit>,
     /// Index of the next commit whose classification is still unknown.
     cursor: usize,
-    my_last_edit: Option<usize>,
+    my_last_check: Option<usize>,
     finished: bool,
 }
 
@@ -364,15 +430,16 @@ pub(super) fn find_rows_changed_after_my_edit(
             path,
             commits,
             cursor: 0,
-            my_last_edit: None,
+            my_last_check: None,
             finished: false,
         })
         .collect::<Vec<_>>();
     let mut blobs = BlobContents::new();
 
     // Rounds: each loads the blobs up to every unfinished row's next commit of mine, then
-    // advances. A row stops at my first commit that is an edit; marker-only commits of
-    // mine send it into another round. Usually one or two rounds.
+    // advances. A row stops at my first commit that is a check (an edit or a mark turned
+    // on); other commits of mine (removing a mark, comments) send it into another round.
+    // Usually one or two rounds.
     while walks.iter().any(|walk| !walk.finished) {
         let mut needed = BTreeSet::new();
         let mut batch_ends = Vec::with_capacity(walks.len());
@@ -401,8 +468,8 @@ pub(super) fn find_rows_changed_after_my_edit(
                 continue;
             }
             let mine = end > walk.cursor && is_mine(&walk.commits[end - 1]);
-            if mine && blobs.commit_is_edit(&walk.commits[end - 1]) {
-                walk.my_last_edit = Some(end - 1);
+            if mine && blobs.commit_is_my_check(&walk.commits[end - 1]) {
+                walk.my_last_check = Some(end - 1);
                 walk.finished = true;
             } else if !mine || end >= walk.commits.len() {
                 walk.finished = true;
@@ -414,7 +481,7 @@ pub(super) fn find_rows_changed_after_my_edit(
     // Classify the other people's commits that could count, and load the baselines.
     let mut needed = BTreeSet::new();
     for walk in &walks {
-        match walk.my_last_edit {
+        match walk.my_last_check {
             Some(index) => {
                 let my_date = walk.commits[index].author_date.as_str();
                 for (position, commit) in walk.commits.iter().enumerate() {
@@ -443,37 +510,34 @@ pub(super) fn find_rows_changed_after_my_edit(
 
     let mut rows = Vec::new();
     for walk in &walks {
-        let (baseline_commit, baseline_is_my_edit, candidates): (
-            &RowCommit,
-            bool,
-            Vec<&RowCommit>,
-        ) = match walk.my_last_edit {
-            Some(index) => {
-                let mine = &walk.commits[index];
-                let candidates = walk
-                    .commits
-                    .iter()
-                    .enumerate()
-                    .filter(|(position, commit)| {
-                        !is_mine(commit)
-                            && (*position < index
-                                || commit.author_date.as_str() > mine.author_date.as_str())
-                    })
-                    .map(|(_, commit)| commit)
-                    .collect();
-                (mine, true, candidates)
-            }
-            None => {
-                let Some(created) = walk.commits.last() else {
-                    continue;
-                };
-                (
-                    created,
-                    false,
-                    walk.commits.iter().filter(|c| !is_mine(c)).collect(),
-                )
-            }
-        };
+        let (baseline_commit, baseline_is_mine, candidates): (&RowCommit, bool, Vec<&RowCommit>) =
+            match walk.my_last_check {
+                Some(index) => {
+                    let mine = &walk.commits[index];
+                    let candidates = walk
+                        .commits
+                        .iter()
+                        .enumerate()
+                        .filter(|(position, commit)| {
+                            !is_mine(commit)
+                                && (*position < index
+                                    || commit.author_date.as_str() > mine.author_date.as_str())
+                        })
+                        .map(|(_, commit)| commit)
+                        .collect();
+                    (mine, true, candidates)
+                }
+                None => {
+                    let Some(created) = walk.commits.last() else {
+                        continue;
+                    };
+                    (
+                        created,
+                        false,
+                        walk.commits.iter().filter(|c| !is_mine(c)).collect(),
+                    )
+                }
+            };
         let edits = candidates
             .into_iter()
             .filter(|commit| blobs.commit_is_edit(commit))
@@ -506,7 +570,7 @@ pub(super) fn find_rows_changed_after_my_edit(
         rows.push(ChangedAfterMyEditRow {
             row_id,
             baseline_commit_sha: baseline_commit.commit_sha.clone(),
-            baseline_is_my_edit,
+            baseline_is_mine,
             baseline_text_style: baseline.text_style.clone(),
             baseline_fields: baseline_fields(
                 repo_path,
@@ -714,7 +778,7 @@ mod tests {
         let rows = find_rows_changed_after_my_edit(&repo.path, ROWS_DIR, "me").expect("rows");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].row_id, "row-a");
-        assert!(rows[0].baseline_is_my_edit);
+        assert!(rows[0].baseline_is_mine);
         assert_eq!(rows[0].baseline_fields["es"].plain_text, "uno");
         assert_eq!(rows[0].edits.len(), 1);
         assert_eq!(rows[0].edits[0].author_login, "other");
@@ -733,8 +797,12 @@ mod tests {
         assert!(repo.changed_row_ids("me").is_empty());
     }
 
+    fn please_check_text(value: &str) -> serde_json::Value {
+        json!({ "fields": { "es": { "plain_text": value, "editor_flags": { "please_check": true } } } })
+    }
+
     #[test]
-    fn my_marker_only_commit_is_not_an_edit() {
+    fn my_reviewed_mark_after_the_other_persons_edit_clears_the_row() {
         let mut repo = TestRepo::new();
         repo.write_row("row-a", text("uno"));
         repo.commit_as("me", "Import chapter", None);
@@ -743,9 +811,98 @@ mod tests {
         repo.write_row("row-a", reviewed_text("dos"));
         repo.commit_as("me", "Mark reviewed", None);
 
+        assert!(repo.changed_row_ids("me").is_empty());
+    }
+
+    #[test]
+    fn my_please_check_flag_counts_as_checking_the_row() {
+        let mut repo = TestRepo::new();
+        repo.write_row("row-a", text("uno"));
+        repo.commit_as("other", "Import chapter", None);
+        repo.write_row("row-a", please_check_text("uno"));
+        repo.commit_as("me", "Mark please check", None);
+
+        assert!(repo.changed_row_ids("me").is_empty());
+    }
+
+    #[test]
+    fn edit_after_my_reviewed_mark_is_diffed_against_the_version_i_marked() {
+        let mut repo = TestRepo::new();
+        repo.write_row("row-a", text("uno"));
+        repo.commit_as("me", "Import chapter", None);
+        repo.write_row("row-a", text("dos"));
+        repo.commit_as("other", "Update row", None);
+        repo.write_row("row-a", reviewed_text("dos"));
+        repo.commit_as("me", "Mark reviewed", None);
+        repo.write_row("row-a", reviewed_text("tres"));
+        repo.commit_as("other", "Update row", None);
+
+        let rows = find_rows_changed_after_my_edit(&repo.path, ROWS_DIR, "me").expect("rows");
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].baseline_is_mine);
+        assert_eq!(rows[0].baseline_fields["es"].plain_text, "dos");
+        assert_eq!(rows[0].edits.len(), 1);
+    }
+
+    #[test]
+    fn removing_my_reviewed_mark_is_not_a_check() {
+        let mut repo = TestRepo::new();
+        repo.write_row("row-a", reviewed_text("uno"));
+        repo.commit_as("me", "Import chapter", None);
+        repo.write_row("row-a", reviewed_text("dos"));
+        repo.commit_as("other", "Update row", None);
+        repo.write_row("row-a", text("dos"));
+        repo.commit_as("me", "Mark all es translations unreviewed", None);
+
         let rows = find_rows_changed_after_my_edit(&repo.path, ROWS_DIR, "me").expect("rows");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].baseline_fields["es"].plain_text, "uno");
+    }
+
+    #[test]
+    fn my_ai_review_marking_the_row_reviewed_counts_as_my_check() {
+        let mut repo = TestRepo::new();
+        repo.write_row("row-a", text("uno"));
+        repo.commit_as("other", "Import chapter", None);
+        repo.write_row("row-a", reviewed_text("uno"));
+        repo.commit_as(
+            "me",
+            "AI review row\n\nGTMS-Operation: ai-review\nGTMS-AI-Model: test-model",
+            None,
+        );
+
+        assert!(repo.changed_row_ids("me").is_empty());
+    }
+
+    #[test]
+    fn reviewed_mark_in_one_language_covers_the_whole_row() {
+        let mut repo = TestRepo::new();
+        repo.write_row(
+            "row-a",
+            json!({ "fields": {
+            "es": { "plain_text": "uno" },
+            "vi": { "plain_text": "một" }
+        } }),
+        );
+        repo.commit_as("me", "Import chapter", None);
+        repo.write_row(
+            "row-a",
+            json!({ "fields": {
+            "es": { "plain_text": "UNO" },
+            "vi": { "plain_text": "một" }
+        } }),
+        );
+        repo.commit_as("other", "Update source", None);
+        repo.write_row(
+            "row-a",
+            json!({ "fields": {
+            "es": { "plain_text": "UNO" },
+            "vi": { "plain_text": "một", "editor_flags": { "reviewed": true } }
+        } }),
+        );
+        repo.commit_as("me", "Mark reviewed", None);
+
+        assert!(repo.changed_row_ids("me").is_empty());
     }
 
     #[test]
@@ -771,16 +928,25 @@ mod tests {
     }
 
     #[test]
-    fn row_someone_else_imported_and_i_never_edited_is_listed_against_the_import() {
+    fn row_someone_else_imported_and_i_never_checked_is_listed_against_the_import() {
         let mut repo = TestRepo::new();
         repo.write_row("row-a", text("uno"));
         repo.commit_as("other", "Import chapter", None);
-        repo.write_row("row-a", reviewed_text("uno"));
-        repo.commit_as("me", "Mark reviewed", None);
+        let mut with_comment = text("uno");
+        with_comment["editor_comments_revision"] = json!(1);
+        with_comment["editor_comments"] = json!([{
+            "comment_id": "c1",
+            "author_login": "me",
+            "author_name": "me",
+            "body": "¿Seguro?",
+            "created_at": "2026-01-02T12:00:00Z"
+        }]);
+        repo.write_row("row-a", with_comment);
+        repo.commit_as("me", "Add comment", None);
 
         let rows = find_rows_changed_after_my_edit(&repo.path, ROWS_DIR, "me").expect("rows");
         assert_eq!(rows.len(), 1);
-        assert!(!rows[0].baseline_is_my_edit);
+        assert!(!rows[0].baseline_is_mine);
         assert_eq!(rows[0].baseline_fields["es"].plain_text, "uno");
     }
 

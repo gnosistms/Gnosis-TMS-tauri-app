@@ -21,6 +21,15 @@ Rules (Hans, 2026-09-27):
 6. Changing the row's text style counts as an edit.
 7. Once shown, a row stays on screen until the filter is changed, even after I edit it.
 
+Revised (Hans, 2026-09-27, after 0.8.123): marking a row means I checked it.
+
+8. My last check of a row = my newest commit that edits it OR turns on a reviewed or
+   please-check mark in any language. Removing a mark (including "Mark all
+   unreviewed") and comments are not checks. A mark AI Review sets for me is mine.
+9. A mark in one language covers the whole row.
+10. Other people's marks still never count; only their edits after my last check do.
+11. The diff baseline is the row at my last check.
+
 "After my last edit" is taken in git terms: another person's edit counts when it is not
 already contained in my last edit of that row (`<my last edit>..HEAD`). That handles
 commits that arrive later by sync but were made earlier by the clock.
