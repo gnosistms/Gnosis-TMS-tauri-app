@@ -159,8 +159,8 @@ export function renderEditorChangePreviousImage(previousImage, { captionHtml = "
       >
         <img class="translation-language-panel__image" src="${escapeHtml(previousImage.src)}" alt="" loading="eager" referrerpolicy="no-referrer" />
         <svg class="translation-language-panel__image-change-x" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-          <path d="M4 4 96 96" />
-          <path d="M96 4 4 96" />
+          <path class="translation-language-panel__image-change-x-halo" d="M4 4 96 96 M96 4 4 96" />
+          <path d="M4 4 96 96 M96 4 4 96" />
         </svg>
       </span>
       ${captionHtml

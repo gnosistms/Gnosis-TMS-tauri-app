@@ -2333,6 +2333,12 @@
   vector-effect: non-scaling-stroke;
 }
 
+/* Keeps the X visible on images that are themselves red or dark. */
+.translation-language-panel__image-change-x .translation-language-panel__image-change-x-halo {
+  stroke: rgba(255, 255, 255, 0.9);
+  stroke-width: 6;
+}
+
 .translation-language-panel__footnote-editor-row--deleted {
   cursor: default;
 }

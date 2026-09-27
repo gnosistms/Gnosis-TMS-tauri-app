@@ -218,6 +218,12 @@ function applyEditorTextHighlightLayersToRowCard(
       return;
     }
 
+    // A field showing a "Changed after my last edit" diff renders merged text that the
+    // highlight layers don't describe; rewriting it would drop the diff.
+    if (stack.dataset.editorChangeDiff === "true") {
+      return;
+    }
+
     const isAiTranslating = stack.dataset.aiTranslating === "true";
     const languageCode = stack.dataset.languageCode ?? "";
     const contentKind = stack.dataset.contentKind === "footnote" ? "footnote" : "field";

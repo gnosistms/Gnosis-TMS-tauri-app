@@ -956,6 +956,7 @@ function renderEditorLanguageField(row, language) {
         data-language-code="${escapeHtml(language.code)}"
         data-row-text-style="${escapeHtml(textStyle)}"
         data-ai-translating="${language.isAiTranslating ? "true" : "false"}"
+        ${language.changeView?.textDiff ? 'data-editor-change-diff="true"' : ""}
       >
           ${staticFieldMarkup}
         </div>
