@@ -382,7 +382,7 @@ pub(super) fn find_rows_changed_after_my_edit(
             } else {
                 walk.commits[walk.cursor..]
                     .iter()
-                    .position(|commit| is_mine(commit))
+                    .position(is_mine)
                     .map(|offset| walk.cursor + offset + 1)
                     .unwrap_or(walk.commits.len())
             };
