@@ -18,6 +18,7 @@ annotations (phonetic readings above CJK base text). This module owns:
 - Mapping cursor positions between base text and visible text
 - Rendering the markup to sanitized HTML for display
 - Search highlight injection into rendered output
+- Formatting-preserving diffs between two markup values
 
 ## Module Inventory
 
@@ -28,6 +29,7 @@ annotations (phonetic readings above CJK base text). This module owns:
 | `transforms.js` | Toggle bold/italic/underline/ruby on a selection range. Describes selection state. |
 | `ranges.js` | Maps base-text character ranges to visible-text ranges (ruby base vs. reading). |
 | `highlights.js` | Renders markup HTML with overlaid search/glossary/editor highlight spans. |
+| `diff.js` | Diffs two markup values into one merged markup value plus insert/delete/format ranges, keeping formatting. |
 | `ruby.js` | Language-specific ruby button config (Japanese: 振り仮名, Chinese: 拼音). |
 
 ## Supported Markup

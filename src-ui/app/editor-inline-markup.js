@@ -29,3 +29,4 @@ export {
   describeInlineMarkupSelection,
   toggleInlineMarkupSelection,
 } from "./editor-inline-markup/transforms.js";
+export { buildInlineMarkupDiff } from "./editor-inline-markup/diff.js";
