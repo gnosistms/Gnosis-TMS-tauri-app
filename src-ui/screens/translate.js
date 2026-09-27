@@ -6,6 +6,10 @@ import {
   pageShell,
 } from "../lib/ui.js";
 import {
+  changedAfterMyEditFilterIsActive,
+  changedAfterMyEditStateForChapter,
+} from "../app/editor-changed-after-my-edit-flow.js";
+import {
   buildEditorPreviewDocument,
   EDITOR_MODE_PREVIEW,
   normalizeEditorMode,
@@ -114,8 +118,15 @@ function buildTranslateScreenFrame(state) {
   } else if (!chapter && !editorChapter?.chapterId) {
     translateBody = renderTranslateStateCard("Could not determine which file to open.");
   } else if (contentRows.length === 0) {
+    const changedAfterMyEdit = changedAfterMyEditFilterIsActive(editorChapter)
+      ? changedAfterMyEditStateForChapter(editorChapter)
+      : null;
     translateBody = renderTranslateStateCard(
-      editorFilters?.hasActiveFilters
+      changedAfterMyEdit?.status === "loading"
+        ? "Finding rows changed after your last edit..."
+        : changedAfterMyEdit?.status === "error"
+        ? changedAfterMyEdit.error || "The rows changed after your last edit could not be loaded."
+        : editorFilters?.hasActiveFilters
         ? "No rows match the current filters."
         : "This file does not contain any translatable rows.",
     );

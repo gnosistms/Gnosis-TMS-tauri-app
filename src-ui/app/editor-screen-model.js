@@ -1,4 +1,9 @@
 import { buildEditorCommentsButtonState, normalizeEditorSidebarTab } from "./editor-comments.js";
+import { buildEditorSectionChangeView } from "./editor-change-view.js";
+import {
+  changedAfterMyEditFilterIsActive,
+  changedAfterMyEditStateForChapter,
+} from "./editor-changed-after-my-edit-flow.js";
 import {
   conflictedLanguageCodesForRow,
   rowHasUnresolvedEditorConflict,
@@ -531,6 +536,10 @@ export function buildEditorScreenViewModel(appState) {
     editorChapter?.commentSeenRevisions && typeof editorChapter.commentSeenRevisions === "object"
       ? editorChapter.commentSeenRevisions
       : {};
+  const changedAfterMyEdit = changedAfterMyEditStateForChapter(editorChapter);
+  const changedAfterMyEditBaselines = changedAfterMyEditFilterIsActive(editorChapter)
+    ? changedAfterMyEdit?.rowsById ?? null
+    : null;
   const editorFilters = buildEditorFilterResult({
     rows: rawRows,
     languages,
@@ -539,6 +548,7 @@ export function buildEditorScreenViewModel(appState) {
     targetLanguageCode: targetCode,
     commentSeenRevisions,
     rowHasGlossaryError: (row) => editorRowHasGlossaryError(row, editorChapter),
+    changedAfterMyEditRowIds: changedAfterMyEdit?.rowIds ?? new Set(),
   });
   const editorReplace = buildEditorReplaceViewModel(editorChapter, editorFilters);
   const contentRows = buildEditorDisplayItems(
@@ -551,10 +561,18 @@ export function buildEditorScreenViewModel(appState) {
       return row;
     }
 
+    const changeBaselineRow = changedAfterMyEditBaselines && row.hasConflict !== true
+      ? changedAfterMyEditBaselines.get(row.rowId) ?? null
+      : null;
     return {
       ...row,
       isConnected: row.id === editorChapter?.activeRowId,
       sections: (Array.isArray(row.sections) ? row.sections : []).map((section) => {
+        const changeView = buildEditorSectionChangeView({
+          baselineRow: changeBaselineRow,
+          section,
+          textStyle: row.textStyle,
+        });
         const aiTranslateLoadingText = activeAiTranslateLoadingTexts.get(
           createEditorAiTranslateLoadingKey(row.rowId, section.code),
         );
@@ -586,6 +604,13 @@ export function buildEditorScreenViewModel(appState) {
             seenRevisions: commentSeenRevisions,
           }),
           isAiTranslating,
+          changeView: isAiTranslating ? null : changeView,
+          // A footnote or caption someone deleted still gets its box, showing the
+          // deleted text.
+          hasVisibleFootnote: section.hasVisibleFootnote === true || Boolean(changeView?.footnotes),
+          hasVisibleImageCaption:
+            section.hasVisibleImageCaption === true
+            || (Boolean(section.image) && Boolean(changeView?.captionDiff)),
           isSelectedCommentsRow:
             normalizeEditorSidebarTab(editorChapter?.sidebarTab) === "comments"
             && editorChapter?.activeRowId === row.rowId

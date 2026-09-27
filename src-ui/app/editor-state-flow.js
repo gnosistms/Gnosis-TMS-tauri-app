@@ -311,6 +311,9 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
     replace: isSameChapter
       ? normalizeEditorReplaceState(previousEditorChapter?.replace)
       : createEditorReplaceState(),
+    changedAfterMyEdit: isSameChapter
+      ? nextEditorChapter?.changedAfterMyEdit ?? previousEditorChapter?.changedAfterMyEdit ?? null
+      : null,
     expandedDeletedRowGroupIds: cloneExpandedDeletedRowGroupIds(previousEditorChapter?.expandedDeletedRowGroupIds),
     glossary: nextEditorChapter?.glossary ?? previousEditorChapter?.glossary ?? createEditorChapterGlossaryState(),
     derivedGlossariesByRowId: preserveEditorDerivedGlossariesByRowId(

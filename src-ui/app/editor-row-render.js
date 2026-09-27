@@ -35,6 +35,10 @@ import { buildEditorRowSearchHighlightMap } from "./editor-search-flow.js";
 import { buildEditorSearchHighlightKey } from "./editor-search-highlighting.js";
 import { normalizeEditorFootnotes } from "./editor-footnotes.js";
 import { buildStaticInlineFootnoteMarkerRanges } from "./editor-static-footnote-markers.js";
+import {
+  renderEditorChangeDiffHtml,
+  renderEditorChangePreviousImage,
+} from "./editor-change-view.js";
 
 export function renderTranslationMarkerIcon(kind) {
   if (kind === "comments") {
@@ -195,6 +199,19 @@ function renderEditorRowContextAction(row) {
   `;
 }
 
+// "Changed after my last edit": the style that was turned on gets a green icon and the
+// one that was turned off a red icon.
+function textStyleChangeClass(language, textStyle) {
+  const change = language?.changeView?.textStyle;
+  if (!change) {
+    return "";
+  }
+  if (change.current === textStyle) {
+    return " translation-row-text-style-button--change-insert";
+  }
+  return change.previous === textStyle ? " translation-row-text-style-button--change-delete" : "";
+}
+
 function renderRowTextStyleButtons(row, language) {
   if (row?.canEdit !== true || language?.canEdit !== true) {
     return "";
@@ -318,7 +335,7 @@ function renderRowTextStyleButtons(row, language) {
       <div class="translation-row-text-style-actions__group" role="radiogroup" aria-label="Text style">
         ${EDITOR_ROW_TEXT_STYLE_OPTIONS.map((option) => `
           <button
-            class="translation-row-text-style-button${selectedTextStyle === option.value ? " is-active" : ""}"
+            class="translation-row-text-style-button${selectedTextStyle === option.value ? " is-active" : ""}${textStyleChangeClass(language, option.value)}"
             type="button"
             role="radio"
             data-action="set-editor-row-text-style"
@@ -417,6 +434,12 @@ function editorImagePreviewCachedStyle(size) {
   return ` style="--editor-image-preview-width: ${escapeHtml(frameWidth)}px; --editor-image-preview-height: ${escapeHtml(frameHeight)}px; --editor-image-preview-content-width: ${escapeHtml(contentWidth)}px; --editor-image-preview-content-height: ${escapeHtml(contentHeight)}px;"`;
 }
 
+function imageCaptionDisplayHtml(language) {
+  return language.changeView?.captionDiff
+    ? renderEditorChangeDiffHtml(language.changeView.captionDiff)
+    : renderSanitizedInlineMarkupHtml(language.imageCaption ?? "");
+}
+
 function renderEditorLanguageImageCaption(row, language) {
   if (!language.hasVisibleImage) {
     return "";
@@ -448,7 +471,7 @@ function renderEditorLanguageImageCaption(row, language) {
     `;
   }
 
-  if (language.showAddImageCaptionButton === true) {
+  if (language.showAddImageCaptionButton === true && !language.changeView?.captionDiff) {
     return `
       <div class="translation-language-panel__image-caption-shell translation-language-panel__image-caption-shell--idle">
         <button
@@ -481,16 +504,23 @@ function renderEditorLanguageImageCaption(row, language) {
               data-editor-image-caption-button
               data-row-id="${escapeHtml(row.id)}"
               data-language-code="${escapeHtml(language.code)}"
-            ><span class="translation-language-panel__image-caption-text" lang="${escapeHtml(language.baseCode || language.code)}">${renderSanitizedInlineMarkupHtml(language.imageCaption ?? "")}</span></button>`
-          : `<div class="translation-language-panel__image-caption-display"><span class="translation-language-panel__image-caption-text" lang="${escapeHtml(language.baseCode || language.code)}">${renderSanitizedInlineMarkupHtml(language.imageCaption ?? "")}</span></div>`
+            ><span class="translation-language-panel__image-caption-text" lang="${escapeHtml(language.baseCode || language.code)}">${imageCaptionDisplayHtml(language)}</span></button>`
+          : `<div class="translation-language-panel__image-caption-display"><span class="translation-language-panel__image-caption-text" lang="${escapeHtml(language.baseCode || language.code)}">${imageCaptionDisplayHtml(language)}</span></div>`
       }
     </div>
   `;
 }
 
 function renderEditorLanguageImage(row, language) {
+  const previousImage = language.changeView?.image?.previous ?? null;
   if (!language.hasVisibleImage) {
-    return "";
+    // "Changed after my last edit": an image someone removed is still shown, crossed out,
+    // with its caption struck through.
+    return previousImage
+      ? `<div class="translation-language-panel__image-shell">${renderEditorChangePreviousImage(previousImage, {
+        captionHtml: language.changeView?.captionDiff ? renderEditorChangeDiffHtml(language.changeView.captionDiff) : "",
+      })}</div>`
+      : "";
   }
 
   if (language.isImageUrlSubmitting === true) {
@@ -609,11 +639,13 @@ function renderEditorLanguageImage(row, language) {
   const imageLabel = editorFieldImageMetadataText(image);
   const cachedPreviewSize = editorImagePreviewFrameSizeForSrc(imageSrc);
   const isLoading = !cachedPreviewSize;
+  const imageIsNew = language.changeView?.image?.currentChanged === true;
   return `
     <div class="translation-language-panel__image-shell">
+      ${previousImage ? renderEditorChangePreviousImage(previousImage) : ""}
       <div class="translation-language-panel__image-row">
         <button
-          class="translation-language-panel__image-preview${isLoading ? " is-loading" : ""}"
+          class="translation-language-panel__image-preview${isLoading ? " is-loading" : ""}${imageIsNew ? " translation-language-panel__image-preview--change-insert" : ""}"
           type="button"
           data-action="open-editor-image-preview"
           data-editor-image-context-menu-target
@@ -714,13 +746,34 @@ function renderDisabledConflictField(row, language, textStyle) {
   `;
 }
 
+// "Changed after my last edit": a changed footnote shows its diff; a new one is all
+// inserted text (its diff against "" says so).
+function footnoteDisplayHtml(language, entry) {
+  const change = language?.changeView?.footnotes?.find((candidate) => candidate.marker === entry.marker);
+  return change?.diff
+    ? renderEditorChangeDiffHtml(change.diff)
+    : renderSanitizedInlineMarkupHtml(entry.text);
+}
+
+// Footnotes someone deleted keep their box, with the deleted text struck through.
+function renderDeletedFootnotes(language, footnotes, renderEntry) {
+  const currentMarkers = new Set(footnotes.map((entry) => entry.marker));
+  return (language?.changeView?.footnotes ?? [])
+    .filter((entry) => entry.change === "delete" && entry.diff && !currentMarkers.has(entry.marker))
+    .map((entry) => renderEntry(entry.marker, renderEditorChangeDiffHtml(entry.diff)))
+    .join("");
+}
+
 function renderEditorFootnoteField(row, language) {
   const footnotes = normalizeEditorFootnotes(language?.footnotes ?? language?.footnote);
   if (row?.canEdit !== true || language?.canEdit !== true) {
-    const footnoteHtml = footnotes.length > 0
+    const renderStaticEntry = (marker, html) =>
+      `<span class="translation-language-panel__footnote-static"><span class="translation-language-panel__footnote-marker">[${escapeHtml(marker)}]</span>${html}</span>`;
+    const deletedFootnotesHtml = renderDeletedFootnotes(language, footnotes, renderStaticEntry);
+    const footnoteHtml = footnotes.length > 0 || deletedFootnotesHtml
       ? footnotes
-        .map((entry) => `<span class="translation-language-panel__footnote-static"><span class="translation-language-panel__footnote-marker">[${escapeHtml(entry.marker)}]</span>${renderSanitizedInlineMarkupHtml(entry.text)}</span>`)
-        .join("")
+        .map((entry) => renderStaticEntry(entry.marker, footnoteDisplayHtml(language, entry)))
+        .join("") + deletedFootnotesHtml
       : renderSanitizedInlineMarkupHtml(language.footnote);
     return `
       <div
@@ -765,7 +818,7 @@ function renderEditorFootnoteField(row, language) {
       }
 
       const displayHtml = entry.text.trim().length > 0
-        ? renderSanitizedInlineMarkupHtml(entry.text)
+        ? footnoteDisplayHtml(language, entry)
         : "&nbsp;";
       return `
       <div
@@ -786,7 +839,15 @@ function renderEditorFootnoteField(row, language) {
       </div>
       `;
     })
-    .join("");
+    .join("") + renderDeletedFootnotes(language, footnotes, (marker, html) => `
+      <div class="translation-language-panel__footnote-editor-row translation-language-panel__footnote-editor-row--deleted">
+        <span class="translation-language-panel__footnote-marker" aria-hidden="true">[${escapeHtml(marker)}]</span>
+        <span
+          class="translation-language-panel__field--footnote translation-language-panel__footnote-display"
+          lang="${escapeHtml(language.baseCode || language.code)}"
+        ><span class="translation-language-panel__footnote-display-text">${html}</span></span>
+      </div>
+    `);
 
   return `
     <div
@@ -813,7 +874,11 @@ function renderEditorLanguageField(row, language) {
       : typeof language.glossaryHighlightHtml === "string"
         ? language.glossaryHighlightHtml
         : "";
-  const staticFieldTextHtml = isCustomHtmlRow
+  // "Changed after my last edit": the static display shows the diff instead (custom
+  // HTML diffs as its raw source); glossary and search marks don't fit the merged text.
+  const staticFieldTextHtml = language.changeView?.textDiff
+    ? renderEditorChangeDiffHtml(language.changeView.textDiff)
+    : isCustomHtmlRow
     ? sanitizeCustomHtmlForDisplay(language.text)
     : renderStaticEditorFieldTextHtml(language, {
       glossaryHighlightHtml,
@@ -833,7 +898,8 @@ function renderEditorLanguageField(row, language) {
   if (language.isTextEditorOpen !== true) {
     const editorClassName =
       `translation-language-panel__editor`
-      + `${language.isImageUrlEditorOpen === true || language.isImageUploadEditorOpen === true ? " translation-language-panel__editor--show-actions" : ""}`;
+      + `${language.isImageUrlEditorOpen === true || language.isImageUploadEditorOpen === true ? " translation-language-panel__editor--show-actions" : ""}`
+      + `${language.changeView?.textStyle ? " translation-language-panel__editor--style-changed" : ""}`;
     const staticFieldClassName =
       `translation-language-panel__field-static`
       + `${language.isAiTranslating ? " translation-language-panel__field-static--loading" : ""}`;
