@@ -17,6 +17,12 @@ function normalizeTimingValue(timing) {
   return { startMs: Math.floor(startMs), endMs: Math.floor(endMs) };
 }
 
+// A row is a subtitle cue when it carries SRT base timing; in a chapter that
+// also has rows from another source format, those rows have none.
+export function rowIsSubtitleCue(row) {
+  return normalizeTimingValue(row?.srtTiming) !== null;
+}
+
 export function cloneRowTimings(timings) {
   const entries = Object.entries(timings && typeof timings === "object" ? timings : {});
   const cloned = {};

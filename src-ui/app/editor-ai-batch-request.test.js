@@ -76,6 +76,15 @@ test("chunkTranslateAllWork caps a batch by the source-token budget", () => {
   assert.deepEqual(batches.map((b) => b.items.map((i) => i.rowId)), [["r0"], ["r1"], ["r2"]]);
 });
 
+test("chunkTranslateAllWork splits where continuesBatch says the next item does not follow", () => {
+  const work = [item("r0"), item("r1"), item("r3"), item("r4")];
+  const batches = chunkTranslateAllWork(work, {
+    continuesBatch: (previous, next) =>
+      Number(next.rowId.slice(1)) === Number(previous.rowId.slice(1)) + 1,
+  });
+  assert.deepEqual(batches.map((b) => b.items.map((i) => i.rowId)), [["r0", "r1"], ["r3", "r4"]]);
+});
+
 test("chunkTranslateAllWork keeps an oversized single row as its own batch", () => {
   const work = [item("r0"), item("r1")];
   const batches = chunkTranslateAllWork(work, {

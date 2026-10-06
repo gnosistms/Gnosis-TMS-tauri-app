@@ -20,11 +20,15 @@ import {
 } from "./editor-ai-assistant-flow.js";
 import {
   AI_BATCH_CONCURRENCY,
+  SUBTITLE_AI_BATCH_MAX_ROWS,
   buildBatchGlossaryHints,
   chunkTranslateAllWork,
+  cuesAreAdjacent,
   estimateSourceTokens,
   groupWorkByLanguagePair,
   mergeGlossaryHintLists,
+  rowIdsAreAdjacentCues,
+  subtitleCuePositions,
 } from "./editor-ai-batch-request.js";
 import {
   createAiBatchPool,
@@ -331,9 +335,22 @@ function glossaryUsageKindForPair(chapterState, sourceLanguageCode, targetLangua
   return derivedGlossaryUsageKindForPair(chapterState, sourceLanguage, targetLanguage);
 }
 
+// True when the row no longer matches what a batch request sent: the row is
+// gone, its source was edited, or its target was filled while the call was in
+// flight (the same checks applyBatchRowResult makes before writing).
+function entryChangedSinceRequest(entry) {
+  const { item } = entry;
+  const currentRow = findEditorRowById(item.rowId, state.editorChapter);
+  return !currentRow
+    || readRowFieldText(currentRow, item.sourceLanguageCode) !== entry.sourceText
+    || readRowFootnoteText(currentRow, item.sourceLanguageCode) !== entry.sourceFootnote
+    || readRowImageCaptionText(currentRow, item.sourceLanguageCode) !== entry.sourceImageCaption
+    || !rowHasTranslateAllWork(currentRow, item.sourceLanguageCode, item.targetLanguageCode);
+}
+
 // entries: [{ item, row, sourceText, sourceFootnote, sourceImageCaption }] —
 // rows resolved once by the caller so the request build does no re-scans.
-function buildTranslateBatchRequest(chapterState, entries, glossaryHints, providerId, modelId) {
+function buildTranslateBatchRequest(chapterState, entries, glossaryHints, providerId, modelId, cuePositions) {
   const sourceLanguageCode = entries[0].item.sourceLanguageCode;
   const targetLanguageCode = entries[0].item.targetLanguageCode;
   const languages = Array.isArray(chapterState?.languages) ? chapterState.languages : [];
@@ -376,6 +393,11 @@ function buildTranslateBatchRequest(chapterState, entries, glossaryHints, provid
     contextAfter,
     rows,
   };
+  // The subtitle rule lets the model move words between neighbouring rows, so
+  // it is sent only when every row in this request follows the one before it.
+  if (rowIdsAreAdjacentCues(cuePositions, entries.map((entry) => entry.item.rowId))) {
+    request.subtitleCues = true;
+  }
   return installationId === null ? request : { ...request, installationId };
 }
 
@@ -721,6 +743,9 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
     if (liveEntries.length === 0) {
       return "ok";
     }
+    // Read once per batch (not per request) and from the same chapter state as
+    // the rows, so the retry reuses it.
+    const cuePositions = subtitleCuePositions(chapterState);
 
     // The single-row path applies and saves internally, so the whole call
     // runs inside the apply lane with the slot acquired inside the lane task
@@ -815,6 +840,7 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
         batchHints,
         provider.providerId,
         provider.modelId,
+        cuePositions,
       );
       let batchCallStartedAt = 0;
       const payload = await runWithTransientAiRetry({
@@ -871,14 +897,60 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
           unknownRowIds,
         });
       }
+      // A subtitle-cue response is applied whole or not at all. The model may
+      // have moved a missing or blank row's words into its neighbours, so
+      // applying the rest and retrying that row alone would translate those
+      // words twice. Returning every entry as missing makes the caller retry
+      // the whole stretch on the batch path.
+      if (request.subtitleCues) {
+        const blankRowIds = entries
+          .filter((entry) => {
+            const rowResult = returnedById.get(entry.item.rowId);
+            return rowResult
+              && entry.sourceText.trim()
+              && !translatedSectionValue(rowResult, "translatedText").trim();
+          })
+          .map((entry) => entry.item.rowId);
+        if (missingEntries.length > 0 || blankRowIds.length > 0) {
+          console.warn("[gtms ai-translate] Subtitle batch response incomplete; applying none of it.", {
+            batchIndex,
+            attempt,
+            missingRowIds: missingEntries.map((entry) => entry.item.rowId),
+            blankRowIds,
+          });
+          return { outcome: "ok", missingEntries: entries };
+        }
+      }
       const outcome = await tools.inApplyLane(async () => {
         try {
+          // A cue that changed while the call was in flight is skipped by
+          // applyBatchRowResult; its neighbours are left for the next run too,
+          // since their translations may carry words moved from it.
+          const skippedRowIds = new Set();
+          if (request.subtitleCues) {
+            entries.forEach((entry, index) => {
+              if (entryChangedSinceRequest(entry)) {
+                if (index > 0) {
+                  skippedRowIds.add(entries[index - 1].item.rowId);
+                }
+                if (index < entries.length - 1) {
+                  skippedRowIds.add(entries[index + 1].item.rowId);
+                }
+              }
+            });
+            if (skippedRowIds.size > 0) {
+              console.warn("[gtms ai-translate] Subtitle cues next to a row changed mid-flight were left untranslated.", {
+                batchIndex,
+                rowIds: [...skippedRowIds],
+              });
+            }
+          }
           for (const entry of entries) {
             if (!isRunActive()) {
               return "abort";
             }
             const rowResult = returnedById.get(entry.item.rowId);
-            if (rowResult) {
+            if (rowResult && !skippedRowIds.has(entry.item.rowId)) {
               await applyBatchRowResult(entry, rowResult, provider, promptText, batchHints, pendingBatchSaveItems);
             }
           }
@@ -894,6 +966,7 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
       return { outcome, missingEntries };
     };
 
+    const cueBatch = rowIdsAreAdjacentCues(cuePositions, liveEntries.map((entry) => entry.item.rowId));
     let missingEntries;
     try {
       const first = await requestAndApply(liveEntries, 1);
@@ -902,25 +975,39 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
       }
       missingEntries = first.missingEntries;
     } catch (error) {
-      console.warn("[gtms ai-translate] Batch translation call failed; translating these rows one at a time.", {
-        rowCount: liveEntries.length,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      // The invoke wrapper owns the terminal command failure. Successful fallback is
-      // diagnostic context, not a separate product defect.
-      addTelemetryBreadcrumb({ operation: "ai-translate-batch", reason: "fallback-single-row" });
-      if (!isRunActive()) {
-        return "abort";
+      if (cueBatch) {
+        // A failed subtitle-cue call gets the same one batch-path retry as an
+        // incomplete response before the stretch falls to single rows, which
+        // translate without the subtitle rule.
+        console.warn("[gtms ai-translate] Subtitle batch call failed; retrying the whole stretch.", {
+          rowCount: liveEntries.length,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        if (!isRunActive()) {
+          return "abort";
+        }
+        missingEntries = liveEntries;
+      } else {
+        console.warn("[gtms ai-translate] Batch translation call failed; translating these rows one at a time.", {
+          rowCount: liveEntries.length,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        // The invoke wrapper owns the terminal command failure. Successful fallback is
+        // diagnostic context, not a separate product defect.
+        addTelemetryBreadcrumb({ operation: "ai-translate-batch", reason: "fallback-single-row" });
+        if (!isRunActive()) {
+          return "abort";
+        }
+        return runSingleRowFallback(liveEntries);
       }
-      return runSingleRowFallback(liveEntries);
     }
     if (missingEntries.length === 0) {
       return "ok";
     }
 
     // Rows the model failed to echo back get ONE retry on the batch path: a
-    // single call for just those rows, run like any other batch (slot, lane,
-    // grouped save). The single-row path is the last resort, not the first —
+    // single call for just those rows (for a subtitle-cue batch, the whole
+    // stretch), run like any other batch (slot, lane, grouped save). The single-row path is the last resort, not the first —
     // measured, one dropped row cost a full provider round trip serialized
     // after the batch (11 s of a 39 s run).
     try {
@@ -966,7 +1053,17 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
   // form singleton batches. Group into contiguous language-pair runs first.
   const orderedWork = groupWorkByLanguagePair(work);
   const kindByPair = new Map();
+  // Subtitle chapters batch only adjacent cues, and more of them, so phrases
+  // cut across caption lines can be translated whole.
+  const cuePositions = subtitleCuePositions(state.editorChapter);
   const batches = chunkTranslateAllWork(orderedWork, {
+    ...(cuePositions
+      ? {
+        maxRows: SUBTITLE_AI_BATCH_MAX_ROWS,
+        continuesBatch: (previousItem, item) =>
+          cuesAreAdjacent(cuePositions, previousItem.rowId, item.rowId),
+      }
+      : {}),
     glossaryKindForItem: (item) => {
       const key = `${item.sourceLanguageCode}::${item.targetLanguageCode}`;
       if (!kindByPair.has(key)) {
