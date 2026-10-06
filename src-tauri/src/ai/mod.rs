@@ -437,6 +437,7 @@ pub(crate) fn build_translation_prompt(request: &AiTranslationRequest) -> String
                 .to_string(),
         );
     }
+    sections.push(translation_register_rule().to_string());
     sections.push(format!(
         "<languages>\nsource: {source_label}\ntarget: {target_label}\n</languages>"
     ));
@@ -479,6 +480,27 @@ pub(crate) fn build_translation_prompt(request: &AiTranslationRequest) -> String
         sections.push("Return only the translated text.".to_string());
     }
     sections.join("\n\n")
+}
+
+// Without this the model accounts for every source word, so spoken-language
+// tags and fillers come out as literal questions and statements. Worded by
+// function rather than by example words so it carries across source languages
+// (see plans/spoken-language-translation-plan.md).
+fn translation_register_rule() -> &'static str {
+    "Translation rule:\nTranslate as a skilled human translator would: into natural target-language text, in the register of each passage of the source. A literary passage stays literary; quoted or spontaneous speech stays speech.\n\nSpontaneous speech contains words that manage the conversation rather than add content: tags that invite the listener's agreement, fillers that hold the speaker's turn or soften a statement, hesitation sounds, and words repeated in false starts. Every language has its own, and they rarely match word for word. Render what each one does the way a native speaker of the target language would, or leave it out. Never turn one into a literal question or statement the speaker did not mean."
+}
+
+// Subtitle imports make one row per caption line, so phrases are cut across
+// rows. Only sent for batches of adjacent cues.
+fn subtitle_cue_rule() -> &'static str {
+    "Subtitle rule:\nThese rows are consecutive subtitle cues from one video. A sentence often begins in one row and continues in the next, so translate the passage as one continuous text, then divide your translation across the same rows. Keep each row roughly aligned with the part of the source it covers, but you may move words between neighbouring rows in <rows_to_translate> so that each sentence reads naturally in the target language; a row's translation does not have to contain every word of that row's source. Every row still gets its own non-empty translation, and no row's translation moves into another row's entry. The rows in <context_before> and <context_after> are translated separately: do not move words into or out of them, and translate everything said in <rows_to_translate> within those rows. Caption markup stays in its own row: a speaker-change marker such as \">>\" stays at the start of its row, and sound tags such as [music] stay in their row."
+}
+
+// Review counterpart of the subtitle rule: Translate All may have moved words
+// between adjacent cues, which a row-by-row meaning review would otherwise
+// report as omissions and additions.
+fn subtitle_cue_review_rule() -> &'static str {
+    "Subtitle rule:\nThese rows are consecutive subtitle cues from one video, and a sentence often runs across several of them. A translation may move words between neighbouring cues so that each sentence reads naturally. Judge each row together with its neighbouring rows, including those in <context_before> and <context_after>: do not report a word as omitted when it appears in a neighbouring row's translation, or as added when it renders a neighbouring row's source, and do not suggest moving words back to the row whose source contains them."
 }
 
 fn translation_glossary_rules() -> &'static str {
@@ -569,6 +591,10 @@ pub(crate) fn build_translation_batch_prompt(request: &AiTranslationBatchRequest
         "Output rule:\nReturn one entry per row in <rows_to_translate>, in the same order, each with its matching rowId. Do not merge, split, drop, reorder, or add rows. Keep each row's main text, footnote, and image caption translations in their matching fields; do not append footnotes or image captions to translatedText. If a row has no footnote or image caption, return an empty string for that field."
             .to_string(),
     );
+    if request.subtitle_cues {
+        sections.push(subtitle_cue_rule().to_string());
+    }
+    sections.push(translation_register_rule().to_string());
     sections.push(format!(
         "<languages>\nsource: {source_label}\ntarget: {target_label}\n</languages>"
     ));
@@ -729,6 +755,9 @@ pub(crate) fn build_review_batch_prompt(request: &AiReviewBatchRequest) -> Strin
         "Use supporting context when relevant. Do not treat reference translations or edit history as more authoritative than the source-language sections. Keep main text, footnotes, and image captions separate."
             .to_string(),
     ];
+    if request.subtitle_cues {
+        sections.push(subtitle_cue_review_rule().to_string());
+    }
     if request.rows.iter().any(|row| !row.qa_hints.is_empty()) {
         sections.push(review_qa_guidance().to_string());
     }
@@ -2681,6 +2710,7 @@ mod tests {
         parse_review_batch_response, parse_review_structured_response,
         parse_translation_batch_response, parse_translation_sections_response,
         parse_validated_translation_batch_response, retain_known_unique_rows,
+        subtitle_cue_review_rule, subtitle_cue_rule, translation_register_rule,
         PreparedGlossaryMatch,
     };
     use crate::ai::types::{
@@ -3009,7 +3039,10 @@ mod tests {
 
         assert_eq!(
             prompt,
-            "Task:\nTranslate source_text from Spanish to Vietnamese.\n\nOutput rule:\nReturn only the translated text. Do not include labels, commentary, or quotes.\n\n<languages>\nsource: Spanish\ntarget: Vietnamese\n</languages>\n\n<source_text>\nHola\n</source_text>\n\nReturn only the translated text."
+            format!(
+                "Task:\nTranslate source_text from Spanish to Vietnamese.\n\nOutput rule:\nReturn only the translated text. Do not include labels, commentary, or quotes.\n\n{}\n\n<languages>\nsource: Spanish\ntarget: Vietnamese\n</languages>\n\n<source_text>\nHola\n</source_text>\n\nReturn only the translated text.",
+                translation_register_rule()
+            )
         );
     }
 
@@ -4022,6 +4055,7 @@ mod tests {
             context_before: vec![],
             context_after: vec![],
             rows,
+            subtitle_cues: false,
             installation_id: None,
         }
     }
@@ -4045,6 +4079,49 @@ mod tests {
         assert!(!prompt.contains("<context_after>"));
         // No glossary block without hints.
         assert!(!prompt.contains("<glossary_info"));
+    }
+
+    #[test]
+    fn build_translation_batch_prompt_sends_register_rule_and_subtitle_rule_only_for_cues() {
+        let mut request = translation_batch_request(vec![
+            translation_batch_row("r0", "There were moments where, you"),
+            translation_batch_row("r1", "know, I did something great, right?"),
+        ]);
+        let prompt = build_translation_batch_prompt(&request);
+        assert!(prompt.contains(translation_register_rule()));
+        assert!(!prompt.contains("Subtitle rule:"));
+
+        request.subtitle_cues = true;
+        let prompt = build_translation_batch_prompt(&request);
+        assert!(prompt.contains(subtitle_cue_rule()));
+        assert!(prompt.contains(translation_register_rule()));
+        assert!(
+            prompt.find("Subtitle rule:").unwrap() < prompt.find("<rows_to_translate>\n").unwrap()
+        );
+    }
+
+    #[test]
+    fn translation_batch_request_without_subtitle_cues_field_deserializes_as_false() {
+        let request: AiTranslationBatchRequest = serde_json::from_value(serde_json::json!({
+            "providerId": "openai",
+            "modelId": "gpt-5.5",
+            "sourceLanguage": "English",
+            "targetLanguage": "Vietnamese",
+            "rows": [],
+        }))
+        .unwrap();
+        assert!(!request.subtitle_cues);
+
+        let request: AiTranslationBatchRequest = serde_json::from_value(serde_json::json!({
+            "providerId": "openai",
+            "modelId": "gpt-5.5",
+            "sourceLanguage": "English",
+            "targetLanguage": "Vietnamese",
+            "rows": [],
+            "subtitleCues": true,
+        }))
+        .unwrap();
+        assert!(request.subtitle_cues);
     }
 
     #[test]
@@ -4289,8 +4366,28 @@ mod tests {
             context_before: vec![],
             context_after: vec![],
             rows,
+            subtitle_cues: false,
             installation_id: None,
         }
+    }
+
+    #[test]
+    fn build_review_batch_prompt_sends_subtitle_rule_only_for_meaning_review_of_cues() {
+        let mut request = review_batch_request(
+            "meaning",
+            vec![review_batch_row("r0"), review_batch_row("r1")],
+        );
+        assert!(!build_review_batch_prompt(&request).contains("Subtitle rule:"));
+
+        request.subtitle_cues = true;
+        let prompt = build_review_batch_prompt(&request);
+        assert!(prompt.contains(subtitle_cue_review_rule()));
+        assert!(
+            prompt.find("Subtitle rule:").unwrap() < prompt.find("<rows_to_review>\n").unwrap()
+        );
+
+        request.review_mode = Some("grammar".to_string());
+        assert!(!build_review_batch_prompt(&request).contains("Subtitle rule:"));
     }
 
     #[test]

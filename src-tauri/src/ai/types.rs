@@ -324,6 +324,10 @@ pub struct AiTranslationBatchRequest {
     pub context_after: Vec<AiAssistantRowWindowEntry>,
     #[serde(default)]
     pub rows: Vec<AiTranslationBatchRowInput>,
+    /// The rows are adjacent cues of a subtitle chapter, so the model may move
+    /// words between neighbouring rows.
+    #[serde(default)]
+    pub subtitle_cues: bool,
     #[serde(default)]
     pub installation_id: Option<i64>,
 }
@@ -401,6 +405,10 @@ pub struct AiReviewBatchRequest {
     pub context_after: Vec<AiAssistantRowWindowEntry>,
     #[serde(default)]
     pub rows: Vec<AiReviewBatchRowInput>,
+    /// The rows are adjacent cues of a subtitle chapter, whose translations may
+    /// have moved words between neighbouring rows.
+    #[serde(default)]
+    pub subtitle_cues: bool,
     #[serde(default)]
     pub installation_id: Option<i64>,
 }

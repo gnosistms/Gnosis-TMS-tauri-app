@@ -415,12 +415,184 @@ test("AI Translate All batches consecutive same-pair rows into one request", asy
 
   assert.equal(batchCalls.length, 1);
   assert.equal(batchCalls[0].rows.length, 3);
+  assert.equal(batchCalls[0].subtitleCues, undefined);
   assert.deepEqual(
     state.editorChapter.rows.map((row) => row.fields.vi),
     ["vi:Hola", "vi:Adios", "vi:Gracias"],
   );
   assert.equal(state.editorChapter.aiTranslateAllModal.isOpen, false);
   assert.equal(state.statusBadges.left.text, "AI translated 3 fields.");
+});
+
+function cueChapter(count, rowOverrides = () => ({})) {
+  const chapterState = batchChapter();
+  chapterState.sourceFormats = ["srt"];
+  chapterState.rows = Array.from({ length: count }, (_, index) => ({
+    rowId: `r${index}`,
+    lifecycleState: "active",
+    srtTiming: { startMs: index * 1000, endMs: index * 1000 + 900 },
+    fields: { es: `linea ${index}`, vi: "" },
+    ...rowOverrides(index),
+  }));
+  return chapterState;
+}
+
+function echoTranslation(rows) {
+  return {
+    rows: rows.map((row) => ({
+      rowId: row.rowId,
+      translatedText: `vi:${row.sourceText}`,
+      translatedFootnote: "",
+      translatedImageCaption: "",
+    })),
+    promptText: "P",
+  };
+}
+
+function sortedByFirstRow(requests) {
+  const firstIndex = (request) => Number(request.rows[0].rowId.slice(1));
+  return [...requests].sort((left, right) => firstIndex(left) - firstIndex(right));
+}
+
+test("AI Translate All batches adjacent subtitle cues up to 30 and flags them as cues", async () => {
+  resetSessionState();
+  editorAiTranslateAllTestApi.resetActiveBatchRunId();
+  // r5 is already translated (a gap in the work), r20 is deleted (not a gap:
+  // r19 and r21 are adjacent cues).
+  state.editorChapter = cueChapter(45, (index) => ({
+    lifecycleState: index === 20 ? "deleted" : "active",
+    fields: { es: `linea ${index}`, vi: index === 5 ? "đã dịch" : "" },
+  }));
+  const batchCalls = [];
+
+  await confirmEditorAiTranslateAll(
+    () => {},
+    batchOperations({
+      runAiTranslationBatch: async (request) => {
+        batchCalls.push(request);
+        return echoTranslation(request.rows);
+      },
+    }),
+  );
+
+  const batches = sortedByFirstRow(batchCalls);
+  assert.deepEqual(
+    batches.map((request) => [request.rows[0].rowId, request.rows.length, request.subtitleCues]),
+    [["r0", 5, true], ["r6", 30, true], ["r37", 8, true]],
+  );
+  assert.ok(!batches[1].rows.some((row) => row.rowId === "r20"));
+});
+
+test("AI Translate All splits subtitle batches at rows without SRT timing", async () => {
+  resetSessionState();
+  editorAiTranslateAllTestApi.resetActiveBatchRunId();
+  // A mixed chapter: r2 came from another source file and has no timing.
+  state.editorChapter = cueChapter(5, (index) => (index === 2 ? { srtTiming: null } : {}));
+  const batchCalls = [];
+
+  await confirmEditorAiTranslateAll(
+    () => {},
+    batchOperations({
+      runAiTranslationBatch: async (request) => {
+        batchCalls.push(request);
+        return echoTranslation(request.rows);
+      },
+    }),
+  );
+
+  assert.deepEqual(
+    sortedByFirstRow(batchCalls).map((request) => request.rows.map((row) => row.rowId)),
+    [["r0", "r1"], ["r3", "r4"]],
+  );
+});
+
+test("AI Translate All applies none of an incomplete subtitle response and retries the whole stretch", async () => {
+  resetSessionState();
+  editorAiTranslateAllTestApi.resetActiveBatchRunId();
+  state.editorChapter = cueChapter(4);
+  const batchCalls = [];
+  const writesBeforeRetry = [];
+
+  await confirmEditorAiTranslateAll(
+    () => {},
+    batchOperations({
+      runAiTranslationBatch: async (request) => {
+        batchCalls.push(request);
+        if (batchCalls.length === 1) {
+          // r0 is missing and r2 is blank (its words moved to a neighbour).
+          const response = echoTranslation(request.rows.filter((row) => row.rowId !== "r0"));
+          response.rows.find((row) => row.rowId === "r2").translatedText = "  ";
+          return response;
+        }
+        writesBeforeRetry.push(...state.editorChapter.rows.map((row) => row.fields.vi));
+        return echoTranslation(request.rows);
+      },
+    }),
+  );
+
+  assert.equal(batchCalls.length, 2);
+  assert.deepEqual(batchCalls[1].rows.map((row) => row.rowId), ["r0", "r1", "r2", "r3"]);
+  assert.equal(batchCalls[1].subtitleCues, true);
+  assert.deepEqual(writesBeforeRetry, ["", "", "", ""]);
+  assert.deepEqual(
+    state.editorChapter.rows.map((row) => row.fields.vi),
+    ["vi:linea 0", "vi:linea 1", "vi:linea 2", "vi:linea 3"],
+  );
+});
+
+test("AI Translate All retries a failed subtitle batch on the batch path before single rows", async () => {
+  resetSessionState();
+  editorAiTranslateAllTestApi.resetActiveBatchRunId();
+  state.editorChapter = cueChapter(3);
+  const batchCalls = [];
+  let singleRowCalls = 0;
+
+  await confirmEditorAiTranslateAll(
+    () => {},
+    batchOperations({
+      runAiTranslationBatch: async (request) => {
+        batchCalls.push(request);
+        if (batchCalls.length === 1) {
+          throw new Error("The AI translation returned an incomplete or extra-row batch.");
+        }
+        return echoTranslation(request.rows);
+      },
+      runEditorAiTranslateForContext: async () => {
+        singleRowCalls += 1;
+        return { ok: true };
+      },
+    }),
+  );
+
+  assert.equal(batchCalls.length, 2);
+  assert.equal(batchCalls[1].subtitleCues, true);
+  assert.equal(singleRowCalls, 0);
+  assert.deepEqual(
+    state.editorChapter.rows.map((row) => row.fields.vi),
+    ["vi:linea 0", "vi:linea 1", "vi:linea 2"],
+  );
+});
+
+test("AI Translate All leaves the neighbours of a subtitle cue changed mid-flight untranslated", async () => {
+  resetSessionState();
+  editorAiTranslateAllTestApi.resetActiveBatchRunId();
+  state.editorChapter = cueChapter(5);
+
+  await confirmEditorAiTranslateAll(
+    () => {},
+    batchOperations({
+      runAiTranslationBatch: async (request) => {
+        // The user types a translation into r2 while the call is in flight.
+        state.editorChapter.rows[2].fields.vi = "người dùng gõ";
+        return echoTranslation(request.rows);
+      },
+    }),
+  );
+
+  assert.deepEqual(
+    state.editorChapter.rows.map((row) => row.fields.vi),
+    ["vi:linea 0", "", "người dùng gõ", "", "vi:linea 4"],
+  );
 });
 
 test("AI Translate All saves each batch response as one grouped save, not per row", async () => {
