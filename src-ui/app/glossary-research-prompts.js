@@ -1,7 +1,7 @@
 // Prompt texts and strict JSON schemas for Glossary Research.
 // Bump RESEARCH_PROMPT_VERSION on any change that could alter a judgment.
 
-export const RESEARCH_PROMPT_VERSION = "2026-10-07.1";
+export const RESEARCH_PROMPT_VERSION = "2026-10-07.2";
 
 const STR = { type: "string" };
 const NSTR = { anyOf: [{ type: "string" }, { type: "null" }] };
@@ -192,8 +192,9 @@ export function originalCheckInstructions(ctx) {
 
 export const CANDIDATES_SCHEMA = object({
   senses: arrayOf(object({
+    senseId: STR,
     sense: STR,
-    candidates: arrayOf(object({ target: STR, recommended: { type: "boolean" }, note: STR, rationale: STR })),
+    groups: arrayOf(object({ members: arrayOf(STR), recommended: { type: "boolean" }, note: STR, rationale: STR })),
   })),
 });
 
@@ -201,11 +202,12 @@ export function candidatesInstructions(ctx) {
   return `You propose candidate ${ctx.targetName} translations of the ${ctx.sourceName} term “${ctx.headword}” for a translators' glossary. ${corpusLine(ctx)} Translators will choose among the candidates passage by passage, so the list must contain every rendering a careful translator could reasonably need, and each candidate needs a note saying when to use it.
 
 Rules:
-- Work sense by sense. A candidate must render the meaning the term has in these texts (the study of where the term comes from, when given, explains special senses).
+- Work sense by sense. A candidate must render the meaning the term has in these texts (the study of where the term comes from, when given, explains special senses). senseId: the id of the sense in the list of the term's senses below ("s1", …), or "none" for a sense not in that list.
+- GROUPS. Put renderings that a translator could use interchangeably for this sense in one group (members); start a separate group only where renderings differ in meaning, register, collocation or what they imply. Every rendering you consider goes into some group: nothing is dropped, and each group is later represented by the member whose general-usage frequency best fits the term. The note and rationale are written once per group.
 - Prefer renderings that translate the term's own meaning over substituting another term the author equates it with. A synonym names the same thing with a different word; list it only if a translator might really need it, and say in its note that it is a synonym and what is lost.
 - If a sense of the term is a translation of an original-language term and ${ctx.targetName} IS that original language, the original term must be one of the candidates for that sense.
 - Notes are written in ${ctx.targetName}, at most 40 words. Rationales are in ${ctx.reportName}, at most 25 words each. sense at most 20 words. ${quotationRules(ctx)}
-- Mark at most one candidate per sense as recommended.
+- Mark at most one group per sense as recommended.
 - A rendering must be understood by a general ${ctx.targetName} reader. A word built from parts works only if each part carries the needed sense in present-day general ${ctx.targetName} use, and a ${ctx.targetName} word that looks like the ${ctx.sourceName} word may not carry the sense used here. Include plain renderings and phrases as well as specialist terms and look-alikes: every candidate is checked afterwards against general-usage frequencies, sense by sense.`;
 }
 
@@ -245,7 +247,7 @@ Principles:
 - The dictionary sense inventory (below) is the starting lexical source; the texts decide which senses are attested. A meaning outside the dictionary goes in sensesOutsideDictionary, never presented as a dictionary sense.
 - ENTRIES. An entry is one TMX unit: a group of ${ctx.sourceName} source terms that share one set of ${ctx.targetName} translations. Group source forms together only when ${ctx.targetName} does not need to distinguish them; split them when ${ctx.targetName} keeps the distinction. Example: Spanish negro/negra/negros/negras → English "black" is one entry; Spanish llave → English "key" and llaves → "keys" are two entries, because English never renders a plural as a singular; Spanish llave/llaves → Vietnamese "chìa khóa" is one entry, because Vietnamese nouns do not mark number. Every confirmed form belongs to exactly one word entry.
 - Variants are distinct ${ctx.targetName} choices a translator picks between. Merge near-synonyms that serve the same contexts; keep variants that serve genuinely different contexts or collocations. Typically 2–7 per entry, ordered by how broadly they apply.
-- START FROM THE CANDIDATE STUDY: its candidates were chosen for the term as a whole, from the study of where the term comes from. Keep its recommended candidates unless the readings show they fail.
+- START FROM THE CANDIDATE STUDY: its candidates were chosen for the term as a whole, from the study of where the term comes from. They come in groups of interchangeable renderings, each shown by its representative with the other members after "also"; a group is one option, not several. Keep its recommended groups unless the readings show they fail. A non-representative member may replace its representative when the readings favour it.
 - Every rendering the open reading used two or more times (see the rendering tally) must be a variant, or be listed in leftOutRenderings with its count and the reason it should not be measured (e.g. it is a synonym the author equates the term with, not a translation of it).
 - Prefer renderings of the term's own meaning over another term the author equates it with; such a synonym is a variant only if translators really need it, and its note says so.
 - If the term translates an original-language term and ${ctx.targetName} is that original language, the original term must be a variant.

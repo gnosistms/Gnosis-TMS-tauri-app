@@ -5,6 +5,8 @@ import {
   accentCounterparts,
   createResearchEngine,
   failedVariants,
+  looksLike,
+  pickRepresentative,
   transferAccents,
   unmeasuredRenderings,
   validateProposal,
@@ -127,7 +129,7 @@ function fakeModel({ failFirstCounting = false } = {}) {
       } else if (request.stage === "sources") {
         out = { summary: "From the source book.", senses: [{ sense: "the Fatal (noun)", inDictionary: false, sourceBook: "Libro fuente — M.", evidence: "named by the author", originalLanguage: "en", originalTerm: "Fateful One", originalTermBasis: "the book's glossary pairs", meaningInSource: "a guide", authorUsage: "follows it", equivalences: [] }] };
       } else if (request.stage === "candidates") {
-        out = { senses: [{ sense: "the Fatal (noun)", candidates: [{ target: "the Fateful One", recommended: true, note: "noun", rationale: "original term" }] }] };
+        out = { senses: [{ senseId: "s1", sense: "the Fatal (noun)", groups: [{ members: ["the Fateful One"], recommended: true, note: "noun", rationale: "original term" }] }] };
       } else if (request.stage === "family") {
         out = { words: [{ form: "fatalmente", kind: "suffixed", reason: "adverb" }, { form: "sobrefatal", kind: "prefixed", reason: "test" }] };
       } else if (request.stage === "parts") {
@@ -380,9 +382,9 @@ function lookalikeModel() {
     async call(request, onDelta) {
       if (request.stage === "candidates") {
         base.calls.push(request.stage);
-        return { status: "ok", text: JSON.stringify({ senses: [{ sense: "inevitable", candidates: [
-          { target: "fatal", recommended: false, note: "n", rationale: "r" },
-          { target: "fateful", recommended: true, note: "n", rationale: "r" },
+        return { status: "ok", text: JSON.stringify({ senses: [{ senseId: "s1", sense: "inevitable", groups: [
+          { members: ["fateful"], recommended: true, note: "n", rationale: "r" },
+          { members: ["fatal"], recommended: false, note: "n", rationale: "r" },
         ] }] }), usage: { inputTokens: 10, outputTokens: 10 } };
       }
       if (request.stage === "checks") {
@@ -457,4 +459,20 @@ test("failedVariants finds failed candidates and coinages built on a failed word
   const found = failedVariants(proposal, { failedWords: ["word"], failedTargets: [] });
   assert.deepEqual(found.map((f) => f.variantId), ["a", "c"]);
   assert.deepEqual(failedVariants(proposal, null), []);
+});
+
+test("a group is represented by the member whose score fits the source sense", () => {
+  const scores = { terrible: 4.7, awful: 4.5, dreadful: 3.6, atrocious: 3.1 };
+  const pick = (target) => pickRepresentative(["atrocious", "dreadful", "awful", "terrible"], (m) => scores[m], target);
+  assert.equal(pick(3.5), "dreadful", "closest, not below by more than half a point");
+  assert.equal(pick(4.68), "terrible");
+  assert.equal(pick(null), "terrible", "no source score: the best-known member");
+  assert.equal(pick(6), "terrible", "nothing close: the best-known member");
+});
+
+test("looksLike flags renderings that share the start of a source word", () => {
+  assert.ok(looksLike("fateful", ["fatal"]));
+  assert.ok(looksLike("supersensible", ["suprasensible", "sensible"]));
+  assert.ok(!looksLike("deadly", ["fatal"]));
+  assert.ok(!looksLike("unseen worlds", ["suprasensible"]));
 });
