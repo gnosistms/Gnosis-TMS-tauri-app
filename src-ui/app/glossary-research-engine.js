@@ -24,6 +24,7 @@ import {
   snippet,
 } from "./glossary-research-occurrences.js";
 import * as prompts from "./glossary-research-prompts.js";
+import { coOccurrence, convergenceContent, sharedRenderings } from "./glossary-research-convergence.js";
 import { aggregateCounts, mergeJudgeCountings } from "./glossary-research-aggregate.js";
 import {
   MIN_SENSE_SAMPLE,
@@ -113,6 +114,30 @@ export function failedVariants(proposal, checks) {
     }
   }
   return found;
+}
+
+/**
+ * Family members grouped by word (a member found through another member's
+ * inflections belongs to it). Prefixed words, compounds and phrases are
+ * suggested for study; suffixed words usually belong to their own studies.
+ */
+export function familyGroups(members) {
+  const groups = new Map();
+  for (const member of members.filter((m) => !m.of)) {
+    groups.set(fold(member.form).trim(), { form: member.form, kind: member.kind, rows: member.rows, forms: [member.form] });
+  }
+  for (const member of members.filter((m) => m.of)) {
+    const group = groups.get(fold(member.of).trim());
+    if (group) {
+      group.forms.push(member.form);
+      group.rows += member.rows;
+    } else {
+      groups.set(fold(member.form).trim(), { form: member.form, kind: member.kind, rows: member.rows, forms: [member.form] });
+    }
+  }
+  return [...groups.values()]
+    .map((group) => ({ ...group, suggested: ["prefixed", "compound", "phrase"].includes(group.kind) }))
+    .sort((a, b) => b.rows - a.rows);
 }
 
 export class ResearchStop extends Error {
@@ -597,12 +622,12 @@ export function createResearchEngine(deps) {
       ], (w) => w.form).filter((w) => !known.has(fold(w.form).trim())).slice(0, 45);
       const members = [];
       const found = new Set(known);
-      const add = async (form, kind) => {
+      const add = async (form, kind, of = null) => {
         const key = fold(form).trim();
         if (!key || found.has(key)) return false;
         found.add(key);
         const count = await corpus.countForm(form).catch(() => ({ rows: 0 }));
-        if (count.rows) members.push({ form, kind, rows: count.rows });
+        if (count.rows) members.push({ form, kind, rows: count.rows, ...(of ? { of } : {}) });
         return count.rows > 0;
       };
       for (const candidate of candidates) {
@@ -612,7 +637,7 @@ export function createResearchEngine(deps) {
           const hint = await corpus.formsHint(candidate.form).catch(() => null);
           // Rare words may have no inflection links in the word list; their plurals
           // then appear among the words that extend their stem.
-          for (const f of [...(hint?.forms ?? []), ...(hint?.related ?? [])]) await add(f.form, candidate.kind);
+          for (const f of [...(hint?.forms ?? []), ...(hint?.related ?? [])]) await add(f.form, candidate.kind, candidate.form);
         }
       }
       members.sort((a, b) => b.rows - a.rows);
@@ -620,6 +645,21 @@ export function createResearchEngine(deps) {
         ? `Word family in the texts: ${members.map((m) => `${m.form} (${m.rows})`).join(", ")}`
         : "No other words built on the term occur in the texts.");
       return { members, searched: candidates.length };
+    });
+  }
+
+  /** The person ticks the related words to research after this one, each as its own entry. */
+  async function chooseFamily() {
+    return stage("familyChoice", async () => {
+      if (!deps.chooseFamily || settings.familyBatch) return { words: [] };
+      const groups = familyGroups(store.load("family")?.members ?? []);
+      if (!groups.length) return { words: [] };
+      const words = await deps.chooseFamily({ term: settings.term, groups });
+      if (cancelled || words == null) throw new ResearchStop("Research was cancelled.", "cancelled");
+      fact(words.length
+        ? `Related words to research next, one after another: ${words.map((w) => w.form).join(", ")}`
+        : "No related words chosen for research.");
+      return { words };
     });
   }
 
@@ -1229,36 +1269,102 @@ export function createResearchEngine(deps) {
   async function propose() {
     return stage("proposal", async () => {
       heading("Proposal");
-      const proposal = await client.callJson({
-        stage: "proposal", purpose: "consolidate variants, notes and entries",
-        instructions: prompts.proposalInstructions(ctx()), content: proposalContent(),
-        schema: prompts.PROPOSAL_SCHEMA, schemaName: "proposal",
-        maxOutputTokens: 24000, effort: settings.effortProposal,
-      });
-      for (const entry of proposal.entries) {
-        // Matching ignores case: one spelling per word.
-        entry.sourceTerms = mergeCaseVariants(entry.sourceTerms.map((form) => ({ form })), (f) => f.form).map((f) => f.form);
+      return makeProposal();
+    });
+  }
+
+  async function makeProposal(extraLines = []) {
+    const proposal = await client.callJson({
+      stage: "proposal", purpose: extraLines.length ? "revise the proposal for shared translations" : "consolidate variants, notes and entries",
+      instructions: prompts.proposalInstructions(ctx()), content: [proposalContent(), ...extraLines].join("\n"),
+      schema: prompts.PROPOSAL_SCHEMA, schemaName: "proposal",
+      maxOutputTokens: 24000, effort: settings.effortProposal,
+    });
+    for (const entry of proposal.entries) {
+      // Matching ignores case: one spelling per word.
+      entry.sourceTerms = mergeCaseVariants(entry.sourceTerms.map((form) => ({ form })), (f) => f.form).map((f) => f.form);
+    }
+    const existingTargets = settings.existingEntries.flatMap((entry) => entry.targetTerms);
+    for (const entry of proposal.entries) {
+      for (const variant of entry.variants) {
+        variant.fromExisting = existingTargets.some((target) => fold(target).trim() === fold(variant.target).trim());
       }
-      const existingTargets = settings.existingEntries.flatMap((entry) => entry.targetTerms);
-      for (const entry of proposal.entries) {
-        for (const variant of entry.variants) {
-          variant.fromExisting = existingTargets.some((target) => fold(target).trim() === fold(variant.target).trim());
+    }
+    // A rendering whose check failed never reaches counting; the review pause can put it back.
+    for (const removed of failedVariants(proposal, store.load("checks"))) {
+      const entry = proposal.entries.find((e) => e.id === removed.entryId);
+      entry.variants = entry.variants.filter((v) => v.id !== removed.variantId);
+      (proposal.removedByChecks ??= []).push(removed);
+      log({ type: "problem", text: `Removed “${removed.target}” from entry ${removed.entryId}: it contains “${removed.word}”, whose frequency check failed.` });
+    }
+    const problems = validateProposal(proposal, store.load("forms").confirmed);
+    problems.push(...unmeasuredRenderings(proposal, store.load("discovery")));
+    if (problems.length) info(`proposal notes: ${problems.join("; ")}`);
+    fact(`${proposal.entries.length} proposed entr${proposal.entries.length === 1 ? "y" : "ies"}: ${proposal.entries.map((e) => `${e.sourceTerms.join("/")} → ${e.variants.map((v) => v.target).join(", ")}`).join(" | ")}`);
+    for (const item of proposal.leftOutRenderings ?? []) info(`not measured: ${item.rendering} (${item.count}) — ${item.reason}`);
+    proposal.existingComparison = await compareWithExisting(proposal);
+    return proposal;
+  }
+
+  /**
+   * Renderings this proposal shares with another source word: an entry of the
+   * glossary, a related word studied just before, or another entry of the
+   * proposal. Sharing is fine when the two mean the same here; when they
+   * differ, the proposal is revised once without the shared rendering.
+   */
+  async function checkConvergence(proposal) {
+    return stage("convergence", async () => {
+      const own = new Set([...(store.load("forms")?.confirmed ?? []), ...(settings.familyForms ?? [])].map((f) => fold(f).trim()));
+      const others = [
+        ...(settings.siblingEntries ?? []).map((entry) => ({ ...entry, origin: "family" })),
+        ...glossaryTerms
+          .filter((term) => !(term.sourceTerms ?? []).some((t) => own.has(fold(t).trim())))
+          .map((term) => ({ ...term, origin: "glossary" })),
+      ];
+      const pairs = sharedRenderings(proposal, others);
+      if (!pairs.length) return { pairs: [], conflicts: [], proposal: null };
+      heading("Shared translations");
+      const items = Object.values(store.load("sample")?.items ?? {});
+      for (const pair of pairs) pair.evidence = coOccurrence(items, pair.sourceTerms, pair.otherSourceTerms, settings.sourceLanguageCode);
+      const verdict = await client.callJson({
+        stage: "convergence", purpose: "decide whether words sharing a translation mean the same",
+        instructions: prompts.convergenceInstructions(ctx()),
+        content: convergenceContent(pairs, { targetName: settings.targetLanguageName, dictionaryText: dictionaryText() }),
+        schema: prompts.CONVERGENCE_SCHEMA, schemaName: "convergence",
+        maxOutputTokens: 800 + 200 * pairs.length, effort: settings.effortLight,
+      }).catch((error) => {
+        info(`shared translations not judged: ${error.message}`);
+        return { pairs: [] };
+      });
+      const byN = new Map(verdict.pairs.map((item) => [item.n, item]));
+      pairs.forEach((pair, index) => {
+        const item = byN.get(index + 1);
+        pair.relation = item?.relation ?? "unknown";
+        pair.basis = item?.evidence ?? "";
+        pair.reason = item?.reason ?? "";
+        const both = `${pair.evidence.passages} sampled passages with both${pair.evidence.sameSentence ? `, ${pair.evidence.sameSentence} in one sentence` : ""}`;
+        fact(`“${pair.target}” for “${pair.sourceTerms[0]}” and “${pair.otherSourceTerms[0]}”: ${pair.relation === "same" ? "same meaning here, sharing is fine" : pair.relation === "different" ? "different meanings" : "not judged"} (${both})${pair.reason ? `. ${pair.reason}` : ""}`);
+      });
+      const conflicts = pairs.filter((pair) => pair.relation === "different");
+      if (!conflicts.length) return { pairs, conflicts, proposal: null };
+      const revised = await makeProposal([
+        "",
+        "SHARED TRANSLATIONS TO AVOID (another source word with a different meaning already has these renderings; do not use them for the entries named; take another rendering from the candidate study):",
+        ...conflicts.map((pair) => `- “${pair.target}” for “${pair.sourceTerms.join(" / ")}”: already used for “${pair.otherSourceTerms.join(" / ")}”, which means something different (${pair.reason})`),
+      ]);
+      // The revision must not bring a merged rendering back.
+      for (const pair of conflicts) {
+        const entry = revised.entries.find((e) => e.sourceTerms.some((t) => pair.sourceTerms.some((s) => fold(s).trim() === fold(t).trim())));
+        const kept = entry?.variants.filter((v) => fold(v.target).trim() !== fold(pair.target).trim());
+        if (!entry || kept.length === entry.variants.length) continue;
+        if (kept.length) {
+          entry.variants = kept;
+          log({ type: "problem", text: `Removed “${pair.target}” from entry ${entry.id}: “${pair.otherSourceTerms[0]}” already has it and means something different.` });
+        } else {
+          log({ type: "problem", text: `Entry ${entry.id} has no rendering besides “${pair.target}”, which “${pair.otherSourceTerms[0]}” already has with a different meaning; review it before counting.` });
         }
       }
-      // A rendering whose check failed never reaches counting; the review pause can put it back.
-      for (const removed of failedVariants(proposal, store.load("checks"))) {
-        const entry = proposal.entries.find((e) => e.id === removed.entryId);
-        entry.variants = entry.variants.filter((v) => v.id !== removed.variantId);
-        (proposal.removedByChecks ??= []).push(removed);
-        log({ type: "problem", text: `Removed “${removed.target}” from entry ${removed.entryId}: it contains “${removed.word}”, whose frequency check failed.` });
-      }
-      const problems = validateProposal(proposal, store.load("forms").confirmed);
-      problems.push(...unmeasuredRenderings(proposal, store.load("discovery")));
-      if (problems.length) info(`proposal notes: ${problems.join("; ")}`);
-      fact(`${proposal.entries.length} proposed entr${proposal.entries.length === 1 ? "y" : "ies"}: ${proposal.entries.map((e) => `${e.sourceTerms.join("/")} → ${e.variants.map((v) => v.target).join(", ")}`).join(" | ")}`);
-      for (const item of proposal.leftOutRenderings ?? []) info(`not measured: ${item.rendering} (${item.count}) — ${item.reason}`);
-      proposal.existingComparison = await compareWithExisting(proposal);
-      return proposal;
+      return { pairs, conflicts, proposal: revised };
     });
   }
 
@@ -1301,7 +1407,10 @@ export function createResearchEngine(deps) {
       await lookUpDictionary();
       await findForms();
       const fresh = store.load("proposal") == null;
-      if (fresh) await findFamily();
+      if (fresh) {
+        await findFamily();
+        await chooseFamily();
+      }
       await drawSample();
       // Runs saved before these steps existed already have a proposal: the
       // studies would feed nothing, so they are not run for them.
@@ -1312,12 +1421,16 @@ export function createResearchEngine(deps) {
         await checkCandidates();
       }
       await discover();
-      const proposal = await propose();
+      let proposal = await propose();
+      if (fresh || store.load("convergence")) {
+        const convergence = await checkConvergence(proposal);
+        if (convergence.proposal) proposal = convergence.proposal;
+      }
       if (fresh && settings.pauseForReview) {
         heading("Review");
         fact("Waiting for you to review the proposed translations before counting.");
       }
-      return { status: "review", proposal, spent: budget.spent };
+      return { status: "review", proposal, familyWords: store.load("familyChoice")?.words ?? [], spent: budget.spent };
     } finally {
       saveUsage();
     }

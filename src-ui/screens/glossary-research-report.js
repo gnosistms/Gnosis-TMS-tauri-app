@@ -198,6 +198,23 @@ function renderFrequency(run) {
     </section>`;
 }
 
+function renderConvergence(run) {
+  const pairs = run.convergence?.pairs ?? [];
+  if (!pairs.length) return "";
+  const src = run.meta.sourceLanguage;
+  const tgt = run.meta.targetLanguage;
+  const verdict = { same: "same meaning here: sharing is fine", different: "different meanings: taken out of the proposal", unknown: "not judged" };
+  return `
+    <section class="card research-section">
+      <h2>Translations shared with other words</h2>
+      <p class="muted">Two words may share a translation when they mean the same in these texts; if both stand in one sentence, the translator says it once. When they mean different things, the shared translation would merge them.</p>
+      <ul>
+        ${pairs.map((p) => `<li><strong lang="${esc(tgt.code)}">${esc(p.target)}</strong> for <span lang="${esc(src.code)}">${esc(p.sourceTerms[0])}</span> and <span lang="${esc(src.code)}">${esc(p.otherSourceTerms[0])}</span>: ${esc(verdict[p.relation] ?? p.relation)}
+          <br><span class="muted">${p.evidence?.passages ?? 0} sampled passages with both${p.evidence?.sameSentence ? `, ${p.evidence.sameSentence} in one sentence` : ""}${p.reason ? `. ${esc(p.reason)}` : ""}</span></li>`).join("")}
+      </ul>
+    </section>`;
+}
+
 function renderSecondary(run) {
   const meta = run.meta;
   const totals = run.aggregate.totals;
@@ -225,6 +242,7 @@ function renderSecondary(run) {
   return `
     ${sources}
     ${renderFrequency(run)}
+    ${renderConvergence(run)}
     ${run.prose ? `<section class="card research-section"><h2>Summary</h2><p>${esc(run.prose.summary)}</p>
       ${run.prose.recommendations?.length ? `<ul>${run.prose.recommendations.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>` : ""}</section>` : ""}
     <section class="card research-section">

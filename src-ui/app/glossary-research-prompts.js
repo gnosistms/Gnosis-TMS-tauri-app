@@ -1,7 +1,7 @@
 // Prompt texts and strict JSON schemas for Glossary Research.
 // Bump RESEARCH_PROMPT_VERSION on any change that could alter a judgment.
 
-export const RESEARCH_PROMPT_VERSION = "2026-10-07.6";
+export const RESEARCH_PROMPT_VERSION = "2026-10-07.7";
 
 const STR = { type: "string" };
 const NSTR = { anyOf: [{ type: "string" }, { type: "null" }] };
@@ -416,4 +416,17 @@ export const FOOTNOTE_SCHEMA = object({
 
 export function footnoteInstructions(ctx) {
   return `These ${ctx.targetName} translations of the ${ctx.sourceName} term “${ctx.headword}” were chosen by translators but are rare in general ${ctx.targetName} use. For each, decide whether a general reader understands it from its parts. If not, write a translator's note in ${ctx.targetName}, at most 40 words, saying what it means in these texts, to be printed at its first occurrence in a book; otherwise leave note empty. ${quotationRule(ctx.targetName, ctx.targetCode)}`;
+}
+
+// --- two source words with one translation ------------------------------------------
+
+export const CONVERGENCE_SCHEMA = object({
+  pairs: arrayOf(object({ n: { type: "integer" }, relation: oneOf("same", "different"), evidence: oneOf("dictionary", "passages", "knowledge"), reason: STR })),
+});
+
+export function convergenceInstructions(ctx) {
+  return `Each numbered pair below is two ${ctx.sourceName} words or expressions that would get the same ${ctx.targetName} translation. ${corpusLine(ctx)} For each pair decide whether one translation for both erases a difference the author makes.
+relation "same": in these texts the two say the same thing, so a reader loses nothing when both are translated alike. Words the passages use as equivalents count as "same" even when both stand in one sentence: the translator then says it once.
+relation "different": they mean different things here, or the author sets them against each other or distinguishes them, so one translation for both would merge two ideas. Signs: a dictionary sense of one that the other lacks and that the author uses; passages that contrast or distinguish them; what you know of both words.
+evidence: what decided it (dictionary, passages, or knowledge). reason: one sentence in ${ctx.reportName}. Answer every pair once, by its number.`;
 }

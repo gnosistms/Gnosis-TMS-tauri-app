@@ -40,12 +40,13 @@ const MAX_LOG_EVENTS = 4000;
 const STAGE_PROGRESS = {
   Dictionary: 0.04, "Word forms": 0.08, "Word family": 0.11, Sampling: 0.14, "Where the term comes from": 0.18,
   "Parts and frequency": 0.23, "Candidate translations": 0.28, "Candidate checks": 0.32, Discovery: 0.36,
-  Proposal: 0.43, "Existing glossary entry": 0.47, Review: 0.5, Counting: 0.52, "Counting (second judge)": 0.72,
+  Proposal: 0.43, "Existing glossary entry": 0.46, "Shared translations": 0.48, Review: 0.5, Counting: 0.52, "Counting (second judge)": 0.72,
   "Rare translations": 0.92, Summary: 0.95, Done: 1,
 };
 
 let activeRun = null; // { engine, requestIds:Set, unlisten, store, context }
 let activeRunCleanup = null;
+let pendingFamilyChoice = null; // resolves the engine's question about related words
 
 /** Download progress of a language's frequency data, as log lines (one per ~10 MB). */
 function listenForDataDownloads(render) {
@@ -182,7 +183,7 @@ export function openGlossaryResearch(render, { term = "", origin = null } = {}) 
 }
 
 export function closeGlossaryResearch(render) {
-  if (activeRun && ["running", "counting"].includes(research().runStatus)) {
+  if (activeRun && ["running", "counting", "family"].includes(research().runStatus)) {
     cancelGlossaryResearchRun(render);
   }
   const origin = research().origin;
@@ -470,7 +471,7 @@ function engineSettings(draft, languages) {
   };
 }
 
-async function beginResearchRun(render, resume = null) {
+async function beginResearchRun(render, resume = null, family = null) {
   const draft = research();
   const team = selectedTeam();
   const installationId = selectedProjectsTeamInstallationId() ?? team?.installationId;
@@ -494,7 +495,7 @@ async function beginResearchRun(render, resume = null) {
     sampleSize: draft.sampleSize, spendingLimitUsd: draft.spendingLimitUsd, seed: draft.seed || "1",
     providerId: status.providerId, modelId: status.modelId,
     existingTermIds: draft.existingMatches.map((term) => term.termId),
-    settings: engineSettings(draft, languages),
+    settings: { ...engineSettings(draft, languages), ...(family ?? {}) },
     startedAt: new Date().toISOString(), status: "running",
   };
   meta.settings.spendingLimitUsd = draft.spendingLimitUsd;
@@ -517,7 +518,15 @@ async function beginResearchRun(render, resume = null) {
     log: (event) => onEngineLog(render, event),
     settings: meta.settings,
     languageData,
-    glossaryTerms: (state.glossaryEditor?.terms ?? []).map((term) => ({ sourceTerms: term.sourceTerms ?? [], targetTerms: term.targetTerms ?? [] })),
+    glossaryTerms: (state.glossaryEditor?.terms ?? []).map((term) => ({
+      sourceTerms: term.sourceTerms ?? [], targetTerms: term.targetTerms ?? [],
+      notes: term.targetVariantNotes ?? [], note: term.notesToTranslators ?? "",
+    })),
+    chooseFamily: ({ groups }) => new Promise((resolve) => {
+      Object.assign(research(), { runStatus: "family", familyGroups: groups, familyTicked: groups.map((group) => group.suggested) });
+      pendingFamilyChoice = resolve;
+      render();
+    }),
   });
   activeRunCleanup = stopProgress;
   activeRun = { engine, requestIds, store, runId, glossaryId, installationId, meta };
@@ -534,6 +543,12 @@ async function beginResearchRun(render, resume = null) {
     draft.proposalDraft = structuredClone(result.proposal);
     meta.status = "review";
     store.save("meta", meta);
+    if (!meta.settings.familyBatch && result.familyWords?.length && !draft.familyQueue) {
+      draft.familyQueue = {
+        headword: meta.term, words: structuredClone(result.familyWords), siblings: [],
+        familyForms: [...(store.load("forms")?.confirmed ?? []), ...result.familyWords.flatMap((word) => word.forms)],
+      };
+    }
   } catch (error) {
     handleRunStop(render, error, store, meta);
   }
@@ -569,6 +584,11 @@ function handleRunStop(render, error, store, meta) {
 
 export function cancelGlossaryResearchRun(render) {
   if (!activeRun) return;
+  research().familyQueue = null;
+  if (pendingFamilyChoice) {
+    pendingFamilyChoice(null);
+    pendingFamilyChoice = null;
+  }
   activeRun.engine.cancel();
   for (const requestId of activeRun.requestIds) {
     void invoke("cancel_glossary_research_request", { requestId }).catch(() => {});
@@ -779,6 +799,7 @@ export async function countGlossaryResearch(render) {
     store.save("meta", meta);
     draft.runStatus = "done";
     draft.progress = 1;
+    if (draft.familyQueue) queueSiblings(draft.familyQueue, store);
   } catch (error) {
     if (/cannot be counted/.test(error.message)) {
       draft.runStatus = "review";
@@ -791,6 +812,64 @@ export async function countGlossaryResearch(render) {
   store.save("log", draft.log);
   await store.flush();
   render();
+  if (draft.runStatus === "done" && draft.familyQueue) await researchNextFamilyWord(render);
+}
+
+// --- related words, researched one after another ---------------------------------
+
+export function toggleResearchFamilyWord(render, index) {
+  const draft = research();
+  if (!draft.familyTicked || index < 0 || index >= draft.familyTicked.length) return;
+  draft.familyTicked[index] = !draft.familyTicked[index];
+  render();
+}
+
+export function continueResearchFamily(render) {
+  const draft = research();
+  if (!pendingFamilyChoice) return;
+  const chosen = (draft.familyGroups ?? []).filter((_, index) => draft.familyTicked?.[index]);
+  const resolve = pendingFamilyChoice;
+  pendingFamilyChoice = null;
+  draft.runStatus = "running";
+  render();
+  resolve(chosen.map(({ form, forms, kind }) => ({ form, forms, kind })));
+}
+
+/** The finished run's translations, for the related words researched after it. */
+function queueSiblings(queue, store) {
+  const frozen = store.load("frozen");
+  const aggregate = store.load("aggregate");
+  for (const entry of frozen?.entries ?? []) {
+    const counts = aggregate?.entries?.[entry.id]?.variants ?? {};
+    const chosen = entry.variants.filter((variant) => (counts[variant.id]?.occurrences ?? 0) > 0);
+    const variants = chosen.length ? chosen : entry.variants;
+    queue.siblings.push({
+      sourceTerms: entry.sourceTerms,
+      targetTerms: variants.map((variant) => variant.target),
+      notes: variants.map((variant) => variant.note ?? ""),
+    });
+  }
+}
+
+async function researchNextFamilyWord(render) {
+  const draft = research();
+  const queue = draft.familyQueue;
+  const next = queue?.words.shift();
+  if (!next) {
+    draft.familyQueue = null;
+    render();
+    return;
+  }
+  Object.assign(draft, {
+    term: next.form,
+    variants: next.forms.filter((form) => fold(form).trim() !== fold(next.form).trim()),
+    existingMatches: findExistingResearchEntries(next.forms),
+    proposalDraft: null, reviewError: "", runError: "", stopKind: "",
+  });
+  await beginResearchRun(render, null, {
+    familyBatch: true, familyHeadword: queue.headword,
+    siblingEntries: structuredClone(queue.siblings), familyForms: queue.familyForms,
+  });
 }
 
 // --- past runs ------------------------------------------------------------------

@@ -7,6 +7,7 @@ import {
   closeGlossaryResearch,
   closeResearchLanguagePicker,
   closeResearchProjectPicker,
+  continueResearchFamily,
   countGlossaryResearch,
   openGlossaryResearch,
   openResearchLanguagePicker,
@@ -25,6 +26,7 @@ import {
   toggleResearchLog,
   toggleResearchRequest,
   toggleResearchPickerProject,
+  toggleResearchFamilyWord,
 } from "../glossary-research-flow.js";
 import {
   addResearchEntryVariant,
@@ -65,6 +67,7 @@ export function createGlossaryResearchActions(render) {
     "toggle-all-research-picker-projects": () => toggleAllResearchPickerProjects(render),
     "cancel-glossary-research-run": () => cancelGlossaryResearchRun(render),
     "count-glossary-research": () => countGlossaryResearch(render),
+    "continue-research-family": () => continueResearchFamily(render),
     "raise-research-limit": () => raiseResearchLimitAndContinue(render),
     "close-research-report": () => closeResearchReport(render),
     "copy-research-markdown": () => copyResearchMarkdown(render),
@@ -80,6 +83,7 @@ export function createGlossaryResearchActions(render) {
     ["set-research-source-mode:", (rest) => setResearchSourceMode(render, rest)],
     ["select-research-picker-language:", (rest) => selectResearchPickerLanguage(render, rest)],
     ["toggle-research-picker-project:", (rest) => toggleResearchPickerProject(render, rest)],
+    ["toggle-research-family:", (rest) => toggleResearchFamilyWord(render, Number.parseInt(rest, 10))],
     ["open-research-report:", (rest) => openResearchReport(render, rest)],
     ["resume-research-run:", (rest) => resumeGlossaryResearchRun(render, rest)],
     ["remove-research-entry:", (rest) => removeResearchProposalEntry(render, Number.parseInt(rest, 10))],

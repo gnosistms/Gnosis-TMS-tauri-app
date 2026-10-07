@@ -5,6 +5,7 @@ import {
   accentCounterparts,
   createResearchEngine,
   failedVariants,
+  familyGroups,
   looksLike,
   pickRepresentative,
   transferAccents,
@@ -19,6 +20,7 @@ import {
   worstCaseCost,
 } from "./glossary-research-budget.js";
 import { buildOccurrences, sentenceBounds } from "./glossary-research-occurrences.js";
+import { coOccurrence, sharedRenderings } from "./glossary-research-convergence.js";
 
 const PRICES = modelPrices("claude", "claude-opus-5-5");
 
@@ -107,7 +109,7 @@ const PROPOSAL = {
   sensesOutsideDictionary: [], openQuestions: [],
 };
 
-function fakeModel({ failFirstCounting = false } = {}) {
+function fakeModel({ failFirstCounting = false, relation = "same" } = {}) {
   const calls = [];
   let countingCalls = 0;
   return {
@@ -139,6 +141,8 @@ function fakeModel({ failFirstCounting = false } = {}) {
       } else if (request.stage === "frequency") {
         const n = [...request.content.matchAll(/^(\d+)\. /gm)].length;
         out = { items: Array.from({ length: n }, (_, i) => ({ n: i + 1, sense: i % 4 === 0 ? "other" : "needed" })) };
+      } else if (request.stage === "convergence") {
+        out = { pairs: [...request.content.matchAll(/^\[(\d+)\](.*)$/gm)].map((m) => ({ n: Number(m[1]), relation: typeof relation === "function" ? relation(m[2]) : relation, evidence: "knowledge", reason: "test" })) };
       } else if (request.stage === "footnotes") {
         out = { items: [] };
       } else if (request.stage === "comparison") {
@@ -173,11 +177,11 @@ function memoryStore(initial = {}) {
   return { data, load: (name) => data[name], save: (name, value) => { data[name] = value; } };
 }
 
-function engine({ model = fakeModel(), store = memoryStore(), limit = 4, items = passages(40), log = () => {}, corpus = fakeCorpus(items), judges = 1, languageData = null, glossaryTerms = [] } = {}) {
+function engine({ model = fakeModel(), store = memoryStore(), limit = 4, items = passages(40), log = () => {}, corpus = fakeCorpus(items), judges = 1, languageData = null, glossaryTerms = [], chooseFamily = undefined } = {}) {
   return {
     model, store, corpus,
     engine: createResearchEngine({
-      model, prices: PRICES, corpus, dictionary, store, log, languageData, glossaryTerms,
+      model, prices: PRICES, corpus, dictionary, store, log, languageData, glossaryTerms, chooseFamily,
       settings: {
         judges, sourceLanguageCode: "es",
         term: "fatal", variants: [], existingEntries: [{ sourceTerms: ["fatal"], targetTerms: ["fateful"], targetVariantNotes: [""], notesToTranslators: "" }],
@@ -507,4 +511,78 @@ test("a calque built on a base word of the source term has that base measured", 
   assert.ok(check.words.some((w) => w.word === "fatal" && w.measure), "the base word is measured");
   assert.equal(check.verdict, "fail");
   assert.ok(store.data.checks.failedWords.includes("fatal"));
+});
+
+test("family members are grouped by word; prefixed words are suggested for study", () => {
+  const groups = familyGroups([
+    { form: "fatalmente", kind: "suffixed", rows: 4 },
+    { form: "sobrefatal", kind: "prefixed", rows: 3 },
+    { form: "sobrefatales", kind: "prefixed", rows: 2, of: "sobrefatal" },
+  ]);
+  assert.deepEqual(groups.map((g) => [g.form, g.forms, g.rows, g.suggested]), [
+    ["sobrefatal", ["sobrefatal", "sobrefatales"], 5, true],
+    ["fatalmente", ["fatalmente"], 4, false],
+  ]);
+});
+
+test("co-occurrence counts passages and sentences; a word inside a longer phrase counts as the phrase", () => {
+  const items = [
+    { text: "El mundo sensible es ilusorio. Lo suprasensible es real." },
+    { text: "Lo sensible y lo suprasensible se unen aquí." },
+    { text: "Solo lo suprasensible." },
+  ];
+  assert.equal(coOccurrence(items, ["suprasensible"], ["sensible"], "es").passages, 2);
+  const phrase = coOccurrence(items, ["suprasensible"], ["mundo sensible"], "es");
+  assert.equal(phrase.passages, 1);
+  assert.equal(phrase.sameSentence, 0);
+  const same = coOccurrence(items, ["sensible"], ["suprasensible"], "es");
+  assert.equal(same.sameSentence, 1);
+  assert.equal(coOccurrence(items, ["sensible"], ["mundo sensible"], "es").passages, 0, "“sensible” inside “mundo sensible” is the phrase, not the word");
+});
+
+test("shared renderings are found within the proposal and against other entries", () => {
+  const pairs = sharedRenderings(PROPOSAL, [{ sourceTerms: ["funesto"], targetTerms: ["Fateful"], origin: "glossary" }]);
+  assert.deepEqual(pairs.map((p) => [p.target, p.otherSourceTerms[0], p.origin]), [
+    ["disastrous", "fatales", "proposal"],
+    ["fateful", "funesto", "glossary"],
+  ]);
+});
+
+test("a rendering shared with a word of different meaning is taken out of the proposal", async () => {
+  const logs = [];
+  const { engine: research, model, store } = engine({
+    model: fakeModel({ relation: (line) => (line.includes("fateful") ? "different" : "same") }), log: (event) => logs.push(event),
+    glossaryTerms: [{ sourceTerms: ["funesto"], targetTerms: ["fateful"] }],
+  });
+  const review = await research.runToReview();
+  assert.equal(model.calls.filter((stage) => stage === "proposal").length, 2, "the proposal is revised once");
+  assert.ok(store.data.convergence.conflicts.some((pair) => pair.target === "fateful"));
+  const e1 = review.proposal.entries.find((e) => e.id === "e1");
+  assert.ok(!e1.variants.some((v) => v.target === "fateful"));
+  assert.ok(logs.some((event) => event.type === "problem" && /funesto/.test(event.text)));
+});
+
+test("words meaning the same may share a rendering, even in one sentence", async () => {
+  const { engine: research, model, store } = engine({
+    glossaryTerms: [{ sourceTerms: ["funesto"], targetTerms: ["fateful"] }],
+  });
+  const review = await research.runToReview();
+  assert.equal(model.calls.filter((stage) => stage === "proposal").length, 1);
+  assert.equal(store.data.convergence.conflicts.length, 0);
+  assert.ok(review.proposal.entries.find((e) => e.id === "e1").variants.some((v) => v.target === "fateful"));
+});
+
+test("the person chooses the related words to research next", async () => {
+  let offered = null;
+  const base = fakeCorpus(passages(40));
+  const { engine: research } = engine({
+    corpus: { ...base, countForm: async (form) => (form === "sobrefatal" ? { rows: 3, examples: [] } : base.countForm(form)) },
+    chooseFamily: async ({ groups }) => {
+      offered = groups;
+      return groups.filter((g) => g.suggested).map(({ form, forms }) => ({ form, forms }));
+    },
+  });
+  const review = await research.runToReview();
+  assert.ok(offered.length >= 1);
+  assert.deepEqual(review.familyWords, offered.filter((g) => g.suggested).map(({ form, forms }) => ({ form, forms })));
 });

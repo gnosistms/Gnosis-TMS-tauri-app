@@ -307,6 +307,21 @@ function renderReview(research, targetName, targetCode) {
     </div>`;
 }
 
+function renderFamilyChoice(research) {
+  const kinds = { prefixed: "prefixed", suffixed: "suffixed", compound: "compound", phrase: "phrase" };
+  const rows = (research.familyGroups ?? []).map((group, index) => `
+    <label class="research-project-row">
+      <input type="checkbox" data-action="toggle-research-family:${index}" ${research.familyTicked?.[index] ? "checked" : ""} />
+      <span>${esc(group.forms.join(", "))}</span>
+      <span class="muted">${esc(kinds[group.kind] ?? group.kind)} · ${group.rows} passages</span>
+    </label>`).join("");
+  return `
+    <div class="research-family">
+      <p class="modal__supporting">These related words occur in the texts. Each word you tick is researched after “${esc(research.term)}”, one after another, as its own glossary entry, and is checked against the translations found before it.</p>
+      <div class="research-project-list">${rows}</div>
+    </div>`;
+}
+
 function renderRun(state) {
   const research = state.glossaryResearch;
   const targetName = state.glossaryEditor?.targetLanguage?.name ?? "target language";
@@ -316,6 +331,7 @@ function renderRun(state) {
     running: research.stageLabel || "Working",
     counting: "Counting",
     review: "Waiting for your review",
+    family: "Related words",
     done: "Research finished",
     stopped: "Stopped",
     failed: "Stopped",
@@ -323,6 +339,7 @@ function renderRun(state) {
   const head = `
     <div class="research-run__head">
       <div class="research-run__status"><strong>${esc(statusText)}</strong> · ${formatUsd(research.spent)} of ${formatUsd(research.limit)}</div>
+      ${research.familyQueue?.words?.length ? `<p class="muted">Then, one after another: ${esc(research.familyQueue.words.map((word) => word.form).join(", "))}</p>` : ""}
       <div class="research-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><span style="width:${pct}%"></span></div>
     </div>`;
   const budgetStop = research.stopKind === "budget";
@@ -340,7 +357,9 @@ function renderRun(state) {
            ${research.raiseLimitError ? `<p class="research-stopped__message">${esc(research.raiseLimitError)}</p>` : ""}` : ""}
        </div>`
     : "";
-  const review = research.runStatus === "review" ? renderReview(research, targetName, state.glossaryEditor?.targetLanguage?.code ?? "") : "";
+  const review = research.runStatus === "review"
+    ? renderReview(research, targetName, state.glossaryEditor?.targetLanguage?.code ?? "")
+    : research.runStatus === "family" ? renderFamilyChoice(research) : "";
   const logLines = `<div class="research-log" data-research-log aria-live="off">${renderLog(research.log, research.requestOpen)}</div>`;
   // While research runs the log is the main view; afterwards it folds away.
   const log = running
@@ -354,6 +373,9 @@ function renderRun(state) {
   let actions;
   if (running) {
     actions = secondaryButton("Cancel", "cancel-glossary-research-run", { modalCancel: true });
+  } else if (research.runStatus === "family") {
+    actions = `${secondaryButton("Cancel", "cancel-glossary-research-run", { modalCancel: true })}
+      ${primaryButton("Continue", "continue-research-family", { modalDefault: true })}`;
   } else if (research.runStatus === "review") {
     actions = `${secondaryButton("Cancel", "close-glossary-research", { modalCancel: true })}
       ${primaryButton("Count", "count-glossary-research", { modalDefault: true })}`;
