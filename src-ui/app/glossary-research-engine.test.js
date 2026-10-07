@@ -177,7 +177,7 @@ function memoryStore(initial = {}) {
   return { data, load: (name) => data[name], save: (name, value) => { data[name] = value; } };
 }
 
-function engine({ model = fakeModel(), store = memoryStore(), limit = 4, items = passages(40), log = () => {}, corpus = fakeCorpus(items), judges = 1, languageData = null, glossaryTerms = [], chooseFamily = undefined } = {}) {
+function engine({ model = fakeModel(), store = memoryStore(), limit = 4, items = passages(40), log = () => {}, corpus = fakeCorpus(items), judges = 1, languageData = null, glossaryTerms = [], chooseFamily = undefined, extraSettings = {} } = {}) {
   return {
     model, store, corpus,
     engine: createResearchEngine({
@@ -187,6 +187,7 @@ function engine({ model = fakeModel(), store = memoryStore(), limit = 4, items =
         term: "fatal", variants: [], existingEntries: [{ sourceTerms: ["fatal"], targetTerms: ["fateful"], targetVariantNotes: [""], notesToTranslators: "" }],
         sourceLanguageName: "Spanish", targetLanguageName: "English", targetLanguageCode: "en", reportLanguageName: "English",
         sampleSize: 20, discoverySize: 10, spendingLimitUsd: limit, seed: "s", workers: 3,
+        ...extraSettings,
       },
     }),
   };
@@ -585,4 +586,28 @@ test("the person chooses the related words to research next", async () => {
   const review = await research.runToReview();
   assert.ok(offered.length >= 1);
   assert.deepEqual(review.familyWords, offered.filter((g) => g.suggested).map(({ form, forms }) => ({ form, forms })));
+});
+
+test("a look-alike absent from the general corpus does not use up a measurement", async () => {
+  const base = lookalikeModel();
+  const model = {
+    calls: base.calls,
+    async call(request, onDelta) {
+      const answer = await base.call(request, onDelta);
+      if (request.stage !== "checks") return answer;
+      const parsed = JSON.parse(answer.text);
+      const fatal = parsed.candidates.find((c) => c.target === "fatal");
+      fatal.words.unshift({ word: "fatales", neededSense: "inevitable", lookalike: true, resembles: "fatales", otherSenses: [] });
+      return { ...answer, text: JSON.stringify(parsed) };
+    },
+  };
+  const data = fakeLanguageData();
+  const sentences = data.sentences;
+  data.sentences = async (code, forms, ...rest) => (code === "en" && forms[0] === "fatales"
+    ? { hits: 0, corpusTokens: 1e6, corpus: "en_news", sample: [] }
+    : sentences(code, forms, ...rest));
+  const { engine: research, store } = engine({ model, languageData: data, extraSettings: { maxSenseChecks: 1 } });
+  await research.runToReview();
+  const fatal = store.data.checks.candidates.find((c) => c.target === "fatal");
+  assert.equal(fatal.verdict, "fail", "“fatal” is still measured after the absent word");
 });

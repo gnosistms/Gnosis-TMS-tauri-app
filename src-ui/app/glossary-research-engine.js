@@ -1079,18 +1079,25 @@ export function createResearchEngine(deps) {
           return 2 + (looksLike(w.word, sourceWords) ? 0 : 1);
         };
         const lookalikes = words.filter((w) => w.lookalike).sort((a, b) => rank(a) - rank(b));
-        const queue = [
-          ...lookalikes.slice(0, settings.maxSenseChecks),
-          ...(corpusCounted(code) ? words.filter((w) => !w.lookalike).slice(0, 4) : []),
-        ];
-        for (const w of queue) {
-          const senses = w.lookalike
+        const measure = (w) => measureSenses({
+          code, name, forms: [w.word], listZipf: zipfOf.get(fold(w.word).trim()),
+          senses: w.lookalike
             ? [{ id: "needed", gloss: w.neededSense }, ...w.otherSenses.slice(0, 5).map((gloss, i) => ({ id: `o${i + 1}`, gloss }))]
-            : [{ id: "needed", gloss: w.neededSense }];
-          measured.set(measureKey(w), await measureSenses({
-            code, name, forms: [w.word], senses, listZipf: zipfOf.get(fold(w.word).trim()),
-            purpose: `sort general ${name} sentences with “${w.word}” by sense`,
-          }));
+            : [{ id: "needed", gloss: w.neededSense }],
+          purpose: `sort general ${name} sentences with “${w.word}” by sense`,
+        });
+        // Only measurements that had sentences to sort count against the limit: a
+        // word absent from the general corpus costs nothing and must not crowd out
+        // the words whose senses can be measured.
+        let sorted = 0;
+        for (const w of lookalikes) {
+          if (sorted >= settings.maxSenseChecks) break;
+          const m = await measure(w);
+          measured.set(measureKey(w), m);
+          if (m.classified) sorted += 1;
+        }
+        if (corpusCounted(code)) {
+          for (const w of words.filter((x) => !x.lookalike).slice(0, 4)) measured.set(measureKey(w), await measure(w));
         }
       }
       const failedWords = [];
@@ -1314,7 +1321,11 @@ export function createResearchEngine(deps) {
    */
   async function checkConvergence(proposal) {
     return stage("convergence", async () => {
-      const own = new Set([...(store.load("forms")?.confirmed ?? []), ...(settings.familyForms ?? [])].map((f) => fold(f).trim()));
+      // Related words researched after this one get new entries: their old ones are not compared.
+      const own = new Set([
+        ...(store.load("forms")?.confirmed ?? []), ...(settings.familyForms ?? []),
+        ...(store.load("familyChoice")?.words ?? []).flatMap((word) => word.forms),
+      ].map((f) => fold(f).trim()));
       const others = [
         ...(settings.siblingEntries ?? []).map((entry) => ({ ...entry, origin: "family" })),
         ...glossaryTerms
