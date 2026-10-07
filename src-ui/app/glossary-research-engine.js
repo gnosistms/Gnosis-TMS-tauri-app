@@ -999,6 +999,21 @@ export function createResearchEngine(deps) {
         schema: prompts.CHECK_SCHEMA, schemaName: "checks",
         maxOutputTokens: 1500 + 300 * toCheck.length, effort: settings.effortLight,
       });
+      // Safety net: a candidate word that contains the spelling of a base word of the
+      // source term (a calque built on it) has that base measured too, in the sense it
+      // needs, even when the model did not split the word.
+      const sourceBases = (parts?.study?.bases ?? []).filter((b) => fold(b.word).trim().length >= 4);
+      for (const candidate of analysis.candidates) {
+        for (const w of [...candidate.words]) {
+          const word = fold(w.word).trim();
+          for (const b of sourceBases) {
+            const base = fold(b.word).trim();
+            if (word === base || !word.includes(base)) continue;
+            if (candidate.words.some((x) => fold(x.word).trim() === base)) continue;
+            candidate.words.push({ word: b.word, neededSense: b.neededSense, lookalike: true, resembles: b.word, otherSenses: b.otherSenses ?? [], addedFromBase: true });
+          }
+        }
+      }
       const byNumber = new Map(analysis.candidates.map((c) => [c.n, c]));
       // A word is measured once for each distinct sense it must carry.
       const measureKey = (w) => `${fold(w.word).trim()}\u0000${fold(w.neededSense).trim()}`;

@@ -477,3 +477,34 @@ test("looksLike flags renderings that share the start of a source word", () => {
   assert.ok(!looksLike("deadly", ["fatal"]));
   assert.ok(!looksLike("unseen worlds", ["suprasensible"]));
 });
+
+test("a calque built on a base word of the source term has that base measured", async () => {
+  const base = lookalikeModel();
+  const model = {
+    calls: base.calls,
+    async call(request, onDelta) {
+      if (request.stage === "parts") {
+        return { status: "ok", text: JSON.stringify({ isCompound: true, parts: [{ part: "sobre", meaning: "above" }, { part: "fatal", meaning: "fated" }], senses: [{ id: "s1", gloss: "beyond fate", usedByAuthor: true }], bases: [{ word: "fatal", forms: ["fatal"], neededSense: "decided by fate", otherSenses: ["deadly"] }] }), usage: { inputTokens: 10, outputTokens: 10 } };
+      }
+      if (request.stage === "candidates") {
+        return { status: "ok", text: JSON.stringify({ senses: [{ senseId: "s1", sense: "beyond fate", groups: [{ members: ["superfatal"], recommended: true, note: "n", rationale: "r" }] }] }), usage: { inputTokens: 10, outputTokens: 10 } };
+      }
+      if (request.stage === "checks") {
+        const n = Number(/^(\d+)\. superfatal/m.exec(request.content)[1]);
+        return { status: "ok", text: JSON.stringify({ candidates: [{ n, target: "superfatal", words: [{ word: "superfatal", neededSense: "beyond fate", lookalike: true, resembles: "sobrefatal", otherSenses: [] }], establishedUsage: false, establishedBasis: "" }] }), usage: { inputTokens: 10, outputTokens: 10 } };
+      }
+      if (request.stage === "frequency") {
+        const n = [...request.content.matchAll(/^(\d+)\. /gm)].length;
+        const english = request.instructions.includes("ordinary English text");
+        return { status: "ok", text: JSON.stringify({ items: Array.from({ length: n }, (_, i) => ({ n: i + 1, sense: english ? "o1" : (request.instructions.includes('"needed"') ? "needed" : "s1") })) }), usage: { inputTokens: 10, outputTokens: 10 } };
+      }
+      return base.call(request, onDelta);
+    },
+  };
+  const { engine: research, store } = engine({ model, languageData: fakeLanguageData() });
+  await research.runToReview();
+  const check = store.data.checks.candidates.find((c) => c.target === "superfatal");
+  assert.ok(check.words.some((w) => w.word === "fatal" && w.measure), "the base word is measured");
+  assert.equal(check.verdict, "fail");
+  assert.ok(store.data.checks.failedWords.includes("fatal"));
+});
