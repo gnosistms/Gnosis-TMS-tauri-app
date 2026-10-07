@@ -34,9 +34,9 @@ use self::{
         insert_gtms_editor_row_sync,
         inspect_gtms_chapter_pdf_fonts as inspect_gtms_chapter_pdf_fonts_sync,
         list_local_gtms_project_files_sync, list_project_transfer_statuses,
-        load_gtms_chapter_editor_data_sync, load_gtms_editor_field_history_sync,
-        load_gtms_editor_row_sync, merge_gtms_editor_rows_sync,
-        permanently_delete_gtms_editor_row_sync,
+        load_gtms_chapter_editor_data_sync, load_gtms_editor_changed_after_my_edit_sync,
+        load_gtms_editor_field_history_sync, load_gtms_editor_row_sync,
+        merge_gtms_editor_rows_sync, permanently_delete_gtms_editor_row_sync,
         preflight_aligned_translation_to_gtms_chapter_sync, purge_local_gtms_project_repo_sync,
         remove_gtms_editor_language_image_sync, restore_gtms_editor_field_from_history_sync,
         reverse_gtms_editor_batch_replace_commit_sync, save_gtms_editor_language_image_url_sync,
@@ -56,6 +56,7 @@ use self::{
         ExportChapterFileInput, ExportChapterFileResponse, InitializeProjectRepoInput,
         InitializeProjectRepoResponse, InsertEditorRowInput, InsertEditorRowResponse,
         ListLocalProjectFilesInput, LoadChapterEditorInput, LoadChapterEditorResponse,
+        LoadEditorChangedAfterMyEditInput, LoadEditorChangedAfterMyEditResponse,
         LoadEditorFieldHistoryInput, LoadEditorFieldHistoryResponse, LoadEditorRowInput,
         LoadEditorRowResponse, LocalProjectFilesResponse, MergeEditorRowsInput,
         MergeEditorRowsResponse, PdfChapterExportInput, PdfFontInspection, PdfFontInspectionInput,
@@ -680,6 +681,18 @@ pub(crate) async fn load_gtms_editor_field_history(
     tauri::async_runtime::spawn_blocking(move || load_gtms_editor_field_history_sync(&app, input))
         .await
         .map_err(|error| format!("The row history worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn load_gtms_editor_changed_after_my_edit(
+    app: AppHandle,
+    input: LoadEditorChangedAfterMyEditInput,
+) -> Result<LoadEditorChangedAfterMyEditResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        load_gtms_editor_changed_after_my_edit_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The changed-rows worker failed: {error}"))?
 }
 
 #[tauri::command]

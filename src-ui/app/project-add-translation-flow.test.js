@@ -288,6 +288,64 @@ test("add translation language Continue runs preflight after selection", async (
   assert.equal(commands[1].payload.input.targetLanguageCode, "vi");
 });
 
+test("add translation runs alignment with Claude when Claude is selected", async () => {
+  resetProjectAddTranslationTestState();
+  state.aiSettings.actionConfig = {
+    ...state.aiSettings.actionConfig,
+    unified: { providerId: "claude", modelId: "claude-opus-5-5" },
+  };
+  state.projectAddTranslation = {
+    ...state.projectAddTranslation,
+    targetLanguageCode: "vi",
+  };
+  const commands = [];
+  invokeHandler = async (command, payload = {}) => {
+    commands.push({ command, payload });
+    if (command === "load_ai_provider_secret") {
+      return "claude-key";
+    }
+    if (command === "preflight_aligned_translation_to_gtms_chapter") {
+      return {
+        status: "mismatch",
+        jobId: "job-1",
+        mismatch: { score: 0.2 },
+        existingTranslationCount: 0,
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await continueProjectAddTranslationLanguage(() => {});
+
+  assert.equal(state.projectAddTranslation.error, "");
+  assert.equal(commands[1]?.command, "preflight_aligned_translation_to_gtms_chapter");
+  assert.equal(commands[1].payload.input.providerId, "claude");
+  assert.equal(commands[1].payload.input.modelId, "claude-opus-5-5");
+});
+
+test("add translation explains that other providers cannot align yet", async () => {
+  resetProjectAddTranslationTestState();
+  state.aiSettings.actionConfig = {
+    ...state.aiSettings.actionConfig,
+    unified: { providerId: "gemini", modelId: "gemini-3-flash-preview" },
+  };
+  state.projectAddTranslation = {
+    ...state.projectAddTranslation,
+    targetLanguageCode: "vi",
+  };
+  const commands = [];
+  invokeHandler = async (command) => {
+    commands.push(command);
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await continueProjectAddTranslationLanguage(() => {});
+
+  assert.deepEqual(commands, []);
+  assert.equal(state.projectAddTranslation.step, "selectLanguage");
+  assert.match(state.projectAddTranslation.error, /requires OpenAI or Claude/);
+});
+
 test("add translation language Continue shows progress modal before preflight response", async () => {
   resetProjectAddTranslationTestState();
   state.projectAddTranslation = {

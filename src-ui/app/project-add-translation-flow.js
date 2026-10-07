@@ -584,7 +584,11 @@ export async function continueProjectAddTranslationAfterMismatch(render) {
   await applyProjectAddTranslation(render, { continueOnMismatch: true });
 }
 
-async function ensureOpenAiReady(render, providerId) {
+// Providers whose structured JSON output alignment supports; the backend
+// enforces the same list (alignment_supports_provider).
+const ALIGNMENT_PROVIDER_IDS = new Set(["openai", "claude"]);
+
+async function ensureAlignmentProviderReady(render, providerId) {
   const result = await ensureSelectedTeamAiProviderReady(render, providerId);
   if (!result?.ok) {
     openAiMissingKeyModal(providerId);
@@ -614,12 +618,12 @@ export async function runProjectAddTranslationPreflight(render) {
   }
 
   const { providerId, modelId } = resolveAlignmentProviderAndModel();
-  if (providerId !== "openai") {
+  if (!ALIGNMENT_PROVIDER_IDS.has(providerId)) {
     state.projectAddTranslation = {
       ...modal,
       step: "selectLanguage",
       status: "idle",
-      error: "Add translation currently requires OpenAI. Select OpenAI in AI Settings and try again.",
+      error: "Add translation currently requires OpenAI or Claude. Select one of them in AI Settings and try again.",
     };
     render();
     return;
@@ -634,7 +638,7 @@ export async function runProjectAddTranslationPreflight(render) {
     render();
     return;
   }
-  if (!(await ensureOpenAiReady(render, providerId))) {
+  if (!(await ensureAlignmentProviderReady(render, providerId))) {
     return;
   }
 

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  EDITOR_ROW_FILTER_MODE_CHANGED_AFTER_MY_EDIT,
   EDITOR_ROW_FILTER_MODE_DELETED,
   EDITOR_ROW_FILTER_MODE_HAS_COMMENTS,
   EDITOR_ROW_FILTER_MODE_HAS_CONFLICT,
@@ -551,4 +552,29 @@ test("the timing-error filter option is only offered for subtitle chapters", () 
   assert.ok(withTiming.some((option) => option.value === EDITOR_ROW_FILTER_MODE_HAS_TIMING_ERROR));
   assert.ok(!withoutTiming.some((option) => option.value === EDITOR_ROW_FILTER_MODE_HAS_TIMING_ERROR));
   assert.equal(withTiming.length, withoutTiming.length + 1);
+});
+
+test("changed-after-my-edit filter shows the snapshot's rows, not deleted ones", () => {
+  const option = editorRowFilterOptionsForChapter()
+    .find((candidate) => candidate.value === EDITOR_ROW_FILTER_MODE_CHANGED_AFTER_MY_EDIT);
+  assert.equal(option?.label, "Changed after my last edit");
+
+  const result = buildEditorFilterResult({
+    rows: [
+      row("changed", { es: "uno" }),
+      row("untouched", { es: "dos" }),
+      row("changed-deleted", { es: "tres" }, "deleted"),
+    ],
+    languages: [language("es")],
+    filters: { rowFilterMode: EDITOR_ROW_FILTER_MODE_CHANGED_AFTER_MY_EDIT },
+    changedAfterMyEditRowIds: new Set(["changed", "changed-deleted"]),
+  });
+  assert.deepEqual(result.filteredRows.map((item) => item.id), ["changed"]);
+
+  const beforeLoad = buildEditorFilterResult({
+    rows: [row("changed", { es: "uno" })],
+    languages: [language("es")],
+    filters: { rowFilterMode: EDITOR_ROW_FILTER_MODE_CHANGED_AFTER_MY_EDIT },
+  });
+  assert.equal(beforeLoad.matchingRowCount, 0);
 });

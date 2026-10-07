@@ -280,3 +280,27 @@ test("classified access transport and permission failures follow operational tel
   assert.equal(result.options.level, "warning");
   assert.equal(result.options.tags.access_failure, "broker_http_503");
 });
+
+test("reports AI safety-filter declines as tagged warnings", () => {
+  const withCategory = resolveCommandFailureReport(
+    "run_ai_translation_batch",
+    new Error(
+      "Claude's safety filter declined this request (category: bio). "
+        + "Try again, or choose a different AI model for this text.",
+    ),
+  );
+  assert.deepEqual(withCategory, {
+    error: "Claude safety filter declined a request",
+    options: {
+      level: "warning",
+      fingerprint: ["command-failure", "run_ai_translation_batch", "ai-safety-refusal"],
+      tags: { ai_refusal_category: "bio" },
+    },
+  });
+
+  const withoutCategory = resolveCommandFailureReport(
+    "run_ai_review",
+    "Claude's safety filter declined this request. Try again, or choose a different AI model for this text.",
+  );
+  assert.equal(withoutCategory.options.tags.ai_refusal_category, "unspecified");
+});

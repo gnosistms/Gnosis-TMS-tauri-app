@@ -7,6 +7,7 @@ import {
   normalizeGlossaryToken,
 } from "./editor-glossary-highlighting.js";
 import { estimateSourceTokens } from "./editor-ai-context-window.js";
+import { chapterHasSrtSourceFormat, rowIsSubtitleCue } from "./editor-timing.js";
 
 // Batch-size defaults. AI_BATCH_MAX_ROWS is calibrated from the OpenAI experiment
 // (no quality cliff through 100 rows; 15 keeps per-batch latency responsive and
@@ -14,6 +15,10 @@ import { estimateSourceTokens } from "./editor-ai-context-window.js";
 // of unusually long rows blowing up a single prompt, not a measured quality point.
 export const AI_BATCH_MAX_ROWS = 15;
 export const AI_BATCH_TOKEN_TARGET = 4000;
+// Subtitle chapters batch adjacent caption cues so the model can reflow words
+// across rows; 30 cues is the batch size tested in
+// plans/spoken-language-translation-plan.md.
+export const SUBTITLE_AI_BATCH_MAX_ROWS = 30;
 // Pool size for concurrent AI calls in a Translate All / Review All run
 // (see plans/ai-batch-parallelization-plan.md). The orchestration scales to
 // the batch count (benchmarked: n batches at concurrency n finish in ~one
@@ -25,6 +30,41 @@ export const AI_BATCH_TOKEN_TARGET = 4000;
 // this the cap on ALL in-flight AI calls for a run, batch requests and
 // per-row fallbacks alike.
 export const AI_BATCH_CONCURRENCY = 6;
+
+// Position of each subtitle cue among the chapter's non-deleted rows, or null
+// when the chapter has no SRT source. Rows without SRT timing (another source
+// file's rows in a mixed chapter) take a position but are not cues, so they
+// separate the cues around them; a deleted cue separates nothing.
+export function subtitleCuePositions(chapterState) {
+  if (!chapterHasSrtSourceFormat(chapterState?.sourceFormats)) {
+    return null;
+  }
+  const positions = new Map();
+  let position = 0;
+  for (const row of Array.isArray(chapterState?.rows) ? chapterState.rows : []) {
+    if (!row?.rowId || row.lifecycleState === "deleted") {
+      continue;
+    }
+    if (rowIsSubtitleCue(row)) {
+      positions.set(row.rowId, position);
+    }
+    position += 1;
+  }
+  return positions;
+}
+
+export function cuesAreAdjacent(positions, previousRowId, rowId) {
+  const previous = positions?.get(previousRowId);
+  return previous !== undefined && positions.get(rowId) === previous + 1;
+}
+
+// True when the rows are two or more subtitle cues, each following the one
+// before it: the condition for letting the model move words between them.
+export function rowIdsAreAdjacentCues(positions, rowIds) {
+  return Boolean(positions)
+    && rowIds.length > 1
+    && rowIds.every((rowId, index) => index === 0 || cuesAreAdjacent(positions, rowIds[index - 1], rowId));
+}
 
 function pairKey(item) {
   return `${item?.sourceLanguageCode ?? ""}::${item?.targetLanguageCode ?? ""}`;
@@ -52,7 +92,9 @@ export function groupWorkByLanguagePair(work) {
 // Splits a row-ordered work list into batches of consecutive items that share a
 // language pair and glossary kind, bounded by row count and a source-token
 // budget. Derived-glossary rows batch together like any other kind; the batch
-// runner derives their pivot glossary once for the whole batch. Each batch is
+// runner derives their pivot glossary once for the whole batch. An optional
+// continuesBatch(previousItem, item) can split a batch further (subtitle
+// chapters split wherever the rows are not adjacent). Each batch is
 // { items, glossaryKind }.
 export function chunkTranslateAllWork(work, options = {}) {
   const maxRows = Number.isFinite(options.maxRows) && options.maxRows > 0
@@ -67,6 +109,9 @@ export function chunkTranslateAllWork(work, options = {}) {
   const sourceTokensForItem = typeof options.sourceTokensForItem === "function"
     ? options.sourceTokensForItem
     : () => 0;
+  const continuesBatch = typeof options.continuesBatch === "function"
+    ? options.continuesBatch
+    : () => true;
 
   const batches = [];
   let current = null;
@@ -88,7 +133,8 @@ export function chunkTranslateAllWork(work, options = {}) {
       && current.glossaryKind === glossaryKind
       && pairKey(current.items[0]) === pairKey(item)
       && current.items.length < maxRows
-      && currentTokens + tokens <= tokenTarget;
+      && currentTokens + tokens <= tokenTarget
+      && continuesBatch(current.items[current.items.length - 1], item);
 
     if (joinsCurrent) {
       current.items.push(item);

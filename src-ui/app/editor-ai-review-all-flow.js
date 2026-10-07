@@ -26,8 +26,10 @@ import {
 import {
   AI_BATCH_CONCURRENCY,
   chunkTranslateAllWork,
+  cuesAreAdjacent,
   estimateSourceTokens,
   mapWithConcurrency,
+  subtitleCuePositions,
 } from "./editor-ai-batch-request.js";
 import { createAiBatchPool, runWithTransientAiRetry } from "./editor-ai-batch-pool.js";
 import { loadAssistantTargetLanguageHistory } from "./editor-ai-assistant-flow.js";
@@ -923,7 +925,16 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
       (Array.isArray(state.editorChapter?.rows) ? state.editorChapter.rows : [])
         .map((row) => [row.rowId, row]),
     );
+    // Subtitle cues are reviewed in stretches of adjacent rows so the review
+    // sees words Translate All moved between neighbouring cues.
+    const cuePositions = subtitleCuePositions(state.editorChapter);
     const batches = chunkTranslateAllWork(work, {
+      ...(cuePositions
+        ? {
+          continuesBatch: (previousItem, item) =>
+            cuesAreAdjacent(cuePositions, previousItem.rowId, item.rowId),
+        }
+        : {}),
       sourceTokensForItem: (item) =>
         estimateSourceTokens(
           readEditorReviewRowFieldText(rowsById.get(item.rowId), targetLanguageCode),

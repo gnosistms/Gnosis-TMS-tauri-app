@@ -12,6 +12,7 @@ export const EDITOR_ROW_FILTER_MODE_HAS_IMAGE = "has-image";
 export const EDITOR_ROW_FILTER_MODE_HAS_FOOTNOTE = "has-footnote";
 export const EDITOR_ROW_FILTER_MODE_HAS_COMMENTS = "has-comments";
 export const EDITOR_ROW_FILTER_MODE_HAS_UNREAD_COMMENTS = "has-unread-comments";
+export const EDITOR_ROW_FILTER_MODE_CHANGED_AFTER_MY_EDIT = "changed-after-my-edit";
 export const EDITOR_ROW_FILTER_MODE_HAS_CONFLICT = "has-conflict";
 export const EDITOR_ROW_FILTER_MODE_HAS_GLOSSARY_ERROR = "has-glossary-error";
 export const EDITOR_ROW_FILTER_MODE_HAS_TIMING_ERROR = "has-timing-error";
@@ -27,6 +28,7 @@ export const EDITOR_ROW_FILTER_OPTIONS = [
   { value: EDITOR_ROW_FILTER_MODE_HAS_FOOTNOTE, label: "Has footnote" },
   { value: EDITOR_ROW_FILTER_MODE_HAS_COMMENTS, label: "Has comments" },
   { value: EDITOR_ROW_FILTER_MODE_HAS_UNREAD_COMMENTS, label: "Has unread comments" },
+  { value: EDITOR_ROW_FILTER_MODE_CHANGED_AFTER_MY_EDIT, label: "Changed after my last edit" },
   { value: EDITOR_ROW_FILTER_MODE_HAS_CONFLICT, label: "Has conflict" },
   { value: EDITOR_ROW_FILTER_MODE_HAS_GLOSSARY_ERROR, label: "Has glossary error" },
   // Subtitle chapters only — hidden from the dropdown elsewhere.
@@ -185,7 +187,14 @@ function rowHasUnresolvedTextConflict(row, targetLanguageCode) {
   );
 }
 
-function rowMatchesFilterMode(row, rowFilterMode, targetLanguageCode, seenRevisions, rowHasGlossaryError) {
+function rowMatchesFilterMode(
+  row,
+  rowFilterMode,
+  targetLanguageCode,
+  seenRevisions,
+  rowHasGlossaryError,
+  changedAfterMyEditRowIds,
+) {
   if (rowFilterMode === EDITOR_ROW_FILTER_MODE_SHOW_ALL) {
     return true;
   }
@@ -210,6 +219,8 @@ function rowMatchesFilterMode(row, rowFilterMode, targetLanguageCode, seenRevisi
       return Number.parseInt(String(row?.commentCount ?? ""), 10) > 0;
     case EDITOR_ROW_FILTER_MODE_HAS_UNREAD_COMMENTS:
       return editorRowHasUnreadComments(row, seenRevisions);
+    case EDITOR_ROW_FILTER_MODE_CHANGED_AFTER_MY_EDIT:
+      return changedAfterMyEditRowIds.has(row.id);
     case EDITOR_ROW_FILTER_MODE_HAS_CONFLICT:
       return rowHasUnresolvedTextConflict(row, targetLanguageCode);
     case EDITOR_ROW_FILTER_MODE_HAS_GLOSSARY_ERROR:
@@ -300,6 +311,8 @@ export function buildEditorFilterResult({
   targetLanguageCode = "",
   commentSeenRevisions = {},
   rowHasGlossaryError = () => false,
+  // Snapshot taken when the "Changed after my last edit" filter was turned on.
+  changedAfterMyEditRowIds = new Set(),
 }) {
   const normalizedFilters = normalizeEditorChapterFilterState(filters);
   const visibleLanguageCodes = buildVisibleLanguageCodeSet(languages, collapsedLanguageCodes);
@@ -347,7 +360,14 @@ export function buildEditorFilterResult({
       continue;
     }
 
-    if (!rowMatchesFilterMode(row, effectiveFilters.rowFilterMode, targetLanguageCode, commentSeenRevisions, rowHasGlossaryError)) {
+    if (!rowMatchesFilterMode(
+      row,
+      effectiveFilters.rowFilterMode,
+      targetLanguageCode,
+      commentSeenRevisions,
+      rowHasGlossaryError,
+      changedAfterMyEditRowIds,
+    )) {
       continue;
     }
 

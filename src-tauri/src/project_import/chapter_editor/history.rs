@@ -583,7 +583,7 @@ fn load_git_history_for_path(
         .collect()
 }
 
-fn author_login_from_email(author_email: &str) -> String {
+pub(super) fn author_login_from_email(author_email: &str) -> String {
     let normalized = author_email.trim().to_ascii_lowercase();
     let Some((local_part, domain)) = normalized.split_once('@') else {
         return String::new();

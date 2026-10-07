@@ -26,6 +26,10 @@ import {
   findEditorRowById,
 } from "./editor-utils.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
+import {
+  changedAfterMyEditFilterIsActive,
+  loadChangedAfterMyEditRows,
+} from "./editor-changed-after-my-edit-flow.js";
 import { waitForNextPaint } from "./runtime.js";
 import { noteUserScrollIntent, readSessionAnchor } from "./editor-scroll-session.js";
 import { state } from "./state.js";
@@ -368,6 +372,9 @@ export function updateEditorRowFilterMode(render, nextValue) {
     },
   };
   renderEditorFilterChange(render, viewportTransition);
+  if (changedAfterMyEditFilterIsActive(state.editorChapter)) {
+    void loadChangedAfterMyEditRows(render);
+  }
 }
 
 export async function showEditorRowInContext(render, rowId) {

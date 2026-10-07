@@ -1,4 +1,6 @@
 #[cfg(test)]
+mod assistant_cache_eval;
+#[cfg(test)]
 mod effort_eval;
 pub(crate) mod glossary_matcher;
 pub mod providers;
@@ -14,9 +16,9 @@ use crate::ai::types::{
     AiAssistantConcordanceHit, AiAssistantRowContext, AiAssistantRowLanguageText,
     AiAssistantRowWindowEntry, AiAssistantTargetLanguageHistoryEntry, AiAssistantTranscriptEntry,
     AiAssistantTurnKind, AiAssistantTurnRequest, AiAssistantTurnResponse, AiModelProbeRequest,
-    AiPromptOutputFormat, AiPromptRequest, AiProviderContinuationMetadata, AiProviderId,
-    AiProviderModel, AiReviewBatchRequest, AiReviewBatchResponse, AiReviewBatchRowInput,
-    AiReviewBatchRowResult, AiReviewFootnote, AiReviewQaHint, AiReviewRequest, AiReviewResponse,
+    AiPromptBlock, AiPromptOutputFormat, AiPromptRequest, AiProviderId, AiProviderModel,
+    AiReviewBatchRequest, AiReviewBatchResponse, AiReviewBatchRowInput, AiReviewBatchRowResult,
+    AiReviewFootnote, AiReviewQaHint, AiReviewRequest, AiReviewResponse,
     AiTranslatedGlossaryBatchPreparationRequest, AiTranslatedGlossaryEntry,
     AiTranslatedGlossaryPreparationRequest, AiTranslatedGlossaryPreparationResponse,
     AiTranslatedGlossaryTermInput, AiTranslationBatchRequest, AiTranslationBatchResponse,
@@ -378,7 +380,6 @@ fn parse_translation_sections_response(text: &str) -> Result<AiTranslationRespon
                 translated_footnote: parsed.translated_footnote,
                 translated_image_caption: parsed.translated_image_caption,
                 prompt_text: String::new(),
-                provider_continuation: None,
             });
         }
     }
@@ -437,6 +438,7 @@ pub(crate) fn build_translation_prompt(request: &AiTranslationRequest) -> String
                 .to_string(),
         );
     }
+    sections.push(translation_register_rule().to_string());
     sections.push(format!(
         "<languages>\nsource: {source_label}\ntarget: {target_label}\n</languages>"
     ));
@@ -479,6 +481,27 @@ pub(crate) fn build_translation_prompt(request: &AiTranslationRequest) -> String
         sections.push("Return only the translated text.".to_string());
     }
     sections.join("\n\n")
+}
+
+// Without this the model accounts for every source word, so spoken-language
+// tags and fillers come out as literal questions and statements. Worded by
+// function rather than by example words so it carries across source languages
+// (see plans/spoken-language-translation-plan.md).
+fn translation_register_rule() -> &'static str {
+    "Translation rule:\nTranslate as a skilled human translator would: into natural target-language text, in the register of each passage of the source. A literary passage stays literary; quoted or spontaneous speech stays speech.\n\nSpontaneous speech contains words that manage the conversation rather than add content: tags that invite the listener's agreement, fillers that hold the speaker's turn or soften a statement, hesitation sounds, and words repeated in false starts. Every language has its own, and they rarely match word for word. Render what each one does the way a native speaker of the target language would, or leave it out. Never turn one into a literal question or statement the speaker did not mean."
+}
+
+// Subtitle imports make one row per caption line, so phrases are cut across
+// rows. Only sent for batches of adjacent cues.
+fn subtitle_cue_rule() -> &'static str {
+    "Subtitle rule:\nThese rows are consecutive subtitle cues from one video. A sentence often begins in one row and continues in the next, so translate the passage as one continuous text, then divide your translation across the same rows. Keep each row roughly aligned with the part of the source it covers, but you may move words between neighbouring rows in <rows_to_translate> so that each sentence reads naturally in the target language; a row's translation does not have to contain every word of that row's source. Every row still gets its own non-empty translation, and no row's translation moves into another row's entry. The rows in <context_before> and <context_after> are translated separately: do not move words into or out of them, and translate everything said in <rows_to_translate> within those rows. Caption markup stays in its own row: a speaker-change marker such as \">>\" stays at the start of its row, and sound tags such as [music] stay in their row."
+}
+
+// Review counterpart of the subtitle rule: Translate All may have moved words
+// between adjacent cues, which a row-by-row meaning review would otherwise
+// report as omissions and additions.
+fn subtitle_cue_review_rule() -> &'static str {
+    "Subtitle rule:\nThese rows are consecutive subtitle cues from one video, and a sentence often runs across several of them. A translation may move words between neighbouring cues so that each sentence reads naturally. Judge each row together with its neighbouring rows, including those in <context_before> and <context_after>: do not report a word as omitted when it appears in a neighbouring row's translation, or as added when it renders a neighbouring row's source, and do not suggest moving words back to the row whose source contains them."
 }
 
 fn translation_glossary_rules() -> &'static str {
@@ -569,6 +592,10 @@ pub(crate) fn build_translation_batch_prompt(request: &AiTranslationBatchRequest
         "Output rule:\nReturn one entry per row in <rows_to_translate>, in the same order, each with its matching rowId. Do not merge, split, drop, reorder, or add rows. Keep each row's main text, footnote, and image caption translations in their matching fields; do not append footnotes or image captions to translatedText. If a row has no footnote or image caption, return an empty string for that field."
             .to_string(),
     );
+    if request.subtitle_cues {
+        sections.push(subtitle_cue_rule().to_string());
+    }
+    sections.push(translation_register_rule().to_string());
     sections.push(format!(
         "<languages>\nsource: {source_label}\ntarget: {target_label}\n</languages>"
     ));
@@ -729,6 +756,9 @@ pub(crate) fn build_review_batch_prompt(request: &AiReviewBatchRequest) -> Strin
         "Use supporting context when relevant. Do not treat reference translations or edit history as more authoritative than the source-language sections. Keep main text, footnotes, and image captions separate."
             .to_string(),
     ];
+    if request.subtitle_cues {
+        sections.push(subtitle_cue_review_rule().to_string());
+    }
     if request.rows.iter().any(|row| !row.qa_hints.is_empty()) {
         sections.push(review_qa_guidance().to_string());
     }
@@ -965,8 +995,8 @@ pub(crate) fn run_ai_translation_batch(
             provider_id: request.provider_id,
             model_id: request.model_id.clone(),
             prompt: prompt.clone(),
-            previous_response_id: None,
             output_format: AiPromptOutputFormat::TranslationBatchJson,
+            prompt_blocks: None,
         },
         &api_key,
     )?;
@@ -1001,8 +1031,8 @@ pub(crate) fn run_ai_review_batch(
             provider_id: request.provider_id,
             model_id: request.model_id.clone(),
             prompt: prompt.clone(),
-            previous_response_id: None,
             output_format: AiPromptOutputFormat::ReviewBatchJson,
+            prompt_blocks: None,
         },
         &api_key,
     )?;
@@ -1219,7 +1249,7 @@ fn format_glossary_target_variant_value(
     Some(serde_json::Value::Object(object))
 }
 
-fn format_assistant_transcript(entries: &[AiAssistantTranscriptEntry]) -> String {
+fn format_assistant_transcript_entries(entries: &[AiAssistantTranscriptEntry]) -> Vec<String> {
     entries
         .iter()
         .filter_map(|entry| {
@@ -1231,8 +1261,7 @@ fn format_assistant_transcript(entries: &[AiAssistantTranscriptEntry]) -> String
 
             Some(format!("- {role}: {text}"))
         })
-        .collect::<Vec<_>>()
-        .join("\n")
+        .collect()
 }
 
 fn format_language_ref(label: &str, code: &str) -> String {
@@ -1472,7 +1501,70 @@ fn format_assistant_user_action(request: &AiAssistantTurnRequest) -> String {
     "<instruction>\nTranslate source_text to target_language, taking into account the source_context and glossary information provided above.\n</instruction>".to_string()
 }
 
-fn build_assistant_prompt(request: &AiAssistantTurnRequest, draft_response: bool) -> String {
+/// An assistant prompt in three parts, ordered from most to least stable so
+/// consecutive turns in a row thread share a cacheable prefix
+/// (plans/ai-assistant-stateless-caching-plan.md):
+/// - `context`: instructions and row context that stay fixed while the user
+///   chats about one row;
+/// - `history`: one `- role: text` line per transcript entry, append-only
+///   across turns;
+/// - `turn`: everything that can change from one turn to the next, including
+///   the current target text, so applying a draft does not invalidate the
+///   earlier parts.
+struct AssistantPromptParts {
+    context: String,
+    history: Vec<String>,
+    turn: String,
+}
+
+impl AssistantPromptParts {
+    /// Text segments whose concatenation is the prompt. Separators lead each
+    /// segment so every earlier segment stays byte-identical when the history
+    /// grows; `<conversation_history>` closes in the turn segment for the same
+    /// reason.
+    fn segments(&self) -> Vec<String> {
+        let mut segments = vec![self.context.clone()];
+        for (index, entry) in self.history.iter().enumerate() {
+            segments.push(if index == 0 {
+                format!("\n\n<conversation_history>\n{entry}")
+            } else {
+                format!("\n{entry}")
+            });
+        }
+        let turn_separator = if self.history.is_empty() {
+            "\n\n"
+        } else {
+            "\n</conversation_history>\n\n"
+        };
+        segments.push(format!("{turn_separator}{}", self.turn));
+        segments
+    }
+
+    fn text(&self) -> String {
+        self.segments().concat()
+    }
+
+    /// Segments as prompt blocks, with cache breakpoints after the row context
+    /// and after the last history entry. The next turn repeats both prefixes;
+    /// the turn segment never is.
+    fn blocks(&self) -> Vec<AiPromptBlock> {
+        let segments = self.segments();
+        let last_history_index = (!self.history.is_empty()).then_some(self.history.len());
+        segments
+            .into_iter()
+            .enumerate()
+            .map(|(index, text)| AiPromptBlock {
+                text,
+                cache: index == 0 || Some(index) == last_history_index,
+            })
+            .collect()
+    }
+}
+
+fn build_assistant_prompt_parts(
+    request: &AiAssistantTurnRequest,
+    draft_response: bool,
+) -> AssistantPromptParts {
     let row = &request.row;
     let glossary_hints = format_translation_glossary_hints(&request.glossary_hints);
     let source_context = format_assistant_source_context(&request.row_window, &row.source_text);
@@ -1480,18 +1572,48 @@ fn build_assistant_prompt(request: &AiAssistantTurnRequest, draft_response: bool
         format_language_ref(&row.source_language_label, &row.source_language_code);
     let target_language =
         format_language_ref(&row.target_language_label, &row.target_language_code);
-    let conversation_history = format_assistant_transcript(&request.transcript);
 
-    let mut sections = Vec::new();
-    sections.push(
+    let mut context = Vec::new();
+    context.push(
         "You are an AI assistant inside a translation editor.\n\
 Use the supplied source context, target-language history, reference translations, glossary, and conversation history when relevant.\n\
 Be direct and useful. If the answer depends on ambiguity in the source text, say so."
             .to_string(),
     );
-    sections.push(reply_language_instruction(&request.reply_language_hint));
+    push_tagged_prompt_section(
+        &mut context,
+        "source_context",
+        format!(
+            "This is the source text in context, provided to help you understand source_text more clearly:\n{source_context}"
+        ),
+    );
+    push_tagged_prompt_section(
+        &mut context,
+        "languages",
+        format!("source: {source_language}\ntarget: {target_language}"),
+    );
+    push_tagged_prompt_section(
+        &mut context,
+        "reference_translations",
+        format_assistant_reference_translations(row),
+    );
+    if !glossary_hints.trim().is_empty() {
+        context.push(format!(
+            "<glossary_info format=\"json\">\n{glossary_hints}\n</glossary_info>"
+        ));
+    }
+    push_tagged_prompt_section(&mut context, "source_text", &row.source_text);
+    push_tagged_prompt_section(&mut context, "source_footnote", &row.source_footnote);
+    push_tagged_prompt_section(
+        &mut context,
+        "source_image_caption",
+        &row.source_image_caption,
+    );
+
+    let mut turn = Vec::new();
+    turn.push(reply_language_instruction(&request.reply_language_hint));
     if draft_response {
-        sections.push(
+        turn.push(
             "Return JSON only with this shape:\n\
 {\"assistantText\":\"...\",\"draftTranslationText\":\"...\"}\n\
 assistantText should be a short explanation for the user.\n\
@@ -1500,72 +1622,32 @@ Do not repeat draftTranslationText inside assistantText."
                 .to_string(),
         );
     } else {
-        sections.push(
+        turn.push(
             "Return JSON only with this shape:\n\
 {\"assistantText\":\"...\",\"draftTranslationText\":null}\n\
 If your answer includes a complete proposed or revised target-language translation that the user could apply to the row, set draftTranslationText to only that translation text and do not repeat it inside assistantText. Otherwise set draftTranslationText to null."
                 .to_string(),
         );
     }
-
     push_tagged_prompt_section(
-        &mut sections,
-        "source_context",
-        format!(
-            "This is the source text in context, provided to help you understand source_text more clearly:\n{source_context}"
-        ),
-    );
-    push_tagged_prompt_section(
-        &mut sections,
-        "languages",
-        format!("source: {source_language}\ntarget: {target_language}"),
-    );
-    push_tagged_prompt_section(
-        &mut sections,
+        &mut turn,
         "target_language_history",
         format_assistant_target_language_history(&row.target_language_history, &row.target_text),
     );
-    push_tagged_prompt_section(
-        &mut sections,
-        "reference_translations",
-        format_assistant_reference_translations(row),
-    );
-    if !glossary_hints.trim().is_empty() {
-        sections.push(format!(
-            "<glossary_info format=\"json\">\n{glossary_hints}\n</glossary_info>"
-        ));
-    }
-    push_tagged_prompt_section(&mut sections, "document_digest", &request.document_digest);
-    push_tagged_prompt_section(
-        &mut sections,
-        "document_revision_key",
-        &request.document_revision_key,
-    );
+    push_optional_tagged_prompt_section(&mut turn, "updated_source_text", &row.updated_source_text);
+    push_optional_tagged_prompt_section(&mut turn, "updated_target_text", &row.updated_target_text);
+    push_tagged_prompt_section(&mut turn, "document_digest", &request.document_digest);
     let concordance_hits = format_assistant_concordance_hits(&request.concordance_hits);
     if concordance_hits != "None." {
-        push_tagged_prompt_section(&mut sections, "concordance_hits", concordance_hits);
+        push_tagged_prompt_section(&mut turn, "concordance_hits", concordance_hits);
     }
-    push_tagged_prompt_section(&mut sections, "source_text", &row.source_text);
-    push_tagged_prompt_section(&mut sections, "source_footnote", &row.source_footnote);
-    push_tagged_prompt_section(
-        &mut sections,
-        "source_image_caption",
-        &row.source_image_caption,
-    );
-    push_optional_tagged_prompt_section(
-        &mut sections,
-        "updated_source_text",
-        &row.updated_source_text,
-    );
-    push_optional_tagged_prompt_section(
-        &mut sections,
-        "updated_target_text",
-        &row.updated_target_text,
-    );
-    push_tagged_prompt_section(&mut sections, "conversation_history", conversation_history);
-    sections.push(format_assistant_user_action(request));
+    turn.push(format_assistant_user_action(request));
 
-    sections.join("\n\n")
+    AssistantPromptParts {
+        context: context.join("\n\n"),
+        history: format_assistant_transcript_entries(&request.transcript),
+        turn: turn.join("\n\n"),
+    }
 }
 
 fn format_assistant_concordance_hits(values: &[AiAssistantConcordanceHit]) -> String {
@@ -1615,12 +1697,9 @@ fn reply_language_instruction(reply_language_hint: &str) -> String {
     }
 }
 
+#[cfg(test)]
 fn build_assistant_chat_prompt(request: &AiAssistantTurnRequest) -> String {
-    build_assistant_prompt(request, false)
-}
-
-fn build_assistant_translate_refinement_prompt(request: &AiAssistantTurnRequest) -> String {
-    build_assistant_prompt(request, true)
+    build_assistant_prompt_parts(request, false).text()
 }
 
 fn strip_markdown_code_fence(text: &str) -> &str {
@@ -1667,11 +1746,6 @@ fn parse_assistant_structured_response(
     }
 
     Err(AI_ASSISTANT_MALFORMED_RESPONSE_MESSAGE.to_string())
-}
-
-fn is_missing_previous_response_error(message: &str) -> bool {
-    let normalized = message.trim().to_ascii_lowercase();
-    normalized.contains("previous response") && normalized.contains("not found")
 }
 
 const GLOSSARY_ALIGNMENT_BATCH_SIZE: usize = 8;
@@ -2174,8 +2248,8 @@ fn build_glossary_alignment_prompt_request(
         provider_id: request.provider_id,
         model_id: request.model_id.clone(),
         prompt: build_glossary_alignment_prompt(request, glossary_source_text, matches),
-        previous_response_id: None,
         output_format: AiPromptOutputFormat::GlossaryAlignmentJson,
+        prompt_blocks: None,
     }
 }
 
@@ -2302,12 +2376,12 @@ pub(crate) fn run_ai_review(
             provider_id: request.provider_id,
             model_id: request.model_id.clone(),
             prompt: prompt.clone(),
-            previous_response_id: None,
             output_format: if structured_review_mode.is_some() {
                 AiPromptOutputFormat::ReviewJson
             } else {
                 AiPromptOutputFormat::Text
             },
+            prompt_blocks: None,
         },
         &api_key,
     )?;
@@ -2373,8 +2447,8 @@ fn prepare_ai_translated_glossary_with_rows(
                 provider_id: request.provider_id,
                 model_id: request.model_id.clone(),
                 prompt: build_translation_prompt(&build_pivot_translation_request(&request)),
-                previous_response_id: None,
                 output_format: AiPromptOutputFormat::Text,
+                prompt_blocks: None,
             },
             &api_key,
         )?
@@ -2534,12 +2608,12 @@ pub(crate) fn run_ai_translation(
             provider_id: request.provider_id,
             model_id: request.model_id.clone(),
             prompt: prompt.clone(),
-            previous_response_id: None,
             output_format: if sectioned_output {
                 AiPromptOutputFormat::TranslationSectionsJson
             } else {
                 AiPromptOutputFormat::Text
             },
+            prompt_blocks: None,
         },
         &api_key,
     )?;
@@ -2547,10 +2621,6 @@ pub(crate) fn run_ai_translation(
     if sectioned_output {
         let mut parsed = parse_translation_sections_response(&response.text)?;
         parsed.prompt_text = prompt;
-        parsed.provider_continuation = Some(AiProviderContinuationMetadata {
-            previous_response_id: None,
-            provider_response_id: response.provider_response_id,
-        });
         return Ok(parsed);
     }
 
@@ -2559,10 +2629,6 @@ pub(crate) fn run_ai_translation(
         translated_footnote: String::new(),
         translated_image_caption: String::new(),
         prompt_text: prompt,
-        provider_continuation: Some(AiProviderContinuationMetadata {
-            previous_response_id: None,
-            provider_response_id: response.provider_response_id,
-        }),
     })
 }
 
@@ -2584,43 +2650,23 @@ pub(crate) fn run_ai_assistant_turn(
     }
 
     let api_key = load_ai_provider_api_key(app, request.provider_id, request.installation_id)?;
-    let prompt = match request.kind {
-        AiAssistantTurnKind::Chat => build_assistant_chat_prompt(&request),
-        AiAssistantTurnKind::TranslateRefinement => {
-            build_assistant_translate_refinement_prompt(&request)
-        }
-    };
-    let previous_response_id = request
-        .provider_continuation
-        .as_ref()
-        .and_then(|metadata| metadata.previous_response_id.clone());
-    let response = match providers::run_prompt(
+    let prompt_parts = build_assistant_prompt_parts(
+        &request,
+        request.kind == AiAssistantTurnKind::TranslateRefinement,
+    );
+    let prompt = prompt_parts.text();
+    // Every turn sends the full prompt (row context and transcript); turns are
+    // not chained through provider-side state (plans/ai-assistant-stateless-caching-plan.md).
+    let response = providers::run_prompt(
         &AiPromptRequest {
             provider_id: request.provider_id,
             model_id: request.model_id.clone(),
             prompt: prompt.clone(),
-            previous_response_id: previous_response_id.clone(),
             output_format: AiPromptOutputFormat::AssistantTurnJson,
+            prompt_blocks: Some(prompt_parts.blocks()),
         },
         &api_key,
-    ) {
-        Ok(response) => response,
-        Err(error)
-            if previous_response_id.is_some() && is_missing_previous_response_error(&error) =>
-        {
-            providers::run_prompt(
-                &AiPromptRequest {
-                    provider_id: request.provider_id,
-                    model_id: request.model_id.clone(),
-                    prompt: prompt.clone(),
-                    previous_response_id: None,
-                    output_format: AiPromptOutputFormat::AssistantTurnJson,
-                },
-                &api_key,
-            )?
-        }
-        Err(error) => return Err(error),
-    };
+    )?;
     let structured_response =
         match parse_assistant_structured_response(&response.text, request.kind) {
             Ok(response) => response,
@@ -2639,10 +2685,6 @@ pub(crate) fn run_ai_assistant_turn(
         draft_translation_text: structured_response.draft_translation_text,
         prompt_text: prompt,
         raw_response: response.text,
-        provider_continuation: Some(AiProviderContinuationMetadata {
-            previous_response_id: None,
-            provider_response_id: response.provider_response_id,
-        }),
     })
 }
 
@@ -2662,20 +2704,22 @@ pub(crate) fn probe_ai_model(app: &AppHandle, request: AiModelProbeRequest) -> R
 #[cfg(test)]
 mod tests {
     use super::{
-        build_assistant_chat_prompt, build_glossary_alignment_prompt_request,
-        build_review_batch_prompt, build_review_prompt, build_translation_batch_prompt,
-        build_translation_prompt, find_matched_glossary_terms,
+        build_assistant_chat_prompt, build_assistant_prompt_parts,
+        build_glossary_alignment_prompt_request, build_review_batch_prompt, build_review_prompt,
+        build_translation_batch_prompt, build_translation_prompt, find_matched_glossary_terms,
         find_matched_glossary_terms_in_texts, parse_assistant_structured_response,
         parse_review_batch_response, parse_review_structured_response,
         parse_translation_batch_response, parse_translation_sections_response,
         parse_validated_translation_batch_response, retain_known_unique_rows,
+        subtitle_cue_review_rule, subtitle_cue_rule, translation_register_rule,
         PreparedGlossaryMatch,
     };
     use crate::ai::types::{
-        AiAssistantRowContext, AiAssistantRowLanguageText, AiAssistantRowWindowEntry,
-        AiAssistantTargetLanguageHistoryEntry, AiAssistantTranscriptEntry, AiAssistantTurnKind,
-        AiAssistantTurnRequest, AiPromptOutputFormat, AiProviderId, AiReviewBatchRequest,
-        AiReviewBatchRowInput, AiReviewFootnote, AiReviewQaHint, AiReviewQaMatch, AiReviewRequest,
+        AiAssistantConcordanceHit, AiAssistantRowContext, AiAssistantRowLanguageText,
+        AiAssistantRowWindowEntry, AiAssistantTargetLanguageHistoryEntry,
+        AiAssistantTranscriptEntry, AiAssistantTurnKind, AiAssistantTurnRequest,
+        AiPromptOutputFormat, AiProviderId, AiReviewBatchRequest, AiReviewBatchRowInput,
+        AiReviewFootnote, AiReviewQaHint, AiReviewQaMatch, AiReviewRequest,
         AiTranslatedGlossaryPreparationRequest, AiTranslatedGlossaryTermInput,
         AiTranslationBatchRequest, AiTranslationBatchRowInput, AiTranslationGlossaryHint,
         AiTranslationGlossaryTargetVariant, AiTranslationNoTranslationHint, AiTranslationRequest,
@@ -2996,7 +3040,10 @@ mod tests {
 
         assert_eq!(
             prompt,
-            "Task:\nTranslate source_text from Spanish to Vietnamese.\n\nOutput rule:\nReturn only the translated text. Do not include labels, commentary, or quotes.\n\n<languages>\nsource: Spanish\ntarget: Vietnamese\n</languages>\n\n<source_text>\nHola\n</source_text>\n\nReturn only the translated text."
+            format!(
+                "Task:\nTranslate source_text from Spanish to Vietnamese.\n\nOutput rule:\nReturn only the translated text. Do not include labels, commentary, or quotes.\n\n{}\n\n<languages>\nsource: Spanish\ntarget: Vietnamese\n</languages>\n\n<source_text>\nHola\n</source_text>\n\nReturn only the translated text.",
+                translation_register_rule()
+            )
         );
     }
 
@@ -3560,7 +3607,6 @@ mod tests {
             concordance_hits: vec![],
             reply_language_hint: String::new(),
             installation_id: None,
-            provider_continuation: None,
         }
     }
 
@@ -3571,11 +3617,10 @@ mod tests {
         assert!(prompt.contains(
             "<source_context>\nThis is the source text in context, provided to help you understand source_text more clearly:\nLinea anterior 3\nLinea anterior 2\nLinea anterior 1\nFuente actual\nLinea siguiente 1\n</source_context>"
         ));
-        assert!(
-            prompt.contains(
-                "<source_text>\nFuente actual\n</source_text>\n\n<conversation_history>\n- assistant: Earlier answer.\n</conversation_history>\n\n<user_request>\nMake it more natural.\n</user_request>"
-            )
-        );
+        assert!(prompt.contains(
+            "<source_text>\nFuente actual\n</source_text>\n\n<conversation_history>\n- assistant: Earlier answer.\n</conversation_history>\n\n"
+        ));
+        assert!(prompt.ends_with("<user_request>\nMake it more natural.\n</user_request>"));
         assert!(!prompt.contains("previous_row_1"));
         assert!(!prompt.contains("Row window context: None."));
     }
@@ -3845,15 +3890,17 @@ mod tests {
     }
 
     #[test]
-    fn assistant_prompt_includes_updated_row_text_before_conversation_history() {
+    fn assistant_prompt_includes_updated_row_text_after_conversation_history() {
         let mut request = assistant_request_for_prompt();
         request.row.updated_source_text = Some("Fuente actualizada".to_string());
         request.row.updated_target_text = Some("Ban dich moi".to_string());
         let prompt = build_assistant_chat_prompt(&request);
 
         assert!(prompt.contains(
-            "<source_text>\nFuente actual\n</source_text>\n\n<updated_source_text>\nFuente actualizada\n</updated_source_text>\n\n<updated_target_text>\nBan dich moi\n</updated_target_text>\n\n<conversation_history>\n- assistant: Earlier answer.\n</conversation_history>\n\n<user_request>\nMake it more natural.\n</user_request>"
+            "</target_language_history>\n\n<updated_source_text>\nFuente actualizada\n</updated_source_text>\n\n<updated_target_text>\nBan dich moi\n</updated_target_text>\n\n<user_request>\nMake it more natural.\n</user_request>"
         ));
+        let history_end = prompt.find("</conversation_history>").unwrap();
+        assert!(prompt.find("<updated_source_text>").unwrap() > history_end);
     }
 
     #[test]
@@ -3862,9 +3909,125 @@ mod tests {
         request.row.updated_target_text = Some(String::new());
         let prompt = build_assistant_chat_prompt(&request);
 
-        assert!(prompt.contains(
-            "<source_text>\nFuente actual\n</source_text>\n\n<updated_target_text>\n(empty)\n</updated_target_text>\n\n<conversation_history>\n- assistant: Earlier answer.\n</conversation_history>"
-        ));
+        assert!(prompt
+            .contains("<updated_target_text>\n(empty)\n</updated_target_text>\n\n<user_request>"));
+    }
+
+    #[test]
+    fn assistant_prompt_omits_document_revision_key() {
+        let mut request = assistant_request_for_prompt();
+        request.document_digest = "Chapter summary".to_string();
+        request.document_revision_key = "rev-123".to_string();
+        let prompt = build_assistant_chat_prompt(&request);
+
+        assert!(prompt.contains("<document_digest>\nChapter summary\n</document_digest>"));
+        assert!(!prompt.contains("rev-123"));
+    }
+
+    #[test]
+    fn assistant_prompt_context_is_unchanged_by_per_turn_input() {
+        let first = assistant_request_for_prompt();
+        let mut second = assistant_request_for_prompt();
+        second.kind = AiAssistantTurnKind::TranslateRefinement;
+        second.user_message = "Shorter, please.".to_string();
+        second.row.target_text = "Ban dich da ap dung".to_string();
+        second.row.updated_target_text = Some("Ban dich da ap dung".to_string());
+        second.document_digest = "Chapter summary".to_string();
+        second.concordance_hits = vec![AiAssistantConcordanceHit {
+            row_id: "row-9".to_string(),
+            source_snippet: "Fuente".to_string(),
+            target_snippet: "nguon".to_string(),
+        }];
+
+        let first_parts = build_assistant_prompt_parts(&first, false);
+        let second_parts = build_assistant_prompt_parts(&second, true);
+
+        assert_eq!(first_parts.context, second_parts.context);
+        assert_eq!(first_parts.history, second_parts.history);
+        assert_ne!(first_parts.turn, second_parts.turn);
+    }
+
+    #[test]
+    fn assistant_prompt_segments_extend_the_previous_turn() {
+        let mut first = assistant_request_for_prompt();
+        first.transcript = vec![AiAssistantTranscriptEntry {
+            role: "user".to_string(),
+            text: "What does this mean?".to_string(),
+        }];
+        let mut second = first.clone();
+        second.transcript.push(AiAssistantTranscriptEntry {
+            role: "assistant".to_string(),
+            text: "It means the source.".to_string(),
+        });
+        second.transcript.push(AiAssistantTranscriptEntry {
+            role: "user".to_string(),
+            text: "Make it more natural.".to_string(),
+        });
+
+        let first_segments = build_assistant_prompt_parts(&first, false).segments();
+        let second_segments = build_assistant_prompt_parts(&second, false).segments();
+
+        // Everything before the turn segment is reused unchanged by the next turn.
+        let reused = first_segments.len() - 1;
+        assert_eq!(first_segments[..reused], second_segments[..reused]);
+        assert_eq!(second_segments.len(), first_segments.len() + 2);
+        assert!(second_segments
+            .iter()
+            .all(|segment| !segment.trim().is_empty()));
+    }
+
+    #[test]
+    fn assistant_prompt_blocks_mark_context_and_last_history_entry() {
+        let mut request = assistant_request_for_prompt();
+        request.transcript = vec![
+            AiAssistantTranscriptEntry {
+                role: "user".to_string(),
+                text: "What does this mean?".to_string(),
+            },
+            AiAssistantTranscriptEntry {
+                role: "assistant".to_string(),
+                text: "It means the source.".to_string(),
+            },
+        ];
+        let parts = build_assistant_prompt_parts(&request, false);
+        let blocks = parts.blocks();
+
+        assert_eq!(
+            blocks.iter().map(|block| block.cache).collect::<Vec<_>>(),
+            vec![true, false, true, false]
+        );
+        assert_eq!(
+            blocks
+                .iter()
+                .map(|block| block.text.as_str())
+                .collect::<String>(),
+            parts.text()
+        );
+
+        request.transcript.clear();
+        let blocks = build_assistant_prompt_parts(&request, false).blocks();
+        assert_eq!(
+            blocks.iter().map(|block| block.cache).collect::<Vec<_>>(),
+            vec![true, false]
+        );
+    }
+
+    #[test]
+    fn assistant_prompt_segments_join_to_the_prompt_text() {
+        let mut request = assistant_request_for_prompt();
+        let parts = build_assistant_prompt_parts(&request, false);
+        assert_eq!(
+            parts.segments().concat(),
+            build_assistant_chat_prompt(&request)
+        );
+        assert_eq!(parts.segments().len(), 3);
+
+        request.transcript.clear();
+        let parts = build_assistant_prompt_parts(&request, false);
+        let prompt = parts.text();
+        assert_eq!(parts.segments().len(), 2);
+        assert!(!prompt.contains("conversation_history"));
+        assert!(prompt.contains("</source_text>\n\nReply in the same language"));
     }
 
     fn translation_batch_row(id: &str, source: &str) -> AiTranslationBatchRowInput {
@@ -3893,6 +4056,7 @@ mod tests {
             context_before: vec![],
             context_after: vec![],
             rows,
+            subtitle_cues: false,
             installation_id: None,
         }
     }
@@ -3916,6 +4080,49 @@ mod tests {
         assert!(!prompt.contains("<context_after>"));
         // No glossary block without hints.
         assert!(!prompt.contains("<glossary_info"));
+    }
+
+    #[test]
+    fn build_translation_batch_prompt_sends_register_rule_and_subtitle_rule_only_for_cues() {
+        let mut request = translation_batch_request(vec![
+            translation_batch_row("r0", "There were moments where, you"),
+            translation_batch_row("r1", "know, I did something great, right?"),
+        ]);
+        let prompt = build_translation_batch_prompt(&request);
+        assert!(prompt.contains(translation_register_rule()));
+        assert!(!prompt.contains("Subtitle rule:"));
+
+        request.subtitle_cues = true;
+        let prompt = build_translation_batch_prompt(&request);
+        assert!(prompt.contains(subtitle_cue_rule()));
+        assert!(prompt.contains(translation_register_rule()));
+        assert!(
+            prompt.find("Subtitle rule:").unwrap() < prompt.find("<rows_to_translate>\n").unwrap()
+        );
+    }
+
+    #[test]
+    fn translation_batch_request_without_subtitle_cues_field_deserializes_as_false() {
+        let request: AiTranslationBatchRequest = serde_json::from_value(serde_json::json!({
+            "providerId": "openai",
+            "modelId": "gpt-5.5",
+            "sourceLanguage": "English",
+            "targetLanguage": "Vietnamese",
+            "rows": [],
+        }))
+        .unwrap();
+        assert!(!request.subtitle_cues);
+
+        let request: AiTranslationBatchRequest = serde_json::from_value(serde_json::json!({
+            "providerId": "openai",
+            "modelId": "gpt-5.5",
+            "sourceLanguage": "English",
+            "targetLanguage": "Vietnamese",
+            "rows": [],
+            "subtitleCues": true,
+        }))
+        .unwrap();
+        assert!(request.subtitle_cues);
     }
 
     #[test]
@@ -4160,8 +4367,28 @@ mod tests {
             context_before: vec![],
             context_after: vec![],
             rows,
+            subtitle_cues: false,
             installation_id: None,
         }
+    }
+
+    #[test]
+    fn build_review_batch_prompt_sends_subtitle_rule_only_for_meaning_review_of_cues() {
+        let mut request = review_batch_request(
+            "meaning",
+            vec![review_batch_row("r0"), review_batch_row("r1")],
+        );
+        assert!(!build_review_batch_prompt(&request).contains("Subtitle rule:"));
+
+        request.subtitle_cues = true;
+        let prompt = build_review_batch_prompt(&request);
+        assert!(prompt.contains(subtitle_cue_review_rule()));
+        assert!(
+            prompt.find("Subtitle rule:").unwrap() < prompt.find("<rows_to_review>\n").unwrap()
+        );
+
+        request.review_mode = Some("grammar".to_string());
+        assert!(!build_review_batch_prompt(&request).contains("Subtitle rule:"));
     }
 
     #[test]
