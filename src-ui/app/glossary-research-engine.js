@@ -596,9 +596,22 @@ export function createResearchEngine(deps) {
         ...proposed.words,
       ], (w) => w.form).filter((w) => !known.has(fold(w.form).trim())).slice(0, 45);
       const members = [];
+      const found = new Set(known);
+      const add = async (form, kind) => {
+        const key = fold(form).trim();
+        if (!key || found.has(key)) return false;
+        found.add(key);
+        const count = await corpus.countForm(form).catch(() => ({ rows: 0 }));
+        if (count.rows) members.push({ form, kind, rows: count.rows });
+        return count.rows > 0;
+      };
       for (const candidate of candidates) {
-        const count = await corpus.countForm(candidate.form).catch(() => ({ rows: 0 }));
-        if (count.rows) members.push({ form: candidate.form, kind: candidate.kind, rows: count.rows });
+        const present = await add(candidate.form, candidate.kind);
+        // A member found in the texts brings its own inflections from the texts' word list.
+        if (present && corpus.formsHint && !/\s/.test(candidate.form.trim())) {
+          const hint = await corpus.formsHint(candidate.form).catch(() => null);
+          for (const f of hint?.forms ?? []) await add(f.form, candidate.kind);
+        }
       }
       members.sort((a, b) => b.rows - a.rows);
       fact(members.length
@@ -994,10 +1007,22 @@ export function createResearchEngine(deps) {
       if (ready) {
         // Look-alikes are measured sense by sense; where a search also matches
         // letters inside other words, the other words get an instance check.
+        // The likeliest false friends first: a word spelled like the term, one of its
+        // forms or parts; then a look-alike that is a whole candidate; then the rest
+        // by how much of its spelling it shares with the source words.
+        const exact = new Set([...sourceWords, ...(store.load("family")?.members ?? []).map((m) => m.form)].map((w) => fold(w).trim()));
+        const wholeCandidates = new Set(toCheck.map((c) => fold(c.target).trim()));
+        const rank = (w) => {
+          const key = fold(w.word).trim();
+          if (exact.has(key)) return 0;
+          if (wholeCandidates.has(key)) return 1;
+          return 2 + (looksLike(w.word, sourceWords) ? 0 : 1);
+        };
+        const lookalikes = words.filter((w) => w.lookalike).sort((a, b) => rank(a) - rank(b));
         const queue = [
-          ...words.filter((w) => w.lookalike),
-          ...(corpusCounted(code) ? words.filter((w) => !w.lookalike) : []),
-        ].slice(0, settings.maxSenseChecks + (corpusCounted(code) ? 4 : 0));
+          ...lookalikes.slice(0, settings.maxSenseChecks),
+          ...(corpusCounted(code) ? words.filter((w) => !w.lookalike).slice(0, 4) : []),
+        ];
         for (const w of queue) {
           const senses = w.lookalike
             ? [{ id: "needed", gloss: w.neededSense }, ...w.otherSenses.slice(0, 5).map((gloss, i) => ({ id: `o${i + 1}`, gloss }))]
