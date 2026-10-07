@@ -29,19 +29,49 @@ import {
 } from "./glossary-research-log-view.js";
 import { createProjectsCorpus, createSamaelCorpus } from "./glossary-research-corpus.js";
 import { createDictionary, DICTIONARY_DOMAINS } from "./glossary-research-dictionary.js";
+import { createLanguageData } from "./glossary-research-frequency.js";
 import { fold } from "./glossary-research-occurrences.js";
 import { parseMoneyValue } from "./money-input.js";
 import { maybeStartGlossaryBackgroundSync } from "./glossary-background-sync.js";
 
 export const RESEARCH_STREAM_EVENT = "glossary-research-stream";
+export const RESEARCH_DATA_PROGRESS_EVENT = "glossary-research-data-progress";
 const MAX_LOG_EVENTS = 4000;
 const STAGE_PROGRESS = {
-  Dictionary: 0.04, "Word forms": 0.1, Sampling: 0.15, "Where the term comes from": 0.2,
-  "Candidate translations": 0.27, Discovery: 0.33, Proposal: 0.42, "Existing glossary entry": 0.47,
-  Review: 0.5, Counting: 0.52, Summary: 0.95, Done: 1,
+  Dictionary: 0.04, "Word forms": 0.08, "Word family": 0.11, Sampling: 0.14, "Where the term comes from": 0.18,
+  "Parts and frequency": 0.23, "Candidate translations": 0.28, "Candidate checks": 0.32, Discovery: 0.36,
+  Proposal: 0.43, "Existing glossary entry": 0.47, Review: 0.5, Counting: 0.52, "Counting (second judge)": 0.72,
+  "Rare translations": 0.92, Summary: 0.95, Done: 1,
 };
 
 let activeRun = null; // { engine, requestIds:Set, unlisten, store, context }
+let activeRunCleanup = null;
+
+/** Download progress of a language's frequency data, as log lines (one per ~10 MB). */
+function listenForDataDownloads(render) {
+  activeRunCleanup?.();
+  const shown = new Map();
+  let unlisten = null;
+  let stopped = false;
+  if (typeof listen !== "function") return () => {};
+  Promise.resolve(listen(RESEARCH_DATA_PROGRESS_EVENT, (event) => {
+    const { language, file, received, total } = event.payload ?? {};
+    const key = `${language}/${file}`;
+    const step = Math.floor((received ?? 0) / (10 * 1024 * 1024));
+    const finished = total && received >= total;
+    if (!finished && shown.get(key) === step) return;
+    shown.set(key, step);
+    const mb = (bytes) => `${Math.round((bytes ?? 0) / (1024 * 1024))} MB`;
+    onEngineLog(render, { type: "info", text: finished ? `Downloaded ${file} (${mb(received)}).` : `Downloading ${file}: ${mb(received)} of ${mb(total)}…` });
+  })).then((fn) => {
+    unlisten = fn;
+    if (stopped) unlisten?.();
+  }).catch(() => {});
+  return () => {
+    stopped = true;
+    unlisten?.();
+  };
+}
 const streamHandlers = new Map();
 let streamListener = null;
 
@@ -435,6 +465,8 @@ function engineSettings(draft, languages) {
     seed: draft.seed || "1",
     pauseForReview: draft.pauseForReview === true,
     webDictionaryDomains: DICTIONARY_DOMAINS,
+    judges: 2,
+    frequencyChecks: true,
   };
 }
 
@@ -474,6 +506,8 @@ async function beginResearchRun(render, resume = null) {
     ? createSamaelCorpus()
     : createProjectsCorpus({ invoke, installationId, projects, languageCode: languages.sourceCode, targetLanguageCode: languages.targetCode });
   const requestIds = new Set();
+  const languageData = createLanguageData({ invoke });
+  const stopProgress = listenForDataDownloads(render);
   const engine = createResearchEngine({
     model: createAppModel({ installationId, providerId: status.providerId, modelId: status.modelId, requestIds }),
     prices: modelPrices(status.providerId, status.modelId),
@@ -482,7 +516,10 @@ async function beginResearchRun(render, resume = null) {
     store,
     log: (event) => onEngineLog(render, event),
     settings: meta.settings,
+    languageData,
+    glossaryTerms: (state.glossaryEditor?.terms ?? []).map((term) => ({ sourceTerms: term.sourceTerms ?? [], targetTerms: term.targetTerms ?? [] })),
   });
+  activeRunCleanup = stopProgress;
   activeRun = { engine, requestIds, store, runId, glossaryId, installationId, meta };
   Object.assign(draft, {
     step: "run", runId, runStatus: "running", stageLabel: "Starting", progress: 0.01,

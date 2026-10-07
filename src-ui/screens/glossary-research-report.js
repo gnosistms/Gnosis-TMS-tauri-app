@@ -7,6 +7,7 @@ import {
   secondaryButton,
 } from "../lib/ui.js";
 import { formatUsd } from "../app/glossary-research-budget.js";
+import { describeSense, formatZipf } from "../app/glossary-research-frequency.js";
 
 const esc = escapeHtml;
 const EXAMPLES_SHOWN = 5;
@@ -158,6 +159,44 @@ function renderEntryCard(report, run, entry) {
     </section>`;
 }
 
+/** Word family, parts, sense frequencies and the candidate checks. */
+function renderFrequency(run) {
+  const meta = run.meta;
+  const src = meta.sourceLanguage;
+  const tgt = meta.targetLanguage;
+  const family = run.family?.members ?? [];
+  const parts = run.parts;
+  const checks = run.checks;
+  if (!family.length && !parts && !checks) return "";
+  const source = parts?.source;
+  const verdictLabel = { pass: "passes", fail: "fails", unclear: "unclear", unchecked: "not checked" };
+  const removed = (run.confirmedProposal ?? run.proposal)?.removedByChecks ?? [];
+  const notes = run.footnotes ?? [];
+  return `
+    <section class="card research-section">
+      <h2>Parts and frequency</h2>
+      <p class="muted">Zipf scores: 0 = not in ordinary use, about 3 = an everyday word, 5+ = very common. A sense's score is the word's score reduced by the share of general-corpus sentences that use the word in that sense.</p>
+      ${parts?.study ? `<p>Parts: ${parts.study.parts.map((p) => `<span lang="${esc(src.code)}">${esc(p.part)}</span> (${esc(p.meaning)})`).join(" + ")}</p>` : ""}
+      ${source ? `
+        <ul>
+          <li><span lang="${esc(src.code)}">${esc(meta.term)}</span>: Zipf ${formatZipf(source.wordZipf)}${source.invented ? " — not in the dictionary and practically absent from general use: the author's own word" : ""}</li>
+          ${parts.study.senses.map((sense) => `<li>${esc(sense.gloss)}${sense.usedByAuthor ? " (used by the author)" : ""}: ${esc(describeSense(source.term.senses[sense.id]))}</li>`).join("")}
+          ${source.bases.map((base) => `<li><span lang="${esc(src.code)}">${esc(base.word)}</span>: Zipf ${formatZipf(base.measure.wordZipf)}; in the sense “${esc(base.neededSense)}”: ${esc(describeSense(base.needed))}</li>`).join("")}
+        </ul>` : parts ? `<p>No ${esc(src.name)} frequency data was available.</p>` : ""}
+      ${family.length ? `<h3>Word family in the texts</h3><p>${family.map((m) => `<span lang="${esc(src.code)}">${esc(m.form)}</span> (${m.rows})`).join(", ")}</p>` : ""}
+      ${checks?.candidates?.length ? `
+        <h3>Candidate checks in general ${esc(tgt.name)}</h3>
+        <ul>
+          ${checks.candidates.map((c) => `<li><strong lang="${esc(tgt.code)}">${esc(c.target)}</strong> ${esc(verdictLabel[c.verdict] ?? c.verdict)}${c.words.length ? ` — ${c.words.map((w) => `<span lang="${esc(tgt.code)}">${esc(w.word)}</span> ${formatZipf(w.zipf)}${w.measure?.needed ? `, in the sense needed ${esc(describeSense(w.measure.needed))}` : ""}`).join("; ")}` : ""}
+            ${[...c.reasons, ...c.notes].length ? `<br><span class="muted">${esc([...c.reasons, ...c.notes].join("; "))}</span>` : ""}
+            ${c.clashes.length ? `<br><span class="muted">Already used in the glossary for: ${esc(c.clashes.map((x) => x.sourceTerms.join(" / ")).join("; "))}</span>` : ""}</li>`).join("")}
+        </ul>` : ""}
+      ${removed.length ? `<p>Removed from the proposal by the checks: ${removed.map((r) => `<span lang="${esc(tgt.code)}">${esc(r.target)}</span>`).join(", ")}.</p>` : ""}
+      ${checks?.failedWords?.length ? `<p>Words to look for in finished ${esc(tgt.name)} translations (any word containing them): ${checks.failedWords.map((w) => `<strong lang="${esc(tgt.code)}">${esc(w)}</strong>`).join(", ")}.</p>` : ""}
+      ${notes.length ? `<h3>Translator's notes proposed for rare translations</h3><ul>${notes.map((n) => `<li><strong lang="${esc(tgt.code)}">${esc(n.target)}</strong> (Zipf ${formatZipf(n.zipf)}): <span lang="${esc(tgt.code)}">${esc(n.note)}</span></li>`).join("")}</ul>` : ""}
+    </section>`;
+}
+
 function renderSecondary(run) {
   const meta = run.meta;
   const totals = run.aggregate.totals;
@@ -184,6 +223,7 @@ function renderSecondary(run) {
     </section>` : "";
   return `
     ${sources}
+    ${renderFrequency(run)}
     ${run.prose ? `<section class="card research-section"><h2>Summary</h2><p>${esc(run.prose.summary)}</p>
       ${run.prose.recommendations?.length ? `<ul>${run.prose.recommendations.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>` : ""}</section>` : ""}
     <section class="card research-section">
@@ -196,6 +236,7 @@ function renderSecondary(run) {
       <ul>
         <li>Texts: ${meta.sourceMode === "samael" ? "complete works of Samael Aun Weor" : "selected team projects"}; ${totals.populationDistinct} distinct passages (${totals.populationRows} before merging ${totals.duplicateGroups} groups of identical passages).</li>
         <li>Sample: ${totals.passagesSampled} passages (${totals.sampleRequested} requested), ${totals.occurrencesSampled} occurrences; seed ${esc(meta.seed)}. The translations and notes were fixed (version ${esc(run.frozen.version)}) before counting.</li>
+        ${totals.judges === 2 ? `<li>Two judges translated every occurrence independently, each seeing the translations in a different order; the counts are their ${totals.votes} votes. They agreed on ${totals.agreement.agreed} of ${totals.agreement.compared} occurrences.</li>` : ""}
         <li>Each occurrence's sentence was translated, then the translation it used was identified. Model: ${esc(meta.modelId)}.</li>
         <li>Outcomes: ${esc(JSON.stringify(totals.outcomes))}</li>
       </ul>
@@ -221,7 +262,7 @@ export function renderGlossaryResearchReportScreen(state) {
     title = `Research: ${run.meta.term} → ${run.meta.targetLanguage.name}`;
     body = `
       <section class="stack research-report">
-        <p class="research-report__banner">Nothing is written to the glossary until you save an entry. ${run.aggregate.totals.passagesSampled} passages, ${run.aggregate.totals.occurrencesSampled} occurrences sampled.</p>
+        <p class="research-report__banner">Nothing is written to the glossary until you save an entry. ${run.aggregate.totals.passagesSampled} passages, ${run.aggregate.totals.occurrencesSampled} occurrences sampled${run.aggregate.totals.judges === 2 ? `, two judges (${run.aggregate.totals.votes} votes)` : ""}.</p>
         ${run.frozen.entries.map((entry) => renderEntryCard(report, run, entry)).join("")}
         ${renderSecondary(run)}
         ${report.copyNotice ? `<p class="muted">${esc(report.copyNotice)}</p>` : ""}
