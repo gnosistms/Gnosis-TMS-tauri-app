@@ -432,7 +432,11 @@ export function createResearchEngine(deps) {
       result.wordZipf = realHits > 0 ? Math.log10((realHits / general.corpusTokens) * 1e9) : 0;
       result.wordZipfSource = "corpus";
     }
-    for (const sense of senses) result.senses[sense.id] = senseZipf(result.wordZipf, result.counts[sense.id] ?? 0, result.instances);
+    // A frequency list counts every occurrence (names and other words spelled the
+    // same included), so a sense's share is taken over all matches; a corpus count
+    // already left out the matches that are not the word.
+    const base = result.wordZipfSource === "list" ? result.classified : result.instances;
+    for (const sense of senses) result.senses[sense.id] = senseZipf(result.wordZipf, result.counts[sense.id] ?? 0, base);
     return result;
   }
 

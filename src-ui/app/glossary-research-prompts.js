@@ -1,7 +1,7 @@
 // Prompt texts and strict JSON schemas for Glossary Research.
 // Bump RESEARCH_PROMPT_VERSION on any change that could alter a judgment.
 
-export const RESEARCH_PROMPT_VERSION = "2026-10-07.2";
+export const RESEARCH_PROMPT_VERSION = "2026-10-07.3";
 
 const STR = { type: "string" };
 const NSTR = { anyOf: [{ type: "string" }, { type: "null" }] };
@@ -203,7 +203,7 @@ export function candidatesInstructions(ctx) {
 
 Rules:
 - Work sense by sense. A candidate must render the meaning the term has in these texts (the study of where the term comes from, when given, explains special senses). senseId: the id of the sense in the list of the term's senses below ("s1", …), or "none" for a sense not in that list.
-- GROUPS. Put renderings that a translator could use interchangeably for this sense in one group (members); start a separate group only where renderings differ in meaning, register, collocation or what they imply. Every rendering you consider goes into some group: nothing is dropped, and each group is later represented by the member whose general-usage frequency best fits the term. The note and rationale are written once per group.
+- GROUPS. Put renderings that a translator could swap for one another in most passages of this sense in one group (members). Start a separate group only for a difference a translator must choose by: a different meaning, a clearly different register, or a collocation that only one of them fits. Shades of intensity or emphasis are not reasons to split. Every rendering you consider goes into some group: nothing is dropped, and each group is later represented by the member whose general-usage frequency best fits the term. The note and rationale are written once per group.
 - Prefer renderings that translate the term's own meaning over substituting another term the author equates it with. A synonym names the same thing with a different word; list it only if a translator might really need it, and say in its note that it is a synonym and what is lost.
 - If a sense of the term is a translation of an original-language term and ${ctx.targetName} IS that original language, the original term must be one of the candidates for that sense.
 - Notes are written in ${ctx.targetName}, at most 40 words. Rationales are in ${ctx.reportName}, at most 25 words each. sense at most 20 words. ${quotationRules(ctx)}
@@ -401,7 +401,7 @@ export function checkInstructions(ctx) {
   return `You prepare candidate ${ctx.targetName} translations of the ${ctx.sourceName} term “${ctx.headword}” for a frequency check. ${corpusLine(ctx)} Do not judge or rank the candidates.
 For each candidate list its words, leaving out function words (articles, prepositions, conjunctions, particles). For a word that is not an established ${ctx.targetName} word (a coinage, or a compound written as one word or with hyphens), also list its parts as separate items. For each word or part give:
 - neededSense: the sense, in plain words, that it must carry in present-day general ${ctx.targetName} use for the candidate to say what the author means.
-- lookalike: true when it has the same or nearly the same written form as a ${ctx.sourceName} word or a part of the term (a cognate or a calque); resembles: that ${ctx.sourceName} word or part, else null.
+- lookalike: true only when it has the same or nearly the same written form as the term, one of its forms, or one of its parts (a cognate or a calque of the term); resemblance to other ${ctx.sourceName} words does not count. resembles: that form or part, else null.
 - otherSenses: for a lookalike, its other common ${ctx.targetName} senses (short glosses); else empty.
 establishedUsage: true only when the candidate as a whole is attested, established ${ctx.targetName} wording for this concept in a tradition the author draws on, as the research below shows; give the evidence in establishedBasis, else empty.
 Write neededSense, otherSenses and establishedBasis in ${ctx.reportName}, at most 15 words each.`;
