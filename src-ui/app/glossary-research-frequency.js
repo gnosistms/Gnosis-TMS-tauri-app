@@ -11,9 +11,15 @@ export const RESEARCH_DATA_CONTACT = "gnosistms@gmail.com";
 /** Smallest sample for which "the sense never occurs" counts as evidence. */
 export const MIN_SENSE_SAMPLE = 30;
 
-/** The data folder's language code for an app language code ("zh-Hant" → "zh", "pt-BR" → "pt"). */
+/**
+ * The language code sent to the data commands: the base code ("pt-BR" → "pt"),
+ * except Traditional Chinese, which keeps its script so the Simplified-script
+ * data is searched with converted words.
+ */
 export function dataLanguage(code) {
-  const base = String(code ?? "").split("-")[0].toLowerCase();
+  const lower = String(code ?? "").toLowerCase();
+  if (["zh-hant", "zh-tw", "zh-hk", "zh-mo"].includes(lower)) return "zh-hant";
+  const base = lower.split("-")[0];
   return base === "no" || base === "nn" ? "nb" : base;
 }
 

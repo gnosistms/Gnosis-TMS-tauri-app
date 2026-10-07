@@ -115,6 +115,9 @@ def build(code, out, cache, corpus=None):
     source = None
     try:
         import wordfreq
+        # wordfreq falls back to a "nearest" language (Mongolian -> Russian); only an exact list counts.
+        if code not in wordfreq.available_languages(wordlist="large"):
+            raise ValueError("no large wordfreq list for this language")
         table = wordfreq.get_frequency_dict(code, wordlist="large")
         if len(table) < 50000:
             raise ValueError("only a small list")

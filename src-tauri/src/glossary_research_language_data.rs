@@ -49,6 +49,55 @@ fn safe_language(code: &str) -> Result<String, String> {
     }
 }
 
+/// The data folder for an app language code, and whether its text is converted from
+/// Traditional to Simplified Chinese first (the Chinese data is in Simplified script).
+fn resolve_language(code: &str) -> (String, bool) {
+    let lower = code.to_lowercase();
+    let traditional = matches!(lower.as_str(), "zh-hant" | "zh-tw" | "zh-hk" | "zh-mo");
+    let base = lower.split('-').next().unwrap_or("").to_string();
+    let base = match base.as_str() {
+        "no" | "nn" => "nb".to_string(),
+        _ => base,
+    };
+    (base, traditional)
+}
+
+type CharMap = Arc<HashMap<char, String>>;
+
+fn conversion_cache() -> &'static Mutex<Option<CharMap>> {
+    static CACHE: OnceLock<Mutex<Option<CharMap>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+/// Traditional → Simplified characters (from the Chinese data's `t2s.tsv.gz`).
+fn to_simplified(app: &AppHandle, text: &str) -> Result<String, String> {
+    let map = {
+        let cached = conversion_cache().lock().map_err(|e| e.to_string())?.clone();
+        match cached {
+            Some(map) => map,
+            None => {
+                let entry = language_entry(app, "zh")?.ok_or("No research data for Chinese.")?;
+                let file = entry.get("traditionalToSimplified").ok_or("The Chinese data has no Traditional conversion table.")?;
+                let path = ensure_file(app, "zh", file)?;
+                let reader = BufReader::new(GzDecoder::new(fs::File::open(&path).map_err(|e| e.to_string())?));
+                let mut map = HashMap::new();
+                for line in reader.lines() {
+                    let line = line.map_err(|e| e.to_string())?;
+                    if let Some((from, to)) = line.split_once('\t') {
+                        if let Some(c) = from.chars().next() {
+                            map.insert(c, to.to_string());
+                        }
+                    }
+                }
+                let map = Arc::new(map);
+                *conversion_cache().lock().map_err(|e| e.to_string())? = Some(map.clone());
+                map
+            }
+        }
+    };
+    Ok(text.chars().map(|c| map.get(&c).cloned().unwrap_or_else(|| c.to_string())).collect())
+}
+
 fn client() -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
         .connect_timeout(Duration::from_secs(20))
@@ -182,8 +231,11 @@ fn language_entry(app: &AppHandle, language: &str) -> Result<Option<Value>, Stri
 /// Make sure a language's data is on this computer (downloading it the first time).
 #[tauri::command]
 pub(crate) async fn glossary_research_language_data(app: AppHandle, language: String) -> Result<LanguageData, String> {
-    let language = safe_language(&language)?;
+    let (language, traditional) = resolve_language(&safe_language(&language)?);
     tauri::async_runtime::spawn_blocking(move || {
+        if traditional {
+            to_simplified(&app, "")?;
+        }
         let Some(entry) = language_entry(&app, &language)? else {
             return Ok(LanguageData {
                 language, available: false, corpus: None, sentences: None, tokens: None,
@@ -239,13 +291,15 @@ fn frequency_table(app: &AppHandle, language: &str) -> Result<FrequencyTable, St
 /// Zipf score of each word (0 when the word is below the list's threshold).
 #[tauri::command]
 pub(crate) async fn glossary_research_zipf(app: AppHandle, language: String, words: Vec<String>) -> Result<Vec<f32>, String> {
-    let language = safe_language(&language)?;
+    let (language, traditional) = resolve_language(&safe_language(&language)?);
     tauri::async_runtime::spawn_blocking(move || {
         let table = frequency_table(&app, &language)?;
-        Ok(words
-            .iter()
-            .map(|word| *table.get(&word.trim().to_lowercase()).unwrap_or(&0.0))
-            .collect())
+        let mut scores = Vec::with_capacity(words.len());
+        for word in &words {
+            let key = if traditional { to_simplified(&app, word.trim())? } else { word.trim().to_string() };
+            scores.push(*table.get(&key.to_lowercase()).unwrap_or(&0.0));
+        }
+        Ok(scores)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -280,17 +334,18 @@ fn unspaced(language: &str) -> bool {
 /// A seeded random sample of general-corpus sentences that contain any of the forms.
 #[tauri::command]
 pub(crate) async fn glossary_research_general_sentences(app: AppHandle, input: SentencesInput) -> Result<SentencesResult, String> {
-    let language = safe_language(&input.language)?;
+    let (language, traditional) = resolve_language(&safe_language(&input.language)?);
     tauri::async_runtime::spawn_blocking(move || {
         let entry = language_entry(&app, &language)?.ok_or_else(|| format!("No research data for language '{language}'."))?;
         let sentences = entry.get("sentences").ok_or("manifest without sentences")?;
         let path = ensure_file(&app, &language, sentences)?;
-        let forms: Vec<String> = input
-            .forms
-            .iter()
-            .map(|form| regex::escape(form.trim()))
-            .filter(|form| !form.is_empty())
-            .collect();
+        let mut forms: Vec<String> = Vec::new();
+        for form in &input.forms {
+            let form = if traditional { to_simplified(&app, form.trim())? } else { form.trim().to_string() };
+            if !form.is_empty() {
+                forms.push(regex::escape(&form));
+            }
+        }
         if forms.is_empty() {
             return Err("No forms to search for.".into());
         }
@@ -343,6 +398,14 @@ mod tests {
         assert!(safe_language("zh-Hant").is_ok());
         assert!(safe_language("../x").is_err());
         assert!(safe_language("").is_err());
+    }
+
+    #[test]
+    fn traditional_chinese_uses_the_chinese_data() {
+        assert_eq!(resolve_language("zh-Hant"), ("zh".to_string(), true));
+        assert_eq!(resolve_language("zh-Hans"), ("zh".to_string(), false));
+        assert_eq!(resolve_language("pt-BR"), ("pt".to_string(), false));
+        assert_eq!(resolve_language("no"), ("nb".to_string(), false));
     }
 
     #[test]
