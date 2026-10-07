@@ -51,7 +51,7 @@ export const RESEARCH_DEFAULTS = {
   judges: 2,
   frequencyChecks: true,
   senseSample: 100,
-  maxSenseChecks: 6,
+  maxSenseChecks: 10,
 };
 
 /** Languages whose frequency list counts syllables, or that are written without spaces: count words in the corpus instead. */
