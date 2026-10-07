@@ -1,5 +1,6 @@
 mod ai;
 mod glossary_research_dle;
+mod glossary_research_language_data;
 mod glossary_research_storage;
 mod ai_secret_storage;
 mod broker;
@@ -646,6 +647,9 @@ pub fn run() {
             project_search::research_sample::glossary_research_project_passages,
             project_search::research_sample::glossary_research_list_projects,
             glossary_research_dle::glossary_research_fetch_dle,
+            glossary_research_language_data::glossary_research_language_data,
+            glossary_research_language_data::glossary_research_zipf,
+            glossary_research_language_data::glossary_research_general_sentences,
             glossary_research_storage::save_glossary_research_stage,
             glossary_research_storage::load_glossary_research_run,
             glossary_research_storage::list_glossary_research_runs,
