@@ -611,3 +611,42 @@ test("a look-alike absent from the general corpus does not use up a measurement"
   const fatal = store.data.checks.candidates.find((c) => c.target === "fatal");
   assert.equal(fatal.verdict, "fail", "“fatal” is still measured after the absent word");
 });
+
+test("a word failing in one sense but passing in another is not banned from other renderings", async () => {
+  const base = lookalikeModel();
+  const model = {
+    calls: base.calls,
+    async call(request, onDelta) {
+      if (request.stage === "candidates") {
+        base.calls.push(request.stage);
+        return { status: "ok", text: JSON.stringify({ senses: [
+          { senseId: "s1", sense: "inevitable", groups: [{ members: ["fatal"], recommended: true, note: "n", rationale: "r" }, { members: ["fateful"], recommended: true, note: "n", rationale: "r" }] },
+          { senseId: "s2", sense: "deadly", groups: [{ members: ["fatal blow"], recommended: true, note: "n", rationale: "r" }] },
+        ] }), usage: { inputTokens: 10, outputTokens: 10 } };
+      }
+      if (request.stage === "checks") {
+        base.calls.push(request.stage);
+        const numbers = [...request.content.matchAll(/^(\d+)\. (.+?) — /gm)].map((m) => [Number(m[1]), m[2]]);
+        return { status: "ok", text: JSON.stringify({ candidates: numbers.map(([n, target]) => ({
+          n, target, establishedUsage: false, establishedBasis: "",
+          words: target === "fateful" ? [{ word: "fateful", neededSense: "decided by fate", lookalike: false, resembles: null, otherSenses: [] }]
+            : [{ word: "fatal", neededSense: target === "fatal" ? "inevitable" : "causing death", lookalike: true, resembles: "fatal", otherSenses: ["deadly"] }],
+        })) }), usage: { inputTokens: 10, outputTokens: 10 } };
+      }
+      if (request.stage === "frequency" && request.instructions.includes("ordinary English text")) {
+        base.calls.push(request.stage);
+        const n = [...request.content.matchAll(/^(\d+)\. /gm)].length;
+        const sense = request.instructions.includes("causing death") ? "needed" : "o1";
+        return { status: "ok", text: JSON.stringify({ items: Array.from({ length: n }, (_, i) => ({ n: i + 1, sense })) }), usage: { inputTokens: 10, outputTokens: 10 } };
+      }
+      return base.call(request, onDelta);
+    },
+  };
+  const { engine: research, store } = engine({ model, languageData: fakeLanguageData() });
+  await research.runToReview();
+  const checks = store.data.checks;
+  assert.equal(checks.candidates.find((c) => c.target === "fatal").verdict, "fail");
+  assert.equal(checks.candidates.find((c) => c.target === "fatal blow").verdict, "pass");
+  assert.deepEqual(checks.failedWords, []);
+  assert.deepEqual(checks.failedTargets, ["fatal"]);
+});

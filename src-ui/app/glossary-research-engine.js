@@ -1101,6 +1101,7 @@ export function createResearchEngine(deps) {
         }
       }
       const failedWords = [];
+      const passedWords = new Set();
       const failedTargets = [];
       const candidates = toCheck.map((c) => {
         const found = byNumber.get(c.n);
@@ -1133,6 +1134,7 @@ export function createResearchEngine(deps) {
               }
               if (!ref.measure.inSense) {
                 notes.push(`“${w.word}”: the sense needed is rare in both languages`);
+                passedWords.add(fold(w.word).trim());
                 continue;
               }
               verdict = "fail";
@@ -1142,6 +1144,8 @@ export function createResearchEngine(deps) {
               verdict = "fail";
               failedWords.push(w.word);
               reasons.push(`“${w.word}” is much less used in the sense needed than ${sourceName} “${ref.label}”: ${formatZipf(needed.zipf)} against ${formatZipf(ref.measure.zipf)}`);
+            } else {
+              passedWords.add(fold(w.word).trim());
             }
           }
           // The whole rendering against the source sense it translates (no demand when that sense is rare in the source too).
@@ -1168,7 +1172,10 @@ export function createResearchEngine(deps) {
         members: g.members.map((m) => ({ target: m, zipf: renderingScore(m, zipfOf) })),
       }));
       info(`${groups.length} groups from ${groups.reduce((n, g) => n + g.members.length, 0)} renderings; ${toCheck.length} checked.`);
-      return { available: ready, groups: outGroups, candidates, failedWords: [...new Set(failedWords)], failedTargets };
+      // A word that fails in one sense but passes in another is not banned: only the
+      // renderings checked for the failing sense go.
+      const banned = [...new Set(failedWords)].filter((w) => !passedWords.has(fold(w).trim()));
+      return { available: ready, groups: outGroups, candidates, failedWords: banned, failedTargets };
     });
   }
 
