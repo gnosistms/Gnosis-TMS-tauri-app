@@ -1,7 +1,7 @@
 // Prompt texts and strict JSON schemas for Glossary Research.
 // Bump RESEARCH_PROMPT_VERSION on any change that could alter a judgment.
 
-export const RESEARCH_PROMPT_VERSION = "2026-10-07.4";
+export const RESEARCH_PROMPT_VERSION = "2026-10-07.5";
 
 const STR = { type: "string" };
 const NSTR = { anyOf: [{ type: "string" }, { type: "null" }] };
@@ -390,6 +390,7 @@ Answer every number once.`;
 
 export const CHECK_SCHEMA = object({
   candidates: arrayOf(object({
+    n: { type: "integer" },
     target: STR,
     words: arrayOf(object({ word: STR, neededSense: STR, lookalike: { type: "boolean" }, resembles: NSTR, otherSenses: arrayOf(STR) })),
     establishedUsage: { type: "boolean" },
@@ -399,7 +400,7 @@ export const CHECK_SCHEMA = object({
 
 export function checkInstructions(ctx) {
   return `You prepare candidate ${ctx.targetName} translations of the ${ctx.sourceName} term “${ctx.headword}” for a frequency check. ${corpusLine(ctx)} Do not judge or rank the candidates.
-For each candidate list its words, leaving out function words (articles, prepositions, conjunctions, particles). For a word that is not an established ${ctx.targetName} word (a coinage, or a compound written as one word or with hyphens), also list its parts as separate items. For each word or part give:
+Candidates are numbered, and the same rendering can appear more than once for different senses: answer every number once, with its own number (n), and judge each for the sense given with it. For each candidate list its words, leaving out function words (articles, prepositions, conjunctions, particles). For a word that is not an established ${ctx.targetName} word (a coinage, or a compound written as one word or with hyphens), also list its parts as separate items. For each word or part give:
 - neededSense: the sense, in plain words, that it must carry in present-day general ${ctx.targetName} use for the candidate to say what the author means.
 - lookalike: true only when it has the same or nearly the same written form as the term, one of its forms, or one of its parts (a cognate or a calque of the term); resemblance to other ${ctx.sourceName} words does not count. resembles: that form or part, else null.
 - otherSenses: for a lookalike, its other common ${ctx.targetName} senses (short glosses); else empty.

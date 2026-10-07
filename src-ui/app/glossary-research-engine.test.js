@@ -135,7 +135,7 @@ function fakeModel({ failFirstCounting = false } = {}) {
       } else if (request.stage === "parts") {
         out = { isCompound: false, parts: [{ part: "fatal", meaning: "inevitable" }], senses: [{ id: "s1", gloss: "inevitable", usedByAuthor: true }, { id: "s2", gloss: "deadly", usedByAuthor: false }], bases: [] };
       } else if (request.stage === "checks") {
-        out = { candidates: [{ target: "the Fateful One", words: [{ word: "Fateful", neededSense: "ruled by fate", lookalike: false, resembles: null, otherSenses: [] }, { word: "One", neededSense: "a being", lookalike: false, resembles: null, otherSenses: [] }], establishedUsage: true, establishedBasis: "the original book" }] };
+        out = { candidates: [{ n: 1, target: "the Fateful One", words: [{ word: "Fateful", neededSense: "ruled by fate", lookalike: false, resembles: null, otherSenses: [] }, { word: "One", neededSense: "a being", lookalike: false, resembles: null, otherSenses: [] }], establishedUsage: true, establishedBasis: "the original book" }] };
       } else if (request.stage === "frequency") {
         const n = [...request.content.matchAll(/^(\d+)\. /gm)].length;
         out = { items: Array.from({ length: n }, (_, i) => ({ n: i + 1, sense: i % 4 === 0 ? "other" : "needed" })) };
@@ -389,9 +389,10 @@ function lookalikeModel() {
       }
       if (request.stage === "checks") {
         base.calls.push(request.stage);
+        const numbers = Object.fromEntries([...request.content.matchAll(/^(\d+)\. (\S+) —/gm)].map((m) => [m[2], Number(m[1])]));
         return { status: "ok", text: JSON.stringify({ candidates: [
-          { target: "fatal", words: [{ word: "fatal", neededSense: "inevitable", lookalike: true, resembles: "fatal", otherSenses: ["deadly"] }], establishedUsage: false, establishedBasis: "" },
-          { target: "fateful", words: [{ word: "fateful", neededSense: "decided by fate", lookalike: false, resembles: null, otherSenses: [] }], establishedUsage: false, establishedBasis: "" },
+          { n: numbers.fatal, target: "fatal", words: [{ word: "fatal", neededSense: "inevitable", lookalike: true, resembles: "fatal", otherSenses: ["deadly"] }], establishedUsage: false, establishedBasis: "" },
+          { n: numbers.fateful, target: "fateful", words: [{ word: "fateful", neededSense: "decided by fate", lookalike: false, resembles: null, otherSenses: [] }], establishedUsage: false, establishedBasis: "" },
         ] }), usage: { inputTokens: 10, outputTokens: 10 } };
       }
       if (request.stage === "frequency") {

@@ -193,6 +193,7 @@ function renderFrequency(run) {
         </ul>` : ""}
       ${removed.length ? `<p>Removed from the proposal by the checks: ${removed.map((r) => `<span lang="${esc(tgt.code)}">${esc(r.target)}</span>`).join(", ")}.</p>` : ""}
       ${checks?.failedWords?.length ? `<p>Words to look for in finished ${esc(tgt.name)} translations (any word containing them): ${checks.failedWords.map((w) => `<strong lang="${esc(tgt.code)}">${esc(w)}</strong>`).join(", ")}.</p>` : ""}
+      ${(run.aggregate?.otherRenderings ?? []).some((o) => o.failedWord) ? `<p>Judges' own renderings that contain a word whose check failed: ${run.aggregate.otherRenderings.filter((o) => o.failedWord).map((o) => `<span lang="${esc(tgt.code)}">${esc(o.rendering)}</span> (${o.n})`).join(", ")}.</p>` : ""}
       ${notes.length ? `<h3>Translator's notes proposed for rare translations</h3><ul>${notes.map((n) => `<li><strong lang="${esc(tgt.code)}">${esc(n.target)}</strong> (Zipf ${formatZipf(n.zipf)}): <span lang="${esc(tgt.code)}">${esc(n.note)}</span></li>`).join("")}</ul>` : ""}
     </section>`;
 }

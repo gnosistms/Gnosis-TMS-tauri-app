@@ -610,7 +610,9 @@ export function createResearchEngine(deps) {
         // A member found in the texts brings its own inflections from the texts' word list.
         if (present && corpus.formsHint && !/\s/.test(candidate.form.trim())) {
           const hint = await corpus.formsHint(candidate.form).catch(() => null);
-          for (const f of hint?.forms ?? []) await add(f.form, candidate.kind);
+          // Rare words may have no inflection links in the word list; their plurals
+          // then appear among the words that extend their stem.
+          for (const f of [...(hint?.forms ?? []), ...(hint?.related ?? [])]) await add(f.form, candidate.kind);
         }
       }
       members.sort((a, b) => b.rows - a.rows);
@@ -973,14 +975,15 @@ export function createResearchEngine(deps) {
         group.representative = pickRepresentative(group.members, (m) => renderingScore(m, zipfOf), target);
         group.lookalikes = group.members.filter((m) => m !== group.representative && looksLike(m, sourceWords));
       }
+      // One check per rendering and sense: a word can carry one sense and lack another.
       const toCheck = [];
       const seen = new Set();
       for (const group of groups) {
         for (const target of [group.representative, ...group.lookalikes]) {
-          const key = fold(target).trim();
+          const key = `${fold(target).trim()}\u0000${group.senseId}`;
           if (seen.has(key)) continue;
           seen.add(key);
-          toCheck.push({ target, sense: group.sense, senseId: group.senseId });
+          toCheck.push({ n: toCheck.length + 1, target, sense: group.sense, senseId: group.senseId });
         }
       }
       const sources = store.load("sources")?.study;
@@ -989,15 +992,17 @@ export function createResearchEngine(deps) {
         instructions: prompts.checkInstructions(ctx()),
         content: [
           `# Term: ${settings.term}`,
-          `## Candidates\n${toCheck.map((c) => `- ${c.target} (for: ${c.sense})`).join("\n")}`,
+          `## Candidates (number. rendering — the sense it must render)\n${toCheck.map((c) => `${c.n}. ${c.target} — ${c.sense}`).join("\n")}`,
           parts?.study ? `## Parts of the term\n${parts.study.parts.map((p) => `- ${p.part}: ${p.meaning}`).join("\n")}` : "",
           sources ? `## Where the term comes from\n${JSON.stringify(sources.senses.map((x) => ({ sense: x.sense, sourceBook: x.sourceBook, originalLanguage: x.originalLanguage, originalTerm: x.originalTerm })), null, 1)}` : "",
         ].filter(Boolean).join("\n\n"),
         schema: prompts.CHECK_SCHEMA, schemaName: "checks",
         maxOutputTokens: 1500 + 300 * toCheck.length, effort: settings.effortLight,
       });
-      const byTarget = new Map(analysis.candidates.map((c) => [fold(c.target).trim(), c]));
-      const words = [...new Map(analysis.candidates.flatMap((c) => c.words).map((w) => [fold(w.word).trim(), w])).values()];
+      const byNumber = new Map(analysis.candidates.map((c) => [c.n, c]));
+      // A word is measured once for each distinct sense it must carry.
+      const measureKey = (w) => `${fold(w.word).trim()}\u0000${fold(w.neededSense).trim()}`;
+      const words = [...new Map(analysis.candidates.flatMap((c) => c.words).map((w) => [measureKey(w), w])).values()];
       const missing = words.map((w) => fold(w.word).trim()).filter((w) => !zipfOf.has(w));
       if (ready && missing.length) {
         const extra = await languageData.zipf(code, missing);
@@ -1027,7 +1032,7 @@ export function createResearchEngine(deps) {
           const senses = w.lookalike
             ? [{ id: "needed", gloss: w.neededSense }, ...w.otherSenses.slice(0, 5).map((gloss, i) => ({ id: `o${i + 1}`, gloss }))]
             : [{ id: "needed", gloss: w.neededSense }];
-          measured.set(fold(w.word).trim(), await measureSenses({
+          measured.set(measureKey(w), await measureSenses({
             code, name, forms: [w.word], senses, listZipf: zipfOf.get(fold(w.word).trim()),
             purpose: `sort general ${name} sentences with “${w.word}” by sense`,
           }));
@@ -1036,13 +1041,13 @@ export function createResearchEngine(deps) {
       const failedWords = [];
       const failedTargets = [];
       const candidates = toCheck.map((c) => {
-        const found = byTarget.get(fold(c.target).trim());
+        const found = byNumber.get(c.n);
         const reasons = [];
         const notes = [];
         let verdict = ready ? "pass" : "unchecked";
         const senseRef = source && !source.invented ? source.term.senses[c.senseId] ?? null : null;
         const items = (found?.words ?? []).map((w) => {
-          const m = measured.get(fold(w.word).trim());
+          const m = measured.get(measureKey(w));
           return {
             word: w.word, neededSense: w.neededSense, lookalike: w.lookalike, resembles: w.resembles,
             zipf: m ? m.wordZipf : zipfOf.get(fold(w.word).trim()) ?? null,
@@ -1348,6 +1353,11 @@ export function createResearchEngine(deps) {
         combined.totals.agreement = merged.agreement;
         aggregate = combined;
         fact(`Two judges agreed on ${merged.agreement.agreed} of ${merged.agreement.compared} occurrences.`);
+      }
+      const failedWords = (store.load("checks")?.failedWords ?? []).map((w) => fold(w).trim()).filter(Boolean);
+      for (const other of aggregate.otherRenderings) {
+        const word = failedWords.find((w) => renderingTokens(other.rendering).some((t) => t.includes(w)));
+        if (word) other.failedWord = word;
       }
       store.save("aggregate", aggregate);
       const footnotes = await stage("footnotes", () => rareWinners(frozen, aggregate).catch((error) => {
