@@ -52,7 +52,7 @@ def find_corpus(code):
         return None
     codes = [iso3] + ALT_CODES.get(code, [])
     kinds = ("news", "newscrawl", "web", "wikipedia", "mixed", "community")
-    for size in ("1M", "300K", "100K"):
+    for size in ("1M", "300K", "100K", "30K"):
         for kind in kinds:
             for lang in codes:
                 for year in range(2024, 2004, -1):
