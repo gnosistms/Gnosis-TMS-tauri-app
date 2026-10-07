@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   accentCounterparts,
   createResearchEngine,
+  failedVariants,
   transferAccents,
   unmeasuredRenderings,
   validateProposal,
@@ -127,6 +128,17 @@ function fakeModel({ failFirstCounting = false } = {}) {
         out = { summary: "From the source book.", senses: [{ sense: "the Fatal (noun)", inDictionary: false, sourceBook: "Libro fuente — M.", evidence: "named by the author", originalLanguage: "en", originalTerm: "Fateful One", originalTermBasis: "the book's glossary pairs", meaningInSource: "a guide", authorUsage: "follows it", equivalences: [] }] };
       } else if (request.stage === "candidates") {
         out = { senses: [{ sense: "the Fatal (noun)", candidates: [{ target: "the Fateful One", recommended: true, note: "noun", rationale: "original term" }] }] };
+      } else if (request.stage === "family") {
+        out = { words: [{ form: "fatalmente", kind: "suffixed", reason: "adverb" }, { form: "sobrefatal", kind: "prefixed", reason: "test" }] };
+      } else if (request.stage === "parts") {
+        out = { isCompound: false, parts: [{ part: "fatal", meaning: "inevitable" }], senses: [{ id: "s1", gloss: "inevitable", usedByAuthor: true }, { id: "s2", gloss: "deadly", usedByAuthor: false }], bases: [] };
+      } else if (request.stage === "checks") {
+        out = { candidates: [{ target: "the Fateful One", words: [{ word: "Fateful", neededSense: "ruled by fate", lookalike: false, resembles: null, otherSenses: [] }, { word: "One", neededSense: "a being", lookalike: false, resembles: null, otherSenses: [] }], establishedUsage: true, establishedBasis: "the original book" }] };
+      } else if (request.stage === "frequency") {
+        const n = [...request.content.matchAll(/^(\d+)\. /gm)].length;
+        out = { items: Array.from({ length: n }, (_, i) => ({ n: i + 1, sense: i % 4 === 0 ? "other" : "needed" })) };
+      } else if (request.stage === "footnotes") {
+        out = { items: [] };
       } else if (request.stage === "comparison") {
         out = { items: [{ existing: "fateful", verdict: "proposed", proposedVariantId: "e1v2", reason: "same" }] };
       } else if (request.stage === "proposal") {
@@ -159,12 +171,13 @@ function memoryStore(initial = {}) {
   return { data, load: (name) => data[name], save: (name, value) => { data[name] = value; } };
 }
 
-function engine({ model = fakeModel(), store = memoryStore(), limit = 4, items = passages(40), log = () => {}, corpus = fakeCorpus(items) } = {}) {
+function engine({ model = fakeModel(), store = memoryStore(), limit = 4, items = passages(40), log = () => {}, corpus = fakeCorpus(items), judges = 1, languageData = null, glossaryTerms = [] } = {}) {
   return {
     model, store, corpus,
     engine: createResearchEngine({
-      model, prices: PRICES, corpus, dictionary, store, log,
+      model, prices: PRICES, corpus, dictionary, store, log, languageData, glossaryTerms,
       settings: {
+        judges, sourceLanguageCode: "es",
         term: "fatal", variants: [], existingEntries: [{ sourceTerms: ["fatal"], targetTerms: ["fateful"], targetVariantNotes: [""], notesToTranslators: "" }],
         sourceLanguageName: "Spanish", targetLanguageName: "English", targetLanguageCode: "en", reportLanguageName: "English",
         sampleSize: 20, discoverySize: 10, spendingLimitUsd: limit, seed: "s", workers: 3,
@@ -338,4 +351,110 @@ test("a resumed run that already has a proposal does not run the new studies", a
   await research.runToReview();
   assert.ok(!model.calls.includes("sources"));
   assert.ok(!model.calls.includes("candidates"));
+});
+
+// --- frequency checks and two judges ---------------------------------------------
+
+function fakeLanguageData({ available = true } = {}) {
+  const asked = [];
+  return {
+    asked,
+    async ensure(code) {
+      asked.push(code);
+      return available ? { available: true, corpus: `${code}_news`, sentences: 1000 } : { available: false };
+    },
+    async zipf(code, words) {
+      return words.map(() => 3.2);
+    },
+    async sentences(code, forms) {
+      return { hits: 60, corpusTokens: 1e6, corpus: `${code}_news`, sample: Array.from({ length: 40 }, (_, i) => `Sentence ${i} with ${forms[0]}.`) };
+    },
+  };
+}
+
+/** A model whose candidate list contains a look-alike that general English never uses in the needed sense. */
+function lookalikeModel() {
+  const base = fakeModel();
+  return {
+    calls: base.calls,
+    async call(request, onDelta) {
+      if (request.stage === "candidates") {
+        base.calls.push(request.stage);
+        return { status: "ok", text: JSON.stringify({ senses: [{ sense: "inevitable", candidates: [
+          { target: "fatal", recommended: false, note: "n", rationale: "r" },
+          { target: "fateful", recommended: true, note: "n", rationale: "r" },
+        ] }] }), usage: { inputTokens: 10, outputTokens: 10 } };
+      }
+      if (request.stage === "checks") {
+        base.calls.push(request.stage);
+        return { status: "ok", text: JSON.stringify({ candidates: [
+          { target: "fatal", words: [{ word: "fatal", neededSense: "inevitable", lookalike: true, resembles: "fatal", otherSenses: ["deadly"] }], establishedUsage: false, establishedBasis: "" },
+          { target: "fateful", words: [{ word: "fateful", neededSense: "decided by fate", lookalike: false, resembles: null, otherSenses: [] }], establishedUsage: false, establishedBasis: "" },
+        ] }), usage: { inputTokens: 10, outputTokens: 10 } };
+      }
+      if (request.stage === "frequency") {
+        base.calls.push(request.stage);
+        const n = [...request.content.matchAll(/^(\d+)\. /gm)].length;
+        const english = request.instructions.includes("ordinary English text");
+        return { status: "ok", text: JSON.stringify({ items: Array.from({ length: n }, (_, i) => ({ n: i + 1, sense: english ? "o1" : "s1" })) }), usage: { inputTokens: 10, outputTokens: 10 } };
+      }
+      if (request.stage === "proposal") {
+        base.calls.push(request.stage);
+        const proposal = structuredClone(PROPOSAL);
+        proposal.entries[0].variants.push({ id: "e1v3", target: "fatal", note: "n", senses: ["1"], corpusSense: null, fromExisting: false, rationale: "r" });
+        return { status: "ok", text: JSON.stringify(proposal), usage: { inputTokens: 10, outputTokens: 10 } };
+      }
+      return base.call(request, onDelta);
+    },
+  };
+}
+
+test("a look-alike never used in the needed sense fails its check and is removed from the proposal", async () => {
+  const logs = [];
+  const languageData = fakeLanguageData();
+  const { engine: research, store } = engine({ model: lookalikeModel(), languageData, log: (event) => logs.push(event) });
+  const review = await research.runToReview();
+  const checks = store.data.checks;
+  const fatal = checks.candidates.find((c) => c.target === "fatal");
+  assert.equal(fatal.verdict, "fail");
+  assert.match(fatal.reasons[0], /0 of 40 sentences/);
+  assert.equal(checks.candidates.find((c) => c.target === "fateful").verdict, "pass");
+  assert.deepEqual(checks.failedWords, ["fatal"]);
+  assert.ok(!review.proposal.entries[0].variants.some((v) => v.target === "fatal"), "the failed rendering is not counted");
+  assert.equal(review.proposal.removedByChecks[0].target, "fatal");
+  assert.deepEqual([...new Set(languageData.asked)], ["es", "en"]);
+  assert.ok(store.data.parts.source.term.senses.s1.zipf > 0, "the source sense is measured");
+});
+
+test("without data for a language the research tells whom to ask and goes on without scores", async () => {
+  const logs = [];
+  const { engine: research, store } = engine({ languageData: fakeLanguageData({ available: false }), log: (event) => logs.push(event) });
+  const review = await research.runToReview();
+  assert.equal(review.status, "review");
+  assert.ok(logs.some((event) => event.type === "problem" && event.text.includes("gnosistms@gmail.com")));
+  assert.equal(store.data.parts.source, null);
+  assert.ok(store.data.checks.candidates.every((c) => c.verdict === "unchecked"));
+});
+
+test("two judges vote on every occurrence and their agreement is reported", async () => {
+  const { engine: research, model } = engine({ judges: 2 });
+  const review = await research.runToReview();
+  const done = await research.runCounting(review.proposal);
+  const { totals, entries } = done.aggregate;
+  assert.equal(totals.occurrencesSampled, 20);
+  assert.equal(totals.votes, 40);
+  assert.equal(totals.judges, 2);
+  assert.equal(totals.agreement.compared, 20);
+  const votes = Object.values(entries).reduce((sum, e) => sum + e.occurrences, 0);
+  assert.equal(votes, 40);
+  assert.ok(model.calls.filter((stage) => stage === "counting").length >= 2);
+});
+
+test("failedVariants finds failed candidates and coinages built on a failed word", () => {
+  const proposal = { entries: [{ id: "e1", variants: [
+    { id: "a", target: "superword" }, { id: "b", target: "plain terms" }, { id: "c", target: "the word" },
+  ] }] };
+  const found = failedVariants(proposal, { failedWords: ["word"], failedTargets: [] });
+  assert.deepEqual(found.map((f) => f.variantId), ["a", "c"]);
+  assert.deepEqual(failedVariants(proposal, null), []);
 });

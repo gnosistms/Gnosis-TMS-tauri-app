@@ -1,7 +1,7 @@
 // Prompt texts and strict JSON schemas for Glossary Research.
 // Bump RESEARCH_PROMPT_VERSION on any change that could alter a judgment.
 
-export const RESEARCH_PROMPT_VERSION = "2026-09-26.2";
+export const RESEARCH_PROMPT_VERSION = "2026-10-07.1";
 
 const STR = { type: "string" };
 const NSTR = { anyOf: [{ type: "string" }, { type: "null" }] };
@@ -205,7 +205,8 @@ Rules:
 - Prefer renderings that translate the term's own meaning over substituting another term the author equates it with. A synonym names the same thing with a different word; list it only if a translator might really need it, and say in its note that it is a synonym and what is lost.
 - If a sense of the term is a translation of an original-language term and ${ctx.targetName} IS that original language, the original term must be one of the candidates for that sense.
 - Notes are written in ${ctx.targetName}, at most 40 words. Rationales are in ${ctx.reportName}, at most 25 words each. sense at most 20 words. ${quotationRules(ctx)}
-- Mark at most one candidate per sense as recommended.`;
+- Mark at most one candidate per sense as recommended.
+- A rendering must be understood by a general ${ctx.targetName} reader. A word built from parts works only if each part carries the needed sense in present-day general ${ctx.targetName} use, and a ${ctx.targetName} word that looks like the ${ctx.sourceName} word may not carry the sense used here. Include plain renderings and phrases as well as specialist terms and look-alikes: every candidate is checked afterwards against general-usage frequencies, sense by sense.`;
 }
 
 // --- proposal ------------------------------------------------------------
@@ -249,6 +250,7 @@ Principles:
 - Prefer renderings of the term's own meaning over another term the author equates it with; such a synonym is a variant only if translators really need it, and its note says so.
 - If the term translates an original-language term and ${ctx.targetName} is that original language, the original term must be a variant.
 - Existing translations found in the texts (when shown) are hints, not authorities.
+- CHECKS. The candidate checks (below) measured the candidates against general ${ctx.targetName} usage, sense by sense. A candidate with verdict "fail" must not be a variant, and no variant may contain a word whose check failed; if the open reading used such a rendering, list it in leftOutRenderings with the check's reason. A rendering that was not checked may be added only when it is made of common ${ctx.targetName} words used in their ordinary sense.
 - EXPRESSIONS. Propose a separate expression entry (kind "expression") only for a recurring fixed expression (normally ≥3 occurrences in the whole population, or a listed dictionary complex form that is attested) whose translation cannot be composed from the word variants. Its sourceTerms list every surface spelling to match, lower case. Recurring combinations that need no entry go in rejectedExpressions.
 - Derived words (other lemmas sharing the stem) are not part of this study; list those worth separate studies in derivativeStudies.
 - LANGUAGE: target, every note, and every generalNote are TMX fields and MUST be in ${ctx.targetName}; each note says when to choose the variant (contexts, collocations, what to avoid), at most 40 words. rationale, reason, evidence, and openQuestions are in ${ctx.reportName}. Source-language quotations keep their wording. ${quotationRules(ctx)}
@@ -339,3 +341,76 @@ export const WEB_DICTIONARY_SCHEMA = object({
     senses: arrayOf(object({ number: STR, labels: STR, definition: STR })),
   })),
 });
+
+// --- word family ------------------------------------------------------------
+
+export const FAMILY_SCHEMA = object({
+  words: arrayOf(object({ form: STR, kind: oneOf("prefixed", "suffixed", "compound", "phrase"), reason: STR })),
+});
+
+export function familyInstructions(ctx) {
+  return `You list the word family of the ${ctx.sourceName} word “${ctx.headword}” for a corpus study. ${corpusLine(ctx)}
+List ${ctx.sourceName} words that contain the headword (or its stem) as one of their parts: the word with a prefix (also written with a hyphen or a space after the prefix), the word with a suffix that makes another word, compounds, and recurring fixed phrases of two or three words built on it. Include the spellings a text might use (joined, hyphenated, spaced; with and without accents). Do not list the inflections of the headword itself; they are already in the study. At most 40, the most plausible for these texts first. Each one is searched in the texts and dropped if it does not occur. reason: at most 8 words, in ${ctx.reportName}.`;
+}
+
+// --- parts and senses of the term ----------------------------------------------
+
+export const PARTS_SCHEMA = object({
+  isCompound: { type: "boolean" },
+  parts: arrayOf(object({ part: STR, meaning: STR })),
+  senses: arrayOf(object({ id: STR, gloss: STR, usedByAuthor: { type: "boolean" } })),
+  bases: arrayOf(object({ word: STR, forms: arrayOf(STR), neededSense: STR, otherSenses: arrayOf(STR) })),
+});
+
+export function partsInstructions(ctx) {
+  return `You analyse the ${ctx.sourceName} term “${ctx.headword}” before it is translated. ${corpusLine(ctx)} Do not propose translations.
+1. parts: take the term apart into its meaningful parts (prefix, base word, suffix; or the words of a phrase). For each part say, in plain words, what it means in this term as the author uses it. A simple word that cannot be split has one part. isCompound: true when the term has more than one part.
+2. senses: the senses of the term itself: the dictionary's senses (merge closely related ones) plus any sense the author uses that the dictionary lacks; at most 6, ids "s1", "s2", …. Gloss each in plain words without using a ${ctx.targetName} word as the definition: the glosses are used to sort sentences of general ${ctx.sourceName} texts by sense. usedByAuthor: true for the senses the passages show the author using.
+3. bases: only when the term has more than one part: for each part that is itself a ${ctx.sourceName} word (not a prefix or suffix), the word written alone, its inflected forms to search (forms, including the word itself), the sense it carries inside the term (neededSense, plain words), and its other common senses (otherSenses, short glosses). These words are measured in general ${ctx.sourceName} usage. Empty for a simple word.
+Write meanings and glosses in ${ctx.reportName}, at most 20 words each. ${quotationRule(ctx.reportName, ctx.reportCode)}`;
+}
+
+// --- sorting general-corpus sentences by sense -----------------------------------
+
+export function senseClassifySchema(ids) {
+  return object({ items: arrayOf(object({ n: { type: "integer" }, sense: oneOf(...ids, "not_this_word", "other") })) });
+}
+
+export function senseClassifyInstructions({ languageName, word, senses }) {
+  return `Each numbered sentence below is ordinary ${languageName} text (news) in which the letters of “${word}” occur. For each sentence decide how they are used:
+${senses.map((sense) => `- "${sense.id}": ${sense.gloss}`).join("\n")}
+- "not_this_word": the letters are not this word here: they belong to other words or to a different word written the same way that is not listed above, a name, or another language.
+- "other": the word is used in a sense not listed above.
+Answer every number once.`;
+}
+
+// --- checking the candidates ------------------------------------------------------
+
+export const CHECK_SCHEMA = object({
+  candidates: arrayOf(object({
+    target: STR,
+    words: arrayOf(object({ word: STR, neededSense: STR, lookalike: { type: "boolean" }, resembles: NSTR, otherSenses: arrayOf(STR) })),
+    establishedUsage: { type: "boolean" },
+    establishedBasis: STR,
+  })),
+});
+
+export function checkInstructions(ctx) {
+  return `You prepare candidate ${ctx.targetName} translations of the ${ctx.sourceName} term “${ctx.headword}” for a frequency check. ${corpusLine(ctx)} Do not judge or rank the candidates.
+For each candidate list its words, leaving out function words (articles, prepositions, conjunctions, particles). For a word that is not an established ${ctx.targetName} word (a coinage, or a compound written as one word or with hyphens), also list its parts as separate items. For each word or part give:
+- neededSense: the sense, in plain words, that it must carry in present-day general ${ctx.targetName} use for the candidate to say what the author means.
+- lookalike: true when it has the same or nearly the same written form as a ${ctx.sourceName} word or a part of the term (a cognate or a calque); resembles: that ${ctx.sourceName} word or part, else null.
+- otherSenses: for a lookalike, its other common ${ctx.targetName} senses (short glosses); else empty.
+establishedUsage: true only when the candidate as a whole is attested, established ${ctx.targetName} wording for this concept in a tradition the author draws on, as the research below shows; give the evidence in establishedBasis, else empty.
+Write neededSense, otherSenses and establishedBasis in ${ctx.reportName}, at most 15 words each.`;
+}
+
+// --- notes for rare winners ---------------------------------------------------------
+
+export const FOOTNOTE_SCHEMA = object({
+  items: arrayOf(object({ target: STR, understandableFromParts: { type: "boolean" }, note: STR })),
+});
+
+export function footnoteInstructions(ctx) {
+  return `These ${ctx.targetName} translations of the ${ctx.sourceName} term “${ctx.headword}” were chosen by translators but are rare in general ${ctx.targetName} use. For each, decide whether a general reader understands it from its parts. If not, write a translator's note in ${ctx.targetName}, at most 40 words, saying what it means in these texts, to be printed at its first occurrence in a book; otherwise leave note empty. ${quotationRule(ctx.targetName, ctx.targetCode)}`;
+}

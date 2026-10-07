@@ -87,3 +87,35 @@ export function aggregateCounts(counting, frozen, sample) {
     unresolvedNotes,
   };
 }
+
+/**
+ * Two judges' countings as one, each judgment a vote: the second judge's
+ * occurrences get "#2" ids. Agreement counts occurrences where both judges
+ * chose the same variant (or the same other rendering).
+ */
+export function mergeJudgeCountings(first, second) {
+  const occurrences = [...first.occurrences];
+  const judgments = { ...first.judgments };
+  let compared = 0;
+  let agreed = 0;
+  for (const occurrence of second.occurrences) {
+    const id = `${occurrence.occId}#2`;
+    occurrences.push({ ...occurrence, occId: id });
+    const b = second.judgments[occurrence.occId];
+    if (b) judgments[id] = { ...b, occId: id };
+    const a = first.judgments[occurrence.occId];
+    if (a && b && a.status !== "failed" && b.status !== "failed") {
+      compared += 1;
+      const same = a.status === b.status && (a.status === "selected"
+        ? a.variantId === b.variantId
+        : a.status === "other"
+          ? String(a.otherRendering ?? "").trim().toLowerCase() === String(b.otherRendering ?? "").trim().toLowerCase()
+          : a.unresolvedReason === b.unresolvedReason);
+      if (same) agreed += 1;
+    }
+  }
+  return {
+    counting: { frozenVersion: first.frozenVersion, occurrences, judgments },
+    agreement: { compared, agreed },
+  };
+}

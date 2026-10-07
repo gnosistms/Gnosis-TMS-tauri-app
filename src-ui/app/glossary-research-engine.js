@@ -24,7 +24,16 @@ import {
   snippet,
 } from "./glossary-research-occurrences.js";
 import * as prompts from "./glossary-research-prompts.js";
-import { aggregateCounts } from "./glossary-research-aggregate.js";
+import { aggregateCounts, mergeJudgeCountings } from "./glossary-research-aggregate.js";
+import {
+  MIN_SENSE_SAMPLE,
+  RESEARCH_DATA_CONTACT,
+  combinedZipf,
+  dataLanguage,
+  describeSense,
+  formatZipf,
+  senseZipf,
+} from "./glossary-research-frequency.js";
 
 export const RESEARCH_DEFAULTS = {
   sampleSize: 100,
@@ -39,7 +48,38 @@ export const RESEARCH_DEFAULTS = {
   effortStudy: "high",
   pauseForReview: true,
   maxRetries: 2,
+  judges: 2,
+  frequencyChecks: true,
+  senseSample: 100,
+  maxSenseChecks: 6,
 };
+
+/** Languages whose frequency list counts syllables, or that are written without spaces: count words in the corpus instead. */
+const CORPUS_COUNTED = new Set(["vi", "km", "th", "lo", "my"]);
+export function corpusCounted(code) {
+  return CORPUS_COUNTED.has(dataLanguage(code));
+}
+
+/** Words of a rendering, lower case, split at anything that is not a letter or digit. */
+export function renderingTokens(text) {
+  return fold(String(text ?? "")).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+}
+
+/** Variants that contain a word whose check failed (or are a failed candidate). */
+export function failedVariants(proposal, checks) {
+  if (!checks) return [];
+  const words = (checks.failedWords ?? []).map((w) => fold(w).trim()).filter(Boolean);
+  const targets = new Set((checks.failedTargets ?? []).map((t) => fold(t).trim()));
+  const found = [];
+  for (const entry of proposal.entries) {
+    for (const variant of entry.variants) {
+      const key = fold(variant.target).trim();
+      const word = words.find((w) => renderingTokens(variant.target).some((token) => token.includes(w)));
+      if (targets.has(key) || word) found.push({ entryId: entry.id, variantId: variant.id, target: variant.target, word: word ?? variant.target });
+    }
+  }
+  return found;
+}
 
 export class ResearchStop extends Error {
   constructor(message, kind = "stopped") {
@@ -291,6 +331,9 @@ export function createModelClient({ model, prices, budget, log, isCancelled, max
 export function createResearchEngine(deps) {
   const settings = { ...RESEARCH_DEFAULTS, ...deps.settings };
   const { corpus, dictionary, store, log } = deps;
+  const languageData = deps.languageData ?? null;
+  const glossaryTerms = deps.glossaryTerms ?? [];
+  const languageStatus = {};
   const budget = createBudget(settings.spendingLimitUsd, store.load("usage") ?? []);
   let cancelled = false;
   const client = createModelClient({
@@ -301,6 +344,63 @@ export function createResearchEngine(deps) {
   const heading = (text) => log({ type: "heading", text });
   const fact = (text) => log({ type: "fact", text });
   const info = (text) => log({ type: "info", text });
+
+  /** The language's frequency data is on this computer (downloaded the first time), or the run goes on without it. */
+  async function frequencyReady(code, name) {
+    if (!settings.frequencyChecks || !languageData) return false;
+    const key = dataLanguage(code);
+    if (!(key in languageStatus)) {
+      info(`Preparing the ${name} frequency data (downloaded once, the first time).`);
+      const status = await languageData.ensure(code);
+      languageStatus[key] = status.available === true;
+      if (status.available) {
+        info(`${name} frequency data ready: ${status.corpus ?? "general corpus"}, ${status.sentences ?? "?"} sentences.`);
+      } else {
+        log({ type: "problem", text: `Frequency data for ${name} is not available${status.error ? ` (${status.error})` : ""}. To ask for it to be added, write to ${RESEARCH_DATA_CONTACT}. The research continues without Zipf scores.` });
+      }
+    }
+    return languageStatus[key];
+  }
+
+  /**
+   * Sort a seeded sample of general-corpus sentences containing the forms by sense.
+   * The word's own score comes from the frequency list, or, for languages where a
+   * search also matches letters inside other words, from the corpus matches that
+   * really are the word.
+   */
+  async function measureSenses({ code, name, forms, senses, purpose, listZipf }) {
+    const general = await languageData.sentences(code, forms, settings.senseSample, `${settings.seed}:${dataLanguage(code)}:${forms.join("|")}`);
+    const result = {
+      forms, hits: general.hits, tokens: general.corpusTokens ?? null, corpus: general.corpus ?? null,
+      classified: 0, notWord: 0, other: 0, instances: 0, counts: {}, wordZipf: listZipf > 0 ? listZipf : 0, wordZipfSource: "list", senses: {},
+    };
+    if (general.sample.length) {
+      const answer = await client.callJson({
+        stage: "frequency", purpose,
+        instructions: prompts.senseClassifyInstructions({ languageName: name, word: forms[0], senses }),
+        content: general.sample.map((text, index) => `${index + 1}. ${text.length > 400 ? `${text.slice(0, 400)}…` : text}`).join("\n"),
+        schema: prompts.senseClassifySchema(senses.map((sense) => sense.id)), schemaName: "senses",
+        maxOutputTokens: 800 + 16 * general.sample.length, effort: settings.effortLight,
+      });
+      const seen = new Set();
+      for (const item of answer.items) {
+        if (!(item.n >= 1 && item.n <= general.sample.length) || seen.has(item.n)) continue;
+        seen.add(item.n);
+        result.classified += 1;
+        if (item.sense === "not_this_word") result.notWord += 1;
+        else if (item.sense === "other") result.other += 1;
+        else result.counts[item.sense] = (result.counts[item.sense] ?? 0) + 1;
+      }
+    }
+    result.instances = result.classified - result.notWord;
+    if ((corpusCounted(code) || !(listZipf > 0)) && general.corpusTokens) {
+      const realHits = result.classified ? general.hits * (result.instances / result.classified) : 0;
+      result.wordZipf = realHits > 0 ? Math.log10((realHits / general.corpusTokens) * 1e9) : 0;
+      result.wordZipfSource = "corpus";
+    }
+    for (const sense of senses) result.senses[sense.id] = senseZipf(result.wordZipf, result.counts[sense.id] ?? 0, result.instances);
+    return result;
+  }
 
   const ctx = (extra = {}) => ({
     headword: settings.term,
@@ -430,6 +530,49 @@ export function createResearchEngine(deps) {
       if (dropped.length) info(`dropped: ${dropped.map((f) => `${f.form} (${f.reason})`).join("; ")}`);
       return { confirmed: forms.map((f) => f.form), searched: inTexts, notFound, candidates: counted.map((c) => ({ form: c.form, kind: c.kind, confidence: c.confidence, rows: c.rows })), decisions: confirmed.forms, related: hint?.related ?? [] };
     });
+  }
+
+  /** Words built on the headword (prefixed, suffixed, compounds, phrases) that occur in the texts. */
+  async function findFamily() {
+    return stage("family", async () => {
+      heading("Word family");
+      const forms = store.load("forms");
+      const known = new Set((forms.candidates ?? []).map((c) => fold(c.form).trim()));
+      const proposed = await client.callJson({
+        stage: "family", purpose: "list words built on the term",
+        instructions: prompts.familyInstructions(ctx()),
+        content: [
+          `Headword: ${settings.term}`,
+          `Forms in the study: ${forms.confirmed.join(", ")}`,
+          `Words of the texts that extend the stem: ${(forms.related ?? []).map((r) => r.form).join(", ") || "none"}`,
+          dictionaryText(),
+        ].join("\n"),
+        schema: prompts.FAMILY_SCHEMA, schemaName: "family",
+        maxOutputTokens: 3000, effort: settings.effortLight,
+      }).catch((error) => {
+        info(`word family not listed: ${error.message}`);
+        return { words: [] };
+      });
+      const candidates = mergeCaseVariants([
+        ...(forms.related ?? []).map((r) => ({ form: r.form, kind: "suffixed" })),
+        ...proposed.words,
+      ], (w) => w.form).filter((w) => !known.has(fold(w.form).trim())).slice(0, 45);
+      const members = [];
+      for (const candidate of candidates) {
+        const count = await corpus.countForm(candidate.form).catch(() => ({ rows: 0 }));
+        if (count.rows) members.push({ form: candidate.form, kind: candidate.kind, rows: count.rows });
+      }
+      members.sort((a, b) => b.rows - a.rows);
+      fact(members.length
+        ? `Word family in the texts: ${members.map((m) => `${m.form} (${m.rows})`).join(", ")}`
+        : "No other words built on the term occur in the texts.");
+      return { members, searched: candidates.length };
+    });
+  }
+
+  function dictionaryText() {
+    const text = ctx().dictionaryText;
+    return text ? `Dictionary entry:\n${text}` : "Dictionary entry: none found";
   }
 
   async function drawSample() {
@@ -630,6 +773,7 @@ export function createResearchEngine(deps) {
         `# Term: ${settings.term}`,
         `## Dictionary entry\n${ctx().dictionaryText || "(none found)"}`,
         sources?.study ? `## Study of where the term comes from\n${JSON.stringify(sources.study, null, 1)}` : "",
+        partsText(),
         `## Passages from the texts\n${authorPassages().join("\n\n")}`,
       ].filter(Boolean).join("\n\n");
       const result = await client.callJson({
@@ -644,6 +788,232 @@ export function createResearchEngine(deps) {
       }
       return result;
     });
+  }
+
+  /** Take the term apart; score it and, sense by sense, the words it is built from. */
+  async function studyParts() {
+    return stage("parts", async () => {
+      heading("Parts and frequency");
+      const forms = store.load("forms").searched;
+      const family = store.load("family")?.members ?? [];
+      const sources = store.load("sources")?.study;
+      const content = [
+        `# Term: ${settings.term}\nForms in the texts: ${forms.join(", ")}`,
+        `## Word family in the texts\n${family.map((m) => `- ${m.form} (${m.kind}, ${m.rows} passages)`).join("\n") || "(none found)"}`,
+        `## ${dictionaryText()}`,
+        sources?.summary ? `## Where the term comes from\n${sources.summary}` : "",
+        `## Passages from the texts\n${authorPassages().slice(0, 15).join("\n\n")}`,
+      ].filter(Boolean).join("\n\n");
+      const study = await client.callJson({
+        stage: "parts", purpose: "take the term apart and list its senses",
+        instructions: prompts.partsInstructions(ctx()), content,
+        schema: prompts.PARTS_SCHEMA, schemaName: "parts",
+        maxOutputTokens: 6000, effort: settings.effortProposal,
+      });
+      fact(`Parts: ${study.parts.map((part) => `${part.part} (${part.meaning})`).join(" + ")}`);
+      const result = { study, source: null };
+      const code = settings.sourceLanguageCode;
+      const name = settings.sourceLanguageName;
+      if (!(await frequencyReady(code, name))) return result;
+      const formZipfs = await languageData.zipf(code, forms);
+      const listZipf = combinedZipf(formZipfs);
+      const term = await measureSenses({
+        code, name, forms, listZipf,
+        senses: study.senses.map(({ id, gloss }) => ({ id, gloss })),
+        purpose: `sort general ${name} sentences with “${settings.term}” by sense`,
+      });
+      const inDictionary = store.load("dictionary")?.status === "found";
+      const invented = !inDictionary && !(term.wordZipf >= 1);
+      const bases = [];
+      if (study.isCompound) {
+        for (const base of study.bases.slice(0, 3)) {
+          const baseForms = [...new Set([base.word, ...base.forms].map((f) => f.trim()).filter(Boolean))];
+          const baseList = combinedZipf(await languageData.zipf(code, baseForms));
+          const measure = await measureSenses({
+            code, name, forms: baseForms, listZipf: baseList,
+            senses: [{ id: "needed", gloss: base.neededSense }, ...base.otherSenses.slice(0, 5).map((gloss, i) => ({ id: `o${i + 1}`, gloss }))],
+            purpose: `sort general ${name} sentences with “${base.word}” by sense`,
+          });
+          bases.push({ word: base.word, neededSense: base.neededSense, measure, needed: measure.senses.needed ?? null });
+          fact(`${name} “${base.word}”: Zipf ${formatZipf(measure.wordZipf)}; in the sense “${base.neededSense}”: ${describeSense(measure.senses.needed)}`);
+        }
+      }
+      const familyZipfs = family.length ? await languageData.zipf(code, family.map((m) => m.form)) : [];
+      result.source = {
+        forms: forms.map((form, i) => ({ form, zipf: formZipfs[i] ?? 0 })),
+        listZipf, wordZipf: term.wordZipf, inDictionary, invented, term, bases,
+        family: family.map((m, i) => ({ ...m, zipf: familyZipfs[i] ?? 0 })),
+      };
+      const used = study.senses.filter((sense) => sense.usedByAuthor);
+      fact(`${name} “${settings.term}”: Zipf ${formatZipf(term.wordZipf)}${invented ? " — not in the dictionary and practically absent from general use: the author's own word" : ""}${used.length ? `; senses the author uses, in general ${name}: ${used.map((sense) => `${sense.gloss} ${describeSense(term.senses[sense.id])}`).join("; ")}` : ""}`);
+      return result;
+    });
+  }
+
+  /** The source measurement a look-alike target word is compared with. */
+  function sourceReference(resembles) {
+    const parts = store.load("parts");
+    const source = parts?.source;
+    if (!source) return null;
+    const key = fold(resembles ?? "").trim();
+    const base = key && source.bases.find((b) => {
+      const word = fold(b.word).trim();
+      return word && (word === key || key.includes(word) || word.includes(key));
+    });
+    if (base?.needed) return { label: base.word, measure: base.needed };
+    if (source.invented) return { label: settings.term, invented: true };
+    const used = parts.study.senses.filter((sense) => sense.usedByAuthor)
+      .map((sense) => source.term.senses[sense.id]).filter(Boolean)
+      .sort((a, b) => (b.inSense ?? 0) - (a.inSense ?? 0));
+    return used[0] ? { label: settings.term, measure: used[0] } : null;
+  }
+
+  /** Glossary entries for other terms that already use this translation. */
+  function findClashes(target) {
+    const key = fold(target).trim();
+    const own = new Set([...(store.load("forms")?.confirmed ?? []), ...((store.load("family")?.members ?? []).map((m) => m.form))].map((f) => fold(f).trim()));
+    return glossaryTerms
+      .filter((term) => (term.targetTerms ?? []).some((t) => fold(t).trim() === key))
+      .filter((term) => !(term.sourceTerms ?? []).some((t) => own.has(fold(t).trim())))
+      .slice(0, 3)
+      .map((term) => ({ sourceTerms: term.sourceTerms ?? [], targetTerms: term.targetTerms ?? [] }));
+  }
+
+  /** Every candidate against general target-language usage: whole words, and look-alike words sense by sense. */
+  async function checkCandidates() {
+    return stage("checks", async () => {
+      heading("Candidate checks");
+      const seen = new Set();
+      const list = [];
+      for (const sense of store.load("candidates")?.senses ?? []) {
+        for (const candidate of sense.candidates) {
+          const key = fold(candidate.target).trim();
+          if (!key || seen.has(key)) continue;
+          seen.add(key);
+          list.push({ target: candidate.target, sense: sense.sense });
+        }
+      }
+      if (!list.length) return { available: false, candidates: [], failedWords: [], failedTargets: [] };
+      const parts = store.load("parts");
+      const sources = store.load("sources")?.study;
+      const analysis = await client.callJson({
+        stage: "checks", purpose: "name each candidate's words and the senses they need",
+        instructions: prompts.checkInstructions(ctx()),
+        content: [
+          `# Term: ${settings.term}`,
+          `## Candidates\n${list.map((c) => `- ${c.target} (for: ${c.sense})`).join("\n")}`,
+          parts?.study ? `## Parts of the term\n${parts.study.parts.map((p) => `- ${p.part}: ${p.meaning}`).join("\n")}` : "",
+          sources ? `## Where the term comes from\n${JSON.stringify(sources.senses.map((x) => ({ sense: x.sense, sourceBook: x.sourceBook, originalLanguage: x.originalLanguage, originalTerm: x.originalTerm })), null, 1)}` : "",
+        ].filter(Boolean).join("\n\n"),
+        schema: prompts.CHECK_SCHEMA, schemaName: "checks",
+        maxOutputTokens: 1500 + 350 * list.length, effort: settings.effortLight,
+      });
+      const code = settings.targetLanguageCode;
+      const name = settings.targetLanguageName;
+      const sourceName = settings.sourceLanguageName;
+      const ready = await frequencyReady(code, name);
+      const byTarget = new Map(analysis.candidates.map((c) => [fold(c.target).trim(), c]));
+      const words = [...new Map(analysis.candidates.flatMap((c) => c.words).map((w) => [fold(w.word).trim(), w])).values()];
+      const listZipfs = ready ? await languageData.zipf(code, words.map((w) => w.word)) : [];
+      const zipfOf = new Map(words.map((w, i) => [fold(w.word).trim(), listZipfs[i] ?? null]));
+      const measured = new Map();
+      if (ready) {
+        // Look-alikes are measured sense by sense; where a search also matches
+        // letters inside other words, the other words get an instance check.
+        const queue = [
+          ...words.filter((w) => w.lookalike),
+          ...(corpusCounted(code) ? words.filter((w) => !w.lookalike) : []),
+        ].slice(0, settings.maxSenseChecks + (corpusCounted(code) ? 4 : 0));
+        for (const w of queue) {
+          const senses = w.lookalike
+            ? [{ id: "needed", gloss: w.neededSense }, ...w.otherSenses.slice(0, 5).map((gloss, i) => ({ id: `o${i + 1}`, gloss }))]
+            : [{ id: "needed", gloss: w.neededSense }];
+          measured.set(fold(w.word).trim(), await measureSenses({
+            code, name, forms: [w.word], senses, listZipf: zipfOf.get(fold(w.word).trim()),
+            purpose: `sort general ${name} sentences with “${w.word}” by sense`,
+          }));
+        }
+      }
+      const source = parts?.source ?? null;
+      const failedWords = [];
+      const failedTargets = [];
+      const candidates = list.map((c) => {
+        const found = byTarget.get(fold(c.target).trim());
+        const reasons = [];
+        const notes = [];
+        let verdict = ready ? "pass" : "unchecked";
+        const items = (found?.words ?? []).map((w) => {
+          const m = measured.get(fold(w.word).trim());
+          return {
+            word: w.word, neededSense: w.neededSense, lookalike: w.lookalike, resembles: w.resembles,
+            zipf: m ? m.wordZipf : zipfOf.get(fold(w.word).trim()) ?? null,
+            measure: m ? { hits: m.hits, classified: m.classified, instances: m.instances, notWord: m.notWord, needed: m.senses.needed ?? null } : null,
+          };
+        });
+        if (ready) {
+          for (const w of items.filter((item) => item.lookalike && item.measure)) {
+            const needed = w.measure.needed;
+            const ref = sourceReference(w.resembles);
+            if (!needed || w.measure.instances < MIN_SENSE_SAMPLE) {
+              notes.push(`“${w.word}”: too few sentences of general ${name} to measure (${w.measure.instances})`);
+              if (verdict === "pass") verdict = "unclear";
+              continue;
+            }
+            if (needed.inSense === 0) {
+              if (ref?.measure && !ref.measure.inSense) {
+                notes.push(`“${w.word}”: the needed sense is rare in both languages`);
+                continue;
+              }
+              verdict = "fail";
+              failedWords.push(w.word);
+              reasons.push(`“${w.word}” is not used in general ${name} in the sense needed (${w.neededSense}): 0 of ${needed.classified} sentences${ref?.measure ? `; ${sourceName} “${ref.label}” in that sense: ${describeSense(ref.measure)}` : ""}`);
+            } else if (ref?.measure?.zipf != null && needed.zipf != null && needed.zipf < ref.measure.zipf - 1) {
+              verdict = "fail";
+              failedWords.push(w.word);
+              reasons.push(`“${w.word}” is much less used in the sense needed than ${sourceName} “${ref.label}”: ${formatZipf(needed.zipf)} against ${formatZipf(ref.measure.zipf)}`);
+            }
+          }
+          const single = !/\s/.test(c.target.trim());
+          const z = single ? (items.length === 1 ? items[0].zipf : zipfOf.get(fold(c.target).trim()) ?? null) : null;
+          if (single && source && !source.invented && !found?.establishedUsage && z != null && source.wordZipf > 0 && z < source.wordZipf - 1) {
+            verdict = "fail";
+            reasons.push(`much less known than the ${sourceName} term: Zipf ${formatZipf(z)} against ${formatZipf(source.wordZipf)}`);
+          }
+        }
+        if (verdict === "fail") failedTargets.push(c.target);
+        return {
+          target: c.target, sense: c.sense, words: items, verdict, reasons, notes,
+          established: found?.establishedUsage ?? false, establishedBasis: found?.establishedBasis ?? "",
+          clashes: findClashes(c.target),
+        };
+      });
+      for (const c of candidates) {
+        const extra = [...c.reasons, ...c.notes, ...c.clashes.map((x) => `already used for ${x.sourceTerms.join(" / ")}`)];
+        fact(`${c.target}: ${c.verdict}${extra.length ? ` — ${extra.join("; ")}` : ""}`);
+      }
+      return { available: ready, candidates, failedWords: [...new Set(failedWords)], failedTargets };
+    });
+  }
+
+  function partsText() {
+    const parts = store.load("parts");
+    if (!parts?.study) return "";
+    const lines = [`## Parts of the term\n${parts.study.parts.map((p) => `- ${p.part}: ${p.meaning}`).join("\n")}`];
+    const source = parts.source;
+    if (source) {
+      lines.push(`Frequency in general ${settings.sourceLanguageName} (Zipf: 0 = not in ordinary use, 3 = everyday word, 5+ = very common): “${settings.term}” ${formatZipf(source.wordZipf)}${source.invented ? " (not in the dictionary; practically absent from general use)" : ""}.`);
+      for (const base of source.bases) lines.push(`“${base.word}” ${formatZipf(base.measure.wordZipf)}; in the sense “${base.neededSense}”: ${describeSense(base.needed)}.`);
+    }
+    return lines.join("\n");
+  }
+
+  function checksText() {
+    const checks = store.load("checks");
+    if (!checks?.candidates?.length) return "(no checks)";
+    return checks.candidates.map((c) => {
+      const words = c.words.map((w) => `${w.word} ${formatZipf(w.zipf)}${w.measure?.needed ? `, needed sense ${describeSense(w.measure.needed)}` : ""}`).join("; ");
+      return `- ${c.target}: ${c.verdict.toUpperCase()}${c.reasons.length ? ` (${c.reasons.join("; ")})` : ""}${words ? ` [${words}]` : ""}${c.clashes.length ? ` [already used for: ${c.clashes.map((x) => x.sourceTerms.join(" / ")).join("; ")}]` : ""}`;
+    }).join("\n");
   }
 
   async function discover() {
@@ -692,6 +1062,9 @@ export function createResearchEngine(deps) {
       "Candidate study (translations proposed for the term as a whole):",
       JSON.stringify(store.load("candidates") ?? {}, null, 1),
       "",
+      "Candidate checks against general usage (Zipf: 0 = not in ordinary use, 3 = everyday word, 5+ = very common):",
+      checksText(),
+      "",
       "Existing translations seen in the texts (hints only):",
       ...Object.values(sample.items).filter((i) => i.existingTranslation).slice(0, 12)
         .map((i) => `- ${i.existingTranslation.slice(0, 200)}`),
@@ -728,6 +1101,13 @@ export function createResearchEngine(deps) {
         for (const variant of entry.variants) {
           variant.fromExisting = existingTargets.some((target) => fold(target).trim() === fold(variant.target).trim());
         }
+      }
+      // A rendering whose check failed never reaches counting; the review pause can put it back.
+      for (const removed of failedVariants(proposal, store.load("checks"))) {
+        const entry = proposal.entries.find((e) => e.id === removed.entryId);
+        entry.variants = entry.variants.filter((v) => v.id !== removed.variantId);
+        (proposal.removedByChecks ??= []).push(removed);
+        log({ type: "problem", text: `Removed “${removed.target}” from entry ${removed.entryId}: it contains “${removed.word}”, whose frequency check failed.` });
       }
       const problems = validateProposal(proposal, store.load("forms").confirmed);
       problems.push(...unmeasuredRenderings(proposal, store.load("discovery")));
@@ -777,13 +1157,16 @@ export function createResearchEngine(deps) {
     try {
       await lookUpDictionary();
       await findForms();
-      await drawSample();
       const fresh = store.load("proposal") == null;
+      if (fresh) await findFamily();
+      await drawSample();
       // Runs saved before these steps existed already have a proposal: the
       // studies would feed nothing, so they are not run for them.
       if (fresh) {
         await traceSources();
+        await studyParts();
         await proposeCandidates();
+        await checkCandidates();
       }
       await discover();
       const proposal = await propose();
@@ -830,11 +1213,26 @@ export function createResearchEngine(deps) {
       }
       store.save("frozen", frozen);
       store.save("confirmedProposal", confirmedProposal);
-      const counting = await stage("counting", () => count(frozen));
-      const aggregate = aggregateCounts(counting, frozen, store.load("sample"));
+      const counting = await stage("counting", () => count(frozen, 1));
+      let aggregate = aggregateCounts(counting, frozen, store.load("sample"));
+      if (settings.judges >= 2) {
+        const second = await stage("counting2", () => count(frozen, 2));
+        const merged = mergeJudgeCountings(counting, second);
+        const combined = aggregateCounts(merged.counting, frozen, store.load("sample"));
+        combined.totals.occurrencesSampled = counting.occurrences.length;
+        combined.totals.judges = 2;
+        combined.totals.votes = merged.counting.occurrences.length;
+        combined.totals.agreement = merged.agreement;
+        aggregate = combined;
+        fact(`Two judges agreed on ${merged.agreement.agreed} of ${merged.agreement.compared} occurrences.`);
+      }
       store.save("aggregate", aggregate);
+      const footnotes = await stage("footnotes", () => rareWinners(frozen, aggregate).catch((error) => {
+        info(`rare translations not checked: ${error.message}`);
+        return [];
+      }));
       heading("Summary");
-      const prose = await summarize(frozen, confirmedProposal, aggregate).catch((error) => {
+      const prose = await summarize(frozen, confirmedProposal, aggregate, footnotes).catch((error) => {
         info(`summary not written: ${error.message}`);
         return null;
       });
@@ -847,8 +1245,61 @@ export function createResearchEngine(deps) {
     }
   }
 
-  async function count(frozen) {
-    heading("Counting");
+  /** Winning translations that are rare in general use and not clear from their parts get a translator's note. */
+  async function rareWinners(frozen, aggregate) {
+    const code = settings.targetLanguageCode;
+    const name = settings.targetLanguageName;
+    if (!(await frequencyReady(code, name))) return [];
+    heading("Rare translations");
+    const winners = [];
+    for (const entry of frozen.entries) {
+      for (const variant of entry.variants) {
+        if ((aggregate.entries[entry.id]?.variants?.[variant.id]?.occurrences ?? 0) > 0) winners.push(variant.target);
+      }
+    }
+    const checks = store.load("checks");
+    const scored = [];
+    for (const target of [...new Set(winners)]) {
+      const checked = checks?.candidates?.find((c) => fold(c.target).trim() === fold(target).trim());
+      let zipf = null;
+      if (checked?.words?.length) {
+        const values = checked.words.map((w) => w.zipf).filter((z) => z != null);
+        zipf = values.length ? Math.min(...values) : null;
+      } else if (!corpusCounted(code)) {
+        const tokens = renderingTokens(target).filter((t) => t.length > 3);
+        const values = tokens.length ? await languageData.zipf(code, tokens) : [];
+        zipf = values.length ? Math.min(...values) : null;
+      }
+      if (zipf != null && zipf < 2) scored.push({ target, zipf });
+    }
+    if (!scored.length) {
+      fact("No chosen translation is rare in general use.");
+      return [];
+    }
+    const answer = await client.callJson({
+      stage: "footnotes", purpose: "notes for rare translations",
+      instructions: prompts.footnoteInstructions(ctx()),
+      content: scored.map((item) => `- ${item.target} (Zipf ${formatZipf(item.zipf)})`).join("\n"),
+      schema: prompts.FOOTNOTE_SCHEMA, schemaName: "footnotes",
+      maxOutputTokens: 1500 + 300 * scored.length, effort: settings.effortLight,
+    });
+    const notes = answer.items.filter((item) => !item.understandableFromParts && item.note.trim())
+      .map((item) => ({ ...item, zipf: scored.find((s) => fold(s.target).trim() === fold(item.target).trim())?.zipf ?? null }));
+    fact(notes.length
+      ? `Translator's note proposed for: ${notes.map((n) => n.target).join(", ")}`
+      : `Rare but clear from their parts: ${scored.map((s) => s.target).join(", ")}`);
+    return notes;
+  }
+
+  async function count(frozen, judge = 1) {
+    heading(judge === 1 ? "Counting" : "Counting (second judge)");
+    if (judge !== 1) {
+      // The second judge sees the same translations in another order.
+      frozen = {
+        ...frozen,
+        entries: frozen.entries.map((entry) => ({ ...entry, displayOrder: shuffled(entry.variants, `${settings.seed}:${frozen.version}:${entry.id}:judge${judge}`) })),
+      };
+    }
     const sample = store.load("sample");
     const items = sample.measuredIds.map((id) => sample.items[id]);
     const occurrences = buildOccurrences(items, frozen.entries, "o", settings.sourceLanguageCode);
@@ -899,7 +1350,7 @@ export function createResearchEngine(deps) {
     return { frozenVersion: frozen.version, occurrences, judgments };
   }
 
-  async function summarize(frozen, proposal, aggregate) {
+  async function summarize(frozen, proposal, aggregate, footnotes = []) {
     return client.callJson({
       stage: "summary", purpose: "report summary",
       instructions: prompts.proseInstructions(ctx()),
@@ -911,6 +1362,8 @@ export function createResearchEngine(deps) {
         existingComparison: proposal.existingComparison,
         derivativeStudies: proposal.derivativeStudies,
         openQuestions: proposal.openQuestions,
+        failedChecks: (store.load("checks")?.candidates ?? []).filter((c) => c.verdict === "fail").map((c) => ({ target: c.target, reasons: c.reasons })),
+        translatorsNotes: footnotes,
       }),
       schema: prompts.PROSE_SCHEMA, schemaName: "summary",
       maxOutputTokens: 5000, effort: settings.effortLight,
