@@ -212,7 +212,55 @@ function renderEntryCard(report, run, entry) {
     </article>`;
 }
 
-/** Word family, parts, sense frequencies and the candidate checks. */
+/** How a candidate's score was found: its rarest own word; parts of a compound are shown but not counted. */
+function scoredBy(c, tgt) {
+  const own = c.words.filter((w) => !w.partOf);
+  const parts = c.words.filter((w) => w.partOf);
+  const word = (w) => `<span lang="${esc(tgt.code)}">${esc(w.word)}</span> ${formatZipf(w.zipf)}${w.measure?.needed ? ` (in the meaning needed: ${esc(describeSense(w.measure.needed))})` : ""}`;
+  const rarest = own.reduce((best, w) => (w.zipf != null && (best == null || w.zipf < best.zipf) ? w : best), null);
+  const lines = [];
+  if (own.length > 1 && rarest) {
+    lines.push(`its rarest word: ${word(rarest)}`);
+    const rest = own.filter((w) => w !== rarest);
+    lines.push(`<span class="rr-muted">other words: ${rest.map(word).join(" · ")}</span>`);
+  } else if (own.length === 1) {
+    lines.push(own[0].word.trim().toLowerCase() === c.target.trim().toLowerCase() ? "the whole word" : `its word ${word(own[0])}`);
+  }
+  if (parts.length) lines.push(`<span class="rr-muted">parts of a compound, not counted: ${parts.map(word).join(" · ")}</span>`);
+  return lines.join("<br>");
+}
+
+/** One block per meaning of the source word: its score there, the minimum, and each translation's check. */
+function renderMeaning(sense, index, measure, candidates, src, tgt, meta) {
+  const verdictLabel = { pass: "passes", fail: "fails", unclear: "unclear", unchecked: "not checked" };
+  const minimum = measure?.zipf != null ? measure.zipf - 1 : null;
+  const spanish = !measure ? `No measurement of this meaning.`
+    : measure.zipf != null
+      ? `${esc(src.name)} in this meaning: <strong>Zipf ${formatZipf(measure.zipf)}</strong> (${measure.inSense} of ${measure.classified} sorted sentences use it). Translations need at least <strong>${formatZipf(minimum)}</strong>.`
+      : `None of the ${measure.classified} sorted ${esc(src.name)} sentences use this meaning, so its score is below ${formatZipf(measure.upperBound)}. No minimum applies to its translations.`;
+  return `
+    <div class="rr-meaning">
+      <h3>Meaning ${index + 1}${sense.usedByAuthor ? ' <span class="rr-pill">used by the author</span>' : ""}</h3>
+      <p class="rr-meaning__gloss">${esc(sense.gloss)}</p>
+      <p>${spanish}</p>
+      ${candidates.length ? `
+        <table class="rr-checks">
+          <thead><tr><th>${esc(tgt.name)} translation</th><th>Score</th><th>How it was scored</th><th>Result</th></tr></thead>
+          <tbody>
+          ${candidates.map((c) => `<tr>
+            <td><strong lang="${esc(tgt.code)}">${esc(c.target)}</strong></td>
+            <td class="rr-checks__score">${formatZipf(c.zipf)}</td>
+            <td>${scoredBy(c, tgt)}
+              ${[...c.reasons, ...c.notes].length ? `<div class="rr-muted">${esc([...c.reasons, ...c.notes].join("; "))}</div>` : ""}
+              ${c.clashes.length ? `<div class="rr-muted">Already used in the glossary for: ${esc(c.clashes.map((x) => x.sourceTerms.join(" / ")).join("; "))}</div>` : ""}</td>
+            <td><span class="rr-pill${c.verdict === "pass" ? " rr-pill--ok" : c.verdict === "fail" ? " rr-pill--warn" : ""}">${esc(verdictLabel[c.verdict] ?? c.verdict)}</span></td>
+          </tr>`).join("")}
+          </tbody>
+        </table>` : `<p class="rr-muted">No translation was proposed for this meaning.</p>`}
+    </div>`;
+}
+
+/** Word family, parts, and the frequency check meaning by meaning. */
 function renderFrequency(run) {
   const meta = run.meta;
   const src = meta.sourceLanguage;
@@ -222,35 +270,26 @@ function renderFrequency(run) {
   const checks = run.checks;
   if (!family.length && !parts && !checks) return "";
   const source = parts?.source;
-  const verdictLabel = { pass: "passes", fail: "fails", unclear: "unclear", unchecked: "not checked" };
   const removed = (run.confirmedProposal ?? run.proposal)?.removedByChecks ?? [];
   const notes = run.footnotes ?? [];
+  const senses = parts?.study?.senses ?? [];
+  const candidates = checks?.candidates ?? [];
+  const forms = (source?.forms ?? []).filter((f) => f && typeof f === "object");
+  const formsText = forms.length > 1
+    ? ` It is counted together with its other forms: ${forms.map((f) => `<span lang="${esc(src.code)}">${esc(f.form)}</span> ${formatZipf(f.zipf)}`).join(" + ")}.`
+    : "";
+  const orphan = candidates.filter((c) => !senses.some((sense) => sense.id === c.senseId));
   return `
     <section class="rr-section">
-      <h2>Parts and frequency</h2>
-      <p class="rr-muted">Zipf scores: 0 = not in ordinary use, about 3 = an everyday word, 5+ = very common. A sense's score is the word's score reduced by the share of general-corpus sentences that use the word in that sense.</p>
-      ${parts?.study ? `<p>Parts: ${parts.study.parts.map((p) => `<span lang="${esc(src.code)}">${esc(p.part)}</span> (${esc(p.meaning)})`).join(" + ")}</p>` : ""}
+      <h2>Frequency</h2>
+      <p class="rr-muted">Zipf scores: 0 = not in ordinary use, about 3 = an everyday word, 5+ = very common. A translation passes when it is at most 1 point rarer in general ${esc(tgt.name)} than the ${esc(src.name)} word is in the meaning it translates.</p>
       ${source ? `
-        <ul>
-          <li><span lang="${esc(src.code)}">${esc(meta.term)}</span>: Zipf ${formatZipf(source.wordZipf)}${source.invented ? " — not in the dictionary and practically absent from general use: the author's own word" : ""}</li>
-          ${parts.study.senses.map((sense) => `<li>${esc(sense.gloss)}${sense.usedByAuthor ? " (used by the author)" : ""}: ${esc(describeSense(source.term.senses[sense.id]))}</li>`).join("")}
-          ${source.bases.map((base) => `<li><span lang="${esc(src.code)}">${esc(base.word)}</span>: Zipf ${formatZipf(base.measure.wordZipf)}; in the sense “${esc(base.neededSense)}”: ${esc(describeSense(base.needed))}</li>`).join("")}
-        </ul>` : parts ? `<p>No ${esc(src.name)} frequency data was available.</p>` : ""}
+        <p><span lang="${esc(src.code)}"><strong>${esc(meta.term)}</strong></span> in general ${esc(src.name)}, all meanings together: Zipf ${formatZipf(source.wordZipf)}.${formsText}${source.invented ? " Not in the dictionary and practically absent from general use: the author's own word." : ""}</p>
+        ${parts?.study?.parts?.length ? `<p>Parts: ${parts.study.parts.map((p) => `<span lang="${esc(src.code)}">${esc(p.part)}</span> (${esc(p.meaning)})`).join(" + ")}</p>` : ""}
+        ${source.bases.map((base) => `<p>Base word <span lang="${esc(src.code)}"><strong>${esc(base.word)}</strong></span>: Zipf ${formatZipf(base.measure.wordZipf)}; in the meaning “${esc(base.neededSense)}”: ${esc(describeSense(base.needed))}.</p>`).join("")}
+        ${senses.map((sense, index) => renderMeaning(sense, index, source.term.senses[sense.id], candidates.filter((c) => c.senseId === sense.id), src, tgt, meta)).join("")}
+        ${orphan.length ? renderMeaning({ gloss: "Translations not tied to one of the meanings above" }, senses.length, null, orphan, src, tgt, meta) : ""}` : parts ? `<p>No ${esc(src.name)} frequency data was available.</p>` : ""}
       ${family.length ? `<h3>Word family in the texts</h3><p>${family.map((m) => `<span lang="${esc(src.code)}">${esc(m.form)}</span> (${m.rows})`).join(", ")}</p>` : ""}
-      ${checks?.candidates?.length ? `
-        <h3>Candidate checks in general ${esc(tgt.name)}</h3>
-        <table class="rr-checks">
-          <thead><tr><th>Translation</th><th>Result</th><th>Words and their Zipf scores</th></tr></thead>
-          <tbody>
-          ${checks.candidates.map((c) => `<tr>
-            <td><strong lang="${esc(tgt.code)}">${esc(c.target)}</strong></td>
-            <td><span class="rr-pill${c.verdict === "pass" ? " rr-pill--ok" : c.verdict === "fail" ? " rr-pill--warn" : ""}">${esc(verdictLabel[c.verdict] ?? c.verdict)}</span></td>
-            <td>${c.words.map((w) => `<span lang="${esc(tgt.code)}">${esc(w.word)}</span> ${formatZipf(w.zipf)}${w.measure?.needed ? `, in the sense needed ${esc(describeSense(w.measure.needed))}` : ""}`).join(" · ")}
-              ${[...c.reasons, ...c.notes].length ? `<div class="rr-muted">${esc([...c.reasons, ...c.notes].join("; "))}</div>` : ""}
-              ${c.clashes.length ? `<div class="rr-muted">Already used in the glossary for: ${esc(c.clashes.map((x) => x.sourceTerms.join(" / ")).join("; "))}</div>` : ""}</td>
-          </tr>`).join("")}
-          </tbody>
-        </table>` : ""}
       ${removed.length ? `<p>Removed from the proposal by the checks: ${removed.map((r) => `<span lang="${esc(tgt.code)}">${esc(r.target)}</span>`).join(", ")}.</p>` : ""}
       ${checks?.failedWords?.length ? `<p>Words to look for in finished ${esc(tgt.name)} translations (any word containing them): ${checks.failedWords.map((w) => `<strong lang="${esc(tgt.code)}">${esc(w)}</strong>`).join(", ")}.</p>` : ""}
       ${(run.aggregate?.otherRenderings ?? []).some((o) => o.failedWord) ? `<p>Judges' own renderings that contain a word whose check failed: ${run.aggregate.otherRenderings.filter((o) => o.failedWord).map((o) => `<span lang="${esc(tgt.code)}">${esc(o.rendering)}</span> (${o.n})`).join(", ")}.</p>` : ""}
