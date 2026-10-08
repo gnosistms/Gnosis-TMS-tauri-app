@@ -3,6 +3,7 @@ import {
   escapeHtml,
   pageShell,
   primaryButton,
+  renderCollapseChevron,
   renderStateCard,
   secondaryButton,
 } from "../lib/ui.js";
@@ -88,8 +89,8 @@ function countCell(key, count, total, passages, expanded, unit) {
     <div class="rr-count">
       <div class="rr-count__figure"><strong>${count}</strong><span> of ${total} ${unit}</span></div>
       <div class="rr-bar" aria-hidden="true"><span style="width:${pct}%"></span></div>
-      <button type="button" class="rr-link rr-count__toggle" data-action="toggle-research-examples:${esc(key)}" aria-expanded="${expanded ? "true" : "false"}">
-        ${passages == null ? "" : `${passages} passage${passages === 1 ? "" : "s"} · `}${expanded ? "hide examples" : "examples"}
+      <button type="button" class="rr-link rr-count__toggle collapse-affordance" data-action="toggle-research-examples:${esc(key)}" aria-expanded="${expanded ? "true" : "false"}">
+        ${renderCollapseChevron(expanded)}<span>${passages == null ? "" : `${passages} passage${passages === 1 ? "" : "s"} · `}${expanded ? "hide" : "show"}</span>
       </button>
     </div>`;
 }

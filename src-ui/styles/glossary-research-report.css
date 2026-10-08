@@ -625,3 +625,9 @@
 .rr-checks td:first-child {
   white-space: nowrap;
 }
+
+.rr-count__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
