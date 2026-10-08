@@ -744,7 +744,19 @@ function findLogRequest(requestId) {
     .flatMap((item) => (item.kind === "batch" ? item.requests : item.kind === "request" ? [item.request] : []))[0] ?? null;
 }
 
+/** The other requests of a request's batch (for batch-wide tallies), or null. */
+function findLogBatch(request) {
+  const key = request?.batch?.key;
+  if (!key) return null;
+  const ids = new Set(research().log.filter((item) => item.type === "request" && item.batch?.key === key).map((item) => item.requestId));
+  return buildLogView(research().log.filter((item) => ids.has(item.requestId)))
+    .flatMap((item) => (item.kind === "batch" ? item.requests : item.kind === "request" ? [item.request] : []));
+}
+
 const streamStates = new Map();
+// A view is rebuilt from the whole answer at most this often; the last part arrives with the finished render.
+const VIEW_INTERVAL_MS = 250;
+const viewDrawnAt = new Map();
 
 /**
  * Streamed text without a full render: the live panel's status and text when
@@ -773,9 +785,12 @@ function updateStreamInDom(entry) {
   } else {
     // A step with a readable view shows it; the block is re-rendered whole when
     // the answer switches between the view and the plain JSON.
-    const view = liveAnswerHtml(request);
     const isView = block.classList.contains("research-live__view");
+    const now = Date.now();
+    if (isView && now - (viewDrawnAt.get(entry.requestId) ?? 0) < VIEW_INTERVAL_MS) return true;
+    const view = liveAnswerHtml(request, { batch: findLogBatch(request) });
     if (Boolean(view) !== isView) return false;
+    viewDrawnAt.set(entry.requestId, now);
     block.innerHTML = view ?? formatJsonStream(entry.text);
   }
   if (body && pinned) body.scrollTop = body.scrollHeight;

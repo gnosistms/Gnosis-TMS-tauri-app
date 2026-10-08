@@ -163,19 +163,19 @@ function usageText(usage) {
 
 /** What was sent, the thinking and the answer of one request, laid out for reading. */
 /** The answer: its readable view when the step has one, else the indented JSON. */
-function answerBlock(request) {
-  const view = liveAnswerHtml(request);
+function answerBlock(request, batch = null) {
+  const view = liveAnswerHtml(request, { batch });
   return view
     ? `<div class="research-live__label">Answer</div><div class="research-live__view" data-live-type="answer-delta">${view}</div>`
     : `<div class="research-live__label">Answer</div><pre class="research-live__answer" data-live-type="answer-delta">${formatJsonStream(request.answer)}</pre>`;
 }
 
-function exchangeBody(request) {
+function exchangeBody(request, batch = null) {
   return `${request.text || request.instructions ? `<details class="research-live__sent"><summary>What was sent</summary>`
       + `${request.instructions ? `<div class="research-live__label">Instructions</div><div class="research-live__text">${esc(request.instructions)}</div>` : ""}`
       + `${request.text ? `<div class="research-live__label">Texts and question</div><div class="research-live__text">${esc(request.text)}</div>` : ""}</details>` : ""}
     ${request.thinking ? `<div class="research-live__label">Thinking</div><div class="research-live__thinking" data-live-type="thinking">${formatThinking(request.thinking)}</div>` : ""}
-    ${request.answer ? answerBlock(request) : ""}
+    ${request.answer ? answerBlock(request, batch) : ""}
     ${request.problem ? `<p class="research-line research-line--problem">${esc(request.problem)}</p>` : ""}
     ${request.usage ? `<div class="research-live__usage">${esc(usageText(request.usage))}</div>` : ""}`;
 }
@@ -292,6 +292,13 @@ function batchSwitcher(batch, shown) {
  * The panel under the results: the AI request running now, streaming in.
  * Between requests it stays as one line; after the run it is not shown.
  */
+/** The requests of a request's batch, for batch-wide tallies; null outside a batch. */
+function batchOf(sections, request) {
+  const key = request?.batch?.key;
+  if (!key) return null;
+  return (sections ?? []).flatMap((section) => section.requests ?? []).filter((r) => r.batch?.key === key);
+}
+
 export function renderLivePanel({ sections, request, running, open, usual = null }) {
   if (!running) return "";
   if (!request) {
@@ -310,6 +317,6 @@ export function renderLivePanel({ sections, request, running, open, usual = null
         ${isRequestRunning(request) ? '<span class="navigation-loading-modal__spinner research-live__spinner" aria-hidden="true"></span>' : ""}
         ${batch ? batchSwitcher(batch, request) : ""}
       </div>
-      ${open ? `<div class="research-live__body" data-live-body>${exchangeBody(request)}</div>` : ""}
+      ${open ? `<div class="research-live__body" data-live-body>${exchangeBody(request, batchOf(sections, request))}</div>` : ""}
     </div>`;
 }
