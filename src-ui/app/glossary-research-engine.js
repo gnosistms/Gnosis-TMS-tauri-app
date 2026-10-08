@@ -66,7 +66,7 @@ export function collectMeasurements(stages, sourceCode, targetCode) {
   const seen = new Set();
   const add = (language, word, sense, zipf, measure) => {
     if (!word || !sense || !measure?.needed || !(measure.classified > 0)) return;
-    const key = `${language}\u0000${fold(word).trim()}\u0000${fold(sense).trim()}`;
+    const key = `${language}\u0000${textKey(word)}\u0000${textKey(sense)}`;
     if (seen.has(key)) return;
     seen.add(key);
     out.push({
@@ -83,15 +83,96 @@ export function collectMeasurements(stages, sourceCode, targetCode) {
 
 /** Earlier measurements merged with new ones (the first one of a word and sense is kept). */
 export function mergeMeasurements(existing, added) {
-  const key = (m) => `${m.language}\u0000${fold(m.word).trim()}\u0000${fold(m.sense).trim()}`;
+  const key = (m) => `${m.language}\u0000${textKey(m.word)}\u0000${textKey(m.sense)}`;
   const seen = new Set(existing.map(key));
   return [...existing, ...added.filter((m) => !seen.has(key(m)))];
 }
 
-/** Languages whose frequency list counts syllables, or that are written without spaces: count words in the corpus instead. */
-const CORPUS_COUNTED = new Set(["vi", "km", "th", "lo", "my"]);
+/**
+ * How a language's words relate to its frequency data (see
+ * plans/language-frequency-handling.md):
+ * - CORPUS_COUNTED: the list does not hold words (Thai lists space-separated
+ *   chunks; Khmer, Lao, Burmese have no list): count every word in the corpus.
+ * - NOT_SPACE_SPLIT: spaces do not separate words (Vietnamese puts them between
+ *   syllables; Chinese, Japanese… use none): a rendering is never split at spaces
+ *   or into characters.
+ * - JOINER_SCRIPTS: compounds are written with a zero-width non-joiner, a space,
+ *   or joined; the data has them joined.
+ */
+const CORPUS_COUNTED = new Set(["th", "km", "lo", "my"]);
+const NOT_SPACE_SPLIT = new Set(["vi", "zh", "ja", "th", "km", "lo", "my"]);
+const JOINER_SCRIPTS = new Set(["fa", "ur", "ps", "ckb"]);
+const baseLanguage = (code) => dataLanguage(code).split("-")[0];
 export function corpusCounted(code) {
-  return CORPUS_COUNTED.has(dataLanguage(code));
+  return CORPUS_COUNTED.has(baseLanguage(code));
+}
+
+/**
+ * A target-language word as it is looked up and compared: lower case, Unicode
+ * NFC, accents and tone marks kept (in Vietnamese they make the word). Joiners
+ * are dropped in scripts whose data writes compounds joined.
+ */
+export function textKey(text, code = "") {
+  let value = String(text ?? "").normalize("NFC").toLowerCase().trim();
+  if (code && JOINER_SCRIPTS.has(baseLanguage(code))) value = value.replace(/[\u200c\u200d]/g, "");
+  return value;
+}
+
+/**
+ * General-usage score of target-language words: the frequencies of each word's
+ * surface forms added up (inflections, forms with attached particles), looked
+ * up exactly as written. A word the list does not hold as a unit is counted
+ * whole in the general corpus, never split into syllables or characters.
+ * items: [{ word, forms? }]. Returns a Map from textKey(word) to the score.
+ */
+export async function scoreWords(languageData, code, items) {
+  const scores = new Map();
+  const wanted = [];
+  for (const item of items) {
+    const key = textKey(item.word, code);
+    if (!key || scores.has(key)) continue;
+    const forms = new Set([key, ...(item.forms ?? []).map((form) => textKey(form, code)).filter(Boolean)]);
+    if (JOINER_SCRIPTS.has(baseLanguage(code))) {
+      for (const form of [...forms]) if (/\s/.test(form)) forms.add(form.replace(/\s+/g, ""));
+    }
+    scores.set(key, 0);
+    wanted.push({ key, forms: [...forms] });
+  }
+  if (!wanted.length) return scores;
+  const allForms = [...new Set(wanted.flatMap((w) => w.forms))];
+  const listed = corpusCounted(code) ? [] : await languageData.zipf(code, allForms);
+  const listScore = new Map(allForms.map((form, i) => [form, listed[i] ?? 0]));
+  const toCount = [];
+  for (const w of wanted) {
+    const score = combinedZipf(w.forms.map((form) => listScore.get(form) ?? 0));
+    scores.set(w.key, score);
+    if (!(score > 0)) toCount.push(w);
+  }
+  if (toCount.length && languageData.corpusZipf) {
+    const counted = await languageData.corpusZipf(code, [...new Set(toCount.flatMap((w) => w.forms))]).catch(() => []);
+    const corpusScore = new Map(counted.map((c) => [textKey(c.phrase, code), c.zipf]));
+    for (const w of toCount) scores.set(w.key, combinedZipf(w.forms.map((form) => corpusScore.get(form) ?? 0)));
+  }
+  return scores;
+}
+
+/**
+ * A rendering's score: that of its rarest own word, as the check step listed the
+ * words (parts listed for the decomposition check do not count). Before the
+ * check, the whole rendering as one unit, or (where spaces separate words) its
+ * rarest longer word.
+ */
+export function scoreRendering(code, rendering, scoreOf, words = null) {
+  const own = (words ?? []).filter((w) => !w.partOf);
+  if (own.length) {
+    const values = own.map((w) => scoreOf.get(textKey(w.word, code))).filter((z) => z != null);
+    if (values.length) return Math.min(...values);
+  }
+  const whole = scoreOf.get(textKey(rendering, code));
+  if (whole != null && (whole > 0 || NOT_SPACE_SPLIT.has(baseLanguage(code)))) return whole;
+  const tokens = renderingTokens(rendering).filter((t) => t.length > 2);
+  const values = tokens.map((t) => scoreOf.get(textKey(t, code))).filter((z) => z != null);
+  return values.length ? Math.min(...values) : whole ?? null;
 }
 
 /**
@@ -119,8 +200,10 @@ export function pickRepresentative(members, scoreOf, target) {
  * at least half of the shorter of the two words. Only decides what gets checked.
  */
 export function looksLike(rendering, sourceWords) {
-  const words = sourceWords.flatMap((w) => renderingTokens(w)).filter((w) => w.length >= 3);
-  return renderingTokens(rendering).some((token) => words.some((word) => {
+  // Spelling across two languages: accents do not count.
+  const folded = (text) => fold(String(text ?? "")).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  const words = sourceWords.flatMap((w) => folded(w)).filter((w) => w.length >= 3);
+  return folded(rendering).some((token) => words.some((word) => {
     if (word.length >= 5 && token.includes(word)) return true;
     let shared = 0;
     while (shared < token.length && shared < word.length && token[shared] === word[shared]) shared += 1;
@@ -128,20 +211,20 @@ export function looksLike(rendering, sourceWords) {
   }));
 }
 
-/** Words of a rendering, lower case, split at anything that is not a letter or digit. */
+/** Words of a rendering, lower case with accents kept, split at anything that is not a letter, mark or digit. */
 export function renderingTokens(text) {
-  return fold(String(text ?? "")).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  return textKey(text).split(/[^\p{L}\p{M}\p{N}\u200c\u200d]+/u).filter(Boolean);
 }
 
 /** Variants that contain a word whose check failed (or are a failed candidate). */
 export function failedVariants(proposal, checks) {
   if (!checks) return [];
-  const words = (checks.failedWords ?? []).map((w) => fold(w).trim()).filter(Boolean);
-  const targets = new Set((checks.failedTargets ?? []).map((t) => fold(t).trim()));
+  const words = (checks.failedWords ?? []).map((w) => textKey(w)).filter(Boolean);
+  const targets = new Set((checks.failedTargets ?? []).map((t) => textKey(t)));
   const found = [];
   for (const entry of proposal.entries) {
     for (const variant of entry.variants) {
-      const key = fold(variant.target).trim();
+      const key = textKey(variant.target);
       const word = words.find((w) => renderingTokens(variant.target).some((token) => token.includes(w)));
       if (targets.has(key) || word) found.push({ entryId: entry.id, variantId: variant.id, target: variant.target, word: word ?? variant.target });
     }
@@ -489,9 +572,11 @@ export function createResearchEngine(deps) {
       }
     }
     result.instances = result.classified - result.notWord;
-    if ((corpusCounted(code) || !(listZipf > 0)) && general.corpusTokens) {
+    if ((corpusCounted(code) || !(listZipf > 0)) && (general.zipfOffset != null || general.corpusTokens)) {
       const realHits = result.classified ? general.hits * (result.instances / result.classified) : 0;
-      result.wordZipf = realHits > 0 ? Math.log10((realHits / general.corpusTokens) * 1e9) : 0;
+      result.wordZipf = realHits <= 0 ? 0
+        : general.zipfOffset != null ? Math.log10(realHits) + general.zipfOffset
+          : Math.log10((realHits / general.corpusTokens) * 1e9);
       result.wordZipfSource = "corpus";
     }
     // A frequency list counts every occurrence (names and other words spelled the
@@ -516,12 +601,15 @@ export function createResearchEngine(deps) {
   /** A cited earlier measurement of the same word, as a measurement of this run. */
   function reusedMeasure(priors, id, word) {
     const prior = id ? priors.find((m) => m.id === id) : null;
-    if (!prior || fold(prior.word).trim() !== fold(word).trim()) return null;
+    if (!prior || textKey(prior.word) !== textKey(word)) return null;
     return {
       forms: [prior.word], hits: prior.hits, classified: prior.classified, instances: prior.instances, notWord: prior.notWord,
       wordZipf: prior.wordZipf, wordZipfSource: "earlier run", senses: { needed: prior.needed }, reused: true,
     };
   }
+
+  const wordScores = (code, items) => scoreWords(languageData, code, items);
+  const renderingScore = (rendering, scoreOf, words = null) => scoreRendering(settings.targetLanguageCode, rendering, scoreOf, words);
 
   const ctx = (extra = {}) => ({
     headword: settings.term,
@@ -1037,22 +1125,13 @@ export function createResearchEngine(deps) {
 
   /** Glossary entries for other terms that already use this translation. */
   function findClashes(target) {
-    const key = fold(target).trim();
+    const key = textKey(target, settings.targetLanguageCode);
     const own = new Set([...(store.load("forms")?.confirmed ?? []), ...((store.load("family")?.members ?? []).map((m) => m.form))].map((f) => fold(f).trim()));
     return glossaryTerms
-      .filter((term) => (term.targetTerms ?? []).some((t) => fold(t).trim() === key))
+      .filter((term) => (term.targetTerms ?? []).some((t) => textKey(t, settings.targetLanguageCode) === key))
       .filter((term) => !(term.sourceTerms ?? []).some((t) => own.has(fold(t).trim())))
       .slice(0, 3)
       .map((term) => ({ sourceTerms: term.sourceTerms ?? [], targetTerms: term.targetTerms ?? [] }));
-  }
-
-  /** A rendering's score: its own, or for a phrase that of its rarest longer word. */
-  function renderingScore(rendering, zipfOf) {
-    const whole = zipfOf.get(fold(rendering).trim());
-    if (whole != null && whole > 0) return whole;
-    const tokens = renderingTokens(rendering).filter((t) => t.length > 2);
-    const values = tokens.map((t) => zipfOf.get(t)).filter((z) => z != null);
-    return values.length ? Math.min(...values) : whole ?? null;
   }
 
   /**
@@ -1077,15 +1156,15 @@ export function createResearchEngine(deps) {
       const parts = store.load("parts");
       const source = parts?.source ?? null;
       const ready = await frequencyReady(code, name);
-      // Scores of every member and of every word in a member (no AI tokens).
-      const lookups = [...new Set(groups.flatMap((g) => g.members.flatMap((m) => [fold(m).trim(), ...renderingTokens(m)])))];
-      const scores = ready ? await languageData.zipf(code, lookups) : [];
-      const zipfOf = new Map(lookups.map((w, i) => [w, ready ? scores[i] ?? 0 : null]));
+      // Scores of every member as a unit and, where spaces separate words, of its words (no AI tokens).
+      const splitAtSpaces = !NOT_SPACE_SPLIT.has(baseLanguage(code));
+      const lookups = groups.flatMap((g) => g.members.flatMap((m) => [m, ...(splitAtSpaces ? renderingTokens(m) : [])]));
+      const zipfOf = ready ? await wordScores(code, lookups.map((word) => ({ word }))) : new Map();
       const sourceWords = [...(store.load("forms")?.confirmed ?? []), ...(parts?.study?.parts ?? []).map((p) => p.part)];
       for (const group of groups) {
         const ref = source && !source.invented ? source.term.senses[group.senseId] : null;
         const target = ref?.zipf ?? null;
-        group.representative = pickRepresentative(group.members, (m) => renderingScore(m, zipfOf), target);
+        group.representative = pickRepresentative(group.members, (m) => (ready ? renderingScore(m, zipfOf) : null), target);
         group.lookalikes = group.members.filter((m) => m !== group.representative && looksLike(m, sourceWords));
       }
       // One check per rendering and sense: a word can carry one sense and lack another.
@@ -1093,7 +1172,7 @@ export function createResearchEngine(deps) {
       const seen = new Set();
       for (const group of groups) {
         for (const target of [group.representative, ...group.lookalikes]) {
-          const key = `${fold(target).trim()}\u0000${group.senseId}`;
+          const key = `${textKey(target, code)}\u0000${group.senseId}`;
           if (seen.has(key)) continue;
           seen.add(key);
           toCheck.push({ n: toCheck.length + 1, target, sense: group.sense, senseId: group.senseId });
@@ -1124,18 +1203,22 @@ export function createResearchEngine(deps) {
             const base = fold(b.word).trim();
             if (word === base || !word.includes(base)) continue;
             if (candidate.words.some((x) => fold(x.word).trim() === base)) continue;
-            candidate.words.push({ word: b.word, neededSense: b.neededSense, lookalike: true, resembles: b.word, otherSenses: b.otherSenses ?? [], addedFromBase: true });
+            candidate.words.push({ word: b.word, partOf: w.word, forms: [], neededSense: b.neededSense, lookalike: true, resembles: b.word, otherSenses: b.otherSenses ?? [], addedFromBase: true });
           }
         }
       }
       const byNumber = new Map(analysis.candidates.map((c) => [c.n, c]));
       // A word is measured once for each distinct sense it must carry.
-      const measureKey = (w) => `${fold(w.word).trim()}\u0000${fold(w.neededSense).trim()}`;
+      const measureKey = (w) => `${textKey(w.word, code)}\u0000${textKey(w.neededSense)}`;
       const words = [...new Map(analysis.candidates.flatMap((c) => c.words).map((w) => [measureKey(w), w])).values()];
-      const missing = words.map((w) => fold(w.word).trim()).filter((w) => !zipfOf.has(w));
-      if (ready && missing.length) {
-        const extra = await languageData.zipf(code, missing);
-        missing.forEach((w, i) => zipfOf.set(w, extra[i] ?? 0));
+      // Every listed word scored with its forms added up (this replaces the unit scores above).
+      if (ready) {
+        const byWord = new Map();
+        for (const w of analysis.candidates.flatMap((c) => c.words)) {
+          const key = textKey(w.word, code);
+          byWord.set(key, { word: w.word, forms: [...new Set([...(byWord.get(key)?.forms ?? []), ...(w.forms ?? [])])] });
+        }
+        for (const [key, score] of await wordScores(code, [...byWord.values()])) zipfOf.set(key, score);
       }
       const measured = new Map();
       if (ready) {
@@ -1145,7 +1228,7 @@ export function createResearchEngine(deps) {
         // forms or parts; then a look-alike that is a whole candidate; then the rest
         // by how much of its spelling it shares with the source words.
         const exact = new Set([...sourceWords, ...(store.load("family")?.members ?? []).map((m) => m.form)].map((w) => fold(w).trim()));
-        const wholeCandidates = new Set(toCheck.map((c) => fold(c.target).trim()));
+        const wholeCandidates = new Set(toCheck.map((c) => fold(c.target).trim())); // compared with fold() below
         const rank = (w) => {
           const key = fold(w.word).trim();
           if (exact.has(key)) return 0;
@@ -1154,7 +1237,7 @@ export function createResearchEngine(deps) {
         };
         const lookalikes = words.filter((w) => w.lookalike).sort((a, b) => rank(a) - rank(b));
         const measure = (w) => measureSenses({
-          code, name, forms: [w.word], listZipf: zipfOf.get(fold(w.word).trim()),
+          code, name, forms: [...new Set([w.word, ...(w.forms ?? [])])], listZipf: zipfOf.get(textKey(w.word, code)),
           senses: w.lookalike
             ? [{ id: "needed", gloss: w.neededSense }, ...w.otherSenses.slice(0, 5).map((gloss, i) => ({ id: `o${i + 1}`, gloss }))]
             : [{ id: "needed", gloss: w.neededSense }],
@@ -1203,7 +1286,8 @@ export function createResearchEngine(deps) {
           const m = measured.get(measureKey(w));
           return {
             word: w.word, neededSense: w.neededSense, lookalike: w.lookalike, resembles: w.resembles,
-            zipf: m ? m.wordZipf : zipfOf.get(fold(w.word).trim()) ?? null,
+            partOf: w.partOf ?? null,
+            zipf: m ? m.wordZipf : zipfOf.get(textKey(w.word, code)) ?? null,
             measure: m ? { hits: m.hits, classified: m.classified, instances: m.instances, notWord: m.notWord, needed: m.senses.needed ?? null, ...(m.reused ? { reused: true } : {}) } : null,
           };
         });
@@ -1224,7 +1308,7 @@ export function createResearchEngine(deps) {
               }
               if (!ref.measure.inSense) {
                 notes.push(`“${w.word}”: the sense needed is rare in both languages`);
-                passedWords.add(fold(w.word).trim());
+                passedWords.add(textKey(w.word, code));
                 continue;
               }
               verdict = "fail";
@@ -1235,11 +1319,11 @@ export function createResearchEngine(deps) {
               failedWords.push(w.word);
               reasons.push(`“${w.word}” is much less used in the sense needed than ${sourceName} “${ref.label}”: ${formatZipf(needed.zipf)} against ${formatZipf(ref.measure.zipf)}`);
             } else {
-              passedWords.add(fold(w.word).trim());
+              passedWords.add(textKey(w.word, code));
             }
           }
           // The whole rendering against the source sense it translates (no demand when that sense is rare in the source too).
-          const z = renderingScore(c.target, zipfOf);
+          const z = renderingScore(c.target, zipfOf, found?.words);
           if (senseRef?.zipf != null && !found?.establishedUsage && z != null && z < senseRef.zipf - 1) {
             verdict = "fail";
             reasons.push(`much less known than ${sourceName} “${settings.term}” in this sense: Zipf ${formatZipf(z)} against ${formatZipf(senseRef.zipf)}`);
@@ -1248,7 +1332,7 @@ export function createResearchEngine(deps) {
         if (verdict === "fail") failedTargets.push(c.target);
         return {
           target: c.target, sense: c.sense, senseId: c.senseId, words: items, verdict, reasons, notes,
-          zipf: renderingScore(c.target, zipfOf),
+          zipf: ready ? renderingScore(c.target, zipfOf, found?.words) : null,
           established: found?.establishedUsage ?? false, establishedBasis: found?.establishedBasis ?? "",
           clashes: findClashes(c.target),
         };
@@ -1262,12 +1346,15 @@ export function createResearchEngine(deps) {
       }
       const outGroups = groups.map((g) => ({
         senseId: g.senseId, sense: g.sense, recommended: g.recommended, note: g.note, representative: g.representative,
-        members: g.members.map((m) => ({ target: m, zipf: renderingScore(m, zipfOf) })),
+        members: g.members.map((m) => ({
+          target: m,
+          zipf: ready ? renderingScore(m, zipfOf, analysis.candidates.find((c) => textKey(c.target, code) === textKey(m, code))?.words) : null,
+        })),
       }));
       info(`${groups.length} groups from ${groups.reduce((n, g) => n + g.members.length, 0)} renderings; ${toCheck.length} checked.`);
       // A word that fails in one sense but passes in another is not banned: only the
       // renderings checked for the failing sense go.
-      const banned = [...new Set(failedWords)].filter((w) => !passedWords.has(fold(w).trim()));
+      const banned = [...new Set(failedWords)].filter((w) => !passedWords.has(textKey(w, code)));
       return { available: ready, groups: outGroups, candidates, failedWords: banned, failedTargets };
     });
   }
@@ -1290,16 +1377,16 @@ export function createResearchEngine(deps) {
   function checksText() {
     const checks = store.load("checks");
     if (!checks?.candidates?.length) return "(no checks)";
-    const byTarget = new Map(checks.candidates.map((c) => [fold(c.target).trim(), c]));
+    const byTarget = new Map(checks.candidates.map((c) => [textKey(c.target), c]));
     const line = (c) => {
       const words = c.words.map((w) => `${w.word} ${formatZipf(w.zipf)}${w.measure?.needed ? `, sense needed ${describeSense(w.measure.needed)}` : ""}`).join("; ");
       return `${c.target}: ${c.verdict.toUpperCase()}${c.reasons.length ? ` (${c.reasons.join("; ")})` : ""}${words ? ` [${words}]` : ""}${c.clashes.length ? ` [already used for: ${c.clashes.map((x) => x.sourceTerms.join(" / ")).join("; ")}]` : ""}`;
     };
     if (!checks.groups?.length) return checks.candidates.map((c) => `- ${line(c)}`).join("\n");
     return checks.groups.map((g) => {
-      const rep = byTarget.get(fold(g.representative).trim());
+      const rep = byTarget.get(textKey(g.representative));
       const others = g.members.filter((m) => m.target !== g.representative).map((m) => {
-        const checked = byTarget.get(fold(m.target).trim());
+        const checked = byTarget.get(textKey(m.target));
         return checked ? line(checked) : `${m.target} ${formatZipf(m.zipf)}`;
       });
       return `- [${g.sense}]${g.recommended ? " (recommended)" : ""} ${rep ? line(rep) : g.representative}${others.length ? `\n    also: ${others.join(" | ")}` : ""}`;
@@ -1395,7 +1482,7 @@ export function createResearchEngine(deps) {
     const existingTargets = settings.existingEntries.flatMap((entry) => entry.targetTerms);
     for (const entry of proposal.entries) {
       for (const variant of entry.variants) {
-        variant.fromExisting = existingTargets.some((target) => fold(target).trim() === fold(variant.target).trim());
+        variant.fromExisting = existingTargets.some((target) => textKey(target) === textKey(variant.target));
       }
     }
     // A rendering whose check failed never reaches counting; the review pause can put it back.
@@ -1471,7 +1558,7 @@ export function createResearchEngine(deps) {
       // The revision must not bring a merged rendering back.
       for (const pair of conflicts) {
         const entry = revised.entries.find((e) => e.sourceTerms.some((t) => pair.sourceTerms.some((s) => fold(s).trim() === fold(t).trim())));
-        const kept = entry?.variants.filter((v) => fold(v.target).trim() !== fold(pair.target).trim());
+        const kept = entry?.variants.filter((v) => textKey(v.target) !== textKey(pair.target));
         if (!entry || kept.length === entry.variants.length) continue;
         if (kept.length) {
           entry.variants = kept;
@@ -1599,7 +1686,7 @@ export function createResearchEngine(deps) {
         logResult("agreement", [{ agreed: merged.agreement.agreed, compared: merged.agreement.compared }],
           `Two judges agreed on ${merged.agreement.agreed} of ${merged.agreement.compared} occurrences.`);
       }
-      const failedWords = (store.load("checks")?.failedWords ?? []).map((w) => fold(w).trim()).filter(Boolean);
+      const failedWords = (store.load("checks")?.failedWords ?? []).map((w) => textKey(w)).filter(Boolean);
       for (const other of aggregate.otherRenderings) {
         const word = failedWords.find((w) => renderingTokens(other.rendering).some((t) => t.includes(w)));
         if (word) other.failedWord = word;
@@ -1638,15 +1725,15 @@ export function createResearchEngine(deps) {
     const checks = store.load("checks");
     const scored = [];
     for (const target of [...new Set(winners)]) {
-      const checked = checks?.candidates?.find((c) => fold(c.target).trim() === fold(target).trim());
+      const checked = checks?.candidates?.find((c) => textKey(c.target) === textKey(target));
       let zipf = null;
-      if (checked?.words?.length) {
-        const values = checked.words.map((w) => w.zipf).filter((z) => z != null);
+      const own = (checked?.words ?? []).filter((w) => !w.partOf);
+      if (own.length) {
+        const values = own.map((w) => w.zipf).filter((z) => z != null);
         zipf = values.length ? Math.min(...values) : null;
-      } else if (!corpusCounted(code)) {
-        const tokens = renderingTokens(target).filter((t) => t.length > 3);
-        const values = tokens.length ? await languageData.zipf(code, tokens) : [];
-        zipf = values.length ? Math.min(...values) : null;
+      } else {
+        const scores = await wordScores(code, [{ word: target }]);
+        zipf = scores.get(textKey(target, code)) ?? null;
       }
       if (zipf != null && zipf < 2) scored.push({ target, zipf });
     }
@@ -1662,7 +1749,7 @@ export function createResearchEngine(deps) {
       maxOutputTokens: 1500 + 300 * scored.length, effort: settings.effortLight,
     });
     const notes = answer.items.filter((item) => !item.understandableFromParts && item.note.trim())
-      .map((item) => ({ ...item, zipf: scored.find((s) => fold(s.target).trim() === fold(item.target).trim())?.zipf ?? null }));
+      .map((item) => ({ ...item, zipf: scored.find((s) => textKey(s.target) === textKey(item.target))?.zipf ?? null }));
     fact(notes.length
       ? `Translator's note proposed for: ${notes.map((n) => n.target).join(", ")}`
       : `Rare but clear from their parts: ${scored.map((s) => s.target).join(", ")}`);
@@ -1799,11 +1886,11 @@ export function unmeasuredRenderings(proposal, discovery) {
   if (!discovery) return [];
   const tally = new Map();
   for (const reading of Object.values(discovery.readings ?? {})) {
-    const key = fold(reading.rendering).trim();
+    const key = textKey(reading.rendering);
     if (key) tally.set(key, { text: tally.get(key)?.text ?? reading.rendering, count: (tally.get(key)?.count ?? 0) + 1 });
   }
-  const targets = new Set(proposal.entries.flatMap((entry) => entry.variants.map((v) => fold(v.target).trim())));
-  const explained = new Set((proposal.leftOutRenderings ?? []).map((item) => fold(item.rendering).trim()));
+  const targets = new Set(proposal.entries.flatMap((entry) => entry.variants.map((v) => textKey(v.target))));
+  const explained = new Set((proposal.leftOutRenderings ?? []).map((item) => textKey(item.rendering)));
   return [...tally.entries()]
     .filter(([key, value]) => value.count >= 2 && !targets.has(key) && !explained.has(key))
     .map(([, value]) => `“${value.text}” (${value.count} readings) is neither measured nor explained`);
@@ -1814,7 +1901,7 @@ export function validateJudgment(row, occurrence, entryById) {
   if (!row) return "missing from the answer";
   const entry = entryById[occurrence.entryId];
   if (row.status === "other" && entry) {
-    const same = entry.variants.find((v) => fold(v.target).trim() === fold(row.otherRendering ?? "").trim());
+    const same = entry.variants.find((v) => textKey(v.target) === textKey(row.otherRendering ?? ""));
     if (same) {
       row.normalizedFromOther = row.otherRendering;
       row.status = "selected";

@@ -16,7 +16,7 @@ use std::time::{Duration, SystemTime};
 
 use flate2::read::GzDecoder;
 use rand::{rngs::StdRng, seq::SliceRandom, SeedableRng};
-use regex::RegexBuilder;
+use regex::{RegexBuilder, RegexSetBuilder};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -113,7 +113,13 @@ fn manifest(app: &AppHandle) -> Result<Value, String> {
         .ok()
         .and_then(|time| SystemTime::now().duration_since(time).ok())
         .map(|age| age < MANIFEST_MAX_AGE)
-        .unwrap_or(false);
+        .unwrap_or(false)
+        // A copy from before corpus counts were calibrated is replaced at once.
+        && fs::read_to_string(&path)
+            .ok()
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+            .map(|value| value.get("calibration").is_some())
+            .unwrap_or(false);
     if !fresh {
         let downloaded = client()?
             .get(format!("{BASE_URL}manifest.json"))
@@ -323,8 +329,15 @@ pub(crate) struct SentencesResult {
     sample: Vec<String>,
     corpus_sentences: Option<u64>,
     corpus_tokens: Option<u64>,
+    /// Calibration of sentence counts to the list's Zipf scale (zipf ≈ log10(hits) + offset).
+    zipf_offset: Option<f64>,
     corpus: Option<String>,
 }
+
+/// Characters that belong to a word when matching at word edges: letters, digits,
+/// combining marks (vowel signs, decomposed accents) and the zero-width joiners
+/// that Persian and other scripts write inside compounds.
+const WORD_CHARS: &str = r"\p{L}\p{N}\p{M}_\x{200C}\x{200D}";
 
 /// Languages written without spaces between words: match inside text, not at word edges.
 fn unspaced(language: &str) -> bool {
@@ -353,7 +366,7 @@ pub(crate) async fn glossary_research_general_sentences(app: AppHandle, input: S
         let pattern = if unspaced(&language) {
             format!("(?:{alternation})")
         } else {
-            format!(r"(?:^|[^\p{{L}}\p{{N}}_])(?:{alternation})(?:[^\p{{L}}\p{{N}}_]|$)")
+            format!(r"(?:^|[^{WORD_CHARS}])(?:{alternation})(?:[^{WORD_CHARS}]|$)")
         };
         let matcher = RegexBuilder::new(&pattern)
             .case_insensitive(true)
@@ -381,8 +394,110 @@ pub(crate) async fn glossary_research_general_sentences(app: AppHandle, input: S
             sample: kept,
             corpus_sentences: sentences.get("sentences").and_then(Value::as_u64),
             corpus_tokens: sentences.get("tokens").and_then(Value::as_u64),
+            zipf_offset: sentences.get("zipfOffset").and_then(Value::as_f64),
             corpus: sentences.get("corpus").and_then(Value::as_str).map(str::to_string),
         })
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// How often each phrase occurs in the general corpus, counted as a whole.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CorpusCount {
+    phrase: String,
+    /// Corpus sentences containing the phrase as a whole (at word edges in spaced scripts).
+    hits: u64,
+    /// Zipf from those sentences and the corpus size; 0 when the phrase does not occur.
+    zipf: f32,
+}
+
+fn corpus_count_cache() -> &'static Mutex<HashMap<String, u64>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// The pattern for a phrase as a whole: inside text for unspaced scripts, at word edges otherwise.
+fn whole_phrase_pattern(language: &str, phrase: &str) -> String {
+    let escaped = regex::escape(phrase);
+    if unspaced(language) {
+        escaped
+    } else {
+        format!(r"(?:^|[^{WORD_CHARS}]){escaped}(?:[^{WORD_CHARS}]|$)")
+    }
+}
+
+/// Zipf from a sentence count: on the frequency list's scale when the language is
+/// calibrated (zipf ≈ log10(hits) + offset), else from the corpus size.
+fn corpus_zipf(hits: u64, offset: Option<f64>, tokens: u64) -> f32 {
+    match offset {
+        Some(offset) if hits > 0 => ((hits as f64).log10() + offset) as f32,
+        _ => zipf_from_hits(hits, tokens),
+    }
+}
+
+fn zipf_from_hits(hits: u64, tokens: u64) -> f32 {
+    if hits == 0 || tokens == 0 {
+        return 0.0;
+    }
+    ((hits as f64 / tokens as f64) * 1e9).log10() as f32
+}
+
+/// Counts each phrase as a whole in the language's general corpus, in one pass.
+/// Used where a frequency list cannot score compounds: lists that count
+/// syllables (Vietnamese) and scripts written without spaces.
+#[tauri::command]
+pub(crate) async fn glossary_research_corpus_zipf(app: AppHandle, language: String, phrases: Vec<String>) -> Result<Vec<CorpusCount>, String> {
+    let (language, traditional) = resolve_language(&safe_language(&language)?);
+    tauri::async_runtime::spawn_blocking(move || {
+        let entry = language_entry(&app, &language)?.ok_or_else(|| format!("No research data for language '{language}'."))?;
+        let sentences = entry.get("sentences").ok_or("manifest without sentences")?;
+        let tokens = sentences.get("tokens").and_then(Value::as_u64).unwrap_or(0);
+        let offset = sentences.get("zipfOffset").and_then(Value::as_f64);
+        let mut searched: Vec<String> = Vec::with_capacity(phrases.len());
+        for phrase in &phrases {
+            let phrase = phrase.trim();
+            let phrase = if traditional { to_simplified(&app, phrase)? } else { phrase.to_string() };
+            searched.push(phrase.to_lowercase());
+        }
+        let key = |phrase: &str| format!("{language}\u{0}{phrase}");
+        let missing: Vec<String> = {
+            let cache = corpus_count_cache().lock().map_err(|e| e.to_string())?;
+            let mut unique: Vec<String> = searched.iter().filter(|p| !p.is_empty() && !cache.contains_key(&key(p))).cloned().collect();
+            unique.sort();
+            unique.dedup();
+            unique
+        };
+        if !missing.is_empty() {
+            let path = ensure_file(&app, &language, sentences)?;
+            let patterns: Vec<String> = missing.iter().map(|p| whole_phrase_pattern(&language, p)).collect();
+            let set = RegexSetBuilder::new(&patterns)
+                .case_insensitive(true)
+                .build()
+                .map_err(|error| error.to_string())?;
+            let mut counts = vec![0u64; missing.len()];
+            let reader = BufReader::new(GzDecoder::new(fs::File::open(&path).map_err(|e| e.to_string())?));
+            for line in reader.lines() {
+                let line = line.map_err(|e| e.to_string())?;
+                for index in set.matches(&line).into_iter() {
+                    counts[index] += 1;
+                }
+            }
+            let mut cache = corpus_count_cache().lock().map_err(|e| e.to_string())?;
+            for (phrase, count) in missing.iter().zip(counts) {
+                cache.insert(key(phrase), count);
+            }
+        }
+        let cache = corpus_count_cache().lock().map_err(|e| e.to_string())?;
+        Ok(phrases
+            .iter()
+            .zip(&searched)
+            .map(|(original, phrase)| {
+                let hits = if phrase.is_empty() { 0 } else { *cache.get(&key(phrase)).unwrap_or(&0) };
+                CorpusCount { phrase: original.clone(), hits, zipf: corpus_zipf(hits, offset, tokens) }
+            })
+            .collect())
     })
     .await
     .map_err(|error| error.to_string())?
@@ -406,6 +521,24 @@ mod tests {
         assert_eq!(resolve_language("zh-Hans"), ("zh".to_string(), false));
         assert_eq!(resolve_language("pt-BR"), ("pt".to_string(), false));
         assert_eq!(resolve_language("no"), ("nb".to_string(), false));
+    }
+
+    #[test]
+    fn whole_phrases_match_at_word_edges_in_spaced_scripts() {
+        let set = RegexSetBuilder::new([whole_phrase_pattern("vi", "trong suốt")]).case_insensitive(true).build().unwrap();
+        assert!(set.is_match("Nước trong suốt."));
+        assert!(!set.is_match("Nước trongsuốt."));
+        assert!(!set.is_match("chương trong suốtnăm"), "a longer word is not the phrase");
+        assert!(!set.is_match("xtrong suốt"));
+        let fa = RegexSetBuilder::new([whole_phrase_pattern("fa", "پسندی")]).build().unwrap();
+        assert!(!fa.is_match("او خود\u{200C}پسندی دارد"), "a ZWNJ joins the compound");
+        assert!(fa.is_match("او پسندی دارد"));
+        let cjk = RegexSetBuilder::new([whole_phrase_pattern("zh", "虚荣")]).build().unwrap();
+        assert!(cjk.is_match("他很爱慕虚荣。"));
+        assert!(zipf_from_hits(0, 1000) == 0.0);
+        assert!((corpus_zipf(100, Some(1.5), 0) - 3.5).abs() < 1e-6);
+        assert!(corpus_zipf(0, Some(1.5), 0) == 0.0);
+        assert!((zipf_from_hits(1, 1_000_000_000) - 0.0).abs() < 1e-6);
     }
 
     #[test]

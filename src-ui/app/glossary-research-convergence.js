@@ -2,11 +2,12 @@
 // same in these texts (two synonyms in one sentence are then translated once);
 // it is a problem only when it erases a difference the author makes.
 
-import { expressionSpans, fold, sentenceBounds, snippet } from "./glossary-research-occurrences.js";
+import { expressionSpans, sentenceBounds, snippet } from "./glossary-research-occurrences.js";
 
 const MAX_PAIRS = 12;
 
-const key = (text) => fold(text).trim();
+// Target renderings are compared with accents and tones kept (phù ≠ phụ).
+const key = (text) => String(text ?? "").normalize("NFC").toLowerCase().trim();
 
 /**
  * Each rendering of the proposal that another source word already has: another

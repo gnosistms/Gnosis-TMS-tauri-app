@@ -71,6 +71,11 @@ export function createLanguageData({ invoke, onProgress = null }) {
       if (!words.length) return [];
       return invoke("glossary_research_zipf", { language: dataLanguage(languageCode), words });
     },
+    /** Each phrase counted as a whole in the general corpus: [{ phrase, hits, zipf }]. */
+    async corpusZipf(languageCode, phrases) {
+      if (!phrases.length) return [];
+      return invoke("glossary_research_corpus_zipf", { language: dataLanguage(languageCode), phrases });
+    },
     async sentences(languageCode, forms, limit, seed) {
       return invoke("glossary_research_general_sentences", {
         input: { language: dataLanguage(languageCode), forms, limit, seed },

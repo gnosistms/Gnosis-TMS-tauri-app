@@ -6,6 +6,9 @@ import {
   createResearchEngine,
   collectMeasurements,
   failedVariants,
+  scoreRendering,
+  scoreWords,
+  textKey,
   familyGroups,
   mergeMeasurements,
   looksLike,
@@ -696,4 +699,65 @@ test("a related word reuses earlier measurements of the same word in the same se
   const fatal = store.data.checks.candidates.find((c) => c.target === "fatal");
   assert.equal(fatal.verdict, "fail");
   assert.equal(fatal.words[0].measure.reused, true);
+});
+
+const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} ≈ ${expected}`);
+
+function listData(table, corpus = {}) {
+  const asked = { list: [], corpus: [] };
+  return {
+    asked,
+    async zipf(code, words) {
+      asked.list.push(...words);
+      return words.map((w) => table[w] ?? 0);
+    },
+    async corpusZipf(code, phrases) {
+      asked.corpus.push(...phrases);
+      return phrases.map((phrase) => ({ phrase, hits: corpus[phrase] ? 10 : 0, zipf: corpus[phrase] ?? 0 }));
+    },
+  };
+}
+
+test("target words are looked up with their accents and tone marks", async () => {
+  assert.equal(textKey("Phù Phiếm"), "phù phiếm");
+  assert.notEqual(textKey("phù"), textKey("phụ"));
+  const data = listData({ "phù phiếm": 2.98, "phu phiem": 0 });
+  const scores = await scoreWords(data, "vi", [{ word: "phù phiếm" }]);
+  near(scores.get("phù phiếm"), 2.98);
+  assert.deepEqual(data.asked.corpus, [], "found in the list: no corpus count");
+});
+
+test("a word's surface forms are added up", async () => {
+  const data = listData({ "غرور": 3.36, "الغرور": 3.63, "والغرور": 2.93 });
+  const scores = await scoreWords(data, "ar", [{ word: "غرور", forms: ["الغرور", "والغرور"] }]);
+  assert.ok(scores.get("غرور") > 3.63, "together more common than any one form");
+});
+
+test("a word the list does not hold is counted whole in the corpus, never split", async () => {
+  const data = listData({ "爱慕": 3.5, "虚荣": 3.33 }, { "爱慕虚荣": 1.9 });
+  const scores = await scoreWords(data, "zh", [{ word: "爱慕虚荣" }]);
+  near(scores.get("爱慕虚荣"), 1.9);
+  assert.deepEqual(data.asked.corpus, ["爱慕虚荣"]);
+});
+
+test("Persian joiners are dropped as in the data, and a spaced compound is also tried joined", async () => {
+  assert.equal(textKey("خود\u200cپسندی", "fa"), "خودپسندی");
+  const data = listData({ "خودپسندی": 1.91 });
+  const scores = await scoreWords(data, "fa", [{ word: "خود پسندی" }]);
+  near(scores.get("خود پسندی"), 1.91);
+});
+
+test("Thai words are always counted in the corpus", async () => {
+  const data = listData({ "ความหยิ่ง": 4.0 }, { "ความหยิ่ง": 2.2 });
+  const scores = await scoreWords(data, "th", [{ word: "ความหยิ่ง" }]);
+  near(scores.get("ความหยิ่ง"), 2.2);
+  assert.deepEqual(data.asked.list, []);
+});
+
+test("a rendering scores as its rarest own word; parts and syllables do not count", () => {
+  const scoreOf = new Map([["phù phiếm", 2.98], ["phiếm", 0.4], ["thói", 3.9], ["ham", 3.1], ["ngưỡng mộ", 4.5]]);
+  assert.equal(scoreRendering("vi", "phù phiếm", scoreOf, [{ word: "phù phiếm" }, { word: "phiếm", partOf: "phù phiếm" }]), 2.98);
+  assert.equal(scoreRendering("vi", "thói ham ngưỡng mộ", scoreOf, [{ word: "thói" }, { word: "ham" }, { word: "ngưỡng mộ" }]), 3.1);
+  assert.equal(scoreRendering("vi", "phù phiếm", new Map([["phù phiếm", 0], ["phiếm", 2]])), 0, "never split into syllables");
+  assert.equal(scoreRendering("en", "beyond the senses", new Map([["beyond the senses", 0], ["beyond", 4.6], ["senses", 3.9]])), 3.9);
 });
