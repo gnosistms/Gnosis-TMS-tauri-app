@@ -280,14 +280,16 @@ export function allRequests(sections) {
 }
 
 /**
- * The request the live panel shows: the one the person picked, else the one
- * it follows while that runs, else the running request that changed last.
+ * The request the live panel shows: the batch member the person picked while
+ * it runs, else the one it follows while that runs, else the running request
+ * that changed last. Finished requests are read in their section instead.
  */
 export function liveRequest(sections, choice = null, follow = null) {
   const requests = allRequests(sections);
+  // A request picked in a batch is shown while it runs; a finished one never stays on screen.
   if (choice) {
     const picked = requests.find((request) => request.requestId === choice);
-    if (picked) return picked;
+    if (picked && isRequestRunning(picked)) return picked;
   }
   // Stay on the request already shown while it runs, so a batch does not jump about.
   const followed = follow && requests.find((request) => request.requestId === follow);
@@ -303,4 +305,70 @@ export function requestBatch(sections, request) {
   const members = allRequests(sections).filter((other) => other.batch?.key === request.batch.key && other.stage === request.stage);
   const done = members.filter((other) => !isRequestRunning(other)).length;
   return { total: request.batch.total, done, running: members.length - done, requests: members };
+}
+
+// --- one-line summaries of finished steps ------------------------------------------
+
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+const RESULT_SUMMARIES = {
+  candidates(data) {
+    const groups = data.reduce((n, sense) => n + (sense.groups?.length ?? 0), 0);
+    const renderings = data.reduce((n, sense) => n + (sense.groups ?? []).reduce((m, g) => m + (g.members?.length ?? 0), 0), 0);
+    return `${plural(renderings, "rendering")} in ${plural(groups, "group")} for ${plural(data.length, "sense")}`;
+  },
+  checks(data) {
+    const count = (verdict) => data.filter((c) => c.verdict === verdict).length;
+    return [`${count("pass")} pass`, count("unclear") ? `${count("unclear")} unclear` : "", count("fail") ? `${count("fail")} fail` : ""].filter(Boolean).join(", ")
+      + ` (${plural(data.length, "candidate")} checked)`;
+  },
+  frequency(data) {
+    const term = data.find((item) => item.kind === "term");
+    const parts = data.find((item) => item.kind === "parts");
+    return [
+      parts ? parts.parts.map((p) => p.part).join(" + ") : "",
+      term ? `“${term.word}” Zipf ${term.zipf == null ? "—" : Number(term.zipf).toFixed(2)}${term.invented ? ", the author's own word" : ""}` : "",
+    ].filter(Boolean).join(" · ");
+  },
+  sampling([item]) {
+    return item.light ? `${plural(item.distinct, "passage")}, light study` : `${plural(item.distinct, "distinct passage")}, ${item.measuring} measured`;
+  },
+  discovery([item]) {
+    return `${item.read} of ${item.total} read; most common: ${(item.top ?? []).slice(0, 3).map(([r]) => r).join(", ")}`;
+  },
+  proposal(data) {
+    return data.map((entry) => `${(entry.sourceTerms ?? [])[0] ?? ""} → ${(entry.variants ?? []).join(", ")}`).join(" | ");
+  },
+  agreement([item]) {
+    return `the judges agreed on ${item.agreed} of ${item.compared}`;
+  },
+  senses(data) {
+    return data.map((sense) => sense.sense).join("; ");
+  },
+  shared(data) {
+    const same = data.filter((pair) => pair.relation === "same").length;
+    const different = data.filter((pair) => pair.relation === "different").length;
+    return [same ? `${same} shared with the same meaning` : "", different ? `${different} with a different meaning, taken out` : ""].filter(Boolean).join("; ") || `${plural(data.length, "pair")} not judged`;
+  },
+};
+
+/** One line saying what a step found: its last finding, else its last line. */
+export function sectionSummary(section) {
+  for (let index = section.items.length - 1; index >= 0; index -= 1) {
+    const item = section.items[index];
+    if (item.kind === "result") {
+      const summarize = RESULT_SUMMARIES[item.resultKind];
+      if (summarize && item.data) {
+        try {
+          return summarize(item.data);
+        } catch {
+          // fall back to the logged text
+        }
+      }
+      return item.texts.at(-1) ?? "";
+    }
+  }
+  const facts = section.items.filter((item) => item.kind === "line" && item.entry.type === "fact");
+  const last = facts.at(-1) ?? section.items.filter((item) => item.kind === "line").at(-1);
+  return last?.entry.text ?? "";
 }

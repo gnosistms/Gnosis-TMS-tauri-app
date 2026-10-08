@@ -752,7 +752,7 @@ function updateStreamInDom(entry) {
   return true;
 }
 
-/** "details ›": show that request's whole exchange in the live panel. */
+/** The batch switcher: watch another running request of the batch. */
 export function showResearchRequest(render, requestId) {
   const draft = research();
   draft.liveChoice = requestId;
@@ -760,15 +760,23 @@ export function showResearchRequest(render, requestId) {
   renderKeepingLogPinned(render);
 }
 
-export function toggleResearchLive(render) {
+/** "details": unfold or fold a finished step. */
+export function toggleResearchSection(render, sectionId) {
   const draft = research();
-  draft.liveOpen = draft.liveOpen === false;
+  draft.sectionOpen = { ...(draft.sectionOpen ?? {}), [sectionId]: !(draft.sectionOpen?.[sectionId] === true) };
   renderKeepingLogPinned(render);
 }
 
-/** Back to following whatever runs (or nothing, after the run). */
-export function closeResearchLive(render) {
-  research().liveChoice = null;
+/** Unfold or fold one finished AI exchange inside its step. */
+export function toggleResearchExchange(render, requestId) {
+  const draft = research();
+  draft.exchangeOpen = { ...(draft.exchangeOpen ?? {}), [requestId]: !(draft.exchangeOpen?.[requestId] === true) };
+  renderKeepingLogPinned(render);
+}
+
+export function toggleResearchLive(render) {
+  const draft = research();
+  draft.liveOpen = draft.liveOpen === false;
   renderKeepingLogPinned(render);
 }
 

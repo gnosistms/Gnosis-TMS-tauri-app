@@ -9,6 +9,7 @@ import {
   requestState,
   requestStatusText,
   requestTitle,
+  sectionSummary,
   stageName,
 } from "../app/glossary-research-log-view.js";
 import { formatJsonStream, formatThinking } from "../app/glossary-research-stream-format.js";
@@ -21,7 +22,7 @@ const DOWNLOAD_LINE = /^(Downloading|Downloaded) /;
 
 // --- results ---------------------------------------------------------------------
 
-function sectionMetaHtml(section) {
+function sectionMetaText(section) {
   const { count, seconds, costUsd, running, failed } = section.meta;
   if (!count) return "";
   const parts = [];
@@ -30,9 +31,7 @@ function sectionMetaHtml(section) {
   if (seconds) parts.push(`${Math.round(seconds)} s`);
   if (costUsd) parts.push(formatUsd(costUsd));
   if (failed) parts.push(`<span class="research-section__failed">${failed} failed</span>`);
-  const shown = section.requests.find(isRequestRunning) ?? section.requests.at(-1);
-  return `<span class="research-section__meta">${parts.join(" · ")}${parts.length ? " · " : ""}`
-    + `<button type="button" class="research-section__details" data-action="show-research-request:${esc(shown.requestId)}">details ›</button></span>`;
+  return parts.join(" · ");
 }
 
 function renderLine(entry) {
@@ -151,32 +150,113 @@ function collapseDownloads(items) {
   return out;
 }
 
-function renderSection(section) {
-  const body = collapseDownloads(section.items)
-    .map((item) => (item.kind === "result" ? renderResult(item) : renderLine(item.entry)))
-    .join("");
-  if (!section.heading) return body ? `<section class="research-section research-section--untitled">${body}</section>` : "";
-  return `<section class="research-section">
-      <div class="research-section__head">
-        <h4 class="research-section__title">${esc(section.heading)}</h4>
-        ${sectionMetaHtml(section)}
-      </div>
-      ${body ? `<div class="research-section__body">${body}</div>` : ""}
-    </section>`;
-}
-
-export function renderResults(sections) {
-  return sections.map(renderSection).join("");
-}
-
-// --- live panel ------------------------------------------------------------------
-
-function usageLine(usage) {
+function usageText(usage) {
   if (usage.line) return usage.line;
   return `${(usage.inputTokens ?? 0).toLocaleString("en-US")} tokens in (${(usage.cachedTokens ?? 0).toLocaleString("en-US")} cached), `
     + `${(usage.outputTokens ?? 0).toLocaleString("en-US")} out (${(usage.reasoningTokens ?? 0).toLocaleString("en-US")} thinking) · `
     + `${formatUsd(usage.costUsd)}${usage.costIsEstimate ? " (reserved; outcome unknown)" : ""} · ${Number(usage.seconds ?? 0).toFixed(1)} s`;
 }
+
+/** What was sent, the thinking and the answer of one request, laid out for reading. */
+function exchangeBody(request) {
+  return `${request.text || request.instructions ? `<details class="research-live__sent"><summary>What was sent</summary>`
+      + `${request.instructions ? `<div class="research-live__label">Instructions</div><div class="research-live__text">${esc(request.instructions)}</div>` : ""}`
+      + `${request.text ? `<div class="research-live__label">Texts and question</div><div class="research-live__text">${esc(request.text)}</div>` : ""}</details>` : ""}
+    ${request.thinking ? `<div class="research-live__label">Thinking</div><div class="research-live__thinking" data-live-type="thinking">${formatThinking(request.thinking)}</div>` : ""}
+    ${request.answer ? `<div class="research-live__label">Answer</div><pre class="research-live__answer" data-live-type="answer-delta">${formatJsonStream(request.answer)}</pre>` : ""}
+    ${request.problem ? `<p class="research-line research-line--problem">${esc(request.problem)}</p>` : ""}
+    ${request.usage ? `<div class="research-live__usage">${esc(usageText(request.usage))}</div>` : ""}`;
+}
+
+function renderExchanges(section, openExchanges) {
+  const done = section.requests.filter((request) => !isRequestRunning(request));
+  if (!done.length) return "";
+  return `<div class="research-exchanges">${done.map((request) => {
+    const open = openExchanges?.[request.requestId] === true;
+    return `<div class="research-exchange${open ? " is-open" : ""}">
+        <button type="button" class="research-exchange__toggle" data-action="toggle-research-exchange:${esc(request.requestId)}" aria-expanded="${open}">
+          <svg class="research-disclosure__chevron" viewBox="0 0 10 10" aria-hidden="true"><path d="M3 1.5 6.5 5 3 8.5" /></svg>
+          <span>AI exchange · ${esc(requestTitle(request))}</span>
+          <span class="research-exchange__status">${esc(requestStatusText(request, formatUsd))}</span>
+        </button>
+        ${open ? `<div class="research-exchange__body">${exchangeBody(request)}</div>` : ""}
+      </div>`;
+  }).join("")}</div>`;
+}
+
+/**
+ * One step. The step running now is open and shows everything as it comes
+ * in; a finished step folds to one line of what it found, and "details"
+ * unfolds the full account with its AI exchanges.
+ */
+function renderSection(section, { current, open, openExchanges }) {
+  const body = collapseDownloads(section.items)
+    .map((item) => (item.kind === "result" ? renderResult(item) : renderLine(item.entry)))
+    .join("");
+  if (!section.heading) return body ? `<section class="research-section research-section--untitled">${body}</section>` : "";
+  const expanded = current || open;
+  const meta = sectionMetaText(section);
+  const summary = expanded ? "" : sectionSummary(section);
+  const hasMore = Boolean(body) || section.requests.length > 0;
+  const toggle = !current && hasMore
+    ? `<button type="button" class="research-section__details" data-action="toggle-research-section:${esc(section.id)}" aria-expanded="${expanded}">${expanded ? "hide" : "details ›"}</button>`
+    : "";
+  return `<section class="research-section${current ? " is-current" : ""}${expanded ? " is-open" : ""}" data-section-id="${esc(section.id)}">
+      <div class="research-section__head">
+        <h4 class="research-section__title">${current ? '<span class="navigation-loading-modal__spinner research-section__spinner" aria-hidden="true"></span>' : ""}${esc(section.heading)}</h4>
+        ${summary ? `<span class="research-section__summary">${esc(summary)}</span>` : ""}
+        <span class="research-section__meta">${meta}${meta && toggle ? " · " : ""}${toggle}</span>
+      </div>
+      ${expanded && (body || section.requests.length) ? `<div class="research-section__body">${body}${current ? "" : renderExchanges(section, openExchanges)}</div>` : ""}
+    </section>`;
+}
+
+/** The steps: while research runs the last one is the step in progress. */
+export function renderResults(sections, { running = false, openSections = {}, openExchanges = {} } = {}) {
+  const titled = sections.filter((section) => section.heading);
+  const currentId = running ? titled.at(-1)?.id : null;
+  return sections.map((section) => renderSection(section, {
+    current: section.id === currentId,
+    open: openSections[section.id] === true,
+    openExchanges,
+  })).join("");
+}
+
+// --- progress line -----------------------------------------------------------------
+
+/** The stages on the progress line, each standing for the steps logged under it. */
+export const RESEARCH_STAGES = [
+  { label: "Dictionary", steps: ["Dictionary", "Word forms", "Word family"] },
+  { label: "Texts", steps: ["Sampling", "Where the term comes from"] },
+  { label: "Candidates", steps: ["Parts and frequency", "Candidate translations", "Candidate checks"] },
+  { label: "Proposal", steps: ["Discovery", "Proposal", "Existing glossary entry", "Shared translations"] },
+  { label: "Review", steps: ["Review"] },
+  { label: "Counting", steps: ["Counting", "Counting (second judge)"] },
+  { label: "Report", steps: ["Rare translations", "Summary", "Done"] },
+];
+
+export function stageIndex(stepLabel, runStatus) {
+  if (runStatus === "done") return RESEARCH_STAGES.length;
+  if (runStatus === "review") return RESEARCH_STAGES.findIndex((stage) => stage.label === "Review");
+  if (runStatus === "family") return 0;
+  const index = RESEARCH_STAGES.findIndex((stage) => stage.steps.includes(stepLabel));
+  return index < 0 ? 0 : index;
+}
+
+/** A line with a labelled dot per stage: done, the one in progress, and those to come. */
+export function renderStageLine({ stepLabel, runStatus }) {
+  const current = stageIndex(stepLabel, runStatus);
+  const stopped = runStatus === "failed" || runStatus === "stopped";
+  return `<ol class="research-steps" aria-label="Research progress">${RESEARCH_STAGES.map((stage, index) => {
+    const state = index < current ? "done" : index === current ? (stopped ? "stopped" : "current") : "todo";
+    return `<li class="research-steps__item research-steps__item--${state}"${state === "current" ? ' aria-current="step"' : ""}>
+        <span class="research-steps__dot" aria-hidden="true"></span>
+        <span class="research-steps__label">${esc(stage.label)}</span>
+      </li>`;
+  }).join("")}</ol>`;
+}
+
+// --- live panel ------------------------------------------------------------------
 
 /** The thinking and answer blocks, also used to update the panel while text streams in. */
 export function liveBlockHtml(type, text) {
@@ -197,27 +277,17 @@ function batchSwitcher(batch, shown) {
 }
 
 /**
- * The panel under the results. `request` is the one shown; while research
- * runs with nothing streaming it stays as one line; `open` folds the body.
+ * The panel under the results: the AI request running now, streaming in.
+ * Between requests it stays as one line; after the run it is not shown.
  */
-export function renderLivePanel({ sections, request, running, open, picked }) {
+export function renderLivePanel({ sections, request, running, open }) {
+  if (!running) return "";
   if (!request) {
-    return running
-      ? `<div class="research-live research-live--idle"><div class="research-live__head"><span class="research-live__title">Waiting for the next AI request…</span></div></div>`
-      : "";
+    return `<div class="research-live research-live--idle"><div class="research-live__head"><span class="research-live__title">Waiting for the next AI request…</span></div></div>`;
   }
   const state = requestState(request);
   const batch = requestBatch(sections, request);
   const id = esc(request.requestId);
-  const body = !open ? "" : `<div class="research-live__body" data-live-body>
-      ${request.text || request.instructions ? `<details class="research-live__sent"><summary>What was sent</summary>`
-        + `${request.instructions ? `<div class="research-live__label">Instructions</div><div class="research-live__text">${esc(request.instructions)}</div>` : ""}`
-        + `${request.text ? `<div class="research-live__label">Texts and question</div><div class="research-live__text">${esc(request.text)}</div>` : ""}</details>` : ""}
-      ${request.thinking ? `<div class="research-live__label">Thinking</div><div class="research-live__thinking" data-live-type="thinking">${liveBlockHtml("thinking", request.thinking)}</div>` : ""}
-      ${request.answer ? `<div class="research-live__label">Answer</div><pre class="research-live__answer" data-live-type="answer-delta">${liveBlockHtml("answer-delta", request.answer)}</pre>` : ""}
-      ${request.problem ? `<p class="research-line research-line--problem">${esc(request.problem)}</p>` : ""}
-      ${request.usage ? `<div class="research-live__usage">${esc(usageLine(request.usage))}</div>` : ""}
-    </div>`;
   return `<div class="research-live research-live--${state}${open ? " is-open" : ""}" data-research-live data-live-request="${id}" data-live-state="${state}" data-live-open="${open}">
       <div class="research-live__head">
         <button type="button" class="research-live__toggle" data-action="toggle-research-live" aria-expanded="${open}">
@@ -227,8 +297,7 @@ export function renderLivePanel({ sections, request, running, open, picked }) {
         <span class="research-live__status" data-live-status>${esc(requestStatusText(request, formatUsd))}</span>
         ${isRequestRunning(request) ? '<span class="navigation-loading-modal__spinner research-live__spinner" aria-hidden="true"></span>' : ""}
         ${batch ? batchSwitcher(batch, request) : ""}
-        ${picked ? `<button type="button" class="research-live__close" data-action="close-research-live" aria-label="${running ? "Follow the running request" : "Close"}" title="${running ? "Follow the running request" : "Close"}">×</button>` : ""}
       </div>
-      ${body}
+      ${open ? `<div class="research-live__body" data-live-body>${exchangeBody(request)}</div>` : ""}
     </div>`;
 }

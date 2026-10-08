@@ -12,6 +12,7 @@ const {
   buildLogView,
   liveRequest,
   requestBatch,
+  sectionSummary,
   collapseRepeatedBlocks,
   readableAnswer,
   requestState,
@@ -155,4 +156,23 @@ test("the live panel follows the request that changed last, unless one was picke
   sections = buildLogSections(state.glossaryResearch.log);
   assert.equal(liveRequest(sections), null, "nothing runs: the panel has nothing to follow");
   assert.equal(sections[0].meta.count, 3);
+});
+
+test("a finished request picked in the panel gives way to the running one", () => {
+  const log = streamThreeBatchRequests();
+  appendResearchLogEvent({ type: "usage", requestId: "r2", record: { stage: "discovery", status: "ok", seconds: 1, costUsd: 0.01 }, spent: 0.01, limit: 4 });
+  const sections = buildLogSections(log);
+  assert.notEqual(liveRequest(sections, "r2").requestId, "r2");
+  assert.equal(liveRequest(sections, "r3").requestId, "r3", "a running batch member can be picked");
+});
+
+test("a finished step reads as one line of what it found", () => {
+  const sections = buildLogSections([
+    { type: "heading", text: "Dictionary" }, { type: "info", text: "trying" }, { type: "fact", text: "DLE: found (2 senses)" },
+    { type: "heading", text: "Candidate checks" },
+    { type: "result", kind: "checks", data: [{ target: "a", verdict: "pass" }, { target: "b", verdict: "fail" }], text: "x" },
+    { type: "result", kind: "checks", data: [{ target: "c", verdict: "unclear" }], text: "y" },
+    { type: "heading", text: "Old" }, { type: "result", kind: "mystery", text: "kept text" },
+  ]);
+  assert.deepEqual(sections.map(sectionSummary), ["DLE: found (2 senses)", "1 pass, 1 unclear, 1 fail (3 candidates checked)", "kept text"]);
 });

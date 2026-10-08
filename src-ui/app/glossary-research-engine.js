@@ -1006,6 +1006,7 @@ export function createResearchEngine(deps) {
       if (!(await frequencyReady(code, name))) return result;
       const formZipfs = await languageData.zipf(code, forms);
       const listZipf = combinedZipf(formZipfs);
+      info(`Measuring “${settings.term}” in general ${name}: sorting example sentences by the sense they use.`);
       const term = await measureSenses({
         code, name, forms, listZipf,
         senses: study.senses.map(({ id, gloss }) => ({ id, gloss })),
@@ -1018,6 +1019,7 @@ export function createResearchEngine(deps) {
         for (const base of study.bases.slice(0, 3)) {
           const baseForms = [...new Set([base.word, ...base.forms].map((f) => f.trim()).filter(Boolean))];
           const baseList = combinedZipf(await languageData.zipf(code, baseForms));
+          info(`Measuring the part “${base.word}” in general ${name}, in the sense it carries in the term.`);
           const measure = reusedMeasure(priorMeasurements(code), base.reuse, base.word) ?? await measureSenses({
             code, name, forms: baseForms, listZipf: baseList,
             senses: [{ id: "needed", gloss: base.neededSense }, ...base.otherSenses.slice(0, 5).map((gloss, i) => ({ id: `o${i + 1}`, gloss }))],
@@ -1195,14 +1197,24 @@ export function createResearchEngine(deps) {
         const priors = priorMeasurements(code);
         for (const w of lookalikes) {
           const reused = reusedMeasure(priors, w.reuse, w.word);
-          if (reused) measured.set(measureKey(w), reused);
+          if (reused) {
+            measured.set(measureKey(w), reused);
+            info(`“${w.word}” was measured in an earlier run in this sense; reused.`);
+          }
         }
+        const toMeasure = lookalikes.filter((x) => !measured.has(measureKey(x)));
+        if (toMeasure.length) info(`${toMeasure.length} word${toMeasure.length === 1 ? "" : "s"} that look like the ${sourceName} term or its parts to measure in general ${name}, likeliest false friends first.`);
         let sorted = 0;
-        for (const w of lookalikes.filter((x) => !measured.has(measureKey(x)))) {
-          if (sorted >= settings.maxSenseChecks) break;
+        for (const [index, w] of toMeasure.entries()) {
+          if (sorted >= settings.maxSenseChecks) {
+            info(`Measurement limit reached (${settings.maxSenseChecks} words with sentences to sort); ${toMeasure.length - index} left unmeasured.`);
+            break;
+          }
+          info(`Measuring “${w.word}” (${index + 1} of ${toMeasure.length}): sorting general ${name} sentences by the sense they use.`);
           const m = await measure(w);
           measured.set(measureKey(w), m);
           if (m.classified) sorted += 1;
+          else info(`“${w.word}” does not occur in the general ${name} corpus.`);
         }
         if (corpusCounted(code)) {
           for (const w of words.filter((x) => !x.lookalike).slice(0, 4)) measured.set(measureKey(w), await measure(w));

@@ -15,7 +15,7 @@ import {
 import { batchSpent } from "../app/glossary-research-family-budget.js";
 import { formatUsd, researchModelsWithPrices } from "../app/glossary-research-budget.js";
 import { buildLogSections, isRequestRunning, liveRequest } from "../app/glossary-research-log-view.js";
-import { renderLivePanel, renderResults } from "./glossary-research-log-render.js";
+import { renderLivePanel, renderResults, renderStageLine } from "./glossary-research-log-render.js";
 
 const esc = escapeHtml;
 
@@ -275,7 +275,6 @@ function renderRun(state) {
   const research = state.glossaryResearch;
   const targetName = state.glossaryEditor?.targetLanguage?.name ?? "target language";
   const running = research.runStatus === "running" || research.runStatus === "counting";
-  const pct = Math.round((research.progress ?? 0) * 100);
   const statusText = {
     running: research.stageLabel || "Working",
     counting: "Counting",
@@ -287,9 +286,9 @@ function renderRun(state) {
   }[research.runStatus] ?? research.runStatus;
   const head = `
     <div class="research-run__head">
-      <div class="research-run__status"><strong>${esc(statusText)}</strong> · ${formatUsd(research.spent)} of ${formatUsd(research.limit)}</div>
+      ${renderStageLine({ stepLabel: research.stageLabel, runStatus: research.runStatus })}
+      <div class="research-run__status"><strong>${esc(statusText)}</strong><span class="research-run__cost">${formatUsd(research.spent)} of ${formatUsd(research.limit)}</span></div>
       ${research.familyQueue ? `<p class="muted">${research.familyQueue.words.length ? `Then, one after another: ${esc(research.familyQueue.words.map((word) => word.form).join(", "))} · ` : ""}related words ${formatUsd(batchSpent(research.familyQueue))} spent of ${formatUsd(research.familyQueue.totalLimit)} in all</p>` : ""}
-      <div class="research-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><span style="width:${pct}%"></span></div>
     </div>`;
   const budgetStop = research.stopKind === "budget";
   const stoppedPanel = (research.runStatus === "failed" || research.runStatus === "stopped")
@@ -313,11 +312,10 @@ function renderRun(state) {
   const shown = liveRequest(sections, research.liveChoice, research.liveFollow);
   // The panel keeps following one request until it finishes.
   research.liveFollow = shown && isRequestRunning(shown) ? shown.requestId : null;
-  const livePanel = renderLivePanel({
-    sections, request: running || research.liveChoice ? shown : null, running,
-    open: research.liveOpen !== false, picked: Boolean(research.liveChoice),
-  });
-  const logLines = `<div class="research-results" data-research-log aria-live="off">${renderResults(sections)}</div>`;
+  const livePanel = renderLivePanel({ sections, request: shown, running, open: research.liveOpen !== false });
+  const logLines = `<div class="research-results" data-research-log aria-live="off">${renderResults(sections, {
+    running, openSections: research.sectionOpen ?? {}, openExchanges: research.exchangeOpen ?? {},
+  })}</div>`;
   // While research runs the log is the main view; afterwards it folds away.
   const log = running
     ? logLines
