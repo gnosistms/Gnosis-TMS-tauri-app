@@ -664,6 +664,10 @@ function appendLog(event) {
   }
   const entry = { type: event.type, text: String(event.text ?? ""), requestId: event.requestId ?? null, at: Date.now() };
   if (event.instructions) entry.instructions = event.instructions;
+  if (event.type === "result") {
+    entry.kind = event.kind;
+    if (event.data !== undefined) entry.data = event.data;
+  }
   if (event.type === "request") {
     entry.stage = event.stage;
     entry.purpose = event.purpose ?? "";

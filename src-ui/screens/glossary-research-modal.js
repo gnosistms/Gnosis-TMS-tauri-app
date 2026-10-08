@@ -221,6 +221,7 @@ function renderLogLine(entry) {
     case "heading":
       return `<div class="research-log__heading">${text}</div>`;
     case "fact":
+    case "result":
       return `<div class="research-log__fact"><strong>${text}</strong></div>`;
     case "problem":
       return `<div class="research-log__problem"><strong>${text}</strong></div>`;

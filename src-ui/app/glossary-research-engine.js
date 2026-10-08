@@ -442,6 +442,8 @@ export function createResearchEngine(deps) {
   const heading = (text) => log({ type: "heading", text });
   const fact = (text) => log({ type: "fact", text });
   const info = (text) => log({ type: "info", text });
+  /** A finding with its data for display; text is the same line a fact would log. */
+  const logResult = (kind, data, text) => log({ type: "result", kind, data, text });
 
   /** The language's frequency data is on this computer (downloaded the first time), or the run goes on without it. */
   async function frequencyReady(code, name) {
@@ -964,7 +966,9 @@ export function createResearchEngine(deps) {
         maxOutputTokens: isLight() ? 8000 : 16000, effort: isLight() ? settings.effortProposal : settings.effortStudy,
       });
       for (const sense of result.senses) {
-        fact(`${sense.sense}: ${sense.groups.map((g) => `${g.recommended ? "★ " : ""}${g.members.join(" / ")}`).join("; ")}`);
+        logResult("candidates",
+          [{ sense: sense.sense, groups: sense.groups.map((g) => ({ recommended: Boolean(g.recommended), members: g.members })) }],
+          `${sense.sense}: ${sense.groups.map((g) => `${g.recommended ? "★ " : ""}${g.members.join(" / ")}`).join("; ")}`);
       }
       return result;
     });
@@ -1260,8 +1264,11 @@ export function createResearchEngine(deps) {
         };
       });
       for (const c of candidates) {
-        const extra = [...c.reasons, ...c.notes, ...c.clashes.map((x) => `already used for ${x.sourceTerms.join(" / ")}`)];
-        fact(`${c.target}: ${c.verdict}${extra.length ? ` — ${extra.join("; ")}` : ""}`);
+        const clashes = c.clashes.map((x) => `already used for ${x.sourceTerms.join(" / ")}`);
+        const extra = [...c.reasons, ...c.notes, ...clashes];
+        logResult("checks",
+          [{ target: c.target, verdict: c.verdict, reasons: c.reasons, notes: c.notes, clashes }],
+          `${c.target}: ${c.verdict}${extra.length ? ` — ${extra.join("; ")}` : ""}`);
       }
       const outGroups = groups.map((g) => ({
         senseId: g.senseId, sense: g.sense, recommended: g.recommended, note: g.note, representative: g.representative,
