@@ -290,7 +290,6 @@ function renderMeaning(sense, index, measure, candidates, src, tgt, meta) {
             ${measured ? `<span class="rr-scale__zone" style="width:${at(minimum)}"><span>too rare</span></span>
             <span class="rr-scale__ref" style="left:${at(measure.zipf)}"><span>${esc(meta.term)} ${formatZipf(measure.zipf)}</span></span>` : ""}
           </div>
-          ${rows}
           <div class="rr-scale__row rr-scale__row--axis" aria-hidden="true">
             <span></span>
             <div class="rr-scale__axis">
@@ -298,6 +297,7 @@ function renderMeaning(sense, index, measure, candidates, src, tgt, meta) {
             </div>
             <span></span>
           </div>
+          ${rows}
         </div>` : ""}
     </div>`;
 }

@@ -649,8 +649,8 @@
   --label-w: 240px;
   --result-w: 92px;
   --gap: 18px;
+  --axis-h: 38px;
   position: relative;
-  padding-top: 26px;
 }
 
 .rr-scale__row {
@@ -660,20 +660,26 @@
   border-bottom: 1px solid var(--surface-border);
 }
 
+/* the scale sits on top, so it is seen before the bars even in a long report */
 .rr-scale__row--axis {
-  border-bottom: 0;
+  border-bottom: 1px solid rgba(164, 112, 41, 0.3);
+}
+
+/* room under the scale for the labels of the line and the too-rare band */
+.rr-scale__row--axis + .rr-scale__row {
+  margin-top: 24px;
 }
 
 /* no Spanish score for this meaning: no line or band, so no room kept for their labels */
-.rr-scale--open {
-  padding-top: 0;
+.rr-scale--open .rr-scale__row--axis + .rr-scale__row {
+  margin-top: 0;
 }
 
 /* the reference line and the too-rare band run behind every row of the plot column */
 .rr-scale__overlay {
   position: absolute;
-  top: 0;
-  bottom: 30px;
+  top: var(--axis-h);
+  bottom: 0;
   left: calc(var(--label-w) + var(--gap));
   right: calc(var(--result-w) + var(--gap));
   pointer-events: none;
@@ -787,13 +793,13 @@
 
 .rr-scale__axis {
   position: relative;
-  height: 30px;
-  border-top: 1px solid rgba(164, 112, 41, 0.3);
+  height: var(--axis-h);
 }
 
 .rr-scale__axis span {
   position: absolute;
-  top: 4px;
+  top: 2px;
+  line-height: 1.3;
   transform: translateX(-50%);
   color: var(--muted);
   font-size: 11px;
