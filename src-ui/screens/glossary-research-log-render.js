@@ -70,6 +70,64 @@ const RESULT_RENDERERS = {
   },
 };
 
+function stats(figures) {
+  return `<div class="research-stats">${figures.filter(Boolean).map(([value, label]) => `<span class="research-stat"><strong>${esc(value)}</strong> ${esc(label)}</span>`).join("")}</div>`;
+}
+
+const zipfText = (value) => (value == null ? "—" : Number(value).toFixed(2));
+
+Object.assign(RESULT_RENDERERS, {
+  sampling([item]) {
+    return stats([
+      [item.distinct, item.distinct === 1 ? "passage" : "distinct passages"],
+      item.duplicateGroups ? [item.duplicateGroups, "duplicate groups"] : null,
+      item.light ? ["light study", "both judges read every passage"] : [item.measuring, "measured"],
+      !item.light && item.discovery ? [item.discovery, `for the open reading${item.overlap ? ` (${item.overlap} shared)` : ""}`] : null,
+    ]);
+  },
+  discovery([item]) {
+    return `${stats([[`${item.read} of ${item.total}`, "read"], [item.renderings, "different renderings"]])}
+      <div class="research-chip-row">${(item.top ?? []).map(([rendering, count]) => `<span class="research-chip">${esc(rendering)} <span class="research-chip__count">${esc(count)}</span></span>`).join("")}</div>`;
+  },
+  proposal(data) {
+    return data.map((entry) => `
+      <div class="research-result__group">
+        <div class="research-result__sub">${esc((entry.sourceTerms ?? []).join(" / "))}</div>
+        <div class="research-chip-row">${chips(entry.variants ?? [], false)}</div>
+      </div>`).join("");
+  },
+  agreement([item]) {
+    return stats([[`${item.agreed} of ${item.compared}`, "occurrences where the two judges agreed"]]);
+  },
+  senses(data) {
+    return data.map((sense) => `
+      <div class="research-result__group">
+        <div class="research-result__lead">${esc(sense.sense)}</div>
+        ${sense.sourceBook || sense.originalTerm ? `<div class="research-result__sub">${[
+          sense.sourceBook ? `from ${esc(sense.sourceBook)}` : "",
+          sense.originalTerm ? `original ${esc(sense.originalLanguage ?? "")} term “${esc(sense.originalTerm)}”` : "",
+        ].filter(Boolean).join(" · ")}</div>` : ""}
+      </div>`).join("");
+  },
+  shared(data) {
+    const verdict = { same: ["same meaning here: sharing is fine", "pass"], different: ["different meanings", "fail"] };
+    return `<div class="research-checks">${data.map((pair) => {
+      const [text, tone] = verdict[pair.relation] ?? ["not judged", "unchecked"];
+      return `<div class="research-checks__target">“${esc(pair.target)}” for ${esc(pair.sourceTerms?.[0])} and ${esc(pair.otherSourceTerms?.[0])}</div>
+        <div class="research-checks__verdict research-checks__verdict--${tone}">${esc(text)}</div>
+        <div class="research-checks__details">${esc(pair.passages)} sampled passages with both${pair.sameSentence ? `, ${esc(pair.sameSentence)} in one sentence` : ""}${pair.reason ? `. ${esc(pair.reason)}` : ""}</div>`;
+    }).join("")}</div>`;
+  },
+  frequency(data) {
+    const parts = data.filter((item) => item.kind === "parts");
+    const rows = data.filter((item) => item.kind === "measure" || item.kind === "term");
+    return `${parts.map((item) => `<div class="research-chip-row research-parts">${item.parts.map((part, index) => `${index ? '<span class="research-parts__plus">+</span>' : ""}<span class="research-chip" title="${esc(part.meaning)}">${esc(part.part)}</span><span class="research-parts__meaning">${esc(part.meaning)}</span>`).join("")}</div>`).join("")}
+      ${rows.length ? `<table class="research-measures"><thead><tr><th>Word</th><th>Zipf</th><th>In the sense used</th></tr></thead><tbody>${rows.map((row) => row.kind === "term"
+        ? `<tr><td>${esc(row.word)} <span class="research-result__sub">${esc(row.language)}</span></td><td>${zipfText(row.zipf)}</td><td>${row.invented ? "the author's own word: not in the dictionary, practically absent from general use" : ""}${(row.senses ?? []).map((sense) => `<div>${esc(sense.gloss)}: ${esc(sense.senseText)}</div>`).join("")}</td></tr>`
+        : `<tr><td>${esc(row.word)} <span class="research-result__sub">${esc(row.language)}</span></td><td>${zipfText(row.zipf)}</td><td>${esc(row.neededSense)}: ${esc(row.senseText)}</td></tr>`).join("")}</tbody></table>` : ""}`;
+  },
+});
+
 function renderResult(item) {
   const renderer = RESULT_RENDERERS[item.resultKind];
   if (renderer && item.data) {

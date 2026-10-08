@@ -752,7 +752,8 @@ export function createResearchEngine(deps) {
         && (settings.studyMode === "light" || population.distinct <= settings.lightMaxPassages);
       if (light) {
         const pool = await corpus.sample(forms, population.distinct, settings.seed);
-        fact(`${population.distinct} passage${population.distinct === 1 ? "" : "s"}: light study, building on the related words already studied; every passage is translated by both judges.`);
+        logResult("sampling", [{ rows: population.rows, distinct: population.distinct, duplicateGroups: population.duplicateGroups, measuring: pool.items.length, discovery: 0, overlap: 0, light: true }],
+          `${population.distinct} passage${population.distinct === 1 ? "" : "s"}: light study, building on the related words already studied; every passage is translated by both judges.`);
         return {
           meta: { ...pool.meta, populationRows: population.rows, populationDistinct: population.distinct, duplicateGroups: population.duplicateGroups },
           nRequested: settings.sampleSize, nActual: pool.items.length, overlap: 0, light: true,
@@ -773,7 +774,8 @@ export function createResearchEngine(deps) {
         discovery = [...discovery, ...extra];
       }
       const neighbours = corpus.collocations ? await corpus.collocations(forms) : [];
-      fact(`${population.rows} matching passages, ${population.distinct} distinct (${population.duplicateGroups} duplicate groups); measuring ${n}, discovery ${discovery.length}${overlap ? ` (overlap ${overlap})` : ""}`);
+      logResult("sampling", [{ rows: population.rows, distinct: population.distinct, duplicateGroups: population.duplicateGroups, measuring: n, discovery: discovery.length, overlap, light: false }],
+        `${population.rows} matching passages, ${population.distinct} distinct (${population.duplicateGroups} duplicate groups); measuring ${n}, discovery ${discovery.length}${overlap ? ` (overlap ${overlap})` : ""}`);
       return {
         meta: { ...pool.meta, populationRows: population.rows, populationDistinct: population.distinct, duplicateGroups: population.duplicateGroups },
         nRequested: settings.sampleSize, nActual: n, overlap,
@@ -893,7 +895,8 @@ export function createResearchEngine(deps) {
       });
       await checkOriginalTerms(study, top, records, searched);
       for (const sense of study.senses.filter((item) => !item.inDictionary)) {
-        fact(`${sense.sense}${sense.sourceBook ? ` — from ${sense.sourceBook}` : ""}${sense.originalTerm ? ` (original ${sense.originalLanguage ?? ""} term “${sense.originalTerm}”)` : ""}`);
+        logResult("senses", [{ sense: sense.sense, sourceBook: sense.sourceBook ?? null, originalTerm: sense.originalTerm ?? null, originalLanguage: sense.originalLanguage ?? null }],
+          `${sense.sense}${sense.sourceBook ? ` — from ${sense.sourceBook}` : ""}${sense.originalTerm ? ` (original ${sense.originalLanguage ?? ""} term “${sense.originalTerm}”)` : ""}`);
       }
       return {
         counts: ranked.map((book) => ({ title: book.title, occurrences: book.occurrences, passages: book.passages })),
@@ -995,7 +998,8 @@ export function createResearchEngine(deps) {
         schema: prompts.PARTS_SCHEMA, schemaName: "parts",
         maxOutputTokens: 6000, effort: settings.effortProposal,
       });
-      fact(`Parts: ${study.parts.map((part) => `${part.part} (${part.meaning})`).join(" + ")}`);
+      logResult("frequency", [{ kind: "parts", parts: study.parts.map(({ part, meaning }) => ({ part, meaning })) }],
+        `Parts: ${study.parts.map((part) => `${part.part} (${part.meaning})`).join(" + ")}`);
       const result = { study, source: null };
       const code = settings.sourceLanguageCode;
       const name = settings.sourceLanguageName;
@@ -1020,7 +1024,8 @@ export function createResearchEngine(deps) {
             purpose: `sort general ${name} sentences with “${base.word}” by sense`,
           });
           bases.push({ word: base.word, neededSense: base.neededSense, measure, needed: measure.senses.needed ?? null });
-          fact(`${name} “${base.word}”: Zipf ${formatZipf(measure.wordZipf)}; in the sense “${base.neededSense}”: ${describeSense(measure.senses.needed)}`);
+          logResult("frequency", [{ kind: "measure", language: name, word: base.word, zipf: measure.wordZipf, neededSense: base.neededSense, senseText: describeSense(measure.senses.needed) }],
+            `${name} “${base.word}”: Zipf ${formatZipf(measure.wordZipf)}; in the sense “${base.neededSense}”: ${describeSense(measure.senses.needed)}`);
         }
       }
       const familyZipfs = family.length ? await languageData.zipf(code, family.map((m) => m.form)) : [];
@@ -1030,7 +1035,10 @@ export function createResearchEngine(deps) {
         family: family.map((m, i) => ({ ...m, zipf: familyZipfs[i] ?? 0 })),
       };
       const used = study.senses.filter((sense) => sense.usedByAuthor);
-      fact(`${name} “${settings.term}”: Zipf ${formatZipf(term.wordZipf)}${invented ? " — not in the dictionary and practically absent from general use: the author's own word" : ""}${used.length ? `; senses the author uses, in general ${name}: ${used.map((sense) => `${sense.gloss} ${describeSense(term.senses[sense.id])}`).join("; ")}` : ""}`);
+      logResult("frequency", [{
+        kind: "term", language: name, word: settings.term, zipf: term.wordZipf, invented,
+        senses: used.map((sense) => ({ gloss: sense.gloss, senseText: describeSense(term.senses[sense.id]) })),
+      }], `${name} “${settings.term}”: Zipf ${formatZipf(term.wordZipf)}${invented ? " — not in the dictionary and practically absent from general use: the author's own word" : ""}${used.length ? `; senses the author uses, in general ${name}: ${used.map((sense) => `${sense.gloss} ${describeSense(term.senses[sense.id])}`).join("; ")}` : ""}`);
       return result;
     });
   }
@@ -1343,7 +1351,8 @@ export function createResearchEngine(deps) {
       const tally = {};
       for (const row of Object.values(readings)) tally[row.rendering.toLowerCase()] = (tally[row.rendering.toLowerCase()] ?? 0) + 1;
       const top = Object.entries(tally).sort((a, b) => b[1] - a[1]).slice(0, 6);
-      fact(`${Object.keys(readings).length} of ${occurrences.length} occurrences read; ${Object.keys(tally).length} different renderings; most common: ${top.map(([k, v]) => `${k} (${v})`).join(", ")}`);
+      logResult("discovery", [{ read: Object.keys(readings).length, total: occurrences.length, renderings: Object.keys(tally).length, top }],
+        `${Object.keys(readings).length} of ${occurrences.length} occurrences read; ${Object.keys(tally).length} different renderings; most common: ${top.map(([k, v]) => `${k} (${v})`).join(", ")}`);
       return { occurrences, readings };
     });
   }
@@ -1422,7 +1431,8 @@ export function createResearchEngine(deps) {
     const problems = validateProposal(proposal, store.load("forms").confirmed);
     problems.push(...unmeasuredRenderings(proposal, store.load("discovery")));
     if (problems.length) info(`proposal notes: ${problems.join("; ")}`);
-    fact(`${proposal.entries.length} proposed entr${proposal.entries.length === 1 ? "y" : "ies"}: ${proposal.entries.map((e) => `${e.sourceTerms.join("/")} → ${e.variants.map((v) => v.target).join(", ")}`).join(" | ")}`);
+    logResult("proposal", proposal.entries.map((e) => ({ sourceTerms: e.sourceTerms, variants: e.variants.map((v) => v.target) })),
+      `${proposal.entries.length} proposed entr${proposal.entries.length === 1 ? "y" : "ies"}: ${proposal.entries.map((e) => `${e.sourceTerms.join("/")} → ${e.variants.map((v) => v.target).join(", ")}`).join(" | ")}`);
     for (const item of proposal.leftOutRenderings ?? []) info(`not measured: ${item.rendering} (${item.count}) — ${item.reason}`);
     proposal.existingComparison = await compareWithExisting(proposal);
     return proposal;
@@ -1469,7 +1479,10 @@ export function createResearchEngine(deps) {
         pair.basis = item?.evidence ?? "";
         pair.reason = item?.reason ?? "";
         const both = `${pair.evidence.passages} sampled passages with both${pair.evidence.sameSentence ? `, ${pair.evidence.sameSentence} in one sentence` : ""}`;
-        fact(`“${pair.target}” for “${pair.sourceTerms[0]}” and “${pair.otherSourceTerms[0]}”: ${pair.relation === "same" ? "same meaning here, sharing is fine" : pair.relation === "different" ? "different meanings" : "not judged"} (${both})${pair.reason ? `. ${pair.reason}` : ""}`);
+        logResult("shared", [{
+          target: pair.target, sourceTerms: pair.sourceTerms, otherSourceTerms: pair.otherSourceTerms, relation: pair.relation,
+          reason: pair.reason, passages: pair.evidence.passages, sameSentence: pair.evidence.sameSentence,
+        }], `“${pair.target}” for “${pair.sourceTerms[0]}” and “${pair.otherSourceTerms[0]}”: ${pair.relation === "same" ? "same meaning here, sharing is fine" : pair.relation === "different" ? "different meanings" : "not judged"} (${both})${pair.reason ? `. ${pair.reason}` : ""}`);
       });
       const conflicts = pairs.filter((pair) => pair.relation === "different");
       if (!conflicts.length) return { pairs, conflicts, proposal: null };
@@ -1606,7 +1619,8 @@ export function createResearchEngine(deps) {
         combined.totals.votes = merged.counting.occurrences.length;
         combined.totals.agreement = merged.agreement;
         aggregate = combined;
-        fact(`Two judges agreed on ${merged.agreement.agreed} of ${merged.agreement.compared} occurrences.`);
+        logResult("agreement", [{ agreed: merged.agreement.agreed, compared: merged.agreement.compared }],
+          `Two judges agreed on ${merged.agreement.agreed} of ${merged.agreement.compared} occurrences.`);
       }
       const failedWords = (store.load("checks")?.failedWords ?? []).map((w) => fold(w).trim()).filter(Boolean);
       for (const other of aggregate.otherRenderings) {
