@@ -11,16 +11,18 @@
 //! person, the window is made visible so the user can complete it; otherwise
 //! the result is "unreachable", which is never reported as "no entry".
 
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use serde_json::Value;
-use tauri::{AppHandle, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
 const RESULT_HOST: &str = "gnosis-research.invalid";
 const AUTOMATIC_WAIT: Duration = Duration::from_secs(25);
 const PERSON_WAIT: Duration = Duration::from_secs(120);
+const TICK: Duration = Duration::from_millis(500);
 
 /// Runs inside the DLE page. Reports once, when the page shows an entry, a
 /// "not in the dictionary" message, or a check that needs a person.
@@ -90,19 +92,27 @@ const EXTRACT_SCRIPT: &str = r#"
     var json = JSON.stringify(payload);
     location.href = "https://RESULT_HOST/?data=" + encodeURIComponent(json);
   }
-  var attempts = 0;
-  var timer = setInterval(function () {
-    attempts += 1;
+  // A browser check (e.g. Cloudflare's "Verify you are human") is reported as
+  // soon as it shows, so the window can be shown to the person at once.
+  function showsCheck(text) {
+    return /Just a moment|Verify you are human|Checking your browser|Performing security verification|Verifica que eres|Un momento/i.test(document.title + " " + text)
+      || !!document.querySelector('iframe[src*="challenges.cloudflare.com"], #challenge-form, .cf-turnstile, #cf-challenge-running');
+  }
+  var askedPerson = false;
+  function look() {
     var text = document.body ? document.body.innerText : "";
     var entry = entryFromPage();
     if (entry) { clearInterval(timer); report({ status: "found", url: location.href, entry: entry }); return; }
     if (/no est[áa] (registrada )?en el Diccionario/i.test(text)) {
       clearInterval(timer); report({ status: "not_found", url: location.href, message: text.slice(0, 300) }); return;
     }
-    if (/Just a moment|Verify you are human|Checking your browser|Verifica que eres/i.test(document.title + " " + text) && attempts === 20) {
+    if (!askedPerson && showsCheck(text)) {
+      askedPerson = true;
       report({ status: "needs_person", url: location.href });
     }
-  }, 500);
+  }
+  var timer = setInterval(look, 500);
+  document.addEventListener("DOMContentLoaded", look);
 })();
 "#;
 
@@ -143,7 +153,7 @@ pub(crate) async fn glossary_research_fetch_dle(
     let (sender, receiver) = mpsc::channel::<Value>();
     let label = format!("dle-{}", uuid::Uuid::now_v7().simple());
     let window = WebviewWindowBuilder::new(&app, &label, WebviewUrl::External(parsed))
-        .title("Diccionario de la lengua española — verification")
+        .title("Gnosis TMS: the dictionary (DLE) asks you to confirm you are a person")
         .inner_size(900.0, 700.0)
         .visible(false)
         .initialization_script(EXTRACT_SCRIPT.replace("RESULT_HOST", RESULT_HOST))
@@ -157,24 +167,49 @@ pub(crate) async fn glossary_research_fetch_dle(
         .build()
         .map_err(|error| format!("Could not open the dictionary page: {error}"))?;
 
+    // The person closing the window ends the wait.
+    let closed = Arc::new(AtomicBool::new(false));
+    let closed_flag = closed.clone();
+    window.on_window_event(move |event| {
+        if matches!(event, WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed) {
+            closed_flag.store(true, Ordering::SeqCst);
+        }
+    });
+
     let result = tauri::async_runtime::spawn_blocking(move || {
         let started = Instant::now();
         let mut needed_person = false;
         let mut deadline = AUTOMATIC_WAIT;
+        let show = |window: &tauri::WebviewWindow| {
+            let _ = window.show();
+            let _ = window.set_focus();
+        };
         loop {
-            let remaining = deadline.saturating_sub(started.elapsed());
-            match receiver.recv_timeout(remaining.max(Duration::from_millis(1))) {
+            if closed.load(Ordering::SeqCst) {
+                return (None, needed_person);
+            }
+            match receiver.recv_timeout(TICK) {
                 Ok(value)
                     if value.get("status").and_then(Value::as_str) == Some("needs_person") =>
                 {
-                    needed_person = true;
-                    deadline = AUTOMATIC_WAIT + PERSON_WAIT;
-                    let _ = window.show();
-                    let _ = window.set_focus();
+                    if !needed_person {
+                        needed_person = true;
+                        deadline = started.elapsed() + PERSON_WAIT;
+                        show(&window);
+                    }
                 }
                 Ok(value) => {
                     let _ = window.close();
                     return (Some(value), needed_person);
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) if started.elapsed() < deadline => {}
+                Err(mpsc::RecvTimeoutError::Timeout) if !needed_person => {
+                    // A hidden page that has not answered (macOS slows the timers of
+                    // hidden windows, and some checks never say what they are) is
+                    // shown to the person rather than given up on.
+                    needed_person = true;
+                    deadline = started.elapsed() + PERSON_WAIT;
+                    show(&window);
                 }
                 Err(_) => {
                     let _ = window.close();
@@ -210,7 +245,11 @@ pub(crate) async fn glossary_research_fetch_dle(
             status: "unreachable".to_string(),
             url,
             entry: None,
-            message: Some("The DLE page did not show an entry in time.".to_string()),
+            message: Some(if needed_person {
+                "The DLE page was shown to you but did not show an entry in time.".to_string()
+            } else {
+                "The DLE page did not show an entry in time.".to_string()
+            }),
             needed_person,
         },
     })
