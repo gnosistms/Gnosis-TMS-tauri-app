@@ -152,7 +152,10 @@ function renderPastRuns(research) {
           return `<li>
             <span><strong>${esc(meta.term)}</strong> → ${esc(meta.targetLanguage?.name ?? "")} · ${esc((meta.startedAt ?? "").slice(0, 10))} · ${esc(meta.status)}${meta.spentUsd != null ? ` · ${formatUsd(meta.spentUsd)}` : ""}</span>
             ${done
-              ? `<button type="button" class="button button--secondary button--compact" data-action="open-research-report:${esc(run.runId)}">Open report</button>`
+              ? `<span class="research-past__actions">
+                  ${meta.settings?.familyBatch ? "" : `<button type="button" class="button button--secondary button--compact" data-action="research-related-words:${esc(run.runId)}">Related words</button>`}
+                  <button type="button" class="button button--secondary button--compact" data-action="open-research-report:${esc(run.runId)}">Open report</button>
+                </span>`
               : `<button type="button" class="button button--secondary button--compact" data-action="resume-research-run:${esc(run.runId)}">Resume</button>`}
           </li>`;
         }).join("")}

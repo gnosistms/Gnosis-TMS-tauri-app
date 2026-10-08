@@ -53,7 +53,44 @@ export const RESEARCH_DEFAULTS = {
   frequencyChecks: true,
   senseSample: 100,
   maxSenseChecks: 10,
+  // A related word with this few passages, researched after another word of its
+  // family, gets the light study: it inherits what the batch already learned.
+  studyMode: "auto", // auto | full | light
+  lightMaxPassages: 3,
 };
+
+/**
+ * The sense measurements of a finished run, for runs after it to reuse: the
+ * base words of the term (source language) and the look-alikes of its
+ * candidates (target language). General-usage measurements do not depend on
+ * the term being studied.
+ */
+export function collectMeasurements(stages, sourceCode, targetCode) {
+  const out = [];
+  const seen = new Set();
+  const add = (language, word, sense, zipf, measure) => {
+    if (!word || !sense || !measure?.needed || !(measure.classified > 0)) return;
+    const key = `${language}\u0000${fold(word).trim()}\u0000${fold(sense).trim()}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({
+      language, word, sense, wordZipf: zipf ?? 0, needed: measure.needed,
+      hits: measure.hits ?? null, classified: measure.classified, instances: measure.instances, notWord: measure.notWord ?? 0,
+    });
+  };
+  for (const base of stages?.parts?.source?.bases ?? []) add(sourceCode, base.word, base.neededSense, base.measure?.wordZipf, { ...base.measure, needed: base.needed });
+  for (const candidate of stages?.checks?.candidates ?? []) {
+    for (const w of candidate.words ?? []) if (w.lookalike && w.measure) add(targetCode, w.word, w.neededSense, w.zipf, w.measure);
+  }
+  return out;
+}
+
+/** Earlier measurements merged with new ones (the first one of a word and sense is kept). */
+export function mergeMeasurements(existing, added) {
+  const key = (m) => `${m.language}\u0000${fold(m.word).trim()}\u0000${fold(m.sense).trim()}`;
+  const seen = new Set(existing.map(key));
+  return [...existing, ...added.filter((m) => !seen.has(key(m)))];
+}
 
 /** Languages whose frequency list counts syllables, or that are written without spaces: count words in the corpus instead. */
 const CORPUS_COUNTED = new Set(["vi", "km", "th", "lo", "my"]);
@@ -123,6 +160,8 @@ export function failedVariants(proposal, checks) {
  */
 export function familyGroups(members) {
   const groups = new Map();
+  // Runs saved before phrases were left out may still list them.
+  members = members.filter((m) => m.kind !== "phrase");
   for (const member of members.filter((m) => !m.of)) {
     groups.set(fold(member.form).trim(), { form: member.form, kind: member.kind, rows: member.rows, forms: [member.form] });
   }
@@ -465,6 +504,35 @@ export function createResearchEngine(deps) {
     return result;
   }
 
+  /** Earlier measurements in one language, numbered for the model to cite. */
+  function priorMeasurements(code) {
+    const list = (settings.priorMeasurements ?? []).filter((m) => m.language === code);
+    return list.map((m, index) => ({ ...m, id: `m${index + 1}` }));
+  }
+
+  function priorsText(priors) {
+    if (!priors.length) return "";
+    return `## Measurements already made (general usage, by sense)\n${priors.map((m) => `${m.id}. “${m.word}” — ${m.sense} — ${describeSense(m.needed)}`).join("\n")}`;
+  }
+
+  /** A cited earlier measurement of the same word, as a measurement of this run. */
+  function reusedMeasure(priors, id, word) {
+    const prior = id ? priors.find((m) => m.id === id) : null;
+    if (!prior || fold(prior.word).trim() !== fold(word).trim()) return null;
+    return {
+      forms: [prior.word], hits: prior.hits, classified: prior.classified, instances: prior.instances, notWord: prior.notWord,
+      wordZipf: prior.wordZipf, wordZipfSource: "earlier run", senses: { needed: prior.needed }, reused: true,
+    };
+  }
+
+  const isLight = () => store.load("sample")?.light === true;
+
+  function siblingText() {
+    const siblings = settings.siblingEntries ?? [];
+    if (!siblings.length) return "";
+    return `## Related words already studied in this batch (their translations, with notes)\n${siblings.map((entry) => `- ${entry.sourceTerms.join(" / ")} → ${entry.targetTerms.map((t, i) => `${t}${entry.notes?.[i] ? ` (${entry.notes[i].slice(0, 160)})` : ""}`).join("; ")}`).join("\n")}`;
+  }
+
   const ctx = (extra = {}) => ({
     headword: settings.term,
     sourceName: settings.sourceLanguageName,
@@ -678,6 +746,19 @@ export function createResearchEngine(deps) {
         throw new ResearchStop(`“${settings.term}” does not occur in the selected texts.`, "no-texts");
       }
       const population = await corpus.population(forms);
+      const light = Boolean(settings.familyBatch) && settings.studyMode !== "full"
+        && (settings.studyMode === "light" || population.distinct <= settings.lightMaxPassages);
+      if (light) {
+        const pool = await corpus.sample(forms, population.distinct, settings.seed);
+        fact(`${population.distinct} passage${population.distinct === 1 ? "" : "s"}: light study, building on the related words already studied; every passage is translated by both judges.`);
+        return {
+          meta: { ...pool.meta, populationRows: population.rows, populationDistinct: population.distinct, duplicateGroups: population.duplicateGroups },
+          nRequested: settings.sampleSize, nActual: pool.items.length, overlap: 0, light: true,
+          measuredIds: pool.items.map((i) => i.itemId), discoveryIds: [],
+          items: Object.fromEntries(pool.items.map((i) => [i.itemId, i])),
+          neighbours: [],
+        };
+      }
       const n = Math.min(settings.sampleSize, population.distinct);
       const poolSize = Math.min(population.distinct, n + settings.discoverySize);
       const pool = await corpus.sample(forms, poolSize, settings.seed);
@@ -716,6 +797,10 @@ export function createResearchEngine(deps) {
   async function traceSources() {
     return stage("sources", async () => {
       heading("Where the term comes from");
+      if (isLight() && settings.baseSources) {
+        fact(`Taken from the study of “${settings.familyHeadword}”.`);
+        return { study: settings.baseSources, inherited: true };
+      }
       if (!corpus.sourceUsage) {
         info("The selected texts have no reference books to trace the term in.");
         return { skipped: true };
@@ -869,13 +954,14 @@ export function createResearchEngine(deps) {
         `## Dictionary entry\n${ctx().dictionaryText || "(none found)"}`,
         sources?.study ? `## Study of where the term comes from\n${JSON.stringify(sources.study, null, 1)}` : "",
         partsText(),
+        isLight() ? siblingText() : "",
         `## Passages from the texts\n${authorPassages().join("\n\n")}`,
       ].filter(Boolean).join("\n\n");
       const result = await client.callJson({
         stage: "candidates", purpose: "propose candidate translations for the whole term",
         instructions: prompts.candidatesInstructions(ctx()), content,
         schema: prompts.CANDIDATES_SCHEMA, schemaName: "candidates",
-        maxOutputTokens: 16000, effort: settings.effortStudy,
+        maxOutputTokens: isLight() ? 8000 : 16000, effort: isLight() ? settings.effortProposal : settings.effortStudy,
       });
       for (const sense of result.senses) {
         fact(`${sense.sense}: ${sense.groups.map((g) => `${g.recommended ? "★ " : ""}${g.members.join(" / ")}`).join("; ")}`);
@@ -896,6 +982,7 @@ export function createResearchEngine(deps) {
         `## Word family in the texts\n${family.map((m) => `- ${m.form} (${m.kind}, ${m.rows} passages)`).join("\n") || "(none found)"}`,
         `## ${dictionaryText()}`,
         sources?.summary ? `## Where the term comes from\n${sources.summary}` : "",
+        priorsText(priorMeasurements(settings.sourceLanguageCode)),
         `## Passages from the texts\n${authorPassages().slice(0, 15).join("\n\n")}`,
       ].filter(Boolean).join("\n\n");
       const study = await client.callJson({
@@ -923,7 +1010,7 @@ export function createResearchEngine(deps) {
         for (const base of study.bases.slice(0, 3)) {
           const baseForms = [...new Set([base.word, ...base.forms].map((f) => f.trim()).filter(Boolean))];
           const baseList = combinedZipf(await languageData.zipf(code, baseForms));
-          const measure = await measureSenses({
+          const measure = reusedMeasure(priorMeasurements(code), base.reuse, base.word) ?? await measureSenses({
             code, name, forms: baseForms, listZipf: baseList,
             senses: [{ id: "needed", gloss: base.neededSense }, ...base.otherSenses.slice(0, 5).map((gloss, i) => ({ id: `o${i + 1}`, gloss }))],
             purpose: `sort general ${name} sentences with “${base.word}” by sense`,
@@ -1037,6 +1124,7 @@ export function createResearchEngine(deps) {
           `## Candidates (number. rendering — the sense it must render)\n${toCheck.map((c) => `${c.n}. ${c.target} — ${c.sense}`).join("\n")}`,
           parts?.study ? `## Parts of the term\n${parts.study.parts.map((p) => `- ${p.part}: ${p.meaning}`).join("\n")}` : "",
           sources ? `## Where the term comes from\n${JSON.stringify(sources.senses.map((x) => ({ sense: x.sense, sourceBook: x.sourceBook, originalLanguage: x.originalLanguage, originalTerm: x.originalTerm })), null, 1)}` : "",
+          priorsText(priorMeasurements(code)),
         ].filter(Boolean).join("\n\n"),
         schema: prompts.CHECK_SCHEMA, schemaName: "checks",
         maxOutputTokens: 1500 + 300 * toCheck.length, effort: settings.effortLight,
@@ -1091,8 +1179,14 @@ export function createResearchEngine(deps) {
         // Only measurements that had sentences to sort count against the limit: a
         // word absent from the general corpus costs nothing and must not crowd out
         // the words whose senses can be measured.
-        let sorted = 0;
+        // Words measured in an earlier run of the batch, in the same sense, are not measured again.
+        const priors = priorMeasurements(code);
         for (const w of lookalikes) {
+          const reused = reusedMeasure(priors, w.reuse, w.word);
+          if (reused) measured.set(measureKey(w), reused);
+        }
+        let sorted = 0;
+        for (const w of lookalikes.filter((x) => !measured.has(measureKey(x)))) {
           if (sorted >= settings.maxSenseChecks) break;
           const m = await measure(w);
           measured.set(measureKey(w), m);
@@ -1116,7 +1210,7 @@ export function createResearchEngine(deps) {
           return {
             word: w.word, neededSense: w.neededSense, lookalike: w.lookalike, resembles: w.resembles,
             zipf: m ? m.wordZipf : zipfOf.get(fold(w.word).trim()) ?? null,
-            measure: m ? { hits: m.hits, classified: m.classified, instances: m.instances, notWord: m.notWord, needed: m.senses.needed ?? null } : null,
+            measure: m ? { hits: m.hits, classified: m.classified, instances: m.instances, notWord: m.notWord, needed: m.senses.needed ?? null, ...(m.reused ? { reused: true } : {}) } : null,
           };
         });
         if (ready) {
@@ -1218,6 +1312,10 @@ export function createResearchEngine(deps) {
   async function discover() {
     return stage("discovery", async () => {
       heading("Discovery");
+      if (isLight()) {
+        info("Skipped: both judges translate every passage.");
+        return { occurrences: [], readings: {}, skipped: true };
+      }
       const sample = store.load("sample");
       const items = sample.discoveryIds.map((id) => sample.items[id]);
       const occurrences = buildOccurrences(items, [], "d", settings.sourceLanguageCode);
@@ -1258,6 +1356,7 @@ export function createResearchEngine(deps) {
       "Study of where the term comes from:",
       store.load("sources")?.study ? JSON.stringify(store.load("sources").study, null, 1) : "(not available for these texts)",
       "",
+      ...(isLight() ? [siblingText(), ""] : []),
       "Candidate study (translations proposed for the term as a whole, in groups of interchangeable renderings), with the checks against general usage (Zipf: 0 = not in ordinary use, 3 = everyday word, 5+ = very common):",
       checksText(),
       "",

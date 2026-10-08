@@ -20,7 +20,7 @@ import {
   RESEARCH_PROVIDERS,
   researchProviderSupported,
 } from "./glossary-research-budget.js";
-import { createResearchEngine, ResearchStop } from "./glossary-research-engine.js";
+import { collectMeasurements, createResearchEngine, familyGroups, mergeMeasurements, ResearchStop } from "./glossary-research-engine.js";
 import {
   buildLogView,
   isRequestOpen,
@@ -565,6 +565,8 @@ async function beginResearchRun(render, resume = null, family = null) {
         wordLimit: limits.word ?? DEFAULT_WORD_LIMIT_USD,
         totalLimit: limits.total ?? DEFAULT_TOTAL_LIMIT_USD,
         spentByRun: {}, done: [], stopped: [],
+        baseSources: store.load("sources")?.study ?? null,
+        measurements: [],
       };
     }
   } catch (error) {
@@ -599,14 +601,25 @@ function handleRunStop(render, error, store, meta) {
     draft.raiseLimitTo = Math.round(limit * 2 * 100) / 100;
   }
   appendLog({ type: "problem", text: draft.runError });
-  if (draft.familyQueue && activeRun) recordRunSpend(draft.familyQueue, meta.runId, activeRun.engine.budget.spent);
+  if (draft.familyQueue && activeRun) {
+    recordRunSpend(draft.familyQueue, meta.runId, activeRun.engine.budget.spent);
+    keepMeasurements(draft.familyQueue, store, meta);
+  }
   meta.status = draft.runStatus;
   meta.error = draft.runError;
   store.save("meta", meta);
 }
 
 export function cancelGlossaryResearchRun(render) {
-  if (!activeRun) return;
+  if (!activeRun) {
+    // The related words of a finished run were being chosen: nothing runs yet.
+    if (pendingFamilyChoice) {
+      const resolve = pendingFamilyChoice;
+      pendingFamilyChoice = null;
+      resolve(null);
+    }
+    return;
+  }
   research().familyQueue = null;
   if (pendingFamilyChoice) {
     pendingFamilyChoice(null);
@@ -825,6 +838,7 @@ export async function countGlossaryResearch(render) {
     if (draft.familyQueue) {
       queueSiblings(draft.familyQueue, store);
       recordRunSpend(draft.familyQueue, meta.runId, engine.budget.spent);
+      keepMeasurements(draft.familyQueue, store, meta);
       draft.familyQueue.done.push(meta.term);
     }
   } catch (error) {
@@ -884,6 +898,12 @@ export function continueResearchFamily(render) {
   resolve(chosen.map(({ form, forms, kind }) => ({ form, forms, kind })));
 }
 
+/** The run's general-usage measurements, for the related words researched after it. */
+function keepMeasurements(queue, store, meta) {
+  const added = collectMeasurements(store.data, meta.sourceLanguage?.code, meta.targetLanguage?.code);
+  queue.measurements = mergeMeasurements(queue.measurements ?? [], added);
+}
+
 /** The finished run's translations, for the related words researched after it. */
 function queueSiblings(queue, store) {
   const frozen = store.load("frozen");
@@ -898,6 +918,49 @@ function queueSiblings(queue, store) {
       notes: variants.map((variant) => variant.note ?? ""),
     });
   }
+}
+
+/** Research the related words of a finished run, one after another, building on it. */
+export async function researchRelatedWordsOf(render, runId) {
+  const installationId = selectedProjectsTeamInstallationId() ?? selectedTeam()?.installationId;
+  const glossaryId = state.glossaryEditor?.glossaryId;
+  const stages = await invoke("load_glossary_research_run", { installationId, glossaryId, runId });
+  const meta = stages?.meta;
+  if (!meta || !stages.frozen) return;
+  const draft = research();
+  const groups = familyGroups(stages.family?.members ?? []);
+  Object.assign(draft, {
+    term: meta.term, variants: meta.variants ?? [], reportLanguageCode: meta.reportLanguage?.code,
+    sourceMode: meta.sourceMode, selectedProjectIds: meta.projectIds ?? [], sampleSize: meta.sampleSize, seed: meta.seed,
+    spendingLimitUsd: meta.spendingLimitUsd, step: "run", runId, runStatus: "family", stageLabel: "", progress: 0,
+    spent: meta.spentUsd ?? 0, limit: meta.spendingLimitUsd, log: [], runError: "", stopKind: "", proposalDraft: null,
+    familyGroups: groups, familyTicked: groups.map((group) => group.suggested),
+    familyWordLimitUsd: draft.familyWordLimitUsd ?? DEFAULT_WORD_LIMIT_USD,
+    familyTotalLimitUsd: draft.familyTotalLimitUsd ?? DEFAULT_TOTAL_LIMIT_USD, familyLimitError: "",
+  });
+  if (!groups.length) appendLog({ type: "fact", text: `The study of “${meta.term}” found no related words in the texts.` });
+  pendingFamilyChoice = (words) => {
+    if (!words?.length) {
+      Object.assign(research(), { step: "form", runStatus: "idle", familyGroups: null });
+      render();
+      return;
+    }
+    const limits = research().familyLimits ?? {};
+    const store = { load: (name) => stages[name], data: stages };
+    const queue = {
+      headword: meta.term, words: structuredClone(words), siblings: [],
+      familyForms: [...(stages.forms?.confirmed ?? []), ...words.flatMap((word) => word.forms)],
+      mainLimit: meta.spendingLimitUsd, wordLimit: limits.word ?? DEFAULT_WORD_LIMIT_USD, totalLimit: limits.total ?? DEFAULT_TOTAL_LIMIT_USD,
+      spentByRun: {}, done: [], stopped: [],
+      baseSources: stages.sources?.study ?? null, measurements: [],
+    };
+    queueSiblings(queue, store);
+    keepMeasurements(queue, store, meta);
+    research().familyQueue = queue;
+    appendLog({ type: "fact", text: `Building on the finished study of “${meta.term}”: ${queue.siblings.length} entr${queue.siblings.length === 1 ? "y" : "ies"} and ${queue.measurements.length} measurements carried over.` });
+    void researchNextFamilyWord(render);
+  };
+  render();
 }
 
 /** A related word whose run stopped is left resumable; the batch goes on. */
@@ -953,6 +1016,7 @@ async function researchNextFamilyWord(render) {
   await beginResearchRun(render, null, {
     familyBatch: true, familyHeadword: queue.headword,
     siblingEntries: structuredClone(queue.siblings), familyForms: queue.familyForms,
+    priorMeasurements: structuredClone(queue.measurements ?? []), baseSources: queue.baseSources ?? null,
   });
 }
 

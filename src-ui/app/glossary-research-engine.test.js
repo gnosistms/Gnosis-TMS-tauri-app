@@ -4,8 +4,10 @@ import assert from "node:assert/strict";
 import {
   accentCounterparts,
   createResearchEngine,
+  collectMeasurements,
   failedVariants,
   familyGroups,
+  mergeMeasurements,
   looksLike,
   pickRepresentative,
   transferAccents,
@@ -649,4 +651,55 @@ test("a word failing in one sense but passing in another is not banned from othe
   assert.equal(checks.candidates.find((c) => c.target === "fatal blow").verdict, "pass");
   assert.deepEqual(checks.failedWords, []);
   assert.deepEqual(checks.failedTargets, ["fatal"]);
+});
+
+test("a run's measurements are collected for later runs, one per word and sense", () => {
+  const needed = { zipf: 3.9, upperBound: null, share: 0.3, inSense: 30, classified: 100 };
+  const stages = {
+    parts: { source: { bases: [{ word: "sensible", neededSense: "perceptible", measure: { wordZipf: 4.5, hits: 900, classified: 100, instances: 100, notWord: 0 }, needed }] } },
+    checks: { candidates: [
+      { words: [{ word: "sensitive", neededSense: "responsive", lookalike: true, zipf: 4.4, measure: { hits: 500, classified: 100, instances: 100, notWord: 0, needed } }] },
+      { words: [{ word: "sensitive", neededSense: "Responsive", lookalike: true, zipf: 4.4, measure: { hits: 500, classified: 100, instances: 100, notWord: 0, needed } }] },
+      { words: [{ word: "perception", neededSense: "x", lookalike: false, zipf: 4.1, measure: null }] },
+    ] },
+  };
+  const found = collectMeasurements(stages, "es", "en");
+  assert.deepEqual(found.map((m) => [m.language, m.word, m.sense]), [["es", "sensible", "perceptible"], ["en", "sensitive", "responsive"]]);
+  assert.equal(mergeMeasurements(found, [{ ...found[1], wordZipf: 0 }, { language: "en", word: "sensory", sense: "of the senses", needed }]).length, 3);
+});
+
+test("a related word with few passages gets the light study and reuses earlier measurements", async () => {
+  const base = lookalikeModel();
+  let englishFrequencyCalls = 0;
+  const model = {
+    calls: base.calls,
+    async call(request, onDelta) {
+      if (request.stage === "frequency" && request.instructions.includes("ordinary English text")) englishFrequencyCalls += 1;
+      const answer = await base.call(request, onDelta);
+      if (request.stage !== "checks") return answer;
+      const parsed = JSON.parse(answer.text);
+      for (const c of parsed.candidates) for (const w of c.words) w.reuse = w.word === "fatal" ? "m1" : null;
+      return { ...answer, text: JSON.stringify(parsed) };
+    },
+  };
+  const prior = { language: "en", word: "fatal", sense: "inevitable", wordZipf: 3.2, needed: { zipf: null, upperBound: 1.9, share: 0, inSense: 0, classified: 40 }, hits: 60, classified: 40, instances: 40, notWord: 0 };
+  const { engine: research, store } = engine({
+    model, items: passages(3), languageData: fakeLanguageData(),
+    extraSettings: {
+      familyBatch: true, familyHeadword: "fatalismo",
+      baseSources: { summary: "From the source book.", senses: [] },
+      siblingEntries: [{ sourceTerms: ["fatalismo"], targetTerms: ["fatalism"], notes: [""] }],
+      priorMeasurements: [prior],
+    },
+  });
+  await research.runToReview();
+  assert.equal(store.data.sample.light, true);
+  assert.equal(store.data.sample.measuredIds.length, 3, "every passage is counted");
+  assert.equal(store.data.sources.inherited, true);
+  assert.ok(!model.calls.includes("sources"), "the origin study is inherited, not repeated");
+  assert.ok(!model.calls.includes("discovery"));
+  assert.equal(englishFrequencyCalls, 0, "the look-alike was measured in an earlier run");
+  const fatal = store.data.checks.candidates.find((c) => c.target === "fatal");
+  assert.equal(fatal.verdict, "fail");
+  assert.equal(fatal.words[0].measure.reused, true);
 });

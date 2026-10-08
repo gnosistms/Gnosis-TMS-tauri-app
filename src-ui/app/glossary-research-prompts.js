@@ -1,7 +1,7 @@
 // Prompt texts and strict JSON schemas for Glossary Research.
 // Bump RESEARCH_PROMPT_VERSION on any change that could alter a judgment.
 
-export const RESEARCH_PROMPT_VERSION = "2026-10-08.1";
+export const RESEARCH_PROMPT_VERSION = "2026-10-08.2";
 
 const STR = { type: "string" };
 const NSTR = { anyOf: [{ type: "string" }, { type: "null" }] };
@@ -361,14 +361,14 @@ export const PARTS_SCHEMA = object({
   isCompound: { type: "boolean" },
   parts: arrayOf(object({ part: STR, meaning: STR })),
   senses: arrayOf(object({ id: STR, gloss: STR, usedByAuthor: { type: "boolean" } })),
-  bases: arrayOf(object({ word: STR, forms: arrayOf(STR), neededSense: STR, otherSenses: arrayOf(STR) })),
+  bases: arrayOf(object({ word: STR, forms: arrayOf(STR), neededSense: STR, otherSenses: arrayOf(STR), reuse: NSTR })),
 });
 
 export function partsInstructions(ctx) {
   return `You analyse the ${ctx.sourceName} term “${ctx.headword}” before it is translated. ${corpusLine(ctx)} Do not propose translations.
 1. parts: take the term apart into its meaningful parts (prefix, base word, suffix; or the words of a phrase). For each part say, in plain words, what it means in this term as the author uses it. A simple word that cannot be split has one part. isCompound: true when the term has more than one part.
 2. senses: the senses of the term itself: the dictionary's senses (merge closely related ones) plus any sense the author uses that the dictionary lacks; at most 6, ids "s1", "s2", …. Gloss each in plain words without using a ${ctx.targetName} word as the definition: the glosses are used to sort sentences of general ${ctx.sourceName} texts by sense. usedByAuthor: true for the senses the passages show the author using.
-3. bases: only when the term has more than one part: for each part that is itself a ${ctx.sourceName} word (not a prefix or suffix), the word written alone, its inflected forms to search (forms, including the word itself), the sense it carries inside the term (neededSense, plain words), and its other common senses (otherSenses, short glosses). These words are measured in general ${ctx.sourceName} usage. Empty for a simple word.
+3. bases: only when the term has more than one part: for each part that is itself a ${ctx.sourceName} word (not a prefix or suffix), the word written alone, its inflected forms to search (forms, including the word itself), the sense it carries inside the term (neededSense, plain words), and its other common senses (otherSenses, short glosses). These words are measured in general ${ctx.sourceName} usage; reuse: when "Measurements already made" lists the same word measured in the same sense as neededSense, that measurement's id, else null. Empty for a simple word.
 Write meanings and glosses in ${ctx.reportName}, at most 20 words each. ${quotationRule(ctx.reportName, ctx.reportCode)}`;
 }
 
@@ -392,7 +392,7 @@ export const CHECK_SCHEMA = object({
   candidates: arrayOf(object({
     n: { type: "integer" },
     target: STR,
-    words: arrayOf(object({ word: STR, neededSense: STR, lookalike: { type: "boolean" }, resembles: NSTR, otherSenses: arrayOf(STR) })),
+    words: arrayOf(object({ word: STR, neededSense: STR, lookalike: { type: "boolean" }, resembles: NSTR, otherSenses: arrayOf(STR), reuse: NSTR })),
     establishedUsage: { type: "boolean" },
     establishedBasis: STR,
   })),
@@ -404,6 +404,7 @@ Candidates are numbered, and the same rendering can appear more than once for di
 - neededSense: the sense, in plain words, that this word itself must carry in present-day general ${ctx.targetName} use for the candidate to say what the author means. Give only the word's own contribution, as broad as it can be while still serving: meaning supplied by the other words of the candidate or by the passage belongs to them, not to this word.
 - lookalike: true only when it has the same or nearly the same written form as the term, one of its forms, or one of its parts (a cognate or a calque of the term); resemblance to other ${ctx.sourceName} words does not count. resembles: that form or part, else null.
 - otherSenses: for a lookalike, its other common ${ctx.targetName} senses (short glosses); else empty.
+- reuse: when "Measurements already made" lists this same word measured in the same sense as neededSense, that measurement's id (e.g. "m3"); else null. A different sense of the word is not the same measurement.
 establishedUsage: true only when the candidate as a whole is attested, established ${ctx.targetName} wording for this concept in a tradition the author draws on, as the research below shows; give the evidence in establishedBasis, else empty.
 Write neededSense, otherSenses and establishedBasis in ${ctx.reportName}, at most 15 words each.`;
 }
