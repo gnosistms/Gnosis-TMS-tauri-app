@@ -25,6 +25,21 @@
   min-height: 0;
 }
 
+.research-modal--run > .modal-card__body > .research-disclosure {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.research-modal--run > .modal-card__body > .research-disclosure > .research-disclosure__toggle {
+  flex: none;
+}
+
+.research-modal--run > .modal-card__body > .research-disclosure > .research-results {
+  flex: 0 1 auto;
+  min-height: 0;
+}
+
 .research-inline {
   display: flex;
   align-items: center;
