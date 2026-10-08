@@ -410,7 +410,9 @@ function lookalikeModel() {
         base.calls.push(request.stage);
         const n = [...request.content.matchAll(/^(\d+)\. /gm)].length;
         const english = request.instructions.includes("ordinary English text");
-        return { status: "ok", text: JSON.stringify({ items: Array.from({ length: n }, (_, i) => ({ n: i + 1, sense: english ? "o1" : "s1" })) }), usage: { inputTokens: 10, outputTokens: 10 } };
+        // General English never uses "fatal" in the needed sense; other words are used in theirs.
+        const sense = !english ? "s1" : / with fatal\./.test(request.content) ? "o1" : "needed";
+        return { status: "ok", text: JSON.stringify({ items: Array.from({ length: n }, (_, i) => ({ n: i + 1, sense })) }), usage: { inputTokens: 10, outputTokens: 10 } };
       }
       if (request.stage === "proposal") {
         base.calls.push(request.stage);
@@ -642,7 +644,7 @@ test("a word failing in one sense but passing in another is not banned from othe
       if (request.stage === "frequency" && request.instructions.includes("ordinary English text")) {
         base.calls.push(request.stage);
         const n = [...request.content.matchAll(/^(\d+)\. /gm)].length;
-        const sense = request.instructions.includes("causing death") ? "needed" : "o1";
+        const sense = request.instructions.includes("inevitable") ? "o1" : "needed";
         return { status: "ok", text: JSON.stringify({ items: Array.from({ length: n }, (_, i) => ({ n: i + 1, sense })) }), usage: { inputTokens: 10, outputTokens: 10 } };
       }
       return base.call(request, onDelta);
@@ -714,7 +716,7 @@ test("a related word reuses earlier measurements of the same word in the same se
   const model = {
     calls: base.calls,
     async call(request, onDelta) {
-      if (request.stage === "frequency" && request.instructions.includes("ordinary English text")) englishFrequencyCalls += 1;
+      if (request.stage === "frequency" && request.instructions.includes("ordinary English text") && / with fatal\./.test(request.content)) englishFrequencyCalls += 1;
       const answer = await base.call(request, onDelta);
       if (request.stage !== "checks") return answer;
       const parsed = JSON.parse(answer.text);
@@ -814,4 +816,28 @@ test("neighbouring words the frequency list holds as one unit are scored as that
   // A free combination of ordinary words keeps its words: the rarest one scores it.
   assert.equal(scoreRendering("vi", "ham hư vinh", scoreOf, candidates[1].words), 2.28);
   assert.equal(scoreRendering("vi", "thích khoe", scoreOf, candidates[2].words), 4.84);
+});
+
+test("the word that sets a passing translation's score is sorted by meaning and judged on that meaning", async () => {
+  const base = lookalikeModel();
+  let sortedFateful = 0;
+  const model = {
+    calls: base.calls,
+    async call(request, onDelta) {
+      if (request.stage === "frequency" && request.instructions.includes("ordinary English text") && / with fateful\./.test(request.content)) {
+        sortedFateful += 1;
+        const n = [...request.content.matchAll(/^(\d+)\. /gm)].length;
+        // General English uses "fateful" only in other meanings.
+        return { status: "ok", text: JSON.stringify({ items: Array.from({ length: n }, (_, i) => ({ n: i + 1, sense: "other" })) }), usage: { inputTokens: 10, outputTokens: 10 } };
+      }
+      return base.call(request, onDelta);
+    },
+  };
+  const { engine: research, store } = engine({ model, languageData: fakeLanguageData() });
+  await research.runToReview();
+  const fateful = store.data.checks.candidates.find((c) => c.target === "fateful");
+  assert.equal(sortedFateful, 1, "the deciding word is sorted once");
+  assert.equal(fateful.verdict, "fail");
+  assert.match(fateful.reasons.join(" "), /not used in general English in the meaning needed/);
+  assert.ok(fateful.words[0].measure?.needed, "the report can show the meaning's score");
 });

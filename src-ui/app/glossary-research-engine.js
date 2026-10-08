@@ -53,6 +53,8 @@ export const RESEARCH_DEFAULTS = {
   frequencyChecks: true,
   senseSample: 100,
   maxSenseChecks: 10,
+  // Words that set a passing translation's score, sorted by meaning (see checks).
+  maxDecidingChecks: 15,
 };
 
 /**
@@ -164,7 +166,7 @@ export async function scoreWords(languageData, code, items, onCounting = null) {
  * Free combinations of ordinary words are not in the list and keep their words.
  * Lists that only hold single tokens never match, so nothing changes there.
  */
-export async function joinListedUnits(languageData, code, candidates) {
+export async function joinListedUnits(languageData, code, candidates, senseOf = null) {
   if (corpusCounted(code)) return;
   const runsOf = (candidate) => {
     const target = textKey(candidate.target, code);
@@ -195,7 +197,9 @@ export async function joinListedUnits(languageData, code, candidates) {
       if (!inList.has(run.span) || run.members.some((w) => used.has(w))) continue;
       run.members.forEach((w) => used.add(w));
       candidate.words.push({
-        word: run.span, partOf: null, forms: [], neededSense: run.members.map((w) => w.neededSense).filter(Boolean).join("; "),
+        // The unit carries the meaning the whole translation expresses.
+        word: run.span, partOf: null, forms: [],
+        neededSense: senseOf?.(candidate) || run.members.map((w) => w.neededSense).filter(Boolean).join("; "),
         lookalike: false, resembles: null, otherSenses: [], joinedFromList: true,
       });
       for (const w of run.members) w.partOf = run.span;
@@ -1261,7 +1265,7 @@ export function createResearchEngine(deps) {
         for (const candidate of analysis.candidates) {
           candidate.target ??= toCheck.find((c) => c.n === candidate.n)?.target ?? "";
         }
-        await joinListedUnits(languageData, code, analysis.candidates);
+        await joinListedUnits(languageData, code, analysis.candidates, (candidate) => toCheck.find((c) => c.n === candidate.n)?.sense);
       }
       const byNumber = new Map(analysis.candidates.map((c) => [c.n, c]));
       // A word is measured once for each distinct sense it must carry.
@@ -1328,6 +1332,43 @@ export function createResearchEngine(deps) {
         if (corpusCounted(code)) {
           for (const w of words.filter((x) => !x.lookalike).slice(0, 4)) measured.set(measureKey(w), await measure(w));
         }
+        // A whole-word score counts every meaning of the word; a translation is
+        // used in one. So the word that sets a translation's score is sorted by
+        // meaning too, where it can change the outcome: the translation passes on
+        // the whole word (sorting can only lower a score) in a meaning with a minimum.
+        if (source && !source.invented) {
+          const deciding = [];
+          for (const c of toCheck) {
+            const ref = source.term.senses[c.senseId];
+            if (ref?.zipf == null) continue;
+            const scored = (byNumber.get(c.n)?.words ?? [])
+              .filter((w) => !w.partOf)
+              .map((w) => ({ w, z: zipfOf.get(textKey(w.word, code)) }))
+              .filter((x) => x.z != null && x.z > 0);
+            if (!scored.length) continue;
+            const rarest = scored.reduce((a, b) => (b.z < a.z ? b : a));
+            if (rarest.z < ref.zipf - 1 || measured.has(measureKey(rarest.w))) continue;
+            deciding.push(rarest.w);
+          }
+          const unique = [...new Map(deciding.map((w) => [measureKey(w), w])).values()];
+          for (const w of unique) {
+            const reused = reusedMeasure(priors, w.reuse, w.word);
+            if (reused) measured.set(measureKey(w), reused);
+          }
+          const todo = unique.filter((w) => !measured.has(measureKey(w)));
+          if (todo.length) info(`${todo.length} word${todo.length === 1 ? "" : "s"} that set a passing translation's score to sort by meaning in general ${name}.`);
+          let sortedDeciding = 0;
+          for (const [index, w] of todo.entries()) {
+            if (sortedDeciding >= settings.maxDecidingChecks) {
+              info(`Limit reached (${settings.maxDecidingChecks} words sorted by meaning); ${todo.length - index} scored on all their uses.`);
+              break;
+            }
+            info(`Sorting “${w.word}” (${index + 1} of ${todo.length}) by meaning: general ${name} sentences with it, in the meaning “${w.neededSense}” or another.`);
+            const m = await measure(w);
+            measured.set(measureKey(w), m);
+            if (m.classified) sortedDeciding += 1;
+          }
+        }
       }
       const failedWords = [];
       const passedWords = new Set();
@@ -1348,7 +1389,22 @@ export function createResearchEngine(deps) {
             measure: m ? { hits: m.hits, classified: m.classified, instances: m.instances, notWord: m.notWord, needed: m.senses.needed ?? null, ...(m.reused ? { reused: true } : {}) } : null,
           };
         });
+        // This translation's own view of its words' scores: a word sorted by
+        // meaning (on enough sentences) counts only its uses in the meaning needed.
+        const senseScore = new Map(zipfOf);
         if (ready) {
+          for (const w of items.filter((item) => !item.partOf && item.measure?.needed)) {
+            const needed = w.measure.needed;
+            if (w.measure.instances < MIN_SENSE_SAMPLE) {
+              if (!w.lookalike) notes.push(`“${w.word}”: too few sentences of general ${name} to sort by meaning (${w.measure.instances}); scored on all its uses`);
+              continue;
+            }
+            senseScore.set(textKey(w.word, code), needed.zipf ?? needed.upperBound ?? 0);
+            if (!w.lookalike && needed.inSense === 0 && senseRef?.zipf != null) {
+              verdict = "fail";
+              reasons.push(`“${w.word}” is not used in general ${name} in the meaning needed (${w.neededSense}): 0 of ${needed.classified} sorted sentences`);
+            }
+          }
           for (const w of items.filter((item) => item.lookalike && item.measure)) {
             const needed = w.measure.needed;
             const ref = sourceReference(w.resembles, c.senseId);
@@ -1380,7 +1436,7 @@ export function createResearchEngine(deps) {
             }
           }
           // The whole rendering against the source sense it translates (no demand when that sense is rare in the source too).
-          const z = renderingScore(c.target, zipfOf, found?.words);
+          const z = renderingScore(c.target, senseScore, found?.words);
           if (senseRef?.zipf != null && !found?.establishedUsage && z != null && z < senseRef.zipf - 1) {
             verdict = "fail";
             reasons.push(`much less known than ${sourceName} “${settings.term}” in this sense: Zipf ${formatZipf(z)} against ${formatZipf(senseRef.zipf)}`);
@@ -1390,7 +1446,7 @@ export function createResearchEngine(deps) {
         else passedTargets.add(textKey(c.target, code));
         return {
           target: c.target, sense: c.sense, senseId: c.senseId, words: items, verdict, reasons, notes,
-          zipf: ready ? renderingScore(c.target, zipfOf, found?.words) : null,
+          zipf: ready ? renderingScore(c.target, senseScore, found?.words) : null,
           established: found?.establishedUsage ?? false, establishedBasis: found?.establishedBasis ?? "",
           clashes: findClashes(c.target),
         };
