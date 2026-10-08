@@ -592,7 +592,8 @@ export function createResearchEngine(deps) {
           result = { ...result, tried: [...result.tried, "AI web search"] };
         }
       }
-      for (const note of result.notes ?? []) fact(note);
+      // A note on why a dictionary failed only matters when no entry was found at all.
+      if (result.status !== "found") for (const note of result.notes ?? []) fact(note);
       fact(result.status === "found"
         ? `${result.sourceName}: found (${result.senseCount} senses${result.complexFormCount ? `, ${result.complexFormCount} complex forms` : ""})`
         : result.status === "not_found"

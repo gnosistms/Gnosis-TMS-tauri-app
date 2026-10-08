@@ -106,12 +106,16 @@ async function lookUpWiktionary(term, languageCode, { fetchImpl }) {
   };
 }
 
+/** After the DLE page did not answer, it is not tried again for this long. */
+const DLE_RETRY_MS = 30 * 60 * 1000;
+const sharedDleState = { failedAt: 0 };
+
 /**
  * The dictionary used by the engine. `languageCode` is the research (source)
  * language. Returns { status, sourceName, url, text, senseCount,
  * complexFormCount, tried[], notes[], articles? }.
  */
-export function createDictionary({ languageCode, invoke, fetchImpl = globalThis.fetch }) {
+export function createDictionary({ languageCode, invoke, fetchImpl = globalThis.fetch, dleState = sharedDleState, now = () => Date.now() }) {
   return {
     async lookup(term, log = () => {}) {
       const tried = [];
@@ -119,10 +123,16 @@ export function createDictionary({ languageCode, invoke, fetchImpl = globalThis.
       if (languageCode === "es") {
         tried.push("DLE (RAE/ASALE)");
         let dle;
-        try {
-          dle = await lookUpDle(term, { invoke, log });
-        } catch (error) {
-          dle = { status: "unreachable", message: error.message };
+        if (dleState.failedAt && now() - dleState.failedAt < DLE_RETRY_MS) {
+          // Each attempt waits up to 25 s; one failure in a session is enough to know.
+          dle = { status: "unreachable", message: "it did not answer a short while ago, so it is not tried again yet" };
+        } else {
+          try {
+            dle = await lookUpDle(term, { invoke, log });
+          } catch (error) {
+            dle = { status: "unreachable", message: error.message };
+          }
+          dleState.failedAt = dle.status === "unreachable" ? now() : 0;
         }
         log(`DLE: ${dle.status}${dle.message ? ` — ${dle.message}` : ""}`);
         if (dle.status === "found") {

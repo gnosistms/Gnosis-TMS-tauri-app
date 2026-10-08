@@ -53,7 +53,7 @@ test("Spanish neighbour tables drop pure function-word pairs", () => {
 test("verified DLE absence is reported and the lookup continues to Wiktionary", async () => {
   const invoke = async () => ({ status: "not_found", url: "https://dle.rae.es/xyz", neededPerson: false });
   const fetchImpl = async () => jsonResponse({ es: [{ partOfSpeech: "Adjective", definitions: [{ definition: "<b>fatal</b>, deadly" }] }] });
-  const result = await createDictionary({ languageCode: "es", invoke, fetchImpl }).lookup("xyz");
+  const result = await createDictionary({ languageCode: "es", invoke, fetchImpl, dleState: { failedAt: 0 } }).lookup("xyz");
   assert.equal(result.status, "found");
   assert.match(result.sourceName, /Wiktionary/);
   assert.deepEqual(result.notes, ["The DLE has no entry for this word (verified)."]);
@@ -63,7 +63,7 @@ test("verified DLE absence is reported and the lookup continues to Wiktionary", 
 test("an unreachable DLE is never reported as a missing entry", async () => {
   const invoke = async () => ({ status: "unreachable" });
   const fetchImpl = async () => { throw new Error("offline"); };
-  const result = await createDictionary({ languageCode: "es", invoke, fetchImpl }).lookup("fatal");
+  const result = await createDictionary({ languageCode: "es", invoke, fetchImpl, dleState: { failedAt: 0 } }).lookup("fatal");
   assert.equal(result.status, "unreachable");
   assert.match(result.notes[0], /not evidence that it has no entry/);
 });
@@ -79,7 +79,7 @@ test("DLE complex forms are read from their own pages", async () => {
     }
     return { status: "found", entry: { kind: "complex", senses: [{ number: "1", labels: [{ abbr: "f." }], definition: "mujer seductora…", examples: [], synonyms: [], antonyms: [] }] } };
   };
-  const result = await createDictionary({ languageCode: "es", invoke, fetchImpl: async () => jsonResponse({}) }).lookup("fatal");
+  const result = await createDictionary({ languageCode: "es", invoke, fetchImpl: async () => jsonResponse({}), dleState: { failedAt: 0 } }).lookup("fatal");
   assert.deepEqual(calls, ["fatal", "/?id=Q1#2iT"]);
   assert.match(result.text, /Sin\.: forzoso/);
   assert.match(dleText(result.articles), /Forma compleja: mujer fatal\n {4}1\. f\. mujer seductora/);
@@ -113,4 +113,20 @@ test("Chinese dictionary lookups use Wiktionary's zh section", async () => {
   const result = await createDictionary({ languageCode: "zh-Hant", invoke: async () => ({}), fetchImpl }).lookup("存在");
   assert.equal(result.status, "found");
   assert.match(result.text, /to exist/);
+});
+
+test("after the DLE fails to answer, later lookups skip it for a while", async () => {
+  let dleCalls = 0;
+  const invoke = async () => { dleCalls += 1; return { status: "unreachable", message: "The DLE page did not show an entry in time." }; };
+  const fetchImpl = async () => jsonResponse({});
+  const dleState = { failedAt: 0 };
+  let clock = 1_000_000;
+  const dictionary = createDictionary({ languageCode: "es", invoke, fetchImpl, dleState, now: () => clock });
+  await dictionary.lookup("uno");
+  const second = await dictionary.lookup("dos");
+  assert.equal(dleCalls, 1);
+  assert.match(second.notes[0], /could not be reached/);
+  clock += 31 * 60 * 1000;
+  await dictionary.lookup("tres");
+  assert.equal(dleCalls, 2, "it is tried again after a while");
 });
