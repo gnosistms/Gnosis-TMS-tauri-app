@@ -650,3 +650,12 @@
   align-items: center;
   gap: 5px;
 }
+
+/* the entry note grows with its text instead of scrolling */
+.rr-autosize {
+  field-sizing: content;
+  min-height: 54px;
+  padding: 14px 18px;
+  line-height: 1.5;
+  resize: none;
+}

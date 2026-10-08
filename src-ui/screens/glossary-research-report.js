@@ -117,7 +117,6 @@ function renderCurrentEntry(run, draft, meta) {
   }).join("");
   return `
     <section class="rr-block rr-current-entry">
-      <ul class="rr-current">${rows}</ul>
       ${draft.existing.notesToTranslators ? `
         <div class="rr-field">
           <span class="rr-field__label">Note for all translations</span>
@@ -127,6 +126,7 @@ function renderCurrentEntry(run, draft, meta) {
         <span class="rr-field__label">${esc(meta.sourceLanguage.name)} forms in this entry</span>
         <p class="rr-current__note" lang="${esc(meta.sourceLanguage.code)}">${esc(draft.existing.sourceTerms.join(", "))}</p>
       </div>
+      <ul class="rr-current">${rows}</ul>
     </section>`;
 }
 
@@ -186,6 +186,16 @@ function renderEntryCard(report, run, entry) {
       ${draft.saveStatus === "saved" ? `<p class="rr-saved">Saved to the glossary</p>` : ""}
       ${showingCurrent ? renderCurrentEntry(run, draft, meta) : `
       <fieldset class="rr-entry__fields">
+        <section class="rr-block rr-grid-2">
+          <label class="rr-field">
+            <span class="rr-field__label">Note for all translations (TMX)</span>
+            <textarea class="field__input rr-autosize" rows="2" lang="${esc(tgt)}" data-research-entry="${esc(entry.id)}:generalNote">${esc(draft.generalNote)}</textarea>
+          </label>
+          <label class="rr-field">
+            <span class="rr-field__label">${esc(meta.sourceLanguage.name)} forms in this entry</span>
+            <input class="field__input" type="text" value="${esc(draft.sourceTerms.join(", "))}" data-research-entry="${esc(entry.id)}:sourceTerms" />
+          </label>
+        </section>
         <section class="rr-block">
           <div class="rr-table-head"><span>Translation and when to use it</span><span>Chosen in the sample</span></div>
           ${variantRows}
@@ -197,16 +207,6 @@ function renderEntryCard(report, run, entry) {
             ${renderVariantExamples(report, run, entry.id, "__other", meta)}
           </div>
           <button class="rr-link rr-add" type="button" data-action="add-research-entry-variant:${esc(entry.id)}">+ Add a translation</button>
-        </section>
-        <section class="rr-block rr-grid-2">
-          <label class="rr-field">
-            <span class="rr-field__label">Note for all translations (TMX)</span>
-            <textarea class="field__input" rows="3" lang="${esc(tgt)}" data-research-entry="${esc(entry.id)}:generalNote">${esc(draft.generalNote)}</textarea>
-          </label>
-          <label class="rr-field">
-            <span class="rr-field__label">${esc(meta.sourceLanguage.name)} forms in this entry</span>
-            <input class="field__input" type="text" value="${esc(draft.sourceTerms.join(", "))}" data-research-entry="${esc(entry.id)}:sourceTerms" />
-          </label>
         </section>
       </fieldset>`}
     </article>`;
