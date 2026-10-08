@@ -1,5 +1,5 @@
 import { stepTimings, usualRange } from "../app/glossary-research-live-progress.js";
-import { originalSourceLabel } from "../app/glossary-research-original-word.js";
+import { originalSourceLabel, originalSourceTooltip } from "../app/glossary-research-original-word.js";
 import {
   escapeHtml,
   primaryButton,
@@ -228,7 +228,7 @@ function renderReview(research, targetName, targetCode) {
         ${entry.variants.map((variant, variantIndex) => `
           <li class="research-review__item">
             <span lang="${esc(targetCode)}">${esc(variant.target)}</span>
-            ${variant.original ? `<span class="research-review__hint" ${tooltipAttributes(`The original word of ${variant.original.book} for this meaning: the translation whenever the term has this meaning.`)}>${esc(originalSourceLabel(variant.original))}</span>` : ""}
+            ${variant.original ? `<span class="research-review__hint" ${tooltipAttributes(originalSourceTooltip(variant.original, variant.target))}>${esc(originalSourceLabel(variant.original))}</span>` : ""}
             <button class="term-variant-row__action-button term-variant-row__action-button--remove" type="button"
               data-action="remove-research-proposal-variant:${entryIndex}:${variantIndex}" aria-label="Remove ${esc(variant.target)}"
               ${tooltipAttributes("Remove", { align: "end" })}>

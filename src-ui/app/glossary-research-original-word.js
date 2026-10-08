@@ -171,6 +171,12 @@ export function originalSourceLabel(original) {
   return `from ${author || original?.originalTitle || original?.book || "the source book"}`;
 }
 
+/** What the "from <author>" label means, for its tooltip. */
+export function originalSourceTooltip(original, target) {
+  const word = target || original?.term || "this word";
+  return `The author took this meaning from ${original?.book || "a book he read in translation"}, which uses “${word}” for it. So “${word}” is the translation whenever the term has this meaning, however rare it is in general use.`;
+}
+
 /** An original word's note must say what it is; it names the original book, which is checkable in any language. */
 export function noteNamesTheBook(variant) {
   const title = fold(variant?.original?.originalTitle);
