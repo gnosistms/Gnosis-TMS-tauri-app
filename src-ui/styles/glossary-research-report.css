@@ -346,6 +346,9 @@
 }
 
 .rr-count__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   align-self: flex-start;
 }
 
@@ -577,39 +580,6 @@
   }
 }
 
-/* candidate checks */
-
-.rr-checks {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13.5px;
-}
-
-.rr-checks th {
-  padding: 6px 10px 6px 0;
-  border-bottom: 1px solid var(--surface-border);
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 600;
-  text-align: left;
-}
-
-.rr-checks td {
-  padding: 8px 10px 8px 0;
-  border-bottom: 1px solid var(--surface-border);
-  vertical-align: top;
-}
-
-.rr-checks td:first-child {
-  white-space: nowrap;
-}
-
-.rr-count__toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-
 /* the entry note grows with its text instead of scrolling */
 .rr-autosize {
   field-sizing: content;
@@ -619,26 +589,243 @@
   resize: none;
 }
 
-/* frequency, one block per meaning */
+.rr-pill--bad {
+  background: var(--message-error-bg);
+  color: var(--message-error-text);
+}
+
+/* how common the translations are: one scale chart per meaning */
+
+.rr-explainer {
+  margin: 4px 0 18px;
+  padding: 14px 18px;
+  border-radius: 10px;
+  background: rgba(164, 112, 41, 0.06);
+}
+
+.rr-explainer p {
+  margin: 0;
+}
+
+.rr-explainer p + p {
+  margin-top: 6px;
+}
+
+.rr-source-line {
+  margin-bottom: 4px;
+}
 
 .rr-meaning {
-  margin-top: 18px;
-  padding-top: 14px;
+  margin-top: 22px;
+  padding-top: 18px;
   border-top: 1px solid var(--surface-border);
 }
 
-.rr-meaning h3 {
+.rr-meaning__head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin: 0 0 4px;
+  gap: 10px;
+}
+
+.rr-section .rr-meaning__head h3 {
+  margin: 0;
+  font-size: 16px;
 }
 
 .rr-meaning__gloss {
+  margin: 2px 0 8px;
   font-style: italic;
 }
 
-.rr-checks__score {
+.rr-meaning__rule {
+  margin-bottom: 14px;
+}
+
+.rr-meaning__none {
+  margin-top: 18px;
+}
+
+.rr-scale {
+  --label-w: 240px;
+  --result-w: 92px;
+  --gap: 18px;
+  position: relative;
+  padding-top: 26px;
+}
+
+.rr-scale__row {
+  display: grid;
+  grid-template-columns: var(--label-w) minmax(0, 1fr) var(--result-w);
+  column-gap: var(--gap);
+  border-bottom: 1px solid var(--surface-border);
+}
+
+.rr-scale__row--axis {
+  border-bottom: 0;
+}
+
+/* no Spanish score for this meaning: no line or band, so no room kept for their labels */
+.rr-scale--open {
+  padding-top: 0;
+}
+
+/* the reference line and the too-rare band run behind every row of the plot column */
+.rr-scale__overlay {
+  position: absolute;
+  top: 0;
+  bottom: 30px;
+  left: calc(var(--label-w) + var(--gap));
+  right: calc(var(--result-w) + var(--gap));
+  pointer-events: none;
+}
+
+.rr-scale__zone {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: 6px 0 0 6px;
+  background: repeating-linear-gradient(135deg, rgba(165, 64, 36, 0.07) 0 6px, rgba(165, 64, 36, 0.12) 6px 7px);
+}
+
+.rr-scale__zone span {
+  position: absolute;
+  top: 4px;
+  left: 6px;
+  color: var(--message-error-text);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.rr-scale__ref {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 2px solid var(--text);
+}
+
+.rr-scale__ref span {
+  position: absolute;
+  top: 2px;
+  left: 6px;
+  color: var(--text);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.rr-scale__label,
+.rr-scale__plot,
+.rr-scale__result {
+  padding: 9px 0;
+}
+
+.rr-scale__label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 15px;
+}
+
+.rr-scale__detail {
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.rr-scale__plot {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+}
+
+.rr-scale__bar {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  height: 12px;
+  margin-top: -6px;
+  border-radius: 0 4px 4px 0;
+}
+
+.rr-scale__bar--pass {
+  background: #e58a12;
+}
+
+.rr-scale__bar--fail {
+  background: #a54024;
+}
+
+.rr-scale__bar--unclear {
+  background: rgba(164, 112, 41, 0.45);
+}
+
+.rr-scale__value {
+  position: absolute;
+  top: 50%;
+  margin: -10px 0 0 6px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--surface-strong);
+  color: var(--text);
+  font-size: 12.5px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.rr-scale__result {
+  display: flex;
+  align-items: flex-start;
+  padding-top: 11px;
+}
+
+.rr-scale__axis {
+  position: relative;
+  height: 30px;
+  border-top: 1px solid rgba(164, 112, 41, 0.3);
+}
+
+.rr-scale__axis span {
+  position: absolute;
+  top: 4px;
+  transform: translateX(-50%);
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.rr-scale__axis span:last-child {
+  transform: translateX(-100%);
+  text-align: right;
+}
+
+.rr-scale__axis b {
+  display: block;
+  color: var(--text);
+  font-weight: 600;
+}
+
+@media (max-width: 760px) {
+  .rr-scale {
+    --label-w: 0px;
+    --gap: 0px;
+    --result-w: 84px;
+  }
+  .rr-scale__row {
+    grid-template-columns: minmax(0, 1fr) var(--result-w);
+  }
+  .rr-scale__label {
+    grid-column: 1 / -1;
+    padding-bottom: 0;
+  }
+  .rr-scale__row--axis > span:first-child {
+    display: none;
+  }
 }
