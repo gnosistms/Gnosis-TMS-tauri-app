@@ -454,9 +454,18 @@ function batchContent(batch, entryLabel) {
 
 // --- the budgeted model client ---------------------------------------------------
 
-export function createModelClient({ model, prices, budget, log, isCancelled, maxRetries }) {
+export function createModelClient({ model, prices, budget, log, isCancelled, maxRetries, prepare = (request) => request }) {
   let sequence = 0;
+  // `prepare` adds what every request carries (the writing rule); applied once per request.
+  const done = new WeakSet();
+  const prepared = (request) => {
+    if (done.has(request)) return request;
+    const ready = prepare(request);
+    done.add(ready);
+    return ready;
+  };
   async function callJson(request) {
+    request = prepared(request);
     let attempt = 0;
     let maxOutputTokens = request.maxOutputTokens;
     for (;;) {
@@ -517,9 +526,11 @@ export function createModelClient({ model, prices, budget, log, isCancelled, max
     const results = new Map();
     // Requests of one call run side by side; the log groups them by this key.
     const batchKey = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
-    const pending = keyed.map(([key, request], index) => [key, {
-      ...request, batch: { key: batchKey, number: index + 1, total: keyed.length },
-    }]);
+    const pending = keyed.map(([key, request], index) => {
+      const batched = { ...prepared(request), batch: { key: batchKey, number: index + 1, total: keyed.length } };
+      done.add(batched);
+      return [key, batched];
+    });
     const running = new Set();
     let stop = null;
     const launch = ([key, request]) => {
@@ -570,6 +581,8 @@ export function createResearchEngine(deps) {
   const client = createModelClient({
     model: deps.model, prices: deps.prices, budget, log,
     isCancelled: () => cancelled, maxRetries: settings.maxRetries,
+    // Sorting sentences by meaning only returns numbers: no writing rule needed.
+    prepare: (request) => (request.stage === "frequency" ? request : { ...request, instructions: `${request.instructions}\n\n${prompts.writingRule(ctx())}` }),
   });
   const saveUsage = () => store.save("usage", budget.records);
   const heading = (text) => log({ type: "heading", text });

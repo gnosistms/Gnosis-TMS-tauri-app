@@ -844,3 +844,22 @@ test("the word that sets a passing translation's score is sorted by meaning and 
   assert.match(fateful.reasons.join(" "), /not used in general English in the meaning needed/);
   assert.ok(fateful.words[0].measure?.needed, "the report can show the meaning's score");
 });
+
+test("every request that writes for the reader carries the plain-writing rule, once", async () => {
+  const requests = [];
+  const model = fakeModel();
+  const call = model.call;
+  model.call = (request, onDelta) => {
+    requests.push(request);
+    return call(request, onDelta);
+  };
+  const { engine: research } = engine({ model });
+  await research.runToReview();
+  const writing = requests.filter((r) => r.stage !== "frequency");
+  assert.ok(writing.length > 5);
+  for (const request of writing) {
+    assert.equal(request.instructions.split("WRITING.").length - 1, 1, `${request.stage}: the rule once`);
+  }
+  assert.match(writing[0].instructions, /not "substantive"/, "English reports get the everyday grammar words");
+  assert.ok(requests.filter((r) => r.stage === "frequency").every((r) => !r.instructions.includes("WRITING.")));
+});

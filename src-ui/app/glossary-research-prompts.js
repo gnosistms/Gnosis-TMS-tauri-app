@@ -1,7 +1,7 @@
 // Prompt texts and strict JSON schemas for Glossary Research.
 // Bump RESEARCH_PROMPT_VERSION on any change that could alter a judgment.
 
-export const RESEARCH_PROMPT_VERSION = "2026-10-08.7";
+export const RESEARCH_PROMPT_VERSION = "2026-10-08.8";
 
 const STR = { type: "string" };
 const NSTR = { anyOf: [{ type: "string" }, { type: "null" }] };
@@ -55,6 +55,21 @@ function quotationRules(ctx) {
   const rules = [quotationRule(ctx.targetName, ctx.targetCode)];
   if (ctx.reportName && ctx.reportName !== ctx.targetName) rules.push(quotationRule(ctx.reportName, ctx.reportCode));
   return rules.join(" ");
+}
+
+/**
+ * How everything written for the reader is written, added to every request (see
+ * the engine's model client). The AI otherwise slips into linguists' words and
+ * into learned look-alikes of words of the language it is reading about
+ * ("substantive" for a noun while studying Spanish, where grammar says
+ * "sustantivo"), and fields the prompt does not name get no language at all.
+ */
+export function writingRule(ctx) {
+  const report = ctx.reportName || "English";
+  const example = /^en\b/i.test(ctx.reportCode || "en")
+    ? ` (in English: "noun", "adjective", "used as a noun", "plural", "the word's meaning"; not "substantive", "substantivized", "nominal", "lemma", "lexeme", "attested")`
+    : "";
+  return `WRITING. Every text you write is in ${report}, except quotations, ${ctx.targetName ?? "target-language"} renderings and the fields these instructions say are in another language. Write it in plain, everyday ${report} for a translator, not for a linguist. Name grammar the way an ordinary ${report} schoolbook does${example}. Never use a learned ${report} word because it resembles the ${ctx.sourceName ?? "source-language"} word for the idea; use the everyday ${report} word.`;
 }
 
 // --- editor flow: find the source-language term ------------------------------
