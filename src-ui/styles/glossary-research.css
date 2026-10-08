@@ -128,6 +128,12 @@
   gap: 10px;
 }
 
+.research-past__actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 6px;
+}
+
 .research-existing {
   padding-left: 18px;
 }
