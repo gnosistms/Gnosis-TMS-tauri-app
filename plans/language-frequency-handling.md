@@ -61,6 +61,19 @@ understates); agglutinative languages have more forms than any list of forms cov
 frequency demands are applied leniently: a rendering is failed only by the per-sense check, not by a whole-word
 score that is likely too low).
 
+## Meanings with no usage data (Hans, 2026-10-08)
+
+When none of the sorted general-corpus sentences use a meaning of the source
+word, that meaning has no minimum: its translations are not rejected for being
+rare. Revisit only if this lets bad translations through.
+
+Idea for later, not built: a comprehension test. Put the source word in a
+sentence and ask a source-language AI what it means; do the same with the
+target-language word and a target-language AI. If source readers can work out
+an invented or rare word, accept a target word that target readers can work out
+too. If the source word itself is incomprehensible, there is no basis for
+rejecting rare translations.
+
 ## The 71 languages
 
 | Code | Language | List from | Corpus size known | Words per sentence | Distinct-word ratio | Handling beyond the universal fixes |
