@@ -1276,6 +1276,7 @@ export function createResearchEngine(deps) {
       const failedWords = [];
       const passedWords = new Set();
       const failedTargets = [];
+      const passedTargets = new Set();
       const candidates = toCheck.map((c) => {
         const found = byNumber.get(c.n);
         const reasons = [];
@@ -1330,6 +1331,7 @@ export function createResearchEngine(deps) {
           }
         }
         if (verdict === "fail") failedTargets.push(c.target);
+        else passedTargets.add(textKey(c.target, code));
         return {
           target: c.target, sense: c.sense, senseId: c.senseId, words: items, verdict, reasons, notes,
           zipf: ready ? renderingScore(c.target, zipfOf, found?.words) : null,
@@ -1355,7 +1357,10 @@ export function createResearchEngine(deps) {
       // A word that fails in one sense but passes in another is not banned: only the
       // renderings checked for the failing sense go.
       const banned = [...new Set(failedWords)].filter((w) => !passedWords.has(textKey(w, code)));
-      return { available: ready, groups: outGroups, candidates, failedWords: banned, failedTargets };
+      // Likewise a rendering that fails for one sense but passes for another stays:
+      // the passages decide where it fits.
+      const failedEverywhere = [...new Set(failedTargets)].filter((t) => !passedTargets.has(textKey(t, code)));
+      return { available: ready, groups: outGroups, candidates, failedWords: banned, failedTargets: failedEverywhere };
     });
   }
 

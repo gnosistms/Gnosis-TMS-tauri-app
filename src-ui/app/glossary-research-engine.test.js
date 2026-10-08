@@ -656,6 +656,42 @@ test("a word failing in one sense but passing in another is not banned from othe
   assert.deepEqual(checks.failedTargets, ["fatal"]);
 });
 
+test("a rendering that fails for one sense but passes for another is not removed", async () => {
+  const base = lookalikeModel();
+  const model = {
+    calls: base.calls,
+    async call(request, onDelta) {
+      if (request.stage === "candidates") {
+        base.calls.push(request.stage);
+        return { status: "ok", text: JSON.stringify({ senses: [
+          { senseId: "s1", sense: "inevitable", groups: [{ members: ["fatal"], recommended: true, note: "n", rationale: "r" }] },
+          { senseId: "s2", sense: "deadly", groups: [{ members: ["fatal"], recommended: true, note: "n", rationale: "r" }] },
+        ] }), usage: { inputTokens: 10, outputTokens: 10 } };
+      }
+      if (request.stage === "checks") {
+        base.calls.push(request.stage);
+        const numbers = [...request.content.matchAll(/^(\d+)\. (.+?) — (.+)$/gm)].map((m) => [Number(m[1]), m[2], m[3]]);
+        return { status: "ok", text: JSON.stringify({ candidates: numbers.map(([n, target, sense]) => ({
+          n, target, establishedUsage: false, establishedBasis: "",
+          words: [{ word: "fatal", partOf: null, forms: [], neededSense: sense === "deadly" ? "causing death" : "inevitable", lookalike: true, resembles: "fatal", otherSenses: ["deadly"] }],
+        })) }), usage: { inputTokens: 10, outputTokens: 10 } };
+      }
+      if (request.stage === "frequency" && request.instructions.includes("ordinary English text")) {
+        base.calls.push(request.stage);
+        const n = [...request.content.matchAll(/^(\d+)\. /gm)].length;
+        const sense = request.instructions.includes("causing death") ? "needed" : "o1";
+        return { status: "ok", text: JSON.stringify({ items: Array.from({ length: n }, (_, i) => ({ n: i + 1, sense })) }), usage: { inputTokens: 10, outputTokens: 10 } };
+      }
+      return base.call(request, onDelta);
+    },
+  };
+  const { engine: research, store } = engine({ model, languageData: fakeLanguageData() });
+  await research.runToReview();
+  const verdicts = store.data.checks.candidates.map((c) => [c.senseId, c.verdict]);
+  assert.deepEqual(verdicts, [["s1", "fail"], ["s2", "pass"]]);
+  assert.deepEqual(store.data.checks.failedTargets, []);
+});
+
 test("a run's measurements are collected for later runs, one per word and sense", () => {
   const needed = { zipf: 3.9, upperBound: null, share: 0.3, inSense: 30, classified: 100 };
   const stages = {
