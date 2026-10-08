@@ -656,6 +656,7 @@ function appendLog(event) {
     const existing = findStreamEntry(draft.log, event.requestId, event.type);
     if (existing) {
       existing.text += event.text;
+      existing.updatedAt = Date.now();
       return existing;
     }
   }

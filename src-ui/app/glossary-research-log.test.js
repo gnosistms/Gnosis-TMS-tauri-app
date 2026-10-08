@@ -8,7 +8,10 @@ const { state } = await import("./state.js");
 const { appendResearchLogEvent } = await import("./glossary-research-flow.js");
 const {
   batchProgressText,
+  buildLogSections,
   buildLogView,
+  liveRequest,
+  requestBatch,
   collapseRepeatedBlocks,
   isRequestOpen,
   readableAnswer,
@@ -108,4 +111,53 @@ test("the review list adds a typed translation once and clears the box", async (
   assert.equal(entry.variants[1].note, "");
   assert.equal(entry.addDraft, "");
   assert.equal(renders, 2);
+});
+
+test("the log reads as sections: lines and findings with the requests made under each heading", () => {
+  state.glossaryResearch.log = [];
+  appendResearchLogEvent({ type: "fact", text: "before any heading" });
+  appendResearchLogEvent({ type: "heading", text: "Candidate translations" });
+  appendResearchLogEvent({ type: "request", requestId: "c", stage: "candidates", purpose: "propose", text: "…" });
+  appendResearchLogEvent({ type: "usage", requestId: "c", record: { stage: "candidates", status: "ok", seconds: 91, costUsd: 0.05 }, spent: 0.05, limit: 4 });
+  appendResearchLogEvent({ type: "result", kind: "candidates", data: [{ sense: "s1", groups: [{ recommended: true, members: ["a"] }] }], text: "s1: ★ a" });
+  appendResearchLogEvent({ type: "result", kind: "candidates", data: [{ sense: "s2", groups: [] }], text: "s2: " });
+  appendResearchLogEvent({ type: "heading", text: "Candidate checks" });
+  appendResearchLogEvent({ type: "result", kind: "checks", text: "old finding without data" });
+  const sections = buildLogSections(state.glossaryResearch.log);
+  assert.deepEqual(sections.map((s) => s.heading), [null, "Candidate translations", "Candidate checks"]);
+  const [, candidates, checks] = sections;
+  assert.equal(candidates.requests.length, 1);
+  assert.deepEqual(candidates.meta, { count: 1, seconds: 91, costUsd: 0.05, running: 0, failed: 0 });
+  assert.equal(candidates.items.length, 1, "consecutive findings of one kind form one block");
+  assert.deepEqual(candidates.items[0].data.map((d) => d.sense), ["s1", "s2"]);
+  assert.equal(checks.items[0].data, null);
+  assert.deepEqual(checks.items[0].texts, ["old finding without data"]);
+});
+
+test("old logs without findings still section by heading", () => {
+  const sections = buildLogSections([
+    { type: "heading", text: "Proposal" }, { type: "fact", text: "1 entry" },
+    { type: "request", requestId: "p", stage: "proposal", text: "→ proposal: x\nTexts" },
+  ]);
+  assert.equal(sections.length, 1);
+  assert.equal(sections[0].items[0].entry.text, "1 entry");
+  assert.equal(sections[0].requests[0].text, "Texts");
+});
+
+test("the live panel follows the request that changed last, unless one was picked", () => {
+  const log = streamThreeBatchRequests();
+  const r1 = log.find((entry) => entry.type === "answer-delta" && entry.requestId === "r1");
+  r1.updatedAt = Date.now() + 1000;
+  let sections = buildLogSections(log);
+  assert.equal(liveRequest(sections).requestId, "r1");
+  assert.equal(liveRequest(sections, "r3").requestId, "r3");
+  assert.equal(liveRequest(sections, "gone").requestId, "r1");
+  const batch = requestBatch(sections, liveRequest(sections));
+  assert.deepEqual([batch.total, batch.done, batch.running], [3, 0, 3]);
+  for (const id of ["r1", "r2", "r3"]) {
+    appendResearchLogEvent({ type: "usage", requestId: id, record: { stage: "discovery", status: "ok", seconds: 1, costUsd: 0.01 }, spent: 0.03, limit: 4 });
+  }
+  sections = buildLogSections(state.glossaryResearch.log);
+  assert.equal(liveRequest(sections), null, "nothing runs: the panel has nothing to follow");
+  assert.equal(sections[0].meta.count, 3);
 });

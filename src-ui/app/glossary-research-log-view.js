@@ -19,6 +19,7 @@ export function stageName(stage) {
 
 function newRequest(entry) {
   return {
+    updatedAt: entry.at ?? 0,
     requestId: entry.requestId,
     stage: entry.stage ?? "",
     purpose: entry.purpose ?? "",
@@ -77,6 +78,10 @@ export function buildLogView(log) {
     return request;
   };
   for (const entry of log) {
+    if (entry.requestId && requests.has(entry.requestId)) {
+      const known = requests.get(entry.requestId);
+      known.updatedAt = Math.max(known.updatedAt, entry.updatedAt ?? entry.at ?? 0);
+    }
     switch (entry.type) {
       case "request": {
         const request = newRequest({ ...entry, text: stripRequestHeader(entry.text) });
@@ -205,4 +210,104 @@ export function isRequestOpen(request, openChoices) {
   const choice = openChoices?.[request.requestId];
   if (choice !== undefined) return choice;
   return !(request.batch && request.batch.total > 1) && isRequestRunning(request);
+}
+
+// --- sections ----------------------------------------------------------------------
+
+function requestSeconds(request) {
+  return Number(request.usage?.seconds) || 0;
+}
+
+function requestCost(request) {
+  return Number(request.usage?.costUsd) || 0;
+}
+
+/**
+ * Consecutive findings of one kind in a section read as one block: their data
+ * lists are joined. A finding without data (old logs, unknown kinds) keeps
+ * its text, which the renderer shows as plain lines.
+ */
+function addLine(section, entry) {
+  if (entry.type === "result") {
+    const last = section.items.at(-1);
+    const hasData = Array.isArray(entry.data) || (entry.data && typeof entry.data === "object");
+    if (hasData && last?.kind === "result" && last.resultKind === entry.kind && Array.isArray(last.data) && Array.isArray(entry.data)) {
+      last.data.push(...entry.data);
+      last.texts.push(entry.text);
+      return;
+    }
+    section.items.push({
+      kind: "result", resultKind: entry.kind ?? "",
+      data: hasData ? (Array.isArray(entry.data) ? [...entry.data] : entry.data) : null,
+      texts: [entry.text],
+    });
+    return;
+  }
+  section.items.push({ kind: "line", entry });
+}
+
+/**
+ * The log as sections, one per heading: its lines and findings, and the AI
+ * requests made under it (shown in the live panel, not between the lines).
+ * Lines before the first heading form a section without a title.
+ */
+export function buildLogSections(log) {
+  const sections = [];
+  const open = (heading) => {
+    const section = { id: `s${sections.length + 1}`, heading, items: [], requests: [] };
+    sections.push(section);
+    return section;
+  };
+  let current = null;
+  for (const item of collapseRepeatedBlocks(buildLogView(log))) {
+    if (item.kind === "line" && item.entry.type === "heading") {
+      current = open(item.entry.text);
+      continue;
+    }
+    current ??= open(null);
+    if (item.kind === "line") addLine(current, item.entry);
+    else if (item.kind === "request") current.requests.push(item.request);
+    else current.requests.push(...item.requests);
+  }
+  for (const section of sections) section.meta = sectionMeta(section);
+  return sections;
+}
+
+/** Seconds, cost and state of a section's requests, for its header. */
+export function sectionMeta(section) {
+  const requests = section.requests;
+  return {
+    count: requests.length,
+    seconds: requests.reduce((sum, request) => sum + requestSeconds(request), 0),
+    costUsd: requests.reduce((sum, request) => sum + requestCost(request), 0),
+    running: requests.filter(isRequestRunning).length,
+    failed: requests.filter((request) => requestState(request) === "failed").length,
+  };
+}
+
+export function allRequests(sections) {
+  return sections.flatMap((section) => section.requests);
+}
+
+/**
+ * The request the live panel shows: the one the person picked, else the
+ * running request that changed last, else none.
+ */
+export function liveRequest(sections, choice = null) {
+  const requests = allRequests(sections);
+  if (choice) {
+    const picked = requests.find((request) => request.requestId === choice);
+    if (picked) return picked;
+  }
+  const running = requests.filter(isRequestRunning);
+  if (!running.length) return null;
+  return running.reduce((best, request) => (request.updatedAt >= best.updatedAt ? request : best));
+}
+
+/** The batch a request belongs to, with its progress; null for a request on its own. */
+export function requestBatch(sections, request) {
+  if (!request?.batch || !(request.batch.total > 1)) return null;
+  const members = allRequests(sections).filter((other) => other.batch?.key === request.batch.key && other.stage === request.stage);
+  const done = members.filter((other) => !isRequestRunning(other)).length;
+  return { total: request.batch.total, done, running: members.length - done, requests: members };
 }
