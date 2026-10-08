@@ -202,16 +202,6 @@ export function batchProgressText(batch) {
   return `${done} of ${batch.total} done${running ? `, ${running} running` : ""}`;
 }
 
-/**
- * Open unless the person chose otherwise: a request that runs on its own is
- * open while it runs, so its thinking and answer can be read as they arrive.
- */
-export function isRequestOpen(request, openChoices) {
-  const choice = openChoices?.[request.requestId];
-  if (choice !== undefined) return choice;
-  return !(request.batch && request.batch.total > 1) && isRequestRunning(request);
-}
-
 // --- sections ----------------------------------------------------------------------
 
 function requestSeconds(request) {
@@ -290,15 +280,18 @@ export function allRequests(sections) {
 }
 
 /**
- * The request the live panel shows: the one the person picked, else the
- * running request that changed last, else none.
+ * The request the live panel shows: the one the person picked, else the one
+ * it follows while that runs, else the running request that changed last.
  */
-export function liveRequest(sections, choice = null) {
+export function liveRequest(sections, choice = null, follow = null) {
   const requests = allRequests(sections);
   if (choice) {
     const picked = requests.find((request) => request.requestId === choice);
     if (picked) return picked;
   }
+  // Stay on the request already shown while it runs, so a batch does not jump about.
+  const followed = follow && requests.find((request) => request.requestId === follow);
+  if (followed && isRequestRunning(followed)) return followed;
   const running = requests.filter(isRequestRunning);
   if (!running.length) return null;
   return running.reduce((best, request) => (request.updatedAt >= best.updatedAt ? request : best));

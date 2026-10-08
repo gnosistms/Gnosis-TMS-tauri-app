@@ -14,17 +14,8 @@ import {
 } from "../app/glossary-research-flow.js";
 import { batchSpent } from "../app/glossary-research-family-budget.js";
 import { formatUsd, researchModelsWithPrices } from "../app/glossary-research-budget.js";
-import {
-  batchProgressText,
-  buildLogView,
-  collapseRepeatedBlocks,
-  isRequestOpen,
-  isRequestRunning,
-  readableAnswer,
-  requestState,
-  requestStatusText,
-  requestTitle,
-} from "../app/glossary-research-log-view.js";
+import { buildLogSections, isRequestRunning, liveRequest } from "../app/glossary-research-log-view.js";
+import { renderLivePanel, renderResults } from "./glossary-research-log-render.js";
 
 const esc = escapeHtml;
 
@@ -215,72 +206,6 @@ function renderExisting(state) {
 
 // --- run view -----------------------------------------------------------------------
 
-function renderLogLine(entry) {
-  const text = esc(entry.text);
-  switch (entry.type) {
-    case "heading":
-      return `<div class="research-log__heading">${text}</div>`;
-    case "fact":
-    case "result":
-      return `<div class="research-log__fact"><strong>${text}</strong></div>`;
-    case "problem":
-      return `<div class="research-log__problem"><strong>${text}</strong></div>`;
-    case "usage":
-      return `<div class="research-log__usage">${text}</div>`;
-    default:
-      return `<div class="research-log__line">${text}</div>`;
-  }
-}
-
-function usageLine(usage) {
-  if (usage.line) return usage.line;
-  return `${(usage.inputTokens ?? 0).toLocaleString("en-US")} tokens in (${(usage.cachedTokens ?? 0).toLocaleString("en-US")} cached), `
-    + `${(usage.outputTokens ?? 0).toLocaleString("en-US")} out (${(usage.reasoningTokens ?? 0).toLocaleString("en-US")} thinking) · `
-    + `${formatUsd(usage.costUsd)}${usage.costIsEstimate ? " (reserved; outcome unknown)" : ""} · ${usage.seconds.toFixed(1)} s`;
-}
-
-// Text blocks carry no whitespace between tags: they keep line breaks as written.
-function requestText(label, type, text, extraClass = "") {
-  return `<div class="research-request__label">${label}</div>`
-    + `<div class="research-request__text${extraClass}" data-log-type="${type}">${esc(text)}</div>`;
-}
-
-function renderRequest(request, openChoices) {
-  const current = requestState(request);
-  const running = isRequestRunning(request);
-  const open = isRequestOpen(request, openChoices);
-  const id = esc(request.requestId);
-  const body = !open ? "" : `<div class="research-request__body">
-      ${request.text || request.instructions ? `<details class="research-request__sent"><summary>What was sent</summary>`
-        + `${request.instructions ? requestText("Instructions", "instructions", request.instructions) : ""}`
-        + `${request.text ? requestText("Texts and question", "content", request.text) : ""}</details>` : ""}
-      ${request.thinking ? requestText("Thinking", "thinking", request.thinking, " research-request__text--thinking") : ""}
-      ${request.answer ? requestText("Answer", "answer-delta", running ? request.answer : readableAnswer(request.answer)) : ""}
-      ${request.problem ? `<div class="research-log__problem">${esc(request.problem)}</div>` : ""}
-      ${request.usage ? `<div class="research-log__usage">${esc(usageLine(request.usage))}</div>` : ""}
-    </div>`;
-  return `<div class="research-request research-request--${current}${open ? " is-open" : ""}" data-log-request-card="${id}" data-log-request-state="${current}" data-log-request-open="${open}">
-      <button type="button" class="research-request__head" data-action="toggle-research-request:${id}" aria-expanded="${open}">
-        <svg class="research-disclosure__chevron" viewBox="0 0 10 10" aria-hidden="true"><path d="M3 1.5 6.5 5 3 8.5" /></svg>
-        <span class="research-request__title">${esc(requestTitle(request))}</span>
-        <span class="research-request__status" data-log-request-status>${esc(requestStatusText(request, formatUsd))}</span>
-        ${running ? '<span class="navigation-loading-modal__spinner research-request__spinner" aria-hidden="true"></span>' : ""}
-      </button>
-      ${body}
-    </div>`;
-}
-
-function renderLog(log, openChoices) {
-  return collapseRepeatedBlocks(buildLogView(log)).map((item) => {
-    if (item.kind === "line") return renderLogLine(item.entry);
-    if (item.kind === "request") return renderRequest(item.request, openChoices);
-    return `<div class="research-batch">
-        <div class="research-batch__head">${item.total} requests side by side · ${esc(batchProgressText(item))}</div>
-        ${item.requests.map((request) => renderRequest(request, openChoices)).join("")}
-      </div>`;
-  }).join("");
-}
-
 function renderReview(research, targetName, targetCode) {
   const proposal = research.proposalDraft;
   if (!proposal) return "";
@@ -384,7 +309,15 @@ function renderRun(state) {
   const review = research.runStatus === "review"
     ? renderReview(research, targetName, state.glossaryEditor?.targetLanguage?.code ?? "")
     : research.runStatus === "family" ? renderFamilyChoice(research) : "";
-  const logLines = `<div class="research-log" data-research-log aria-live="off">${renderLog(research.log, research.requestOpen)}</div>`;
+  const sections = buildLogSections(research.log);
+  const shown = liveRequest(sections, research.liveChoice, research.liveFollow);
+  // The panel keeps following one request until it finishes.
+  research.liveFollow = shown && isRequestRunning(shown) ? shown.requestId : null;
+  const livePanel = renderLivePanel({
+    sections, request: running || research.liveChoice ? shown : null, running,
+    open: research.liveOpen !== false, picked: Boolean(research.liveChoice),
+  });
+  const logLines = `<div class="research-results" data-research-log aria-live="off">${renderResults(sections)}</div>`;
   // While research runs the log is the main view; afterwards it folds away.
   const log = running
     ? logLines
@@ -394,6 +327,7 @@ function renderRun(state) {
         </button>
         ${research.logOpen ? logLines : ""}
       </div>`;
+  const logArea = `${log}${livePanel}`;
   let actions;
   if (running) {
     actions = secondaryButton("Cancel", "cancel-glossary-research-run", { modalCancel: true });
@@ -413,7 +347,7 @@ function renderRun(state) {
       ${primaryButton("Resume", `resume-research-run:${research.runId}`, { modalDefault: true })}`;
   }
   return modal("glossary-research", `Research: ${research.term}`,
-    `${head}${stoppedPanel}${review}${log}`, actions, "research-modal--run");
+    `${head}${stoppedPanel}${review}${logArea}`, actions, "research-modal--run");
 }
 
 // --- nested pickers ----------------------------------------------------------------

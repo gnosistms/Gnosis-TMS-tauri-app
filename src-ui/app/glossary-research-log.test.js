@@ -13,7 +13,6 @@ const {
   liveRequest,
   requestBatch,
   collapseRepeatedBlocks,
-  isRequestOpen,
   readableAnswer,
   requestState,
   requestStatusText,
@@ -56,22 +55,18 @@ test("requests of one batch are grouped under one progress line", () => {
   assert.equal(requestTitle(batch.requests[1]), "Batch 2 of 3 · open reading of 10 occurrences");
   assert.equal(requestStatusText(batch.requests[1], usd), "done · 12 s · $0.04");
   assert.match(requestStatusText(batch.requests[0], usd), /^writing the answer… 30 characters$/);
-  // Batch requests stay closed unless opened; a lone running request is open.
-  assert.equal(isRequestOpen(batch.requests[0], {}), false);
-  assert.equal(isRequestOpen(batch.requests[0], { r1: true }), true);
 });
 
-test("a request running on its own is open while it runs and closes when done", () => {
+test("a request running on its own reports its state as it streams", () => {
   state.glossaryResearch.log = [];
   appendResearchLogEvent({ type: "request", requestId: "p", stage: "proposal", purpose: "consolidate", text: "…" });
   appendResearchLogEvent({ type: "thinking", requestId: "p", text: "Weighing the senses." });
   let [item] = buildLogView(state.glossaryResearch.log);
   assert.equal(requestState(item.request), "thinking");
-  assert.equal(isRequestOpen(item.request, {}), true);
   appendResearchLogEvent({ type: "answer-delta", requestId: "p", text: '{"a":1}' });
   appendResearchLogEvent({ type: "usage", requestId: "p", record: { stage: "proposal", status: "ok", seconds: 3, costUsd: 0.2 }, spent: 0.2, limit: 4 });
   [item] = buildLogView(state.glossaryResearch.log);
-  assert.equal(isRequestOpen(item.request, {}), false);
+  assert.equal(requestState(item.request), "done");
   assert.equal(readableAnswer(item.request.answer), '{\n  "a": 1\n}');
 });
 

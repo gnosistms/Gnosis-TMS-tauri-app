@@ -23,7 +23,6 @@ import {
 import { collectMeasurements, createResearchEngine, familyGroups, mergeMeasurements, ResearchStop } from "./glossary-research-engine.js";
 import {
   buildLogView,
-  isRequestOpen,
   requestState,
   requestStatusText,
 } from "./glossary-research-log-view.js";
@@ -38,6 +37,7 @@ import {
   recordRunSpend,
 } from "./glossary-research-family-budget.js";
 import { fold } from "./glossary-research-occurrences.js";
+import { formatJsonStream, formatThinking } from "./glossary-research-stream-format.js";
 import { parseMoneyValue } from "./money-input.js";
 import { maybeStartGlossaryBackgroundSync } from "./glossary-background-sync.js";
 
@@ -723,42 +723,66 @@ function findLogRequest(requestId) {
     .flatMap((item) => (item.kind === "batch" ? item.requests : item.kind === "request" ? [item.request] : []))[0] ?? null;
 }
 
+const streamStates = new Map();
+
 /**
- * Update one request's status line (and its text, when it is open) without a
- * full render. Returns false when the page must render instead: the request
- * is not on screen yet, its state just changed, or an open request has just
- * started a new kind of text.
+ * Streamed text without a full render: the live panel's status and text when
+ * the text belongs to the request it shows; nothing for other requests until
+ * their state changes. Returns false when the page must render instead.
  */
 function updateStreamInDom(entry) {
-  const container = logContainer();
-  if (!container || !(entry.type === "answer-delta" || entry.type === "thinking")) return false;
-  const card = container.querySelector(`[data-log-request-card="${CSS.escape(String(entry.requestId))}"]`);
-  const request = card ? findLogRequest(entry.requestId) : null;
-  if (!request || card.dataset.logRequestState !== requestState(request)) return false;
-  const block = card.querySelector(`[data-log-type="${entry.type}"]`);
-  if (!block && card.dataset.logRequestOpen === "true") return false;
-  const pinned = container.scrollTop + container.clientHeight >= container.scrollHeight - 24;
-  const status = card.querySelector("[data-log-request-status]");
+  if (typeof document === "undefined" || !(entry.type === "answer-delta" || entry.type === "thinking")) return false;
+  const request = findLogRequest(entry.requestId);
+  if (!request) return false;
+  const state = requestState(request);
+  const changed = streamStates.get(entry.requestId) !== state;
+  streamStates.set(entry.requestId, state);
+  const panel = document.querySelector("[data-research-live]");
+  if (!panel || panel.dataset.liveRequest !== String(entry.requestId)) return !changed && Boolean(logContainer());
+  if (panel.dataset.liveState !== state) return false;
+  const status = panel.querySelector("[data-live-status]");
   if (status) status.textContent = requestStatusText(request, formatUsd);
-  if (block) block.textContent = entry.text;
-  if (pinned) container.scrollTop = container.scrollHeight;
+  if (panel.dataset.liveOpen !== "true") return true;
+  const block = panel.querySelector(`[data-live-type="${entry.type}"]`);
+  if (!block) return false;
+  const body = panel.querySelector("[data-live-body]");
+  const pinned = body && body.scrollTop + body.clientHeight >= body.scrollHeight - 24;
+  block.innerHTML = entry.type === "thinking" ? formatThinking(entry.text) : formatJsonStream(entry.text);
+  if (body && pinned) body.scrollTop = body.scrollHeight;
   return true;
 }
 
-export function toggleResearchRequest(render, requestId) {
+/** "details ›": show that request's whole exchange in the live panel. */
+export function showResearchRequest(render, requestId) {
   const draft = research();
-  const request = findLogRequest(requestId);
-  if (!request) return;
-  draft.requestOpen = { ...(draft.requestOpen ?? {}), [requestId]: !isRequestOpen(request, draft.requestOpen) };
-  render();
+  draft.liveChoice = requestId;
+  draft.liveOpen = true;
+  renderKeepingLogPinned(render);
+}
+
+export function toggleResearchLive(render) {
+  const draft = research();
+  draft.liveOpen = draft.liveOpen === false;
+  renderKeepingLogPinned(render);
+}
+
+/** Back to following whatever runs (or nothing, after the run). */
+export function closeResearchLive(render) {
+  research().liveChoice = null;
+  renderKeepingLogPinned(render);
 }
 
 export function renderKeepingLogPinned(render) {
   const before = logContainer();
   const pinned = !before || before.scrollTop + before.clientHeight >= before.scrollHeight - 24;
+  const liveBefore = typeof document !== "undefined" ? document.querySelector("[data-live-body]") : null;
+  const livePinned = !liveBefore || liveBefore.scrollTop + liveBefore.clientHeight >= liveBefore.scrollHeight - 24;
+  const liveScroll = liveBefore?.scrollTop ?? 0;
   render();
   const after = logContainer();
   if (after && pinned) after.scrollTop = after.scrollHeight;
+  const liveAfter = typeof document !== "undefined" ? document.querySelector("[data-live-body]") : null;
+  if (liveAfter) liveAfter.scrollTop = livePinned ? liveAfter.scrollHeight : liveScroll;
 }
 
 // --- review and counting -------------------------------------------------------------

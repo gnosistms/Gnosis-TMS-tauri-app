@@ -2,6 +2,27 @@
 
 .research-modal--run {
   width: min(980px, 100%);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* The results give way so the live panel and the buttons stay in view. */
+.research-modal--run > .modal-card__body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.research-modal--run > .modal-card__body > * {
+  flex: none;
+}
+
+.research-modal--run > .modal-card__body > .research-results,
+.research-modal--run > .modal-card__body > .research-disclosure {
+  flex: 0 1 auto;
+  min-height: 0;
 }
 
 .research-inline {
@@ -165,49 +186,330 @@
   transition: width 300ms ease;
 }
 
-.research-log {
-  flex: 1;
-  min-height: 260px;
+/* Research log: results by section, in the app's own type and colours */
+.research-results {
+  min-height: 140px;
   max-height: 52vh;
   overflow-y: auto;
-  padding: 10px 12px;
-  border-radius: var(--radius-control);
-  background: #f6f7f9;
-  border: 1px solid var(--surface-border);
-  color: #2d333b;
-  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-}
-
-.research-log__heading {
-  margin: 12px 0 4px;
+  padding: 2px 4px 8px 2px;
   color: var(--text);
-  font: 600 14px/1.3 var(--font-sans);
+  font: 14px/1.5 var(--font-sans);
+}
+
+.research-section + .research-section {
+  margin-top: 20px;
+}
+
+.research-section__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+  padding-bottom: 4px;
   border-bottom: 1px solid var(--surface-border);
-  padding-bottom: 2px;
 }
 
-.research-log__fact {
-  color: #1a7f37;
-  margin: 2px 0;
+.research-section__title {
+  margin: 0;
+  color: var(--text);
+  font: 500 15px/1.3 var(--font-sans);
+}
+
+.research-section__meta {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.research-section__details {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.research-section__details:hover {
+  color: var(--text-hover);
+}
+
+.research-section__failed {
+  color: var(--message-error-text);
+}
+
+.research-section__body {
+  display: grid;
+  gap: 6px;
+  padding-top: 8px;
+}
+
+.research-section--untitled {
+  display: grid;
+  gap: 6px;
+}
+
+.research-line {
+  margin: 0;
+  color: var(--text);
   white-space: pre-wrap;
+  word-break: break-word;
 }
 
-.research-log__problem {
-  color: #cf222e;
-  margin: 2px 0;
+.research-line--muted {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.research-line--problem {
+  padding: 6px 10px;
+  border: 1px solid var(--message-error-border);
+  border-radius: var(--radius-control);
+  background: var(--message-error-bg);
+  color: var(--message-error-text);
+}
+
+.research-result {
+  display: grid;
+  gap: 10px;
+}
+
+.research-result__group {
+  display: grid;
+  gap: 5px;
+}
+
+.research-result__sub {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.research-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.research-chip {
+  padding: 1px 9px;
+  border: 1px solid var(--surface-border);
+  border-radius: 999px;
+  background: var(--surface-strong);
+  font-size: 13px;
+}
+
+.research-chip--recommended {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-strong));
+}
+
+.research-checks {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 16px;
+}
+
+.research-checks__target {
+  font-weight: 500;
+}
+
+.research-checks__verdict--pass {
+  color: var(--message-success-text);
+}
+
+.research-checks__verdict--unclear {
+  color: var(--message-warning-text);
+}
+
+.research-checks__verdict--fail {
+  color: var(--message-error-text);
+}
+
+.research-checks__verdict--unchecked {
+  color: var(--muted);
+}
+
+.research-checks__details {
+  grid-column: 1 / -1;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+/* Live panel: the AI request running now, below the results */
+.research-live {
+  margin-top: 10px;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--surface-strong) 92%, var(--muted));
+}
+
+.research-live__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+.research-live__toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: 500 13px/1.4 var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+}
+
+.research-live.is-open .research-live__toggle .research-disclosure__chevron {
+  transform: rotate(90deg);
+}
+
+.research-live--idle .research-live__title {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.research-live__status {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.research-live--failed .research-live__status {
+  color: var(--message-error-text);
+}
+
+.research-live__spinner {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-width: 2px;
+}
+
+.research-live__batch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.research-live__switcher {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.research-live__pick {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border: 1px solid var(--surface-border);
+  border-radius: 4px;
+  background: var(--surface-strong);
+  color: var(--muted);
+  font: 11px/18px var(--font-sans);
+  cursor: pointer;
+}
+
+.research-live__pick--done {
+  color: var(--message-success-text);
+}
+
+.research-live__pick--failed {
+  color: var(--message-error-text);
+}
+
+.research-live__pick.is-current {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.research-live__close {
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.research-live__body {
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 2px 12px 10px;
+  border-top: 1px solid var(--surface-border);
+}
+
+.research-live__label {
+  margin-top: 8px;
+  color: var(--muted);
+  font: 600 11px/1.4 var(--font-sans);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.research-live__sent summary {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.research-live__text,
+.research-live__answer {
+  margin: 0;
+  color: var(--text);
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   white-space: pre-wrap;
+  word-break: break-word;
 }
 
-.research-log__usage {
-  color: #8250df;
+.research-live__thinking {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.research-live__thinking p {
   margin: 2px 0 6px;
 }
 
-.research-log__line {
-  white-space: pre-wrap;
-  word-break: break-word;
-  opacity: 0.72;
-  margin: 1px 0;
+.research-stream__title {
+  margin: 8px 0 2px;
+  color: var(--text);
+  font: 600 12.5px/1.4 var(--font-sans);
+}
+
+.research-stream__key {
+  color: var(--text-hover);
+}
+
+.research-stream__string {
+  color: var(--message-success-text);
+}
+
+.research-stream__punct {
+  color: var(--muted);
+}
+
+.research-live__usage {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .research-stopped {
@@ -468,6 +770,15 @@
 }
 
 @media (max-width: 640px) {
+  .research-checks {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .research-checks__verdict {
+    margin-bottom: 2px;
+  }
+  .research-section__meta {
+    white-space: normal;
+  }
   .research-advanced__grid,
   .research-review__variant,
   .research-variant__row {
@@ -617,111 +928,6 @@
   .research-review__variant-row textarea {
     grid-column: 1 / 2;
   }
-}
-
-/* One item per AI request in the research log */
-.research-batch {
-  margin: 4px 0 8px;
-}
-
-.research-batch__head {
-  color: #57606a;
-  margin: 2px 0 4px;
-}
-
-.research-batch .research-request {
-  margin-left: 12px;
-}
-
-.research-request {
-  margin: 2px 0;
-}
-
-.research-request__head {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  width: 100%;
-  padding: 3px 6px;
-  border: 0;
-  border-radius: 4px;
-  background: none;
-  color: #0969da;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.research-request__head:hover {
-  background: rgba(9, 105, 218, 0.07);
-}
-
-.research-request__head .research-disclosure__chevron {
-  flex: none;
-  align-self: center;
-}
-
-.research-request.is-open > .research-request__head .research-disclosure__chevron {
-  transform: rotate(90deg);
-}
-
-.research-request__title {
-  flex: 0 1 auto;
-  min-width: 0;
-}
-
-.research-request__status {
-  flex: 1 1 auto;
-  min-width: 0;
-  color: #57606a;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.research-request--done .research-request__status {
-  color: #1a7f37;
-}
-
-.research-request--failed .research-request__status {
-  color: #cf222e;
-}
-
-.research-request__spinner {
-  flex: none;
-  align-self: center;
-  width: 12px;
-  height: 12px;
-  border-width: 2px;
-}
-
-.research-request__body {
-  margin: 2px 0 8px 22px;
-  padding-left: 10px;
-  border-left: 2px solid var(--surface-border);
-}
-
-.research-request__label {
-  margin-top: 6px;
-  color: #57606a;
-  font-weight: 700;
-}
-
-.research-request__text {
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.research-request__text--thinking {
-  font-family: var(--font-sans);
-  font-size: 13px;
-  font-style: italic;
-  color: #57606a;
-}
-
-.research-request__sent summary {
-  cursor: pointer;
-  color: #57606a;
 }
 
 .research-checkbox {
