@@ -141,7 +141,10 @@ export function enforceOriginalWords(proposal, placed, { headword = "" } = {}) {
       entry.variants.push(variant);
       added.push({ entryId: entry.id, target: word.term });
     }
-    variant.original = { term: word.term, sense: word.sense, book: bookName(word), originalTitle: word.originalTitle ?? word.translationTitle ?? "" };
+    variant.original = {
+      term: word.term, sense: word.sense, book: bookName(word),
+      originalTitle: word.originalTitle ?? word.translationTitle ?? "", author: word.originalAuthor ?? "",
+    };
     // The original word comes first: it is the translation of its meaning.
     entry.variants = [variant, ...entry.variants.filter((v) => v !== variant)];
     const sameMeaning = (v) => v !== variant && !v.original && (v.senses ?? []).length
@@ -157,6 +160,15 @@ export function enforceOriginalWords(proposal, placed, { headword = "" } = {}) {
     entry.variants = entry.variants.filter((v) => !sameMeaning(v));
   }
   return { added, removed };
+}
+
+/**
+ * The short label of an original word: "from M.", the author of the book it was
+ * borrowed from (runs saved before the author was kept: from the book's name).
+ */
+export function originalSourceLabel(original) {
+  const author = original?.author || /\(([^()]+)\)\s*$/.exec(original?.book ?? "")?.[1] || "";
+  return `from ${author || original?.originalTitle || original?.book || "the source book"}`;
 }
 
 /** An original word's note must say what it is; it names the original book, which is checkable in any language. */

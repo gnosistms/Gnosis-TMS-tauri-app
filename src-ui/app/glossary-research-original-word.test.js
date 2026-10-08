@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  enforceOriginalWords, noteNamesTheBook, originalFor, originalWordOf, placeOriginalWords, requiredOriginalWords,
+  enforceOriginalWords, noteNamesTheBook, originalFor, originalSourceLabel, originalWordOf, placeOriginalWords, requiredOriginalWords,
 } from "./glossary-research-original-word.js";
 import { frozenEntryText } from "./glossary-research-prompts.js";
 
@@ -125,4 +125,10 @@ test("the word with an article counts as the word, a longer rendering does not",
   const placed = placeOriginalWords(candidates, required);
   assert.equal(placed[0].senseId, "s6");
   assert.deepEqual(candidates.senses[0].groups.map((g) => [g.members, g.recommended]), [[["Innermost"], true], [["innermost Being"], false]]);
+});
+
+test("an original word is labelled by the author of its book", () => {
+  assert.equal(originalSourceLabel({ author: "M.", book: "The Dayspring of Youth (M.)" }), "from M.");
+  assert.equal(originalSourceLabel({ book: "The Dayspring of Youth (M.)", originalTitle: "The Dayspring of Youth" }), "from M.", "older runs: from the book's name");
+  assert.equal(originalSourceLabel({ book: "Isis Unveiled", originalTitle: "Isis Unveiled" }), "from Isis Unveiled", "no author known");
 });

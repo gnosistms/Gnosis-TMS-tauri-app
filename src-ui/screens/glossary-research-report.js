@@ -9,6 +9,7 @@ import {
 } from "../lib/ui.js";
 import { formatUsd } from "../app/glossary-research-budget.js";
 import { RARELY_CHOSEN_SHARE } from "../app/glossary-research-report-flow.js";
+import { originalSourceLabel } from "../app/glossary-research-original-word.js";
 import { describeSense, formatZipf } from "../app/glossary-research-frequency.js";
 
 const esc = escapeHtml;
@@ -164,7 +165,7 @@ function renderEntryCard(report, run, draft) {
           <div class="rr-variant__head">
             <input class="rr-variant__target" type="text" lang="${esc(tgt)}" value="${esc(variant.target)}" placeholder="New translation" data-research-entry="${esc(entry.id)}:target:${index}" aria-label="Translation" />
             ${variant.partOfSpeech ? `<span class="rr-pill">${esc(variant.partOfSpeech)}</span>` : ""}
-            ${variant.original ? `<span class="rr-pill rr-pill--ok" title="${esc(`The original word of ${variant.original.book} for this meaning: the translation whenever the term has this meaning, whatever its frequency.`)}">traditional term</span>` : ""}
+            ${variant.original ? `<span class="rr-pill rr-pill--ok" title="${esc(`The original word of ${variant.original.book} for this meaning: the translation whenever the term has this meaning, whatever its frequency.`)}">${esc(originalSourceLabel(variant.original))}</span>` : ""}
             ${variant.fromExisting ? `<span class="rr-pill">in current entry</span>` : ""}
             ${rarelyChosen ? `<span class="rr-pill rr-pill--warn">${c.occurrences ? "rarely chosen" : "never chosen"}</span>` : ""}
           </div>
