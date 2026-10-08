@@ -39,6 +39,7 @@ import {
 } from "./glossary-research-family-budget.js";
 import { fold } from "./glossary-research-occurrences.js";
 import { formatJsonStream, formatThinking } from "./glossary-research-stream-format.js";
+import { liveAnswerHtml } from "./glossary-research-live-views.js";
 import { liveStatusHtml, recordStepTiming, seedStepTimings, stepTimings, timingsSeeded, usualRange } from "./glossary-research-live-progress.js";
 import { parseMoneyValue } from "./money-input.js";
 import { maybeStartGlossaryBackgroundSync } from "./glossary-background-sync.js";
@@ -767,7 +768,16 @@ function updateStreamInDom(entry) {
   if (!block) return false;
   const body = panel.querySelector("[data-live-body]");
   const pinned = body && body.scrollTop + body.clientHeight >= body.scrollHeight - 24;
-  block.innerHTML = entry.type === "thinking" ? formatThinking(entry.text) : formatJsonStream(entry.text);
+  if (entry.type === "thinking") {
+    block.innerHTML = formatThinking(entry.text);
+  } else {
+    // A step with a readable view shows it; the block is re-rendered whole when
+    // the answer switches between the view and the plain JSON.
+    const view = liveAnswerHtml(request);
+    const isView = block.classList.contains("research-live__view");
+    if (Boolean(view) !== isView) return false;
+    block.innerHTML = view ?? formatJsonStream(entry.text);
+  }
   if (body && pinned) body.scrollTop = body.scrollHeight;
   return true;
 }

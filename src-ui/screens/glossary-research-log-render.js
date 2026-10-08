@@ -14,6 +14,7 @@ import {
 } from "../app/glossary-research-log-view.js";
 import { formatJsonStream, formatThinking } from "../app/glossary-research-stream-format.js";
 import { liveStatusHtml } from "../app/glossary-research-live-progress.js";
+import { liveAnswerHtml } from "../app/glossary-research-live-views.js";
 
 function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -161,12 +162,20 @@ function usageText(usage) {
 }
 
 /** What was sent, the thinking and the answer of one request, laid out for reading. */
+/** The answer: its readable view when the step has one, else the indented JSON. */
+function answerBlock(request) {
+  const view = liveAnswerHtml(request);
+  return view
+    ? `<div class="research-live__label">Answer</div><div class="research-live__view" data-live-type="answer-delta">${view}</div>`
+    : `<div class="research-live__label">Answer</div><pre class="research-live__answer" data-live-type="answer-delta">${formatJsonStream(request.answer)}</pre>`;
+}
+
 function exchangeBody(request) {
   return `${request.text || request.instructions ? `<details class="research-live__sent"><summary>What was sent</summary>`
       + `${request.instructions ? `<div class="research-live__label">Instructions</div><div class="research-live__text">${esc(request.instructions)}</div>` : ""}`
       + `${request.text ? `<div class="research-live__label">Texts and question</div><div class="research-live__text">${esc(request.text)}</div>` : ""}</details>` : ""}
     ${request.thinking ? `<div class="research-live__label">Thinking</div><div class="research-live__thinking" data-live-type="thinking">${formatThinking(request.thinking)}</div>` : ""}
-    ${request.answer ? `<div class="research-live__label">Answer</div><pre class="research-live__answer" data-live-type="answer-delta">${formatJsonStream(request.answer)}</pre>` : ""}
+    ${request.answer ? answerBlock(request) : ""}
     ${request.problem ? `<p class="research-line research-line--problem">${esc(request.problem)}</p>` : ""}
     ${request.usage ? `<div class="research-live__usage">${esc(usageText(request.usage))}</div>` : ""}`;
 }

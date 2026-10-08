@@ -1097,3 +1097,88 @@
 .research-review__add .field__input {
   flex: 1;
 }
+
+/* live answer views (the AI's answer shown as data while it streams in) */
+
+.research-live__view {
+  padding: 4px 2px 8px;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--text);
+}
+
+.research-view__heading {
+  margin: 0 0 10px;
+  font-weight: 600;
+}
+
+/* sentences per meaning */
+.research-chart {
+  display: grid;
+  gap: 8px;
+}
+
+.research-chart__row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.research-chart__label {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-height: 1.35;
+}
+
+.research-view__explain {
+  margin: -6px 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.research-chart__tag {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--control-selected-surface);
+  color: var(--link);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.research-chart__track {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.research-chart__bar {
+  display: block;
+  height: 10px;
+  min-width: 2px;
+  border-radius: 0 4px 4px 0;
+  background: #e58a12;
+  transition: width 200ms ease;
+}
+
+.research-chart__row--needed .research-chart__bar {
+  background: #a85c08;
+}
+
+.research-chart__row--rest .research-chart__bar {
+  background: rgba(164, 112, 41, 0.35);
+}
+
+.research-chart__row--rest .research-chart__label {
+  color: var(--muted);
+}
+
+.research-chart__value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}

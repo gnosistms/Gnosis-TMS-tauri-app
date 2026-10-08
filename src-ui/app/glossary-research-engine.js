@@ -609,8 +609,12 @@ export function createResearchEngine(deps) {
     if (general.sample.length) {
       const answer = await client.callJson({
         stage: "frequency", purpose,
-        // The answer lists one item per sentence; "n" opens each item.
-        progress: { key: "n", total: general.sample.length, unit: "sentence" },
+        // The answer lists one item per sentence; "n" opens each item. The live
+        // panel charts the sentences per meaning, so it gets the meanings' names.
+        progress: {
+          key: "n", total: general.sample.length, unit: "sentence", view: "senses",
+          word: forms[0], language: name, senses: senses.map((sense) => ({ id: sense.id, gloss: sense.gloss })),
+        },
         instructions: prompts.senseClassifyInstructions({ languageName: name, word: forms[0], senses }),
         content: general.sample.map((text, index) => `${index + 1}. ${text.length > 400 ? `${text.slice(0, 400)}…` : text}`).join("\n"),
         schema: prompts.senseClassifySchema(senses.map((sense) => sense.id)), schemaName: "senses",
