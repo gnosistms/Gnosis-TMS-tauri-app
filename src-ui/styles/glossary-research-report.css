@@ -72,39 +72,6 @@
   color: var(--message-warning-text);
 }
 
-/* summary */
-
-.rr-summary {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-  gap: 12px;
-}
-
-.rr-stat {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 14px 16px;
-  border: 1px solid var(--surface-border);
-  border-radius: var(--radius-card);
-  background: var(--surface-strong);
-}
-
-.rr-stat strong {
-  font-size: 22px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-.rr-stat span {
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.rr-summary__note {
-  margin-top: -8px;
-}
-
 /* entry card */
 
 .rr-entry {

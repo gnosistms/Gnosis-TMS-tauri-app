@@ -339,21 +339,6 @@ function renderSecondary(run, report) {
     </section>`;
 }
 
-function renderSummary(run) {
-  const totals = run.aggregate.totals;
-  const usage = run.usage ?? [];
-  const cost = usage.reduce((sum, record) => sum + (record.costUsd ?? 0), 0);
-  const stat = (value, label) => `<div class="rr-stat"><strong>${value}</strong><span>${esc(label)}</span></div>`;
-  return `
-    <div class="rr-summary">
-      ${stat(totals.passagesSampled, `passages sampled of ${totals.populationDistinct}`)}
-      ${stat(totals.occurrencesSampled, "uses of the word")}
-      ${totals.judges === 2 ? stat(`${totals.agreement.agreed}/${totals.agreement.compared}`, "uses where both judges agreed") : ""}
-      ${stat(formatUsd(cost), "cost of this research")}
-    </div>
-    <p class="rr-muted rr-summary__note">Nothing changes in the glossary until you press Save to glossary. Untick a translation to leave it out; click a count to read the passages behind it.</p>`;
-}
-
 /** One Save for the whole report: every entry not set to keep the current one. */
 function renderSaveButton(report) {
   const drafts = Object.values(report.entryDrafts ?? {});
@@ -377,7 +362,6 @@ export function renderGlossaryResearchReportScreen(state) {
     title = `Research: ${run.meta.term} → ${run.meta.targetLanguage.name}`;
     body = `
       <section class="rr">
-        ${renderSummary(run)}
         ${report.copyNotice ? `<p class="rr-muted">${esc(report.copyNotice)}</p>` : ""}
         ${run.frozen.entries.map((entry) => renderEntryCard(report, run, entry)).join("")}
         ${renderSecondary(run, report)}
