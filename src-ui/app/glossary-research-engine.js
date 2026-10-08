@@ -27,6 +27,9 @@ import * as prompts from "./glossary-research-prompts.js";
 import { coOccurrence, convergenceContent, sharedRenderings } from "./glossary-research-convergence.js";
 import { aggregateCounts, mergeJudgeCountings } from "./glossary-research-aggregate.js";
 import {
+  bookName, enforceOriginalWords, noteNamesTheBook, originalFor, originalWordOf, originalWordsText, placeOriginalWords, requiredOriginalWords,
+} from "./glossary-research-original-word.js";
+import {
   MIN_SENSE_SAMPLE,
   RESEARCH_DATA_CONTACT,
   combinedZipf,
@@ -977,6 +980,7 @@ export function createResearchEngine(deps) {
       const formKeys = new Set(forms.map((form) => fold(form).trim()));
       const originalSections = [];
       const searched = new Set();
+      const pairReads = new Map(); // original book id → occurrences of its glossary-pair words
       for (const book of top) {
         const record = records.find((item) => item.title === book.title);
         if (!record?.originalBookId || !corpus.originalSample) continue;
@@ -986,6 +990,7 @@ export function createResearchEngine(deps) {
         if (!originals.length) continue;
         const found = await corpus.originalSample(record.originalBookId, originals, settings.seed);
         searched.add(`${record.originalBookId}:${fold(originals.join(",")).trim()}`);
+        pairReads.set(record.originalBookId, found.occurrences ?? 0);
         const name = record.originalTitle ?? book.title;
         info(`original text of ${name}: ${found.occurrences} occurrences of ${originals.map((o) => `“${o}”`).join(", ")} in ${found.paragraphs} passages`);
         originalSections.push(section(
@@ -1011,6 +1016,15 @@ export function createResearchEngine(deps) {
         maxOutputTokens: 16000, effort: settings.effortStudy,
       });
       await checkOriginalTerms(study, top, records, searched);
+      for (const sense of study.senses) {
+        const book = bookOfSense(sense, top);
+        const word = originalWordOf(sense, book && records.find((item) => item.title === book.title), { forms, pairReads });
+        if (!word) continue;
+        sense.originalWord = word;
+        if (word.verified && requiredOriginalWords({ senses: [sense] }, settings.targetLanguageCode).length) {
+          fact(`“${word.term}” is the original ${settings.targetLanguageName} word of ${bookName(word)} for “${sense.sense}” (${word.basis}): it will be the translation for that meaning, whatever its frequency.`);
+        }
+      }
       for (const sense of study.senses.filter((item) => !item.inDictionary)) {
         logResult("senses", [{ sense: sense.sense, sourceBook: sense.sourceBook ?? null, originalTerm: sense.originalTerm ?? null, originalLanguage: sense.originalLanguage ?? null }],
           `${sense.sense}${sense.sourceBook ? ` — from ${sense.sourceBook}` : ""}${sense.originalTerm ? ` (original ${sense.originalLanguage ?? ""} term “${sense.originalTerm}”)` : ""}`);
@@ -1023,6 +1037,20 @@ export function createResearchEngine(deps) {
     });
   }
 
+  /** The reference book (of the most-used ones) a study sense names as its source. */
+  function bookOfSense(sense, top) {
+    if (!sense?.sourceBook) return null;
+    return top.find((item) => {
+      const name = item.title.split(" — ")[0].replace(/\s*\([^)]*\)\s*/g, " ").trim().toLowerCase();
+      return name && sense.sourceBook.toLowerCase().includes(name);
+    }) ?? null;
+  }
+
+  /** Original words this glossary must use (see glossary-research-original-word.js). */
+  function requiredOriginals() {
+    return requiredOriginalWords(store.load("sources")?.study, settings.targetLanguageCode);
+  }
+
   /**
    * When the study only believes it knows the original word of a sense from a
    * translated book, check that word against the book's original text.
@@ -1031,10 +1059,7 @@ export function createResearchEngine(deps) {
     if (!corpus.originalSample) return;
     for (const sense of study.senses) {
       if (sense.inDictionary || !sense.originalTerm || !sense.sourceBook) continue;
-      const book = top.find((item) => {
-        const name = item.title.split(" — ")[0].replace(/\s*\([^)]*\)\s*/g, " ").trim().toLowerCase();
-        return name && sense.sourceBook.toLowerCase().includes(name);
-      });
+      const book = bookOfSense(sense, top);
       const record = book && records.find((item) => item.title === book.title);
       if (!record?.originalBookId || searched.has(`${record.originalBookId}:${fold(sense.originalTerm).trim()}`)) continue;
       const found = await corpus.originalSample(record.originalBookId, [sense.originalTerm], settings.seed, 10);
@@ -1071,10 +1096,12 @@ export function createResearchEngine(deps) {
     return stage("candidates", async () => {
       heading("Candidate translations");
       const sources = store.load("sources");
+      const originals = requiredOriginals();
       const content = [
         `# Term: ${settings.term}`,
         `## Dictionary entry\n${ctx().dictionaryText || "(none found)"}`,
         sources?.study ? `## Study of where the term comes from\n${JSON.stringify(sources.study, null, 1)}` : "",
+        originals.length ? `## Original words (required)\n${originalWordsText(originals, settings.targetLanguageName)}` : "",
         partsText(),
         `## Passages from the texts\n${authorPassages().join("\n\n")}`,
       ].filter(Boolean).join("\n\n");
@@ -1086,6 +1113,10 @@ export function createResearchEngine(deps) {
         schema: prompts.CANDIDATES_SCHEMA, schemaName: "candidates",
         maxOutputTokens: 16000, effort: settings.effortStudy,
       });
+      result.originalWords = placeOriginalWords(result, originals);
+      for (const word of result.originalWords) {
+        info(`“${word.term}” is the recommended translation of “${word.senseText}”: the original word of ${bookName(word)}${word.added ? " (added: the candidates had left it out)" : ""}.`);
+      }
       for (const sense of result.senses) {
         logResult("candidates",
           [{ sense: sense.sense, groups: sense.groups.map((g) => ({ recommended: Boolean(g.recommended), members: g.members })) }],
@@ -1206,7 +1237,7 @@ export function createResearchEngine(deps) {
       for (const sense of store.load("candidates")?.senses ?? []) {
         for (const group of sense.groups ?? []) {
           const members = [...new Set(group.members.map((m) => m.trim()).filter(Boolean))];
-          if (members.length) groups.push({ senseId: sense.senseId, sense: sense.sense, members, recommended: group.recommended, note: group.note });
+          if (members.length) groups.push({ senseId: sense.senseId, sense: sense.sense, members, recommended: group.recommended, note: group.note, ...(group.original ? { original: true } : {}) });
         }
       }
       if (!groups.length) return { available: false, groups: [], candidates: [], failedWords: [], failedTargets: [] };
@@ -1224,7 +1255,7 @@ export function createResearchEngine(deps) {
       for (const group of groups) {
         const ref = source && !source.invented ? source.term.senses[group.senseId] : null;
         const target = ref?.zipf ?? null;
-        group.representative = pickRepresentative(group.members, (m) => (ready ? renderingScore(m, zipfOf) : null), target);
+        group.representative = group.original ? group.members[0] : pickRepresentative(group.members, (m) => (ready ? renderingScore(m, zipfOf) : null), target);
         group.lookalikes = group.members.filter((m) => m !== group.representative && looksLike(m, sourceWords));
       }
       // One check per rendering and sense: a word can carry one sense and lack another.
@@ -1381,8 +1412,10 @@ export function createResearchEngine(deps) {
       const passedWords = new Set();
       const failedTargets = [];
       const passedTargets = new Set();
+      const placedOriginals = store.load("candidates")?.originalWords ?? [];
       const candidates = toCheck.map((c) => {
         const found = byNumber.get(c.n);
+        const original = originalFor(placedOriginals, c.target, c.senseId);
         const reasons = [];
         const notes = [];
         let verdict = ready ? "pass" : "unchecked";
@@ -1432,11 +1465,11 @@ export function createResearchEngine(deps) {
                 continue;
               }
               verdict = "fail";
-              failedWords.push(w.word);
+              if (!original) failedWords.push(w.word);
               reasons.push(`“${w.word}” is not used in general ${name} in the sense needed (${w.neededSense}): 0 of ${needed.classified} sentences; ${sourceName} “${ref.label}”: ${describeSense(ref.measure)}`);
             } else if (ref?.measure?.zipf != null && needed.zipf != null && needed.zipf < ref.measure.zipf - 1) {
               verdict = "fail";
-              failedWords.push(w.word);
+              if (!original) failedWords.push(w.word);
               reasons.push(`“${w.word}” is much less used in the sense needed than ${sourceName} “${ref.label}”: ${formatZipf(needed.zipf)} against ${formatZipf(ref.measure.zipf)}`);
             } else {
               passedWords.add(textKey(w.word, code));
@@ -1449,12 +1482,20 @@ export function createResearchEngine(deps) {
             reasons.push(`much less known than ${sourceName} “${settings.term}” in this sense: Zipf ${formatZipf(z)} against ${formatZipf(senseRef.zipf)}`);
           }
         }
+        if (original && verdict !== "unchecked") {
+          // The original word of the book the meaning comes from is kept whatever its frequency.
+          notes.unshift(`the original word of ${bookName(original)}: the translation for this meaning, whatever its frequency`);
+          notes.push(...reasons.map((reason) => `not applied: ${reason}`));
+          reasons.length = 0;
+          verdict = "pass";
+        }
         if (verdict === "fail") failedTargets.push(c.target);
         else passedTargets.add(textKey(c.target, code));
         return {
           target: c.target, sense: c.sense, senseId: c.senseId, words: items, verdict, reasons, notes,
           zipf: ready ? renderingScore(c.target, senseScore, found?.words) : null,
           established: found?.establishedUsage ?? false, establishedBasis: found?.establishedBasis ?? "",
+          ...(original ? { original: bookName(original) } : {}),
           clashes: findClashes(c.target),
         };
       });
@@ -1467,6 +1508,7 @@ export function createResearchEngine(deps) {
       }
       const outGroups = groups.map((g) => ({
         senseId: g.senseId, sense: g.sense, recommended: g.recommended, note: g.note, representative: g.representative,
+        ...(g.original ? { original: true } : {}),
         members: g.members.map((m) => ({
           target: m,
           zipf: ready ? renderingScore(m, zipfOf, analysis.candidates.find((c) => textKey(c.target, code) === textKey(m, code))?.words) : null,
@@ -1504,7 +1546,7 @@ export function createResearchEngine(deps) {
     const byTarget = new Map(checks.candidates.map((c) => [textKey(c.target), c]));
     const line = (c) => {
       const words = c.words.map((w) => `${w.word} ${formatZipf(w.zipf)}${w.measure?.needed ? `, sense needed ${describeSense(w.measure.needed)}` : ""}`).join("; ");
-      return `${c.target}: ${c.verdict.toUpperCase()}${c.reasons.length ? ` (${c.reasons.join("; ")})` : ""}${words ? ` [${words}]` : ""}${c.clashes.length ? ` [already used for: ${c.clashes.map((x) => x.sourceTerms.join(" / ")).join("; ")}]` : ""}`;
+      return `${c.target}: ${c.verdict.toUpperCase()}${c.original ? ` (ORIGINAL WORD of ${c.original})` : ""}${c.reasons.length ? ` (${c.reasons.join("; ")})` : ""}${words ? ` [${words}]` : ""}${c.clashes.length ? ` [already used for: ${c.clashes.map((x) => x.sourceTerms.join(" / ")).join("; ")}]` : ""}`;
     };
     if (!checks.groups?.length) return checks.candidates.map((c) => `- ${line(c)}`).join("\n");
     return checks.groups.map((g) => {
@@ -1562,6 +1604,10 @@ export function createResearchEngine(deps) {
       "Study of where the term comes from:",
       store.load("sources")?.study ? JSON.stringify(store.load("sources").study, null, 1) : "(not available for these texts)",
       "",
+      ...(() => {
+        const text = originalWordsText(requiredOriginals(), settings.targetLanguageName);
+        return text ? ["Original words (required; see the rule on original words):", text, ""] : [];
+      })(),
       "Candidate study (translations proposed for the term as a whole, in groups of interchangeable renderings), with the checks against general usage (Zipf: 0 = not in ordinary use, 3 = everyday word, 5+ = very common):",
       checksText(),
       "",
@@ -1617,6 +1663,7 @@ export function createResearchEngine(deps) {
       (proposal.removedByChecks ??= []).push(removed);
       log({ type: "problem", text: `Removed “${removed.target}” from entry ${removed.entryId}: it contains “${removed.word}”, whose frequency check failed.` });
     }
+    await enforceOriginals(proposal);
     const problems = validateProposal(proposal, store.load("forms").confirmed);
     problems.push(...unmeasuredRenderings(proposal, store.load("discovery")));
     if (problems.length) info(`proposal notes: ${problems.join("; ")}`);
@@ -1625,6 +1672,37 @@ export function createResearchEngine(deps) {
     for (const item of proposal.leftOutRenderings ?? []) info(`not measured: ${item.rendering} (${item.count}) — ${item.reason}`);
     proposal.existingComparison = await compareWithExisting(proposal);
     return proposal;
+  }
+
+  /**
+   * The original word of a borrowed meaning is a variant, the only one for that
+   * meaning, and its note tells the translating AI that it is the traditional
+   * term (naming the book). A note that does not is rewritten.
+   */
+  async function enforceOriginals(proposal) {
+    const placed = store.load("candidates")?.originalWords ?? [];
+    if (!placed.length) return;
+    const { added, removed } = enforceOriginalWords(proposal, placed, { headword: settings.term });
+    for (const item of added) log({ type: "problem", text: `Added “${item.target}” to entry ${item.entryId}: it is the original word of the book this meaning comes from.` });
+    for (const item of removed) info(`left out “${item.target}” (entry ${item.entryId}): same meaning as the original word “${item.original}”`);
+    for (const entry of proposal.entries) {
+      for (const variant of entry.variants.filter((v) => v.original && !noteNamesTheBook(v))) {
+        const answer = await client.callJson({
+          stage: "original-note", purpose: `write the note for the original word “${variant.target}”`,
+          instructions: prompts.originalNoteInstructions(ctx()),
+          content: [
+            `Term: ${settings.term}. Translation: “${variant.target}”, the original word of ${variant.original.book} for the meaning “${variant.original.sense}”.`,
+            `Book title to name exactly: ${variant.original.originalTitle}`,
+            `Current note: ${variant.note || "(none)"}`,
+            `Other translations of the entry: ${entry.variants.filter((v) => v !== variant).map((v) => `${v.target} (${v.note})`).join("; ") || "(none)"}`,
+          ].join("\n"),
+          schema: prompts.ORIGINAL_NOTE_SCHEMA, schemaName: "original_note",
+          maxOutputTokens: 1500, effort: settings.effortLight,
+        });
+        if (answer?.note) variant.note = answer.note.trim();
+        if (!noteNamesTheBook(variant)) variant.note = `${variant.note} (${variant.original.originalTitle})`.trim();
+      }
+    }
   }
 
   /**
@@ -1773,7 +1851,7 @@ export function createResearchEngine(deps) {
         id: entry.id, kind: entry.kind,
         sourceTerms: entry.sourceTerms.map((t) => t.trim()).filter(Boolean),
         generalNote: entry.generalNote,
-        variants: entry.variants.map(({ id, target, note }) => ({ id, target, note })),
+        variants: entry.variants.map(({ id, target, note, original }) => ({ id, target, note, ...(original ? { original } : {}) })),
       })),
     };
     const version = stableHash(body).slice(0, 12);

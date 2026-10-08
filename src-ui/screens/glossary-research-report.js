@@ -155,7 +155,7 @@ function renderEntryCard(report, run, draft) {
   const variantRows = draft.variants.map((variant, index) => {
     const key = `${entry.id}:${variant.id}`;
     const c = counts.variants[variant.id] ?? { occurrences: 0, passages: 0 };
-    const rarelyChosen = !variant.include && !variant.added
+    const rarelyChosen = !variant.include && !variant.added && !variant.original
       && (counts.occurrences ? c.occurrences / counts.occurrences : 0) < RARELY_CHOSEN_SHARE;
     return `
       <div class="rr-variant${variant.include ? "" : " is-excluded"}">
@@ -163,6 +163,7 @@ function renderEntryCard(report, run, draft) {
         <div class="rr-variant__main">
           <div class="rr-variant__head">
             <input class="rr-variant__target" type="text" lang="${esc(tgt)}" value="${esc(variant.target)}" placeholder="New translation" data-research-entry="${esc(entry.id)}:target:${index}" aria-label="Translation" />
+            ${variant.original ? `<span class="rr-pill rr-pill--ok" title="${esc(`The original word of ${variant.original.book} for this meaning: the translation whenever the term has this meaning, whatever its frequency.`)}">traditional term</span>` : ""}
             ${variant.fromExisting ? `<span class="rr-pill">in current entry</span>` : ""}
             ${rarelyChosen ? `<span class="rr-pill rr-pill--warn">${c.occurrences ? "rarely chosen" : "never chosen"}</span>` : ""}
           </div>

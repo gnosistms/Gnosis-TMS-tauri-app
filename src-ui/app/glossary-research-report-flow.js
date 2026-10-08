@@ -107,9 +107,11 @@ export function buildEntryDrafts(run, glossaryTerms) {
           return {
             id: variant.id, target: variant.target, note: variant.note, count,
             fromExisting,
+            ...(variant.original ? { original: variant.original } : {}),
             // Chosen in under 2% of the sample (or never): proposed for removal, since
-            // every variant is sent to the translating AI; the user can keep it.
-            include: counts.occurrences === 0 || count / counts.occurrences >= RARELY_CHOSEN_SHARE,
+            // every variant is sent to the translating AI; the user can keep it. The
+            // original word of a borrowed meaning always stays.
+            include: Boolean(variant.original) || counts.occurrences === 0 || count / counts.occurrences >= RARELY_CHOSEN_SHARE,
           };
         })
         .sort((a, b) => b.count - a.count);

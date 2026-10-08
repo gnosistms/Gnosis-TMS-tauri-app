@@ -132,6 +132,8 @@ function fakeModel({ failFirstCounting = false, relation = "same" } = {}) {
         out = { forms: [{ form: "fatal", keep: true, reason: "ok" }, { form: "fatales", keep: true, reason: "ok" }, { form: "fatalmente", keep: false, reason: "derived adverb" }] };
       } else if (request.stage === "discovery") {
         out = { items: unique.map((occId) => ({ occId, sense: "2", corpusSense: null, rendering: "disastrous", phraseTranslation: "a disastrous result", expressionCandidate: null, reason: "fake" })) };
+      } else if (request.schemaName === "original_note") {
+        out = { note: "The traditional English term for this meaning, from The Source Book." };
       } else if (request.schemaName === "original_check") {
         out = { confirmed: true, originalTerm: null, basis: "the original uses it the same way", meaningInOriginal: "a guide" };
       } else if (request.stage === "sources") {
@@ -238,7 +240,7 @@ test("the proposal is made without the glossary, from the source study and the c
   assert.match(byStage.sources.content, /Fatal = Fateful One/);
   assert.match(byStage.sources.content, /Como dice ⟦Libro fuente⟧/);
   assert.match(byStage.candidates.content, /Fateful One/, "the candidate study sees the source study");
-  assert.match(byStage.proposal.content, /the Fateful One/, "the proposal sees the candidate study");
+  assert.match(byStage.proposal.content, /Fateful One: [A-Z]+ \(ORIGINAL WORD/, "the proposal sees the candidate study, with the original word marked");
   assert.doesNotMatch(byStage.proposal.content, /Existing glossary/);
   assert.equal(byStage.comparison.stage, "comparison", "the existing entry is compared afterwards");
   assert.equal(review.proposal.existingComparison[0].proposed, "fateful");
@@ -690,7 +692,8 @@ test("a rendering that fails for one sense but passes for another is not removed
   };
   const { engine: research, store } = engine({ model, languageData: fakeLanguageData() });
   await research.runToReview();
-  const verdicts = store.data.checks.candidates.map((c) => [c.senseId, c.verdict]);
+  // The fake source study's original word ("Fateful One") is added and checked too.
+  const verdicts = store.data.checks.candidates.filter((c) => !c.original).map((c) => [c.senseId, c.verdict]);
   assert.deepEqual(verdicts, [["s1", "fail"], ["s2", "pass"]]);
   assert.deepEqual(store.data.checks.failedTargets, []);
 });

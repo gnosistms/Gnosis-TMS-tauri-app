@@ -1,7 +1,7 @@
 // Prompt texts and strict JSON schemas for Glossary Research.
 // Bump RESEARCH_PROMPT_VERSION on any change that could alter a judgment.
 
-export const RESEARCH_PROMPT_VERSION = "2026-10-08.5";
+export const RESEARCH_PROMPT_VERSION = "2026-10-08.7";
 
 const STR = { type: "string" };
 const NSTR = { anyOf: [{ type: "string" }, { type: "null" }] };
@@ -205,13 +205,19 @@ Rules:
 - Work sense by sense. A candidate must render the meaning the term has in these texts (the study of where the term comes from, when given, explains special senses). senseId: the id of the sense in the list of the term's senses below ("s1", …), or "none" for a sense not in that list.
 - GROUPS. Put renderings that a translator could swap for one another in most passages of this sense in one group (members). Start a separate group only for a difference a translator must choose by: a different meaning, a clearly different register, or a collocation that only one of them fits. Shades of intensity or emphasis are not reasons to split. Every rendering you consider goes into some group: nothing is dropped, and each group is later represented by the member whose general-usage frequency best fits the term. The note and rationale are written once per group.
 - Prefer renderings that translate the term's own meaning over substituting another term the author equates it with. A synonym names the same thing with a different word; list it only if a translator might really need it, and say in its note that it is a synonym and what is lost.
-- If a sense of the term is a translation of an original-language term and ${ctx.targetName} IS that original language, the original term must be one of the candidates for that sense.
+- ORIGINAL WORDS. When "Original words (required)" names one for a meaning, that word is the traditional ${ctx.targetName} term for the meaning: put it alone in its own group for that sense, recommended, and recommend no other group of that sense. List other renderings of that meaning only if the passages show the author using the term in that meaning in a way the original word cannot render. Otherwise, if a sense of the term translates an original-language term and ${ctx.targetName} IS that original language, the original term must be one of the candidates for that sense.
 - Notes are written in ${ctx.targetName}, at most 40 words. Rationales are in ${ctx.reportName}, at most 25 words each. sense at most 20 words. ${quotationRules(ctx)}
 - Mark at most one group per sense as recommended.
 - A rendering must be understood by a general ${ctx.targetName} reader. A word built from parts works only if each part carries the needed sense in present-day general ${ctx.targetName} use, and a ${ctx.targetName} word that looks like the ${ctx.sourceName} word may not carry the sense used here. Include plain renderings and phrases as well as specialist terms and look-alikes: every candidate is checked afterwards against general-usage frequencies, sense by sense.`;
 }
 
 // --- proposal ------------------------------------------------------------
+
+export const ORIGINAL_NOTE_SCHEMA = object({ note: STR });
+
+export function originalNoteInstructions(ctx) {
+  return `Write the glossary note for one translation of the ${ctx.sourceName} term “${ctx.headword}”. The translation is the original word of the book the author took this meaning from: the traditional ${ctx.targetName} term for it. The note is read by a translating AI with each sentence that contains the term. In ${ctx.targetName}, at most 25 words, say that it is the traditional ${ctx.targetName} term for this meaning, name the book by the title given (exactly as given), and say it is used whenever the term has this meaning. Keep any useful point of the current note (e.g. capitals, an article). Nothing else.`;
+}
 
 const VARIANT = object({
   id: STR,
@@ -250,7 +256,7 @@ Principles:
 - START FROM THE CANDIDATE STUDY: its candidates were chosen for the term as a whole, from the study of where the term comes from. They come in groups of interchangeable renderings, each shown by its representative with the other members after "also"; a group is one option, not several. Keep its recommended groups unless the readings show they fail. A non-representative member may replace its representative when the readings favour it.
 - Every rendering the open reading used two or more times (see the rendering tally) must be a variant, or be listed in leftOutRenderings with its count and the reason it should not be measured (e.g. it is a synonym the author equates the term with, not a translation of it).
 - Prefer renderings of the term's own meaning over another term the author equates it with; such a synonym is a variant only if translators really need it, and its note says so.
-- If the term translates an original-language term and ${ctx.targetName} is that original language, the original term must be a variant.
+- ORIGINAL WORDS. When "Original words (required)" names one, it is the traditional ${ctx.targetName} term for its meaning: it must be a variant, whatever its frequency, and the only variant for that meaning (give it exactly the same senses labels as the meaning has; other renderings of that meaning go in leftOutRenderings). Other meanings of the term that do not come from that book keep their own variants. Its note says, in ${ctx.targetName}, that it is the traditional ${ctx.targetName} term for this meaning, naming the original book by its title exactly as given, and that it is used whenever the term has this meaning (at most 25 words). Otherwise, if the term translates an original-language term and ${ctx.targetName} is that original language, the original term must be a variant.
 - Existing translations found in the texts (when shown) are hints, not authorities.
 - CHECKS. The candidate checks (below) measured the candidates against general ${ctx.targetName} usage, sense by sense. A candidate with verdict "fail" must not be a variant, and no variant may contain a word whose check failed; if the open reading used such a rendering, list it in leftOutRenderings with the check's reason. A rendering that was not checked may be added only when it is made of common ${ctx.targetName} words used in their ordinary sense.
 - EXPRESSIONS. Propose a separate expression entry (kind "expression") only for a recurring fixed expression (normally ≥3 occurrences in the whole population, or a listed dictionary complex form that is attested) whose translation cannot be composed from the word variants. Its sourceTerms list every surface spelling to match, lower case. Recurring combinations that need no entry go in rejectedExpressions.
@@ -286,7 +292,7 @@ export function frozenEntryText(frozen, targetName) {
     lines.push(`${entry.kind === "expression" ? "EXPRESSION ENTRY" : "ENTRY"} [${entry.id}] “${entry.sourceTerms.join(" / ")}”`);
     lines.push(`General note (${targetName}): ${entry.generalNote}`);
     for (const variant of entry.displayOrder ?? entry.variants) {
-      lines.push(`  [${variant.id}] ${variant.target} — ${variant.note}`);
+      lines.push(`  [${variant.id}] ${variant.target} — ${variant.note}${variant.original ? `\n      TRADITIONAL ${targetName.toUpperCase()} TERM: the original word of ${variant.original.book} for the meaning “${variant.original.sense}”.` : ""}`);
     }
     lines.push("");
   }
@@ -313,7 +319,7 @@ export function translateInstructions(ctx, frozenText) {
 The glossary entries (frozen; do not change them):
 ${frozenText}
 
-Each passage marks one occurrence per id as ⟦…⟧ [id] and states which entry applies. Choose only among that entry's variants. An "existing translation" line, when present, may be wrong; do not copy it.
+Each passage marks one occurrence per id as ⟦…⟧ [id] and states which entry applies. Choose only among that entry's variants. A variant marked TRADITIONAL ${ctx.targetName.toUpperCase()} TERM is the original word of the book the author took that meaning from: whenever the occurrence has that meaning, translate it with that variant, even where another wording would read more smoothly; use another variant only when the occurrence has a different meaning that does not come from that book. An "existing translation" line, when present, may be wrong; do not copy it.
 
 For every id: first translate into ${ctx.targetName} the complete sentence that contains the marked occurrence (sentenceTranslation), naturally and faithfully, using the entry as guidance. Then:
 - chosenWording: the exact characters of your translation that render the marked word or expression (a verbatim substring of sentenceTranslation).
