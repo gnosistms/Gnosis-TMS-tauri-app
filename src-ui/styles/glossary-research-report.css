@@ -831,9 +831,13 @@
   }
 }
 
-/* a score above the top of the scale: number inside the end of the full bar */
-.rr-scale__value--inside {
-  transform: translateX(calc(-100% - 12px));
-  background: transparent;
-  color: var(--accent-text);
+/* the end ticks sit on the chart's edges: keep their labels inside */
+.rr-scale__axis span:first-child {
+  transform: none;
+  text-align: left;
+}
+
+.rr-scale__axis span:last-child {
+  transform: translateX(-100%);
+  text-align: right;
 }

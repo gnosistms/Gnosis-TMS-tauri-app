@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { renderGlossaryResearchReportScreen } from "./glossary-research-report.js";
+import { renderGlossaryResearchReportScreen, zipfRange } from "./glossary-research-report.js";
 import { buildEntryDrafts } from "../app/glossary-research-report-flow.js";
 
 function run() {
@@ -43,4 +43,11 @@ test("an entry already in the glossary switches between the suggestion and the c
   assert.match(kept, /Why: too broad/);
   assert.doesNotMatch(kept, /data-research-entry="e1:target:0"/);
   assert.match(kept, /data-action="save-research-report"[^>]*disabled/);
+});
+
+test("each chart's scale covers its own values on whole numbers, at least two steps wide", () => {
+  assert.deepEqual(zipfRange([2.28, 4.52, 3.48, 2.48]), { lo: 2, hi: 5 });
+  assert.deepEqual(zipfRange([0, 2.98, 3.57]), { lo: 0, hi: 4 });
+  assert.deepEqual(zipfRange([3.1, 3.2]), { lo: 2, hi: 4 });
+  assert.deepEqual(zipfRange([6.6, 3.04, 2.04]), { lo: 1, hi: 7 });
 });

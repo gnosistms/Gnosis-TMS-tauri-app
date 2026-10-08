@@ -212,10 +212,30 @@ function renderEntryCard(report, run, entry) {
     </article>`;
 }
 
-// Research words sit well below the commonest function words; a rarer score
-// above the top of the scale fills its bar and shows its number inside it.
-const ZIPF_MAX = 6;
-const ZIPF_TICKS = [[1, "rare"], [3, "everyday"], [5, "very common"]];
+const ZIPF_WORDS = ["", "rare", "uncommon", "everyday", "common", "very common"];
+
+/**
+ * The stretch of the Zipf scale one chart needs: from just below its lowest
+ * value to just above its highest, on whole numbers, at least two steps wide.
+ */
+export function zipfRange(values) {
+  const known = values.filter((v) => Number.isFinite(v));
+  if (!known.length) return { lo: 0, hi: 4 };
+  let lo = Math.max(0, Math.floor(Math.min(...known) - 0.25));
+  let hi = Math.ceil(Math.max(...known) + 0.25);
+  if (hi - lo < 2) hi = lo + 2;
+  return { lo, hi };
+}
+
+/** Whole-number ticks of a range, each with its plain word while there is room for the words. */
+function zipfTicks({ lo, hi }) {
+  const ticks = [];
+  for (let z = Math.ceil(lo); z <= hi; z += 1) {
+    const word = hi - lo <= 4 || z % 2 === 1 ? ZIPF_WORDS[z] ?? "" : "";
+    ticks.push([z, word]);
+  }
+  return ticks;
+}
 
 /** Plain word for a Zipf score. */
 function zipfWord(zipf) {
@@ -228,7 +248,8 @@ function zipfWord(zipf) {
   return "very common";
 }
 
-const at = (zipf) => `${(Math.max(0, Math.min(ZIPF_MAX, zipf ?? 0)) / ZIPF_MAX) * 100}%`;
+/** Where a score sits on a chart's range, as a CSS length. */
+const placeOn = ({ lo, hi }) => (zipf) => `${((Math.max(lo, Math.min(hi, zipf ?? lo)) - lo) / (hi - lo)) * 100}%`;
 
 /** The line under a translation: which word set its score, and anything else worth knowing. */
 function scoredBy(c, tgt) {
@@ -259,6 +280,8 @@ function renderMeaning(sense, index, measure, candidates, src, tgt, meta) {
     : measured
       ? `In general ${esc(src.name)}, ${term} in this meaning scores <strong>${formatZipf(measure.zipf)}</strong>, ${zipfWord(measure.zipf)} (${measure.inSense} of the ${measure.classified} sentences we sorted use it). A translation should score at least <strong>${formatZipf(minimum)}</strong>.`
       : `None of the ${measure.classified} general ${esc(src.name)} sentences we sorted use this meaning, so we can't tell how common it is (below ${formatZipf(measure.upperBound)}). Its translations are not held to a minimum.`;
+  const range = zipfRange([...candidates.map((c) => c.zipf), measured ? measure.zipf : null, minimum]);
+  const at = placeOn(range);
   const verdict = (c) => c.verdict === "fail"
     ? (c.reasons.some((r) => /^much less known than/.test(r)) ? ["too rare", "fail"] : ["fails", "fail"])
     : c.verdict === "pass" ? ["passes", "pass"] : [c.verdict === "unclear" ? "unclear" : "not checked", "unclear"];
@@ -273,7 +296,7 @@ function renderMeaning(sense, index, measure, candidates, src, tgt, meta) {
       </div>
       <div class="rr-scale__plot" title="${esc(`${c.target}: ${formatZipf(c.zipf)}${measured ? `, minimum ${formatZipf(minimum)}` : ""}`)}">
         <span class="rr-scale__bar rr-scale__bar--${kind}" style="width:${at(c.zipf)}"></span>
-        <span class="rr-scale__value${(c.zipf ?? 0) > ZIPF_MAX ? " rr-scale__value--inside" : ""}" style="left:${at(c.zipf)}">${c.zipf == null ? "no score" : formatZipf(c.zipf)}${absent ? ` · not found in general ${esc(tgt.name)}` : ""}</span>
+        <span class="rr-scale__value" style="left:${at(c.zipf)}">${c.zipf == null ? "no score" : formatZipf(c.zipf)}${absent ? ` · not found in general ${esc(tgt.name)}` : ""}</span>
       </div>
       <div class="rr-scale__result"><span class="rr-pill rr-pill--${kind === "pass" ? "ok" : kind === "fail" ? "bad" : "warn"}">${label}</span></div>
       </div>`;
@@ -295,7 +318,7 @@ function renderMeaning(sense, index, measure, candidates, src, tgt, meta) {
           <div class="rr-scale__row rr-scale__row--axis" aria-hidden="true">
             <span></span>
             <div class="rr-scale__axis">
-              ${ZIPF_TICKS.map(([z, word]) => `<span style="left:${at(z)}"><b>${z}</b>${esc(word)}</span>`).join("")}
+              ${zipfTicks(range).map(([z, word]) => `<span style="left:${at(z)}"><b>${z}</b>${esc(word)}</span>`).join("")}
             </div>
             <span></span>
           </div>
