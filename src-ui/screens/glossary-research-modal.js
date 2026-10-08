@@ -283,11 +283,10 @@ function renderLog(log, openChoices) {
 function renderReview(research, targetName, targetCode) {
   const proposal = research.proposalDraft;
   if (!proposal) return "";
-  const several = proposal.entries.length > 1;
   const relatedWord = Boolean(research.familyQueue) && research.term !== research.familyQueue.headword;
   const entries = proposal.entries.map((entry, entryIndex) => `
     <section class="research-review__entry">
-      ${several ? `<h3 class="research-review__entry-title">${esc(entry.sourceTerms[0] ?? "")}${entry.kind === "expression" ? ' <span class="research-review__hint">expression</span>' : ""}</h3>` : ""}
+      <h3 class="research-review__entry-title">${esc(entry.sourceTerms[0] ?? "")}${entry.kind === "expression" ? ' <span class="research-review__hint">expression</span>' : ""}</h3>
       <ul class="research-review__list">
         ${entry.variants.map((variant, variantIndex) => `
           <li class="research-review__item">
