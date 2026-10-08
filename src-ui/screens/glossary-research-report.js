@@ -217,13 +217,17 @@ const ZIPF_WORDS = ["", "rare", "uncommon", "everyday", "common", "very common"]
 /**
  * The stretch of the Zipf scale one chart needs: from the whole number just
  * below its lowest value to just past its highest (the numbers beside the bars
- * get their own room in the layout), at least 1.5 steps wide.
+ * get their own room in the layout), at least 1.5 steps wide, and extended to
+ * the next whole number when it would otherwise stop within a third of a step of it.
  */
 export function zipfRange(values) {
   const known = values.filter((v) => Number.isFinite(v));
   if (!known.length) return { lo: 0, hi: 4 };
   const lo = Math.max(0, Math.floor(Math.min(...known) - 0.25));
-  const hi = Math.max(Math.max(...known) + 0.1, lo + 1.5);
+  let hi = Math.max(Math.max(...known) + 0.1, lo + 1.5);
+  // End on a whole number or clearly short of one: a chart that stops just
+  // before a number would look as if that number's label were missing.
+  if (Math.ceil(hi) - hi <= 1 / 3) hi = Math.ceil(hi);
   return { lo, hi: Math.round(hi * 100) / 100 };
 }
 
