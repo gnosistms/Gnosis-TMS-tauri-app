@@ -1,10 +1,17 @@
 /* Glossary Research: modal, run log, review, report page. */
 
+/* The run window takes nearly the full height of the app window, at a reading width. */
+.modal-backdrop:has(> .research-modal--run) {
+  padding: 10px 28px;
+}
+
 .research-modal--run {
-  width: min(980px, 100%);
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  width: min(980px, 100%);
+  height: 100%;
+  max-height: none;
+  overflow: auto;
 }
 
 /* The results give way so the live panel and the buttons stay in view. */
@@ -19,7 +26,12 @@
   flex: none;
 }
 
-.research-modal--run > .modal-card__body > .research-results,
+.research-modal--run > .modal-card__body > .research-results {
+  flex: 1 1 auto;
+  min-height: 140px;
+  max-height: none;
+}
+
 .research-modal--run > .modal-card__body > .research-disclosure {
   flex: 0 1 auto;
   min-height: 0;
