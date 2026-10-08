@@ -668,7 +668,7 @@ test("a run's measurements are collected for later runs, one per word and sense"
   assert.equal(mergeMeasurements(found, [{ ...found[1], wordZipf: 0 }, { language: "en", word: "sensory", sense: "of the senses", needed }]).length, 3);
 });
 
-test("a related word with few passages gets the light study and reuses earlier measurements", async () => {
+test("a related word reuses earlier measurements of the same word in the same sense", async () => {
   const base = lookalikeModel();
   let englishFrequencyCalls = 0;
   const model = {
@@ -687,17 +687,11 @@ test("a related word with few passages gets the light study and reuses earlier m
     model, items: passages(3), languageData: fakeLanguageData(),
     extraSettings: {
       familyBatch: true, familyHeadword: "fatalismo",
-      baseSources: { summary: "From the source book.", senses: [] },
       siblingEntries: [{ sourceTerms: ["fatalismo"], targetTerms: ["fatalism"], notes: [""] }],
       priorMeasurements: [prior],
     },
   });
   await research.runToReview();
-  assert.equal(store.data.sample.light, true);
-  assert.equal(store.data.sample.measuredIds.length, 3, "every passage is counted");
-  assert.equal(store.data.sources.inherited, true);
-  assert.ok(!model.calls.includes("sources"), "the origin study is inherited, not repeated");
-  assert.ok(!model.calls.includes("discovery"));
   assert.equal(englishFrequencyCalls, 0, "the look-alike was measured in an earlier run");
   const fatal = store.data.checks.candidates.find((c) => c.target === "fatal");
   assert.equal(fatal.verdict, "fail");

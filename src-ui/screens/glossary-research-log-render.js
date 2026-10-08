@@ -76,6 +76,7 @@ function stats(figures) {
 const zipfText = (value) => (value == null ? "—" : Number(value).toFixed(2));
 
 Object.assign(RESULT_RENDERERS, {
+  // item.light: runs saved while a light study for rare related words existed.
   sampling([item]) {
     return stats([
       [item.distinct, item.distinct === 1 ? "passage" : "distinct passages"],

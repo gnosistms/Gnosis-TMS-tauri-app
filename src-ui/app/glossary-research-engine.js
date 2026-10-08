@@ -53,10 +53,6 @@ export const RESEARCH_DEFAULTS = {
   frequencyChecks: true,
   senseSample: 100,
   maxSenseChecks: 10,
-  // A related word with this few passages, researched after another word of its
-  // family, gets the light study: it inherits what the batch already learned.
-  studyMode: "auto", // auto | full | light
-  lightMaxPassages: 3,
 };
 
 /**
@@ -527,14 +523,6 @@ export function createResearchEngine(deps) {
     };
   }
 
-  const isLight = () => store.load("sample")?.light === true;
-
-  function siblingText() {
-    const siblings = settings.siblingEntries ?? [];
-    if (!siblings.length) return "";
-    return `## Related words already studied in this batch (their translations, with notes)\n${siblings.map((entry) => `- ${entry.sourceTerms.join(" / ")} → ${entry.targetTerms.map((t, i) => `${t}${entry.notes?.[i] ? ` (${entry.notes[i].slice(0, 160)})` : ""}`).join("; ")}`).join("\n")}`;
-  }
-
   const ctx = (extra = {}) => ({
     headword: settings.term,
     sourceName: settings.sourceLanguageName,
@@ -749,20 +737,6 @@ export function createResearchEngine(deps) {
         throw new ResearchStop(`“${settings.term}” does not occur in the selected texts.`, "no-texts");
       }
       const population = await corpus.population(forms);
-      const light = Boolean(settings.familyBatch) && settings.studyMode !== "full"
-        && (settings.studyMode === "light" || population.distinct <= settings.lightMaxPassages);
-      if (light) {
-        const pool = await corpus.sample(forms, population.distinct, settings.seed);
-        logResult("sampling", [{ rows: population.rows, distinct: population.distinct, duplicateGroups: population.duplicateGroups, measuring: pool.items.length, discovery: 0, overlap: 0, light: true }],
-          `${population.distinct} passage${population.distinct === 1 ? "" : "s"}: light study, building on the related words already studied; every passage is translated by both judges.`);
-        return {
-          meta: { ...pool.meta, populationRows: population.rows, populationDistinct: population.distinct, duplicateGroups: population.duplicateGroups },
-          nRequested: settings.sampleSize, nActual: pool.items.length, overlap: 0, light: true,
-          measuredIds: pool.items.map((i) => i.itemId), discoveryIds: [],
-          items: Object.fromEntries(pool.items.map((i) => [i.itemId, i])),
-          neighbours: [],
-        };
-      }
       const n = Math.min(settings.sampleSize, population.distinct);
       const poolSize = Math.min(population.distinct, n + settings.discoverySize);
       const pool = await corpus.sample(forms, poolSize, settings.seed);
@@ -775,7 +749,7 @@ export function createResearchEngine(deps) {
         discovery = [...discovery, ...extra];
       }
       const neighbours = corpus.collocations ? await corpus.collocations(forms) : [];
-      logResult("sampling", [{ rows: population.rows, distinct: population.distinct, duplicateGroups: population.duplicateGroups, measuring: n, discovery: discovery.length, overlap, light: false }],
+      logResult("sampling", [{ rows: population.rows, distinct: population.distinct, duplicateGroups: population.duplicateGroups, measuring: n, discovery: discovery.length, overlap }],
         `${population.rows} matching passages, ${population.distinct} distinct (${population.duplicateGroups} duplicate groups); measuring ${n}, discovery ${discovery.length}${overlap ? ` (overlap ${overlap})` : ""}`);
       return {
         meta: { ...pool.meta, populationRows: population.rows, populationDistinct: population.distinct, duplicateGroups: population.duplicateGroups },
@@ -802,10 +776,6 @@ export function createResearchEngine(deps) {
   async function traceSources() {
     return stage("sources", async () => {
       heading("Where the term comes from");
-      if (isLight() && settings.baseSources) {
-        fact(`Taken from the study of “${settings.familyHeadword}”.`);
-        return { study: settings.baseSources, inherited: true };
-      }
       if (!corpus.sourceUsage) {
         info("The selected texts have no reference books to trace the term in.");
         return { skipped: true };
@@ -960,14 +930,13 @@ export function createResearchEngine(deps) {
         `## Dictionary entry\n${ctx().dictionaryText || "(none found)"}`,
         sources?.study ? `## Study of where the term comes from\n${JSON.stringify(sources.study, null, 1)}` : "",
         partsText(),
-        isLight() ? siblingText() : "",
         `## Passages from the texts\n${authorPassages().join("\n\n")}`,
       ].filter(Boolean).join("\n\n");
       const result = await client.callJson({
         stage: "candidates", purpose: "propose candidate translations for the whole term",
         instructions: prompts.candidatesInstructions(ctx()), content,
         schema: prompts.CANDIDATES_SCHEMA, schemaName: "candidates",
-        maxOutputTokens: isLight() ? 8000 : 16000, effort: isLight() ? settings.effortProposal : settings.effortStudy,
+        maxOutputTokens: 16000, effort: settings.effortStudy,
       });
       for (const sense of result.senses) {
         logResult("candidates",
@@ -1340,10 +1309,6 @@ export function createResearchEngine(deps) {
   async function discover() {
     return stage("discovery", async () => {
       heading("Discovery");
-      if (isLight()) {
-        info("Skipped: both judges translate every passage.");
-        return { occurrences: [], readings: {}, skipped: true };
-      }
       const sample = store.load("sample");
       const items = sample.discoveryIds.map((id) => sample.items[id]);
       const occurrences = buildOccurrences(items, [], "d", settings.sourceLanguageCode);
@@ -1385,7 +1350,6 @@ export function createResearchEngine(deps) {
       "Study of where the term comes from:",
       store.load("sources")?.study ? JSON.stringify(store.load("sources").study, null, 1) : "(not available for these texts)",
       "",
-      ...(isLight() ? [siblingText(), ""] : []),
       "Candidate study (translations proposed for the term as a whole, in groups of interchangeable renderings), with the checks against general usage (Zipf: 0 = not in ordinary use, 3 = everyday word, 5+ = very common):",
       checksText(),
       "",

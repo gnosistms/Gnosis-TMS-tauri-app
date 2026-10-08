@@ -565,7 +565,6 @@ async function beginResearchRun(render, resume = null, family = null) {
         wordLimit: limits.word ?? DEFAULT_WORD_LIMIT_USD,
         totalLimit: limits.total ?? DEFAULT_TOTAL_LIMIT_USD,
         spentByRun: {}, done: [], stopped: [],
-        baseSources: store.load("sources")?.study ?? null,
         measurements: [],
       };
     }
@@ -989,7 +988,7 @@ export async function researchRelatedWordsOf(render, runId) {
       familyForms: [...(stages.forms?.confirmed ?? []), ...words.flatMap((word) => word.forms)],
       mainLimit: meta.spendingLimitUsd, wordLimit: limits.word ?? DEFAULT_WORD_LIMIT_USD, totalLimit: limits.total ?? DEFAULT_TOTAL_LIMIT_USD,
       spentByRun: {}, done: [], stopped: [],
-      baseSources: stages.sources?.study ?? null, measurements: [],
+      measurements: [],
     };
     queueSiblings(queue, store);
     keepMeasurements(queue, store, meta);
@@ -1053,7 +1052,7 @@ async function researchNextFamilyWord(render) {
   await beginResearchRun(render, null, {
     familyBatch: true, familyHeadword: queue.headword,
     siblingEntries: structuredClone(queue.siblings), familyForms: queue.familyForms,
-    priorMeasurements: structuredClone(queue.measurements ?? []), baseSources: queue.baseSources ?? null,
+    priorMeasurements: structuredClone(queue.measurements ?? []),
   });
 }
 
