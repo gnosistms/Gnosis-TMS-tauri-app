@@ -18,7 +18,8 @@ function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
 
-const DOWNLOAD_LINE = /^(Downloading|Downloaded) /;
+// Progress lines that replace each other: data downloads and corpus counts.
+const DOWNLOAD_LINE = /^(Downloading|Downloaded) |^Counting \d+ words? in the general /;
 
 // --- results ---------------------------------------------------------------------
 

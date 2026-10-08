@@ -125,7 +125,7 @@ export function textKey(text, code = "") {
  * whole in the general corpus, never split into syllables or characters.
  * items: [{ word, forms? }]. Returns a Map from textKey(word) to the score.
  */
-export async function scoreWords(languageData, code, items) {
+export async function scoreWords(languageData, code, items, onCounting = null) {
   const scores = new Map();
   const wanted = [];
   for (const item of items) {
@@ -149,6 +149,7 @@ export async function scoreWords(languageData, code, items) {
     if (!(score > 0)) toCount.push(w);
   }
   if (toCount.length && languageData.corpusZipf) {
+    onCounting?.(toCount.map((w) => w.key));
     const counted = await languageData.corpusZipf(code, [...new Set(toCount.flatMap((w) => w.forms))]).catch(() => []);
     const corpusScore = new Map(counted.map((c) => [textKey(c.phrase, code), c.zipf]));
     for (const w of toCount) scores.set(w.key, combinedZipf(w.forms.map((form) => corpusScore.get(form) ?? 0)));
@@ -608,7 +609,10 @@ export function createResearchEngine(deps) {
     };
   }
 
-  const wordScores = (code, items) => scoreWords(languageData, code, items);
+  const wordScores = (code, items) => scoreWords(languageData, code, items, (words) => {
+    const shown = words.slice(0, 8).map((w) => `“${w}”`).join(", ");
+    info(`Counting ${words.length === 1 ? "a word" : `${words.length} words`} the ${settings.targetLanguageName} frequency list does not hold as a unit, whole, in the general ${settings.targetLanguageName} corpus: ${shown}${words.length > 8 ? "…" : ""}`);
+  });
   const renderingScore = (rendering, scoreOf, words = null) => scoreRendering(settings.targetLanguageCode, rendering, scoreOf, words);
 
   const ctx = (extra = {}) => ({

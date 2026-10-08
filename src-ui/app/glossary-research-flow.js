@@ -75,9 +75,21 @@ function listenForDataDownloads(render) {
     unlisten = fn;
     if (stopped) unlisten?.();
   }).catch(() => {});
+  // Counting words in a general corpus reads up to a million sentences: say how far it is.
+  let unlistenCount = null;
+  Promise.resolve(listen("glossary-research-count-progress", (event) => {
+    const { language, done, total, words } = event.payload ?? {};
+    const name = languageName(language, language);
+    const of = total ? ` of ${total.toLocaleString("en-US")}` : "";
+    onEngineLog(render, { type: "info", text: `Counting ${words === 1 ? "1 word" : `${words} words`} in the general ${name} corpus: ${Number(done ?? 0).toLocaleString("en-US")}${of} sentences read…` });
+  })).then((fn) => {
+    unlistenCount = fn;
+    if (stopped) unlistenCount?.();
+  }).catch(() => {});
   return () => {
     stopped = true;
     unlisten?.();
+    unlistenCount?.();
   };
 }
 const streamHandlers = new Map();

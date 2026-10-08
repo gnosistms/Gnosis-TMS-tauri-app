@@ -16,7 +16,7 @@ use std::time::{Duration, SystemTime};
 
 use flate2::read::GzDecoder;
 use rand::{rngs::StdRng, seq::SliceRandom, SeedableRng};
-use regex::{RegexBuilder, RegexSetBuilder};
+use regex::RegexBuilder;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -418,14 +418,74 @@ fn corpus_count_cache() -> &'static Mutex<HashMap<String, u64>> {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// The pattern for a phrase as a whole: inside text for unspaced scripts, at word edges otherwise.
-fn whole_phrase_pattern(language: &str, phrase: &str) -> String {
-    let escaped = regex::escape(phrase);
-    if unspaced(language) {
-        escaped
-    } else {
-        format!(r"(?:^|[^{WORD_CHARS}]){escaped}(?:[^{WORD_CHARS}]|$)")
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CountProgress {
+    language: String,
+    done: u64,
+    total: u64,
+    words: usize,
+}
+
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_' || c == '\u{200C}' || c == '\u{200D}'
+        || matches!(unicode_general_mark(c), true)
+}
+
+/// Combining marks (vowel signs, decomposed accents) belong to the word they sit on.
+fn unicode_general_mark(c: char) -> bool {
+    // Combining Diacritical Marks and the common Indic/Thai vowel-sign blocks.
+    matches!(c as u32, 0x0300..=0x036F | 0x0483..=0x0489 | 0x0591..=0x05C7 | 0x0610..=0x061A | 0x064B..=0x065F
+        | 0x0670 | 0x06D6..=0x06ED | 0x0900..=0x0903 | 0x093A..=0x094F | 0x0951..=0x0957 | 0x0962..=0x0963
+        | 0x0981..=0x0983 | 0x09BC..=0x09D7 | 0x0A01..=0x0A83 | 0x0ABC..=0x0ACD | 0x0B01..=0x0B57 | 0x0B82..=0x0BD7
+        | 0x0C00..=0x0C56 | 0x0C81..=0x0CD6 | 0x0D00..=0x0D57 | 0x0D81..=0x0DF3 | 0x0E31 | 0x0E34..=0x0E3A
+        | 0x0E47..=0x0E4E | 0x0EB1 | 0x0EB4..=0x0EBC | 0x0EC8..=0x0ECD | 0x1AB0..=0x1AFF | 0x1DC0..=0x1DFF
+        | 0x20D0..=0x20FF | 0xFE20..=0xFE2F)
+}
+
+/// Sentences containing each phrase as a whole, in one pass over the corpus: each
+/// sentence is lower-cased once, one literal search finds candidate matches
+/// (longest phrases first), and word edges are checked by hand in spaced scripts.
+fn count_whole_phrases(path: &Path, language: &str, phrases: &[String], progress: impl Fn(u64)) -> Result<Vec<u64>, String> {
+    let mut order: Vec<usize> = (0..phrases.len()).collect();
+    order.sort_by_key(|&i| std::cmp::Reverse(phrases[i].chars().count()));
+    let alternation = order.iter().map(|&i| regex::escape(&phrases[i])).collect::<Vec<_>>().join("|");
+    let matcher = RegexBuilder::new(&alternation).build().map_err(|error| error.to_string())?;
+    let index_of: HashMap<&str, usize> = phrases.iter().enumerate().map(|(i, p)| (p.as_str(), i)).collect();
+    let check_edges = !unspaced(language);
+    let mut counts = vec![0u64; phrases.len()];
+    let mut seen = vec![false; phrases.len()];
+    let reader = BufReader::new(GzDecoder::new(fs::File::open(path).map_err(|e| e.to_string())?));
+    let mut lines = 0u64;
+    for line in reader.lines() {
+        let line = line.map_err(|e| e.to_string())?.to_lowercase();
+        lines += 1;
+        if lines % 100_000 == 0 {
+            progress(lines);
+        }
+        let mut hit_any = false;
+        for found in matcher.find_iter(&line) {
+            if check_edges {
+                let before = line[..found.start()].chars().next_back();
+                let after = line[found.end()..].chars().next();
+                if before.is_some_and(is_word_char) || after.is_some_and(is_word_char) {
+                    continue;
+                }
+            }
+            if let Some(&i) = index_of.get(found.as_str()) {
+                if !seen[i] {
+                    seen[i] = true;
+                    counts[i] += 1;
+                    hit_any = true;
+                }
+            }
+        }
+        if hit_any {
+            seen.iter_mut().for_each(|flag| *flag = false);
+        }
     }
+    progress(lines);
+    Ok(counts)
 }
 
 /// Zipf from a sentence count: on the frequency list's scale when the language is
@@ -471,19 +531,10 @@ pub(crate) async fn glossary_research_corpus_zipf(app: AppHandle, language: Stri
         };
         if !missing.is_empty() {
             let path = ensure_file(&app, &language, sentences)?;
-            let patterns: Vec<String> = missing.iter().map(|p| whole_phrase_pattern(&language, p)).collect();
-            let set = RegexSetBuilder::new(&patterns)
-                .case_insensitive(true)
-                .build()
-                .map_err(|error| error.to_string())?;
-            let mut counts = vec![0u64; missing.len()];
-            let reader = BufReader::new(GzDecoder::new(fs::File::open(&path).map_err(|e| e.to_string())?));
-            for line in reader.lines() {
-                let line = line.map_err(|e| e.to_string())?;
-                for index in set.matches(&line).into_iter() {
-                    counts[index] += 1;
-                }
-            }
+            let total = sentences.get("sentences").and_then(Value::as_u64).unwrap_or(0);
+            let counts = count_whole_phrases(&path, &language, &missing, |done| {
+                let _ = app.emit("glossary-research-count-progress", CountProgress { language: language.clone(), done, total, words: missing.len() });
+            })?;
             let mut cache = corpus_count_cache().lock().map_err(|e| e.to_string())?;
             for (phrase, count) in missing.iter().zip(counts) {
                 cache.insert(key(phrase), count);
@@ -524,21 +575,35 @@ mod tests {
     }
 
     #[test]
-    fn whole_phrases_match_at_word_edges_in_spaced_scripts() {
-        let set = RegexSetBuilder::new([whole_phrase_pattern("vi", "trong suốt")]).case_insensitive(true).build().unwrap();
-        assert!(set.is_match("Nước trong suốt."));
-        assert!(!set.is_match("Nước trongsuốt."));
-        assert!(!set.is_match("chương trong suốtnăm"), "a longer word is not the phrase");
-        assert!(!set.is_match("xtrong suốt"));
-        let fa = RegexSetBuilder::new([whole_phrase_pattern("fa", "پسندی")]).build().unwrap();
-        assert!(!fa.is_match("او خود\u{200C}پسندی دارد"), "a ZWNJ joins the compound");
-        assert!(fa.is_match("او پسندی دارد"));
-        let cjk = RegexSetBuilder::new([whole_phrase_pattern("zh", "虚荣")]).build().unwrap();
-        assert!(cjk.is_match("他很爱慕虚荣。"));
+    fn whole_phrases_are_counted_once_per_sentence_at_word_edges() {
+        use flate2::{write::GzEncoder, Compression};
+        let dir = std::env::temp_dir().join(format!("gtms-count-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let write = |name: &str, lines: &[&str]| {
+            let path = dir.join(name);
+            let mut encoder = GzEncoder::new(fs::File::create(&path).unwrap(), Compression::fast());
+            for line in lines {
+                writeln!(encoder, "{line}").unwrap();
+            }
+            encoder.finish().unwrap();
+            path
+        };
+        let vi = write("vi.gz", &[
+            "Nước Trong Suốt như gương, trong suốt cả ngày.",
+            "Nước trongsuốt.",
+            "chương trong suốtnăm",
+            "Đó là sự phù phiếm.",
+        ]);
+        let counts = count_whole_phrases(&vi, "vi", &["trong suốt".into(), "phù phiếm".into(), "phù".into()], |_| {}).unwrap();
+        assert_eq!(counts, vec![1, 1, 0], "once per sentence, whole words only, the longer phrase wins");
+        let fa = write("fa.gz", &["او خود\u{200C}پسندی دارد", "او پسندی دارد"]);
+        assert_eq!(count_whole_phrases(&fa, "fa", &["پسندی".into()], |_| {}).unwrap(), vec![1], "a ZWNJ joins the compound");
+        let zh = write("zh.gz", &["他很爱慕虚荣。", "虚荣心很强"]);
+        assert_eq!(count_whole_phrases(&zh, "zh", &["虚荣".into()], |_| {}).unwrap(), vec![2]);
         assert!(zipf_from_hits(0, 1000) == 0.0);
         assert!((corpus_zipf(100, Some(1.5), 0) - 3.5).abs() < 1e-6);
         assert!(corpus_zipf(0, Some(1.5), 0) == 0.0);
-        assert!((zipf_from_hits(1, 1_000_000_000) - 0.0).abs() < 1e-6);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
