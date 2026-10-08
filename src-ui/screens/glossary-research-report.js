@@ -212,8 +212,10 @@ function renderEntryCard(report, run, entry) {
     </article>`;
 }
 
-const ZIPF_MAX = 7;
-const ZIPF_TICKS = [[1, "rare"], [3, "everyday"], [5, "very common"], [7, ""]];
+// Research words sit well below the commonest function words; a rarer score
+// above the top of the scale fills its bar and shows its number inside it.
+const ZIPF_MAX = 6;
+const ZIPF_TICKS = [[1, "rare"], [3, "everyday"], [5, "very common"]];
 
 /** Plain word for a Zipf score. */
 function zipfWord(zipf) {
@@ -271,7 +273,7 @@ function renderMeaning(sense, index, measure, candidates, src, tgt, meta) {
       </div>
       <div class="rr-scale__plot" title="${esc(`${c.target}: ${formatZipf(c.zipf)}${measured ? `, minimum ${formatZipf(minimum)}` : ""}`)}">
         <span class="rr-scale__bar rr-scale__bar--${kind}" style="width:${at(c.zipf)}"></span>
-        <span class="rr-scale__value" style="left:${at(c.zipf)}">${c.zipf == null ? "no score" : formatZipf(c.zipf)}${absent ? ` · not found in general ${esc(tgt.name)}` : ""}</span>
+        <span class="rr-scale__value${(c.zipf ?? 0) > ZIPF_MAX ? " rr-scale__value--inside" : ""}" style="left:${at(c.zipf)}">${c.zipf == null ? "no score" : formatZipf(c.zipf)}${absent ? ` · not found in general ${esc(tgt.name)}` : ""}</span>
       </div>
       <div class="rr-scale__result"><span class="rr-pill rr-pill--${kind === "pass" ? "ok" : kind === "fail" ? "bad" : "warn"}">${label}</span></div>
       </div>`;
@@ -325,7 +327,7 @@ function renderFrequency(run) {
       <h2>How common the translations are</h2>
       <div class="rr-explainer">
         <p>A translation should be about as familiar to ${esc(tgt.name)} readers as the ${esc(src.name)} word is to ${esc(src.name)} readers, in the meaning it translates. Familiarity is measured on the <strong>Zipf scale</strong>: how often a word turns up in everyday writing. Each step up means ten times as often; about 3 is an everyday word.</p>
-        <p>A translation may be at most <strong>one step rarer</strong> than the ${esc(src.name)} word. In the charts below, the dark line marks the ${esc(src.name)} word and the shaded area is too rare.</p>
+        <p>A translation may be at most <strong>one step rarer</strong> than the ${esc(src.name)} word. In the charts below, the thin vertical line marks the ${esc(src.name)} word and the shaded area is too rare.</p>
       </div>
       ${source ? `
         <p class="rr-source-line">${term(meta, src)} in general ${esc(src.name)}, all meanings together: <strong>${formatZipf(source.wordZipf)}</strong>, ${zipfWord(source.wordZipf)}${forms.length > 1 ? ` (${forms.map((f) => `<span lang="${esc(src.code)}">${esc(f.form)}</span> ${formatZipf(f.zipf)}`).join(" + ")}, counted together)` : ""}.${source.invented ? " It is not in the dictionary and is practically absent from general use: the author's own word." : ""}

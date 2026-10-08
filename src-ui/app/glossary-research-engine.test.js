@@ -7,6 +7,7 @@ import {
   collectMeasurements,
   failedVariants,
   scoreRendering,
+  joinListedUnits,
   scoreWords,
   textKey,
   familyGroups,
@@ -796,4 +797,21 @@ test("a rendering scores as its rarest own word; parts and syllables do not coun
   assert.equal(scoreRendering("vi", "thói ham ngưỡng mộ", scoreOf, [{ word: "thói" }, { word: "ham" }, { word: "ngưỡng mộ" }]), 3.1);
   assert.equal(scoreRendering("vi", "phù phiếm", new Map([["phù phiếm", 0], ["phiếm", 2]])), 0, "never split into syllables");
   assert.equal(scoreRendering("en", "beyond the senses", new Map([["beyond the senses", 0], ["beyond", 4.6], ["senses", 3.9]])), 3.9);
+});
+
+test("neighbouring words the frequency list holds as one unit are scored as that unit", async () => {
+  const list = new Map([["khoe của", 1.98], ["hư vinh", 2.28], ["khoe", 4.84], ["của", 7.12], ["ham", 3.93], ["thích", 5.2]]);
+  const languageData = { zipf: async (_code, forms) => forms.map((form) => list.get(form) ?? 0) };
+  const candidates = [
+    { n: 1, target: "khoe của", words: [{ word: "khoe", partOf: null }, { word: "của", partOf: null }] },
+    { n: 2, target: "ham hư vinh", words: [{ word: "ham", partOf: null }, { word: "hư vinh", partOf: null }] },
+    { n: 3, target: "thích khoe", words: [{ word: "thích", partOf: null }, { word: "khoe", partOf: null }] },
+  ];
+  await joinListedUnits(languageData, "vi", candidates);
+  const scoreOf = new Map([...list].map(([k, v]) => [k, v]));
+  assert.equal(scoreRendering("vi", "khoe của", scoreOf, candidates[0].words), 1.98);
+  assert.deepEqual(candidates[0].words.filter((w) => w.partOf).map((w) => w.word), ["khoe", "của"]);
+  // A free combination of ordinary words keeps its words: the rarest one scores it.
+  assert.equal(scoreRendering("vi", "ham hư vinh", scoreOf, candidates[1].words), 2.28);
+  assert.equal(scoreRendering("vi", "thích khoe", scoreOf, candidates[2].words), 4.84);
 });

@@ -158,6 +158,52 @@ export async function scoreWords(languageData, code, items, onCounting = null) {
 }
 
 /**
+ * Neighbouring words of a candidate that the frequency list holds as one unit
+ * (a compound in its own right, like Vietnamese "khoe của") become one word: the
+ * unit is listed as the candidate's own word and the words it joins as its parts.
+ * Free combinations of ordinary words are not in the list and keep their words.
+ * Lists that only hold single tokens never match, so nothing changes there.
+ */
+export async function joinListedUnits(languageData, code, candidates) {
+  if (corpusCounted(code)) return;
+  const runsOf = (candidate) => {
+    const target = textKey(candidate.target, code);
+    const placed = candidate.words
+      .filter((w) => !w.partOf)
+      .map((w) => ({ w, at: target.indexOf(textKey(w.word, code)), key: textKey(w.word, code) }))
+      .filter((p) => p.at >= 0 && p.key)
+      .sort((a, b) => a.at - b.at);
+    const runs = [];
+    for (let i = 0; i < placed.length; i += 1) {
+      for (let j = placed.length - 1; j > i; j -= 1) {
+        const span = target.slice(placed[i].at, placed[j].at + placed[j].key.length);
+        // Only words that stand next to each other, separated by spaces at most.
+        const gaps = placed.slice(i, j).every((p, k) => /^\s*$/.test(target.slice(p.at + p.key.length, placed[i + k + 1].at)));
+        if (gaps) runs.push({ span, members: placed.slice(i, j + 1).map((p) => p.w) });
+      }
+    }
+    return runs.sort((a, b) => b.members.length - a.members.length);
+  };
+  const all = candidates.map((candidate) => ({ candidate, runs: runsOf(candidate) }));
+  const spans = [...new Set(all.flatMap((c) => c.runs.map((r) => r.span)))];
+  if (!spans.length) return;
+  const listed = await languageData.zipf(code, spans);
+  const inList = new Set(spans.filter((_, i) => listed[i] > 0));
+  for (const { candidate, runs } of all) {
+    const used = new Set();
+    for (const run of runs) {
+      if (!inList.has(run.span) || run.members.some((w) => used.has(w))) continue;
+      run.members.forEach((w) => used.add(w));
+      candidate.words.push({
+        word: run.span, partOf: null, forms: [], neededSense: run.members.map((w) => w.neededSense).filter(Boolean).join("; "),
+        lookalike: false, resembles: null, otherSenses: [], joinedFromList: true,
+      });
+      for (const w of run.members) w.partOf = run.span;
+    }
+  }
+}
+
+/**
  * A rendering's score: that of its rarest own word, as the check step listed the
  * words (parts listed for the decomposition check do not count). Before the
  * check, the whole rendering as one unit, or (where spaces separate words) its
@@ -1210,6 +1256,12 @@ export function createResearchEngine(deps) {
             candidate.words.push({ word: b.word, partOf: w.word, forms: [], neededSense: b.neededSense, lookalike: true, resembles: b.word, otherSenses: b.otherSenses ?? [], addedFromBase: true });
           }
         }
+      }
+      if (ready) {
+        for (const candidate of analysis.candidates) {
+          candidate.target ??= toCheck.find((c) => c.n === candidate.n)?.target ?? "";
+        }
+        await joinListedUnits(languageData, code, analysis.candidates);
       }
       const byNumber = new Map(analysis.candidates.map((c) => [c.n, c]));
       // A word is measured once for each distinct sense it must carry.

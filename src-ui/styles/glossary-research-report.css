@@ -709,14 +709,14 @@
   top: 0;
   bottom: 0;
   width: 0;
-  border-left: 2px solid var(--text);
+  border-left: 2px solid rgba(74, 45, 19, 0.22);
 }
 
 .rr-scale__ref span {
   position: absolute;
   top: 2px;
   left: 6px;
-  color: var(--text);
+  color: var(--muted);
   font-size: 11.5px;
   font-weight: 600;
   white-space: nowrap;
@@ -807,11 +807,6 @@
   text-align: center;
 }
 
-.rr-scale__axis span:last-child {
-  transform: translateX(-100%);
-  text-align: right;
-}
-
 .rr-scale__axis b {
   display: block;
   color: var(--text);
@@ -834,4 +829,11 @@
   .rr-scale__row--axis > span:first-child {
     display: none;
   }
+}
+
+/* a score above the top of the scale: number inside the end of the full bar */
+.rr-scale__value--inside {
+  transform: translateX(calc(-100% - 12px));
+  background: transparent;
+  color: var(--accent-text);
 }
