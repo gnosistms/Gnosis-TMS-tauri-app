@@ -623,6 +623,47 @@
   white-space: nowrap;
 }
 
+/* running request: what it is doing, a bar while items are written, the clock */
+.research-live__status:has(.research-live__doing) {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.research-live__doing {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+}
+
+.research-live__bar {
+  flex: 0 0 110px;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(164, 112, 41, 0.14);
+  overflow: hidden;
+}
+
+.research-live__bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 300ms ease;
+}
+
+.research-live__clock {
+  flex: none;
+  margin-left: auto;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.research-live__slow {
+  color: var(--message-warning-text);
+}
+
 .research-live--failed .research-live__status {
   color: var(--message-error-text);
 }

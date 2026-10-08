@@ -19,6 +19,9 @@ function overlaps(a, b) {
   return b.some((value) => set.has(fold(value).trim()));
 }
 
+/** A translation chosen in less than this share of an entry's sampled votes is proposed for removal. */
+export const RARELY_CHOSEN_SHARE = 0.02;
+
 /** Editable draft per frozen entry, compared with the existing glossary. */
 export function buildEntryDrafts(run, glossaryTerms) {
   const frozen = run.frozen;
@@ -35,8 +38,9 @@ export function buildEntryDrafts(run, glossaryTerms) {
       return {
         id: variant.id, target: variant.target, note: variant.note, count,
         fromExisting,
-        // Never chosen in the sample: proposed for removal (the user can keep it).
-        include: count > 0 || entryCounts.occurrences === 0,
+        // Chosen in under 2% of the sample (or never): proposed for removal, since
+        // every variant is sent to the translating AI; the user can keep it.
+        include: entryCounts.occurrences === 0 || count / entryCounts.occurrences >= RARELY_CHOSEN_SHARE,
       };
     }).sort((a, b) => b.count - a.count);
     drafts[entry.id] = {

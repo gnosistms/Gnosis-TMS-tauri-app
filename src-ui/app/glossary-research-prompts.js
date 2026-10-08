@@ -1,7 +1,7 @@
 // Prompt texts and strict JSON schemas for Glossary Research.
 // Bump RESEARCH_PROMPT_VERSION on any change that could alter a judgment.
 
-export const RESEARCH_PROMPT_VERSION = "2026-10-08.4";
+export const RESEARCH_PROMPT_VERSION = "2026-10-08.5";
 
 const STR = { type: "string" };
 const NSTR = { anyOf: [{ type: "string" }, { type: "null" }] };
@@ -246,7 +246,7 @@ export function proposalInstructions(ctx) {
 Principles:
 - The dictionary sense inventory (below) is the starting lexical source; the texts decide which senses are attested. A meaning outside the dictionary goes in sensesOutsideDictionary, never presented as a dictionary sense.
 - ENTRIES. An entry is one TMX unit: a group of ${ctx.sourceName} source terms that share one set of ${ctx.targetName} translations. Group source forms together only when ${ctx.targetName} does not need to distinguish them; split them when ${ctx.targetName} keeps the distinction. Example: Spanish negro/negra/negros/negras → English "black" is one entry; Spanish llave → English "key" and llaves → "keys" are two entries, because English never renders a plural as a singular; Spanish llave/llaves → Vietnamese "chìa khóa" is one entry, because Vietnamese nouns do not mark number. Every confirmed form belongs to exactly one word entry.
-- Variants are distinct ${ctx.targetName} choices a translator picks between. Merge near-synonyms that serve the same contexts; keep variants that serve genuinely different contexts or collocations. Typically 2–7 per entry, ordered by how broadly they apply.
+- Variants are distinct ${ctx.targetName} choices a translator picks between. Merge near-synonyms that serve the same contexts; keep variants that serve genuinely different contexts or collocations. Typically 2–5 per entry, ordered by how broadly they apply; fewer is better, because every variant and note is sent to the translating AI with each sentence that contains the term, alongside many other glossary entries.
 - START FROM THE CANDIDATE STUDY: its candidates were chosen for the term as a whole, from the study of where the term comes from. They come in groups of interchangeable renderings, each shown by its representative with the other members after "also"; a group is one option, not several. Keep its recommended groups unless the readings show they fail. A non-representative member may replace its representative when the readings favour it.
 - Every rendering the open reading used two or more times (see the rendering tally) must be a variant, or be listed in leftOutRenderings with its count and the reason it should not be measured (e.g. it is a synonym the author equates the term with, not a translation of it).
 - Prefer renderings of the term's own meaning over another term the author equates it with; such a synonym is a variant only if translators really need it, and its note says so.
@@ -255,7 +255,8 @@ Principles:
 - CHECKS. The candidate checks (below) measured the candidates against general ${ctx.targetName} usage, sense by sense. A candidate with verdict "fail" must not be a variant, and no variant may contain a word whose check failed; if the open reading used such a rendering, list it in leftOutRenderings with the check's reason. A rendering that was not checked may be added only when it is made of common ${ctx.targetName} words used in their ordinary sense.
 - EXPRESSIONS. Propose a separate expression entry (kind "expression") only for a recurring fixed expression (normally ≥3 occurrences in the whole population, or a listed dictionary complex form that is attested) whose translation cannot be composed from the word variants. Its sourceTerms list every surface spelling to match, lower case. Recurring combinations that need no entry go in rejectedExpressions.
 - Derived words (other lemmas sharing the stem) are not part of this study; list those worth separate studies in derivativeStudies.
-- LANGUAGE: target, every note, and every generalNote are TMX fields and MUST be in ${ctx.targetName}; each note says when to choose the variant (contexts, collocations, what to avoid), at most 40 words. rationale, reason, evidence, and openQuestions are in ${ctx.reportName}. Source-language quotations keep their wording. ${quotationRules(ctx)}
+- LANGUAGE: target, every note, and every generalNote are TMX fields and MUST be in ${ctx.targetName}.
+- NOTES are read by a translating AI, many entries at a time, so keep them short. Each variant's note says only when to choose it, in at most 12 words; the most broadly used variant's note can be just that it is the default. No warnings about what not to do unless they prevent a real, common mistake; no advice about other words; nothing addressed to researchers (doubts go in openQuestions). generalNote is one short line, or empty when the variants' notes say enough. rationale, reason, evidence, and openQuestions are in ${ctx.reportName}. Source-language quotations keep their wording. ${quotationRules(ctx)}
 - Ids: entries "e1", "e2", …; variants "e1v1", "e1v2", ….
 - populationOccurrencesCited: an expression's whole-population occurrence count from the neighbour table (0 for word entries).
 

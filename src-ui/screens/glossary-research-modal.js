@@ -1,3 +1,4 @@
+import { stepTimings, usualRange } from "../app/glossary-research-live-progress.js";
 import {
   escapeHtml,
   primaryButton,
@@ -319,7 +320,8 @@ function renderRun(state) {
   const shown = liveRequest(sections, research.liveChoice, research.liveFollow);
   // The panel keeps following one request until it finishes.
   research.liveFollow = shown && isRequestRunning(shown) ? shown.requestId : null;
-  const livePanel = renderLivePanel({ sections, request: shown, running, open: research.liveOpen !== false });
+  const usual = shown ? usualRange(stepTimings(research.modelId, shown.stage)) : null;
+  const livePanel = renderLivePanel({ sections, request: shown, running, open: research.liveOpen !== false, usual });
   const logLines = `<div class="research-results" data-research-log aria-live="off">${renderResults(sections, {
     running, openSections: research.sectionOpen ?? {}, openExchanges: research.exchangeOpen ?? {},
   })}</div>`;

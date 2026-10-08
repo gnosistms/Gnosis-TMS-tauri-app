@@ -24,6 +24,9 @@ function newRequest(entry) {
     stage: entry.stage ?? "",
     purpose: entry.purpose ?? "",
     batch: entry.batch ?? null,
+    // When it was sent, and what its answer counts (for the live panel's progress).
+    startedAt: entry.at ?? 0,
+    progress: entry.progress ?? null,
     text: entry.text ?? "",
     instructions: entry.instructions ?? "",
     thinking: "",

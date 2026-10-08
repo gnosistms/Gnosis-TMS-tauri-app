@@ -8,6 +8,7 @@ import {
   secondaryButton,
 } from "../lib/ui.js";
 import { formatUsd } from "../app/glossary-research-budget.js";
+import { RARELY_CHOSEN_SHARE } from "../app/glossary-research-report-flow.js";
 import { describeSense, formatZipf } from "../app/glossary-research-frequency.js";
 
 const esc = escapeHtml;
@@ -151,7 +152,8 @@ function renderEntryCard(report, run, entry) {
   const variantRows = draft.variants.map((variant, index) => {
     const key = `${entry.id}:${variant.id}`;
     const c = counts.variants[variant.id] ?? { occurrences: 0, passages: 0 };
-    const neverChosen = !variant.include && c.occurrences === 0 && !variant.added;
+    const rarelyChosen = !variant.include && !variant.added
+      && (counts.occurrences ? c.occurrences / counts.occurrences : 0) < RARELY_CHOSEN_SHARE;
     return `
       <div class="rr-variant${variant.include ? "" : " is-excluded"}">
         <input class="rr-variant__check" type="checkbox" aria-label="Include ${esc(variant.target)}" data-research-entry="${esc(entry.id)}:include:${index}" ${variant.include ? "checked" : ""} />
@@ -159,7 +161,7 @@ function renderEntryCard(report, run, entry) {
           <div class="rr-variant__head">
             <input class="rr-variant__target" type="text" lang="${esc(tgt)}" value="${esc(variant.target)}" placeholder="New translation" data-research-entry="${esc(entry.id)}:target:${index}" aria-label="Translation" />
             ${variant.fromExisting ? `<span class="rr-pill">in current entry</span>` : ""}
-            ${neverChosen ? `<span class="rr-pill rr-pill--warn">never chosen</span>` : ""}
+            ${rarelyChosen ? `<span class="rr-pill rr-pill--warn">${c.occurrences ? "rarely chosen" : "never chosen"}</span>` : ""}
           </div>
           <textarea class="rr-variant__note" rows="1" lang="${esc(tgt)}" placeholder="When to use it" data-research-entry="${esc(entry.id)}:note:${index}" aria-label="Usage note for ${esc(variant.target)}">${esc(variant.note)}</textarea>
         </div>

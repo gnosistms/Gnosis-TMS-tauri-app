@@ -13,6 +13,7 @@ import {
   stageName,
 } from "../app/glossary-research-log-view.js";
 import { formatJsonStream, formatThinking } from "../app/glossary-research-stream-format.js";
+import { liveStatusHtml } from "../app/glossary-research-live-progress.js";
 
 function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -282,7 +283,7 @@ function batchSwitcher(batch, shown) {
  * The panel under the results: the AI request running now, streaming in.
  * Between requests it stays as one line; after the run it is not shown.
  */
-export function renderLivePanel({ sections, request, running, open }) {
+export function renderLivePanel({ sections, request, running, open, usual = null }) {
   if (!running) return "";
   if (!request) {
     return `<div class="research-live research-live--idle"><div class="research-live__head"><span class="research-live__title">Waiting for the next AI request…</span></div></div>`;
@@ -296,7 +297,7 @@ export function renderLivePanel({ sections, request, running, open }) {
           <svg class="research-disclosure__chevron" viewBox="0 0 10 10" aria-hidden="true"><path d="M3 1.5 6.5 5 3 8.5" /></svg>
           <span class="research-live__title">${esc(liveTitle(request))}</span>
         </button>
-        <span class="research-live__status" data-live-status>${esc(requestStatusText(request, formatUsd))}</span>
+        <span class="research-live__status" data-live-status>${isRequestRunning(request) ? liveStatusHtml(request, state, usual) : esc(requestStatusText(request, formatUsd))}</span>
         ${isRequestRunning(request) ? '<span class="navigation-loading-modal__spinner research-live__spinner" aria-hidden="true"></span>' : ""}
         ${batch ? batchSwitcher(batch, request) : ""}
       </div>

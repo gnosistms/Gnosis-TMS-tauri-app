@@ -23,6 +23,7 @@ import {
 import { collectMeasurements, createResearchEngine, familyGroups, mergeMeasurements, ResearchStop } from "./glossary-research-engine.js";
 import {
   buildLogView,
+  isRequestRunning,
   requestState,
   requestStatusText,
 } from "./glossary-research-log-view.js";
@@ -38,6 +39,7 @@ import {
 } from "./glossary-research-family-budget.js";
 import { fold } from "./glossary-research-occurrences.js";
 import { formatJsonStream, formatThinking } from "./glossary-research-stream-format.js";
+import { liveStatusHtml, recordStepTiming, seedStepTimings, stepTimings, timingsSeeded, usualRange } from "./glossary-research-live-progress.js";
 import { parseMoneyValue } from "./money-input.js";
 import { maybeStartGlossaryBackgroundSync } from "./glossary-background-sync.js";
 
@@ -553,10 +555,15 @@ async function beginResearchRun(render, resume = null, family = null) {
       render();
     }),
   });
-  activeRunCleanup = stopProgress;
+  const stopClock = startLiveClock();
+  activeRunCleanup = () => {
+    stopProgress?.();
+    stopClock();
+  };
+  void seedTimingsFromSavedRuns(installationId, glossaryId);
   activeRun = { engine, requestIds, store, runId, glossaryId, installationId, meta };
   Object.assign(draft, {
-    step: "run", runId, runStatus: "running", stageLabel: "Starting", progress: 0.01,
+    step: "run", runId, runStatus: "running", stageLabel: "Starting", progress: 0.01, modelId: meta.modelId ?? status.modelId,
     spent: engine.budget.spent, limit: engine.budget.limit, runError: "", stopKind: "",
     log: resume?.stages?.log ?? [],
   });
@@ -684,6 +691,7 @@ function appendLog(event) {
     entry.stage = event.stage;
     entry.purpose = event.purpose ?? "";
     if (event.batch) entry.batch = event.batch;
+    if (event.progress) entry.progress = event.progress;
   }
   if (event.type === "usage") {
     const r = event.record;
@@ -692,6 +700,7 @@ function appendLog(event) {
       + `${r.outputTokens ?? "?"} out (${r.reasoningTokens ?? 0} thinking), ${formatUsd(r.costUsd)}`
       + `${r.costIsEstimate ? " (reserved; outcome unknown)" : ""}, ${r.seconds.toFixed(1)} s — total ${formatUsd(event.spent)} of ${formatUsd(event.limit)}`;
     draft.spent = event.spent;
+    if (r.status === "ok") recordStepTiming(draft.modelId, r.stage, r.seconds);
   }
   draft.log.push(entry);
   if (draft.log.length > MAX_LOG_EVENTS) draft.log.splice(0, draft.log.length - MAX_LOG_EVENTS);
@@ -752,7 +761,7 @@ function updateStreamInDom(entry) {
   if (!panel || panel.dataset.liveRequest !== String(entry.requestId)) return !changed && Boolean(logContainer());
   if (panel.dataset.liveState !== state) return false;
   const status = panel.querySelector("[data-live-status]");
-  if (status) status.textContent = requestStatusText(request, formatUsd);
+  if (status) status.innerHTML = liveStatusFor(request, state);
   if (panel.dataset.liveOpen !== "true") return true;
   const block = panel.querySelector(`[data-live-type="${entry.type}"]`);
   if (!block) return false;
@@ -761,6 +770,46 @@ function updateStreamInDom(entry) {
   block.innerHTML = entry.type === "thinking" ? formatThinking(entry.text) : formatJsonStream(entry.text);
   if (body && pinned) body.scrollTop = body.scrollHeight;
   return true;
+}
+
+/** The live panel's status line for a running request, or the plain status when it has finished. */
+function liveStatusFor(request, phase) {
+  if (!isRequestRunning(request)) return escapeStatus(requestStatusText(request, formatUsd));
+  return liveStatusHtml(request, phase, usualRange(stepTimings(research()?.modelId, request.stage)));
+}
+
+function escapeStatus(text) {
+  return String(text).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+}
+
+/** Ticks the live panel's clock every second while a research runs. */
+function startLiveClock() {
+  if (typeof document === "undefined" || typeof setInterval !== "function") return () => {};
+  const timer = setInterval(() => {
+    const panel = document.querySelector("[data-research-live]");
+    const request = panel ? findLogRequest(panel.dataset.liveRequest) : null;
+    const status = panel?.querySelector("[data-live-status]");
+    if (request && status && isRequestRunning(request)) status.innerHTML = liveStatusFor(request, requestState(request));
+  }, 1000);
+  return () => clearInterval(timer);
+}
+
+/** Once: take the step timings of the runs saved for this glossary, so the clock has a usual range from the start. */
+async function seedTimingsFromSavedRuns(installationId, glossaryId) {
+  try {
+    if (timingsSeeded()) return;
+    const summaries = await invoke("list_glossary_research_runs", { installationId, glossaryId });
+    const runs = [];
+    for (const summary of (summaries ?? []).slice(0, 30)) {
+      const runId = summary.runId ?? summary.run_id ?? summary.id;
+      if (!runId) continue;
+      const run = await invoke("load_glossary_research_run", { installationId, glossaryId, runId }).catch(() => null);
+      if (run?.usage) runs.push({ modelId: run.meta?.modelId, usage: run.usage });
+    }
+    seedStepTimings(runs);
+  } catch {
+    // Timings only improve the clock; without them it shows the elapsed time alone.
+  }
 }
 
 /** The batch switcher: watch another running request of the batch. */

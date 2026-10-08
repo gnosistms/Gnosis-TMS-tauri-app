@@ -465,7 +465,7 @@ export function createModelClient({ model, prices, budget, log, isCancelled, max
       budget.reserve(reserve);
       sequence += 1;
       const requestId = `${request.stage}-${sequence}-${Date.now().toString(36)}`;
-      log({ type: "request", stage: request.stage, requestId, text: request.content, instructions: request.instructions, purpose: request.purpose, batch: request.batch ?? null });
+      log({ type: "request", stage: request.stage, requestId, text: request.content, instructions: request.instructions, purpose: request.purpose, batch: request.batch ?? null, progress: request.progress ?? null });
       const started = Date.now();
       let outcome;
       try {
@@ -609,6 +609,8 @@ export function createResearchEngine(deps) {
     if (general.sample.length) {
       const answer = await client.callJson({
         stage: "frequency", purpose,
+        // The answer lists one item per sentence; "n" opens each item.
+        progress: { key: "n", total: general.sample.length, unit: "sentence" },
         instructions: prompts.senseClassifyInstructions({ languageName: name, word: forms[0], senses }),
         content: general.sample.map((text, index) => `${index + 1}. ${text.length > 400 ? `${text.slice(0, 400)}…` : text}`).join("\n"),
         schema: prompts.senseClassifySchema(senses.map((sense) => sense.id)), schemaName: "senses",
@@ -1078,6 +1080,8 @@ export function createResearchEngine(deps) {
       ].filter(Boolean).join("\n\n");
       const result = await client.callJson({
         stage: "candidates", purpose: "propose candidate translations for the whole term",
+        // One block per meaning; the model may leave some meanings out, so no total.
+        progress: { key: "senseId", total: null, unit: "meaning" },
         instructions: prompts.candidatesInstructions(ctx()), content,
         schema: prompts.CANDIDATES_SCHEMA, schemaName: "candidates",
         maxOutputTokens: 16000, effort: settings.effortStudy,
@@ -1237,6 +1241,7 @@ export function createResearchEngine(deps) {
       const sources = store.load("sources")?.study;
       const analysis = await client.callJson({
         stage: "checks", purpose: "name each candidate's words and the senses they need",
+        progress: { key: "n", total: toCheck.length, unit: "translation" },
         instructions: prompts.checkInstructions(ctx()),
         content: [
           `# Term: ${settings.term}`,
@@ -1521,6 +1526,7 @@ export function createResearchEngine(deps) {
       const instructions = prompts.discoveryInstructions(ctx());
       const keyed = batchOccurrences(items, occurrences, settings.discoveryBatch).map((batch, index) => [index, {
         stage: "discovery", purpose: `open reading of ${batch.occurrences.length} occurrences`,
+        progress: { key: "occId", total: batch.occurrences.length, unit: "use" },
         instructions, content: batchContent(batch, null),
         schema: prompts.DISCOVERY_SCHEMA, schemaName: "discovery",
         maxOutputTokens: 900 + 260 * batch.occurrences.length, effort: settings.effortLight,
@@ -1700,6 +1706,7 @@ export function createResearchEngine(deps) {
     const variants = proposal.entries.flatMap((entry) => entry.variants.map((v) => `[${v.id}] ${v.target} — ${v.note}`));
     const result = await client.callJson({
       stage: "comparison", purpose: "compare with the existing glossary entry",
+      progress: { key: "existing", total: existing.reduce((n, term) => n + (term.targetTerms?.length ?? 0), 0) || null, unit: "translation" },
       instructions: prompts.compareInstructions(ctx()),
       content: [
         "Proposal (variant id, translation, note):", ...variants, "",
@@ -1862,6 +1869,7 @@ export function createResearchEngine(deps) {
     }
     const answer = await client.callJson({
       stage: "footnotes", purpose: "notes for rare translations",
+      progress: { key: "target", total: scored.length, unit: "translation" },
       instructions: prompts.footnoteInstructions(ctx()),
       content: scored.map((item) => `- ${item.target} (Zipf ${formatZipf(item.zipf)})`).join("\n"),
       schema: prompts.FOOTNOTE_SCHEMA, schemaName: "footnotes",
@@ -1901,6 +1909,7 @@ export function createResearchEngine(deps) {
       const batches = batchOccurrences(items, todo, size);
       const keyed = batches.map((batch, index) => [index, {
         stage: "counting", purpose: `translate and choose for ${batch.occurrences.length} occurrences`,
+        progress: { key: "occId", total: batch.occurrences.length, unit: "use" },
         instructions, content: batchContent(batch, label),
         schema: prompts.TRANSLATE_SCHEMA, schemaName: "counting",
         maxOutputTokens: 1200 + 330 * batch.occurrences.length, effort: settings.effortLight,

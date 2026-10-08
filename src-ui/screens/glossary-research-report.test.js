@@ -52,3 +52,16 @@ test("each chart's scale runs from a whole number below its values to just past 
   assert.deepEqual(zipfRange([0, 2.98, 3.57]), { lo: 0, hi: 4 });
   assert.deepEqual(zipfRange([3.1, 3.2]), { lo: 2, hi: 3.5 });
 });
+
+test("translations chosen in under 2% of the votes come unticked, marked rarely or never chosen", () => {
+  const r = run();
+  r.frozen.entries[0].variants = [
+    { id: "v1", target: "hư vinh", note: "" }, { id: "v2", target: "thói tự ngưỡng mộ", note: "" }, { id: "v3", target: "sự vô nghĩa", note: "" },
+  ];
+  r.aggregate.entries.e1 = { occurrences: 234, passages: 100, variants: { v1: { occurrences: 230, passages: 99 }, v2: { occurrences: 4, passages: 3 } }, other: 0, unresolved: {}, failed: 0 };
+  const drafts = buildEntryDrafts(r, []);
+  assert.deepEqual(drafts.e1.variants.map((v) => [v.target, v.include]), [["hư vinh", true], ["thói tự ngưỡng mộ", false], ["sự vô nghĩa", false]]);
+  const html = renderGlossaryResearchReportScreen({ glossaryResearchReport: { status: "ready", run: r, entryDrafts: drafts, expandedVariants: {}, showAllExamples: {} }, offline: {} });
+  assert.match(html, /rarely chosen/);
+  assert.match(html, /never chosen/);
+});
