@@ -427,13 +427,8 @@
   flex-basis: 100%;
 }
 
-/* note + forms */
+/* entry note */
 
-.rr-grid-2 {
-  display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-  gap: 16px;
-}
 
 .rr-field {
   display: flex;
@@ -579,9 +574,6 @@
   }
   .rr-count {
     grid-column: 2;
-  }
-  .rr-grid-2 {
-    grid-template-columns: minmax(0, 1fr);
   }
 }
 

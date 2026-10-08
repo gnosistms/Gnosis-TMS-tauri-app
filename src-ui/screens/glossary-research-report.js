@@ -95,6 +95,11 @@ function countCell(key, count, total, passages, expanded, unit) {
     </div>`;
 }
 
+function sameForms(a, b) {
+  const key = (forms) => [...new Set(forms.map((form) => form.trim().toLowerCase()))].sort().join("|");
+  return key(a) === key(b);
+}
+
 /** The entry as it is in the glossary now, each translation marked kept or left out by the suggestion. */
 function renderCurrentEntry(run, draft, meta) {
   const comparison = (run.confirmedProposal ?? run.proposal)?.existingComparison ?? [];
@@ -122,10 +127,11 @@ function renderCurrentEntry(run, draft, meta) {
           <span class="rr-field__label">Note for all translations</span>
           <p class="rr-current__note" lang="${esc(tgt)}">${esc(draft.existing.notesToTranslators)}</p>
         </div>` : ""}
+      ${sameForms(draft.existing.sourceTerms, draft.sourceTerms) ? "" : `
       <div class="rr-field">
-        <span class="rr-field__label">${esc(meta.sourceLanguage.name)} forms in this entry</span>
+        <span class="rr-field__label">${esc(meta.sourceLanguage.name)} forms in the glossary</span>
         <p class="rr-current__note" lang="${esc(meta.sourceLanguage.code)}">${esc(draft.existing.sourceTerms.join(", "))}</p>
-      </div>
+      </div>`}
       <ul class="rr-current">${rows}</ul>
     </section>`;
 }
@@ -186,16 +192,10 @@ function renderEntryCard(report, run, entry) {
       ${draft.saveStatus === "saved" ? `<p class="rr-saved">Saved to the glossary</p>` : ""}
       ${showingCurrent ? renderCurrentEntry(run, draft, meta) : `
       <fieldset class="rr-entry__fields">
-        <section class="rr-block rr-grid-2">
-          <label class="rr-field">
-            <span class="rr-field__label">Note for all translations (TMX)</span>
-            <textarea class="field__input rr-autosize" rows="2" lang="${esc(tgt)}" data-research-entry="${esc(entry.id)}:generalNote">${esc(draft.generalNote)}</textarea>
-          </label>
-          <label class="rr-field">
-            <span class="rr-field__label">${esc(meta.sourceLanguage.name)} forms in this entry</span>
-            <input class="field__input" type="text" value="${esc(draft.sourceTerms.join(", "))}" data-research-entry="${esc(entry.id)}:sourceTerms" />
-          </label>
-        </section>
+        <label class="rr-field">
+          <span class="rr-field__label">Note for all translations (TMX)</span>
+          <textarea class="field__input rr-autosize" rows="2" lang="${esc(tgt)}" data-research-entry="${esc(entry.id)}:generalNote">${esc(draft.generalNote)}</textarea>
+        </label>
         <section class="rr-block">
           <div class="rr-table-head"><span>Translation and when to use it</span><span>Chosen in the sample</span></div>
           ${variantRows}
