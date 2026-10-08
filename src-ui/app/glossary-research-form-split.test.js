@@ -10,7 +10,7 @@ test("overlap is shared translations over all translations of either form", () =
   assert.equal(overlap(new Set(), new Set()), 0);
 });
 
-test("vanidad and vanidades share only half their translations, so they are split", () => {
+test("vanidad and vanidades do not take the same translations, so they are split", () => {
   const all = [
     ...votes("vanidad", { huvinh: 170, phuphiem: 12, thoiham: 6, other: 10 }),
     ...votes("vanidades", { nhungthu: 18, huvinh: 9, phuhoa: 5, phuphiem: 4 }),
@@ -19,21 +19,23 @@ test("vanidad and vanidades share only half their translations, so they are spli
   assert.deepEqual(groups.map((g) => g.forms), [["vanidad"], ["vanidades"]]);
 });
 
-test("forms that share most translations stay together", () => {
+test("forms served by the same translations stay together; one different translation splits them", () => {
   const all = [...votes("negro", { den: 50, toi: 5 }), ...votes("negros", { den: 30, toi: 3 })];
+  const split = groupForms(["negro", "negros"], [...all, ...votes("negros", { ammau: 4 })], new Map([["negro", 30], ["negros", 20]]));
+  assert.equal(split.length, 2);
   const groups = groupForms(["negro", "negros"], all, new Map([["negro", 30], ["negros", 20]]));
   assert.deepEqual(groups.map((g) => g.forms), [["negro", "negros"]]);
 });
 
-test("a chain is not enough: every pair in a group must share most", () => {
-  // a~b and b~c share 2 of 3, but a and c share 1 of 4.
+test("a chain is not enough: every pair in a group must pass", () => {
+  // With a lower bar of 2/3: a~b and b~c share 2 of 3, but a and c share 1 of 4.
   const all = [
     ...votes("a", { x: 20, y: 20 }),
     ...votes("b", { x: 20, y: 20, z: 20 }),
     ...votes("c", { y: 20, z: 20, w: 20 }),
   ];
   const uses = new Map([["a", 20], ["b", 30], ["c", 30]]);
-  const groups = groupForms(["a", "b", "c"], all, uses);
+  const groups = groupForms(["a", "b", "c"], all, uses, { together: 2 / 3 });
   assert.equal(groups.length, 2);
   assert.ok(!groups.some((g) => g.forms.includes("a") && g.forms.includes("c")));
 });

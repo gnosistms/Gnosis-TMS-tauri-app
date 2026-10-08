@@ -10,6 +10,8 @@ import { submitGlossaryTermEditor } from "./glossary-term-draft.js";
 import { createGlossaryResearchReportState, createGlossaryResearchState } from "./glossary-research-state.js";
 import { fold } from "./glossary-research-occurrences.js";
 import { groupForms } from "./glossary-research-form-split.js";
+import { linkGlossaryTerms } from "./glossary-term-siblings.js";
+import { showNoticeBadge } from "./status-feedback.js";
 
 function installationId() {
   return selectedProjectsTeamInstallationId() ?? selectedTeam()?.installationId;
@@ -262,8 +264,24 @@ export async function saveResearchReport(render) {
   const drafts = Object.values(state.glossaryResearchReport.entryDrafts ?? {});
   for (const draft of drafts) {
     if (draft.decision === "keep" || draft.saveStatus === "saved") continue;
-    await saveResearchEntry(render, draft.entryId);
+    await saveResearchEntry(render, draft.id ?? draft.entryId);
   }
+  // The entries one study split into (vanidad / vanidades) are linked as related
+  // entries, so a later change to one is a reminder to check the other.
+  const byStudyEntry = new Map();
+  for (const draft of drafts) {
+    if (!draft.splitFrom || !draft.existingTermId) continue;
+    byStudyEntry.set(draft.entryId, [...(byStudyEntry.get(draft.entryId) ?? []), draft.existingTermId]);
+  }
+  for (const termIds of byStudyEntry.values()) {
+    if (termIds.length < 2) continue;
+    try {
+      await linkGlossaryTerms(termIds);
+    } catch (error) {
+      showNoticeBadge(`Saved, but the entries could not be linked as related: ${error?.message ?? error}`, render);
+    }
+  }
+  render();
 }
 
 // --- Markdown export for discussion with any AI ----------------------------------

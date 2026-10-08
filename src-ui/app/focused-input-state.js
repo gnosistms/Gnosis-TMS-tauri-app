@@ -22,6 +22,7 @@ const SUPPORTED_FOCUSED_INPUT_SELECTORS = [
   "[data-glossary-permanent-delete-input]",
   "[data-glossary-term-search-input]",
   "[data-glossary-term-notes-input]",
+  "[data-glossary-term-sibling-input]",
   "[data-glossary-term-footnote-input]",
   "[data-editor-export-language-select]",
   "[data-editor-export-paper-size-select]",

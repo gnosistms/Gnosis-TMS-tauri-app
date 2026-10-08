@@ -376,6 +376,17 @@ function handleGlossaryTermVariantInput(event) {
   return true;
 }
 
+function handleGlossaryTermSiblingInput(event) {
+  const input = event.target.closest("[data-glossary-term-sibling-input]");
+  if (!input || !state.glossaryTermEditor) {
+    return false;
+  }
+
+  state.glossaryTermEditor.siblingInput = input.value;
+  state.glossaryTermEditor.siblingError = "";
+  return true;
+}
+
 function handleGlossaryTermNotesInput(event) {
   const input = event.target.closest("[data-glossary-term-notes-input]");
   if (!input) {
@@ -1226,6 +1237,7 @@ const inputHandlers = [
   handleGlossaryTermVariantInput,
   handleGlossaryTermVariantNoteInput,
   handleGlossaryTermNotesInput,
+  handleGlossaryTermSiblingInput,
   handleGlossaryTermFootnoteInput,
   handleGlossaryResearchInput,
   handleQaListTitleInput,

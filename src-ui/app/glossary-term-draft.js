@@ -49,6 +49,7 @@ import {
 } from "./glossary-term-write-coordinator.js";
 import { removeGlossaryEditorQuery } from "./glossary-editor-query.js";
 import { refreshEditorGlossaryAfterLocalChange } from "./editor-glossary-flow.js";
+import { remindOfSiblings } from "./glossary-term-siblings.js";
 
 const SOURCE_TERM_DUPLICATE_WARNING =
   "Some source variants are duplicated within this term or elsewhere in the glossary. Remove or change the marked variants before saving.";
@@ -198,6 +199,11 @@ function createGlossaryTermEditorModalState(term = null, overrides = {}) {
     notesToTranslators: term?.notesToTranslators ?? "",
     footnote: term?.footnote ?? "",
     untranslated: term?.untranslated === true,
+    // Related entries (kept apart, linked as a reminder): shown and edited in place.
+    siblingTermIds: [...(term?.siblingTermIds ?? [])],
+    siblingInput: "",
+    siblingError: "",
+    relatedOpen: false,
     attemptedDraft: overrides.attemptedDraft ?? null,
   };
 }
@@ -418,7 +424,9 @@ async function runGlossaryTermSaveIntent(render, intent) {
       if (state.glossaryEditor.status === "ready") markGlossaryBackgroundSyncDirty();
     }
     clearGlossaryEditorStatus(render);
-    showNoticeBadge(intent.value?.isCreate ? "Glossary term added." : "Glossary term saved.", render);
+    if (intent.value?.isCreate || !remindOfSiblings(confirmedTerm, render)) {
+      showNoticeBadge(intent.value?.isCreate ? "Glossary term added." : "Glossary term saved.", render);
+    }
   } catch (error) {
     clearGlossaryEditorStatus(render);
     throw error;
@@ -762,6 +770,7 @@ export async function submitGlossaryTermEditor(render) {
     notesToTranslators: draft.notesToTranslators,
     footnote: draft.footnote,
     untranslated: draft.untranslated === true,
+    siblingTermIds: [...(draft.siblingTermIds ?? [])],
   };
   const repoInput = {
     installationId: team.installationId,
