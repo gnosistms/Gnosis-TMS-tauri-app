@@ -490,7 +490,10 @@ export function renderGlossaryResearchReportScreen(state) {
   return pageShell({
     title,
     navButtons,
-    tools: report.run ? `<div class="rr-tools">${secondaryButton("Copy for AI discussion", "copy-research-markdown")}${renderSaveButton(report)}</div>` : "",
+    tools: report.run ? `<div class="rr-tools">${secondaryButton("Copy report", "copy-research-markdown", {
+      tooltip: "Copy the report to the clipboard so you can paste it into AI for further research.",
+      tooltipOptions: { side: "bottom" },
+    })}${renderSaveButton(report)}</div>` : "",
     body,
   });
 }
