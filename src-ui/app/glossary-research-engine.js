@@ -575,12 +575,14 @@ export function createResearchEngine(deps) {
   /** A finding with its data for display; text is the same line a fact would log. */
   const logResult = (kind, data, text) => log({ type: "result", kind, data, text });
 
-  /** The language's frequency data is on this computer (downloaded the first time), or the run goes on without it. */
+  /**
+   * The language's frequency data is on this computer (downloaded the first time,
+   * with its own progress lines), or the run goes on without it.
+   */
   async function frequencyReady(code, name) {
     if (!settings.frequencyChecks || !languageData) return false;
     const key = dataLanguage(code);
     if (!(key in languageStatus)) {
-      info(`Preparing the ${name} frequency data (downloaded once, the first time).`);
       const status = await languageData.ensure(code);
       languageStatus[key] = status.available === true;
       if (status.available) {
