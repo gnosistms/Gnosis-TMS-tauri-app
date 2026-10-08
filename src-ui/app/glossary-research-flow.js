@@ -30,6 +30,13 @@ import {
 import { createProjectsCorpus, createSamaelCorpus } from "./glossary-research-corpus.js";
 import { createDictionary, DICTIONARY_DOMAINS } from "./glossary-research-dictionary.js";
 import { createLanguageData } from "./glossary-research-frequency.js";
+import {
+  DEFAULT_TOTAL_LIMIT_USD,
+  DEFAULT_WORD_LIMIT_USD,
+  batchSpent,
+  nextWordLimit,
+  recordRunSpend,
+} from "./glossary-research-family-budget.js";
 import { fold } from "./glossary-research-occurrences.js";
 import { parseMoneyValue } from "./money-input.js";
 import { maybeStartGlossaryBackgroundSync } from "./glossary-background-sync.js";
@@ -205,6 +212,8 @@ export function updateResearchField(field, value) {
   if (field === "raiseLimitTo") draft.raiseLimitTo = parseMoneyValue(value) ?? draft.raiseLimitTo;
   else if (field === "sampleSize") draft.sampleSize = Math.max(1, Math.min(1000, Number.parseInt(value, 10) || 100));
   else if (field === "spendingLimitUsd") draft.spendingLimitUsd = parseMoneyValue(value) ?? draft.spendingLimitUsd;
+  else if (field === "familyWordLimitUsd") draft.familyWordLimitUsd = parseMoneyValue(value) ?? draft.familyWordLimitUsd;
+  else if (field === "familyTotalLimitUsd") draft.familyTotalLimitUsd = parseMoneyValue(value) ?? draft.familyTotalLimitUsd;
   else draft[field] = value;
   draft.formError = "";
 }
@@ -523,7 +532,11 @@ async function beginResearchRun(render, resume = null, family = null) {
       notes: term.targetVariantNotes ?? [], note: term.notesToTranslators ?? "",
     })),
     chooseFamily: ({ groups }) => new Promise((resolve) => {
-      Object.assign(research(), { runStatus: "family", familyGroups: groups, familyTicked: groups.map((group) => group.suggested) });
+      Object.assign(research(), {
+        runStatus: "family", familyGroups: groups, familyTicked: groups.map((group) => group.suggested),
+        familyWordLimitUsd: research().familyWordLimitUsd ?? DEFAULT_WORD_LIMIT_USD,
+        familyTotalLimitUsd: research().familyTotalLimitUsd ?? DEFAULT_TOTAL_LIMIT_USD, familyLimitError: "",
+      });
       pendingFamilyChoice = resolve;
       render();
     }),
@@ -544,9 +557,14 @@ async function beginResearchRun(render, resume = null, family = null) {
     meta.status = "review";
     store.save("meta", meta);
     if (!meta.settings.familyBatch && result.familyWords?.length && !draft.familyQueue) {
+      const limits = draft.familyLimits ?? {};
       draft.familyQueue = {
         headword: meta.term, words: structuredClone(result.familyWords), siblings: [],
         familyForms: [...(store.load("forms")?.confirmed ?? []), ...result.familyWords.flatMap((word) => word.forms)],
+        mainLimit: meta.spendingLimitUsd,
+        wordLimit: limits.word ?? DEFAULT_WORD_LIMIT_USD,
+        totalLimit: limits.total ?? DEFAULT_TOTAL_LIMIT_USD,
+        spentByRun: {}, done: [], stopped: [],
       };
     }
   } catch (error) {
@@ -555,6 +573,10 @@ async function beginResearchRun(render, resume = null, family = null) {
   draft.spent = engine.budget.spent;
   store.save("log", draft.log);
   render();
+  if (meta.settings.familyBatch && draft.runStatus === "failed" && draft.runId === runId && draft.familyQueue) {
+    await skipFamilyWord(render);
+    return;
+  }
   // Counting follows straight away unless the person asked to review first.
   // Runs saved before this setting existed always paused, and still do.
   if (draft.runStatus === "review" && meta.settings?.pauseForReview === false && !resume?.stages?.confirmedProposal) {
@@ -577,6 +599,7 @@ function handleRunStop(render, error, store, meta) {
     draft.raiseLimitTo = Math.round(limit * 2 * 100) / 100;
   }
   appendLog({ type: "problem", text: draft.runError });
+  if (draft.familyQueue && activeRun) recordRunSpend(draft.familyQueue, meta.runId, activeRun.engine.budget.spent);
   meta.status = draft.runStatus;
   meta.error = draft.runError;
   store.save("meta", meta);
@@ -799,7 +822,11 @@ export async function countGlossaryResearch(render) {
     store.save("meta", meta);
     draft.runStatus = "done";
     draft.progress = 1;
-    if (draft.familyQueue) queueSiblings(draft.familyQueue, store);
+    if (draft.familyQueue) {
+      queueSiblings(draft.familyQueue, store);
+      recordRunSpend(draft.familyQueue, meta.runId, engine.budget.spent);
+      draft.familyQueue.done.push(meta.term);
+    }
   } catch (error) {
     if (/cannot be counted/.test(error.message)) {
       draft.runStatus = "review";
@@ -813,6 +840,7 @@ export async function countGlossaryResearch(render) {
   await store.flush();
   render();
   if (draft.runStatus === "done" && draft.familyQueue) await researchNextFamilyWord(render);
+  else if (draft.runStatus === "failed" && draft.familyQueue) await skipFamilyWord(render);
 }
 
 // --- related words, researched one after another ---------------------------------
@@ -824,10 +852,31 @@ export function toggleResearchFamilyWord(render, index) {
   render();
 }
 
+/** The total limit shown on the related-words screen: a cap on everything, the first word included. */
+export function researchFamilyTotal(draft = research()) {
+  return draft.familyTotalLimitUsd ?? DEFAULT_TOTAL_LIMIT_USD;
+}
+
 export function continueResearchFamily(render) {
   const draft = research();
   if (!pendingFamilyChoice) return;
   const chosen = (draft.familyGroups ?? []).filter((_, index) => draft.familyTicked?.[index]);
+  if (chosen.length) {
+    const word = Number(draft.familyWordLimitUsd);
+    const total = researchFamilyTotal(draft);
+    if (!(word > 0)) {
+      draft.familyLimitError = "Enter a limit per related word above $0.";
+      render();
+      return;
+    }
+    if (!(total > (Number(draft.spent) || 0))) {
+      draft.familyLimitError = `Enter a total limit above what is already spent (${formatUsd(draft.spent)}).`;
+      render();
+      return;
+    }
+    draft.familyLimits = { word, total };
+  }
+  draft.familyLimitError = "";
   const resolve = pendingFamilyChoice;
   pendingFamilyChoice = null;
   draft.runStatus = "running";
@@ -851,16 +900,51 @@ function queueSiblings(queue, store) {
   }
 }
 
+/** A related word whose run stopped is left resumable; the batch goes on. */
+async function skipFamilyWord(render) {
+  const draft = research();
+  const queue = draft.familyQueue;
+  if (!queue) return;
+  queue.stopped.push(draft.term);
+  appendLog({ type: "problem", text: `“${draft.term}” stopped; it can be resumed from past research. Going on with the next related word.` });
+  await researchNextFamilyWord(render);
+}
+
+function finishFamilyBatch(render, reason = "") {
+  const draft = research();
+  const queue = draft.familyQueue;
+  draft.familyQueue = null;
+  if (!queue) return;
+  const left = queue.words.map((word) => word.form);
+  appendLog({
+    type: left.length ? "problem" : "fact",
+    text: [
+      reason,
+      queue.done.length ? `Researched: ${queue.done.join(", ")}.` : "",
+      queue.stopped.length ? `Stopped (resumable): ${queue.stopped.join(", ")}.` : "",
+      left.length ? `Not started: ${left.join(", ")}.` : "",
+      `Spent ${formatUsd(batchSpent(queue))} of the total limit ${formatUsd(queue.totalLimit)}.`,
+    ].filter(Boolean).join(" "),
+  });
+  render();
+}
+
 async function researchNextFamilyWord(render) {
   const draft = research();
   const queue = draft.familyQueue;
-  const next = queue?.words.shift();
-  if (!next) {
-    draft.familyQueue = null;
-    render();
+  if (!queue) return;
+  if (!queue.words.length) {
+    finishFamilyBatch(render);
     return;
   }
+  const { limit } = nextWordLimit(queue);
+  if (limit == null) {
+    finishFamilyBatch(render, "The total spending limit is reached.");
+    return;
+  }
+  const next = queue.words.shift();
   Object.assign(draft, {
+    spendingLimitUsd: limit,
     term: next.form,
     variants: next.forms.filter((form) => fold(form).trim() !== fold(next.form).trim()),
     existingMatches: findExistingResearchEntries(next.forms),

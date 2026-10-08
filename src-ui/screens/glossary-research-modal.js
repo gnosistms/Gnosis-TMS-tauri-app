@@ -9,8 +9,10 @@ import { renderLanguagePickerModal } from "./language-picker-modal.js";
 import { renderMoneyInput } from "./money-input.js";
 import {
   researchableProjects,
+  researchFamilyTotal,
   supportedResearchProviderNames,
 } from "../app/glossary-research-flow.js";
+import { batchSpent } from "../app/glossary-research-family-budget.js";
 import { formatUsd, researchModelsWithPrices } from "../app/glossary-research-budget.js";
 import {
   batchProgressText,
@@ -315,10 +317,26 @@ function renderFamilyChoice(research) {
       <span>${esc(group.forms.join(", "))}</span>
       <span class="muted">${esc(kinds[group.kind] ?? group.kind)} · ${group.rows} passages</span>
     </label>`).join("");
+  const anyTicked = (research.familyTicked ?? []).some(Boolean);
   return `
     <div class="research-family">
       <p class="modal__supporting">These related words occur in the texts. Each word you tick is researched after “${esc(research.term)}”, one after another, as its own glossary entry, and is checked against the translations found before it.</p>
       <div class="research-project-list">${rows}</div>
+      ${anyTicked ? `
+        <div class="research-family__limits">
+          <p class="modal__supporting">Spending limit for “${esc(research.term)}”: ${formatUsd(research.limit)}. A related word that reaches its own limit stops and can be resumed later; the others go on. The total limit covers everything, “${esc(research.term)}” included, and stops the rest when reached.</p>
+          <div class="research-advanced__row">
+            <label class="field">
+              <span class="field__label">Limit per related word</span>
+              ${renderMoneyInput({ value: research.familyWordLimitUsd, inputAttributes: 'data-research-field="familyWordLimitUsd"', ariaLabel: "Spending limit per related word in US dollars" })}
+            </label>
+            <label class="field">
+              <span class="field__label">Total limit</span>
+              ${renderMoneyInput({ value: researchFamilyTotal(research), inputAttributes: 'data-research-field="familyTotalLimitUsd"', ariaLabel: "Total spending limit in US dollars" })}
+            </label>
+          </div>
+          ${research.familyLimitError ? `<p class="modal__error" role="alert">${esc(research.familyLimitError)}</p>` : ""}
+        </div>` : ""}
     </div>`;
 }
 
@@ -339,7 +357,7 @@ function renderRun(state) {
   const head = `
     <div class="research-run__head">
       <div class="research-run__status"><strong>${esc(statusText)}</strong> · ${formatUsd(research.spent)} of ${formatUsd(research.limit)}</div>
-      ${research.familyQueue?.words?.length ? `<p class="muted">Then, one after another: ${esc(research.familyQueue.words.map((word) => word.form).join(", "))}</p>` : ""}
+      ${research.familyQueue ? `<p class="muted">${research.familyQueue.words.length ? `Then, one after another: ${esc(research.familyQueue.words.map((word) => word.form).join(", "))} · ` : ""}related words ${formatUsd(batchSpent(research.familyQueue))} spent of ${formatUsd(research.familyQueue.totalLimit)} in all</p>` : ""}
       <div class="research-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><span style="width:${pct}%"></span></div>
     </div>`;
   const budgetStop = research.stopKind === "budget";
