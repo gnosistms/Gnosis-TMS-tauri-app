@@ -58,7 +58,7 @@ export function requiredOriginalWords(study, targetCode) {
   const seen = new Set();
   return (study?.senses ?? [])
     .filter((sense) => sense.originalWord?.verified && baseLanguage(sense.originalWord.languageCode) === baseLanguage(targetCode))
-    .map((sense) => ({ ...sense.originalWord, sense: sense.sense }))
+    .map((sense) => ({ ...sense.originalWord, sense: sense.sense, partOfSpeech: sense.partOfSpeech ?? null }))
     .filter((word) => !seen.has(fold(word.term)) && seen.add(fold(word.term)));
 }
 
@@ -137,7 +137,7 @@ export function enforceOriginalWords(proposal, placed, { headword = "" } = {}) {
       entry = words.find((e) => e.sourceTerms.some((t) => fold(t) === fold(headword))) ?? words[0];
       let n = entry.variants.length + 1;
       while (entry.variants.some((v) => v.id === `${entry.id}v${n}`)) n += 1;
-      variant = { id: `${entry.id}v${n}`, target: word.term, note: "", senses: [`Outside dictionary: ${word.sense}`], corpusSense: word.sense, rationale: "" };
+      variant = { id: `${entry.id}v${n}`, target: word.term, note: "", ...(word.partOfSpeech ? { partOfSpeech: word.partOfSpeech } : {}), senses: [`Outside dictionary: ${word.sense}`], corpusSense: word.sense, rationale: "" };
       entry.variants.push(variant);
       added.push({ entryId: entry.id, target: word.term });
     }

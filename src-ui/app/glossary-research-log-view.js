@@ -356,11 +356,12 @@ const RESULT_SUMMARIES = {
   // Where the author took the term from leads; the ordinary meanings follow.
   senses(data) {
     const label = (sense) => sense.label || sense.sense;
+    const pos = (sense) => sense.partOfSpeech || sense.wordClass || "";
     const borrowed = data.filter((sense) => sense.inDictionary === false || sense.sourceBook);
     const ordinary = data.filter((sense) => !borrowed.includes(sense));
     const parts = borrowed.map((sense) => {
-      const article = /^[aeiou]/i.test(sense.wordClass ?? "") ? "an" : "a";
-      const head = sense.wordClass ? `as ${article} ${sense.wordClass} (${label(sense)})` : label(sense);
+      const article = /^[aeiou]/i.test(pos(sense)) ? "an" : "a";
+      const head = pos(sense) ? `as ${article} ${pos(sense)} (${label(sense)})` : label(sense);
       const origin = [
         sense.sourceBook ? `from ${sense.sourceBook}` : "the author's own",
         sense.originalTerm ? `original ${sense.originalLanguage ?? ""} “${sense.originalTerm}”${sense.verified === false ? " (unverified)" : ""}` : "",
@@ -369,7 +370,7 @@ const RESULT_SUMMARIES = {
     });
     if (ordinary.length) {
       const byClass = new Map();
-      for (const sense of ordinary) byClass.set(sense.wordClass || "", [...(byClass.get(sense.wordClass || "") ?? []), label(sense)]);
+      for (const sense of ordinary) byClass.set(pos(sense), [...(byClass.get(pos(sense)) ?? []), label(sense)]);
       for (const [wordClass, labels] of byClass) {
         parts.push(`${wordClass ? `as an${/^[aeiou]/i.test(wordClass) ? "" : ""} ${wordClass}, ` : ""}ordinary ${ordinary[0].language ?? ""}: ${labels.join("; ")}`.replace(/ +/g, " ").replace(/^as an ([^aeiou])/i, "as a $1"));
       }

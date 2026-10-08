@@ -163,6 +163,7 @@ function renderEntryCard(report, run, draft) {
         <div class="rr-variant__main">
           <div class="rr-variant__head">
             <input class="rr-variant__target" type="text" lang="${esc(tgt)}" value="${esc(variant.target)}" placeholder="New translation" data-research-entry="${esc(entry.id)}:target:${index}" aria-label="Translation" />
+            ${variant.partOfSpeech ? `<span class="rr-pill">${esc(variant.partOfSpeech)}</span>` : ""}
             ${variant.original ? `<span class="rr-pill rr-pill--ok" title="${esc(`The original word of ${variant.original.book} for this meaning: the translation whenever the term has this meaning, whatever its frequency.`)}">traditional term</span>` : ""}
             ${variant.fromExisting ? `<span class="rr-pill">in current entry</span>` : ""}
             ${rarelyChosen ? `<span class="rr-pill rr-pill--warn">${c.occurrences ? "rarely chosen" : "never chosen"}</span>` : ""}
@@ -316,6 +317,7 @@ function renderMeaning(sense, index, measure, candidates, src, tgt, meta) {
     <div class="rr-meaning">
       <div class="rr-meaning__head">
         <h3>Meaning ${index + 1}</h3>
+        ${sense.partOfSpeech ? `<span class="rr-pill">${esc(sense.partOfSpeech)}</span>` : ""}
         ${sense.usedByAuthor ? '<span class="rr-pill">used by the author</span>' : ""}
       </div>
       <p class="rr-meaning__gloss">${esc(sense.gloss)}</p>

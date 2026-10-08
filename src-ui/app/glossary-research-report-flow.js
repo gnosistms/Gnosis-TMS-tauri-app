@@ -108,6 +108,7 @@ export function buildEntryDrafts(run, glossaryTerms) {
             id: variant.id, target: variant.target, note: variant.note, count,
             fromExisting,
             ...(variant.original ? { original: variant.original } : {}),
+            ...(variant.partOfSpeech ? { partOfSpeech: variant.partOfSpeech } : {}),
             // Chosen in under 2% of the sample (or never): proposed for removal, since
             // every variant is sent to the translating AI; the user can keep it. The
             // original word of a borrowed meaning always stays.

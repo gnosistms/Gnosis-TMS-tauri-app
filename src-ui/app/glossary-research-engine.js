@@ -629,7 +629,7 @@ export function createResearchEngine(deps) {
         // panel charts the sentences per meaning, so it gets the meanings' names.
         progress: {
           key: "n", total: general.sample.length, unit: "sentence", view: "senses",
-          word: forms[0], language: name, senses: senses.map((sense) => ({ id: sense.id, gloss: sense.gloss })),
+          word: forms[0], language: name, senses: senses.map((sense) => ({ id: sense.id, gloss: sense.gloss, partOfSpeech: sense.partOfSpeech ?? null })),
         },
         instructions: prompts.senseClassifyInstructions({ languageName: name, word: forms[0], senses }),
         content: general.sample.map((text, index) => `${index + 1}. ${text.length > 400 ? `${text.slice(0, 400)}…` : text}`).join("\n"),
@@ -1047,7 +1047,7 @@ export function createResearchEngine(deps) {
       for (const sense of study.senses) {
         const verified = sense.originalWord?.verified === true;
         logResult("senses", [{
-          sense: sense.sense, label: sense.label ?? "", wordClass: sense.wordClass ?? "", inDictionary: sense.inDictionary === true,
+          sense: sense.sense, label: sense.label ?? "", partOfSpeech: sense.partOfSpeech ?? sense.wordClass ?? "", inDictionary: sense.inDictionary === true,
           sourceBook: sense.sourceBook ?? null, originalTerm: sense.originalTerm ?? null, originalLanguage: sense.originalLanguage ?? null,
           verified, term: settings.term, language: settings.sourceLanguageName,
         }], `${sense.sense}${sense.sourceBook ? ` — from ${sense.sourceBook}` : ""}${sense.originalTerm ? ` (original ${sense.originalLanguage ?? ""} term “${sense.originalTerm}”)` : ""}`);
@@ -1181,7 +1181,7 @@ export function createResearchEngine(deps) {
       info(`Measuring “${settings.term}” in general ${name}: sorting example sentences by the sense they use.`);
       const term = await measureSenses({
         code, name, forms, listZipf,
-        senses: study.senses.map(({ id, gloss }) => ({ id, gloss })),
+        senses: study.senses.map(({ id, gloss, partOfSpeech }) => ({ id, gloss, partOfSpeech })),
         purpose: `sort general ${name} sentences with “${settings.term}” by sense`,
       });
       const inDictionary = store.load("dictionary")?.status === "found";
@@ -1554,7 +1554,7 @@ export function createResearchEngine(deps) {
     const source = parts.source;
     const lines = [
       `## Parts of the term\n${parts.study.parts.map((p) => `- ${p.part}: ${p.meaning}`).join("\n")}`,
-      `## The term's senses\n${parts.study.senses.map((sense) => `- ${sense.id}: ${sense.gloss}${sense.usedByAuthor ? " (used by the author)" : ""}${source ? `; in general ${settings.sourceLanguageName}: ${describeSense(source.term.senses[sense.id])}` : ""}`).join("\n")}`,
+      `## The term's senses\n${parts.study.senses.map((sense) => `- ${sense.id}${sense.partOfSpeech ? ` (${sense.partOfSpeech})` : ""}: ${sense.gloss}${sense.usedByAuthor ? " (used by the author)" : ""}${source ? `; in general ${settings.sourceLanguageName}: ${describeSense(source.term.senses[sense.id])}` : ""}`).join("\n")}`,
     ];
     if (source) {
       lines.push(`Frequency in general ${settings.sourceLanguageName} (Zipf: 0 = not in ordinary use, 3 = everyday word, 5+ = very common): “${settings.term}” ${formatZipf(source.wordZipf)}${source.invented ? " (not in the dictionary; practically absent from general use)" : ""}.`);
@@ -1875,7 +1875,7 @@ export function createResearchEngine(deps) {
         id: entry.id, kind: entry.kind,
         sourceTerms: entry.sourceTerms.map((t) => t.trim()).filter(Boolean),
         generalNote: entry.generalNote,
-        variants: entry.variants.map(({ id, target, note, original }) => ({ id, target, note, ...(original ? { original } : {}) })),
+        variants: entry.variants.map(({ id, target, note, original, partOfSpeech }) => ({ id, target, note, ...(partOfSpeech ? { partOfSpeech } : {}), ...(original ? { original } : {}) })),
       })),
     };
     const version = stableHash(body).slice(0, 12);

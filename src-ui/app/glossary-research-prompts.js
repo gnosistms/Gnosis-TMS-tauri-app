@@ -1,7 +1,7 @@
 // Prompt texts and strict JSON schemas for Glossary Research.
 // Bump RESEARCH_PROMPT_VERSION on any change that could alter a judgment.
 
-export const RESEARCH_PROMPT_VERSION = "2026-10-08.9";
+export const RESEARCH_PROMPT_VERSION = "2026-10-08.10";
 
 const STR = { type: "string" };
 const NSTR = { anyOf: [{ type: "string" }, { type: "null" }] };
@@ -13,6 +13,17 @@ const object = (properties) => ({
   required: Object.keys(properties),
 });
 const oneOf = (...values) => ({ type: "string", enum: values });
+
+/**
+ * Parts of speech, from a fixed list so that every language pair gets the same
+ * plain labels (a free field invites linguists' words). The app shows them as is.
+ */
+export const PARTS_OF_SPEECH = ["noun", "proper noun", "verb", "adjective", "adverb", "phrase", "other"];
+const POS = oneOf(...PARTS_OF_SPEECH);
+
+function partOfSpeechRule(what) {
+  return `partOfSpeech: how the term is used in ${what}, one of ${PARTS_OF_SPEECH.map((p) => `"${p}"`).join(", ")}. Label the use, not the dictionary entry: a word of one kind used as another (an adjective used as a noun) takes the kind it is used as.`;
+}
 
 function corpusLine(ctx) {
   return `Source texts: ${ctx.corpusDescription}.`;
@@ -166,7 +177,7 @@ export const SOURCES_SCHEMA = object({
   senses: arrayOf(object({
     sense: STR,
     label: STR,
-    wordClass: STR,
+    partOfSpeech: POS,
     inDictionary: { type: "boolean" },
     sourceBook: NSTR,
     evidence: STR,
@@ -189,7 +200,7 @@ Work out:
 2. If that book is a translation, the original-language word or phrase that the ${ctx.sourceName} term translates. Use the records and the passages of the original text when given (e.g. the book's glossary pairs) and say what they are; if they do not settle it, give your belief and say it is unverified in originalTermBasis (it will be checked against the original text). Never invent a record.
 3. What the term means in the source book: what it is, what it does, how it relates to the neighbouring concepts of that system. Quote the book.
 4. How the author uses it: whether he follows the source, and which other terms he equates it with. relation "identity" only for explicit statements that X is Y; say whether the equated terms are names for the same thing in other systems.
-List the senses the author uses most first. For each sense give label: the sense in 2 to 4 plain words (e.g. "inner, deep"; "the divine Innermost"), and wordClass: how the term is used in it (noun, adjective, verb, adverb or phrase).
+List the senses the author uses most first. For each sense give label: the sense in 2 to 4 plain words (e.g. "inner, deep"; "the divine Innermost"), and ${partOfSpeechRule("this sense")}
 Do not discuss translating the term. Write label, summary, evidence, originalTermBasis, meaningInSource, authorUsage and relations in ${ctx.reportName}; keep the wording of quotations. ${quotationRule(ctx.reportName, ctx.reportCode)}
 
 Length: keep every fact that bears on the meaning, the origin or the original word, and nothing else; do not repeat yourself across fields. A sense the dictionary already covers gets one line: meaningInSource at most 15 words, authorUsage at most 20, evidence "dictionary", no equivalences. For any other sense: evidence at most 80 words with at most 3 short quotations; meaningInSource at most 120 words; authorUsage at most 100 words; each equivalence's evidence at most 25 words. summary at most 80 words.`;
@@ -241,13 +252,14 @@ const VARIANT = object({
   id: STR,
   target: STR,
   note: STR,
+  partOfSpeech: POS,
   senses: arrayOf(STR),
   corpusSense: NSTR,
   rationale: STR,
 });
 
 export const PROPOSAL_SCHEMA = object({
-  partOfSpeech: STR,
+  partsOfSpeech: arrayOf(POS),
   entries: arrayOf(object({
     id: STR,
     kind: oneOf("word", "expression"),
@@ -270,6 +282,7 @@ export function proposalInstructions(ctx) {
 Principles:
 - The dictionary sense inventory (below) is the starting lexical source; the texts decide which senses are attested. A meaning outside the dictionary goes in sensesOutsideDictionary, never presented as a dictionary sense.
 - ENTRIES. An entry is one TMX unit: a group of ${ctx.sourceName} source terms that share one set of ${ctx.targetName} translations. Group source forms together only when ${ctx.targetName} does not need to distinguish them; split them when ${ctx.targetName} keeps the distinction. Example: Spanish negro/negra/negros/negras → English "black" is one entry; Spanish llave → English "key" and llaves → "keys" are two entries, because English never renders a plural as a singular; Spanish llave/llaves → Vietnamese "chìa khóa" is one entry, because Vietnamese nouns do not mark number. Every confirmed form belongs to exactly one word entry.
+- PARTS OF SPEECH. partsOfSpeech: every part of speech the term is used as in these texts. Each variant's partOfSpeech: how the term is used in the passages that variant serves (one of ${PARTS_OF_SPEECH.map((p) => `"${p}"`).join(", ")}; an adjective used as a noun is "noun").
 - Variants are distinct ${ctx.targetName} choices a translator picks between. Merge near-synonyms that serve the same contexts; keep variants that serve genuinely different contexts or collocations. Typically 2–5 per entry, ordered by how broadly they apply; fewer is better, because every variant and note is sent to the translating AI with each sentence that contains the term, alongside many other glossary entries.
 - START FROM THE CANDIDATE STUDY: its candidates were chosen for the term as a whole, from the study of where the term comes from. They come in groups of interchangeable renderings, each shown by its representative with the other members after "also"; a group is one option, not several. Keep its recommended groups unless the readings show they fail. A non-representative member may replace its representative when the readings favour it.
 - Every rendering the open reading used two or more times (see the rendering tally) must be a variant, or be listed in leftOutRenderings with its count and the reason it should not be measured (e.g. it is a synonym the author equates the term with, not a translation of it).
@@ -310,7 +323,7 @@ export function frozenEntryText(frozen, targetName) {
     lines.push(`${entry.kind === "expression" ? "EXPRESSION ENTRY" : "ENTRY"} [${entry.id}] “${entry.sourceTerms.join(" / ")}”`);
     lines.push(`General note (${targetName}): ${entry.generalNote}`);
     for (const variant of entry.displayOrder ?? entry.variants) {
-      lines.push(`  [${variant.id}] ${variant.target} — ${variant.note}${variant.original ? `\n      TRADITIONAL ${targetName.toUpperCase()} TERM: the original word of ${variant.original.book} for the meaning “${variant.original.sense}”.` : ""}`);
+      lines.push(`  [${variant.id}] ${variant.target}${variant.partOfSpeech ? ` (${variant.partOfSpeech})` : ""} — ${variant.note}${variant.original ? `\n      TRADITIONAL ${targetName.toUpperCase()} TERM: the original word of ${variant.original.book} for the meaning “${variant.original.sense}”.` : ""}`);
     }
     lines.push("");
   }
@@ -385,14 +398,14 @@ List ${ctx.sourceName} words that contain the headword (or its stem) as one of t
 export const PARTS_SCHEMA = object({
   isCompound: { type: "boolean" },
   parts: arrayOf(object({ part: STR, meaning: STR })),
-  senses: arrayOf(object({ id: STR, gloss: STR, usedByAuthor: { type: "boolean" } })),
+  senses: arrayOf(object({ id: STR, gloss: STR, partOfSpeech: POS, usedByAuthor: { type: "boolean" } })),
   bases: arrayOf(object({ word: STR, forms: arrayOf(STR), neededSense: STR, otherSenses: arrayOf(STR), reuse: NSTR })),
 });
 
 export function partsInstructions(ctx) {
   return `You analyse the ${ctx.sourceName} term “${ctx.headword}” before it is translated. ${corpusLine(ctx)} Do not propose translations.
 1. parts: take the term apart into its meaningful parts (prefix, base word, suffix; or the words of a phrase). For each part say, in plain words, what it means in this term as the author uses it. A simple word that cannot be split has one part. isCompound: true when the term has more than one part.
-2. senses: the senses of the term itself: the dictionary's senses (merge closely related ones) plus any sense the author uses that the dictionary lacks; at most 6, ids "s1", "s2", …. Gloss each in plain words without using a ${ctx.targetName} word as the definition: the glosses are used to sort sentences of general ${ctx.sourceName} texts by sense. usedByAuthor: true for the senses the passages show the author using.
+2. senses: the senses of the term itself: the dictionary's senses (merge closely related ones) plus any sense the author uses that the dictionary lacks; at most 6, ids "s1", "s2", …. Gloss each in plain words without using a ${ctx.targetName} word as the definition: the glosses are used to sort sentences of general ${ctx.sourceName} texts by sense. usedByAuthor: true for the senses the passages show the author using. ${partOfSpeechRule("the sense")} A sense used as two parts of speech is two senses.
 3. bases: only when the term has more than one part: for each part that is itself a ${ctx.sourceName} word (not a prefix or suffix), the word written alone, its inflected forms to search (forms, including the word itself), the sense it carries inside the term (neededSense, plain words), and its other common senses (otherSenses, short glosses). These words are measured in general ${ctx.sourceName} usage; reuse: when "Measurements already made" lists the same word measured in the same sense as neededSense, that measurement's id, else null. Empty for a simple word.
 Write meanings and glosses in ${ctx.reportName}, at most 20 words each. ${quotationRule(ctx.reportName, ctx.reportCode)}`;
 }
@@ -405,7 +418,7 @@ export function senseClassifySchema(ids) {
 
 export function senseClassifyInstructions({ languageName, word, senses }) {
   return `Each numbered sentence below is ordinary ${languageName} text (news) in which the letters of “${word}” occur. For each sentence decide how they are used:
-${senses.map((sense) => `- "${sense.id}": ${sense.gloss}`).join("\n")}
+${senses.map((sense) => `- "${sense.id}"${sense.partOfSpeech ? ` (${sense.partOfSpeech})` : ""}: ${sense.gloss}`).join("\n")}
 - "not_this_word": the letters are not this word here: they belong to other words or to a different word written the same way that is not listed above, a name, or another language.
 - "other": the word is used in a sense not listed above.
 Answer every number once.`;

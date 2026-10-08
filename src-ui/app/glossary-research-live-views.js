@@ -44,7 +44,7 @@ function sensesView(request, value) {
   }
   const total = hint.total > 0 ? hint.total : Math.max(sorted, 1);
   const rows = [
-    ...senses.map((sense) => [sense.gloss, counts.get(sense.id) ?? 0, sense.id === "needed" ? "needed" : "sense", sense.id === "needed" ? "needed" : ""]),
+    ...senses.map((sense) => [`${sense.partOfSpeech ? `(${sense.partOfSpeech}) ` : ""}${sense.gloss}`, counts.get(sense.id) ?? 0, sense.id === "needed" ? "needed" : "sense", sense.id === "needed" ? "needed" : ""]),
     ...[["other", "another meaning"], ["not_this_word", "not this word (a name, another word)"]]
       .filter(([id]) => counts.get(id)).map(([id, text]) => [text, counts.get(id), "rest"]),
   ];
@@ -97,7 +97,7 @@ function sourcesView(request, value) {
     ${value?.summary ? `<p class="research-view__summary">${esc(value.summary)}</p>` : ""}
     ${senses.map((sense) => `
       <div class="research-view__card">
-        <div class="research-view__title">${sense.label ? `<strong>${esc(sense.label)}</strong> ` : ""}${sense.wordClass ? muted(`(${sense.wordClass})`) : ""} ${sense.inDictionary === true ? label("in the dictionary") : sense.inDictionary === false ? label("not in the dictionary", "accent") : ""}</div>
+        <div class="research-view__title">${sense.label ? `<strong>${esc(sense.label)}</strong> ` : ""}${sense.partOfSpeech || sense.wordClass ? muted(`(${sense.partOfSpeech || sense.wordClass})`) : ""} ${sense.inDictionary === true ? label("in the dictionary") : sense.inDictionary === false ? label("not in the dictionary", "accent") : ""}</div>
         <div class="research-view__line">${esc(sense.sense)}</div>
         ${sense.sourceBook ? `<div class="research-view__line">From <strong>${esc(sense.sourceBook)}</strong>${sense.originalTerm ? `, original ${esc(sense.originalLanguage)} <strong>“${esc(sense.originalTerm)}”</strong>` : ""}</div>` : ""}
         ${sense.meaningInSource && sense.inDictionary === false ? `<div class="research-view__line">${muted("Meaning there:")} ${esc(sense.meaningInSource)}</div>` : ""}
@@ -112,7 +112,7 @@ function partsView(request, value) {
   const bases = list(value?.bases).filter((base) => str(base?.word));
   return view("parts", "Parts and meanings", `
     ${parts.length ? `<div class="research-view__equation">${parts.map((part, index) => `${index ? '<span class="research-view__plus">+</span>' : ""}<span class="research-view__part"><strong>${esc(part.part)}</strong>${muted(part.meaning)}</span>`).join("")}</div>` : ""}
-    ${senses.length ? `<ol class="research-view__definitions">${senses.map((sense) => `<li>${esc(sense.gloss)}${sense.usedByAuthor === true ? ` ${label("used by the author", "accent")}` : ""}</li>`).join("")}</ol>` : ""}
+    ${senses.length ? `<ol class="research-view__definitions">${senses.map((sense) => `<li>${sense.partOfSpeech ? `${muted(`(${sense.partOfSpeech})`)} ` : ""}${esc(sense.gloss)}${sense.usedByAuthor === true ? ` ${label("used by the author", "accent")}` : ""}</li>`).join("")}</ol>` : ""}
     ${bases.length ? `<div class="research-view__rows">${bases.map((base) => `<div class="research-view__row">Base word <strong>${esc(base.word)}</strong>: ${esc(base.neededSense)} ${list(base.otherSenses).length ? muted(`+${plural(list(base.otherSenses).length, "other meaning")}`) : ""}</div>`).join("")}</div>` : ""}`);
 }
 
@@ -203,11 +203,11 @@ function proposalView(request, value) {
   const entries = list(value?.entries).filter((entry) => list(entry?.sourceTerms).length || str(entry?.generalNote));
   const leftOut = list(value?.leftOutRenderings).filter((item) => str(item?.rendering));
   const small = (title, items, render) => (items.length ? `<div class="research-view__block"><div class="research-view__title">${title}</div><ul class="research-view__list">${items.map(render).join("")}</ul></div>` : "");
-  return view("proposal", `Proposed ${entries.length === 1 ? "entry" : "entries"}${value?.partOfSpeech ? ` ${muted(`(${value.partOfSpeech})`)}` : ""}`, `
+  return view("proposal", `Proposed ${entries.length === 1 ? "entry" : "entries"}${list(value?.partsOfSpeech).length ? ` ${muted(`(${list(value.partsOfSpeech).join(", ")})`)}` : ""}`, `
     ${entries.map((entry) => `<div class="research-view__card">
       <div class="research-view__title"><strong>${esc(list(entry.sourceTerms).join(" · "))}</strong>${entry.kind === "expression" ? ` ${label("expression")}` : ""}</div>
       ${entry.generalNote ? `<div class="research-view__note">${esc(entry.generalNote)}</div>` : ""}
-      <ul class="research-view__list">${list(entry.variants).filter((v) => str(v?.target)).map((v) => `<li><strong>${esc(v.target)}</strong>${v.note ? ` — ${esc(v.note)}` : ""}</li>`).join("")}</ul>
+      <ul class="research-view__list">${list(entry.variants).filter((v) => str(v?.target)).map((v) => `<li><strong>${esc(v.target)}</strong>${v.partOfSpeech ? ` ${muted(`(${v.partOfSpeech})`)}` : ""}${v.note ? ` — ${esc(v.note)}` : ""}</li>`).join("")}</ul>
     </div>`).join("")}
     ${small("Left out", leftOut, (item) => `<li><strong>${esc(item.rendering)}</strong>${item.count ? ` ${muted(`×${item.count}`)}` : ""} ${muted(item.reason)}</li>`)}
     ${small("Fixed expressions without their own entry", list(value?.rejectedExpressions).filter((x) => str(x?.source)), (item) => `<li><strong>${esc(item.source)}</strong> ${muted(item.reason)}</li>`)}
