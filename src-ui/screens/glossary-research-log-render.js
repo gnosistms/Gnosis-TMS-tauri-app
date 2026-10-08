@@ -105,11 +105,11 @@ Object.assign(RESULT_RENDERERS, {
   senses(data) {
     return data.map((sense) => `
       <div class="research-result__group">
-        <div class="research-result__lead">${esc(sense.sense)}</div>
+        <div class="research-result__lead">${sense.label ? `<strong>${esc(sense.label)}</strong>${sense.wordClass ? ` <span class="research-result__sub">(${esc(sense.wordClass)})</span>` : ""} — ` : ""}${esc(sense.sense)}</div>
         ${sense.sourceBook || sense.originalTerm ? `<div class="research-result__sub">${[
           sense.sourceBook ? `from ${esc(sense.sourceBook)}` : "",
-          sense.originalTerm ? `original ${esc(sense.originalLanguage ?? "")} term “${esc(sense.originalTerm)}”` : "",
-        ].filter(Boolean).join(" · ")}</div>` : ""}
+          sense.originalTerm ? `original ${esc(sense.originalLanguage ?? "")} term “${esc(sense.originalTerm)}”${sense.verified === false ? " (unverified)" : ""}` : "",
+        ].filter(Boolean).join(" · ")}</div>` : sense.inDictionary ? `<div class="research-result__sub">ordinary meaning (in the dictionary)</div>` : ""}
       </div>`).join("");
   },
   shared(data) {
