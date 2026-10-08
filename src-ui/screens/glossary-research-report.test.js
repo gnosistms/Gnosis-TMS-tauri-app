@@ -45,9 +45,9 @@ test("an entry already in the glossary switches between the suggestion and the c
   assert.match(kept, /data-action="save-research-report"[^>]*disabled/);
 });
 
-test("each chart's scale covers its own values on whole numbers, at least two steps wide", () => {
-  assert.deepEqual(zipfRange([2.28, 4.52, 3.48, 2.48]), { lo: 2, hi: 5 });
-  assert.deepEqual(zipfRange([0, 2.98, 3.57]), { lo: 0, hi: 4 });
-  assert.deepEqual(zipfRange([3.1, 3.2]), { lo: 2, hi: 4 });
-  assert.deepEqual(zipfRange([6.6, 3.04, 2.04]), { lo: 1, hi: 7 });
+test("each chart's scale runs from a whole number below its values to just past the highest", () => {
+  assert.deepEqual(zipfRange([2.28, 4.52, 3.48, 2.48]), { lo: 2, hi: 4.62 });
+  assert.deepEqual(zipfRange([4.84, 3.04, 2.04, 3.56]), { lo: 1, hi: 4.94 });
+  assert.deepEqual(zipfRange([0, 2.98, 3.57]), { lo: 0, hi: 3.67 });
+  assert.deepEqual(zipfRange([3.1, 3.2]), { lo: 2, hi: 3.5 });
 });

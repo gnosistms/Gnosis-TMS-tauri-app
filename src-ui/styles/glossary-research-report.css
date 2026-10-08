@@ -649,6 +649,8 @@
   --label-w: 240px;
   --result-w: 92px;
   --gap: 18px;
+  /* room past the scale for the number beside the longest bar */
+  --value-room: 52px;
   --axis-h: 38px;
   position: relative;
 }
@@ -681,7 +683,7 @@
   top: var(--axis-h);
   bottom: 0;
   left: calc(var(--label-w) + var(--gap));
-  right: calc(var(--result-w) + var(--gap));
+  right: calc(var(--result-w) + var(--gap) + var(--value-room));
   pointer-events: none;
 }
 
@@ -743,6 +745,7 @@
 }
 
 .rr-scale__plot {
+  margin-right: var(--value-room);
   position: relative;
   z-index: 1;
   display: flex;
@@ -792,6 +795,7 @@
 }
 
 .rr-scale__axis {
+  margin-right: var(--value-room);
   position: relative;
   height: var(--axis-h);
 }
@@ -831,13 +835,8 @@
   }
 }
 
-/* the end ticks sit on the chart's edges: keep their labels inside */
+/* the first tick sits on the chart's left edge: keep its label inside */
 .rr-scale__axis span:first-child {
   transform: none;
   text-align: left;
-}
-
-.rr-scale__axis span:last-child {
-  transform: translateX(-100%);
-  text-align: right;
 }

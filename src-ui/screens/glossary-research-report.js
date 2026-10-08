@@ -215,22 +215,22 @@ function renderEntryCard(report, run, entry) {
 const ZIPF_WORDS = ["", "rare", "uncommon", "everyday", "common", "very common"];
 
 /**
- * The stretch of the Zipf scale one chart needs: from just below its lowest
- * value to just above its highest, on whole numbers, at least two steps wide.
+ * The stretch of the Zipf scale one chart needs: from the whole number just
+ * below its lowest value to just past its highest (the numbers beside the bars
+ * get their own room in the layout), at least 1.5 steps wide.
  */
 export function zipfRange(values) {
   const known = values.filter((v) => Number.isFinite(v));
   if (!known.length) return { lo: 0, hi: 4 };
-  let lo = Math.max(0, Math.floor(Math.min(...known) - 0.25));
-  let hi = Math.ceil(Math.max(...known) + 0.25);
-  if (hi - lo < 2) hi = lo + 2;
-  return { lo, hi };
+  const lo = Math.max(0, Math.floor(Math.min(...known) - 0.25));
+  const hi = Math.max(Math.max(...known) + 0.1, lo + 1.5);
+  return { lo, hi: Math.round(hi * 100) / 100 };
 }
 
 /** Whole-number ticks of a range, each with its plain word while there is room for the words. */
 function zipfTicks({ lo, hi }) {
   const ticks = [];
-  for (let z = Math.ceil(lo); z <= hi; z += 1) {
+  for (let z = Math.ceil(lo); z <= Math.floor(hi); z += 1) {
     const word = hi - lo <= 4 || z % 2 === 1 ? ZIPF_WORDS[z] ?? "" : "";
     ticks.push([z, word]);
   }
