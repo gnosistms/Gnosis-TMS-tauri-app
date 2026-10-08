@@ -7,7 +7,7 @@
   flex-direction: column;
   gap: 20px;
   width: min(1040px, calc(100% - var(--page-gutter-width)));
-  margin: 0 auto 48px;
+  margin: 24px auto 48px;
   color: var(--text);
 }
 
@@ -480,41 +480,53 @@
   font-weight: 600;
 }
 
-/* current glossary entry */
+/* current glossary entry (shown instead of the suggestion when chosen) */
 
-.rr-entry > .rr-block {
-  padding-top: 18px;
-  border-top: 1px solid var(--surface-border);
+.rr-current-entry {
+  gap: 18px;
 }
 
 .rr-current {
   display: flex;
   flex-direction: column;
-  gap: 8px;
   margin: 0;
   padding: 0;
+  border-top: 1px solid var(--surface-border);
   list-style: none;
 }
 
 .rr-current__row {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 10px;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 0 14px 44px;
+  border-bottom: 1px solid var(--surface-border);
 }
 
-.rr-current__row .rr-muted {
-  flex-basis: 100%;
+.rr-current__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
 }
 
 .rr-current__target {
-  font-weight: 500;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.rr-current__variant-note {
+  margin: 0;
+  color: var(--text-hover);
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 .rr-current__note {
-  margin: 10px 0 0;
-  color: var(--muted);
-  font-size: 13.5px;
+  margin: 0;
+  color: var(--text-hover);
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 /* background sections */

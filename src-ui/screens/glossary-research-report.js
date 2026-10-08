@@ -95,25 +95,38 @@ function countCell(key, count, total, passages, expanded, unit) {
     </div>`;
 }
 
-function renderExistingComparison(run, draft, meta) {
-  if (!draft.existing) return "";
+/** The entry as it is in the glossary now, each translation marked kept or left out by the suggestion. */
+function renderCurrentEntry(run, draft, meta) {
   const comparison = (run.confirmedProposal ?? run.proposal)?.existingComparison ?? [];
   const compared = (target) => comparison.find((item) => item.existing?.trim().toLowerCase() === target.trim().toLowerCase());
   const proposed = new Set(draft.variants.map((variant) => variant.target.trim().toLowerCase()));
-  const rows = draft.existing.targetTerms.map((target) => {
+  const tgt = meta.targetLanguage.code;
+  const rows = draft.existing.targetTerms.map((target, index) => {
     const item = compared(target);
     const kept = item?.verdict === "proposed" || proposed.has(target.trim().toLowerCase());
     const status = kept
-      ? `<span class="rr-pill rr-pill--ok">kept</span>`
-      : item?.verdict === "left_out" ? `<span class="rr-pill rr-pill--warn">left out</span>` : `<span class="rr-pill">not compared</span>`;
-    const reason = !kept && item?.reason ? `<p class="rr-muted">${esc(item.reason)}</p>` : "";
-    return `<li class="rr-current__row"><span class="rr-current__target" lang="${esc(meta.targetLanguage.code)}">${esc(target)}</span>${status}${reason}</li>`;
+      ? `<span class="rr-pill rr-pill--ok">also in the suggestion</span>`
+      : item?.verdict === "left_out" ? `<span class="rr-pill rr-pill--warn">left out of the suggestion</span>` : "";
+    const note = draft.existing.targetVariantNotes?.[index];
+    return `
+      <li class="rr-current__row">
+        <div class="rr-current__head"><span class="rr-current__target" lang="${esc(tgt)}">${esc(target)}</span>${status}</div>
+        ${note ? `<p class="rr-current__variant-note" lang="${esc(tgt)}">${esc(note)}</p>` : ""}
+        ${!kept && item?.reason ? `<p class="rr-muted">Why: ${esc(item.reason)}</p>` : ""}
+      </li>`;
   }).join("");
   return `
-    <section class="rr-block">
-      <h3 class="rr-block__title">Current glossary entry <span class="rr-muted" lang="${esc(meta.sourceLanguage.code)}">${esc(draft.existing.sourceTerms.join(", "))}</span></h3>
+    <section class="rr-block rr-current-entry">
       <ul class="rr-current">${rows}</ul>
-      ${draft.existing.notesToTranslators ? `<p class="rr-current__note" lang="${esc(meta.targetLanguage.code)}">${esc(draft.existing.notesToTranslators)}</p>` : ""}
+      ${draft.existing.notesToTranslators ? `
+        <div class="rr-field">
+          <span class="rr-field__label">Note for all translations</span>
+          <p class="rr-current__note" lang="${esc(tgt)}">${esc(draft.existing.notesToTranslators)}</p>
+        </div>` : ""}
+      <div class="rr-field">
+        <span class="rr-field__label">${esc(meta.sourceLanguage.name)} forms in this entry</span>
+        <p class="rr-current__note" lang="${esc(meta.sourceLanguage.code)}">${esc(draft.existing.sourceTerms.join(", "))}</p>
+      </div>
     </section>`;
 }
 
@@ -126,9 +139,9 @@ function renderEntryCard(report, run, entry) {
   const judges = run.aggregate.totals?.judges ?? 1;
   const unit = judges > 1 ? "votes" : "uses";
   const uses = Math.round(counts.occurrences / judges);
-  const decisionOptions = draft.existingTermId
-    ? [["update", "Update entry"], ["keep", "Keep current"]]
-    : [["add", "Add to glossary"], ["keep", "Don't add"]];
+  // Only an entry already in the glossary has a choice: the suggested update or the entry as it is.
+  const hasCurrent = Boolean(draft.existingTermId && draft.existing);
+  const showingCurrent = hasCurrent && draft.decision === "keep";
   const variantRows = draft.variants.map((variant, index) => {
     const key = `${entry.id}:${variant.id}`;
     const c = counts.variants[variant.id] ?? { occurrences: 0, passages: 0 };
@@ -153,24 +166,26 @@ function renderEntryCard(report, run, entry) {
   const otherCount = counts.other + unresolved + (counts.failed ?? 0);
   const variantsLabel = entry.sourceTerms.slice(1);
   return `
-    <article class="rr-entry${draft.decision === "keep" ? " is-kept" : ""}">
+    <article class="rr-entry">
       <header class="rr-entry__head">
         <div>
           <p class="rr-eyebrow">${entry.kind === "expression" ? "Expression" : "Entry"} · ${uses} uses in ${counts.passages} passages</p>
           <h2 class="rr-entry__title" lang="${esc(meta.sourceLanguage.code)}">${esc(entry.sourceTerms[0] ?? "")}</h2>
           ${variantsLabel.length ? `<p class="rr-entry__forms" lang="${esc(meta.sourceLanguage.code)}">${esc(variantsLabel.join(" · "))}</p>` : ""}
         </div>
-        <div class="rr-segmented" role="radiogroup" aria-label="What to do with this entry">
-          ${decisionOptions.map(([value, label]) => `
+        ${hasCurrent ? `
+        <div class="rr-segmented" role="radiogroup" aria-label="Which version to show">
+          ${[["update", "Suggested update"], ["keep", "Current glossary entry"]].map(([value, label]) => `
             <label class="rr-segmented__option${draft.decision === value ? " is-selected" : ""}">
               <input type="radio" name="decision-${esc(entry.id)}" data-action="set-research-entry-decision:${esc(entry.id)}:${value}" ${draft.decision === value ? "checked" : ""} />
               <span>${esc(label)}</span>
             </label>`).join("")}
-        </div>
+        </div>` : ""}
       </header>
       ${draft.saveError ? `<p class="rr-alert" role="alert">${esc(draft.saveError)}</p>` : ""}
       ${draft.saveStatus === "saved" ? `<p class="rr-saved">Saved to the glossary</p>` : ""}
-      <fieldset class="rr-entry__fields" ${draft.decision === "keep" ? "disabled" : ""}>
+      ${showingCurrent ? renderCurrentEntry(run, draft, meta) : `
+      <fieldset class="rr-entry__fields">
         <section class="rr-block">
           <div class="rr-table-head"><span>Translation and when to use it</span><span>Chosen in the sample</span></div>
           ${variantRows}
@@ -193,8 +208,7 @@ function renderEntryCard(report, run, entry) {
             <input class="field__input" type="text" value="${esc(draft.sourceTerms.join(", "))}" data-research-entry="${esc(entry.id)}:sourceTerms" />
           </label>
         </section>
-      </fieldset>
-      ${renderExistingComparison(run, draft, meta)}
+      </fieldset>`}
     </article>`;
 }
 
