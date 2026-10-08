@@ -1,7 +1,7 @@
 // Prompt texts and strict JSON schemas for Glossary Research.
 // Bump RESEARCH_PROMPT_VERSION on any change that could alter a judgment.
 
-export const RESEARCH_PROMPT_VERSION = "2026-10-07.9";
+export const RESEARCH_PROMPT_VERSION = "2026-10-08.1";
 
 const STR = { type: "string" };
 const NSTR = { anyOf: [{ type: "string" }, { type: "null" }] };
@@ -352,7 +352,7 @@ export const FAMILY_SCHEMA = object({
 
 export function familyInstructions(ctx) {
   return `You list the word family of the ${ctx.sourceName} word “${ctx.headword}” for a corpus study. ${corpusLine(ctx)}
-List ${ctx.sourceName} words that contain the headword (or its stem) as one of their parts: the word with a prefix (also written with a hyphen or a space after the prefix), the word with a suffix that makes another word, compounds, and fixed phrases of two or three words built on it whose meaning is more than the sum of their words (a set term, a title, an idiom). Do not list ordinary combinations of the word with a noun or verb (it describing an ordinary thing): the study of the word itself covers them. Go through the productive prefixes and suffixes of ${ctx.sourceName} one by one rather than listing only the obvious ones; authors coin words with them. Include the spellings a text might use (joined, hyphenated, spaced; with and without accents). Do not list the inflections of the headword itself; they are already in the study. At most 40, the most plausible for these texts first. Each one is searched in the texts and dropped if it does not occur. reason: at most 8 words, in ${ctx.reportName}.`;
+List ${ctx.sourceName} words that contain the headword (or its stem) as one of their parts: the word with a prefix (also written with a hyphen or a space after the prefix), the word with a suffix that makes another word, and compounds. Do not list phrases of separate words: a phrase needs its own entry only when translating its words with their own translations does not work, and the study of the word decides that from its passages. Go through the productive prefixes and suffixes of ${ctx.sourceName} one by one rather than listing only the obvious ones; authors coin words with them. Include the spellings a text might use (joined, hyphenated, spaced; with and without accents). Do not list the inflections of the headword itself; they are already in the study. At most 40, the most plausible for these texts first. Each one is searched in the texts and dropped if it does not occur. reason: at most 8 words, in ${ctx.reportName}.`;
 }
 
 // --- parts and senses of the term ----------------------------------------------

@@ -118,7 +118,7 @@ export function failedVariants(proposal, checks) {
 
 /**
  * Family members grouped by word (a member found through another member's
- * inflections belongs to it). Prefixed words, compounds and phrases are
+ * inflections belongs to it). Prefixed words and compounds are
  * suggested for study; suffixed words usually belong to their own studies.
  */
 export function familyGroups(members) {
@@ -136,7 +136,7 @@ export function familyGroups(members) {
     }
   }
   return [...groups.values()]
-    .map((group) => ({ ...group, suggested: ["prefixed", "compound", "phrase"].includes(group.kind) }))
+    .map((group) => ({ ...group, suggested: ["prefixed", "compound"].includes(group.kind) }))
     .sort((a, b) => b.rows - a.rows);
 }
 
@@ -618,7 +618,9 @@ export function createResearchEngine(deps) {
       });
       const candidates = mergeCaseVariants([
         ...(forms.related ?? []).map((r) => ({ form: r.form, kind: "suffixed" })),
-        ...proposed.words,
+        // Phrases are not related words: the study of the word gives one an entry
+        // only when its words' own translations do not compose it.
+        ...proposed.words.filter((w) => w.kind !== "phrase"),
       ], (w) => w.form).filter((w) => !known.has(fold(w.form).trim())).slice(0, 45);
       const members = [];
       const found = new Set(known);
