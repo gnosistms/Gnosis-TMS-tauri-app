@@ -206,10 +206,19 @@ function renderExisting(state) {
 
 // --- run view -----------------------------------------------------------------------
 
+/** The text above the review lists, worded for one term or for a term with related terms. */
+export function reviewIntro(entries, term) {
+  const main = entries[0]?.sourceTerms?.[0] ?? term ?? "";
+  const related = entries.length - 1;
+  if (related <= 0) {
+    return `Below are possible translations of “${main}”. In the next step, we will count how many times each one would actually be the most appropriate translation in the corpus texts. Based on the results, we will keep the most important translations and drop the less useful ones. Before we count, please review the list: remove any you don't want the AI to consider, and add any you would like to suggest.`;
+  }
+  return `Below are “${main}” and ${related} related term${related === 1 ? "" : "s"}, each with its possible translations. In the next step, we will count how many times each translation would actually be the most appropriate one in the corpus texts. Based on the results, we will keep the most important translations and drop the less useful ones. Before we count, please review the lists: remove any translations you don't want the AI to consider, and add any you would like to suggest.`;
+}
+
 function renderReview(research, targetName, targetCode) {
   const proposal = research.proposalDraft;
   if (!proposal) return "";
-  const relatedWord = Boolean(research.familyQueue) && research.term !== research.familyQueue.headword;
   const entries = proposal.entries.map((entry, entryIndex) => `
     <section class="research-review__entry">
       <h3 class="research-review__entry-title">${esc(entry.sourceTerms[0] ?? "")}${entry.kind === "expression" ? ' <span class="research-review__hint">expression</span>' : ""}</h3>
@@ -232,9 +241,7 @@ function renderReview(research, targetName, targetCode) {
     </section>`).join("");
   return `
     <div class="research-review">
-      <p class="modal__supporting">${relatedWord
-        ? "Below is a list of terms related to your original research term."
-        : "Below is your research term."} For each of them, we have a list of possible translations. In the next step, we will count how many times each of them would actually be the most appropriate translation when translating the actual corpus texts. Based on these results, we will identify the most important translations and eliminate the less useful ones. Before we do the count, please review the candidate translations. Remove the ones you don't want the AI to consider and add any new ones that you would like to suggest.</p>
+      <p class="modal__supporting">${esc(reviewIntro(proposal.entries, research.term))}</p>
       ${entries}
       ${research.reviewError ? `<p class="modal__error" role="alert">${esc(research.reviewError)}</p>` : ""}
     </div>`;
