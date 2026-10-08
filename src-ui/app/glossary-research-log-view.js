@@ -315,15 +315,22 @@ export function requestBatch(sections, request) {
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 const RESULT_SUMMARIES = {
+  // The recommended rendering of each meaning, then how many options there are.
   candidates(data) {
     const groups = data.reduce((n, sense) => n + (sense.groups?.length ?? 0), 0);
-    const renderings = data.reduce((n, sense) => n + (sense.groups ?? []).reduce((m, g) => m + (g.members?.length ?? 0), 0), 0);
-    return `${plural(renderings, "rendering")} in ${plural(groups, "group")} for ${plural(data.length, "sense")}`;
+    const recommended = [...new Set(data.map((sense) => (sense.groups ?? []).find((g) => g.recommended)?.members?.[0]).filter(Boolean))];
+    return `${recommended.length ? `★ ${recommended.join(", ")} · ` : ""}${plural(groups, "group")} of options for ${plural(data.length, "meaning")}`;
   },
+  // Which candidates failed, by name; the passes only as a number.
   checks(data) {
-    const count = (verdict) => data.filter((c) => c.verdict === verdict).length;
-    return [`${count("pass")} pass`, count("unclear") ? `${count("unclear")} unclear` : "", count("fail") ? `${count("fail")} fail` : ""].filter(Boolean).join(", ")
-      + ` (${plural(data.length, "candidate")} checked)`;
+    const failed = [...new Set(data.filter((c) => c.verdict === "fail").map((c) => c.target))];
+    const unclear = [...new Set(data.filter((c) => c.verdict === "unclear").map((c) => c.target))];
+    const passed = new Set(data.filter((c) => c.verdict === "pass").map((c) => c.target)).size;
+    return [
+      failed.length ? `fail: ${failed.join(", ")}` : "none fail",
+      unclear.length ? `unclear: ${unclear.join(", ")}` : "",
+      `${passed} pass`,
+    ].filter(Boolean).join(" · ");
   },
   frequency(data) {
     const term = data.find((item) => item.kind === "term");
@@ -336,8 +343,9 @@ const RESULT_SUMMARIES = {
   sampling([item]) {
     return item.light ? `${plural(item.distinct, "passage")}, light study` : `${plural(item.distinct, "distinct passage")}, ${item.measuring} measured`;
   },
+  // What a translator reached for, with how often.
   discovery([item]) {
-    return `${item.read} of ${item.total} read; most common: ${(item.top ?? []).slice(0, 3).map(([r]) => r).join(", ")}`;
+    return `translators reached for ${(item.top ?? []).slice(0, 4).map(([r, n]) => `${r} (${n})`).join(", ")} · ${item.read} of ${item.total} uses read`;
   },
   proposal(data) {
     return data.map((entry) => `${(entry.sourceTerms ?? [])[0] ?? ""} → ${(entry.variants ?? []).join(", ")}`).join(" | ");
@@ -345,8 +353,28 @@ const RESULT_SUMMARIES = {
   agreement([item]) {
     return `the judges agreed on ${item.agreed} of ${item.compared}`;
   },
+  // Where the author took the term from leads; the ordinary meanings follow.
   senses(data) {
-    return data.map((sense) => sense.sense).join("; ");
+    const label = (sense) => sense.label || sense.sense;
+    const borrowed = data.filter((sense) => sense.inDictionary === false || sense.sourceBook);
+    const ordinary = data.filter((sense) => !borrowed.includes(sense));
+    const parts = borrowed.map((sense) => {
+      const article = /^[aeiou]/i.test(sense.wordClass ?? "") ? "an" : "a";
+      const head = sense.wordClass ? `as ${article} ${sense.wordClass} (${label(sense)})` : label(sense);
+      const origin = [
+        sense.sourceBook ? `from ${sense.sourceBook}` : "the author's own",
+        sense.originalTerm ? `original ${sense.originalLanguage ?? ""} “${sense.originalTerm}”${sense.verified === false ? " (unverified)" : ""}` : "",
+      ].filter(Boolean).join(", ");
+      return `${head}: ${origin}`;
+    });
+    if (ordinary.length) {
+      const byClass = new Map();
+      for (const sense of ordinary) byClass.set(sense.wordClass || "", [...(byClass.get(sense.wordClass || "") ?? []), label(sense)]);
+      for (const [wordClass, labels] of byClass) {
+        parts.push(`${wordClass ? `as an${/^[aeiou]/i.test(wordClass) ? "" : ""} ${wordClass}, ` : ""}ordinary ${ordinary[0].language ?? ""}: ${labels.join("; ")}`.replace(/ +/g, " ").replace(/^as an ([^aeiou])/i, "as a $1"));
+      }
+    }
+    return parts.join(" · ");
   },
   shared(data) {
     const same = data.filter((pair) => pair.relation === "same").length;
@@ -363,7 +391,11 @@ export function sectionSummary(section) {
       const summarize = RESULT_SUMMARIES[item.resultKind];
       if (summarize && item.data) {
         try {
-          return summarize(item.data);
+          // Steps that log one result per meaning or candidate are summed up together.
+          const all = section.items
+            .filter((other) => other.kind === "result" && other.resultKind === item.resultKind && Array.isArray(other.data))
+            .flatMap((other) => other.data);
+          return summarize(all.length ? all : item.data);
         } catch {
           // fall back to the logged text
         }

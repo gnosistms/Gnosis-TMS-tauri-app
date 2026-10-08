@@ -1,7 +1,7 @@
 // Prompt texts and strict JSON schemas for Glossary Research.
 // Bump RESEARCH_PROMPT_VERSION on any change that could alter a judgment.
 
-export const RESEARCH_PROMPT_VERSION = "2026-10-08.8";
+export const RESEARCH_PROMPT_VERSION = "2026-10-08.9";
 
 const STR = { type: "string" };
 const NSTR = { anyOf: [{ type: "string" }, { type: "null" }] };
@@ -165,6 +165,8 @@ export const SOURCES_SCHEMA = object({
   summary: STR,
   senses: arrayOf(object({
     sense: STR,
+    label: STR,
+    wordClass: STR,
     inDictionary: { type: "boolean" },
     sourceBook: NSTR,
     evidence: STR,
@@ -187,7 +189,8 @@ Work out:
 2. If that book is a translation, the original-language word or phrase that the ${ctx.sourceName} term translates. Use the records and the passages of the original text when given (e.g. the book's glossary pairs) and say what they are; if they do not settle it, give your belief and say it is unverified in originalTermBasis (it will be checked against the original text). Never invent a record.
 3. What the term means in the source book: what it is, what it does, how it relates to the neighbouring concepts of that system. Quote the book.
 4. How the author uses it: whether he follows the source, and which other terms he equates it with. relation "identity" only for explicit statements that X is Y; say whether the equated terms are names for the same thing in other systems.
-Do not discuss translating the term. Write summary, evidence, originalTermBasis, meaningInSource, authorUsage and relations in ${ctx.reportName}; keep the wording of quotations. ${quotationRule(ctx.reportName, ctx.reportCode)}
+List the senses the author uses most first. For each sense give label: the sense in 2 to 4 plain words (e.g. "inner, deep"; "the divine Innermost"), and wordClass: how the term is used in it (noun, adjective, verb, adverb or phrase).
+Do not discuss translating the term. Write label, summary, evidence, originalTermBasis, meaningInSource, authorUsage and relations in ${ctx.reportName}; keep the wording of quotations. ${quotationRule(ctx.reportName, ctx.reportCode)}
 
 Length: keep every fact that bears on the meaning, the origin or the original word, and nothing else; do not repeat yourself across fields. A sense the dictionary already covers gets one line: meaningInSource at most 15 words, authorUsage at most 20, evidence "dictionary", no equivalences. For any other sense: evidence at most 80 words with at most 3 short quotations; meaningInSource at most 120 words; authorUsage at most 100 words; each equivalence's evidence at most 25 words. summary at most 80 words.`;
 }

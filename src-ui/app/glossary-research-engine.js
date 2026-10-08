@@ -625,8 +625,12 @@ export function createResearchEngine(deps) {
     if (general.sample.length) {
       const answer = await client.callJson({
         stage: "frequency", purpose,
-        // The answer lists one item per sentence; "n" opens each item.
-        progress: { key: "n", total: general.sample.length, unit: "sentence" },
+        // The answer lists one item per sentence; "n" opens each item. The live
+        // panel charts the sentences per meaning, so it gets the meanings' names.
+        progress: {
+          key: "n", total: general.sample.length, unit: "sentence", view: "senses",
+          word: forms[0], language: name, senses: senses.map((sense) => ({ id: sense.id, gloss: sense.gloss })),
+        },
         instructions: prompts.senseClassifyInstructions({ languageName: name, word: forms[0], senses }),
         content: general.sample.map((text, index) => `${index + 1}. ${text.length > 400 ? `${text.slice(0, 400)}…` : text}`).join("\n"),
         schema: prompts.senseClassifySchema(senses.map((sense) => sense.id)), schemaName: "senses",
@@ -1038,9 +1042,15 @@ export function createResearchEngine(deps) {
           fact(`“${word.term}” is the original ${settings.targetLanguageName} word of ${bookName(word)} for “${sense.sense}” (${word.basis}): it will be the translation for that meaning, whatever its frequency.`);
         }
       }
-      for (const sense of study.senses.filter((item) => !item.inDictionary)) {
-        logResult("senses", [{ sense: sense.sense, sourceBook: sense.sourceBook ?? null, originalTerm: sense.originalTerm ?? null, originalLanguage: sense.originalLanguage ?? null }],
-          `${sense.sense}${sense.sourceBook ? ` — from ${sense.sourceBook}` : ""}${sense.originalTerm ? ` (original ${sense.originalLanguage ?? ""} term “${sense.originalTerm}”)` : ""}`);
+      // Every sense, borrowed ones with their book and original word, so the step's
+      // one-line summary can lead with where the author took the term from.
+      for (const sense of study.senses) {
+        const verified = sense.originalWord?.verified === true;
+        logResult("senses", [{
+          sense: sense.sense, label: sense.label ?? "", wordClass: sense.wordClass ?? "", inDictionary: sense.inDictionary === true,
+          sourceBook: sense.sourceBook ?? null, originalTerm: sense.originalTerm ?? null, originalLanguage: sense.originalLanguage ?? null,
+          verified, term: settings.term, language: settings.sourceLanguageName,
+        }], `${sense.sense}${sense.sourceBook ? ` — from ${sense.sourceBook}` : ""}${sense.originalTerm ? ` (original ${sense.originalLanguage ?? ""} term “${sense.originalTerm}”)` : ""}`);
       }
       return {
         counts: ranked.map((book) => ({ title: book.title, occurrences: book.occurrences, passages: book.passages })),
@@ -1744,6 +1754,7 @@ export function createResearchEngine(deps) {
       for (const pair of pairs) pair.evidence = coOccurrence(items, pair.sourceTerms, pair.otherSourceTerms, settings.sourceLanguageCode);
       const verdict = await client.callJson({
         stage: "convergence", purpose: "decide whether words sharing a translation mean the same",
+        progress: { key: "n", total: pairs.length, unit: "pair", pairs: pairs.map((pair, index) => ({ n: index + 1, target: pair.target, a: pair.sourceTerms?.[0] ?? "", b: pair.otherSourceTerms?.[0] ?? "" })) },
         instructions: prompts.convergenceInstructions(ctx()),
         content: convergenceContent(pairs, { targetName: settings.targetLanguageName, dictionaryText: dictionaryText() }),
         schema: prompts.CONVERGENCE_SCHEMA, schemaName: "convergence",
@@ -1993,6 +2004,7 @@ export function createResearchEngine(deps) {
       ? `${entryById[entryId].kind === "expression" ? "expression " : ""}entry [${entryId}] “${entryById[entryId].sourceTerms.join(" / ")}”`
       : "no entry (report status unresolved/not_this_word if it is not the headword)";
     const instructions = prompts.translateInstructions(ctx(), prompts.frozenEntryText(frozen, settings.targetLanguageName));
+    const variantNames = Object.fromEntries(frozen.entries.flatMap((entry) => entry.variants.map((variant) => [variant.id, variant.target])));
     const judgments = {};
     let todo = occurrences.filter((o) => o.entryId !== "unassigned");
     for (let attempt = 0; attempt < 2 && todo.length; attempt += 1) {
@@ -2000,7 +2012,8 @@ export function createResearchEngine(deps) {
       const batches = batchOccurrences(items, todo, size);
       const keyed = batches.map((batch, index) => [index, {
         stage: "counting", purpose: `translate and choose for ${batch.occurrences.length} occurrences`,
-        progress: { key: "occId", total: batch.occurrences.length, unit: "use" },
+        // The live view tallies the chosen translations by name.
+        progress: { key: "occId", total: batch.occurrences.length, unit: "use", variants: variantNames },
         instructions, content: batchContent(batch, label),
         schema: prompts.TRANSLATE_SCHEMA, schemaName: "counting",
         maxOutputTokens: 1200 + 330 * batch.occurrences.length, effort: settings.effortLight,
