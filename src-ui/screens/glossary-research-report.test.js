@@ -65,3 +65,32 @@ test("translations chosen in under 2% of the votes come unticked, marked rarely 
   assert.match(html, /rarely chosen/);
   assert.match(html, /never chosen/);
 });
+
+test("a split entry becomes two drafts: the larger updates the existing entry and keeps its unstudied forms", () => {
+  const r = run();
+  r.frozen.entries[0] = { id: "e1", kind: "word", sourceTerms: ["vanidad", "vanidades"], generalNote: "", variants: [
+    { id: "v1", target: "hư vinh", note: "" }, { id: "v2", target: "những thứ phù phiếm", note: "" }, { id: "v3", target: "những thứ phù hoa", note: "" },
+  ] };
+  const occurrences = [];
+  const judgments = {};
+  const add = (surface, variantId, n) => {
+    for (let i = 0; i < n; i += 1) {
+      const occId = `${surface}${occurrences.length}`;
+      occurrences.push({ occId, entryId: "e1", itemId: `i${occurrences.length}`, surface });
+      judgments[occId] = { status: "selected", variantId };
+    }
+  };
+  add("vanidad", "v1", 30);
+  add("vanidades", "v2", 8);
+  add("vanidades", "v3", 4);
+  r.counting = { occurrences, judgments };
+  const existing = [{ termId: "t1", sourceTerms: ["vanidad", "vanidades", "vano", "vanos"], targetTerms: ["phù phiếm"], targetVariantNotes: [""], notesToTranslators: "" }];
+  const drafts = Object.values(buildEntryDrafts(r, existing));
+  assert.deepEqual(drafts.map((d) => [d.sourceTerms, d.decision, d.variants.map((v) => v.target)]), [
+    [["vanidad"], "update", ["hư vinh"]],
+    [["vanidades"], "add", ["những thứ phù phiếm", "những thứ phù hoa"]],
+  ]);
+  assert.deepEqual(drafts[0].keepForms, ["vano", "vanos"]);
+  const html = renderGlossaryResearchReportScreen({ glossaryResearchReport: { status: "ready", run: r, entryDrafts: Object.fromEntries(drafts.map((d) => [d.id, d])), expandedVariants: {}, showAllExamples: {} }, offline: {} });
+  assert.match(html, /A separate entry: in the sample, <span lang="es">vanidades<\/span> mostly took other translations than <span lang="es">vanidad<\/span>/);
+});

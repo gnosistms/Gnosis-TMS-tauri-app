@@ -840,3 +840,11 @@
   transform: none;
   text-align: left;
 }
+
+.rr-entry__split {
+  max-width: 640px;
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}

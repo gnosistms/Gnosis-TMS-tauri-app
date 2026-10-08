@@ -9,6 +9,7 @@ import { selectedProjectsTeamInstallationId } from "./project-context.js";
 import { submitGlossaryTermEditor } from "./glossary-term-draft.js";
 import { createGlossaryResearchReportState, createGlossaryResearchState } from "./glossary-research-state.js";
 import { fold } from "./glossary-research-occurrences.js";
+import { groupForms } from "./glossary-research-form-split.js";
 
 function installationId() {
   return selectedProjectsTeamInstallationId() ?? selectedTeam()?.installationId;
@@ -22,41 +23,113 @@ function overlaps(a, b) {
 /** A translation chosen in less than this share of an entry's sampled votes is proposed for removal. */
 export const RARELY_CHOSEN_SHARE = 0.02;
 
-/** Editable draft per frozen entry, compared with the existing glossary. */
+const formOf = (occurrence) => String(occurrence.surface ?? "").normalize("NFC").toLowerCase().trim();
+
+/** Every judge's choice for each counted occurrence: [{ occurrence, variantId|null }]. */
+function votesOf(run) {
+  const out = [];
+  for (const counting of [run.counting, run.counting2].filter(Boolean)) {
+    for (const occurrence of counting.occurrences ?? run.counting.occurrences ?? []) {
+      const judgment = counting.judgments?.[occurrence.occId];
+      if (!judgment) continue;
+      out.push({ occurrence, variantId: judgment.status === "selected" ? judgment.variantId ?? null : null });
+    }
+  }
+  return out;
+}
+
+/** Votes and passages of one group of forms, shaped like an aggregate entry. */
+function countsOf(votes, forms) {
+  const counts = { occurrences: 0, passages: 0, variants: {}, other: 0, unresolved: {}, failed: 0 };
+  const passages = new Set();
+  const byVariant = new Map();
+  for (const { occurrence, variantId } of votes) {
+    if (!forms.has(formOf(occurrence))) continue;
+    counts.occurrences += 1;
+    passages.add(occurrence.itemId);
+    if (!variantId) {
+      counts.other += 1;
+      continue;
+    }
+    const seen = byVariant.get(variantId) ?? { occurrences: 0, items: new Set() };
+    seen.occurrences += 1;
+    seen.items.add(occurrence.itemId);
+    byVariant.set(variantId, seen);
+  }
+  counts.passages = passages.size;
+  for (const [id, seen] of byVariant) counts.variants[id] = { occurrences: seen.occurrences, passages: seen.items.size };
+  return counts;
+}
+
+function existingSummary(existing) {
+  return existing
+    ? { sourceTerms: existing.sourceTerms ?? [], targetTerms: existing.targetTerms ?? [], targetVariantNotes: existing.targetVariantNotes ?? [], notesToTranslators: existing.notesToTranslators ?? "", footnote: existing.footnote ?? "" }
+    : null;
+}
+
+/**
+ * Editable drafts of the report, compared with the existing glossary: one per
+ * frozen entry, or one per group of its forms when the count shows that the forms
+ * mostly take different translations (see glossary-research-form-split.js).
+ */
 export function buildEntryDrafts(run, glossaryTerms) {
   const frozen = run.frozen;
-  const counts = run.aggregate?.entries ?? {};
+  const aggregate = run.aggregate?.entries ?? {};
+  const votes = run.counting ? votesOf(run) : [];
+  // Forms the study covered: an existing entry keeps its other forms when it is updated.
+  const studied = new Set(frozen.entries.flatMap((entry) => entry.sourceTerms.map((form) => fold(form).trim())));
   const drafts = {};
   for (const entry of frozen.entries) {
     const existing = glossaryTerms.find((term) => overlaps(term.sourceTerms ?? [], entry.sourceTerms)) ?? null;
-    const entryCounts = counts[entry.id] ?? { variants: {}, occurrences: 0 };
     const proposalEntry = (run.confirmedProposal ?? run.proposal)?.entries?.find((e) => e.id === entry.id);
-    const variants = entry.variants.map((variant) => {
-      const count = entryCounts.variants?.[variant.id]?.occurrences ?? 0;
-      const fromExisting = proposalEntry?.variants?.find((v) => v.id === variant.id)?.fromExisting === true
-        || (existing?.targetTerms ?? []).some((target) => fold(target).trim() === fold(variant.target).trim());
-      return {
-        id: variant.id, target: variant.target, note: variant.note, count,
-        fromExisting,
-        // Chosen in under 2% of the sample (or never): proposed for removal, since
-        // every variant is sent to the translating AI; the user can keep it.
-        include: entryCounts.occurrences === 0 || count / entryCounts.occurrences >= RARELY_CHOSEN_SHARE,
+    const entryVotes = votes.filter((vote) => vote.occurrence.entryId === entry.id);
+    const uses = new Map();
+    for (const occurrence of run.counting?.occurrences ?? []) {
+      if (occurrence.entryId === entry.id) uses.set(formOf(occurrence), (uses.get(formOf(occurrence)) ?? 0) + 1);
+    }
+    const groups = entry.kind === "expression" || !entryVotes.length
+      ? [{ forms: entry.sourceTerms.map((f) => f.normalize("NFC").toLowerCase().trim()), thin: [] }]
+      : groupForms(entry.sourceTerms, entryVotes.map((v) => ({ form: formOf(v.occurrence), variantId: v.variantId })), uses);
+    const split = groups.length > 1;
+    groups.forEach((group, index) => {
+      const forms = new Set(group.forms);
+      const counts = split ? countsOf(entryVotes, forms) : aggregate[entry.id] ?? { variants: {}, occurrences: 0 };
+      // The existing entry is updated by the group with the most uses; the others are added.
+      const mine = index === 0 ? existing : null;
+      const variants = entry.variants
+        .filter((variant) => !split || (counts.variants[variant.id]?.occurrences ?? 0) > 0)
+        .map((variant) => {
+          const count = counts.variants?.[variant.id]?.occurrences ?? 0;
+          const fromExisting = proposalEntry?.variants?.find((v) => v.id === variant.id)?.fromExisting === true
+            || (mine?.targetTerms ?? []).some((target) => fold(target).trim() === fold(variant.target).trim());
+          return {
+            id: variant.id, target: variant.target, note: variant.note, count,
+            fromExisting,
+            // Chosen in under 2% of the sample (or never): proposed for removal, since
+            // every variant is sent to the translating AI; the user can keep it.
+            include: counts.occurrences === 0 || count / counts.occurrences >= RARELY_CHOSEN_SHARE,
+          };
+        })
+        .sort((a, b) => b.count - a.count);
+      const id = split ? `${entry.id}~${index + 1}` : entry.id;
+      drafts[id] = {
+        id,
+        entryId: entry.id,
+        kind: entry.kind,
+        forms: split ? [...forms] : null,
+        counts: split ? counts : null,
+        splitFrom: split ? { forms: groups.filter((_, k) => k !== index).flatMap((g) => g.forms), thin: group.thin } : null,
+        decision: mine ? "update" : "add",
+        existingTermId: mine?.termId ?? null,
+        existing: existingSummary(mine),
+        keepForms: mine ? (mine.sourceTerms ?? []).filter((form) => !studied.has(fold(form).trim())) : [],
+        sourceTerms: entry.sourceTerms.filter((form) => forms.has(form.normalize("NFC").toLowerCase().trim())),
+        generalNote: entry.generalNote,
+        variants,
+        saveStatus: "idle",
+        saveError: "",
       };
-    }).sort((a, b) => b.count - a.count);
-    drafts[entry.id] = {
-      entryId: entry.id,
-      kind: entry.kind,
-      decision: existing ? "update" : "add",
-      existingTermId: existing?.termId ?? null,
-      existing: existing
-        ? { sourceTerms: existing.sourceTerms ?? [], targetTerms: existing.targetTerms ?? [], targetVariantNotes: existing.targetVariantNotes ?? [], notesToTranslators: existing.notesToTranslators ?? "", footnote: existing.footnote ?? "" }
-        : null,
-      sourceTerms: [...entry.sourceTerms],
-      generalNote: entry.generalNote,
-      variants,
-      saveStatus: "idle",
-      saveError: "",
-    };
+    });
   }
   return drafts;
 }
@@ -153,7 +226,8 @@ export async function saveResearchEntry(render, entryId) {
     installationId: team?.installationId ?? null,
     repoName: state.glossaryEditor?.repoName ?? "",
     termId: existing?.termId ?? null,
-    sourceTerms: [...draft.sourceTerms],
+    // Forms of the existing entry that this study did not cover stay in it.
+    sourceTerms: [...draft.sourceTerms, ...(existing ? draft.keepForms ?? [] : [])],
     targetTerms: variants.map((variant) => variant.target.trim()),
     targetVariantNotes: variants.map((variant) => variant.note.trim()),
     notesToTranslators: draft.generalNote.trim(),

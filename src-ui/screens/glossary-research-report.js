@@ -63,11 +63,13 @@ function renderExample(run, occurrence, judgment, targetCode, sourceCode) {
     </li>`;
 }
 
-function renderVariantExamples(report, run, entryId, variantId, meta) {
-  const key = `${entryId}:${variantId}`;
+function renderVariantExamples(report, run, draft, variantId, meta) {
+  const key = `${draft.id}:${variantId}`;
   if (!report.expandedVariants[key]) return "";
   const judgments = run.counting.judgments;
-  const matching = run.counting.occurrences.filter((occurrence) => occurrence.entryId === entryId
+  const inDraft = (occurrence) => !draft.forms
+    || draft.forms.includes(String(occurrence.surface ?? "").normalize("NFC").toLowerCase().trim());
+  const matching = run.counting.occurrences.filter((occurrence) => occurrence.entryId === draft.entryId && inDraft(occurrence)
     && (variantId === "__other"
       ? judgments[occurrence.occId]?.status !== "selected"
       : judgments[occurrence.occId]?.variantId === variantId));
@@ -137,9 +139,10 @@ function renderCurrentEntry(run, draft, meta) {
     </section>`;
 }
 
-function renderEntryCard(report, run, entry) {
-  const draft = report.entryDrafts[entry.id];
-  const counts = run.aggregate.entries[entry.id] ?? { occurrences: 0, passages: 0, variants: {}, other: 0, unresolved: {}, failed: 0, notRun: 0 };
+function renderEntryCard(report, run, draft) {
+  // A draft is one frozen entry, or the forms of one that the count put in their own entry.
+  const entry = { id: draft.id, kind: draft.kind, sourceTerms: draft.sourceTerms };
+  const counts = draft.counts ?? run.aggregate.entries[draft.entryId] ?? { occurrences: 0, passages: 0, variants: {}, other: 0, unresolved: {}, failed: 0, notRun: 0 };
   const meta = run.meta;
   const tgt = meta.targetLanguage.code;
   // With two judges every use is counted twice: the counts are votes.
@@ -166,7 +169,7 @@ function renderEntryCard(report, run, entry) {
           <textarea class="rr-variant__note" rows="1" lang="${esc(tgt)}" placeholder="When to use it" data-research-entry="${esc(entry.id)}:note:${index}" aria-label="Usage note for ${esc(variant.target)}">${esc(variant.note)}</textarea>
         </div>
         ${countCell(key, c.occurrences, counts.occurrences, c.passages, report.expandedVariants[key], unit)}
-        ${renderVariantExamples(report, run, entry.id, variant.id, meta)}
+        ${renderVariantExamples(report, run, draft, variant.id, meta)}
       </div>`;
   }).join("");
   const unresolved = Object.values(counts.unresolved).reduce((a, b) => a + b, 0);
@@ -180,6 +183,7 @@ function renderEntryCard(report, run, entry) {
           <p class="rr-eyebrow">${entry.kind === "expression" ? "Expression" : "Entry"} · ${uses} uses in ${counts.passages} passages</p>
           <h2 class="rr-entry__title" lang="${esc(meta.sourceLanguage.code)}">${esc(entry.sourceTerms[0] ?? "")}</h2>
           ${variantsLabel.length ? `<p class="rr-entry__forms" lang="${esc(meta.sourceLanguage.code)}">${esc(variantsLabel.join(" · "))}</p>` : ""}
+          ${draft.splitFrom ? `<p class="rr-entry__split">A separate entry: in the sample, <span lang="${esc(meta.sourceLanguage.code)}">${esc(entry.sourceTerms.join(", "))}</span> mostly took other translations than <span lang="${esc(meta.sourceLanguage.code)}">${esc(draft.splitFrom.forms.join(", "))}</span>.${draft.splitFrom.thin.length ? ` Too few uses to tell for ${esc(draft.splitFrom.thin.join(", "))}; placed here as the closest match.` : ""}</p>` : ""}
         </div>
         ${hasCurrent ? `
         <div class="rr-segmented" role="radiogroup" aria-label="Which version to show">
@@ -206,7 +210,7 @@ function renderEntryCard(report, run, entry) {
             <div class="rr-variant__main"><span class="rr-variant__label">None of these fit</span>
               <p class="rr-muted">The translator wrote something else${unresolved ? `; ${unresolved} not decided` : ""}${counts.failed ? `; ${counts.failed} failed` : ""}.</p></div>
             ${countCell(otherKey, otherCount, counts.occurrences, null, report.expandedVariants[otherKey], unit)}
-            ${renderVariantExamples(report, run, entry.id, "__other", meta)}
+            ${renderVariantExamples(report, run, draft, "__other", meta)}
           </div>
           <button class="rr-link rr-add" type="button" data-action="add-research-entry-variant:${esc(entry.id)}">+ Add a translation</button>
         </section>
@@ -483,7 +487,7 @@ export function renderGlossaryResearchReportScreen(state) {
     body = `
       <section class="rr">
         ${report.copyNotice ? `<p class="rr-muted">${esc(report.copyNotice)}</p>` : ""}
-        ${run.frozen.entries.map((entry) => renderEntryCard(report, run, entry)).join("")}
+        ${Object.values(report.entryDrafts).map((draft) => renderEntryCard(report, run, draft)).join("")}
         ${renderSecondary(run, report)}
       </section>`;
   } else {
