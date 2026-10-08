@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
 
 use flate2::read::GzDecoder;
-use rand::{rngs::StdRng, seq::SliceRandom, SeedableRng};
+use rand::{rngs::StdRng, seq::SliceRandom, Rng, SeedableRng};
 use regex::RegexBuilder;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -24,8 +24,6 @@ use tauri::{AppHandle, Emitter, Manager};
 
 const BASE_URL: &str = "https://gnosis.sgp1.digitaloceanspaces.com/research-data/v1/";
 const MANIFEST_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 3600);
-/// Matching sentences kept before the seeded draw; enough for any sample size we use.
-const MAX_MATCHES: usize = 50_000;
 
 fn data_root(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app
@@ -344,6 +342,36 @@ fn unspaced(language: &str) -> bool {
     matches!(language.split('-').next().unwrap_or(""), "zh" | "ja" | "th" | "lo" | "km" | "my")
 }
 
+/// A seeded uniform draw of at most `limit` items from a stream of any length
+/// (reservoir sampling): every item has the same chance, wherever it is in the
+/// file, and only `limit` items are held at a time. The same seed on the same
+/// stream gives the same draw. Returns (items seen, items drawn) in random order.
+fn seeded_draw<I>(items: I, limit: usize, seed: &str) -> Result<(usize, Vec<String>), String>
+where
+    I: Iterator<Item = Result<String, String>>,
+{
+    let digest = Sha256::digest(seed.as_bytes());
+    let mut bytes = [0u8; 32];
+    bytes.copy_from_slice(&digest);
+    let mut rng = StdRng::from_seed(bytes);
+    let mut seen = 0usize;
+    let mut kept: Vec<String> = Vec::with_capacity(limit.min(10_000));
+    for item in items {
+        let item = item?;
+        seen += 1;
+        if kept.len() < limit {
+            kept.push(item);
+        } else if limit > 0 {
+            let slot = rng.gen_range(0..seen);
+            if slot < limit {
+                kept[slot] = item;
+            }
+        }
+    }
+    kept.shuffle(&mut rng);
+    Ok((seen, kept))
+}
+
 /// A seeded random sample of general-corpus sentences that contain any of the forms.
 #[tauri::command]
 pub(crate) async fn glossary_research_general_sentences(app: AppHandle, input: SentencesInput) -> Result<SentencesResult, String> {
@@ -373,22 +401,11 @@ pub(crate) async fn glossary_research_general_sentences(app: AppHandle, input: S
             .build()
             .map_err(|error| error.to_string())?;
         let reader = BufReader::new(GzDecoder::new(fs::File::open(&path).map_err(|e| e.to_string())?));
-        let mut hits = 0usize;
-        let mut kept = Vec::new();
-        for line in reader.lines() {
-            let line = line.map_err(|e| e.to_string())?;
-            if matcher.is_match(&line) {
-                hits += 1;
-                if kept.len() < MAX_MATCHES {
-                    kept.push(line);
-                }
-            }
-        }
-        let digest = Sha256::digest(input.seed.as_bytes());
-        let mut seed = [0u8; 32];
-        seed.copy_from_slice(&digest);
-        kept.shuffle(&mut StdRng::from_seed(seed));
-        kept.truncate(input.limit);
+        let matching = reader
+            .lines()
+            .map(|line| line.map_err(|e| e.to_string()))
+            .filter(|line| line.as_ref().map_or(true, |line| matcher.is_match(line)));
+        let (hits, kept) = seeded_draw(matching, input.limit, &input.seed)?;
         Ok(SentencesResult {
             hits,
             sample: kept,
@@ -604,6 +621,27 @@ mod tests {
         assert!((corpus_zipf(100, Some(1.5), 0) - 3.5).abs() < 1e-6);
         assert!(corpus_zipf(0, Some(1.5), 0) == 0.0);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_draw_is_uniform_over_the_whole_stream_and_repeatable() {
+        let stream = |n: usize| (0..n).map(|i| Ok(i.to_string()));
+        let (seen, first) = seeded_draw(stream(200_000), 100, "1:es:íntimo").unwrap();
+        assert_eq!(seen, 200_000);
+        assert_eq!(first.len(), 100);
+        assert_eq!(seeded_draw(stream(200_000), 100, "1:es:íntimo").unwrap().1, first, "same seed, same draw");
+        assert_ne!(seeded_draw(stream(200_000), 100, "2:es:íntimo").unwrap().1, first);
+        // Items from late in the stream are drawn as often as early ones.
+        let mut late = 0usize;
+        for round in 0..200 {
+            let (_, drawn) = seeded_draw(stream(100_000), 100, &format!("round {round}")).unwrap();
+            late += drawn.iter().filter(|item| item.parse::<usize>().unwrap() >= 50_000).count();
+        }
+        let share = late as f64 / 20_000.0;
+        assert!((0.47..0.53).contains(&share), "second half drawn {share:.3} of the time");
+        let (seen, few) = seeded_draw(stream(7), 100, "x").unwrap();
+        assert_eq!((seen, few.len()), (7, 7), "fewer items than the limit: all of them");
+        assert!(seeded_draw(stream(5), 0, "x").unwrap().1.is_empty());
     }
 
     #[test]
