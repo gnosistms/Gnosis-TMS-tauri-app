@@ -179,6 +179,15 @@ export async function saveResearchEntry(render, entryId) {
   render();
 }
 
+/** Save every entry that is not set to keep the current one, one after another. */
+export async function saveResearchReport(render) {
+  const drafts = Object.values(state.glossaryResearchReport.entryDrafts ?? {});
+  for (const draft of drafts) {
+    if (draft.decision === "keep" || draft.saveStatus === "saved") continue;
+    await saveResearchEntry(render, draft.entryId);
+  }
+}
+
 // --- Markdown export for discussion with any AI ----------------------------------
 
 export function researchMarkdown(run) {
