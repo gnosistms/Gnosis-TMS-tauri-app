@@ -553,27 +553,34 @@
   margin-top: 4px;
 }
 
-.rr-section--details summary {
+.rr-section--fold h2.rr-fold__heading {
+  margin: 0;
+}
+
+.rr-fold__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
   cursor: pointer;
-  list-style: none;
 }
 
-.rr-section--details summary::-webkit-details-marker {
-  display: none;
-}
-
-.rr-section--details summary h2 {
-  display: inline;
-}
-
-.rr-section--details summary::after {
-  content: " ›";
+.rr-fold__toggle .collapse-chevron {
+  width: 0.62em;
+  height: 0.62em;
   color: var(--muted);
-  font-size: 18px;
 }
 
-.rr-section--details[open] summary::after {
-  content: " ˅";
+.rr-fold__toggle:hover .collapse-chevron {
+  color: var(--link-hover);
+}
+
+.rr-fold__body {
+  margin-top: 6px;
 }
 
 .rr-section .research-dictionary {

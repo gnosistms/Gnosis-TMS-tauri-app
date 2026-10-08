@@ -261,7 +261,7 @@ function renderConvergence(run) {
     </section>`;
 }
 
-function renderSecondary(run) {
+function renderSecondary(run, report) {
   const meta = run.meta;
   const totals = run.aggregate.totals;
   const proposal = run.confirmedProposal ?? run.proposal ?? {};
@@ -269,6 +269,7 @@ function renderSecondary(run) {
   const usage = run.usage ?? [];
   const cost = usage.reduce((sum, record) => sum + (record.costUsd ?? 0), 0);
   const dictionary = run.dictionary ?? {};
+  const methodOpen = report?.expandedVariants?.__method === true;
   const study = run.sources?.study;
   const origins = study?.senses?.filter((sense) => !sense.inDictionary) ?? [];
   const sources = study ? `
@@ -299,8 +300,14 @@ function renderSecondary(run) {
       ${list("Senses outside the dictionary", proposal.sensesOutsideDictionary, (d) => `<li>${esc(d.gloss)} — ${esc(d.evidence)}</li>`)}
       ${list("Open questions", proposal.openQuestions, (q) => `<li>${esc(q)}</li>`)}
     </section>` : ""}
-    <details class="rr-section rr-section--details">
-      <summary><h2>How this was measured</h2></summary>
+    <section class="rr-section rr-section--fold">
+      <h2 class="rr-fold__heading">
+        <button type="button" class="rr-fold__toggle collapse-affordance" data-action="toggle-research-examples:__method" aria-expanded="${methodOpen ? "true" : "false"}">
+          ${renderCollapseChevron(methodOpen)}<span>How this was measured</span>
+        </button>
+      </h2>
+      ${methodOpen ? `
+      <div class="rr-fold__body">
       <h3>Method</h3>
       <p>Counts show which proposed translation was judged most appropriate in each sampled context. They measure contextual preference, not frequency in ${esc(meta.targetLanguage.name)} or exclusive correctness.</p>
       <ul>
@@ -314,7 +321,8 @@ function renderSecondary(run) {
       ${(dictionary.notes ?? []).map((note) => `<p>${esc(note)}</p>`).join("")}
       <h3>Cost</h3>
       <p>${usage.length} AI requests, US${formatUsd(cost)} (limit US${formatUsd(meta.spendingLimitUsd)}).</p>
-    </details>`;
+      </div>` : ""}
+    </section>`;
 }
 
 function renderSummary(run) {
@@ -358,7 +366,7 @@ export function renderGlossaryResearchReportScreen(state) {
         ${renderSummary(run)}
         ${report.copyNotice ? `<p class="rr-muted">${esc(report.copyNotice)}</p>` : ""}
         ${run.frozen.entries.map((entry) => renderEntryCard(report, run, entry)).join("")}
-        ${renderSecondary(run)}
+        ${renderSecondary(run, report)}
       </section>`;
   } else {
     body = "";
