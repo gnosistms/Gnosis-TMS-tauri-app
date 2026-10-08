@@ -284,6 +284,7 @@ function renderReview(research, targetName, targetCode) {
   const proposal = research.proposalDraft;
   if (!proposal) return "";
   const several = proposal.entries.length > 1;
+  const relatedWord = Boolean(research.familyQueue) && research.term !== research.familyQueue.headword;
   const entries = proposal.entries.map((entry, entryIndex) => `
     <section class="research-review__entry">
       ${several ? `<h3 class="research-review__entry-title">${esc(entry.sourceTerms[0] ?? "")}${entry.kind === "expression" ? ' <span class="research-review__hint">expression</span>' : ""}</h3>` : ""}
@@ -306,7 +307,9 @@ function renderReview(research, targetName, targetCode) {
     </section>`).join("");
   return `
     <div class="research-review">
-      <p class="modal__supporting">These ${esc(targetName)} translations will be counted. Remove any that should not be, or add missing ones.</p>
+      <p class="modal__supporting">${relatedWord
+        ? "Below is a list of terms related to your original research term."
+        : "Below is your research term."} For each of them, we have a list of possible translations. In the next step, we will count how many times each of them would actually be the most appropriate translation when translating the actual corpus texts. Based on these results, we will identify the most important translations and eliminate the less useful ones. Before we do the count, please review the candidate translations. Remove the ones you don't want the AI to consider and add any new ones that you would like to suggest.</p>
       ${entries}
       ${research.reviewError ? `<p class="modal__error" role="alert">${esc(research.reviewError)}</p>` : ""}
     </div>`;
