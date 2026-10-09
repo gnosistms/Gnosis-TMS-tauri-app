@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { liveAnswerHtml } from "./glossary-research-live-views.js";
+import { liveAnswerHtml, sourceSnippets, stepDisplay } from "./glossary-research-live-views.js";
 
 const progress = {
   key: "n", total: 10, unit: "sentence", view: "senses", word: "mortal", language: "English",
@@ -59,4 +59,24 @@ test("a finished batch step tallies every use and folds the uses behind one line
   assert.match(html, /title="inner: 2"/);
   assert.match(html, /<details class="research-view__more"><summary>Show the 2 uses<\/summary>/);
   assert.doesNotMatch(html, /o1|o2/, "no internal ids");
+});
+
+test("each counted use shows its source sentence, the word marked", () => {
+  const text = "### Passage o001\no001.1: use entry [e1]\n(previous passage) …otra cosa. Más ⟦íntimo⟧ texto.\nPrimera frase. Aquellos que llegan a la Auto-Realización ⟦Intima⟧ [o001.1] mediante la evolución, son mentirosos.\n(next passage) La Auto-Realización Intima es…";
+  const snippet = sourceSnippets(text).get("o001.1");
+  assert.deepEqual(snippet, { before: "Aquellos que llegan a la Auto-Realización ", word: "Intima", after: " mediante la evolución, son mentirosos." });
+  const request = { stage: "counting", text, usage: {}, progress: { variants: { e1v1: "inner" } }, answer: '{"items":[{"occId":"o001.1","status":"selected","variantId":"e1v1","sentenceTranslation":"inner Self-realization","chosenWording":"inner"}]}' };
+  assert.match(liveAnswerHtml(request, { final: true }), /research-view__source" lang="es">Aquellos que llegan a la Auto-Realización <mark>Intima<\/mark>/);
+});
+
+test("after the second count, the uses where the two AIs differ are listed with the source and both translations", () => {
+  const text = "o1.1 x\nUno ⟦íntimo⟧ [o1.1] aquí.\nDos ⟦íntima⟧ [o2.1] allí.";
+  const req = (answer) => ({ stage: "counting", text, usage: {}, progress: { variants: { a: "Innermost", b: "within" } }, answer });
+  const first = { heading: "Counting", items: [], requests: [req('{"items":[{"occId":"o1.1","status":"selected","variantId":"a","sentenceTranslation":"the Innermost","chosenWording":"Innermost"},{"occId":"o2.1","status":"selected","variantId":"a","sentenceTranslation":"x Innermost","chosenWording":"Innermost"}]}')] };
+  const second = { heading: "Counting (second judge)", items: [], requests: [req('{"items":[{"occId":"o1.1","status":"selected","variantId":"a","sentenceTranslation":"the Innermost","chosenWording":"Innermost"},{"occId":"o2.1","status":"selected","variantId":"b","sentenceTranslation":"Christ within","chosenWording":"within"}]}')] };
+  const shown = stepDisplay(second, { sections: [first, second] });
+  assert.match(shown.html, /The two AIs chose differently for 1 of 2 uses/);
+  assert.match(shown.html, /Dos <mark>íntima<\/mark> allí\./);
+  assert.match(shown.html, /first: Innermost[\s\S]*second: within/);
+  assert.ok(shown.after && shown.results.has("agreement"));
 });

@@ -212,7 +212,38 @@ function highlightIn(sentence, wording) {
   return at < 0 ? esc(text) : `${esc(text.slice(0, at))}<mark>${esc(text.slice(at, at + wording.length))}</mark>${esc(text.slice(at + wording.length))}`;
 }
 
+/**
+ * The source sentence of each marked use in a request's passages ("… ⟦Intima⟧ [o001.1] …"):
+ * Map(occId → { before, word, after }), cut at the sentence around the mark.
+ */
+export function sourceSnippets(...texts) {
+  const snippets = new Map();
+  for (const text of texts) {
+    for (const line of String(text ?? "").split("\n")) {
+      if (line.startsWith("(previous passage)") || line.startsWith("(next passage)")) continue;
+      for (const m of line.matchAll(/⟦([^⟧]+)⟧ \[([^\]]+)\]/g)) {
+        const clean = (part) => part.replace(/⟦([^⟧]+)⟧ \[[^\]]+\]/g, "$1");
+        const head = clean(line.slice(0, m.index));
+        const tail = clean(line.slice(m.index + m[0].length));
+        const start = Math.max(head.search(/[^.!?]*$/), head.length - 220);
+        const stop = tail.search(/[.!?]/);
+        snippets.set(m[2], {
+          before: `${start > 0 && head.length - start >= 220 ? "…" : ""}${head.slice(start).trimStart()}`,
+          word: m[1],
+          after: stop >= 0 && stop < 220 ? tail.slice(0, stop + 1) : `${tail.slice(0, 220)}…`,
+        });
+      }
+    }
+  }
+  return snippets;
+}
+
+function sourceLine(snippet) {
+  return snippet ? `<div class="research-view__source" lang="es">${esc(snippet.before)}<mark>${esc(snippet.word)}</mark>${esc(snippet.after)}</div>` : "";
+}
+
 function countingView(request, value, batch, final) {
+  const sources = sourceSnippets(request.text, ...(batch ?? []).map((member) => member.text));
   const names = request.progress?.variants ?? {};
   const items = list(value?.items).filter((item) => str(item?.occId));
   const all = [...batchItems(request, batch), ...items].filter((item) => str(item?.occId));
@@ -223,6 +254,7 @@ function countingView(request, value, batch, final) {
   const rows = [...counted, ...unchosen];
   const row = (item) => `<div class="research-view__row">
         ${item.status && item.status !== "selected" ? label(item.status === "other" ? `something else${item.otherRendering ? `: ${item.otherRendering}` : ""}` : "could not tell", "warn") : ""}${item.fit === "poor" ? ` ${label("poor fit", "warn")}` : ""}
+        ${sourceLine(sources.get(item.occId))}
         <div class="research-view__sentence">${highlightIn(item.sentenceTranslation, item.chosenWording)}</div>
       </div>`;
   return view("counting", `Translation chosen for each use of the word (${usesIn(all)})`,
@@ -499,11 +531,45 @@ function checksDisplay(section, context) {
   };
 }
 
+/** After the second count: the uses where the two AIs chose differently, with the source and both translations. */
+function disagreementsDisplay(section, context) {
+  const first = [...(context.sections ?? [])].reverse().find((other) => other.heading === "Counting");
+  if (!first || section.requests.some(isRunning) || !section.requests.length) return null;
+  const answers = (requests) => {
+    const byUse = new Map();
+    for (const request of requests.filter((item) => item.stage === "counting")) {
+      const names = request.progress?.variants ?? {};
+      for (const item of list(answerOf(request)?.items)) {
+        if (!str(item?.occId)) continue;
+        byUse.set(item.occId, { ...item, name: item.status === "selected" ? names[item.variantId] ?? item.variantId : item.status === "other" ? `something else${item.otherRendering ? `: ${item.otherRendering}` : ""}` : "could not tell" });
+      }
+    }
+    return byUse;
+  };
+  const one = answers(first.requests);
+  const two = answers(section.requests);
+  const differ = [...two].filter(([occId, item]) => one.has(occId) && one.get(occId).name !== item.name);
+  const compared = [...two.keys()].filter((occId) => one.has(occId)).length;
+  if (!compared) return null;
+  const sources = sourceSnippets(...[...first.requests, ...section.requests].map((request) => request.text));
+  const rows = differ.map(([occId, item]) => {
+    const a = one.get(occId);
+    return `<div class="research-view__row">${sourceLine(sources.get(occId))}
+      <div class="research-view__sentence">${label(`first: ${a.name}`)} ${highlightIn(a.sentenceTranslation, a.chosenWording)}</div>
+      <div class="research-view__sentence">${label(`second: ${item.name}`)} ${highlightIn(item.sentenceTranslation, item.chosenWording)}</div></div>`;
+  }).join("");
+  return {
+    html: view("disagreements", differ.length ? `The two AIs chose differently for ${differ.length} of ${compared} uses` : `The two AIs chose the same translation for all ${compared} uses`, differ.length ? `<div class="research-view__rows">${rows}</div>` : ""),
+    requests: new Set(), results: new Set(["agreement"]), facts: [], after: true,
+  };
+}
+
 const STEP_DISPLAYS = {
   "Word forms": formsDisplay,
   "Word family": familyDisplay,
   "Parts and frequency": meaningsDisplay,
   "Candidate checks": checksDisplay,
+  "Counting (second judge)": disagreementsDisplay,
 };
 
 /** The one display of a step that has one (see above), or null. */

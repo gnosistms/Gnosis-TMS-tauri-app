@@ -47,7 +47,7 @@ test("a step with a readable view shows the view, not the conversation", () => {
   assert.doesNotMatch(forms, /SENT TEXT|Listing forms|&quot;forms&quot;/, "no exchange, thinking or JSON");
 });
 
-test("a step without a view yet shows the conversation; a step still thinking shows its thinking live", () => {
+test("a step without a view yet shows the conversation; a step still thinking shows no thinking, only that it thinks", () => {
   const steps = [
     { type: "heading", text: "Proposal" },
     request("r2", "original-note"),
@@ -64,9 +64,7 @@ test("a step without a view yet shows the conversation; a step still thinking sh
   assert.match(proposal, /Traditional term/);
   assert.match(proposal, /What was sent/);
   assert.match(proposal, /How the AI got there \(1 step\)/, "finished: the thinking is folded");
-  assert.match(counting, /data-live-thinking="r3"/);
-  assert.match(counting, /research-thought__title">Weighing the variants/);
-  assert.match(counting, /reading the passage/);
+  assert.doesNotMatch(counting, /data-live-thinking|Weighing the variants|reading the passage/, "the thinking is not shown (Hans, 2026-10-09)");
   assert.match(counting, /data-step-status/);
 });
 
@@ -79,7 +77,7 @@ test("the stage line marks the stages done, the one in progress and those to com
   assert.equal((html.match(/research-steps__item--todo/g) ?? []).length, 4);
 });
 
-test("a finished thinking-heavy step keeps how the AI got there, folded", () => {
+test("a finished step shows its view without the AI's thinking", () => {
   const steps = [
     { type: "heading", text: "Candidate translations" },
     request("r4", "candidates"),
@@ -90,8 +88,7 @@ test("a finished thinking-heavy step keeps how the AI got there, folded", () => 
   ];
   const [candidates] = renderResults(buildLogSections(steps), { running: false, openSections: { s1: true } }).split("<section").slice(1);
   assert.match(candidates, /research-view--candidates/);
-  assert.match(candidates, /How the AI got there \(2 steps\)/);
-  assert.match(candidates, /<summary>Reading the origin<\/summary><p>It is a noun\.<\/p>/);
+  assert.doesNotMatch(candidates, /How the AI got there|Reading the origin/);
 });
 
 test("a finished step that only repeats its line cannot be opened; its explanation shows on hover", () => {

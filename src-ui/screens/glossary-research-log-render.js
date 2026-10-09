@@ -163,9 +163,6 @@ function collapseDownloads(items) {
 // A step's AI answers are shown as their readable views; these finished-step
 // findings say the same as a view, so they are left out when the view is there.
 const COVERED_BY_VIEW = { candidates: "candidates", proposal: "proposal", sources: "senses", discovery: "discovery" };
-// Steps where thinking is most of the work: their finished views keep how the AI got there.
-const THINKING_STEPS = new Set(["sources", "candidates", "proposal", "parts", "family", "checks"]);
-
 /**
  * A request whose answer has no readable view yet: the exchange itself (the
  * answer as indented JSON, the thinking and what was sent folded), so nothing
@@ -198,19 +195,12 @@ function groupBlock(group, current) {
   const view = groupViewHtml(group);
   const request = viewRequest(group);
   if (view) {
-    const thoughtful = !group.requests.some(isRequestRunning) && group.requests.length === 1 && THINKING_STEPS.has(request.stage) && request.thinking;
-    parts.push(`<div class="research-step__view" data-view-key="${esc(group.key)}">${view}</div>${thoughtful ? howItWorked(request) : ""}`);
+    parts.push(`<div class="research-step__view" data-view-key="${esc(group.key)}">${view}</div>`);
   }
   else if (request && !VIEW_LEFT_OUT.has(request.stage)) parts.push(`<div class="research-step__view research-step__view--plain" data-view-key="${esc(group.key)}">${exchangeHtml(request)}</div>`);
   return parts.join("");
 }
 
-/** The thinking of the step's request that is thinking now: real-time, so it goes last, above the "now" line. */
-function thinkingNow(section) {
-  const thinking = section.requests.filter((r) => ["thinking", "waiting"].includes(requestState(r)) && r.thinking);
-  const latest = thinking.length ? thinking.reduce((a, b) => (b.updatedAt >= a.updatedAt ? b : a)) : null;
-  return latest ? thinkingHtml(latest) : "";
-}
 
 /**
  * Everything a step shows, the same while it runs and afterwards: the readable
@@ -222,7 +212,7 @@ function stepBody(section, current, context = {}) {
   // A step with one display that fills in (words with their counts, meanings
   // with their bars, candidates with their measurements) draws it first; what it
   // drew is not drawn again.
-  const display = stepDisplay(section, context);
+  const display = stepDisplay(section, { ...context, sections: context.sections ?? [] });
   const drawn = display?.requests ?? new Set();
   const groups = requestGroups(section.requests.filter((request) => !drawn.has(request.requestId)));
   const covered = new Set(display?.results ?? []);
@@ -241,7 +231,8 @@ function stepBody(section, current, context = {}) {
     .join("");
   const failed = section.requests.filter((request) => requestState(request) === "failed" && !cancelled)
     .map((request) => renderLine({ type: "problem", text: `${stageName(request.stage)}: ${request.problem || "the AI request failed"}` })).join("");
-  return `${display?.html ?? ""}${views}${findings}${failed}${current ? thinkingNow(section) : ""}`;
+  // The AI's thinking is not shown (Hans, 2026-10-09): the now line says it is thinking.
+  return display?.after ? `${views}${display.html}${findings}${failed}` : `${display?.html ?? ""}${views}${findings}${failed}`;
 }
 
 function stepMetaText(section) {
@@ -301,7 +292,8 @@ function renderSection(section, { current, open, usualFor, context, later }) {
  * The steps, oldest first: while research runs the last one is the step in
  * progress. `usualFor(stage)` gives a step's usual duration for the clock.
  */
-export function renderResults(sections, { running = false, openSections = {}, usualFor = null, context = {} } = {}) {
+export function renderResults(sections, { running = false, openSections = {}, usualFor = null, context: given = {} } = {}) {
+  const context = { ...given, sections };
   const titled = sections.filter((section) => section.heading);
   const currentId = running ? titled.at(-1)?.id : null;
   const lastId = titled.at(-1)?.id;
