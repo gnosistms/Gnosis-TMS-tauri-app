@@ -332,8 +332,9 @@ function renderRun(state) {
     running, openSections: research.sectionOpen ?? {}, usualFor, context,
   })}</div>`;
   // While research runs the log is the main view; afterwards it folds away.
+  // While research runs the list follows the latest; "↓ Latest" brings it back after scrolling up.
   const log = running
-    ? logLines
+    ? `<div class="research-results-wrap">${logLines}<button type="button" class="research-latest" data-action="research-scroll-latest">↓ Latest</button></div>`
     : `<div class="research-disclosure${research.logOpen ? " is-open" : ""}">
         <button type="button" class="research-disclosure__toggle" data-action="toggle-research-log" aria-expanded="${research.logOpen === true}">
           <svg class="research-disclosure__chevron" viewBox="0 0 10 10" aria-hidden="true"><path d="M3 1.5 6.5 5 3 8.5" /></svg>Research log

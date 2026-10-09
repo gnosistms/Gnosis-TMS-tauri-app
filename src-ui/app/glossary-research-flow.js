@@ -855,12 +855,36 @@ export function toggleResearchSection(render, sectionId) {
   renderKeepingLogPinned(render);
 }
 
+/** "↓ Latest": back to the end of the list, which then follows the research again. */
+export function scrollResearchLogToLatest() {
+  const log = logContainer();
+  if (!log) return;
+  log.scrollTop = log.scrollHeight;
+  log.parentElement?.classList.remove("is-away");
+}
+
+// The list is "away" when the person has scrolled up from the end: it stops following and offers "↓ Latest".
+if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
+  document.addEventListener("scroll", (event) => {
+    const log = event.target;
+    if (!log?.matches?.("[data-research-log]")) return;
+    const away = log.scrollTop + log.clientHeight < log.scrollHeight - 24;
+    log.parentElement?.classList.toggle("is-away", away);
+  }, true);
+}
+
 export function renderKeepingLogPinned(render) {
   const before = logContainer();
   const pinned = !before || before.scrollTop + before.clientHeight >= before.scrollHeight - 24;
+  const kept = before?.scrollTop ?? 0;
   render();
   const after = logContainer();
   if (after && pinned) after.scrollTop = after.scrollHeight;
+  // Scrolled up to read: stay where the person is, and offer "↓ Latest".
+  else if (after && before) {
+    after.scrollTop = kept;
+    after.parentElement?.classList.add("is-away");
+  }
 }
 
 // --- review and counting -------------------------------------------------------------
