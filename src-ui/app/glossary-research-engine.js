@@ -771,6 +771,7 @@ export function createResearchEngine(deps) {
       });
       const proposed = await client.callJson({
         stage: "forms", purpose: `list every spelling of “${settings.term}” to search for (plural, feminine, without accents…)`,
+        progress: { key: "form", total: null, unit: "spelling" },
         instructions: prompts.formsProposeInstructions(proposeCtx),
         content: prompts.formsProposeContent(proposeCtx),
         schema: prompts.FORMS_PROPOSE_SCHEMA, schemaName: "forms",
@@ -807,6 +808,7 @@ export function createResearchEngine(deps) {
       ].join("\n")).join("\n");
       const confirmed = await client.callJson({
         stage: "forms", purpose: `check in example passages that each spelling is “${settings.term}”, not another word spelled the same (such as a verb form)`,
+        progress: { key: "form", total: counted.length, unit: "spelling", verb: "checked" },
         instructions: prompts.formsConfirmInstructions(confirmCtx), content,
         schema: prompts.FORMS_CONFIRM_SCHEMA, schemaName: "forms_confirm",
         maxOutputTokens: 3000, effort: settings.effortLight,

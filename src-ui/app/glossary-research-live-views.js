@@ -353,7 +353,8 @@ function formsDisplay(section, context) {
     const count = counts.get(lower(form.form));
     const decision = decisions.get(lower(form.form));
     const kind = [form.kind === "spelling" || form.kind === "text" ? "outline" : "", form.confidence === "low" ? "faint" : "", decision?.keep === false ? "dropped" : ""].filter(Boolean);
-    const text = count ? `${form.form} (${count.rows})` : form.form;
+    // Each spelling's check shows on its chip as soon as it arrives.
+    const text = `${decision?.keep === true ? "✓ " : ""}${form.form}${count ? ` (${count.rows})` : ""}`;
     return `<span title="${esc([decision?.reason, form.added ? "added: found in the texts or spelled without accents" : ""].filter(Boolean).join("; "))}">${chip(text, kind.join(" research-view__chip--"))}</span>`;
   }).join("");
   const anyDropped = [...decisions.values()].some((form) => form.keep === false);
@@ -362,7 +363,8 @@ function formsDisplay(section, context) {
     shown.some((form) => form.kind === "spelling" || form.kind === "text") ? "Outlined: other spellings." : "",
     shown.some((form) => form.confidence === "low") ? "Faded: the AI is less sure." : "",
     counts.size ? "The number is how many passages use the spelling." : "",
-    anyDropped ? "Crossed out: a different word spelled the same (hover to see why)." : decisions.size ? "Checked in example passages: each is this word." : "",
+    [...decisions.values()].some((form) => form.keep === true) ? "✓: checked in example passages, it is this word." : "",
+    anyDropped ? "Crossed out: checked, a different word spelled the same (hover to see why)." : "",
   ].filter(Boolean).join(" ");
   const heading = counts.size ? `Spellings, and how many passages in ${esc(context.texts ?? "the texts")} use each` : "";
   return {
