@@ -83,7 +83,7 @@ Object.assign(RESULT_RENDERERS, {
   // item.light: runs saved while a light study for rare related words existed.
   sampling([item]) {
     return stats([
-      [item.distinct.toLocaleString("en-US"), `${item.distinct === 1 ? "passage uses" : "passages use"} the word (each passage counted once)`],
+      [item.distinct.toLocaleString("en-US"), `${item.distinct === 1 ? "paragraph uses" : "paragraphs use"} the word (each counted once)`],
       item.light ? ["all", "read by both AIs"] : [item.measuring, "picked at random to test translations on"],
       !item.light && item.discovery ? [item.discovery, "of them also translated with no suggestions (see Free translation)"] : null,
     ]);

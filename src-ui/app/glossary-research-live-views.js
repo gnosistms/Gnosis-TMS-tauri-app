@@ -5,6 +5,7 @@
 // plain indented JSON. Every field may still be missing or half-written.
 
 import { parsePartialJson } from "./glossary-research-partial-json.js";
+import { commonness } from "./glossary-research-frequency.js";
 
 const esc = (text) => String(text ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 const list = (value) => (Array.isArray(value) ? value : []);
@@ -178,7 +179,7 @@ function tallyRows(items, keyOf, nameOf) {
 /** "114 uses of the word in 100 passages": a use's id is its passage's id, a dot and its number. */
 function usesIn(items) {
   const passages = new Set(items.map((item) => str(item?.occId).split(".")[0])).size;
-  return `${plural(items.length, "use")} of the word${passages && passages !== items.length ? ` in ${plural(passages, "passage")}` : ""}`;
+  return `${plural(items.length, "use")} of the word${passages && passages !== items.length ? ` in ${plural(passages, "paragraph")}` : ""}`;
 }
 
 /**
@@ -342,7 +343,7 @@ function formsDisplay(section, context) {
   // Counts: logged as data; older runs logged them as lines.
   const counts = new Map(resultData(section, "formCount").map((item) => [lower(item.form), item]));
   for (const text of lineTexts(section, "info")) {
-    const m = /^“(.+?)” appears in (\d+) passages?/.exec(text) ?? /^search “(.+?)”: (\d+) passages/.exec(text);
+    const m = /^“(.+?)” appears in (\d+) (?:passages?|paragraphs?)/.exec(text) ?? /^search “(.+?)”: (\d+) passages/.exec(text);
     if (m && !counts.has(lower(m[1]))) counts.set(lower(m[1]), { form: m[1], rows: Number(m[2]), added: /added/.test(text) });
   }
   const shown = [...proposed];
@@ -362,11 +363,11 @@ function formsDisplay(section, context) {
     shown.some((form) => form.kind !== "spelling" && form.kind !== "text") ? "Solid: grammatical forms." : "",
     shown.some((form) => form.kind === "spelling" || form.kind === "text") ? "Outlined: other spellings." : "",
     shown.some((form) => form.confidence === "low") ? "Faded: the AI is less sure." : "",
-    counts.size ? "The number is how many passages use the spelling." : "",
-    [...decisions.values()].some((form) => form.keep === true) ? "✓: checked in example passages, it is this word." : "",
+    counts.size ? "The number is how many paragraphs use the spelling." : "",
+    [...decisions.values()].some((form) => form.keep === true) ? "✓: checked in example paragraphs, it is this word." : "",
     anyDropped ? "Crossed out: checked, a different word spelled the same (hover to see why)." : "",
   ].filter(Boolean).join(" ");
-  const heading = counts.size ? `Spellings, and how many passages in ${esc(context.texts ?? "the texts")} use each` : "";
+  const heading = counts.size ? `Spellings, and how many paragraphs in ${esc(context.texts ?? "the texts")} use each` : "";
   return {
     html: view("forms", heading, `<div class="research-view__chips">${chips}</div><p class="research-view__explain">${legend}</p>`),
     requests: new Set(requests.map((request) => request.requestId)),
@@ -396,7 +397,7 @@ function familyDisplay(section) {
   const waiting = finished ? [] : words.filter((word) => !checked.has(lower(word.form)));
   return {
     ...drawn,
-    html: view("family", found.length || !finished ? "Related words in the texts, and how many passages use each" : "None of the possible related words is in the texts", `
+    html: view("family", found.length || !finished ? "Related words in the texts, and how many paragraphs use each" : "None of the possible related words is in the texts", `
       <div class="research-view__rows">${found.map(([form, count]) => row(spelled.get(form) ?? form, reasons.get(form) ?? "", count)).join("")}</div>
       ${waiting.length ? `<p class="research-view__explain">${plural(waiting.length, "more word")} to search for</p>` : ""}
       ${missing.length ? `<details class="research-view__more"><summary>${plural(missing.length, "possible word")} not in the texts</summary><div class="research-view__rows">${missing.map((word) => row(word.form, word.reason)).join("")}</div></details>` : ""}`),
@@ -463,8 +464,10 @@ function checksDisplay(section, context) {
       <div class="research-view__tcell">${own.map((w) => {
         const pieces = words.filter((p) => p.partOf === w.word).map((p) => p.word);
         const m = measured.get(`${lower(w.word)}\u0000${lower(w.neededSense)}`);
+        const zipf = list(check?.words).find((x) => lower(x.word) === lower(w.word))?.zipf;
+        const how = m ? ` — used this way in ${m.inSense} of ${m.of} everyday sentences` : zipf != null ? ` — ${commonness(zipf)} in everyday use` : "";
         return `<div class="research-view__word">${chip(w.word, w.lookalike ? "flag" : "")}${pieces.length > 1 ? ` ${muted(`= ${pieces.join(" + ")}`)}` : ""}
-          <div class="research-view__note">${esc(w.neededSense)}${m ? ` — used this way in ${m.inSense} of ${m.of} everyday sentences` : ""}</div></div>`;
+          <div class="research-view__note">${esc(w.neededSense)}${how}</div></div>`;
       }).join("")}</div>
     </div>`;
   }).join("");

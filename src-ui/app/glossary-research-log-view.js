@@ -345,7 +345,7 @@ const RESULT_SUMMARIES = {
     ].filter(Boolean).join(" · ");
   },
   sampling([item]) {
-    return item.light ? `${plural(item.distinct, "passage")}, all read` : `${item.measuring} of ${item.distinct.toLocaleString("en-US")} passages picked at random`;
+    return item.light ? `${plural(item.distinct, "passage")}, all read` : `${item.measuring} of ${item.distinct.toLocaleString("en-US")} paragraphs picked at random`;
   },
   // What a translator reached for, with how often.
   discovery([item]) {

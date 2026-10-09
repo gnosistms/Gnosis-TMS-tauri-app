@@ -603,7 +603,7 @@ export function createResearchEngine(deps) {
       const status = await languageData.ensure(code);
       languageStatus[key] = status.available === true;
       if (status.available) {
-        info(`Everyday ${name} usage data is ready: ${Number(status.sentences) ? `${(Number(status.sentences) / 1e6).toLocaleString("en-US")} million` : "a corpus of"} sentences of ${name} news text, to measure how common words are.`);
+        info(`Looking up how common the words are in everyday ${name} (${Number(status.sentences) ? `${(Number(status.sentences) / 1e6).toLocaleString("en-US")} million` : "a corpus of"} sentences of ${name} news text)…`);
       } else {
         log({ type: "problem", text: `Frequency data for ${name} is not available${status.error ? ` (${status.error})` : ""}. To ask for it to be added, write to ${RESEARCH_DATA_CONTACT}. The research continues without Zipf scores.` });
       }
@@ -794,7 +794,7 @@ export function createResearchEngine(deps) {
         ...accentCounterparts(proposedForms.map((f) => f.form)).map((form) => ({ form, kind: "spelling", confidence: "medium" })),
       ], (f) => f.form).filter((f) => !proposedForms.some((p) => p.form.toLowerCase() === f.form.toLowerCase()));
       const counted = [];
-      info("Counting how many passages use each spelling…");
+      info("Counting how many paragraphs use each spelling…");
       for (const candidate of [...proposedForms, ...extra]) {
         const count = await corpus.countForm(candidate.form);
         const added = !proposedForms.includes(candidate);
@@ -802,7 +802,7 @@ export function createResearchEngine(deps) {
         counted.push({ ...candidate, rows: count.rows, examples: count.examples });
         // Lands in the spellings display, next to its spelling.
         logResult("formCount", [{ form: candidate.form, rows: count.rows, added, kind: candidate.kind }],
-          `“${candidate.form}” appears in ${count.rows} ${count.rows === 1 ? "passage" : "passages"}${added ? " (added: found in the texts or spelled without accents)" : ""}`);
+          `“${candidate.form}” appears in ${count.rows} ${count.rows === 1 ? "paragraph" : "paragraphs"}${added ? " (added: found in the texts or spelled without accents)" : ""}`);
       }
       const confirmCtx = ctx();
       const content = counted.map((c) => [
@@ -869,7 +869,7 @@ export function createResearchEngine(deps) {
         return count.rows > 0;
       };
       // Counting takes up to a minute: say so.
-      if (candidates.length) info("Counting how many passages use each related word…");
+      if (candidates.length) info("Counting how many paragraphs use each related word…");
       for (const candidate of candidates) {
         const present = await add(candidate.form, candidate.kind);
         // A member found in the texts brings its own inflections from the texts' word list.
@@ -882,7 +882,7 @@ export function createResearchEngine(deps) {
       }
       members.sort((a, b) => b.rows - a.rows);
       fact(members.length
-        ? `Related words in the texts (passages): ${members.map((m) => `${m.form} (${m.rows})`).join(", ")}`
+        ? `Related words in the texts (paragraphs): ${members.map((m) => `${m.form} (${m.rows})`).join(", ")}`
         : "No other words built on the term occur in the texts.");
       return { members, searched: candidates.length };
     });
@@ -911,7 +911,7 @@ export function createResearchEngine(deps) {
   async function drawSample() {
     return stage("sample", async () => {
       heading("Sampling");
-      info("Finding every passage that uses the word, to pick a random sample…");
+      info("Finding every paragraph that uses the word, to pick a random sample…");
       const forms = store.load("forms").searched;
       if (!forms.length) {
         throw new ResearchStop(`“${settings.term}” does not occur in the selected texts.`, "no-texts");
@@ -961,7 +961,7 @@ export function createResearchEngine(deps) {
         return { skipped: true };
       }
       const forms = store.load("forms").searched;
-      info(`Finding the reference books that use “${settings.term}”…`);
+      info(`Searching the books ${corpus.authorName ?? "the author"} read for “${settings.term}”…`);
       const usage = await corpus.sourceUsage(forms, settings.seed);
       if (!usage.length) {
         fact("None of the reference books uses the term.");
@@ -1024,7 +1024,7 @@ export function createResearchEngine(deps) {
         searched.add(`${record.originalBookId}:${fold(originals.join(",")).trim()}`);
         pairReads.set(record.originalBookId, found.occurrences ?? 0);
         const name = record.originalTitle ?? book.title;
-        fact(`${book.title.split(" — ")[0]} is a Spanish translation of ${name}${record.originalAuthor ? ` by ${record.originalAuthor}` : ""}. The book's own glossary pairs “${settings.term}” with ${originals.map((o) => `“${o}”`).join(", ")}, found ${found.occurrences} times in the original.`);
+        fact(`${corpus.authorName ?? "The author"} read ${book.title.split(" — ")[0]}, the Spanish translation of ${name}${record.originalAuthor ? `, written in ${record.originalLanguage === "en" ? "English" : "its original language"} by ${record.originalAuthor}` : ""}. Its glossary gives “${settings.term}” as the translation of ${originals.map((o) => `“${o}”`).join(", ")}, which the original uses ${found.occurrences} times.`);
         originalSections.push(section(
           `The original text of ${name}: ${found.occurrences} occurrences of ${originals.map((o) => `“${o}”`).join(", ")} in ${found.paragraphs} passages (a sample)`,
           found.items.map((item) => passageSnippet({ ...item, reference: { title: name } })),
@@ -1198,7 +1198,7 @@ export function createResearchEngine(deps) {
       if (!(await frequencyReady(code, name))) return result;
       const formZipfs = await languageData.zipf(code, forms);
       const listZipf = combinedZipf(formZipfs);
-      info(`How common is each meaning of “${settings.term}”? The AI sorts everyday ${name} sentences with the word by the meaning it has in each.`);
+      info(`Finding everyday ${name} sentences that use “${settings.term}”, to see how common each meaning is…`);
       const term = await measureSenses({
         code, name, forms, listZipf,
         senses: study.senses.map(({ id, gloss, partOfSpeech }) => ({ id, gloss, partOfSpeech })),
@@ -1405,7 +1405,7 @@ export function createResearchEngine(deps) {
             info(`Measurement limit reached (${settings.maxSenseChecks} words with sentences to sort); ${toMeasure.length - index} left unmeasured.`);
             break;
           }
-          info(`“${w.word}” (${index + 1} of ${toMeasure.length}): which meanings does it have in everyday ${name}?`);
+          info(`“${w.word}” looks like the ${sourceName} word: finding everyday ${name} sentences that use it, to see which meanings it has…`);
           const m = await measure(w);
           measured.set(measureKey(w), m);
           if (m.classified) sorted += 1;
@@ -1438,14 +1438,14 @@ export function createResearchEngine(deps) {
             if (reused) measured.set(measureKey(w), reused);
           }
           const todo = unique.filter((w) => !measured.has(measureKey(w)));
-          if (todo.length) info(`Checking ${todo.length} ${todo.length === 1 ? "word" : "words"} of the candidates: how often is each used in everyday ${name} in the meaning needed (not just how common it is overall)?`);
+          if (todo.length) info(`${todo.length} ${todo.length === 1 ? "word decides" : "words decide"} whether ${todo.length === 1 ? "its candidate passes" : "their candidates pass"}: checking how often each is used in the meaning needed. (Very common words pass without this.)`);
           let sortedDeciding = 0;
           for (const [index, w] of todo.entries()) {
             if (sortedDeciding >= settings.maxDecidingChecks) {
               info(`Limit reached (${settings.maxDecidingChecks} words sorted by meaning); ${todo.length - index} scored on all their uses.`);
               break;
             }
-            info(`“${w.word}” (${index + 1} of ${todo.length}): how often does it mean “${w.neededSense}” in everyday ${name}?`);
+            info(`Word ${index + 1} of ${todo.length}, “${w.word}”: finding everyday ${name} sentences that use it…`);
             const m = await measure(w);
             measured.set(measureKey(w), m);
             if (m.classified) sortedDeciding += 1;
@@ -1547,7 +1547,7 @@ export function createResearchEngine(deps) {
         const clashes = c.clashes.map((x) => `already used for ${x.sourceTerms.join(" / ")}`);
         const extra = [...c.reasons, ...c.notes, ...clashes];
         logResult("checks",
-          [{ target: c.target, verdict: c.verdict, reasons: c.reasons, notes: c.notes, clashes }],
+          [{ target: c.target, verdict: c.verdict, reasons: c.reasons, notes: c.notes, clashes, words: c.words.filter((w) => !w.partOf).map((w) => ({ word: w.word, zipf: w.zipf })) }],
           `${c.target}: ${c.verdict}${extra.length ? ` — ${extra.join("; ")}` : ""}`);
       }
       const outGroups = groups.map((g) => ({
@@ -1611,7 +1611,7 @@ export function createResearchEngine(deps) {
       const instructions = prompts.discoveryInstructions(ctx());
       const keyed = batchOccurrences(items, occurrences, settings.discoveryBatch).map((batch, index) => [index, {
         stage: "discovery", purpose: `translate ${batch.occurrences.length === 1 ? "1 use" : `${batch.occurrences.length} uses`} of the word freely, without suggestions`,
-        progress: { key: "occId", total: batch.occurrences.length, unit: "use" },
+        progress: { key: "occId", total: batch.occurrences.length, unit: "use", all: occurrences.length },
         instructions, content: batchContent(batch, null),
         schema: prompts.DISCOVERY_SCHEMA, schemaName: "discovery",
         maxOutputTokens: 900 + 260 * batch.occurrences.length, effort: settings.effortLight,
@@ -2038,7 +2038,7 @@ export function createResearchEngine(deps) {
       const keyed = batches.map((batch, index) => [index, {
         stage: "counting", purpose: `translate ${batch.occurrences.length === 1 ? "1 use" : `${batch.occurrences.length} uses`} of the word with the proposed entry, noting which translation fits`,
         // The live view tallies the chosen translations by name.
-        progress: { key: "occId", total: batch.occurrences.length, unit: "use", variants: variantNames },
+        progress: { key: "occId", total: batch.occurrences.length, unit: "use", all: occurrences.length, variants: variantNames },
         instructions, content: batchContent(batch, label),
         schema: prompts.TRANSLATE_SCHEMA, schemaName: "counting",
         maxOutputTokens: 1200 + 330 * batch.occurrences.length, effort: settings.effortLight,

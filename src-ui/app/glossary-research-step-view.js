@@ -5,7 +5,7 @@
 
 import { isRequestRunning, requestState } from "./glossary-research-log-view.js";
 import { liveAnswerHtml } from "./glossary-research-live-views.js";
-import { liveStatusHtml } from "./glossary-research-live-progress.js";
+import { elapsedText, liveStatusHtml, writingProgress } from "./glossary-research-live-progress.js";
 
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
@@ -56,14 +56,28 @@ export function stepStatus(section, usualFor) {
   // After a cancel nothing is happening in the step, whatever requests were cut short.
   if (section.items.some((item) => item.kind === "line" && /^Cancelled\b/.test(item.entry.text ?? ""))) return "";
   const request = runningRequest(section);
+  if (request?.batch?.total > 1) {
+    const members = section.requests.filter((other) => other.batch?.key === request.batch.key);
+    // All the uses of the batch, also those of batches not sent yet.
+    const total = request.progress?.all ?? members.reduce((n, other) => n + (other.progress?.total ?? 0), 0);
+    if (total) {
+      const done = members.reduce((n, other) => n + (other.usage ? (other.progress?.total ?? 0) : (writingProgress(other.answer, other.progress)?.current ?? 0)), 0);
+      const started = Math.min(...members.map((other) => other.startedAt || Infinity));
+      const pct = Math.round((100 * done) / total);
+      return `<span class="research-live__doing">${done} of ${total} uses of the word translated</span>`
+        + `<span class="research-live__bar" role="progressbar" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${done}"><span style="width:${pct}%"></span></span>`
+        + (Number.isFinite(started) ? `<span class="research-live__clock">${elapsedText(Date.now() - started)}</span>` : "");
+    }
+  }
   if (request) return liveStatusHtml(request, requestState(request), usualFor?.(request.stage) ?? null);
   // A progress line is what happens now until a finding, or an AI request, comes after it.
+  const working = '<span class="research-live__doing">Working…</span>';
   const index = section.items.findLastIndex((item) => item.kind === "line" && item.entry.type === "info");
-  if (index < 0) return "";
+  if (index < 0) return working;
   const line = section.items[index];
   const after = section.items.slice(index + 1).some((item) => item.kind === "line" && item.entry.type !== "info");
   const requestAfter = section.requests.some((request) => (request.startedAt ?? 0) > (line.entry.at ?? 0));
-  return after || requestAfter ? "" : `<span class="research-live__doing">${esc(line.entry.text)}</span>`;
+  return after || requestAfter ? working : `<span class="research-live__doing">${esc(line.entry.text)}</span>`;
 }
 
 /** The current step's head status, for the clock and the stream updates. */
@@ -76,7 +90,7 @@ export function currentStepStatus(sections, usualFor) {
 // Step names as the person reads them (the log keeps the engine's names, so
 // saved runs read the same).
 const STEP_TITLES = {
-  "Sampling": "Sample passages",
+  "Sampling": "Sample paragraphs",
   "Parts and frequency": "Meanings",
   "Candidate checks": "Checking the candidates",
   "Discovery": "Free translation",
@@ -99,19 +113,19 @@ export function stepExplanation(heading, context = {}) {
   const lines = {
     "Dictionary": `The standard meanings of ${term}, from a ${source} dictionary.`,
     "Word forms": `Every spelling of ${term} to search for in ${texts}.`,
-    "Word family": "Related words from the same root, which may need their own research.",
-    "Sampling": `Passages from ${texts} that use ${term}, picked at random to test translations on.`,
+    "Word family": "Related words from the same root; you can choose to research some of them next.",
+    "Sampling": `Paragraphs from ${texts} that use ${term}, picked at random; the proposed translations are tried on them later.`,
     "Where the term comes from": `Did ${context.author ?? "the author"} take ${term} from another book? If so, its original word.`,
     "Parts and frequency": `The meanings of ${term}, and how common each is in everyday ${source}.`,
     "Candidate translations": `Possible ${target} translations for each meaning.`,
     "Candidate checks": `Is each candidate common enough in everyday ${target}, in the meaning needed?`,
-    "Discovery": "An AI translates sample passages freely, with no suggestions: what comes naturally?",
+    "Discovery": "An AI translates some of the sample paragraphs freely, with no suggestions: what comes naturally?",
     "Proposal": "The proposed glossary entry: its translations, and when to use each.",
     "Shared translations": "Is a proposed translation already used for a word with a different meaning?",
     "Existing glossary entry": "The proposal compared with the glossary's current entry.",
-    "Review": "Your turn: check the proposed translations, then press Count to test them on the sample passages.",
-    "Counting": "An AI translates each sample passage with the proposed entry; we count which translation it uses.",
-    "Counting (second judge)": "A second AI does the same, to check the first.",
+    "Review": "Your turn: check the proposed translations (you can remove or add some), then press Count to try them on the sample paragraphs.",
+    "Counting": "An AI translates each sample paragraph with the proposed entry; we count which translation it uses.",
+    "Counting (second judge)": "A second AI does the same on its own, to check the first.",
     "Rare translations": "Do translations that are rare in everyday use need a note?",
     "Summary": "A short written summary for the report.",
   };
