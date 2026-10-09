@@ -387,7 +387,13 @@ function formsDisplay(section, context) {
   }
   const shown = [...proposed];
   for (const item of counts.values()) {
-    if (!shown.some((form) => lower(form.form) === lower(item.form))) shown.push({ form: item.form, kind: item.kind === "text" ? "text" : "spelling", added: true });
+    if (shown.some((form) => lower(form.form) === lower(item.form))) continue;
+    // A word that only begins with the term's letters shows once the check finds it is a form.
+    if (item.kind === "extension") {
+      if (decisions.get(lower(item.form))?.keep === true) shown.push({ form: item.form, kind: "extension", added: true });
+      continue;
+    }
+    shown.push({ form: item.form, kind: item.kind === "text" ? "text" : "spelling", added: true });
   }
   const chips = shown.map((form) => {
     const count = counts.get(lower(form.form));
@@ -395,16 +401,17 @@ function formsDisplay(section, context) {
     const kind = [form.kind === "spelling" || form.kind === "text" ? "outline" : "", form.confidence === "low" ? "faint" : "", decision?.keep === false ? "dropped" : ""].filter(Boolean);
     // Each spelling's check shows on its chip as soon as it arrives.
     const text = `${decision?.keep === true ? "✓ " : ""}${form.form}${count ? ` (${count.rows})` : ""}`;
-    return tip([decision?.reason, form.added ? "Added: found in the texts or spelled without accents." : ""].filter(Boolean).join(" "), chip(text, kind.join(" research-view__chip--")));
+    const added = form.kind === "extension" ? "Added: a word of the texts that begins with the same letters." : form.added ? "Added: found in the texts or spelled without accents." : "";
+    return tip([decision?.reason, added].filter(Boolean).join(" "), chip(text, kind.join(" research-view__chip--")));
   }).join("");
-  const anyDropped = [...decisions.values()].some((form) => form.keep === false);
+  const anyDropped = shown.some((form) => decisions.get(lower(form.form))?.keep === false);
   const legend = [
     shown.some((form) => form.kind !== "spelling" && form.kind !== "text") ? "Solid: grammatical forms." : "",
     shown.some((form) => form.kind === "spelling" || form.kind === "text") ? "Outlined: other spellings." : "",
     shown.some((form) => form.confidence === "low") ? "Faded: the AI is less sure." : "",
     counts.size ? "The number is how many paragraphs use the spelling." : "",
     [...decisions.values()].some((form) => form.keep === true) ? "✓: checked in example paragraphs, it is this word." : "",
-    confirmRequest && isRunning(confirmRequest) && decisions.size < shown.length ? "No mark: not checked yet." : "",
+    confirmRequest && isRunning(confirmRequest) && shown.some((form) => !decisions.has(lower(form.form))) ? "No mark: not checked yet." : "",
     anyDropped ? "Crossed out: checked, a different word spelled the same (hover to see why)." : "",
   ].filter(Boolean).join(" ");
   const heading = counts.size ? `Spellings, and how many paragraphs in ${esc(context.texts ?? "the texts")} use each` : "";
@@ -421,6 +428,9 @@ const spellingKey = (text) => str(text).normalize("NFD").replace(/[\u0300-\u036f
 
 function familyDisplay(section) {
   const request = section.requests.find((item) => item.stage === "family");
+  // The second request checks the forms found for the related words.
+  const formCheck = section.requests.find((item) => item.stage === "family" && item !== request);
+  const notForms = new Set(list(answerOf(formCheck)?.forms).filter((form) => form?.keep === false).map((form) => lower(form.form)));
   const words = list(answerOf(request)?.words).filter((word) => str(word?.form) && word.kind !== "phrase");
   if (!words.length) return null;
   // Counts arrive one by one as data; older runs logged them in one line at the end.
@@ -437,6 +447,7 @@ function familyDisplay(section) {
   }
   for (const item of checked.values()) {
     if (words.some((word) => lower(word.form) === lower(item.form))) continue;
+    if (item.of && notForms.has(lower(item.form))) continue;
     const owner = item.of ? groups.get(spellingKey(item.of)) : null;
     if (owner) owner.members.push({ form: item.form, item, inflection: true });
     else if (item.rows > 0) groups.set(spellingKey(item.form), { lead: { form: item.form, reason: "" }, members: [{ form: item.form, item }] });
@@ -459,7 +470,7 @@ function familyDisplay(section) {
     return tip(`${str(group.lead.reason)}${spellings}`, chip(text, s.missing ? "faint" : ""));
   };
   const all = [...groups.values()];
-  const drawn = { requests: new Set([request.requestId]), results: new Set(["familyCount"]), facts: [/^(Related words in the texts|Word family in the texts|No other words built on the term)/] };
+  const drawn = { requests: new Set([request.requestId, ...(formCheck ? [formCheck.requestId] : [])]), results: new Set(["familyCount"]), facts: [/^(Related words in the texts|Word family in the texts|No other words built on the term)/] };
   const legend = (pending) => [
     "Hover a word for what it is and how it is spelled; +n: other spellings or forms of it.",
     [...checked.values()].length ? "The number is how many paragraphs use it." : "",

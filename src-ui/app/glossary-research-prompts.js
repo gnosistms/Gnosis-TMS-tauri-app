@@ -1,7 +1,7 @@
 // Prompt texts and strict JSON schemas for Glossary Research.
 // Bump RESEARCH_PROMPT_VERSION on any change that could alter a judgment.
 
-export const RESEARCH_PROMPT_VERSION = "2026-10-09.1";
+export const RESEARCH_PROMPT_VERSION = "2026-10-09.2";
 
 const STR = { type: "string" };
 const NSTR = { anyOf: [{ type: "string" }, { type: "null" }] };
@@ -137,7 +137,7 @@ export const FORMS_CONFIRM_SCHEMA = object({
 
 export function formsConfirmInstructions(ctx) {
   return `You confirm which surface forms belong to a corpus study of the ${ctx.sourceName} word “${ctx.headword}”. ${corpusLine(ctx)}
-For each candidate you get its number of passages in the texts and a few example passages. Keep a form when the examples show it is the same word in the same range of meanings. Drop it when the examples are a different word (a homograph, a name, another lemma). A form with no passages may be kept only if you are highly confident it is a valid form of the same word (e.g. a regular plural). Reasons at most 12 words, in ${ctx.reportName}.`;
+For each candidate you get its number of passages in the texts and a few example passages. Keep a form when the examples show it is the same word in the same range of meanings. Drop it when the examples are a different word (a homograph, a name, another lemma). Some candidates are words of the texts that only begin with the same letters: keep one only when it is a form of this word (another number, gender, person, tense or spelling); drop words made from it with a prefix or suffix, and words that merely share its first letters. A form with no passages may be kept only if you are highly confident it is a valid form of the same word (e.g. a regular plural). Reasons at most 12 words, in ${ctx.reportName}.`;
 }
 
 // --- discovery (open reading) -----------------------------------------------
@@ -392,9 +392,14 @@ export const FAMILY_SCHEMA = object({
   words: arrayOf(object({ form: STR, kind: oneOf("prefixed", "suffixed", "compound", "phrase"), reason: STR })),
 });
 
+export function familyFormsInstructions(ctx) {
+  return `You check the forms of words related to the ${ctx.sourceName} word “${ctx.headword}” before a corpus study. ${corpusLine(ctx)}
+Each line is a word of the texts found as a possible form of a related word (from a word list, or because it begins with the same letters), with its number of passages and an example. Keep it only when it is a form of that related word: the same word in another number, gender, person, tense or spelling. Drop it when it is a different word: made from it with another prefix or suffix, or a word that merely shares its first letters. Give every line; form: the word as written. Reasons at most 12 words, in ${ctx.reportName}.`;
+}
+
 export function familyInstructions(ctx) {
   return `You list the word family of the ${ctx.sourceName} word “${ctx.headword}” for a corpus study. ${corpusLine(ctx)}
-List ${ctx.sourceName} words that contain the headword (or its stem) as one of their parts: the word with a prefix (also written with a hyphen or a space after the prefix), the word with a suffix that makes another word, and compounds. Do not list phrases of separate words: a phrase needs its own entry only when translating its words with their own translations does not work, and the study of the word decides that from its passages. Go through the productive prefixes and suffixes of ${ctx.sourceName} one by one rather than listing only the obvious ones; authors coin words with them. Include the spellings a text might use (joined, hyphenated, spaced; with and without accents). Do not list the inflections of the headword itself; they are already in the study. At most 40, the most plausible for these texts first. Each one is searched in the texts and dropped if it does not occur. reason: at most 8 words, in ${ctx.reportName}.`;
+List ${ctx.sourceName} words that contain the headword (or its stem) as one of their parts: the word with a prefix (also written with a hyphen or a space after the prefix), the word with a suffix that makes another word, and compounds. Do not list phrases of separate words: a phrase needs its own entry only when translating its words with their own translations does not work, and the study of the word decides that from its passages. Go through the productive prefixes and suffixes of ${ctx.sourceName} one by one rather than listing only the obvious ones; authors coin words with them. Include the spellings a text might use (joined, hyphenated, spaced; with and without accents). Do not list the inflections of the headword itself; they are already in the study. From the words of the texts that begin with the headword's letters, list those built on the headword, and leave out words that merely share its first letters. At most 40, the most plausible for these texts first. Each one is searched in the texts and dropped if it does not occur. reason: at most 8 words, in ${ctx.reportName}.`;
 }
 
 // --- parts and senses of the term ----------------------------------------------

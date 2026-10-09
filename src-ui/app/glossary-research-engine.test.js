@@ -635,6 +635,57 @@ test("the person chooses the related words to research next", async () => {
   assert.deepEqual(review.familyWords, offered.filter((g) => g.suggested).map(({ form, forms }) => ({ form, forms })));
 });
 
+test("words that only begin like the term are checked, not taken as related words", async () => {
+  const base = fakeCorpus(passages(40));
+  const rows = { fatalitos: 2, fatalmente: 2, "fatales1": 1, sobrefatal: 3, sobrefatales: 1, sobrefatalidad: 2 };
+  const corpus = {
+    ...base,
+    async formsHint(term) {
+      if (term === "sobrefatal") return { forms: [], related: [{ form: "sobrefatales", rows: 1 }, { form: "sobrefatalidad", rows: 2 }] };
+      return { forms: [{ form: "fatal", rows: 20 }, { form: "fatales", rows: 3 }], related: [{ form: "fatalmente", rows: 2 }, { form: "fatales1", rows: 1 }, { form: "fatalitos", rows: 2 }] };
+    },
+    async countForm(form) {
+      return rows[form] ? { rows: rows[form], examples: [{ text: `Un ${form} aquí.`, start: 3, end: 3 + form.length }] } : base.countForm(form);
+    },
+  };
+  const inner = fakeModel();
+  const requests = [];
+  const answer = (out) => ({ status: "ok", text: JSON.stringify(out), usage: { inputTokens: 10, outputTokens: 10 } });
+  const model = {
+    calls: inner.calls,
+    async call(request, onDelta) {
+      requests.push(request);
+      if (request.schemaName === "forms_confirm") {
+        inner.calls.push(request.stage);
+        return answer({ forms: [
+          { form: "fatal", keep: true, reason: "ok" }, { form: "fatales", keep: true, reason: "ok" },
+          { form: "fatalitos", keep: true, reason: "a form" }, { form: "fatalmente", keep: false, reason: "an adverb made from it" },
+        ] });
+      }
+      if (request.schemaName === "family") {
+        inner.calls.push(request.stage);
+        return answer({ words: [{ form: "sobrefatal", kind: "prefixed", reason: "test" }] });
+      }
+      if (request.schemaName === "family_forms") {
+        inner.calls.push(request.stage);
+        return answer({ forms: [{ form: "sobrefatales", keep: true, reason: "plural" }, { form: "sobrefatalidad", keep: false, reason: "another word" }] });
+      }
+      return inner.call(request, onDelta);
+    },
+  };
+  const { engine: research, store } = engine({ model, corpus });
+  await research.runToReview();
+  const confirm = requests.find((request) => request.schemaName === "forms_confirm");
+  assert.match(confirm.content, /“fatalitos” \(a word of the texts that begins with the same letters\)/);
+  assert.doesNotMatch(confirm.content, /fatales1/, "a word with a footnote number attached is not a word");
+  assert.ok(store.data.forms.confirmed.includes("fatalitos"), "a form found among the words that begin alike joins the study");
+  assert.deepEqual(store.data.forms.related.map((f) => f.form), ["fatalmente"], "the rest go to the word family");
+  const family = requests.find((request) => request.schemaName === "family");
+  assert.match(family.content, /are not its forms: fatalmente$/m);
+  assert.deepEqual(store.data.family.members.map((m) => m.form).sort(), ["sobrefatal", "sobrefatales"],
+    "only words the AI lists are related words; a form the check rejects is left out");
+});
+
 test("a look-alike absent from the general corpus does not use up a measurement", async () => {
   const base = lookalikeModel();
   const model = {

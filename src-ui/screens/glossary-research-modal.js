@@ -256,7 +256,7 @@ function renderFamilyChoice(research) {
     <label class="research-project-row">
       <input type="checkbox" data-action="toggle-research-family:${index}" ${research.familyTicked?.[index] ? "checked" : ""} />
       <span>${esc(group.forms.join(", "))}</span>
-      <span class="muted">${esc(kinds[group.kind] ?? group.kind)} · ${group.rows} passages</span>
+      <span class="muted">${esc(kinds[group.kind] ?? group.kind)} · ${group.rows} ${group.rows === 1 ? "passage" : "passages"}</span>
     </label>`).join("");
   const anyTicked = (research.familyTicked ?? []).some(Boolean);
   return `

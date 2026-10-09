@@ -81,3 +81,31 @@ test("after the second count, the uses where the two AIs differ are listed with 
   assert.match(shown.html, /first: Innermost[\s\S]*second: within/);
   assert.ok(shown.after && shown.results.has("agreement"));
 });
+
+test("a word that only begins like the term shows among the spellings once the check keeps it", () => {
+  const result = (form, rows, kind) => ({ kind: "result", resultKind: "formCount", data: [{ form, rows, added: kind !== "user", kind }] });
+  const propose = { requestId: "r1", stage: "forms", usage: {}, answer: '{"forms":[{"form":"cohabitar","kind":"user","confidence":"high"}]}' };
+  const confirm = (answer, usage) => ({ requestId: "r2", stage: "forms", ...(usage ? { usage } : {}), answer });
+  const section = (check) => ({ heading: "Word forms", items: [result("cohabitar", 20, "user"), result("cohabitaremos", 1, "extension"), result("cohabitación", 4, "extension")], requests: [propose, check] });
+  const running = stepDisplay(section(confirm('{"forms":[{"form":"cohabitar","keep":true,"reason":"ok"}')));
+  assert.doesNotMatch(running.html, /cohabitaremos|cohabitación/, "not shown before the check");
+  const done = stepDisplay(section(confirm('{"forms":[{"form":"cohabitar","keep":true,"reason":"ok"},{"form":"cohabitaremos","keep":true,"reason":"future tense"},{"form":"cohabitación","keep":false,"reason":"a noun made from it"}]}', {})));
+  assert.match(done.html, /✓ cohabitaremos \(1\)/);
+  assert.doesNotMatch(done.html, /cohabitación/, "a word made from the term belongs to the word family, not the spellings");
+  assert.doesNotMatch(done.html, /Crossed out/);
+});
+
+test("a form of a related word that the check rejects is not shown with it", () => {
+  const family = { requestId: "f1", stage: "family", usage: {}, answer: '{"words":[{"form":"intimidad","kind":"suffixed","reason":"noun"}]}' };
+  const check = { requestId: "f2", stage: "family", usage: {}, answer: '{"forms":[{"form":"intimidades","keep":true,"reason":"plural"},{"form":"intimidado","keep":false,"reason":"from intimidar"}]}' };
+  const count = (form, rows, of) => ({ kind: "result", resultKind: "familyCount", data: [{ form, rows, ...(of ? { of } : {}) }] });
+  const shown = stepDisplay({
+    heading: "Word family",
+    items: [count("intimidad", 13), count("intimidades", 4, "intimidad"), count("intimidado", 1, "intimidad"),
+      { kind: "line", entry: { type: "fact", text: "Related words in the texts (paragraphs): intimidad (13), intimidades (4)" } }],
+    requests: [family, check],
+  });
+  assert.ok(shown.requests.has("f2"), "the check has no conversation of its own");
+  assert.match(shown.html, /intimidades \(4\) \(a form\)/);
+  assert.doesNotMatch(shown.html, /intimidado/);
+});

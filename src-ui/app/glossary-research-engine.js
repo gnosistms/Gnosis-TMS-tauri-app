@@ -40,6 +40,15 @@ import {
   senseZipf,
 } from "./glossary-research-frequency.js";
 
+/**
+ * A token with a digit is not a word: in the texts it is usually a word with its
+ * footnote number attached ("cohabitaremos1").
+ */
+export const isWord = (form) => !/\p{N}/u.test(String(form ?? ""));
+
+/** How many words of the texts that begin with the term's letters are checked as its possible forms. */
+const MAX_STEM_EXTENSIONS = 25;
+
 export const RESEARCH_DEFAULTS = {
   sampleSize: 100,
   discoverySize: 30,
@@ -789,9 +798,16 @@ export function createResearchEngine(deps) {
       // The AI can overlook spellings, so every form in the texts' word list
       // and every accented/unaccented counterpart is checked too; the confirm
       // step decides whether each is the same word.
+      // Words of the texts that begin with the term's letters may be its forms
+      // ("cohabitaremos" for "cohabitar") or other words ("intimidad" for
+      // "íntimo"); the confirm step decides, and the rest go to the word family.
+      const extensions = (hint?.related ?? []).filter((f) => isWord(f.form))
+        .sort((a, b) => (b.rows ?? 0) - (a.rows ?? 0)).slice(0, MAX_STEM_EXTENSIONS)
+        .map((f) => ({ form: f.form, kind: "extension", confidence: "low" }));
       const extra = mergeCaseVariants([
-        ...(hint?.forms ?? []).map((f) => ({ form: f.form, kind: "text", confidence: "medium" })),
+        ...(hint?.forms ?? []).filter((f) => isWord(f.form)).map((f) => ({ form: f.form, kind: "text", confidence: "medium" })),
         ...accentCounterparts(proposedForms.map((f) => f.form)).map((form) => ({ form, kind: "spelling", confidence: "medium" })),
+        ...extensions,
       ], (f) => f.form).filter((f) => !proposedForms.some((p) => p.form.toLowerCase() === f.form.toLowerCase()));
       const counted = [];
       info("Counting how many paragraphs use each spelling…");
@@ -806,8 +822,10 @@ export function createResearchEngine(deps) {
       }
       const confirmCtx = ctx();
       const content = counted.map((c) => [
-        `“${c.form}” (${c.kind}, confidence ${c.confidence}): ${c.rows} passages`,
-        ...c.examples.slice(0, 2).map((e) => `   ${snippet(e.text, e.start, e.end, 90)}`),
+        c.kind === "extension"
+          ? `“${c.form}” (a word of the texts that begins with the same letters): ${c.rows} passages`
+          : `“${c.form}” (${c.kind}, confidence ${c.confidence}): ${c.rows} passages`,
+        ...c.examples.slice(0, c.kind === "extension" ? 1 : 2).map((e) => `   ${snippet(e.text, e.start, e.end, 90)}`),
       ].join("\n")).join("\n");
       const confirmed = await client.callJson({
         stage: "forms", purpose: `check in example paragraphs that each spelling is “${settings.term}”, not another word spelled the same (such as a verb form)`,
@@ -822,9 +840,12 @@ export function createResearchEngine(deps) {
       const inTexts = forms.filter((f) => f.rows > 0).map((f) => f.form);
       const notFound = forms.filter((f) => f.rows === 0).map((f) => f.form);
       fact(`${inTexts.length} ${inTexts.length === 1 ? "spelling" : "spellings"} found in the texts: ${inTexts.join(", ") || "none"}${notFound.length ? `; also kept, though not in the texts: ${notFound.join(", ")}` : ""}`);
-      const dropped = confirmed.forms.filter((f) => !f.keep);
+      const isExtension = new Set(counted.filter((c) => c.kind === "extension").map((c) => c.form.trim().toLowerCase()));
+      const dropped = confirmed.forms.filter((f) => !f.keep && !isExtension.has(f.form.trim().toLowerCase()));
       if (dropped.length) info(`dropped: ${dropped.map((f) => `${f.form} (${f.reason})`).join("; ")}`);
-      return { confirmed: forms.map((f) => f.form), searched: inTexts, notFound, candidates: counted.map((c) => ({ form: c.form, kind: c.kind, confidence: c.confidence, rows: c.rows })), decisions: confirmed.forms, related: hint?.related ?? [] };
+      // The words that begin like the term but are not its forms: candidates for its word family.
+      const related = (hint?.related ?? []).filter((f) => isWord(f.form) && !keep.has(f.form.trim().toLowerCase()));
+      return { confirmed: forms.map((f) => f.form), searched: inTexts, notFound, candidates: counted.filter((c) => c.kind !== "extension" || keep.has(c.form.trim().toLowerCase())).map((c) => ({ form: c.form, kind: c.kind, confidence: c.confidence, rows: c.rows })), decisions: confirmed.forms, related };
     });
   }
 
@@ -841,7 +862,7 @@ export function createResearchEngine(deps) {
         content: [
           `Headword: ${settings.term}`,
           `Forms in the study: ${forms.confirmed.join(", ")}`,
-          `Words of the texts that extend the stem: ${(forms.related ?? []).map((r) => r.form).join(", ") || "none"}`,
+          `Words of the texts that begin with the headword's letters and are not its forms: ${(forms.related ?? []).filter((r) => isWord(r.form)).map((r) => r.form).join(", ") || "none"}`,
           dictionaryText(),
         ].join("\n"),
         schema: prompts.FAMILY_SCHEMA, schemaName: "family",
@@ -850,13 +871,16 @@ export function createResearchEngine(deps) {
         info(`word family not listed: ${error.message}`);
         return { words: [] };
       });
-      const candidates = mergeCaseVariants([
-        ...(forms.related ?? []).map((r) => ({ form: r.form, kind: "suffixed" })),
+      // Only the words the AI lists: a word that merely begins with the same
+      // letters ("intimidado" next to "íntimo") is not related.
+      const candidates = mergeCaseVariants(
         // Phrases are not related words: the study of the word gives one an entry
         // only when its words' own translations do not compose it.
-        ...proposed.words.filter((w) => w.kind !== "phrase"),
-      ], (w) => w.form).filter((w) => !known.has(fold(w.form).trim())).slice(0, 45);
+        proposed.words.filter((w) => w.kind !== "phrase" && isWord(w.form)),
+        (w) => w.form,
+      ).filter((w) => !known.has(fold(w.form).trim())).slice(0, 45);
       const members = [];
+      const examples = new Map(); // a related word's possible form → example passages
       const found = new Set(known);
       const add = async (form, kind, of = null) => {
         const key = fold(form).trim();
@@ -864,6 +888,7 @@ export function createResearchEngine(deps) {
         found.add(key);
         const count = await corpus.countForm(form).catch(() => ({ rows: 0 }));
         if (count.rows) members.push({ form, kind, rows: count.rows, ...(of ? { of } : {}) });
+        if (count.rows && of) examples.set(key, count.examples ?? []);
         // Lands in the related-words display, next to its word.
         logResult("familyCount", [{ form, rows: count.rows, of }], `“${form}”: ${count.rows} passages`);
         return count.rows > 0;
@@ -877,7 +902,30 @@ export function createResearchEngine(deps) {
           const hint = await corpus.formsHint(candidate.form).catch(() => null);
           // Rare words may have no inflection links in the word list; their plurals
           // then appear among the words that extend their stem.
-          for (const f of [...(hint?.forms ?? []), ...(hint?.related ?? [])]) await add(f.form, candidate.kind, candidate.form);
+          for (const f of [...(hint?.forms ?? []), ...(hint?.related ?? [])]) if (isWord(f.form)) await add(f.form, candidate.kind, candidate.form);
+        }
+      }
+      // The word list links forms loosely and words that begin alike are not forms
+      // ("intimidado" is not a form of "intimidad"): the AI checks each one.
+      const possible = members.filter((m) => m.of);
+      if (possible.length) {
+        const checked = await client.callJson({
+          stage: "family", purpose: "check that each word found as a form of a related word is that word",
+          progress: { key: "form", total: possible.length, unit: "form", verb: "checked" },
+          instructions: prompts.familyFormsInstructions(ctx()),
+          content: possible.map((m) => [
+            `“${m.form}” as a form of “${m.of}”: ${m.rows} passages`,
+            ...(examples.get(fold(m.form).trim()) ?? []).slice(0, 1).map((e) => `   ${snippet(e.text, e.start, e.end, 90)}`),
+          ].join("\n")).join("\n"),
+          schema: prompts.FORMS_CONFIRM_SCHEMA, schemaName: "family_forms",
+          maxOutputTokens: 2000, effort: settings.effortLight,
+        }).catch((error) => {
+          info(`forms of the related words not checked: ${error.message}`);
+          return null;
+        });
+        const notForms = new Set((checked?.forms ?? []).filter((f) => f.keep === false).map((f) => fold(f.form).trim()));
+        for (let i = members.length - 1; i >= 0; i -= 1) {
+          if (members[i].of && notForms.has(fold(members[i].form).trim())) members.splice(i, 1);
         }
       }
       members.sort((a, b) => b.rows - a.rows);
