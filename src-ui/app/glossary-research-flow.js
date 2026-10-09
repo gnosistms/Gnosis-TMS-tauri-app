@@ -841,6 +841,13 @@ async function seedTimingsFromSavedRuns(installationId, glossaryId) {
   }
 }
 
+/** Fold or unfold the step running now (it is open unless folded). */
+export function toggleResearchCurrent(render, sectionId) {
+  const draft = research();
+  draft.sectionOpen = { ...(draft.sectionOpen ?? {}), [sectionId]: draft.sectionOpen?.[sectionId] === false };
+  renderKeepingLogPinned(render);
+}
+
 /** "details": unfold or fold a finished step. */
 export function toggleResearchSection(render, sectionId) {
   const draft = research();

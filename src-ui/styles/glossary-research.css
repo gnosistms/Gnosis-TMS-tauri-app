@@ -1541,3 +1541,13 @@
   font: 13px/1.5 var(--font-sans);
   white-space: pre-wrap;
 }
+
+/* the "now" line at the end of the open running step: wraps; one line only beside a folded title */
+.research-step__now {
+  flex-wrap: wrap;
+  padding-top: 4px;
+}
+
+.research-step__now .research-live__doing {
+  white-space: normal;
+}

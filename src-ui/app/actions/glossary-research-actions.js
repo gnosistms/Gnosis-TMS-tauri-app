@@ -26,6 +26,7 @@ import {
   toggleResearchAdvanced,
   toggleResearchLog,
   toggleResearchSection,
+  toggleResearchCurrent,
   toggleResearchPickerProject,
   toggleResearchFamilyWord,
 } from "../glossary-research-flow.js";
@@ -107,6 +108,7 @@ export function createGlossaryResearchActions(render) {
     ["add-research-entry-variant:", (rest) => addResearchEntryVariant(render, rest)],
     ["save-research-entry:", (rest) => saveResearchEntry(render, rest)],
     ["toggle-research-section:", (rest) => toggleResearchSection(render, rest)],
+    ["toggle-research-current:", (rest) => toggleResearchCurrent(render, rest)],
     ["open-research-source:", (rest) => openExternalUrl(rest)],
     ["select-research-prep-language:", (rest) => selectResearchPrepLanguage(render, rest)],
   ];

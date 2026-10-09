@@ -305,3 +305,189 @@ export function liveAnswerHtml(request, { batch = null, final = false } = {}) {
     return null;
   }
 }
+
+// --- one display per step ----------------------------------------------------------
+//
+// Steps whose data arrives in several parts (an AI answer, then counts, then a
+// check) show it in one display that fills in place: counts go next to the
+// words they count, a check marks the words it drops, measurements land in the
+// rows they measure. Each returns { html, requests, results, facts }: what it
+// drew, so the step does not draw those again. Null: the step has no such display.
+
+const answerOf = (request) => (request?.answer ? parsePartialJson(request.answer) : null);
+const lower = (text) => str(text).normalize("NFC").toLowerCase().trim();
+const isRunning = (request) => !request.usage && !request.problem;
+
+function resultData(section, kind) {
+  return section.items.filter((item) => item.kind === "result" && item.resultKind === kind)
+    .flatMap((item) => (Array.isArray(item.data) ? item.data : []));
+}
+
+function lineTexts(section, type) {
+  return section.items.filter((item) => item.kind === "line" && item.entry.type === type).map((item) => str(item.entry.text));
+}
+
+/** "word (12), other (3)" → Map(word → 12). */
+function countList(text) {
+  return new Map([...String(text).matchAll(/([^,():]+?) \((\d+)\)/g)].map((m) => [lower(m[1]), Number(m[2])]));
+}
+
+function formsDisplay(section, context) {
+  const requests = section.requests.filter((request) => request.stage === "forms");
+  const proposeRequest = requests.find((request) => !/"keep"\s*:/.test(request.answer ?? ""));
+  const confirmRequest = requests.find((request) => /"keep"\s*:/.test(request.answer ?? ""));
+  const proposed = list(answerOf(proposeRequest)?.forms).filter((form) => str(form?.form));
+  if (!proposed.length) return null;
+  const decisions = new Map(list(answerOf(confirmRequest)?.forms).filter((form) => str(form?.form)).map((form) => [lower(form.form), form]));
+  // Counts: logged as data; older runs logged them as lines.
+  const counts = new Map(resultData(section, "formCount").map((item) => [lower(item.form), item]));
+  for (const text of lineTexts(section, "info")) {
+    const m = /^“(.+?)” appears in (\d+) passages?/.exec(text) ?? /^search “(.+?)”: (\d+) passages/.exec(text);
+    if (m && !counts.has(lower(m[1]))) counts.set(lower(m[1]), { form: m[1], rows: Number(m[2]), added: /added/.test(text) });
+  }
+  const shown = [...proposed];
+  for (const item of counts.values()) {
+    if (!shown.some((form) => lower(form.form) === lower(item.form))) shown.push({ form: item.form, kind: item.kind === "text" ? "text" : "spelling", added: true });
+  }
+  const chips = shown.map((form) => {
+    const count = counts.get(lower(form.form));
+    const decision = decisions.get(lower(form.form));
+    const kind = [form.kind === "spelling" || form.kind === "text" ? "outline" : "", form.confidence === "low" ? "faint" : "", decision?.keep === false ? "dropped" : ""].filter(Boolean);
+    const text = count ? `${form.form} (${count.rows})` : form.form;
+    return `<span title="${esc([decision?.reason, form.added ? "added: found in the texts or spelled without accents" : ""].filter(Boolean).join("; "))}">${chip(text, kind.join(" research-view__chip--"))}</span>`;
+  }).join("");
+  const anyDropped = [...decisions.values()].some((form) => form.keep === false);
+  const legend = [
+    shown.some((form) => form.kind !== "spelling" && form.kind !== "text") ? "Solid: grammatical forms." : "",
+    shown.some((form) => form.kind === "spelling" || form.kind === "text") ? "Outlined: other spellings." : "",
+    shown.some((form) => form.confidence === "low") ? "Faded: the AI is less sure." : "",
+    counts.size ? "The number is how many passages use the spelling." : "",
+    anyDropped ? "Crossed out: a different word spelled the same (hover to see why)." : decisions.size ? "Checked in example passages: each is this word." : "",
+  ].filter(Boolean).join(" ");
+  const heading = counts.size ? `Spellings, and how many passages in ${esc(context.texts ?? "the texts")} use each` : "";
+  return {
+    html: view("forms", heading, `<div class="research-view__chips">${chips}</div><p class="research-view__explain">${legend}</p>`),
+    requests: new Set(requests.map((request) => request.requestId)),
+    results: new Set(["formCount"]),
+    facts: [/spellings? found in the texts:|^Forms: /],
+  };
+}
+
+function familyDisplay(section) {
+  const request = section.requests.find((item) => item.stage === "family");
+  const words = list(answerOf(request)?.words).filter((word) => str(word?.form) && word.kind !== "phrase");
+  if (!words.length) return null;
+  const fact = lineTexts(section, "fact").find((text) => /^(Related words in the texts|Word family in the texts)/.test(text));
+  const counts = fact ? countList(fact.slice(fact.indexOf(":") + 1)) : null;
+  const row = (form, reason, count) => `<div class="research-view__row"><strong>${esc(form)}</strong>${count != null ? ` (${count})` : ""} ${muted(reason)}</div>`;
+  if (!counts) {
+    return {
+      html: view("family", `Possible related words${isRunning(request) ? " so far" : ""}`, `<div class="research-view__rows">${words.map((word) => row(word.form, word.reason)).join("")}</div>`),
+      requests: new Set([request.requestId]), results: new Set(), facts: [],
+    };
+  }
+  const reasons = new Map(words.map((word) => [lower(word.form), word.reason]));
+  const found = [...counts].sort((a, b) => b[1] - a[1]);
+  const missing = words.filter((word) => !counts.has(lower(word.form)));
+  return {
+    html: view("family", found.length ? "Related words in the texts, and how many passages use each" : "None of the possible related words is in the texts", `
+      <div class="research-view__rows">${found.map(([form, count]) => row(words.find((word) => lower(word.form) === form)?.form ?? form, reasons.get(form) ?? "", count)).join("")}</div>
+      ${missing.length ? `<details class="research-view__more"><summary>${plural(missing.length, "other possible word")} not in the texts</summary><div class="research-view__rows">${missing.map((word) => row(word.form, word.reason)).join("")}</div></details>` : ""}`),
+    requests: new Set([request.requestId]), results: new Set(), facts: [/^(Related words in the texts|Word family in the texts|No other words built on the term)/],
+  };
+}
+
+function meaningsDisplay(section, context) {
+  const request = section.requests.find((item) => item.stage === "parts");
+  const study = answerOf(request);
+  const senses = list(study?.senses).filter((sense) => str(sense?.gloss));
+  if (!senses.length) return null;
+  const parts = list(study?.parts).filter((part) => str(part?.part));
+  const ids = new Set(senses.map((sense) => sense.id));
+  // The sorting of the term's own sentences uses the meanings' ids; a base word's uses "needed".
+  const sorting = section.requests.find((item) => item.stage === "frequency" && list(item.progress?.senses).some((sense) => ids.has(sense.id)));
+  const counts = new Map();
+  let sorted = 0;
+  for (const item of list(answerOf(sorting)?.items)) {
+    if (!str(item?.sense)) continue;
+    sorted += 1;
+    counts.set(item.sense, (counts.get(item.sense) ?? 0) + 1);
+  }
+  const language = sorting?.progress?.language ?? context.source ?? "";
+  const word = context.term ?? sorting?.progress?.word ?? "";
+  const rows = [
+    ...senses.map((sense) => [sense.gloss, counts.get(sense.id) ?? 0, sense.usedByAuthor ? "needed" : "sense", sense.partOfSpeech ?? ""]),
+    ...[["other", "another meaning"], ["not_this_word", "not this word (a name, another word)"]].filter(([id]) => counts.get(id)).map(([id, text]) => [text, counts.get(id), "rest"]),
+  ];
+  const total = sorting?.progress?.total ?? sorted;
+  const equation = parts.length > 1 ? `<div class="research-view__equation">${parts.map((part, index) => `${index ? '<span class="research-view__plus">+</span>' : ""}<span class="research-view__part"><strong>${esc(part.part)}</strong>${muted(part.meaning)}</span>`).join("")}</div>` : "";
+  const body = sorting
+    ? `${bars(rows, total, "Sentences per meaning")}<p class="research-view__explain">Bars: how many of ${total} everyday ${esc(language)} sentences (news) use each meaning${sorting && isRunning(sorting) ? ", so far" : ""}. Darker: meanings the author uses.</p>`
+    : `<ol class="research-view__definitions">${senses.map((sense) => `<li>${sense.partOfSpeech ? `${muted(`(${sense.partOfSpeech})`)} ` : ""}${esc(sense.gloss)}${sense.usedByAuthor ? ` ${label("used by the author", "accent")}` : ""}</li>`).join("")}</ol>`;
+  return {
+    html: view("parts", sorting ? `Meanings of “${esc(word)}”, and how often each is used` : `Meanings of “${esc(word)}”`, `${equation}${body}`),
+    requests: new Set([request.requestId, ...(sorting ? [sorting.requestId] : [])]),
+    results: new Set(["frequency"]),
+    facts: [],
+  };
+}
+
+function checksDisplay(section, context) {
+  const request = section.requests.find((item) => item.stage === "checks");
+  const candidates = list(answerOf(request)?.candidates).filter((candidate) => str(candidate?.target));
+  if (!candidates.length) return null;
+  const sortings = section.requests.filter((item) => item.stage === "frequency");
+  const measured = new Map();
+  for (const sorting of sortings) {
+    const items = list(answerOf(sorting)?.items).filter((item) => str(item?.sense));
+    if (!items.length || isRunning(sorting)) continue;
+    measured.set(`${lower(sorting.progress?.word)}\u0000${lower(list(sorting.progress?.senses)[0]?.gloss)}`,
+      { inSense: items.filter((item) => item.sense === "needed").length, of: items.length });
+  }
+  const verdicts = new Map(resultData(section, "checks").map((check) => [lower(check.target), check]));
+  const verdictLabel = { pass: ["passes", "good"], fail: ["fails", "warn"], unclear: ["unclear", "warn"] };
+  const rows = candidates.map((candidate) => {
+    const words = list(candidate.words).filter((w) => str(w?.word));
+    const own = words.filter((w) => !w.partOf);
+    const check = verdicts.get(lower(candidate.target));
+    const [verdictText, tone] = verdictLabel[check?.verdict] ?? [];
+    const reason = check ? [...list(check.reasons), ...list(check.notes)][0] : "";
+    return `<div class="research-view__trow">
+      <div class="research-view__tcell"><strong>${esc(candidate.target)}</strong>${verdictText ? ` ${label(verdictText, tone)}` : ""}${reason ? `<div class="research-view__note">${esc(reason)}</div>` : ""}</div>
+      <div class="research-view__tcell">${own.map((w) => {
+        const pieces = words.filter((p) => p.partOf === w.word).map((p) => p.word);
+        const m = measured.get(`${lower(w.word)}\u0000${lower(w.neededSense)}`);
+        return `<div class="research-view__word">${chip(w.word, w.lookalike ? "flag" : "")}${pieces.length > 1 ? ` ${muted(`= ${pieces.join(" + ")}`)}` : ""}
+          <div class="research-view__note">${esc(w.neededSense)}${m ? ` — used this way in ${m.inSense} of ${m.of} everyday sentences` : ""}</div></div>`;
+      }).join("")}</div>
+    </div>`;
+  }).join("");
+  const done = verdicts.size > 0;
+  return {
+    html: view("checks", done ? "Each candidate, its words, and whether it passes" : `Each candidate's words, and the meaning each must have (${candidates.length}${request.progress?.total ? ` of ${request.progress.total}` : ""})`,
+      `<p class="research-view__explain">Each word is measured in everyday ${esc(context.target ?? "")} sentences (news): how often is it used in the meaning needed? Highlighted: looks like the word being researched, so it may be a false friend.</p>
+       <div class="research-view__table">${rows}</div>`),
+    // A word being sorted right now keeps its own live chart below the table.
+    requests: new Set([request.requestId, ...sortings.filter((sorting) => !isRunning(sorting)).map((sorting) => sorting.requestId)]),
+    results: new Set(["checks"]),
+    facts: [],
+  };
+}
+
+const STEP_DISPLAYS = {
+  "Word forms": formsDisplay,
+  "Word family": familyDisplay,
+  "Parts and frequency": meaningsDisplay,
+  "Candidate checks": checksDisplay,
+};
+
+/** The one display of a step that has one (see above), or null. */
+export function stepDisplay(section, context = {}) {
+  const build = STEP_DISPLAYS[section?.heading];
+  if (!build) return null;
+  try {
+    return build(section, context);
+  } catch {
+    return null;
+  }
+}

@@ -135,7 +135,8 @@ export function liveStatusHtml(request, phase, usual, now = Date.now()) {
     doing = request.purpose ? `Asking the AI to ${request.purpose} (thinking)` : "The AI is thinking";
   } else if (phase === "writing") {
     const progress = writingProgress(request.answer, request.progress);
-    doing = progress ? `The AI is writing: ${writingText(progress)}` : "The AI is writing its answer";
+    // The answer itself is on screen above; only how far it has got is added.
+    doing = progress ? `${writingText(progress)} so far` : "";
     if (progress?.total) {
       const pct = Math.round((100 * Math.max(0, progress.current - 0.5)) / progress.total);
       bar = `<span class="research-live__bar" role="progressbar" aria-valuemin="0" aria-valuemax="${progress.total}" aria-valuenow="${progress.current}"><span style="width:${pct}%"></span></span>`;

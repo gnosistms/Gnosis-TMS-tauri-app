@@ -764,8 +764,6 @@ export function createResearchEngine(deps) {
     return stage("forms", async () => {
       heading("Word forms");
       const hint = corpus.formsHint ? await corpus.formsHint(settings.term) : null;
-      if (hint?.forms?.length) {
-      }
       const proposeCtx = ctx({
         userVariants: settings.variants,
         existingSourceTerms: settings.existingEntries.flatMap((entry) => entry.sourceTerms),
@@ -792,12 +790,15 @@ export function createResearchEngine(deps) {
         ...accentCounterparts(proposedForms.map((f) => f.form)).map((form) => ({ form, kind: "spelling", confidence: "medium" })),
       ], (f) => f.form).filter((f) => !proposedForms.some((p) => p.form.toLowerCase() === f.form.toLowerCase()));
       const counted = [];
+      info("Counting how many passages use each spelling…");
       for (const candidate of [...proposedForms, ...extra]) {
         const count = await corpus.countForm(candidate.form);
         const added = !proposedForms.includes(candidate);
         if (added && !count.rows) continue;
         counted.push({ ...candidate, rows: count.rows, examples: count.examples });
-        info(`“${candidate.form}” appears in ${count.rows} ${count.rows === 1 ? "passage" : "passages"}${added ? " (added: found in the texts or spelled without accents)" : ""}`);
+        // Lands in the spellings display, next to its spelling.
+        logResult("formCount", [{ form: candidate.form, rows: count.rows, added, kind: candidate.kind }],
+          `“${candidate.form}” appears in ${count.rows} ${count.rows === 1 ? "passage" : "passages"}${added ? " (added: found in the texts or spelled without accents)" : ""}`);
       }
       const confirmCtx = ctx();
       const content = counted.map((c) => [
@@ -805,7 +806,7 @@ export function createResearchEngine(deps) {
         ...c.examples.slice(0, 2).map((e) => `   ${snippet(e.text, e.start, e.end, 90)}`),
       ].join("\n")).join("\n");
       const confirmed = await client.callJson({
-        stage: "forms", purpose: `check in the texts which spellings really are “${settings.term}”`,
+        stage: "forms", purpose: `check in example passages that each spelling is “${settings.term}”, not another word spelled the same (such as a verb form)`,
         instructions: prompts.formsConfirmInstructions(confirmCtx), content,
         schema: prompts.FORMS_CONFIRM_SCHEMA, schemaName: "forms_confirm",
         maxOutputTokens: 3000, effort: settings.effortLight,
@@ -1011,7 +1012,7 @@ export function createResearchEngine(deps) {
         searched.add(`${record.originalBookId}:${fold(originals.join(",")).trim()}`);
         pairReads.set(record.originalBookId, found.occurrences ?? 0);
         const name = record.originalTitle ?? book.title;
-        info(`${book.title.split(" — ")[0]} is a Spanish translation of ${name}${record.originalAuthor ? ` by ${record.originalAuthor}` : ""}. The book's own glossary pairs “${settings.term}” with ${originals.map((o) => `“${o}”`).join(", ")}, found ${found.occurrences} times in the original.`);
+        fact(`${book.title.split(" — ")[0]} is a Spanish translation of ${name}${record.originalAuthor ? ` by ${record.originalAuthor}` : ""}. The book's own glossary pairs “${settings.term}” with ${originals.map((o) => `“${o}”`).join(", ")}, found ${found.occurrences} times in the original.`);
         originalSections.push(section(
           `The original text of ${name}: ${found.occurrences} occurrences of ${originals.map((o) => `“${o}”`).join(", ")} in ${found.paragraphs} passages (a sample)`,
           found.items.map((item) => passageSnippet({ ...item, reference: { title: name } })),
@@ -1701,7 +1702,6 @@ export function createResearchEngine(deps) {
     if (problems.length) info(`proposal notes: ${problems.join("; ")}`);
     logResult("proposal", proposal.entries.map((e) => ({ sourceTerms: e.sourceTerms, variants: e.variants.map((v) => v.target) })),
       `${proposal.entries.length} proposed entr${proposal.entries.length === 1 ? "y" : "ies"}: ${proposal.entries.map((e) => `${e.sourceTerms.join("/")} → ${e.variants.map((v) => v.target).join(", ")}`).join(" | ")}`);
-    for (const item of proposal.leftOutRenderings ?? []) info(`Left out: “${item.rendering}”${item.count ? ` (written ${item.count} ${item.count === 1 ? "time" : "times"} in the free translation)` : ""} — ${item.reason}`);
     proposal.existingComparison = await compareWithExisting(proposal);
     return proposal;
   }

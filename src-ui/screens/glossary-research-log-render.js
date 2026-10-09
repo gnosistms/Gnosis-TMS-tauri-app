@@ -15,6 +15,7 @@ import {
 } from "../app/glossary-research-log-view.js";
 import { formatJsonStream, formatThinkingLive, formatThinkingSteps, thinkingSteps } from "../app/glossary-research-stream-format.js";
 import { groupViewHtml, requestGroups, stepExplanation, stepStatus, stepTitle, viewRequest, VIEW_LEFT_OUT } from "../app/glossary-research-step-view.js";
+import { stepDisplay } from "../app/glossary-research-live-views.js";
 
 function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -201,12 +202,14 @@ function groupBlock(group, current) {
     parts.push(`<div class="research-step__view" data-view-key="${esc(group.key)}">${view}</div>${thoughtful ? howItWorked(request) : ""}`);
   }
   else if (request && !VIEW_LEFT_OUT.has(request.stage)) parts.push(`<div class="research-step__view research-step__view--plain" data-view-key="${esc(group.key)}">${exchangeHtml(request)}</div>`);
-  if (current) {
-    const thinking = group.requests.filter((r) => ["thinking", "waiting"].includes(requestState(r)) && r.thinking);
-    const latest = thinking.length ? thinking.reduce((a, b) => (b.updatedAt >= a.updatedAt ? b : a)) : null;
-    if (latest) parts.push(thinkingHtml(latest));
-  }
   return parts.join("");
+}
+
+/** The thinking of the step's request that is thinking now: real-time, so it goes last, above the "now" line. */
+function thinkingNow(section) {
+  const thinking = section.requests.filter((r) => ["thinking", "waiting"].includes(requestState(r)) && r.thinking);
+  const latest = thinking.length ? thinking.reduce((a, b) => (b.updatedAt >= a.updatedAt ? b : a)) : null;
+  return latest ? thinkingHtml(latest) : "";
 }
 
 /**
@@ -215,9 +218,14 @@ function groupBlock(group, current) {
  * and the thinking while it thinks), the findings the views do not cover, and
  * its notes and problems. Progress lines are left out.
  */
-function stepBody(section, current) {
-  const groups = requestGroups(section.requests);
-  const covered = new Set();
+function stepBody(section, current, context = {}) {
+  // A step with one display that fills in (words with their counts, meanings
+  // with their bars, candidates with their measurements) draws it first; what it
+  // drew is not drawn again.
+  const display = stepDisplay(section, context);
+  const drawn = display?.requests ?? new Set();
+  const groups = requestGroups(section.requests.filter((request) => !drawn.has(request.requestId)));
+  const covered = new Set(display?.results ?? []);
   const views = groups.map((group) => {
     const stage = group.requests[0]?.stage;
     if (COVERED_BY_VIEW[stage] && groupViewHtml(group)) covered.add(COVERED_BY_VIEW[stage]);
@@ -226,13 +234,14 @@ function stepBody(section, current) {
   const cancelled = section.items.some((item) => item.kind === "line" && /^Cancelled\b/.test(item.entry.text ?? ""));
   const findings = collapseDownloads(section.items)
     .filter((item) => (item.kind === "result" ? !covered.has(item.resultKind) : item.entry.type === "fact" || item.entry.type === "problem"))
+    .filter((item) => !(item.kind === "line" && (display?.facts ?? []).some((pattern) => pattern.test(item.entry.text ?? ""))))
     // "Research was cancelled." repeats the "Cancelled…" line.
     .filter((item) => !(cancelled && item.kind === "line" && /^Research was cancelled/.test(item.entry.text ?? "")))
     .map((item) => (item.kind === "result" ? renderResult(item) : renderLine(item.entry)))
     .join("");
   const failed = section.requests.filter((request) => requestState(request) === "failed" && !cancelled)
     .map((request) => renderLine({ type: "problem", text: `${stageName(request.stage)}: ${request.problem || "the AI request failed"}` })).join("");
-  return `${views}${findings}${failed}`;
+  return `${display?.html ?? ""}${views}${findings}${failed}${current ? thinkingNow(section) : ""}`;
 }
 
 function stepMetaText(section) {
@@ -251,21 +260,23 @@ function renderSection(section, { current, open, usualFor, context, later }) {
   }
   const summary = current ? "" : section.heading === "Review" && later ? "You reviewed the proposal and started the count." : sectionSummary(section);
   // A step whose content only repeats the line it folds to has nothing more to open.
-  const full = current ? "" : stepBody(section, false);
+  const full = current ? "" : stepBody(section, false, context);
   const plain = !current && (later && section.heading === "Review"
     || full.replace(/<[^>]+>/g, " ").replace(/&[a-z#0-9]+;/gi, " ").replace(/\s+/g, " ").trim() === summary.replace(/[&<>"']/g, " ").replace(/\s+/g, " ").trim()
     || !full.trim());
-  const expanded = current || (open && !plain);
-  const body = current ? stepBody(section, true) : expanded ? full : "";
+  // The step running now is open unless the person folded it.
+  const expanded = current ? open !== false : open === true && !plain;
+  const body = current ? (expanded ? stepBody(section, true, context) : "") : expanded ? full : "";
   const meta = current ? "" : stepMetaText(section);
   const status = current ? stepStatus(section, usualFor) : "";
   const title = esc(stepTitle(section.heading));
   const explanation = expanded ? stepExplanation(section.heading, context) : "";
   const head = current
-    ? `<div class="research-section__head">
+    ? `<button type="button" class="research-section__head research-section__toggle" data-action="toggle-research-current:${esc(section.id)}" aria-expanded="${expanded}">
+        <svg class="research-disclosure__chevron" viewBox="0 0 10 10" aria-hidden="true"><path d="M3 1.5 6.5 5 3 8.5" /></svg>
         <h4 class="research-section__title"><span class="navigation-loading-modal__spinner research-section__spinner" aria-hidden="true"></span>${title}</h4>
-        <span class="research-section__status" data-step-status>${status}</span>
-      </div>`
+        ${expanded ? "" : `<span class="research-section__status" data-step-status>${status}</span>`}
+      </button>`
     : plain
       // Nothing more to open: the line is the step, and what it does shows on hover.
       ? `<div class="research-section__head research-section__head--plain"${tooltipAttributes(stepExplanation(section.heading, context))}>
@@ -282,7 +293,7 @@ function renderSection(section, { current, open, usualFor, context, later }) {
   return `<section class="research-section${current ? " is-current" : ""}${expanded ? " is-open" : ""}" data-section-id="${esc(section.id)}"${current ? " data-step-current" : ""}>
       ${head}
       ${explanation ? `<p class="research-section__explain">${esc(explanation)}</p>` : ""}
-      ${body ? `<div class="research-section__body">${body}</div>` : ""}
+      ${body || (current && expanded) ? `<div class="research-section__body">${body}${current && expanded ? `<div class="research-step__now research-section__status" data-step-status>${status}</div>` : ""}</div>` : ""}
     </section>`;
 }
 
@@ -296,7 +307,7 @@ export function renderResults(sections, { running = false, openSections = {}, us
   const lastId = titled.at(-1)?.id;
   return sections.map((section) => renderSection(section, {
     current: section.id === currentId,
-    open: openSections[section.id] === true,
+    open: openSections[section.id],
     usualFor,
     context,
     later: section.id !== lastId,

@@ -55,8 +55,13 @@ export function runningRequest(section) {
 export function stepStatus(section, usualFor) {
   const request = runningRequest(section);
   if (request) return liveStatusHtml(request, requestState(request), usualFor?.(request.stage) ?? null);
-  const line = [...section.items].reverse().find((item) => item.kind === "line" && item.entry.type === "info");
-  return line ? `<span class="research-live__doing">${esc(line.entry.text)}</span>` : "";
+  // A progress line is what happens now until a finding, or an AI request, comes after it.
+  const index = section.items.findLastIndex((item) => item.kind === "line" && item.entry.type === "info");
+  if (index < 0) return "";
+  const line = section.items[index];
+  const after = section.items.slice(index + 1).some((item) => item.kind === "line" && item.entry.type !== "info");
+  const requestAfter = section.requests.some((request) => (request.startedAt ?? 0) > (line.entry.at ?? 0));
+  return after || requestAfter ? "" : `<span class="research-live__doing">${esc(line.entry.text)}</span>`;
 }
 
 /** The current step's head status, for the clock and the stream updates. */
