@@ -162,7 +162,7 @@ const quoted = (words) => {
  * comes from, so it is not taken for the AI's answer (Hans, 2026-10-09): the
  * book's own glossaries (`printed`), or the search site's comparison of the
  * translation with its original (`aligned`: matched by AI, then each original
- * word found by a program in the original passages cited for it).
+ * word confirmed by a program in the matching passages of the original).
  * `searched` are the forms counted in the original text; `occurrences` their count.
  */
 export function pairFact({ site = "author's", author = "the author", shortTitle, record, term, pairs, occurrences, searched = [] }) {
@@ -171,18 +171,24 @@ export function pairFact({ site = "author's", author = "the author", shortTitle,
   const sentence = `The ${site} search site lists ${shortTitle} among the books ${author} read: the Spanish translation of ${name}${record?.originalAuthor ? `, written${language ? ` in ${language}` : ""} by ${record.originalAuthor}` : ""}`;
   const intro = sentence.endsWith(".") ? sentence : `${sentence}.`; // "by M." ends the sentence
   const original = `${language ? `${language} ` : ""}original`;
-  const times = `${occurrences} time${occurrences === 1 ? "" : "s"}`;
+  const times = occurrences === 1 ? "once" : `${occurrences} times`;
   const words = [...new Set(pairs.flatMap(pairWords))];
   if (pairs.every((pair) => pair.basis !== "aligned")) {
     return `${intro} Both editions end with a glossary; matched entry by entry, they pair “${term}” with ${words.map((o) => `“${o}”`).join(", ")}, which the ${original} uses ${times}.`;
   }
   const extra = searched.filter((form) => !words.some((word) => fold(word) === fold(form)));
   const counting = extra.length ? ` (counting ${quoted(extra)})` : "";
-  const how = `The site compared the two texts passage by passage (an AI paired the words; a program then found each ${language || "original"} word in the passages cited for it)`;
+  const spoken = language || "original";
+  const how = `The site compared the Spanish translation with the ${original} passage by passage: an AI matched the words, and a program then confirmed that each ${spoken} word appears in the matching ${spoken} passages.`;
   if (pairs.every((pair) => pair.status === "passthrough")) {
-    return `${intro} ${how} and finds the word unchanged in the ${original}: ${quoted(words)}, used ${times}${counting}.`;
+    // A kept word may be spelled differently in the original ("akasa" for "akasha").
+    const bare = (text) => fold(text).normalize("NFD").replace(/\p{M}/gu, "");
+    if (words.every((word) => bare(word) === bare(term))) {
+      return `${intro} ${how} The Spanish translation keeps the ${original}'s word: ${quoted(words)}, used ${times}${counting}.`;
+    }
+    return `${intro} ${how} The Spanish translation keeps the ${original}'s word; the ${original} spells it ${quoted(words)} and uses it ${times}${counting}.`;
   }
-  return `${intro} ${how} and pairs “${term}” with ${quoted(words)}, which the ${original} uses ${times}${counting}.`;
+  return `${intro} ${how} It pairs “${term}” with ${quoted(words)}, which the ${original} uses ${times}${counting}.`;
 }
 
 /** "The Dayspring of Youth (M.)", or the translation's title when the original's is unknown. */

@@ -222,17 +222,22 @@ test("the pair facts say where each pair comes from", () => {
   );
   assert.equal(
     pairFact({ ...base, shortTitle: "Isis sin velo", record: isis, term: "daimón", pairs: isis.termPairs, occurrences: 134, searched: ["demon", "daimonion", "demons"] }),
-    "The Samael Aun Weor search site lists Isis sin velo among the books Samael Aun Weor read: the Spanish translation of Isis Unveiled, written in English by H. P. Blavatsky. The site compared the two texts passage by passage (an AI paired the words; a program then found each English word in the passages cited for it) and pairs “daimón” with “demon” and “daimonion”, which the English original uses 134 times (counting “demons”).",
+    "The Samael Aun Weor search site lists Isis sin velo among the books Samael Aun Weor read: the Spanish translation of Isis Unveiled, written in English by H. P. Blavatsky. The site compared the Spanish translation with the English original passage by passage: an AI matched the words, and a program then confirmed that each English word appears in the matching English passages. It pairs “daimón” with “demon” and “daimonion”, which the English original uses 134 times (counting “demons”).",
   );
   const kundalini = { ...isis, title: "Kundalini Yoga — Sivananda", originalTitle: "Kundalini Yoga", originalAuthor: "Sivananda" };
   assert.match(
     pairFact({ ...base, shortTitle: "Kundalini Yoga", record: kundalini, term: "kundalini", pairs: [{ original: "Kundalini", status: "passthrough", basis: "aligned" }], occurrences: 300, searched: ["Kundalini"] }),
-    /and finds the word unchanged in the English original: “Kundalini”, used 300 times\.$/,
+    /passages\. The Spanish translation keeps the English original's word: “Kundalini”, used 300 times\.$/,
+  );
+  // A kept word spelled differently in the original names that spelling; one use reads "once".
+  assert.match(
+    pairFact({ ...base, shortTitle: "Isis sin velo", record: isis, term: "Akasha", pairs: [{ original: "akasa", status: "passthrough", basis: "aligned" }], occurrences: 1, searched: ["akasa"] }),
+    /passages\. The Spanish translation keeps the English original's word; the English original spells it “akasa” and uses it once\.$/,
   );
   const levi = { ...isis, originalLanguage: "fr", originalTitle: null, originalAuthor: "Eliphas Levi" };
   assert.match(
     pairFact({ ...base, shortTitle: "Dogma y ritual de la alta magia", record: levi, term: "adepto", pairs: [{ original: "adepte", basis: "aligned" }], occurrences: 12, searched: ["adepte", "adeptes"] }),
-    /the Spanish translation of Dogma y ritual de la alta magia, written in French by Eliphas Levi\. .*each French word .* pairs “adepto” with “adepte”, which the French original uses 12 times \(counting “adeptes”\)\.$/,
+    /the Spanish translation of Dogma y ritual de la alta magia, written in French by Eliphas Levi\. The site compared the Spanish translation with the French original .*each French word appears in the matching French passages\. It pairs “adepto” with “adepte”, which the French original uses 12 times \(counting “adeptes”\)\.$/,
   );
   assert.equal(languageNameOf("de"), "German");
   assert.equal(languageNameOf(null), "");

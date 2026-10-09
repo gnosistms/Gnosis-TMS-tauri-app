@@ -1038,7 +1038,7 @@ export function createResearchEngine(deps) {
           : "";
         const aligned = (record.termPairs ?? []).filter((pair) => pair.basis === "aligned");
         const alignedLine = aligned.length
-          ? `\n  The term paired with the original's word by the search site's comparison of this translation with its original (matched by AI; each original word then found in the passages cited for it) (${settings.sourceLanguageName} = original): ${aligned.map(pairText).join("; ")}`
+          ? `\n  The term paired with the original's word by the search site's comparison of this translation with its original (an AI matched the words; a program then confirmed that each original word appears in the matching passages of the original) (${settings.sourceLanguageName} = original): ${aligned.map(pairText).join("; ")}`
           : "";
         return `- ${parts.join("; ")}${pairs}${alignedLine}`;
       });
