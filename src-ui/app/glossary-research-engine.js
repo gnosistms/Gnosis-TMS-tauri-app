@@ -1034,6 +1034,40 @@ export function createResearchEngine(deps) {
     return sample.discoveryIds.map((id) => passageSnippet(sample.items[id]));
   }
 
+  /**
+   * The words of the reference books one letter away from the forms that are the
+   * term spelled differently, judged by the AI from examples: [{ form, rows, books }].
+   */
+  async function nearSpellings(forms) {
+    const near = corpus.nearForms ? await corpus.nearForms(forms) : null;
+    const candidates = (near ?? []).filter((item) => isWord(item.form) && !forms.some((form) => fold(form) === fold(item.form)));
+    if (!candidates.length) return [];
+    const checked = await client.callJson({
+      stage: "sources", purpose: `check which words of the books ${corpus.authorName ?? "the author"} read, one letter away from “${headword()}”, are the same word spelled differently`,
+      progress: { key: "form", total: candidates.length, unit: "word", verb: "checked" },
+      instructions: prompts.nearFormsInstructions(ctx()),
+      content: candidates.map((item) => [
+        `“${item.form}” (near “${item.near}”): ${item.rows} ${item.rows === 1 ? "passage" : "passages"}`,
+        ...item.examples.slice(0, 2).map((e) => `   [${e.title}] ${snippet(e.text, e.start, e.end, 90)}`),
+      ].join("\n")).join("\n"),
+      schema: prompts.FORMS_CONFIRM_SCHEMA, schemaName: "near_forms",
+      maxOutputTokens: 1500, effort: settings.effortLight,
+    }).catch((error) => {
+      info(`other spellings in the books not checked: ${error.message}`);
+      return null;
+    });
+    const same = new Set((checked?.forms ?? []).filter((f) => f.keep === true).map((f) => fold(f.form)));
+    const kept = candidates.filter((item) => same.has(fold(item.form)));
+    if (kept.length) {
+      const where = (item) => {
+        const titles = item.books.slice(0, 2).map((book) => book.title.split(" — ")[0]);
+        return `${item.rows} ${item.rows === 1 ? "passage" : "passages"}, in ${titles.join(" and ")}${item.books.length > 2 ? ` and ${item.books.length - 2} more` : ""}`;
+      };
+      fact(`Searched too, as other spellings of “${headword()}” in the books ${corpus.authorName ?? "the author"} read: ${kept.map((item) => `“${item.form}” (${where(item)})`).join("; ")}.`);
+    }
+    return kept.map((item) => ({ form: item.form, rows: item.rows, books: item.books.map((book) => book.title) }));
+  }
+
   /** Where the term comes from: the reference books the author read. */
   async function traceSources() {
     return stage("sources", async () => {
@@ -1043,11 +1077,19 @@ export function createResearchEngine(deps) {
         return { skipped: true };
       }
       const forms = store.load("forms").searched;
-      info(`Searching the books ${corpus.authorName ?? "the author"} read for “${headword()}”…`);
-      const usage = await corpus.sourceUsage(forms, settings.seed);
+      const author = corpus.authorName ?? "the author";
+      info(`Searching the books ${author} read for “${headword()}”…`);
+      // The books may spell the term differently ("Akasa", "Hooltanpanas"): words
+      // one letter away are checked, and those that are the term are searched too.
+      const spellings = await nearSpellings(forms);
+      const usage = await corpus.sourceUsage([...forms, ...spellings.map((item) => item.form)], settings.seed);
       if (!usage.length) {
-        fact("None of the reference books uses the term.");
-        return { skipped: true, counts: [] };
+        const held = corpus.sourceBooks ? (await corpus.sourceBooks()).length : 0;
+        fact(held > 1
+          ? `None of the ${held} books the search site holds of those ${author} read uses “${headword()}”.`
+          : held === 1 ? `The one book the search site holds of those ${author} read does not use “${headword()}”.`
+            : "None of the reference books uses the term.");
+        return { skipped: true, counts: [], spellings };
       }
       const byBook = new Map();
       for (const item of usage) {
@@ -1161,7 +1203,7 @@ export function createResearchEngine(deps) {
         }
       }
       const content = [
-        `# Term: ${headword()}\nSpellings searched: ${forms.join(", ")}`,
+        `# Term: ${headword()}\nSpellings searched: ${forms.join(", ")}${spellings.length ? `\nAlso searched in the reference books, which spell it differently: ${spellings.map((item) => item.form).join(", ")}` : ""}`,
         section("Dictionary entry", [ctx().dictionaryText || "(none found)"]),
         section("Occurrences in the reference books (books the author read)", [ranked.map((book) => {
           const length = records.find((record) => record.title === book.title)?.paragraphs;

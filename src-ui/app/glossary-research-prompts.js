@@ -1,7 +1,7 @@
 // Prompt texts and strict JSON schemas for Glossary Research.
 // Bump RESEARCH_PROMPT_VERSION on any change that could alter a judgment.
 
-export const RESEARCH_PROMPT_VERSION = "2026-10-09.2";
+export const RESEARCH_PROMPT_VERSION = "2026-10-09.3";
 
 const STR = { type: "string" };
 const NSTR = { anyOf: [{ type: "string" }, { type: "null" }] };
@@ -391,6 +391,11 @@ export const WEB_DICTIONARY_SCHEMA = object({
 export const FAMILY_SCHEMA = object({
   words: arrayOf(object({ form: STR, kind: oneOf("prefixed", "suffixed", "compound", "phrase"), reason: STR })),
 });
+
+export function nearFormsInstructions(ctx) {
+  return `You check words found in the reference books the author read (${ctx.sourceName} editions) that are one letter away from a spelling of the ${ctx.sourceName} term “${ctx.headword}”. ${corpusLine(ctx)}
+Each line gives the word, the spelling it is near, its number of passages and examples. Keep it when it is the same word written differently: another spelling or transliteration, other accents, or a misprint. Drop it when it is a different word, even a related one. Give every line; form: the word as written. Reasons at most 12 words, in ${ctx.reportName}.`;
+}
 
 export function familyFormsInstructions(ctx) {
   return `You check the forms of words related to the ${ctx.sourceName} word “${ctx.headword}” before a corpus study. ${corpusLine(ctx)}

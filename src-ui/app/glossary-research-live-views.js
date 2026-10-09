@@ -96,6 +96,17 @@ function familyView(request, value) {
 }
 
 function sourcesView(request, value) {
+  // The check of words one letter away from the term in the books the author read.
+  if (Array.isArray(value?.forms)) {
+    const forms = value.forms.filter((form) => str(form?.form));
+    const same = forms.filter((form) => form.keep === true);
+    return view("forms", "Words of those books one letter away from the term: which are the same word",
+      `<div class="research-view__chips">${forms.map((form) => tip(form.reason, chip(`${form.keep === true ? "✓ " : ""}${form.form}`, form.keep === false ? "dropped" : ""))).join("")}</div>
+       <p class="research-view__explain">${[
+         same.length ? "✓: the same word spelled differently." : "",
+         forms.some((form) => form.keep === false) ? "Crossed out: a different word (hover to see why)." : "",
+       ].filter(Boolean).join(" ")}</p>`);
+  }
   if (value && "confirmed" in value) {
     return view("original-check", "Checking the original word in the original text",
       `<p>${value.confirmed === true ? label("confirmed", "good") : value.confirmed === false ? label("not confirmed", "warn") : ""} ${value.originalTerm ? `<strong>“${esc(value.originalTerm)}”</strong>` : ""}</p>

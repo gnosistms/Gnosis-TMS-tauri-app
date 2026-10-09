@@ -1003,3 +1003,55 @@ test("the studies name the term as the texts write it, not as it was typed", asy
   assert.match(parts.content, /^# Term: fatal$/m);
   assert.doesNotMatch(seen.map((request) => `${request.instructions}\n${request.content}`).join("\n"), /“Fatal”/);
 });
+
+test("the books the author read are searched for the term's other spellings there, judged by the AI", async () => {
+  const base = fakeCorpus(passages(40));
+  const searched = [];
+  const example = (form) => ({ title: "Libro fuente — M.", text: `Habla del ${form} aquí.`, start: 10, end: 10 + form.length });
+  const corpus = {
+    ...base,
+    async nearForms() {
+      return [
+        { form: "Fatall", near: "fatal", rows: 2, books: [{ title: "Libro fuente — M.", rows: 2 }], examples: [example("Fatall")] },
+        { form: "fetal", near: "fatal", rows: 5, books: [{ title: "Otro libro", rows: 5 }], examples: [example("fetal")] },
+        { form: "fatales", near: "fatal", rows: 3, books: [], examples: [] },
+      ];
+    },
+    async sourceUsage(forms, seed) {
+      searched.push(forms);
+      return base.sourceUsage(forms, seed);
+    },
+  };
+  const inner = fakeModel();
+  const requests = [];
+  const model = {
+    calls: inner.calls,
+    async call(request, onDelta) {
+      requests.push(request);
+      if (request.schemaName === "near_forms") {
+        inner.calls.push(request.stage);
+        return { status: "ok", text: JSON.stringify({ forms: [{ form: "Fatall", keep: true, reason: "a misprint" }, { form: "fetal", keep: false, reason: "another word" }] }), usage: { inputTokens: 10, outputTokens: 10 } };
+      }
+      return inner.call(request, onDelta);
+    },
+  };
+  const logs = [];
+  const { engine: research, store } = engine({ model, corpus, log: (event) => logs.push(event) });
+  await research.runToReview();
+  const check = requests.find((request) => request.schemaName === "near_forms");
+  assert.match(check.content, /“Fatall” \(near “fatal”\): 2 passages\n   \[Libro fuente — M\.\] Habla del ⟦Fatall⟧ aquí/);
+  assert.doesNotMatch(check.content, /fatales/, "a spelling already searched is not checked again");
+  assert.deepEqual(searched[0], ["fatal", "fatales", "Fatall"]);
+  assert.ok(logs.some((event) => event.type === "fact" && event.text === "Searched too, as other spellings of “fatal” in the books the author read: “Fatall” (2 passages, in Libro fuente)."));
+  assert.match(requests.find((request) => request.schemaName === "sources").content, /Also searched in the reference books, which spell it differently: Fatall/);
+  assert.equal(store.data.sources.spellings, undefined, "the study keeps its own record");
+});
+
+test("when no book the author read uses the term, the step says how many books were searched", async () => {
+  const base = fakeCorpus(passages(40));
+  const corpus = { ...base, async sourceUsage() { return []; }, async sourceBooks() { return [{ title: "A" }, { title: "B" }]; } };
+  const logs = [];
+  const { engine: research } = engine({ corpus, log: (event) => logs.push(event) });
+  await research.runToReview();
+  assert.ok(logs.some((event) => event.type === "fact" && event.text === "None of the 2 books the search site holds of those the author read uses “fatal”."));
+});

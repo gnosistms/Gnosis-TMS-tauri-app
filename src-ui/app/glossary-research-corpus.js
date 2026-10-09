@@ -213,6 +213,23 @@ export function createSamaelCorpus({ baseUrl = samaelCorpusUrl(), fetchImpl = gl
         return null; // an older site without the endpoint: the books' own glossary pairs still apply
       }
     },
+    /**
+     * Words of the reference books one letter away from the forms ("Akasa" for
+     * "akasha"), with passage counts, books and examples: other spellings of the
+     * term, or different words that look alike. Null when the site cannot say.
+     */
+    async nearForms(forms) {
+      try {
+        const result = await get("/api/sample/near-forms", { forms: forms.join(","), kind: "source" });
+        return (result.near ?? []).map((item) => ({
+          form: item.form, near: item.near, rows: item.rows ?? 0,
+          books: (item.books ?? []).map((book) => ({ title: book.title, rows: book.rows })),
+          examples: (item.examples ?? []).map((e) => ({ title: e.title, text: e.text, start: codePointToUtf16Offset(e.text, e.start), end: codePointToUtf16Offset(e.text, e.end) })),
+        }));
+      } catch {
+        return null; // an older site without the endpoint: only the spellings themselves are searched
+      }
+    },
     /** Every passage of the reference books that uses the forms, in seeded random order. */
     async sourceUsage(forms, seed) {
       const result = await get("/api/sample", { forms: forms.join(","), n: 2000, seed, kind: "source", context: 0 });
