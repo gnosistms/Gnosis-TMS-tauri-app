@@ -73,7 +73,8 @@ export function stepStatus(section, usualFor) {
   }
   if (request) return liveStatusHtml(request, requestState(request), usualFor?.(request.stage) ?? null);
   // A progress line is what happens now until a finding, or an AI request, comes after it.
-  const waiting = [...section.items].reverse().find((item) => item.kind === "line" && /^Waiting for you\b/.test(item.entry.text ?? ""));
+  const last = [...section.items].reverse().find((item) => item.kind === "line" && item.entry.type !== "problem");
+  const waiting = last && /^Waiting for you\b/.test(last.entry.text ?? "") ? last : null;
   if (waiting && !runningRequest(section)) return `<span class="research-live__doing">${esc(waiting.entry.text)}</span>`;
   const working = '<span class="research-live__doing">Working…</span>';
   const index = section.items.findLastIndex((item) => item.kind === "line" && item.entry.type === "info");

@@ -894,6 +894,8 @@ export function createResearchEngine(deps) {
       if (!deps.chooseFamily || settings.familyBatch) return { words: [] };
       const groups = familyGroups(store.load("family")?.members ?? []);
       if (!groups.length) return { words: [] };
+      // The person may take a while to choose: the now line says the research waits for them.
+      info("Waiting for you to choose which related words to research next (or none).");
       const words = await deps.chooseFamily({ term: settings.term, groups });
       if (cancelled || words == null) throw new ResearchStop("Research was cancelled.", "cancelled");
       fact(words.length
@@ -1211,7 +1213,7 @@ export function createResearchEngine(deps) {
         for (const base of study.bases.slice(0, 3)) {
           const baseForms = [...new Set([base.word, ...base.forms].map((f) => f.trim()).filter(Boolean))];
           const baseList = combinedZipf(await languageData.zipf(code, baseForms));
-          info(`Measuring the part “${base.word}” in general ${name}, in the sense it carries in the term.`);
+          info(`The part “${base.word}”: finding everyday ${name} sentences that use it, to see how often it has the meaning it has in the term…`);
           const measure = reusedMeasure(priorMeasurements(code), base.reuse, base.word) ?? await measureSenses({
             code, name, forms: baseForms, listZipf: baseList,
             senses: [{ id: "needed", gloss: base.neededSense }, ...base.otherSenses.slice(0, 5).map((gloss, i) => ({ id: `o${i + 1}`, gloss }))],
@@ -1412,7 +1414,11 @@ export function createResearchEngine(deps) {
           else info(`“${w.word}” does not occur in the general ${name} corpus.`);
         }
         if (corpusCounted(code)) {
-          for (const w of words.filter((x) => !x.lookalike).slice(0, 4)) measured.set(measureKey(w), await measure(w));
+          const unspaced = words.filter((x) => !x.lookalike).slice(0, 4);
+          for (const [index, w] of unspaced.entries()) {
+            info(`Word ${index + 1} of ${unspaced.length}, “${w.word}”: finding everyday ${name} sentences that really contain it (in ${name}, a search also matches parts of other words)…`);
+            measured.set(measureKey(w), await measure(w));
+          }
         }
         // A whole-word score counts every meaning of the word; a translation is
         // used in one. So the word that sets a translation's score is sorted by
