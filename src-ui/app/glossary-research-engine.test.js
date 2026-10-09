@@ -878,9 +878,15 @@ test("the origin study sees where the author names a book next to the term, and 
   corpus.earliestUses = async (forms) => [{ itemId: "e1", year: 1950, text: `El ${forms[0]} primero.`, occurrences: [{ start: 3, end: 3 + forms[0].length }], reference: { title: "LA REVOLUCIÓN DE BEL" } }];
   const { engine: research, store } = engine({ model, corpus });
   await research.runToReview();
-  const sources = requests.find((request) => request.stage === "sources" && /trace|where each of his meanings/.test(request.purpose));
+  const sources = requests.find((request) => request.stage === "sources" && /which are ordinary/.test(request.purpose));
   assert.match(sources.content, /## Where the author names those books next to the term[\s\S]*Como dice Libro fuente/);
   assert.match(sources.content, /## The author's earliest dated uses of the term \(year: work\)[\s\S]*\[1950: LA REVOLUCIÓN DE BEL\]/);
   const sense = store.data.sources.study.senses[0];
   assert.ok(sense.borrowing, "the borrowing is judged for a sense from a source book");
+});
+
+test("the origin request says what the AI adds when a book's glossary already gave the word", async () => {
+  const { sourcesPurpose } = await import("./glossary-research-engine.js");
+  assert.equal(sourcesPurpose("Samael Aun Weor", "íntimo", ["Dioses Atómicos"]), "check which of Samael Aun Weor's meanings of “íntimo” come from Dioses Atómicos and which are ordinary");
+  assert.match(sourcesPurpose("Samael Aun Weor", "íntimo", []), /^study how Samael Aun Weor uses “íntimo”: which of the meanings are ordinary/);
 });

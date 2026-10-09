@@ -219,7 +219,8 @@ function requestCost(request) {
 
 /**
  * Consecutive findings of one kind in a section read as one block: their data
- * lists are joined. A finding without data (old logs, unknown kinds) keeps
+ * lists are joined. Each finding records how many requests came before it
+ * (`at`), so the step shows findings and answers in the order they arrived. A finding without data (old logs, unknown kinds) keeps
  * its text, which the renderer shows as plain lines.
  */
 function addLine(section, entry) {
@@ -232,13 +233,13 @@ function addLine(section, entry) {
       return;
     }
     section.items.push({
-      kind: "result", resultKind: entry.kind ?? "",
+      kind: "result", resultKind: entry.kind ?? "", at: section.requests.length,
       data: hasData ? (Array.isArray(entry.data) ? [...entry.data] : entry.data) : null,
       texts: [entry.text],
     });
     return;
   }
-  section.items.push({ kind: "line", entry });
+  section.items.push({ kind: "line", entry, at: section.requests.length });
 }
 
 /**

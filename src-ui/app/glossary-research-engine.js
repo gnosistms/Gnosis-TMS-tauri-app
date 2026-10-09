@@ -1027,6 +1027,7 @@ export function createResearchEngine(deps) {
       const originalSections = [];
       const searched = new Set();
       const pairReads = new Map(); // original book id → occurrences of its glossary-pair words
+      const pairedBooks = []; // books whose glossary already pairs the term with an original word
       for (const book of top) {
         const record = records.find((item) => item.title === book.title);
         if (!record?.originalBookId || !corpus.originalSample) continue;
@@ -1038,6 +1039,7 @@ export function createResearchEngine(deps) {
         searched.add(`${record.originalBookId}:${fold(originals.join(",")).trim()}`);
         pairReads.set(record.originalBookId, found.occurrences ?? 0);
         const name = record.originalTitle ?? book.title;
+        pairedBooks.push(book.title.split(" — ")[0]);
         fact(`${corpus.authorName ?? "The author"} read ${book.title.split(" — ")[0]}, the Spanish translation of ${name}${record.originalAuthor ? `, written in ${record.originalLanguage === "en" ? "English" : "its original language"} by ${record.originalAuthor}` : ""}. Its glossary gives “${settings.term}” as the translation of ${originals.map((o) => `“${o}”`).join(", ")}, which the original uses ${found.occurrences} times.`);
         originalSections.push(section(
           `The original text of ${name}: ${found.occurrences} occurrences of ${originals.map((o) => `“${o}”`).join(", ")} in ${found.paragraphs} passages (a sample)`,
@@ -1061,7 +1063,7 @@ export function createResearchEngine(deps) {
         section("A sample of the author's own uses", authorPassages()),
       ].join("\n\n");
       const study = await client.callJson({
-        stage: "sources", purpose: `study how ${corpus.authorName ?? "the author"} uses “${settings.term}” and where each of his meanings comes from`,
+        stage: "sources", purpose: sourcesPurpose(corpus.authorName ?? "the author", settings.term, pairedBooks),
         progress: { key: "sense", total: null, unit: "meaning" },
         instructions: prompts.sourcesInstructions(ctx()), content,
         schema: prompts.SOURCES_SCHEMA, schemaName: "sources",
@@ -2212,4 +2214,16 @@ export function validateJudgment(row, occurrence, entryById) {
   const wording = String(row.chosenWording ?? "").trim();
   row.wordingFound = Boolean(wording) && row.sentenceTranslation.toLowerCase().includes(wording.toLowerCase());
   return null;
+}
+
+/**
+ * What the AI is asked in the sources step. When a book's glossary already
+ * pairs the term with an original word, the step has shown that; the AI then
+ * says which of the author's meanings come from that book and which are ordinary.
+ */
+export function sourcesPurpose(author, term, pairedBooks = []) {
+  const books = [...new Set(pairedBooks)];
+  if (!books.length) return `study how ${author} uses “${term}”: which of the meanings are ordinary and which come from other books`;
+  const list = books.length === 1 ? books[0] : `${books.slice(0, -1).join(", ")} or ${books.at(-1)}`;
+  return `check which of ${author}'s meanings of “${term}” come from ${list} and which are ordinary`;
 }

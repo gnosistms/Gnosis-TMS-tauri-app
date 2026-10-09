@@ -216,23 +216,28 @@ function stepBody(section, current, context = {}) {
   const drawn = display?.requests ?? new Set();
   const groups = requestGroups(section.requests.filter((request) => !drawn.has(request.requestId)));
   const covered = new Set(display?.results ?? []);
+  // Findings and answers keep their order of arrival: a fact found before a
+  // request stays above its answer (Hans, 2026-10-09).
   const views = groups.map((group) => {
     const stage = group.requests[0]?.stage;
     if (COVERED_BY_VIEW[stage] && groupViewHtml(group)) covered.add(COVERED_BY_VIEW[stage]);
-    return groupBlock(group, current);
-  }).join("");
+    return { at: Math.max(0, section.requests.indexOf(group.requests[0])), html: groupBlock(group, current) };
+  });
   const cancelled = section.items.some((item) => item.kind === "line" && /^Cancelled\b/.test(item.entry.text ?? ""));
   const findings = collapseDownloads(section.items)
     .filter((item) => (item.kind === "result" ? !covered.has(item.resultKind) : item.entry.type === "fact" || item.entry.type === "problem"))
     .filter((item) => !(item.kind === "line" && (display?.facts ?? []).some((pattern) => pattern.test(item.entry.text ?? ""))))
     // "Research was cancelled." repeats the "Cancelled…" line.
     .filter((item) => !(cancelled && item.kind === "line" && /^Research was cancelled/.test(item.entry.text ?? "")))
-    .map((item) => (item.kind === "result" ? renderResult(item) : renderLine(item.entry)))
-    .join("");
+    .map((item) => ({ at: item.at ?? Number.MAX_SAFE_INTEGER, html: item.kind === "result" ? renderResult(item) : renderLine(item.entry) }));
   const failed = section.requests.filter((request) => requestState(request) === "failed" && !cancelled)
     .map((request) => renderLine({ type: "problem", text: `${stageName(request.stage)}: ${request.problem || "the AI request failed"}` })).join("");
   // The AI's thinking is not shown (Hans, 2026-10-09): the now line says it is thinking.
-  return display?.after ? `${views}${display.html}${findings}${failed}` : `${display?.html ?? ""}${views}${findings}${failed}`;
+  // A finding logged when k requests had started comes before request k.
+  const blocks = [...findings.map((block) => ({ ...block, order: 0 })), ...views.map((block) => ({ ...block, order: 1 }))];
+  if (display?.after) blocks.push({ at: views.length ? views.at(-1).at : -1, order: 2, html: display.html });
+  const body = blocks.sort((a, b) => a.at - b.at || a.order - b.order).map((block) => block.html).join("");
+  return display?.after ? `${body}${failed}` : `${display?.html ?? ""}${body}${failed}`;
 }
 
 function stepMetaText(section) {

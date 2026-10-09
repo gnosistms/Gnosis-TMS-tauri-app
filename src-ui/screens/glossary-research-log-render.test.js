@@ -97,3 +97,22 @@ test("a finished step that only repeats its line cannot be opened; its explanati
   assert.doesNotMatch(rare, /toggle-research-section|research-section__body/);
   assert.match(rare, /data-tooltip="Do translations that are rare in everyday use need a note\?"/);
 });
+
+test("findings and answers keep their order of arrival", () => {
+  const steps = [
+    { type: "heading", text: "Candidate translations" },
+    { type: "fact", text: "FOUND BEFORE the request." },
+    request("r5", "candidates"),
+    { type: "answer-delta", requestId: "r5", text: '{"senses":[{"senseId":"s1","sense":"divine","groups":[{"members":["Innermost"],"recommended":true,"note":"n","rationale":"r"}]}]}' },
+    usage("r5"),
+    { type: "fact", text: "FOUND AFTER the answer." },
+    { type: "heading", text: "Proposal" },
+  ];
+  const [section] = renderResults(buildLogSections(steps), { running: false, openSections: { s1: true } }).split("<section").slice(1);
+  const step = section.slice(section.indexOf("research-section__body"));
+  const before = step.indexOf("FOUND BEFORE");
+  const view = step.indexOf("research-view--candidates");
+  const after = step.indexOf("FOUND AFTER");
+  assert.ok(before >= 0 && view >= 0 && after >= 0);
+  assert.ok(before < view && view < after, "fact, then the answer, then the later fact");
+});
