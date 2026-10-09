@@ -1569,3 +1569,15 @@
   color: var(--text);
   font-weight: 600;
 }
+
+/* What happens now stays in view at the foot of the list, however long the step's display. */
+.research-step__now {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin: 0 -2px;
+  padding: 8px 2px 6px;
+  border-top: 1px solid var(--surface-border);
+  background: rgb(255, 250, 244);
+  box-shadow: 0 -8px 12px -8px rgba(164, 112, 41, 0.18);
+}

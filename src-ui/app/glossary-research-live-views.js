@@ -412,6 +412,9 @@ function formsDisplay(section, context) {
   };
 }
 
+/** One word written several ways (with or without accents, hyphens, spaces) is one key. */
+const spellingKey = (text) => str(text).normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[-\s]/g, "").toLowerCase();
+
 function familyDisplay(section) {
   const request = section.requests.find((item) => item.stage === "family");
   const words = list(answerOf(request)?.words).filter((word) => str(word?.form) && word.kind !== "phrase");
@@ -421,32 +424,58 @@ function familyDisplay(section) {
   const fact = lineTexts(section, "fact").find((text) => /^(Related words in the texts|Word family in the texts)/.test(text));
   if (fact) for (const [form, rows] of countList(fact.slice(fact.indexOf(":") + 1))) if (!checked.has(form)) checked.set(form, { form, rows });
   const finished = Boolean(fact) || lineTexts(section, "fact").some((text) => /^No other words built on the term/.test(text));
-  const drawn = { requests: new Set([request.requestId]), results: new Set(["familyCount"]), facts: [/^(Related words in the texts|Word family in the texts|No other words built on the term)/] };
-  const row = (form, reason, item) => {
-    const count = item?.rows > 0 ? ` (${item.rows})` : "";
-    const missing = item && !(item.rows > 0);
-    return `<div class="research-view__row${missing ? " research-view__row--missing" : ""}"><strong>${esc(form)}</strong>${count} ${muted([item?.of ? `form of ${item.of}` : "", reason, missing ? "not in the texts" : ""].filter(Boolean).join(" · "))}</div>`;
+  // One chip per word: its other spellings, and its forms found in the texts, go with it.
+  const groups = new Map();
+  for (const word of words) {
+    const key = spellingKey(word.form);
+    if (!groups.has(key)) groups.set(key, { lead: word, members: [] });
+    groups.get(key).members.push({ form: word.form, item: checked.get(lower(word.form)) });
+  }
+  for (const item of checked.values()) {
+    if (words.some((word) => lower(word.form) === lower(item.form))) continue;
+    const owner = item.of ? groups.get(spellingKey(item.of)) : null;
+    if (owner) owner.members.push({ form: item.form, item, inflection: true });
+    else if (item.rows > 0) groups.set(spellingKey(item.form), { lead: { form: item.form, reason: "" }, members: [{ form: item.form, item }] });
+  }
+  const state = (group) => {
+    const counts = group.members.map((m) => m.item).filter(Boolean);
+    const rows = Math.max(0, ...group.members.filter((m) => !m.inflection).map((m) => m.item?.rows ?? 0));
+    if (rows > 0) return { found: true, rows };
+    const allChecked = group.members.filter((m) => !m.inflection).every((m) => m.item);
+    return { found: false, missing: allChecked || finished, pending: !allChecked && !finished, rows: 0, counts };
   };
-  // Forms found in the texts that the AI did not list (inflections of a listed word) come after it.
-  const extra = [...checked.values()].filter((item) => item.rows > 0 && !words.some((word) => lower(word.form) === lower(item.form)));
-  const rows = (items) => items.map((word) => row(word.form, word.reason, checked.get(lower(word.form)))).join("")
-    + extra.filter((item) => items === words).map((item) => row(item.form, "", item)).join("");
+  const chipOf = (group) => {
+    const s = state(group);
+    const others = group.members.filter((m) => m.form !== group.lead.form);
+    const tip = [group.lead.reason, ...group.members.map((m) => `${m.form}${m.item ? `: ${m.item.rows} ${m.item.rows === 1 ? "paragraph" : "paragraphs"}` : ""}${m.inflection ? " (a form of it)" : ""}`)].filter(Boolean).join("\n");
+    const text = `${group.lead.form}${s.found ? ` (${s.rows})` : ""}${others.length ? ` +${others.length}` : ""}`;
+    return `<span title="${esc(tip)}">${chip(text, s.missing ? "faint" : "")}</span>`;
+  };
+  const all = [...groups.values()];
+  const drawn = { requests: new Set([request.requestId]), results: new Set(["familyCount"]), facts: [/^(Related words in the texts|Word family in the texts|No other words built on the term)/] };
+  const legend = (pending) => [
+    "Hover a word for what it is and how it is spelled; +n: other spellings or forms of it.",
+    [...checked.values()].length ? "The number is how many paragraphs use it." : "",
+    all.some((group) => state(group).missing) ? "Faded: not in the texts." : "",
+    pending ? `${plural(pending, "more word")} to search for.` : "",
+  ].filter(Boolean).join(" ");
   if (!finished) {
-    const pending = words.filter((word) => !checked.has(lower(word.form))).length;
+    const pending = all.filter((group) => state(group).pending).length;
     return {
       ...drawn,
       html: view("family", checked.size ? "Possible related words, and how many paragraphs use each" : "Possible related words (each is then searched for in the texts)",
-        `<div class="research-view__rows">${rows(words)}</div>${checked.size && pending ? `<p class="research-view__explain">${plural(pending, "more word")} to search for</p>` : ""}`),
+        `<div class="research-view__chips">${all.map(chipOf).join("")}</div><p class="research-view__explain">${legend(checked.size ? pending : 0)}</p>`),
     };
   }
   // Finished: the words in the texts first, by count; the others folded.
-  const found = words.filter((word) => checked.get(lower(word.form))?.rows > 0).sort((x, y) => checked.get(lower(y.form)).rows - checked.get(lower(x.form)).rows);
-  const missing = words.filter((word) => !(checked.get(lower(word.form))?.rows > 0));
+  const found = all.filter((group) => state(group).found).sort((x, y) => state(y).rows - state(x).rows);
+  const missing = all.filter((group) => !state(group).found);
   return {
     ...drawn,
-    html: view("family", found.length || extra.length ? "Related words in the texts, and how many paragraphs use each" : "None of the possible related words is in the texts", `
-      <div class="research-view__rows">${found.map((word) => row(word.form, word.reason, checked.get(lower(word.form)))).join("")}${extra.map((item) => row(item.form, "", item)).join("")}</div>
-      ${missing.length ? `<details class="research-view__more"><summary>${plural(missing.length, "possible word")} not in the texts</summary><div class="research-view__rows">${missing.map((word) => row(word.form, word.reason)).join("")}</div></details>` : ""}`),
+    html: view("family", found.length ? "Related words in the texts, and how many paragraphs use each" : "None of the possible related words is in the texts", `
+      <div class="research-view__chips">${found.map(chipOf).join("")}</div>
+      ${missing.length ? `<details class="research-view__more"><summary>${plural(missing.length, "possible word")} not in the texts</summary><div class="research-view__chips">${missing.map(chipOf).join("")}</div></details>` : ""}
+      <p class="research-view__explain">${legend(0)}</p>`),
   };
 }
 
