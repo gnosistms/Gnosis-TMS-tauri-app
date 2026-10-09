@@ -11,6 +11,7 @@ import {
   scoreWords,
   textKey,
   familyGroups,
+  writtenForm,
   mergeMeasurements,
   looksLike,
   pickRepresentative,
@@ -977,4 +978,28 @@ test("the origin request says what the AI adds when a book's glossary already ga
   const { sourcesPurpose } = await import("./glossary-research-engine.js");
   assert.equal(sourcesPurpose("Samael Aun Weor", "íntimo", ["Dioses Atómicos"]), "check which of Samael Aun Weor's meanings of “íntimo” come from Dioses Atómicos and which are ordinary");
   assert.match(sourcesPurpose("Samael Aun Weor", "íntimo", []), /^study how Samael Aun Weor uses “íntimo”: which of the meanings are ordinary/);
+});
+
+test("the studies name the term as the texts write it, not as it was typed", async () => {
+  const occ = (text, surface) => ({ text, occurrences: [{ start: text.indexOf(surface), end: text.indexOf(surface) + surface.length, surface }] });
+  const items = [occ("Íntimo es el Ser.", "Íntimo"), occ("Un amigo íntimo vino.", "íntimo"), occ("Lo más íntimo.", "íntimo"), occ("Unirse con el Íntimo.", "Íntimo")];
+  assert.equal(writtenForm("Íntimo", items), "íntimo", "a capital at the start of a sentence does not count");
+  assert.equal(writtenForm("samael", [occ("Dijo Samael.", "Samael")]), "Samael");
+  assert.equal(writtenForm("Íntimo", []), "Íntimo", "no passages: the typed term");
+  assert.equal(writtenForm("Íntimo", [occ("el Íntimo", "Íntimo"), occ("lo íntimo", "íntimo")]), "Íntimo", "a tie keeps the typed term");
+
+  const base = fakeCorpus(passages(40));
+  const corpus = { ...base, async sample(forms, n, seed) {
+    const found = await base.sample(forms.map((f) => f.toLowerCase()), n, seed);
+    return found;
+  } };
+  const inner = fakeModel();
+  const seen = [];
+  const model = { calls: inner.calls, async call(request, onDelta) { seen.push(request); return inner.call(request, onDelta); } };
+  const { engine: research, store } = engine({ model, corpus, extraSettings: { term: "Fatal" } });
+  await research.runToReview();
+  assert.equal(store.data.forms.headword, "fatal");
+  const parts = seen.find((request) => request.stage === "parts");
+  assert.match(parts.content, /^# Term: fatal$/m);
+  assert.doesNotMatch(seen.map((request) => `${request.instructions}\n${request.content}`).join("\n"), /“Fatal”/);
 });

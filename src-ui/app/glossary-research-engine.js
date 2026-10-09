@@ -44,6 +44,29 @@ import {
  * A token with a digit is not a word: in the texts it is usually a word with its
  * footnote number attached ("cohabitaremos1").
  */
+/**
+ * How the texts write the term: its most common capitalization away from the
+ * start of a sentence (where a capital says nothing), among the passages given.
+ * The typed term when the passages do not show it.
+ */
+export function writtenForm(term, items) {
+  const key = String(term ?? "").normalize("NFC").toLowerCase().trim();
+  const counts = new Map();
+  for (const item of items ?? []) {
+    for (const occurrence of item.occurrences ?? []) {
+      const surface = String(occurrence.surface ?? "").normalize("NFC");
+      if (surface.toLowerCase().trim() !== key) continue;
+      const before = String(item.text ?? "").slice(0, occurrence.start).trimEnd();
+      // Start of a passage or after a sentence's end, an opening mark or a quotation mark.
+      if (!before || /[.!?¡¿:;…"“”«»„'‘’(\[\u3002\uff01\uff1f\u0964\u061f\u06d4-]$/u.test(before)) continue;
+      counts.set(surface, (counts.get(surface) ?? 0) + 1);
+    }
+  }
+  let best = null;
+  for (const [surface, count] of counts) if (!best || count > best.count) best = { surface, count };
+  return best && best.count > (counts.get(String(term).normalize("NFC")) ?? 0) ? best.surface : term;
+}
+
 export const isWord = (form) => !/\p{N}/u.test(String(form ?? ""));
 
 /** How many words of the texts that begin with the term's letters are checked as its possible forms. */
@@ -699,14 +722,18 @@ export function createResearchEngine(deps) {
   });
   const renderingScore = (rendering, scoreOf, words = null) => scoreRendering(settings.targetLanguageCode, rendering, scoreOf, words);
 
+  // The term as the texts write it ("íntimo", typed "Íntimo"): the studies use it,
+  // so a capital typed for the glossary does not suggest one meaning.
+  const headword = () => store.load("forms")?.headword ?? settings.term;
+
   const ctx = (extra = {}) => ({
-    headword: settings.term,
+    headword: headword(),
     sourceName: settings.sourceLanguageName,
     targetName: settings.targetLanguageName,
     reportName: settings.reportLanguageName,
     corpusDescription: corpus.description,
     dictionaryText: store.load("dictionary")?.text ?? "",
-    forms: store.load("forms")?.confirmed ?? [settings.term],
+    forms: store.load("forms")?.confirmed ?? [headword()],
     targetCode: settings.targetLanguageCode,
     reportCode: settings.reportLanguageCode ?? "",
     authorName: corpus.authorName ?? "the author",
@@ -775,14 +802,19 @@ export function createResearchEngine(deps) {
     return stage("forms", async () => {
       heading("Word forms");
       info(`Collecting the spellings of “${settings.term}” that occur in the texts…`);
+      const written = corpus.sample
+        ? writtenForm(settings.term, (await corpus.sample([settings.term], 60, settings.seed).catch(() => null))?.items ?? [])
+        : settings.term;
       const hint = corpus.formsHint ? await corpus.formsHint(settings.term) : null;
+      const proposeCtx0 = { headword: written };
       const proposeCtx = ctx({
+        ...proposeCtx0,
         userVariants: settings.variants,
         existingSourceTerms: settings.existingEntries.flatMap((entry) => entry.sourceTerms),
         corpusForms: (hint?.forms ?? []).map((f) => f.form),
       });
       const proposed = await client.callJson({
-        stage: "forms", purpose: `complete the list of spellings of “${settings.term}” to search for (plural, feminine, without accents…)`,
+        stage: "forms", purpose: `complete the list of spellings of “${written}” to search for (plural, feminine, without accents…)`,
         progress: { key: "form", total: null, unit: "spelling" },
         instructions: prompts.formsProposeInstructions(proposeCtx),
         content: prompts.formsProposeContent(proposeCtx),
@@ -820,7 +852,7 @@ export function createResearchEngine(deps) {
         logResult("formCount", [{ form: candidate.form, rows: count.rows, added, kind: candidate.kind }],
           `“${candidate.form}” appears in ${count.rows} ${count.rows === 1 ? "paragraph" : "paragraphs"}${added ? " (added: found in the texts or spelled without accents)" : ""}`);
       }
-      const confirmCtx = ctx();
+      const confirmCtx = ctx({ headword: written });
       const content = counted.map((c) => [
         c.kind === "extension"
           ? `“${c.form}” (a word of the texts that begins with the same letters): ${c.rows} passages`
@@ -828,7 +860,7 @@ export function createResearchEngine(deps) {
         ...c.examples.slice(0, c.kind === "extension" ? 1 : 2).map((e) => `   ${snippet(e.text, e.start, e.end, 90)}`),
       ].join("\n")).join("\n");
       const confirmed = await client.callJson({
-        stage: "forms", purpose: `check in example paragraphs that each spelling is “${settings.term}”, not another word spelled the same (such as a verb form)`,
+        stage: "forms", purpose: `check in example paragraphs that each spelling is “${written}”, not another word spelled the same (such as a verb form)`,
         progress: { key: "form", total: counted.length, unit: "spelling", verb: "checked" },
         instructions: prompts.formsConfirmInstructions(confirmCtx), content,
         schema: prompts.FORMS_CONFIRM_SCHEMA, schemaName: "forms_confirm",
@@ -845,7 +877,7 @@ export function createResearchEngine(deps) {
       if (dropped.length) info(`dropped: ${dropped.map((f) => `${f.form} (${f.reason})`).join("; ")}`);
       // The words that begin like the term but are not its forms: candidates for its word family.
       const related = (hint?.related ?? []).filter((f) => isWord(f.form) && !keep.has(f.form.trim().toLowerCase()));
-      return { confirmed: forms.map((f) => f.form), searched: inTexts, notFound, candidates: counted.filter((c) => c.kind !== "extension" || keep.has(c.form.trim().toLowerCase())).map((c) => ({ form: c.form, kind: c.kind, confidence: c.confidence, rows: c.rows })), decisions: confirmed.forms, related };
+      return { headword: written, confirmed: forms.map((f) => f.form), searched: inTexts, notFound, candidates: counted.filter((c) => c.kind !== "extension" || keep.has(c.form.trim().toLowerCase())).map((c) => ({ form: c.form, kind: c.kind, confidence: c.confidence, rows: c.rows })), decisions: confirmed.forms, related };
     });
   }
 
@@ -856,11 +888,11 @@ export function createResearchEngine(deps) {
       const forms = store.load("forms");
       const known = new Set((forms.candidates ?? []).map((c) => fold(c.form).trim()));
       const proposed = await client.callJson({
-        stage: "family", purpose: `find related words built on “${settings.term}”`,
+        stage: "family", purpose: `find related words built on “${headword()}”`,
         progress: { key: "form", total: null, unit: "word" },
         instructions: prompts.familyInstructions(ctx()),
         content: [
-          `Headword: ${settings.term}`,
+          `Headword: ${headword()}`,
           `Forms in the study: ${forms.confirmed.join(", ")}`,
           `Words of the texts that begin with the headword's letters and are not its forms: ${(forms.related ?? []).filter((r) => isWord(r.form)).map((r) => r.form).join(", ") || "none"}`,
           dictionaryText(),
@@ -1011,7 +1043,7 @@ export function createResearchEngine(deps) {
         return { skipped: true };
       }
       const forms = store.load("forms").searched;
-      info(`Searching the books ${corpus.authorName ?? "the author"} read for “${settings.term}”…`);
+      info(`Searching the books ${corpus.authorName ?? "the author"} read for “${headword()}”…`);
       const usage = await corpus.sourceUsage(forms, settings.seed);
       if (!usage.length) {
         fact("None of the reference books uses the term.");
@@ -1040,7 +1072,7 @@ export function createResearchEngine(deps) {
         const name = book.title.split(" — ")[0];
         const phrases = [...new Set([name.replace(/\s*\([^)]*\)\s*/g, " ").trim(), ...[...name.matchAll(/\(([^)]+)\)/g)].map((m) => m[1].trim())])].filter((p) => p.length > 3);
         if (corpus.authorCitations && phrases.length) {
-          info(`Looking for places where ${corpus.authorName ?? "the author"} names ${name} next to “${settings.term}”…`);
+          info(`Looking for places where ${corpus.authorName ?? "the author"} names ${name} next to “${headword()}”…`);
           const found = await corpus.authorCitations(phrases, forms, settings.seed).catch(() => []);
           citationsByBook.set(book.title, found.length);
           citations.push(...found.map((item) => passageSnippet(item, 900)));
@@ -1119,7 +1151,7 @@ export function createResearchEngine(deps) {
           if (!pairedBooks.includes(book.title.split(" — ")[0])) pairedBooks.push(book.title.split(" — ")[0]);
           fact(pairFact({
             site: corpus.authorName ?? "author's", author: corpus.authorName ?? "the author",
-            shortTitle: book.title.split(" — ")[0], record, term: settings.term, pairs: group,
+            shortTitle: book.title.split(" — ")[0], record, term: headword(), pairs: group,
             occurrences: found.occurrences, searched: lookFor.slice(0, 20),
           }));
           originalSections.push(section(
@@ -1129,7 +1161,7 @@ export function createResearchEngine(deps) {
         }
       }
       const content = [
-        `# Term: ${settings.term}\nSpellings searched: ${forms.join(", ")}`,
+        `# Term: ${headword()}\nSpellings searched: ${forms.join(", ")}`,
         section("Dictionary entry", [ctx().dictionaryText || "(none found)"]),
         section("Occurrences in the reference books (books the author read)", [ranked.map((book) => {
           const length = records.find((record) => record.title === book.title)?.paragraphs;
@@ -1145,7 +1177,7 @@ export function createResearchEngine(deps) {
         section("A sample of the author's own uses", authorPassages()),
       ].join("\n\n");
       const study = await client.callJson({
-        stage: "sources", purpose: sourcesPurpose(corpus.authorName ?? "the author", settings.term, pairedBooks),
+        stage: "sources", purpose: sourcesPurpose(corpus.authorName ?? "the author", headword(), pairedBooks),
         progress: { key: "sense", total: null, unit: "meaning" },
         instructions: prompts.sourcesInstructions(ctx()), content,
         schema: prompts.SOURCES_SCHEMA, schemaName: "sources",
@@ -1161,7 +1193,7 @@ export function createResearchEngine(deps) {
             citations: citationsByBook.get(book.title) ?? 0,
             pair: word?.verified ? word.pairBasis ?? null : null,
           });
-          const line = borrowingText(sense, sense.borrowing, { author: corpus.authorName ?? "The author", term: settings.term, translationTitle: record.title.split(" — ")[0].replace(/\s*\([^)]*\)\s*$/, "") });
+          const line = borrowingText(sense, sense.borrowing, { author: corpus.authorName ?? "The author", term: headword(), translationTitle: record.title.split(" — ")[0].replace(/\s*\([^)]*\)\s*$/, "") });
           if (line) fact(line);
         }
         if (!word) continue;
@@ -1177,7 +1209,7 @@ export function createResearchEngine(deps) {
         logResult("senses", [{
           sense: sense.sense, label: sense.label ?? "", partOfSpeech: sense.partOfSpeech ?? sense.wordClass ?? "", inDictionary: sense.inDictionary === true,
           sourceBook: sense.sourceBook ?? null, originalTerm: sense.originalTerm ?? null, originalLanguage: sense.originalLanguage ?? null,
-          verified, term: settings.term, language: settings.sourceLanguageName,
+          verified, term: headword(), language: settings.sourceLanguageName,
           originalTitle: sense.originalWord?.originalTitle ?? null, originalAuthor: sense.originalWord?.originalAuthor ?? null,
           translationTitle: sense.originalWord?.translationTitle ? sense.originalWord.translationTitle.split(" — ")[0].replace(/\s*\([^)]*\)\s*$/, "") : null,
         }], `${sense.sense}${sense.sourceBook ? ` — from ${sense.sourceBook}` : ""}${sense.originalTerm ? ` (original ${sense.originalLanguage ?? ""} term “${sense.originalTerm}”)` : ""}`);
@@ -1220,14 +1252,14 @@ export function createResearchEngine(deps) {
       const found = await corpus.originalSample(record.originalBookId, [sense.originalTerm], settings.seed, 10);
       info(`Reading the original book, ${name}: “${sense.originalTerm}” appears ${found.occurrences} times`);
       const content = [
-        `Term: ${settings.term}. Proposed original word: “${sense.originalTerm}” (${sense.originalTermBasis}).`,
+        `Term: ${headword()}. Proposed original word: “${sense.originalTerm}” (${sense.originalTermBasis}).`,
         `## The original text (${name}): ${found.occurrences} occurrences in ${found.paragraphs} passages (a sample)`,
         found.items.map((item) => passageSnippet({ ...item, reference: { title: name } })).join("\n\n") || "(no passage contains the proposed word)",
         `## The ${settings.sourceLanguageName} edition (${book.title})`,
         book.items.slice(0, 8).map((item) => passageSnippet(item)).join("\n\n"),
       ].join("\n\n");
       const check = await client.callJson({
-        stage: "sources", purpose: `confirm in the original book that “${sense.originalTerm}” is the word behind “${settings.term}”`,
+        stage: "sources", purpose: `confirm in the original book that “${sense.originalTerm}” is the word behind “${headword()}”`,
         instructions: prompts.originalCheckInstructions(ctx()), content,
         schema: prompts.ORIGINAL_CHECK_SCHEMA, schemaName: "original_check",
         maxOutputTokens: 4000, effort: settings.effortProposal,
@@ -1252,7 +1284,7 @@ export function createResearchEngine(deps) {
       const sources = store.load("sources");
       const originals = requiredOriginals();
       const content = [
-        `# Term: ${settings.term}`,
+        `# Term: ${headword()}`,
         `## Dictionary entry\n${ctx().dictionaryText || "(none found)"}`,
         sources?.study ? `## Study of where the term comes from\n${JSON.stringify(sources.study, null, 1)}` : "",
         originals.length ? `## Original words (required)\n${originalWordsText(originals, settings.targetLanguageName)}` : "",
@@ -1288,7 +1320,7 @@ export function createResearchEngine(deps) {
       const family = store.load("family")?.members ?? [];
       const sources = store.load("sources")?.study;
       const content = [
-        `# Term: ${settings.term}\nForms in the texts: ${forms.join(", ")}`,
+        `# Term: ${headword()}\nForms in the texts: ${forms.join(", ")}`,
         `## Word family in the texts\n${family.map((m) => `- ${m.form} (${m.kind}, ${m.rows} passages)`).join("\n") || "(none found)"}`,
         `## ${dictionaryText()}`,
         sources?.summary ? `## Where the term comes from\n${sources.summary}` : "",
@@ -1296,7 +1328,7 @@ export function createResearchEngine(deps) {
         `## Passages from the texts\n${authorPassages().slice(0, 15).join("\n\n")}`,
       ].filter(Boolean).join("\n\n");
       const study = await client.callJson({
-        stage: "parts", purpose: `list the meanings of “${settings.term}”`,
+        stage: "parts", purpose: `list the meanings of “${headword()}”`,
         progress: { key: "gloss", total: null, unit: "meaning" },
         instructions: prompts.partsInstructions(ctx()), content,
         schema: prompts.PARTS_SCHEMA, schemaName: "parts",
@@ -1310,11 +1342,11 @@ export function createResearchEngine(deps) {
       if (!(await frequencyReady(code, name))) return result;
       const formZipfs = await languageData.zipf(code, forms);
       const listZipf = combinedZipf(formZipfs);
-      info(`Finding everyday ${name} sentences that use “${settings.term}”, to see how common each meaning is…`);
+      info(`Finding everyday ${name} sentences that use “${headword()}”, to see how common each meaning is…`);
       const term = await measureSenses({
         code, name, forms, listZipf,
         senses: study.senses.map(({ id, gloss, partOfSpeech }) => ({ id, gloss, partOfSpeech })),
-        purpose: `sort everyday ${name} sentences with “${settings.term}” by meaning`,
+        purpose: `sort everyday ${name} sentences with “${headword()}” by meaning`,
       });
       const inDictionary = store.load("dictionary")?.status === "found";
       const invented = !inDictionary && !(term.wordZipf >= 1);
@@ -1342,9 +1374,9 @@ export function createResearchEngine(deps) {
       };
       const used = study.senses.filter((sense) => sense.usedByAuthor);
       logResult("frequency", [{
-        kind: "term", language: name, word: settings.term, zipf: term.wordZipf, invented,
+        kind: "term", language: name, word: headword(), zipf: term.wordZipf, invented,
         senses: used.map((sense) => ({ gloss: sense.gloss, senseText: describeSense(term.senses[sense.id]) })),
-      }], `${name} “${settings.term}”: Zipf ${formatZipf(term.wordZipf)}${invented ? " — not in the dictionary and practically absent from general use: the author's own word" : ""}${used.length ? `; senses the author uses, in general ${name}: ${used.map((sense) => `${sense.gloss} ${describeSense(term.senses[sense.id])}`).join("; ")}` : ""}`);
+      }], `${name} “${headword()}”: Zipf ${formatZipf(term.wordZipf)}${invented ? " — not in the dictionary and practically absent from general use: the author's own word" : ""}${used.length ? `; senses the author uses, in general ${name}: ${used.map((sense) => `${sense.gloss} ${describeSense(term.senses[sense.id])}`).join("; ")}` : ""}`);
       return result;
     });
   }
@@ -1364,9 +1396,9 @@ export function createResearchEngine(deps) {
       return word && (word === key || key.includes(word) || word.includes(key));
     });
     if (base?.needed) return { label: base.word, measure: base.needed };
-    if (source.invented) return { label: settings.term, invented: true };
+    if (source.invented) return { label: headword(), invented: true };
     const measure = senseId && source.term.senses[senseId];
-    return measure ? { label: `${settings.term} (${parts.study.senses.find((x) => x.id === senseId)?.gloss ?? senseId})`, measure } : null;
+    return measure ? { label: `${headword()} (${parts.study.senses.find((x) => x.id === senseId)?.gloss ?? senseId})`, measure } : null;
   }
 
   /** Glossary entries for other terms that already use this translation. */
@@ -1430,7 +1462,7 @@ export function createResearchEngine(deps) {
         progress: { key: "n", total: toCheck.length, unit: "translation" },
         instructions: prompts.checkInstructions(ctx()),
         content: [
-          `# Term: ${settings.term}`,
+          `# Term: ${headword()}`,
           `## Candidates (number. rendering — the sense it must render)\n${toCheck.map((c) => `${c.n}. ${c.target} — ${c.sense}`).join("\n")}`,
           parts?.study ? `## Parts of the term\n${parts.study.parts.map((p) => `- ${p.part}: ${p.meaning}`).join("\n")}` : "",
           sources ? `## Where the term comes from\n${JSON.stringify(sources.senses.map((x) => ({ sense: x.sense, sourceBook: x.sourceBook, originalLanguage: x.originalLanguage, originalTerm: x.originalTerm })), null, 1)}` : "",
@@ -1639,7 +1671,7 @@ export function createResearchEngine(deps) {
           const z = renderingScore(c.target, senseScore, found?.words);
           if (senseRef?.zipf != null && !found?.establishedUsage && z != null && z < senseRef.zipf - 1) {
             verdict = "fail";
-            reasons.push(`much less familiar to ${name} readers than “${settings.term}” is to ${sourceName} readers in this meaning: ${commonness(z)} against ${commonness(senseRef.zipf)}`);
+            reasons.push(`much less familiar to ${name} readers than “${headword()}” is to ${sourceName} readers in this meaning: ${commonness(z)} against ${commonness(senseRef.zipf)}`);
           }
         }
         if (original && verdict !== "unchecked") {
@@ -1693,7 +1725,7 @@ export function createResearchEngine(deps) {
       `## The term's senses\n${parts.study.senses.map((sense) => `- ${sense.id}${sense.partOfSpeech ? ` (${sense.partOfSpeech})` : ""}: ${sense.gloss}${sense.usedByAuthor ? " (used by the author)" : ""}${source ? `; in general ${settings.sourceLanguageName}: ${describeSense(source.term.senses[sense.id])}` : ""}`).join("\n")}`,
     ];
     if (source) {
-      lines.push(`Frequency in general ${settings.sourceLanguageName} (Zipf: 0 = not in ordinary use, 3 = everyday word, 5+ = very common): “${settings.term}” ${formatZipf(source.wordZipf)}${source.invented ? " (not in the dictionary; practically absent from general use)" : ""}.`);
+      lines.push(`Frequency in general ${settings.sourceLanguageName} (Zipf: 0 = not in ordinary use, 3 = everyday word, 5+ = very common): “${headword()}” ${formatZipf(source.wordZipf)}${source.invented ? " (not in the dictionary; practically absent from general use)" : ""}.`);
       for (const base of source.bases) lines.push(`“${base.word}” ${formatZipf(base.measure.wordZipf)}; in the sense “${base.neededSense}”: ${describeSense(base.needed)}.`);
     }
     return lines.join("\n");
@@ -1759,7 +1791,7 @@ export function createResearchEngine(deps) {
     const forms = store.load("forms");
     const disc = store.load("discovery");
     const lines = [
-      `Headword: ${settings.term}. Confirmed forms: ${forms.confirmed.join(", ")}${forms.notFound.length ? ` (not in the texts: ${forms.notFound.join(", ")})` : ""}.`,
+      `Headword: ${headword()}. Confirmed forms: ${forms.confirmed.join(", ")}${forms.notFound.length ? ` (not in the texts: ${forms.notFound.join(", ")})` : ""}.`,
       `Derived words sharing the stem (not in this study): ${forms.related.map((r) => `${r.form} (${r.rows})`).join(", ") || "none listed"}`,
       `Population: ${sample.meta.populationDistinct} distinct passages.`,
       "",
@@ -1855,7 +1887,7 @@ export function createResearchEngine(deps) {
           stage: "original-note", purpose: `write the glossary note for “${variant.target}”`,
           instructions: prompts.originalNoteInstructions(ctx()),
           content: [
-            `Term: ${settings.term}. Translation: “${variant.target}”, the original word of ${variant.original.book} for the meaning “${variant.original.sense}”.`,
+            `Term: ${headword()}. Translation: “${variant.target}”, the original word of ${variant.original.book} for the meaning “${variant.original.sense}”.`,
             `Book title to name exactly: ${variant.original.originalTitle}`,
             `Current note: ${variant.note || "(none)"}`,
             `Other translations of the entry: ${entry.variants.filter((v) => v !== variant).map((v) => `${v.target} (${v.note})`).join("; ") || "(none)"}`,
