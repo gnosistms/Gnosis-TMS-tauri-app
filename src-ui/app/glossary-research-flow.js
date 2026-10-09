@@ -845,14 +845,25 @@ async function seedTimingsFromSavedRuns(installationId, glossaryId) {
 export function toggleResearchCurrent(render, sectionId) {
   const draft = research();
   draft.sectionOpen = { ...(draft.sectionOpen ?? {}), [sectionId]: draft.sectionOpen?.[sectionId] === false };
-  renderKeepingLogPinned(render);
+  renderKeepingLogPosition(render);
 }
 
 /** "details": unfold or fold a finished step. */
 export function toggleResearchSection(render, sectionId) {
   const draft = research();
   draft.sectionOpen = { ...(draft.sectionOpen ?? {}), [sectionId]: !(draft.sectionOpen?.[sectionId] === true) };
-  renderKeepingLogPinned(render);
+  renderKeepingLogPosition(render);
+}
+
+/**
+ * Opening or folding a step keeps the list where it is: the clicked step stays
+ * under the pointer. Only new research events make the list follow the latest.
+ */
+function renderKeepingLogPosition(render) {
+  const kept = logContainer()?.scrollTop ?? 0;
+  render();
+  const after = logContainer();
+  if (after) after.scrollTop = kept;
 }
 
 /** "↓ Latest": back to the end of the list, which then follows the research again. */

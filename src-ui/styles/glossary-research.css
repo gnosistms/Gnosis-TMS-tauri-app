@@ -232,8 +232,8 @@
   margin-top: 10px;
 }
 
-.research-section.is-open + .research-section,
-.research-section + .research-section.is-open {
+/* An open step gives the next one more room; its own title does not move when it opens. */
+.research-section.is-open + .research-section {
   margin-top: 18px;
 }
 
