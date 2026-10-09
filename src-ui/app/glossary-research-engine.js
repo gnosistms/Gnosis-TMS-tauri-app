@@ -765,7 +765,7 @@ export function createResearchEngine(deps) {
   async function findForms() {
     return stage("forms", async () => {
       heading("Word forms");
-      info(`Finding the spellings of “${settings.term}” used in the texts…`);
+      info(`Collecting the spellings of “${settings.term}” that occur in the texts…`);
       const hint = corpus.formsHint ? await corpus.formsHint(settings.term) : null;
       const proposeCtx = ctx({
         userVariants: settings.variants,
@@ -773,7 +773,7 @@ export function createResearchEngine(deps) {
         corpusForms: (hint?.forms ?? []).map((f) => f.form),
       });
       const proposed = await client.callJson({
-        stage: "forms", purpose: `list every spelling of “${settings.term}” to search for (plural, feminine, without accents…)`,
+        stage: "forms", purpose: `complete the list of spellings of “${settings.term}” to search for (plural, feminine, without accents…)`,
         progress: { key: "form", total: null, unit: "spelling" },
         instructions: prompts.formsProposeInstructions(proposeCtx),
         content: prompts.formsProposeContent(proposeCtx),
@@ -810,7 +810,7 @@ export function createResearchEngine(deps) {
         ...c.examples.slice(0, 2).map((e) => `   ${snippet(e.text, e.start, e.end, 90)}`),
       ].join("\n")).join("\n");
       const confirmed = await client.callJson({
-        stage: "forms", purpose: `check in example passages that each spelling is “${settings.term}”, not another word spelled the same (such as a verb form)`,
+        stage: "forms", purpose: `check in example paragraphs that each spelling is “${settings.term}”, not another word spelled the same (such as a verb form)`,
         progress: { key: "form", total: counted.length, unit: "spelling", verb: "checked" },
         instructions: prompts.formsConfirmInstructions(confirmCtx), content,
         schema: prompts.FORMS_CONFIRM_SCHEMA, schemaName: "forms_confirm",
@@ -1042,7 +1042,7 @@ export function createResearchEngine(deps) {
         section("A sample of the author's own uses", authorPassages()),
       ].join("\n\n");
       const study = await client.callJson({
-        stage: "sources", purpose: `find out where the author took “${settings.term}” from`,
+        stage: "sources", purpose: `study how ${corpus.authorName ?? "the author"} uses “${settings.term}” and where each of his meanings comes from`,
         progress: { key: "sense", total: null, unit: "meaning" },
         instructions: prompts.sourcesInstructions(ctx()), content,
         schema: prompts.SOURCES_SCHEMA, schemaName: "sources",

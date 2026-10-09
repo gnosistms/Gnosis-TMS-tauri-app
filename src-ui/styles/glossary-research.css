@@ -1551,3 +1551,8 @@
 .research-step__now .research-live__doing {
   white-space: normal;
 }
+
+.research-view__row--missing strong {
+  color: var(--muted);
+  font-weight: 500;
+}

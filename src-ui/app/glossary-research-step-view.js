@@ -33,7 +33,8 @@ export function requestGroups(requests) {
 export function viewRequest(group) {
   const writing = group.requests.filter((request) => requestState(request) === "writing");
   if (writing.length) return writing.reduce((a, b) => (b.updatedAt >= a.updatedAt ? b : a));
-  return [...group.requests].reverse().find((request) => request.answer) ?? null;
+  const answered = group.requests.filter((request) => request.answer);
+  return answered.length ? answered.reduce((a, b) => (b.updatedAt >= a.updatedAt ? b : a)) : null;
 }
 
 /** The readable view of one group of requests (a whole batch at once), or "". */
@@ -64,13 +65,16 @@ export function stepStatus(section, usualFor) {
       const done = members.reduce((n, other) => n + (other.usage ? (other.progress?.total ?? 0) : (writingProgress(other.answer, other.progress)?.current ?? 0)), 0);
       const started = Math.min(...members.map((other) => other.startedAt || Infinity));
       const pct = Math.round((100 * done) / total);
-      return `<span class="research-live__doing">${done} of ${total} uses of the word translated</span>`
+      const atWork = members.filter((other) => !other.usage && !other.problem).length;
+      return `<span class="research-live__doing">${done} of ${total} uses of the word translated${atWork ? ` · ${atWork} ${atWork === 1 ? "batch" : "batches"} at work` : ""}</span>`
         + `<span class="research-live__bar" role="progressbar" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${done}"><span style="width:${pct}%"></span></span>`
         + (Number.isFinite(started) ? `<span class="research-live__clock">${elapsedText(Date.now() - started)}</span>` : "");
     }
   }
   if (request) return liveStatusHtml(request, requestState(request), usualFor?.(request.stage) ?? null);
   // A progress line is what happens now until a finding, or an AI request, comes after it.
+  const waiting = [...section.items].reverse().find((item) => item.kind === "line" && /^Waiting for you\b/.test(item.entry.text ?? ""));
+  if (waiting && !runningRequest(section)) return `<span class="research-live__doing">${esc(waiting.entry.text)}</span>`;
   const working = '<span class="research-live__doing">Working…</span>';
   const index = section.items.findLastIndex((item) => item.kind === "line" && item.entry.type === "info");
   if (index < 0) return working;
@@ -95,6 +99,7 @@ const STEP_TITLES = {
   "Candidate checks": "Checking the candidates",
   "Discovery": "Free translation",
   "Rare translations": "Notes for rare translations",
+  "Counting (second judge)": "Counting again, by a second AI",
 };
 
 export function stepTitle(heading) {
