@@ -1545,7 +1545,6 @@
 /* the "now" line at the end of the open running step: wraps; one line only beside a folded title */
 .research-step__now {
   flex-wrap: wrap;
-  padding-top: 4px;
 }
 
 .research-step__now .research-live__doing {
@@ -1578,7 +1577,9 @@
   z-index: 2;
   /* Edge to edge across the list (its side padding is 2px left, 12px right). */
   margin: 0 -12px 0 -2px;
-  padding: 9px 12px 14px 2px;
+  /* 8px of the bottom padding lie over the list's own bottom padding. */
+  padding: 3px 12px 10px 2px;
+  line-height: 1.3;
   border-top: 1px solid var(--surface-border);
   background: rgb(255, 250, 244);
   box-shadow: 0 -10px 14px -10px rgba(164, 112, 41, 0.22);
