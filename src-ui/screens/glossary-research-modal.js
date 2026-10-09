@@ -320,8 +320,16 @@ function renderRun(state) {
     : research.runStatus === "family" ? renderFamilyChoice(research) : "";
   const sections = buildLogSections(research.log);
   const usualFor = (stage) => usualRange(stepTimings(research.modelId, stage));
+  const samael = research.sourceMode === "samael";
+  const context = {
+    term: research.term,
+    texts: samael ? "Samael Aun Weor's books and lectures" : "the selected projects",
+    author: samael ? "Samael Aun Weor" : "the author",
+    source: state.glossaryEditor?.sourceLanguage?.name,
+    target: targetName,
+  };
   const logLines = `<div class="research-results" data-research-log aria-live="off">${renderResults(sections, {
-    running, openSections: research.sectionOpen ?? {}, usualFor,
+    running, openSections: research.sectionOpen ?? {}, usualFor, context,
   })}</div>`;
   // While research runs the log is the main view; afterwards it folds away.
   const log = running

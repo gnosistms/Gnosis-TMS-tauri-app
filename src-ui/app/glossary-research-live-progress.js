@@ -115,7 +115,8 @@ export function writingProgress(answer, progress) {
 /** "translation 12 of 31", "meaning 3". */
 export function writingText(p) {
   if (!p) return "";
-  return p.total ? `${p.unit} ${p.current} of ${p.total}` : `${p.unit} ${p.current}`;
+  const units = p.unit === "use" ? "uses of the word" : `${p.unit}s`;
+  return p.total ? `${p.current} of ${p.total} ${units}` : `${p.current} ${p.current === 1 ? p.unit : units}`;
 }
 
 const escapeHtml = (text) => String(text ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
@@ -127,14 +128,14 @@ const escapeHtml = (text) => String(text ?? "").replace(/[&<>"]/g, (c) => ({ "&"
  */
 export function liveStatusHtml(request, phase, usual, now = Date.now()) {
   const elapsed = request.startedAt ? now - request.startedAt : 0;
-  let doing = "sent, waiting for the AI";
+  let doing = request.purpose ? `Asking the AI to ${request.purpose}` : "Waiting for the AI";
   let bar = "";
   if (phase === "thinking") {
-    const title = latestThinkingTitle(request.thinking);
-    doing = title ? `thinking: ${title}` : "thinking";
+    // What it was asked stays in view; its thinking shows below the status.
+    doing = request.purpose ? `Asking the AI to ${request.purpose} (thinking)` : "The AI is thinking";
   } else if (phase === "writing") {
     const progress = writingProgress(request.answer, request.progress);
-    doing = progress ? `writing ${writingText(progress)}` : "writing the answer";
+    doing = progress ? `The AI is writing: ${writingText(progress)}` : "The AI is writing its answer";
     if (progress?.total) {
       const pct = Math.round((100 * Math.max(0, progress.current - 0.5)) / progress.total);
       bar = `<span class="research-live__bar" role="progressbar" aria-valuemin="0" aria-valuemax="${progress.total}" aria-valuenow="${progress.current}"><span style="width:${pct}%"></span></span>`;

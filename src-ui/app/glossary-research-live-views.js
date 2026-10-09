@@ -50,21 +50,26 @@ function sensesView(request, value) {
   ];
   const done = Boolean(request.usage);
   return view("senses",
-    `${done ? "Sorted" : "Sorting"} ${done ? sorted : `${sorted} of ${total}`} general ${esc(hint.language)} sentences with “${esc(hint.word)}” by meaning`,
-    `<p class="research-view__explain">Each sentence is put under the meaning it uses. A meaning's share of the sentences becomes its share of the word's frequency score.</p>${bars(rows, total, "Sentences per meaning")}`);
+    `“${esc(hint.word)}” in everyday ${esc(hint.language)}: which meaning it has in each sentence (${done ? sorted : `${sorted} of ${total}`})`,
+    `<p class="research-view__explain">Sentences from ${esc(hint.language)} news, sorted by meaning. This shows how common each meaning is.</p>${bars(rows, total, "Sentences per meaning")}`);
 }
 
 function formsView(request, value) {
   const forms = list(value?.forms).filter((form) => str(form?.form));
   if (!forms.length) return view("forms", "Word forms", muted("…"));
   if (forms.some((form) => "keep" in form)) {
-    return view("forms", "Checking the forms against the texts",
+    const dropped = forms.some((form) => form.keep === false);
+    return view("forms", "Which spellings really are this word",
       `<div class="research-view__chips">${forms.map((form) => `<span title="${esc(form.reason)}">${chip(form.form, form.keep === false ? "dropped" : "")}</span>`).join("")}</div>
-       <p class="research-view__explain">Struck-out forms were dropped; hover for the reason.</p>`);
+       <p class="research-view__explain">${dropped ? "Crossed out: dropped (hover to see why)." : "All confirmed."}</p>`);
   }
-  return view("forms", "Forms of the term to search for",
+  return view("forms", "Spellings to search for",
     `<div class="research-view__chips">${forms.map((form) => `<span title="${esc([form.kind, form.confidence].filter(Boolean).join(", "))}">${chip(form.form, [form.kind === "spelling" ? "outline" : "", form.confidence === "low" ? "faint" : ""].filter(Boolean).join(" research-view__chip--"))}</span>`).join("")}</div>
-     <p class="research-view__explain">Solid: inflections. Outlined: other spellings. Faded: less likely.</p>`);
+     <p class="research-view__explain">${[
+       forms.some((form) => form.kind !== "spelling") ? "Solid: grammatical forms." : "",
+       forms.some((form) => form.kind === "spelling") ? "Outlined: other spellings." : "",
+       forms.some((form) => form.confidence === "low") ? "Faded: the AI is less sure." : "",
+     ].filter(Boolean).join(" ")}</p>`);
 }
 
 function dictionaryView(request, value) {
@@ -79,10 +84,9 @@ function dictionaryView(request, value) {
 
 function familyView(request, value) {
   const words = list(value?.words).filter((word) => str(word?.form));
-  const kinds = { prefixed: "prefix", suffixed: "suffix", compound: "compound", phrase: "phrase" };
-  return view("family", words.length ? `${plural(words.length, "related word")} found` : "Looking for related words",
+  return view("family", words.length ? `${plural(words.length, "possible related word")}, each then searched for in the texts` : "Looking for related words",
     `<div class="research-view__rows">${words.map((word) => `
-      <div class="research-view__row"><strong>${esc(word.form)}</strong> ${word.kind ? label(kinds[word.kind] ?? word.kind) : ""} ${muted(word.reason)}</div>`).join("")}</div>`);
+      <div class="research-view__row"><strong>${esc(word.form)}</strong> ${muted(word.reason)}</div>`).join("")}</div>`);
 }
 
 function sourcesView(request, value) {
@@ -111,7 +115,7 @@ function partsView(request, value) {
   const parts = list(value?.parts).filter((part) => str(part?.part));
   const senses = list(value?.senses).filter((sense) => str(sense?.gloss));
   const bases = list(value?.bases).filter((base) => str(base?.word));
-  return view("parts", "Parts and meanings", `
+  return view("parts", parts.length > 1 ? "How the word is built, and its meanings" : "Meanings", `
     ${parts.length ? `<div class="research-view__equation">${parts.map((part, index) => `${index ? '<span class="research-view__plus">+</span>' : ""}<span class="research-view__part"><strong>${esc(part.part)}</strong>${muted(part.meaning)}</span>`).join("")}</div>` : ""}
     ${senses.length ? `<ol class="research-view__definitions">${senses.map((sense) => `<li>${sense.partOfSpeech ? `${muted(`(${sense.partOfSpeech})`)} ` : ""}${esc(sense.gloss)}${sense.usedByAuthor === true ? ` ${label("used by the author", "accent")}` : ""}</li>`).join("")}</ol>` : ""}
     ${bases.length ? `<div class="research-view__rows">${bases.map((base) => `<div class="research-view__row">Base word <strong>${esc(base.word)}</strong>: ${esc(base.neededSense)} ${list(base.otherSenses).length ? muted(`+${plural(list(base.otherSenses).length, "other meaning")}`) : ""}</div>`).join("")}</div>` : ""}`);
@@ -120,7 +124,7 @@ function partsView(request, value) {
 function candidatesView(request, value) {
   const senses = list(value?.senses).filter((sense) => str(sense?.sense));
   const groups = senses.reduce((n, sense) => n + list(sense.groups).length, 0);
-  return view("candidates", senses.length ? `${plural(groups, "group")} of candidate translations for ${plural(senses.length, "meaning")}` : "Candidate translations",
+  return view("candidates", senses.length ? `${plural(groups, "option")} for ${plural(senses.length, "meaning")} <span class="research-view__muted">(★ recommended; words on one row can replace each other)</span>` : "Possible translations",
     senses.map((sense) => {
       const ordered = [...list(sense.groups)].sort((a, b) => Number(b?.recommended === true) - Number(a?.recommended === true));
       return `<div class="research-view__block">
@@ -136,8 +140,8 @@ function candidatesView(request, value) {
 function checksView(request, value) {
   const candidates = list(value?.candidates).filter((c) => str(c?.target));
   const total = request.progress?.total;
-  return view("checks", `${total ? `${candidates.length} of ${total}` : candidates.length} candidates taken apart into their words`,
-    `<p class="research-view__explain">Each word is then measured in general use; a word that looks like the Spanish term is also checked for the meaning it is used in.</p>
+  return view("checks", `Each candidate's words, and the meaning each must have (${total ? `${candidates.length} of ${total}` : candidates.length})`,
+    `<p class="research-view__explain">Next, each word is looked up in everyday use (a compound word part by part). Highlighted: looks like the word being researched, so it may be a false friend.</p>
      <div class="research-view__table">${candidates.map((c) => {
       const words = list(c.words).filter((w) => str(w?.word));
       const own = words.filter((w) => !w.partOf);
@@ -145,7 +149,7 @@ function checksView(request, value) {
         <div class="research-view__tcell"><strong>${esc(c.target)}</strong>${c.establishedUsage === true ? ` ${label("established", "good")}` : ""}</div>
         <div class="research-view__tcell">${own.map((w) => {
           const parts = words.filter((p) => p.partOf === w.word).map((p) => p.word);
-          return `<div class="research-view__word">${chip(w.word, w.lookalike ? "flag" : "")}${parts.length ? ` ${muted(`= ${parts.join(" + ")}`)}` : ""}${w.lookalike ? ` ${muted(`looks like “${w.resembles || "the term"}”: measured by meaning`)}` : ""}${w.neededSense ? `<div class="research-view__note">${esc(w.neededSense)}</div>` : ""}</div>`;
+          return `<div class="research-view__word">${chip(w.word, w.lookalike ? "flag" : "")}${parts.length > 1 ? ` ${muted(`= ${parts.join(" + ")}`)}` : ""}${w.lookalike ? ` ${muted(`looks like “${w.resembles || "the term"}”: measured by meaning`)}` : ""}${w.neededSense ? `<div class="research-view__note">${esc(w.neededSense)}</div>` : ""}</div>`;
         }).join("")}</div>
       </div>`;
     }).join("")}</div>`);
@@ -171,6 +175,12 @@ function tallyRows(items, keyOf, nameOf) {
   return [...counts].sort((a, b) => b[1] - a[1]);
 }
 
+/** "114 uses of the word in 100 passages": a use's id is its passage's id, a dot and its number. */
+function usesIn(items) {
+  const passages = new Set(items.map((item) => str(item?.occId).split(".")[0])).size;
+  return `${plural(items.length, "use")} of the word${passages && passages !== items.length ? ` in ${plural(passages, "passage")}` : ""}`;
+}
+
 /**
  * The rows of a batch step: while it runs, the uses of the request being written;
  * when the step is finished, every use, folded behind one line.
@@ -184,9 +194,14 @@ function useRows(items, all, final, unit, row) {
 function discoveryView(request, value, batch, final) {
   const items = list(value?.items).filter((item) => str(item?.occId));
   const all = [...batchItems(request, batch), ...items].filter((item) => str(item?.occId));
-  const rows = tallyRows(all, (item) => str(item?.rendering), (key) => key).slice(0, 8);
+  const spelled = new Map();
+  for (const item of all) {
+    const key = str(item?.rendering).toLowerCase();
+    if (key && !spelled.has(key)) spelled.set(key, item.rendering);
+  }
+  const rows = tallyRows(all, (item) => str(item?.rendering).toLowerCase(), (key) => spelled.get(key) ?? key).slice(0, 8);
   const row = (item) => `<div class="research-view__row"><strong>${esc(item.rendering)}</strong> ${muted(item.phraseTranslation)}${item.expressionCandidate ? ` ${label(`expression: ${item.expressionCandidate}`, "accent")}` : ""}</div>`;
-  return view("discovery", `Open reading: what a translator reaches for${final ? ` (${plural(all.length, "use")})` : batch?.length > 1 ? " (all batches so far)" : ""}`,
+  return view("discovery", `What the AI wrote, with no suggestions (${usesIn(all)}${final ? "" : " so far"})`,
     `${rows.length ? bars(rows, 0, "Renderings used") : ""}${useRows(items, all, final, "use", row)}`);
 }
 
@@ -206,7 +221,7 @@ function countingView(request, value, batch, final) {
         ${item.status && item.status !== "selected" ? label(item.status === "other" ? `something else${item.otherRendering ? `: ${item.otherRendering}` : ""}` : "could not tell", "warn") : ""}${item.fit === "poor" ? ` ${label("poor fit", "warn")}` : ""}
         <div class="research-view__sentence">${highlightIn(item.sentenceTranslation, item.chosenWording)}</div>
       </div>`;
-  return view("counting", `Which translation fits each use${final ? ` (${plural(all.length, "use")})` : batch?.length > 1 ? " (all batches so far)" : ""}`,
+  return view("counting", `Translation chosen for each use of the word (${usesIn(all)}${final ? "" : " so far"})`,
     `${rows.length ? bars(rows.map(([text, n]) => [text, n, text === "something else" || text === "could not tell" ? "rest" : "sense"]), 0, "Chosen translations") : ""}${useRows(items, all, final, "use", row)}`);
 }
 
@@ -220,9 +235,9 @@ function proposalView(request, value) {
       ${entry.generalNote ? `<div class="research-view__note">${esc(entry.generalNote)}</div>` : ""}
       <ul class="research-view__list">${list(entry.variants).filter((v) => str(v?.target)).map((v) => `<li><strong>${esc(v.target)}</strong>${v.partOfSpeech ? ` ${muted(`(${v.partOfSpeech})`)}` : ""}${v.note ? ` — ${esc(v.note)}` : ""}</li>`).join("")}</ul>
     </div>`).join("")}
-    ${small("Left out", leftOut, (item) => `<li><strong>${esc(item.rendering)}</strong>${item.count ? ` ${muted(`×${item.count}`)}` : ""} ${muted(item.reason)}</li>`)}
+    ${small("Translations left out", leftOut, (item) => `<li><strong>${esc(item.rendering)}</strong>${item.count ? ` ${muted(`×${item.count}`)}` : ""} ${muted(item.reason)}</li>`)}
     ${small("Fixed expressions without their own entry", list(value?.rejectedExpressions).filter((x) => str(x?.source)), (item) => `<li><strong>${esc(item.source)}</strong> ${muted(item.reason)}</li>`)}
-    ${small("Separate studies suggested", list(value?.derivativeStudies).filter((x) => str(x?.source)), (item) => `<li><strong>${esc(item.source)}</strong> ${muted(item.reason)}</li>`)}
+    ${small("Related words to research separately", list(value?.derivativeStudies).filter((x) => str(x?.source)), (item) => `<li><strong>${esc(item.source)}</strong> ${muted(item.reason)}</li>`)}
     ${small("Open questions", list(value?.openQuestions).filter(str), (item) => `<li>${esc(item)}</li>`)}`);
 }
 

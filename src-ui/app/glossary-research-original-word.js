@@ -85,12 +85,13 @@ export function placeOriginalWords(candidates, required) {
   candidates.senses ??= [];
   for (const word of required) {
     const key = fold(word.term);
-    const holders = [];
-    for (const sense of candidates.senses) {
-      for (const group of sense.groups ?? []) {
-        if ((group.members ?? []).some((member) => sameWord(member, key))) holders.push({ sense, group });
-      }
-    }
+    // The word as written wins over a case variant: "Innermost" (the divine name)
+    // is not the adjective "innermost" listed for another meaning.
+    const exact = (member) => String(member ?? "").normalize("NFC").trim() === String(word.term).normalize("NFC").trim();
+    const find = (test) => candidates.senses.flatMap((sense) => (sense.groups ?? [])
+      .filter((group) => (group.members ?? []).some(test)).map((group) => ({ sense, group })));
+    let holders = find(exact);
+    if (!holders.length) holders = find((member) => sameWord(member, key));
     const holder = holders.find((h) => h.group.recommended) ?? holders[0] ?? null;
     let sense = holder?.sense;
     if (!sense) {
@@ -99,7 +100,7 @@ export function placeOriginalWords(candidates, required) {
     }
     const note = holder && holder.group.members.length === 1 ? holder.group.note : "";
     if (holder) {
-      holder.group.members = holder.group.members.filter((member) => !sameWord(member, key));
+      holder.group.members = holder.group.members.filter((member) => !(exact(member) || (!holders.some((h) => h.group.members.some(exact)) && sameWord(member, key))));
       sense.groups = sense.groups.filter((group) => group.members.length);
     }
     for (const group of sense.groups) group.recommended = false;
@@ -114,8 +115,8 @@ export function placeOriginalWords(candidates, required) {
 
 /** The placed original word a candidate check is for, or null. */
 export function originalFor(placed, target, senseId) {
-  const key = fold(target);
-  return (placed ?? []).find((word) => fold(word.term) === key && word.senseId === senseId) ?? null;
+  const text = String(target ?? "").normalize("NFC").trim();
+  return (placed ?? []).find((word) => String(word.term).normalize("NFC").trim() === text && word.senseId === senseId) ?? null;
 }
 
 /**
@@ -131,8 +132,10 @@ export function enforceOriginalWords(proposal, placed, { headword = "" } = {}) {
   if (!words.length) return { added, removed };
   for (const word of placed ?? []) {
     const key = fold(word.term);
-    let entry = words.find((e) => e.variants.some((v) => fold(v.target) === key));
-    let variant = entry?.variants.find((v) => fold(v.target) === key);
+    const term = String(word.term).normalize("NFC").trim();
+    const exact = (v) => String(v.target ?? "").normalize("NFC").trim() === term;
+    let entry = words.find((e) => e.variants.some(exact)) ?? words.find((e) => e.variants.some((v) => fold(v.target) === key));
+    let variant = entry?.variants.find(exact) ?? entry?.variants.find((v) => fold(v.target) === key);
     if (!variant) {
       entry = words.find((e) => e.sourceTerms.some((t) => fold(t) === fold(headword))) ?? words[0];
       let n = entry.variants.length + 1;

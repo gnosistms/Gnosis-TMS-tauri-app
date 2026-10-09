@@ -45,18 +45,18 @@ test("timings are kept per model and step, and saved runs are added once", () =>
 test("the item being written is counted from the field that opens each item", () => {
   const answer = '{"candidates":[{"n":1,"words":[{"word":"x"}]},{"n": 2,"words":[';
   assert.deepEqual(writingProgress(answer, { key: "n", total: 31, unit: "translation" }), { current: 2, total: 31, unit: "translation" });
-  assert.equal(writingText(writingProgress('{"senses":[{"senseId":"s1"},{"senseId":"s2"', { key: "senseId", total: null, unit: "meaning" })), "meaning 2");
+  assert.equal(writingText(writingProgress('{"senses":[{"senseId":"s1"},{"senseId":"s2"', { key: "senseId", total: null, unit: "meaning" })), "2 meanings");
   assert.equal(writingProgress("{", { key: "n", total: 3 }), null);
 });
 
 test("the live status says what the request is doing, with the clock and the usual time", () => {
   const usual = usualRange([150, 180, 200, 240]);
   const started = 1_000_000;
-  const thinking = liveStatusHtml({ startedAt: started, thinking: "**Evaluating Vietnamese translations**\n…" }, "thinking", usual, started + 100_000);
-  assert.match(thinking, /thinking: Evaluating Vietnamese translations/);
+  const thinking = liveStatusHtml({ startedAt: started, purpose: "propose Vietnamese translations for each meaning", thinking: "**Evaluating Vietnamese translations**\n…" }, "thinking", usual, started + 100_000);
+  assert.match(thinking, /Asking the AI to propose Vietnamese translations for each meaning \(thinking\)/, "what it was asked stays in view; the thinking shows below");
   assert.match(thinking, /1:40 · usually 3–4 min/);
   const writing = liveStatusHtml({ startedAt: started, answer: '{"candidates":[{"n":1},{"n":2', progress: { key: "n", total: 4, unit: "translation" } }, "writing", usual, started + 5_000);
-  assert.match(writing, /writing translation 2 of 4/);
+  assert.match(writing, /The AI is writing: 2 of 4 translations/);
   assert.match(writing, /role="progressbar"/);
   assert.match(liveStatusHtml({ startedAt: started }, "waiting", usual, started + 900_000), /taking much longer than usual/);
 });

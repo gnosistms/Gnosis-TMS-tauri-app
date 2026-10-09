@@ -33,6 +33,7 @@ import {
   MIN_SENSE_SAMPLE,
   RESEARCH_DATA_CONTACT,
   combinedZipf,
+  commonness,
   dataLanguage,
   describeSense,
   formatZipf,
@@ -602,7 +603,7 @@ export function createResearchEngine(deps) {
       const status = await languageData.ensure(code);
       languageStatus[key] = status.available === true;
       if (status.available) {
-        info(`${name} frequency data ready: ${status.corpus ?? "general corpus"}, ${status.sentences ?? "?"} sentences.`);
+        info(`Everyday ${name} usage data is ready: ${Number(status.sentences) ? `${(Number(status.sentences) / 1e6).toLocaleString("en-US")} million` : "a corpus of"} sentences of ${name} news text, to measure how common words are.`);
       } else {
         log({ type: "problem", text: `Frequency data for ${name} is not available${status.error ? ` (${status.error})` : ""}. To ask for it to be added, write to ${RESEARCH_DATA_CONTACT}. The research continues without Zipf scores.` });
       }
@@ -719,7 +720,7 @@ export function createResearchEngine(deps) {
       if (result.status !== "found" && settings.webDictionaryDomains?.length) {
         info("No dictionary entry yet; asking the AI to search dictionary sites.");
         const found = await client.callJson({
-          stage: "dictionary", purpose: "search dictionary sites for definitions",
+          stage: "dictionary", purpose: "look the word up on dictionary websites",
           instructions: `You look up the ${settings.sourceLanguageName} word “${settings.term}” in published dictionaries using web search, only on dictionary sites. Copy each sense's definition faithfully (in the dictionary's own language), with its number and grammatical labels, and give the page address. Never write definitions from memory: if the search finds no dictionary entry for this exact word, return found=false and no entries.`,
           content: `Word: ${settings.term}\nLanguage: ${settings.sourceLanguageName}`,
           schema: prompts.WEB_DICTIONARY_SCHEMA, schemaName: "web_dictionary",
@@ -748,8 +749,10 @@ export function createResearchEngine(deps) {
       }
       // A note on why a dictionary failed only matters when no entry was found at all.
       if (result.status !== "found") for (const note of result.notes ?? []) fact(note);
+      const phrases = (result.articles ?? []).flatMap((article) => (article.complexForms ?? []).map((form) => `«${form.form}»`));
+      if (result.status === "found" && result.text) logResult("dictionary", [{ sourceName: result.sourceName, url: result.url ?? "", text: result.text }], `${result.sourceName}: entry`);
       fact(result.status === "found"
-        ? `${result.sourceName}: found (${result.senseCount} senses${result.complexFormCount ? `, ${result.complexFormCount} complex forms` : ""})`
+        ? `${result.sourceName}: ${result.senseCount} ${result.senseCount === 1 ? "meaning" : "meanings"}${phrases.length ? `, and the ${phrases.length === 1 ? "phrase" : "phrases"} ${phrases.join(", ")}` : result.complexFormCount ? `, and ${result.complexFormCount} ${result.complexFormCount === 1 ? "phrase" : "phrases"} with the word` : ""}`
         : result.status === "not_found"
           ? `No dictionary entry found (${result.tried.join(", ")})`
           : `Dictionary unreachable (${result.tried.join(", ")}) — continuing without it`);
@@ -762,7 +765,6 @@ export function createResearchEngine(deps) {
       heading("Word forms");
       const hint = corpus.formsHint ? await corpus.formsHint(settings.term) : null;
       if (hint?.forms?.length) {
-        info(`Word list of the texts: ${hint.forms.map((f) => `${f.form} (${f.rows})`).join(", ")}`);
       }
       const proposeCtx = ctx({
         userVariants: settings.variants,
@@ -770,7 +772,7 @@ export function createResearchEngine(deps) {
         corpusForms: (hint?.forms ?? []).map((f) => f.form),
       });
       const proposed = await client.callJson({
-        stage: "forms", purpose: "propose word forms",
+        stage: "forms", purpose: `list every spelling of “${settings.term}” to search for (plural, feminine, without accents…)`,
         instructions: prompts.formsProposeInstructions(proposeCtx),
         content: prompts.formsProposeContent(proposeCtx),
         schema: prompts.FORMS_PROPOSE_SCHEMA, schemaName: "forms",
@@ -795,7 +797,7 @@ export function createResearchEngine(deps) {
         const added = !proposedForms.includes(candidate);
         if (added && !count.rows) continue;
         counted.push({ ...candidate, rows: count.rows, examples: count.examples });
-        info(`search “${candidate.form}”: ${count.rows} passages${added ? " (added: word list or accent spelling)" : ""}`);
+        info(`“${candidate.form}” appears in ${count.rows} ${count.rows === 1 ? "passage" : "passages"}${added ? " (added: found in the texts or spelled without accents)" : ""}`);
       }
       const confirmCtx = ctx();
       const content = counted.map((c) => [
@@ -803,7 +805,7 @@ export function createResearchEngine(deps) {
         ...c.examples.slice(0, 2).map((e) => `   ${snippet(e.text, e.start, e.end, 90)}`),
       ].join("\n")).join("\n");
       const confirmed = await client.callJson({
-        stage: "forms", purpose: "confirm word forms against the texts",
+        stage: "forms", purpose: `check in the texts which spellings really are “${settings.term}”`,
         instructions: prompts.formsConfirmInstructions(confirmCtx), content,
         schema: prompts.FORMS_CONFIRM_SCHEMA, schemaName: "forms_confirm",
         maxOutputTokens: 3000, effort: settings.effortLight,
@@ -813,7 +815,7 @@ export function createResearchEngine(deps) {
       const forms = counted.filter((c) => keep.has(c.form.trim().toLowerCase()));
       const inTexts = forms.filter((f) => f.rows > 0).map((f) => f.form);
       const notFound = forms.filter((f) => f.rows === 0).map((f) => f.form);
-      fact(`Forms: ${inTexts.join(", ") || "none found"}${notFound.length ? `; kept though not in the texts: ${notFound.join(", ")}` : ""}`);
+      fact(`${inTexts.length} ${inTexts.length === 1 ? "spelling" : "spellings"} found in the texts: ${inTexts.join(", ") || "none"}${notFound.length ? `; also kept, though not in the texts: ${notFound.join(", ")}` : ""}`);
       const dropped = confirmed.forms.filter((f) => !f.keep);
       if (dropped.length) info(`dropped: ${dropped.map((f) => `${f.form} (${f.reason})`).join("; ")}`);
       return { confirmed: forms.map((f) => f.form), searched: inTexts, notFound, candidates: counted.map((c) => ({ form: c.form, kind: c.kind, confidence: c.confidence, rows: c.rows })), decisions: confirmed.forms, related: hint?.related ?? [] };
@@ -827,7 +829,7 @@ export function createResearchEngine(deps) {
       const forms = store.load("forms");
       const known = new Set((forms.candidates ?? []).map((c) => fold(c.form).trim()));
       const proposed = await client.callJson({
-        stage: "family", purpose: "list words built on the term",
+        stage: "family", purpose: `find related words built on “${settings.term}”`,
         instructions: prompts.familyInstructions(ctx()),
         content: [
           `Headword: ${settings.term}`,
@@ -869,7 +871,7 @@ export function createResearchEngine(deps) {
       }
       members.sort((a, b) => b.rows - a.rows);
       fact(members.length
-        ? `Word family in the texts: ${members.map((m) => `${m.form} (${m.rows})`).join(", ")}`
+        ? `Related words in the texts (passages): ${members.map((m) => `${m.form} (${m.rows})`).join(", ")}`
         : "No other words built on the term occur in the texts.");
       return { members, searched: candidates.length };
     });
@@ -885,7 +887,7 @@ export function createResearchEngine(deps) {
       if (cancelled || words == null) throw new ResearchStop("Research was cancelled.", "cancelled");
       fact(words.length
         ? `Related words to research next, one after another: ${words.map((w) => w.form).join(", ")}`
-        : "No related words chosen for research.");
+        : "You chose no related words to research next.");
       return { words };
     });
   }
@@ -1009,7 +1011,7 @@ export function createResearchEngine(deps) {
         searched.add(`${record.originalBookId}:${fold(originals.join(",")).trim()}`);
         pairReads.set(record.originalBookId, found.occurrences ?? 0);
         const name = record.originalTitle ?? book.title;
-        info(`original text of ${name}: ${found.occurrences} occurrences of ${originals.map((o) => `“${o}”`).join(", ")} in ${found.paragraphs} passages`);
+        info(`${book.title.split(" — ")[0]} is a Spanish translation of ${name}${record.originalAuthor ? ` by ${record.originalAuthor}` : ""}. The book's own glossary pairs “${settings.term}” with ${originals.map((o) => `“${o}”`).join(", ")}, found ${found.occurrences} times in the original.`);
         originalSections.push(section(
           `The original text of ${name}: ${found.occurrences} occurrences of ${originals.map((o) => `“${o}”`).join(", ")} in ${found.paragraphs} passages (a sample)`,
           found.items.map((item) => passageSnippet({ ...item, reference: { title: name } })),
@@ -1027,7 +1029,7 @@ export function createResearchEngine(deps) {
         section("A sample of the author's own uses", authorPassages()),
       ].join("\n\n");
       const study = await client.callJson({
-        stage: "sources", purpose: "trace where the term comes from",
+        stage: "sources", purpose: `find out where the author took “${settings.term}” from`,
         instructions: prompts.sourcesInstructions(ctx()), content,
         schema: prompts.SOURCES_SCHEMA, schemaName: "sources",
         maxOutputTokens: 16000, effort: settings.effortStudy,
@@ -1050,6 +1052,8 @@ export function createResearchEngine(deps) {
           sense: sense.sense, label: sense.label ?? "", partOfSpeech: sense.partOfSpeech ?? sense.wordClass ?? "", inDictionary: sense.inDictionary === true,
           sourceBook: sense.sourceBook ?? null, originalTerm: sense.originalTerm ?? null, originalLanguage: sense.originalLanguage ?? null,
           verified, term: settings.term, language: settings.sourceLanguageName,
+          originalTitle: sense.originalWord?.originalTitle ?? null, originalAuthor: sense.originalWord?.originalAuthor ?? null,
+          translationTitle: sense.originalWord?.translationTitle ? sense.originalWord.translationTitle.split(" — ")[0].replace(/\s*\([^)]*\)\s*$/, "") : null,
         }], `${sense.sense}${sense.sourceBook ? ` — from ${sense.sourceBook}` : ""}${sense.originalTerm ? ` (original ${sense.originalLanguage ?? ""} term “${sense.originalTerm}”)` : ""}`);
       }
       return {
@@ -1087,7 +1091,7 @@ export function createResearchEngine(deps) {
       if (!record?.originalBookId || searched.has(`${record.originalBookId}:${fold(sense.originalTerm).trim()}`)) continue;
       const found = await corpus.originalSample(record.originalBookId, [sense.originalTerm], settings.seed, 10);
       const name = record.originalTitle ?? book.title;
-      info(`original text of ${name}: ${found.occurrences} occurrences of “${sense.originalTerm}” in ${found.paragraphs} passages`);
+      info(`Reading the original book, ${name}: “${sense.originalTerm}” appears ${found.occurrences} times`);
       const content = [
         `Term: ${settings.term}. Proposed original word: “${sense.originalTerm}” (${sense.originalTermBasis}).`,
         `## The original text (${name}): ${found.occurrences} occurrences in ${found.paragraphs} passages (a sample)`,
@@ -1096,7 +1100,7 @@ export function createResearchEngine(deps) {
         book.items.slice(0, 8).map((item) => passageSnippet(item)).join("\n\n"),
       ].join("\n\n");
       const check = await client.callJson({
-        stage: "sources", purpose: `check the original word “${sense.originalTerm}”`,
+        stage: "sources", purpose: `confirm in the original book that “${sense.originalTerm}” is the word behind “${settings.term}”`,
         instructions: prompts.originalCheckInstructions(ctx()), content,
         schema: prompts.ORIGINAL_CHECK_SCHEMA, schemaName: "original_check",
         maxOutputTokens: 4000, effort: settings.effortProposal,
@@ -1129,7 +1133,7 @@ export function createResearchEngine(deps) {
         `## Passages from the texts\n${authorPassages().join("\n\n")}`,
       ].filter(Boolean).join("\n\n");
       const result = await client.callJson({
-        stage: "candidates", purpose: "propose candidate translations for the whole term",
+        stage: "candidates", purpose: `propose ${settings.targetLanguageName} translations for each meaning`,
         // One block per meaning; the model may leave some meanings out, so no total.
         progress: { key: "senseId", total: null, unit: "meaning" },
         instructions: prompts.candidatesInstructions(ctx()), content,
@@ -1165,7 +1169,7 @@ export function createResearchEngine(deps) {
         `## Passages from the texts\n${authorPassages().slice(0, 15).join("\n\n")}`,
       ].filter(Boolean).join("\n\n");
       const study = await client.callJson({
-        stage: "parts", purpose: "take the term apart and list its senses",
+        stage: "parts", purpose: `list the meanings of “${settings.term}”`,
         instructions: prompts.partsInstructions(ctx()), content,
         schema: prompts.PARTS_SCHEMA, schemaName: "parts",
         maxOutputTokens: 6000, effort: settings.effortProposal,
@@ -1178,11 +1182,11 @@ export function createResearchEngine(deps) {
       if (!(await frequencyReady(code, name))) return result;
       const formZipfs = await languageData.zipf(code, forms);
       const listZipf = combinedZipf(formZipfs);
-      info(`Measuring “${settings.term}” in general ${name}: sorting example sentences by the sense they use.`);
+      info(`How common is each meaning of “${settings.term}”? The AI sorts everyday ${name} sentences with the word by the meaning it has in each.`);
       const term = await measureSenses({
         code, name, forms, listZipf,
         senses: study.senses.map(({ id, gloss, partOfSpeech }) => ({ id, gloss, partOfSpeech })),
-        purpose: `sort general ${name} sentences with “${settings.term}” by sense`,
+        purpose: `sort everyday ${name} sentences with “${settings.term}” by meaning`,
       });
       const inDictionary = store.load("dictionary")?.status === "found";
       const invented = !inDictionary && !(term.wordZipf >= 1);
@@ -1195,7 +1199,7 @@ export function createResearchEngine(deps) {
           const measure = reusedMeasure(priorMeasurements(code), base.reuse, base.word) ?? await measureSenses({
             code, name, forms: baseForms, listZipf: baseList,
             senses: [{ id: "needed", gloss: base.neededSense }, ...base.otherSenses.slice(0, 5).map((gloss, i) => ({ id: `o${i + 1}`, gloss }))],
-            purpose: `sort general ${name} sentences with “${base.word}” by sense`,
+            purpose: `sort everyday ${name} sentences with “${base.word}” by meaning`,
           });
           bases.push({ word: base.word, neededSense: base.neededSense, measure, needed: measure.senses.needed ?? null });
           logResult("frequency", [{ kind: "measure", language: name, word: base.word, zipf: measure.wordZipf, neededSense: base.neededSense, senseText: describeSense(measure.senses.needed) }],
@@ -1294,7 +1298,7 @@ export function createResearchEngine(deps) {
       }
       const sources = store.load("sources")?.study;
       const analysis = await client.callJson({
-        stage: "checks", purpose: "name each candidate's words and the senses they need",
+        stage: "checks", purpose: "take each candidate apart into its words, and say which meaning each word needs",
         progress: { key: "n", total: toCheck.length, unit: "translation" },
         instructions: prompts.checkInstructions(ctx()),
         content: [
@@ -1362,7 +1366,7 @@ export function createResearchEngine(deps) {
           senses: w.lookalike
             ? [{ id: "needed", gloss: w.neededSense }, ...w.otherSenses.slice(0, 5).map((gloss, i) => ({ id: `o${i + 1}`, gloss }))]
             : [{ id: "needed", gloss: w.neededSense }],
-          purpose: `sort general ${name} sentences with “${w.word}” by sense`,
+          purpose: `sort everyday ${name} sentences with “${w.word}” by meaning`,
         });
         // Only measurements that had sentences to sort count against the limit: a
         // word absent from the general corpus costs nothing and must not crowd out
@@ -1377,14 +1381,14 @@ export function createResearchEngine(deps) {
           }
         }
         const toMeasure = lookalikes.filter((x) => !measured.has(measureKey(x)));
-        if (toMeasure.length) info(`${toMeasure.length} word${toMeasure.length === 1 ? "" : "s"} that look like the ${sourceName} term or its parts to measure in general ${name}, likeliest false friends first.`);
+        if (toMeasure.length) info(`${toMeasure.length === 1 ? "One candidate word looks" : `${toMeasure.length} candidate words look`} like the ${sourceName} word, so ${toMeasure.length === 1 ? "it might be a false friend: its meanings" : "they might be false friends: their meanings"} in everyday ${name} are checked.`);
         let sorted = 0;
         for (const [index, w] of toMeasure.entries()) {
           if (sorted >= settings.maxSenseChecks) {
             info(`Measurement limit reached (${settings.maxSenseChecks} words with sentences to sort); ${toMeasure.length - index} left unmeasured.`);
             break;
           }
-          info(`Measuring “${w.word}” (${index + 1} of ${toMeasure.length}): sorting general ${name} sentences by the sense they use.`);
+          info(`“${w.word}” (${index + 1} of ${toMeasure.length}): which meanings does it have in everyday ${name}?`);
           const m = await measure(w);
           measured.set(measureKey(w), m);
           if (m.classified) sorted += 1;
@@ -1417,14 +1421,14 @@ export function createResearchEngine(deps) {
             if (reused) measured.set(measureKey(w), reused);
           }
           const todo = unique.filter((w) => !measured.has(measureKey(w)));
-          if (todo.length) info(`${todo.length} word${todo.length === 1 ? "" : "s"} that set a passing translation's score to sort by meaning in general ${name}.`);
+          if (todo.length) info(`Checking ${todo.length} ${todo.length === 1 ? "word" : "words"} of the candidates: how often is each used in everyday ${name} in the meaning needed (not just how common it is overall)?`);
           let sortedDeciding = 0;
           for (const [index, w] of todo.entries()) {
             if (sortedDeciding >= settings.maxDecidingChecks) {
               info(`Limit reached (${settings.maxDecidingChecks} words sorted by meaning); ${todo.length - index} scored on all their uses.`);
               break;
             }
-            info(`Sorting “${w.word}” (${index + 1} of ${todo.length}) by meaning: general ${name} sentences with it, in the meaning “${w.neededSense}” or another.`);
+            info(`“${w.word}” (${index + 1} of ${todo.length}): how often does it mean “${w.neededSense}” in everyday ${name}?`);
             const m = await measure(w);
             measured.set(measureKey(w), m);
             if (m.classified) sortedDeciding += 1;
@@ -1459,20 +1463,20 @@ export function createResearchEngine(deps) {
           for (const w of items.filter((item) => !item.partOf && item.measure?.needed)) {
             const needed = w.measure.needed;
             if (w.measure.instances < MIN_SENSE_SAMPLE) {
-              if (!w.lookalike) notes.push(`“${w.word}”: too few sentences of general ${name} to sort by meaning (${w.measure.instances}); scored on all its uses`);
+              if (!w.lookalike) notes.push(`“${w.word}”: only ${w.measure.instances} everyday ${name} ${w.measure.instances === 1 ? "sentence uses" : "sentences use"} it, too few to tell its meanings apart; judged on all its uses`);
               continue;
             }
             senseScore.set(textKey(w.word, code), needed.zipf ?? needed.upperBound ?? 0);
             if (!w.lookalike && needed.inSense === 0 && senseRef?.zipf != null) {
               verdict = "fail";
-              reasons.push(`“${w.word}” is not used in general ${name} in the meaning needed (${w.neededSense}): 0 of ${needed.classified} sorted sentences`);
+              reasons.push(`“${w.word}” is never used in everyday ${name} in the meaning needed (${w.neededSense}): 0 of ${needed.classified} sentences`);
             }
           }
           for (const w of items.filter((item) => item.lookalike && item.measure)) {
             const needed = w.measure.needed;
             const ref = sourceReference(w.resembles, c.senseId);
             if (!needed || w.measure.instances < MIN_SENSE_SAMPLE) {
-              notes.push(`“${w.word}”: too few sentences of general ${name} to measure (${w.measure.instances})`);
+              notes.push(`“${w.word}”: only ${w.measure.instances} everyday ${name} ${w.measure.instances === 1 ? "sentence uses" : "sentences use"} it, too few to measure`);
               if (verdict === "pass") verdict = "unclear";
               continue;
             }
@@ -1489,11 +1493,11 @@ export function createResearchEngine(deps) {
               }
               verdict = "fail";
               if (!original) failedWords.push(w.word);
-              reasons.push(`“${w.word}” is not used in general ${name} in the sense needed (${w.neededSense}): 0 of ${needed.classified} sentences; ${sourceName} “${ref.label}”: ${describeSense(ref.measure)}`);
+              reasons.push(`“${w.word}” looks like the ${sourceName} word but is never used in everyday ${name} in the meaning needed (${w.neededSense}): 0 of ${needed.classified} sentences`);
             } else if (ref?.measure?.zipf != null && needed.zipf != null && needed.zipf < ref.measure.zipf - 1) {
               verdict = "fail";
               if (!original) failedWords.push(w.word);
-              reasons.push(`“${w.word}” is much less used in the sense needed than ${sourceName} “${ref.label}”: ${formatZipf(needed.zipf)} against ${formatZipf(ref.measure.zipf)}`);
+              reasons.push(`“${w.word}” is much rarer in the meaning needed than ${sourceName} “${ref.label}”: ${commonness(needed.zipf)} against ${commonness(ref.measure.zipf)}`);
             } else {
               passedWords.add(textKey(w.word, code));
             }
@@ -1502,7 +1506,7 @@ export function createResearchEngine(deps) {
           const z = renderingScore(c.target, senseScore, found?.words);
           if (senseRef?.zipf != null && !found?.establishedUsage && z != null && z < senseRef.zipf - 1) {
             verdict = "fail";
-            reasons.push(`much less known than ${sourceName} “${settings.term}” in this sense: Zipf ${formatZipf(z)} against ${formatZipf(senseRef.zipf)}`);
+            reasons.push(`much less familiar to ${name} readers than “${settings.term}” is to ${sourceName} readers in this meaning: ${commonness(z)} against ${commonness(senseRef.zipf)}`);
           }
         }
         if (original && verdict !== "unchecked") {
@@ -1537,7 +1541,6 @@ export function createResearchEngine(deps) {
           zipf: ready ? renderingScore(m, zipfOf, analysis.candidates.find((c) => textKey(c.target, code) === textKey(m, code))?.words) : null,
         })),
       }));
-      info(`${groups.length} groups from ${groups.reduce((n, g) => n + g.members.length, 0)} renderings; ${toCheck.length} checked.`);
       // A word that fails in one sense but passes in another is not banned: only the
       // renderings checked for the failing sense go.
       const banned = [...new Set(failedWords)].filter((w) => !passedWords.has(textKey(w, code)));
@@ -1590,7 +1593,7 @@ export function createResearchEngine(deps) {
       const occurrences = buildOccurrences(items, [], "d", settings.sourceLanguageCode);
       const instructions = prompts.discoveryInstructions(ctx());
       const keyed = batchOccurrences(items, occurrences, settings.discoveryBatch).map((batch, index) => [index, {
-        stage: "discovery", purpose: `open reading of ${batch.occurrences.length} occurrences`,
+        stage: "discovery", purpose: `translate ${batch.occurrences.length === 1 ? "1 use" : `${batch.occurrences.length} uses`} of the word freely, without suggestions`,
         progress: { key: "occId", total: batch.occurrences.length, unit: "use" },
         instructions, content: batchContent(batch, null),
         schema: prompts.DISCOVERY_SCHEMA, schemaName: "discovery",
@@ -1603,9 +1606,15 @@ export function createResearchEngine(deps) {
         if (value instanceof Error) continue;
         for (const row of value.items) if (byId.has(row.occId)) readings[row.occId] = row;
       }
+      // One count per wording whatever its capitals, shown as first written ("Innermost" stays capitalised).
       const tally = {};
-      for (const row of Object.values(readings)) tally[row.rendering.toLowerCase()] = (tally[row.rendering.toLowerCase()] ?? 0) + 1;
-      const top = Object.entries(tally).sort((a, b) => b[1] - a[1]).slice(0, 6);
+      const spelled = {};
+      for (const row of Object.values(readings)) {
+        const key = row.rendering.toLowerCase();
+        spelled[key] ??= row.rendering;
+        tally[key] = (tally[key] ?? 0) + 1;
+      }
+      const top = Object.entries(tally).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([key, n]) => [spelled[key], n]);
       logResult("discovery", [{ read: Object.keys(readings).length, total: occurrences.length, renderings: Object.keys(tally).length, top }],
         `${Object.keys(readings).length} of ${occurrences.length} occurrences read; ${Object.keys(tally).length} different renderings; most common: ${top.map(([k, v]) => `${k} (${v})`).join(", ")}`);
       return { occurrences, readings };
@@ -1664,7 +1673,7 @@ export function createResearchEngine(deps) {
 
   async function makeProposal(extraLines = []) {
     const proposal = await client.callJson({
-      stage: "proposal", purpose: extraLines.length ? "revise the proposal for shared translations" : "consolidate variants, notes and entries",
+      stage: "proposal", purpose: extraLines.length ? "revise the proposal so no translation is shared with a word of different meaning" : "put the findings together into a proposed glossary entry",
       instructions: prompts.proposalInstructions(ctx()), content: [proposalContent(), ...extraLines].join("\n"),
       schema: prompts.PROPOSAL_SCHEMA, schemaName: "proposal",
       maxOutputTokens: 24000, effort: settings.effortProposal,
@@ -1692,7 +1701,7 @@ export function createResearchEngine(deps) {
     if (problems.length) info(`proposal notes: ${problems.join("; ")}`);
     logResult("proposal", proposal.entries.map((e) => ({ sourceTerms: e.sourceTerms, variants: e.variants.map((v) => v.target) })),
       `${proposal.entries.length} proposed entr${proposal.entries.length === 1 ? "y" : "ies"}: ${proposal.entries.map((e) => `${e.sourceTerms.join("/")} → ${e.variants.map((v) => v.target).join(", ")}`).join(" | ")}`);
-    for (const item of proposal.leftOutRenderings ?? []) info(`not measured: ${item.rendering} (${item.count}) — ${item.reason}`);
+    for (const item of proposal.leftOutRenderings ?? []) info(`Left out: “${item.rendering}”${item.count ? ` (written ${item.count} ${item.count === 1 ? "time" : "times"} in the free translation)` : ""} — ${item.reason}`);
     proposal.existingComparison = await compareWithExisting(proposal);
     return proposal;
   }
@@ -1711,7 +1720,7 @@ export function createResearchEngine(deps) {
     for (const entry of proposal.entries) {
       for (const variant of entry.variants.filter((v) => v.original && !noteNamesTheBook(v))) {
         const answer = await client.callJson({
-          stage: "original-note", purpose: `write the note for the original word “${variant.target}”`,
+          stage: "original-note", purpose: `write the glossary note for “${variant.target}”`,
           instructions: prompts.originalNoteInstructions(ctx()),
           content: [
             `Term: ${settings.term}. Translation: “${variant.target}”, the original word of ${variant.original.book} for the meaning “${variant.original.sense}”.`,
@@ -1753,7 +1762,7 @@ export function createResearchEngine(deps) {
       const items = Object.values(store.load("sample")?.items ?? {});
       for (const pair of pairs) pair.evidence = coOccurrence(items, pair.sourceTerms, pair.otherSourceTerms, settings.sourceLanguageCode);
       const verdict = await client.callJson({
-        stage: "convergence", purpose: "decide whether words sharing a translation mean the same",
+        stage: "convergence", purpose: "check whether words that share a translation mean the same",
         progress: { key: "n", total: pairs.length, unit: "pair", pairs: pairs.map((pair, index) => ({ n: index + 1, target: pair.target, a: pair.sourceTerms?.[0] ?? "", b: pair.otherSourceTerms?.[0] ?? "" })) },
         instructions: prompts.convergenceInstructions(ctx()),
         content: convergenceContent(pairs, { targetName: settings.targetLanguageName, dictionaryText: dictionaryText() }),
@@ -1807,7 +1816,7 @@ export function createResearchEngine(deps) {
     heading("Existing glossary entry");
     const variants = proposal.entries.flatMap((entry) => entry.variants.map((v) => `[${v.id}] ${v.target} — ${v.note}`));
     const result = await client.callJson({
-      stage: "comparison", purpose: "compare with the existing glossary entry",
+      stage: "comparison", purpose: "compare the proposal with the glossary's current entry",
       progress: { key: "existing", total: existing.reduce((n, term) => n + (term.targetTerms?.length ?? 0), 0) || null, unit: "translation" },
       instructions: prompts.compareInstructions(ctx()),
       content: [
@@ -1931,7 +1940,7 @@ export function createResearchEngine(deps) {
       });
       store.save("prose", prose);
       heading("Done");
-      fact(`Spent ${formatUsd(budget.spent)} of ${formatUsd(budget.limit)}.`);
+      fact(`Finished. Open the report to check the entry and save it to the glossary. Cost: ${formatUsd(budget.spent)} (limit ${formatUsd(budget.limit)}).`);
       return { status: "done", frozen, aggregate, prose, spent: budget.spent };
     } finally {
       saveUsage();
@@ -1970,7 +1979,7 @@ export function createResearchEngine(deps) {
       return [];
     }
     const answer = await client.callJson({
-      stage: "footnotes", purpose: "notes for rare translations",
+      stage: "footnotes", purpose: "write notes for translations that are rare in everyday use",
       progress: { key: "target", total: scored.length, unit: "translation" },
       instructions: prompts.footnoteInstructions(ctx()),
       content: scored.map((item) => `- ${item.target} (Zipf ${formatZipf(item.zipf)})`).join("\n"),
@@ -2011,7 +2020,7 @@ export function createResearchEngine(deps) {
       const size = attempt === 0 ? settings.countBatch : Math.max(2, Math.floor(settings.countBatch / 2));
       const batches = batchOccurrences(items, todo, size);
       const keyed = batches.map((batch, index) => [index, {
-        stage: "counting", purpose: `translate and choose for ${batch.occurrences.length} occurrences`,
+        stage: "counting", purpose: `translate ${batch.occurrences.length === 1 ? "1 use" : `${batch.occurrences.length} uses`} of the word with the proposed entry, noting which translation fits`,
         // The live view tallies the chosen translations by name.
         progress: { key: "occId", total: batch.occurrences.length, unit: "use", variants: variantNames },
         instructions, content: batchContent(batch, label),
@@ -2036,7 +2045,7 @@ export function createResearchEngine(deps) {
       });
       todo = retry;
       const done = Object.keys(judgments).length;
-      info(`judged ${done} of ${occurrences.length} occurrences${retry.length ? `; ${retry.length} to retry` : ""}`);
+      info(`${done} of ${occurrences.length} uses of the word translated${retry.length ? `; ${retry.length} to try again` : ""}`);
     }
     for (const occurrence of todo) {
       judgments[occurrence.occId] = { occId: occurrence.occId, status: "failed", variantId: null, note: occurrence.problem };
@@ -2049,7 +2058,7 @@ export function createResearchEngine(deps) {
 
   async function summarize(frozen, proposal, aggregate, footnotes = []) {
     return client.callJson({
-      stage: "summary", purpose: "report summary",
+      stage: "summary", purpose: "write a short summary for the report",
       instructions: prompts.proseInstructions(ctx()),
       content: JSON.stringify({
         entries: frozen.entries.map((entry) => ({ id: entry.id, kind: entry.kind, sourceTerms: entry.sourceTerms, generalNote: entry.generalNote, variants: entry.variants })),

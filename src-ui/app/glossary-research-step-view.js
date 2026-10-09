@@ -65,3 +65,48 @@ export function currentStepStatus(sections, usualFor) {
   const section = titled.at(-1);
   return section ? stepStatus(section, usualFor) : "";
 }
+
+// Step names as the person reads them (the log keeps the engine's names, so
+// saved runs read the same).
+const STEP_TITLES = {
+  "Sampling": "Sample passages",
+  "Parts and frequency": "Meanings",
+  "Candidate checks": "Checking the candidates",
+  "Discovery": "Free translation",
+  "Rare translations": "Notes for rare translations",
+};
+
+export function stepTitle(heading) {
+  return STEP_TITLES[heading] ?? heading;
+}
+
+/**
+ * What a step does, in one short line, for someone who knows the app but not
+ * the research. `context`: { term, texts, author, source, target }.
+ */
+export function stepExplanation(heading, context = {}) {
+  const term = context.term ? `“${context.term}”` : "the term";
+  const texts = context.texts ?? "the texts";
+  const source = context.source ?? "source-language";
+  const target = context.target ?? "target-language";
+  const lines = {
+    "Dictionary": `The standard meanings of ${term}, from a ${source} dictionary.`,
+    "Word forms": `Every spelling of ${term} to search for in ${texts}.`,
+    "Word family": "Related words from the same root, which may need their own research.",
+    "Sampling": `Passages from ${texts} that use ${term}, picked at random to test translations on.`,
+    "Where the term comes from": `Did ${context.author ?? "the author"} take ${term} from another book? If so, its original word.`,
+    "Parts and frequency": `The meanings of ${term}, and how common each is in everyday ${source}.`,
+    "Candidate translations": `Possible ${target} translations for each meaning.`,
+    "Candidate checks": `Is each candidate common enough in everyday ${target}, in the meaning needed?`,
+    "Discovery": "An AI translates sample passages freely, with no suggestions: what comes naturally?",
+    "Proposal": "The proposed glossary entry: its translations, and when to use each.",
+    "Shared translations": "Is a proposed translation already used for a word with a different meaning?",
+    "Existing glossary entry": "The proposal compared with the glossary's current entry.",
+    "Review": "Your turn: check the proposed translations, then press Count to test them on the sample passages.",
+    "Counting": "An AI translates each sample passage with the proposed entry; we count which translation it uses.",
+    "Counting (second judge)": "A second AI does the same, to check the first.",
+    "Rare translations": "Do translations that are rare in everyday use need a note?",
+    "Summary": "A short written summary for the report.",
+  };
+  return lines[heading] ?? "";
+}

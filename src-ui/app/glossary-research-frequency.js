@@ -46,6 +46,16 @@ export function formatZipf(value) {
   return value == null ? "—" : value.toFixed(2);
 }
 
+/**
+ * How common a word is, in plain words ("rare", "common"), for readers who do
+ * not know the 0–7 frequency scale; tables show the score itself.
+ */
+export function commonness(value) {
+  if (value == null) return "not measured";
+  const word = value < 1 ? "almost never used" : value < 2 ? "rare" : value < 3 ? "uncommon" : value < 4 ? "common" : value < 5 ? "very common" : "everyday";
+  return word;
+}
+
 /** "2.31", "< 1.80 (0 of 64)", or "—". */
 export function describeSense(measure) {
   if (!measure) return "—";

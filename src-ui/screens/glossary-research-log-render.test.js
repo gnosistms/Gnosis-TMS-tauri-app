@@ -5,14 +5,14 @@ import { buildLogSections } from "../app/glossary-research-log-view.js";
 import { renderResults, renderStageLine, stageIndex } from "./glossary-research-log-render.js";
 
 const log = [
-  { type: "heading", text: "Dictionary" }, { type: "fact", text: "DLE: found (2 senses)" },
+  { type: "heading", text: "Dictionary" }, { type: "fact", text: "DLE: found (2 senses)" }, { type: "fact", text: "1. adj. Lo más interior." },
   { type: "heading", text: "Word forms" }, { type: "fact", text: "Forms: fatal, fatales" },
 ];
 
 test("while research runs, the last step is open and the earlier ones fold to a summary", () => {
   const html = renderResults(buildLogSections(log), { running: true });
   const [dictionary, forms] = html.split("<section").slice(1);
-  assert.match(dictionary, /research-section__summary">DLE: found \(2 senses\)/);
+  assert.match(dictionary, /research-section__summary">1\. adj\. Lo más interior\./);
   assert.match(dictionary, /data-action="toggle-research-section:s1" aria-expanded="false"/);
   assert.doesNotMatch(dictionary, /research-section__body/);
   assert.match(forms, /is-current/);
@@ -92,4 +92,11 @@ test("a finished thinking-heavy step keeps how the AI got there, folded", () => 
   assert.match(candidates, /research-view--candidates/);
   assert.match(candidates, /How the AI got there \(2 steps\)/);
   assert.match(candidates, /<summary>Reading the origin<\/summary><p>It is a noun\.<\/p>/);
+});
+
+test("a finished step that only repeats its line cannot be opened; its explanation shows on hover", () => {
+  const steps = [{ type: "heading", text: "Rare translations" }, { type: "fact", text: "No chosen translation is rare." }, { type: "heading", text: "Summary" }];
+  const [rare] = renderResults(buildLogSections(steps), { running: false, openSections: { s1: true } }).split("<section").slice(1);
+  assert.doesNotMatch(rare, /toggle-research-section|research-section__body/);
+  assert.match(rare, /data-tooltip="Do translations that are rare in everyday use need a note\?"/);
 });

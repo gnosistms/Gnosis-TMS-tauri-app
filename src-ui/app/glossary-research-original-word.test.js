@@ -62,7 +62,7 @@ test("the original word stands alone, recommended, in its meaning", () => {
   const s6 = candidates.senses[1].groups;
   assert.deepEqual(s6.map((g) => [g.members, g.recommended]), [[["Innermost"], true], [["inner Being", "innermost Being"], false], [["Inmost"], false]]);
   assert.equal(candidates.senses[0].groups[0].recommended, true, "other meanings keep their recommendation");
-  assert.ok(originalFor(placed, "innermost", "s6"));
+  assert.ok(originalFor(placed, "Innermost", "s6"));
   assert.equal(originalFor(placed, "Innermost", "s1"), null, "the same word in another meaning is checked as usual");
 });
 
@@ -131,4 +131,22 @@ test("an original word is labelled by the author of its book", () => {
   assert.equal(originalSourceLabel({ author: "M.", book: "The Dayspring of Youth (M.)" }), "from M.");
   assert.equal(originalSourceLabel({ book: "The Dayspring of Youth (M.)", originalTitle: "The Dayspring of Youth" }), "from M.", "older runs: from the book's name");
   assert.equal(originalSourceLabel({ book: "Isis Unveiled", originalTitle: "Isis Unveiled" }), "from Isis Unveiled", "no author known");
+});
+
+test("the word as written wins over a lower-case variant listed for another meaning", () => {
+  const candidates = { senses: [
+    { senseId: "s1", sense: "deep within", groups: [{ members: ["inner", "inward", "innermost"], recommended: true, note: "" }] },
+    { senseId: "s6", sense: "divine Being", groups: [{ members: ["Innermost"], recommended: true, note: "divine" }] },
+  ] };
+  const placed = placeOriginalWords(candidates, required);
+  assert.equal(placed[0].senseId, "s6");
+  assert.deepEqual(candidates.senses[0].groups[0].members, ["inner", "inward", "innermost"], "the adjective stays where it is");
+  assert.equal(candidates.senses[0].groups[0].recommended, true);
+  assert.equal(originalFor(placed, "innermost", "s6"), null, "the lower-case adjective is checked as usual");
+  const proposal = { entries: [{ id: "e1", kind: "word", sourceTerms: ["íntimo"], variants: [
+    { id: "e1v1", target: "innermost", note: "adjective", senses: ["DLE 1"] },
+    { id: "e1v2", target: "Innermost", note: "divine", senses: ["divine"] },
+  ] }] };
+  enforceOriginalWords(proposal, placed, { headword: "íntimo" });
+  assert.deepEqual(proposal.entries[0].variants.map((v) => [v.target, Boolean(v.original)]), [["Innermost", true], ["innermost", false]]);
 });

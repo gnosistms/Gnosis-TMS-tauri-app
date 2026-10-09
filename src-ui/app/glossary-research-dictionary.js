@@ -65,7 +65,6 @@ async function lookUpDle(term, { invoke, log }) {
       const sub = await invoke("glossary_research_fetch_dle", { path: form.href });
       form.senses = sub.status === "found" && sub.entry?.kind === "complex" ? sub.entry.senses : [];
       form.retrieval = sub.status === "found" ? "found" : sub.status;
-      log(`DLE complex form «${form.form}»: ${form.retrieval}${form.senses.length ? ` (${form.senses.length} senses)` : ""}`);
     }
   }
   return { ...first, articles };
@@ -134,11 +133,11 @@ export function createDictionary({ languageCode, invoke, fetchImpl = globalThis.
           }
           dleState.failedAt = dle.status === "unreachable" ? now() : 0;
         }
-        log(`DLE: ${dle.status}${dle.message ? ` — ${dle.message}` : ""}`);
+        log(`DLE (the Spanish Academy's dictionary): ${{ found: "found", not_found: "no entry", unreachable: "could not be reached" }[dle.status] ?? dle.status}${dle.message ? ` — ${dle.message}` : ""}`);
         if (dle.status === "found") {
           const articles = dle.articles;
           return {
-            status: "found", sourceName: "Diccionario de la lengua española (RAE/ASALE)", url: dle.url,
+            status: "found", sourceName: "the Spanish Academy's dictionary (DLE)", url: dle.url,
             text: dleText(articles), articles, tried, notes,
             senseCount: articles.reduce((sum, a) => sum + a.senses.length, 0),
             complexFormCount: articles.reduce((sum, a) => sum + (a.complexForms?.length ?? 0), 0),
@@ -150,7 +149,7 @@ export function createDictionary({ languageCode, invoke, fetchImpl = globalThis.
       }
       tried.push("Wiktionary");
       const wiki = await lookUpWiktionary(term, languageCode, { fetchImpl });
-      log(`Wiktionary: ${wiki.status}${wiki.message ? ` — ${wiki.message}` : ""}`);
+      log(`Wiktionary: ${{ found: "found", not_found: "no entry", unreachable: "could not be reached" }[wiki.status] ?? wiki.status}${wiki.message ? ` — ${wiki.message}` : ""}`);
       if (wiki.status === "found") {
         return { status: "found", sourceName: "Wiktionary (CC BY-SA 4.0)", url: wiki.url, text: wiki.text, senseCount: wiki.senseCount, complexFormCount: 0, tried, notes };
       }

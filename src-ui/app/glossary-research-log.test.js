@@ -174,5 +174,5 @@ test("a finished step reads as one line of what it found", () => {
     { type: "result", kind: "checks", data: [{ target: "c", verdict: "unclear" }], text: "y" },
     { type: "heading", text: "Old" }, { type: "result", kind: "mystery", text: "kept text" },
   ]);
-  assert.deepEqual(sections.map(sectionSummary), ["DLE: found (2 senses)", "fail: b · unclear: c · 1 pass", "kept text"]);
+  assert.deepEqual(sections.map(sectionSummary), ["DLE: found (2 senses)", "1 of 3 pass · rejected: b · unclear: c", "kept text"]);
 });

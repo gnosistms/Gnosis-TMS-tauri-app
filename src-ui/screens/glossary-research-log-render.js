@@ -3,6 +3,7 @@
 // a live panel below that follows one AI request as it streams in.
 
 import { formatUsd } from "../app/glossary-research-budget.js";
+import { tooltipAttributes } from "../lib/ui.js";
 import {
   isRequestRunning,
   requestBatch,
@@ -13,7 +14,7 @@ import {
   stageName,
 } from "../app/glossary-research-log-view.js";
 import { formatJsonStream, formatThinkingLive, formatThinkingSteps, thinkingSteps } from "../app/glossary-research-stream-format.js";
-import { groupViewHtml, requestGroups, stepStatus, viewRequest, VIEW_LEFT_OUT } from "../app/glossary-research-step-view.js";
+import { groupViewHtml, requestGroups, stepExplanation, stepStatus, stepTitle, viewRequest, VIEW_LEFT_OUT } from "../app/glossary-research-step-view.js";
 
 function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -81,10 +82,9 @@ Object.assign(RESULT_RENDERERS, {
   // item.light: runs saved while a light study for rare related words existed.
   sampling([item]) {
     return stats([
-      [item.distinct, item.distinct === 1 ? "passage" : "distinct passages"],
-      item.duplicateGroups ? [item.duplicateGroups, "duplicate groups"] : null,
-      item.light ? ["light study", "both judges read every passage"] : [item.measuring, "measured"],
-      !item.light && item.discovery ? [item.discovery, `for the open reading${item.overlap ? ` (${item.overlap} shared)` : ""}`] : null,
+      [item.distinct.toLocaleString("en-US"), `${item.distinct === 1 ? "passage uses" : "passages use"} the word (each passage counted once)`],
+      item.light ? ["all", "read by both AIs"] : [item.measuring, "picked at random to test translations on"],
+      !item.light && item.discovery ? [item.discovery, "of them also translated with no suggestions (see Free translation)"] : null,
     ]);
   },
   discovery([item]) {
@@ -98,8 +98,11 @@ Object.assign(RESULT_RENDERERS, {
         <div class="research-chip-row">${chips(entry.variants ?? [], false)}</div>
       </div>`).join("");
   },
+  dictionary([item]) {
+    return `<div class="research-dictionary">${item.url ? `<a class="research-result__sub" href="${esc(item.url)}" target="_blank" rel="noreferrer">${esc(item.sourceName)}</a>` : `<span class="research-result__sub">${esc(item.sourceName)}</span>`}<pre class="research-dictionary__text">${esc(item.text)}</pre></div>`;
+  },
   agreement([item]) {
-    return stats([[`${item.agreed} of ${item.compared}`, "occurrences where the two judges agreed"]]);
+    return stats([[`${item.agreed} of ${item.compared}`, "uses where the two AIs chose the same translation"]]);
   },
   senses(data) {
     return data.map((sense) => `
@@ -124,7 +127,7 @@ Object.assign(RESULT_RENDERERS, {
     const parts = data.filter((item) => item.kind === "parts");
     const rows = data.filter((item) => item.kind === "measure" || item.kind === "term");
     return `${parts.map((item) => `<div class="research-chip-row research-parts">${item.parts.map((part, index) => `${index ? '<span class="research-parts__plus">+</span>' : ""}<span class="research-chip" title="${esc(part.meaning)}">${esc(part.part)}</span><span class="research-parts__meaning">${esc(part.meaning)}</span>`).join("")}</div>`).join("")}
-      ${rows.length ? `<table class="research-measures"><thead><tr><th>Word</th><th>Zipf</th><th>In the sense used</th></tr></thead><tbody>${rows.map((row) => row.kind === "term"
+      ${rows.length ? `<table class="research-measures"><thead><tr><th>Word</th><th>How common (0 never – 7 most common)</th><th>In the meaning needed (how common; sentences)</th></tr></thead><tbody>${rows.map((row) => row.kind === "term"
         ? `<tr><td>${esc(row.word)} <span class="research-result__sub">${esc(row.language)}</span></td><td>${zipfText(row.zipf)}</td><td>${row.invented ? "the author's own word: not in the dictionary, practically absent from general use" : ""}${(row.senses ?? []).map((sense) => `<div>${esc(sense.gloss)}: ${esc(sense.senseText)}</div>`).join("")}</td></tr>`
         : `<tr><td>${esc(row.word)} <span class="research-result__sub">${esc(row.language)}</span></td><td>${zipfText(row.zipf)}</td><td>${esc(row.neededSense)}: ${esc(row.senseText)}</td></tr>`).join("")}</tbody></table>` : ""}`;
   },
@@ -220,11 +223,14 @@ function stepBody(section, current) {
     if (COVERED_BY_VIEW[stage] && groupViewHtml(group)) covered.add(COVERED_BY_VIEW[stage]);
     return groupBlock(group, current);
   }).join("");
+  const cancelled = section.items.some((item) => item.kind === "line" && /^Cancelled\b/.test(item.entry.text ?? ""));
   const findings = collapseDownloads(section.items)
     .filter((item) => (item.kind === "result" ? !covered.has(item.resultKind) : item.entry.type === "fact" || item.entry.type === "problem"))
+    // "Research was cancelled." repeats the "Cancelled…" line.
+    .filter((item) => !(cancelled && item.kind === "line" && /^Research was cancelled/.test(item.entry.text ?? "")))
     .map((item) => (item.kind === "result" ? renderResult(item) : renderLine(item.entry)))
     .join("");
-  const failed = section.requests.filter((request) => requestState(request) === "failed")
+  const failed = section.requests.filter((request) => requestState(request) === "failed" && !cancelled)
     .map((request) => renderLine({ type: "problem", text: `${stageName(request.stage)}: ${request.problem || "the AI request failed"}` })).join("");
   return `${views}${findings}${failed}`;
 }
@@ -238,23 +244,36 @@ function stepMetaText(section) {
  * One step. The step running now is open and fills in as it goes; a finished
  * step folds to one line of what it found and opens to its final state.
  */
-function renderSection(section, { current, open, usualFor }) {
+function renderSection(section, { current, open, usualFor, context, later }) {
   if (!section.heading) {
     const body = stepBody(section, current);
     return body ? `<section class="research-section research-section--untitled">${body}</section>` : "";
   }
-  const expanded = current || open;
-  const body = expanded ? stepBody(section, current) : "";
-  const summary = current ? "" : sectionSummary(section);
+  const summary = current ? "" : section.heading === "Review" && later ? "You reviewed the proposal and started the count." : sectionSummary(section);
+  // A step whose content only repeats the line it folds to has nothing more to open.
+  const full = current ? "" : stepBody(section, false);
+  const plain = !current && (later && section.heading === "Review"
+    || full.replace(/<[^>]+>/g, " ").replace(/&[a-z#0-9]+;/gi, " ").replace(/\s+/g, " ").trim() === summary.replace(/[&<>"']/g, " ").replace(/\s+/g, " ").trim()
+    || !full.trim());
+  const expanded = current || (open && !plain);
+  const body = current ? stepBody(section, true) : expanded ? full : "";
   const meta = current ? "" : stepMetaText(section);
   const status = current ? stepStatus(section, usualFor) : "";
-  const title = `${esc(section.heading)}`;
+  const title = esc(stepTitle(section.heading));
+  const explanation = expanded ? stepExplanation(section.heading, context) : "";
   const head = current
     ? `<div class="research-section__head">
         <h4 class="research-section__title"><span class="navigation-loading-modal__spinner research-section__spinner" aria-hidden="true"></span>${title}</h4>
         <span class="research-section__status" data-step-status>${status}</span>
       </div>`
-    : `<button type="button" class="research-section__head research-section__toggle" data-action="toggle-research-section:${esc(section.id)}" aria-expanded="${expanded}">
+    : plain
+      // Nothing more to open: the line is the step, and what it does shows on hover.
+      ? `<div class="research-section__head research-section__head--plain"${tooltipAttributes(stepExplanation(section.heading, context))}>
+          <h4 class="research-section__title">${title}</h4>
+          ${summary ? `<span class="research-section__summary">${esc(summary)}</span>` : ""}
+          ${meta ? `<span class="research-section__meta">${meta}</span>` : ""}
+        </div>`
+      : `<button type="button" class="research-section__head research-section__toggle" data-action="toggle-research-section:${esc(section.id)}" aria-expanded="${expanded}">
         <svg class="research-disclosure__chevron" viewBox="0 0 10 10" aria-hidden="true"><path d="M3 1.5 6.5 5 3 8.5" /></svg>
         <h4 class="research-section__title">${title}</h4>
         ${summary ? `<span class="research-section__summary">${esc(summary)}</span>` : ""}
@@ -262,6 +281,7 @@ function renderSection(section, { current, open, usualFor }) {
       </button>`;
   return `<section class="research-section${current ? " is-current" : ""}${expanded ? " is-open" : ""}" data-section-id="${esc(section.id)}"${current ? " data-step-current" : ""}>
       ${head}
+      ${explanation ? `<p class="research-section__explain">${esc(explanation)}</p>` : ""}
       ${body ? `<div class="research-section__body">${body}</div>` : ""}
     </section>`;
 }
@@ -270,13 +290,16 @@ function renderSection(section, { current, open, usualFor }) {
  * The steps, oldest first: while research runs the last one is the step in
  * progress. `usualFor(stage)` gives a step's usual duration for the clock.
  */
-export function renderResults(sections, { running = false, openSections = {}, usualFor = null } = {}) {
+export function renderResults(sections, { running = false, openSections = {}, usualFor = null, context = {} } = {}) {
   const titled = sections.filter((section) => section.heading);
   const currentId = running ? titled.at(-1)?.id : null;
+  const lastId = titled.at(-1)?.id;
   return sections.map((section) => renderSection(section, {
     current: section.id === currentId,
     open: openSections[section.id] === true,
     usualFor,
+    context,
+    later: section.id !== lastId,
   })).join("");
 }
 

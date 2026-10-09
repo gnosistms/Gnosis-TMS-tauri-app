@@ -1,3 +1,5 @@
+import { commonness } from "./glossary-research-frequency.js";
+
 // Turns the stored research log (a flat list of events) into what the log
 // shows: headings and findings as lines, and one item per AI request holding
 // what was sent, the thinking, the answer, the cost and any problem. Requests
@@ -319,39 +321,41 @@ const RESULT_SUMMARIES = {
   candidates(data) {
     const groups = data.reduce((n, sense) => n + (sense.groups?.length ?? 0), 0);
     const recommended = [...new Set(data.map((sense) => (sense.groups ?? []).find((g) => g.recommended)?.members?.[0]).filter(Boolean))];
-    return `${recommended.length ? `★ ${recommended.join(", ")} · ` : ""}${plural(groups, "group")} of options for ${plural(data.length, "meaning")}`;
+    return `${recommended.length ? `Recommended: ${recommended.join(", ")} · ` : ""}${plural(groups, "option")} for ${plural(data.length, "meaning")}`;
   },
   // Which candidates failed, by name; the passes only as a number.
   checks(data) {
-    const failed = [...new Set(data.filter((c) => c.verdict === "fail").map((c) => c.target))];
+    const why = (c) => (/never used|wrong meaning/i.test((c.reasons ?? []).join(" ")) ? "not used in that meaning" : /rarer|less familiar|less known|less used/i.test((c.reasons ?? []).join(" ")) ? "too rare" : "");
+    const failed = [...new Map(data.filter((c) => c.verdict === "fail").map((c) => [c.target, why(c) ? `${c.target} (${why(c)})` : c.target])).values()];
     const unclear = [...new Set(data.filter((c) => c.verdict === "unclear").map((c) => c.target))];
     const passed = new Set(data.filter((c) => c.verdict === "pass").map((c) => c.target)).size;
+    const all = new Set(data.map((c) => c.target)).size;
     return [
-      failed.length ? `fail: ${failed.join(", ")}` : "none fail",
+      `${passed} of ${all} pass`,
+      failed.length ? `rejected: ${failed.join(", ")}` : "none rejected",
       unclear.length ? `unclear: ${unclear.join(", ")}` : "",
-      `${passed} pass`,
     ].filter(Boolean).join(" · ");
   },
   frequency(data) {
     const term = data.find((item) => item.kind === "term");
     const parts = data.find((item) => item.kind === "parts");
     return [
-      parts ? parts.parts.map((p) => p.part).join(" + ") : "",
-      term ? `“${term.word}” Zipf ${term.zipf == null ? "—" : Number(term.zipf).toFixed(2)}${term.invented ? ", the author's own word" : ""}` : "",
+      parts && parts.parts.length > 1 ? `built from ${parts.parts.map((p) => p.part).join(" + ")}` : "",
+      term ? (term.invented ? `“${term.word}” is the author's own word: not in everyday ${term.language ?? ""}` : `“${term.word}” is ${commonness(term.zipf)} in everyday ${term.language ?? ""}`).replace(/ +/g, " ") : "",
     ].filter(Boolean).join(" · ");
   },
   sampling([item]) {
-    return item.light ? `${plural(item.distinct, "passage")}, light study` : `${plural(item.distinct, "distinct passage")}, ${item.measuring} measured`;
+    return item.light ? `${plural(item.distinct, "passage")}, all read` : `${item.measuring} of ${item.distinct.toLocaleString("en-US")} passages picked at random`;
   },
   // What a translator reached for, with how often.
   discovery([item]) {
-    return `translators reached for ${(item.top ?? []).slice(0, 4).map(([r, n]) => `${r} (${n})`).join(", ")} · ${item.read} of ${item.total} uses read`;
+    return `Written most: ${(item.top ?? []).slice(0, 4).map(([r, n]) => `${r} (${n})`).join(", ")} · ${item.read} uses of the word`;
   },
   proposal(data) {
-    return data.map((entry) => `${(entry.sourceTerms ?? [])[0] ?? ""} → ${(entry.variants ?? []).join(", ")}`).join(" | ");
+    return `Proposed: ${data.map((entry) => `${(entry.sourceTerms ?? [])[0] ?? ""} → ${(entry.variants ?? []).join(", ")}`).join(" | ")}`;
   },
   agreement([item]) {
-    return `the judges agreed on ${item.agreed} of ${item.compared}`;
+    return `The two AIs chose the same translation for ${item.agreed} of ${item.compared} uses`;
   },
   // Where the author took the term from leads; the ordinary meanings follow.
   senses(data) {
@@ -362,8 +366,11 @@ const RESULT_SUMMARIES = {
     const parts = borrowed.map((sense) => {
       const article = /^[aeiou]/i.test(pos(sense)) ? "an" : "a";
       const head = pos(sense) ? `as ${article} ${pos(sense)} (${label(sense)})` : label(sense);
+      const book = sense.originalTitle
+        ? `from ${sense.originalTitle}${sense.originalAuthor ? ` by ${sense.originalAuthor}` : ""}${sense.translationTitle ? ` (in Spanish: ${sense.translationTitle})` : ""}`
+        : sense.sourceBook ? `from ${sense.sourceBook}` : "the author's own";
       const origin = [
-        sense.sourceBook ? `from ${sense.sourceBook}` : "the author's own",
+        book,
         sense.originalTerm ? `original ${sense.originalLanguage ?? ""} “${sense.originalTerm}”${sense.verified === false ? " (unverified)" : ""}` : "",
       ].filter(Boolean).join(", ");
       return `${head}: ${origin}`;
@@ -384,10 +391,63 @@ const RESULT_SUMMARIES = {
   },
 };
 
+/** Counting: the translations chosen most, by name, from the judges' answers. */
+function countingSummary(section) {
+  const counts = new Map();
+  let judged = 0;
+  for (const request of section.requests) {
+    if (request.stage !== "counting" || !request.answer) continue;
+    let value;
+    try {
+      value = JSON.parse(request.answer);
+    } catch {
+      continue;
+    }
+    const names = request.progress?.variants ?? {};
+    for (const item of value?.items ?? []) {
+      judged += 1;
+      const name = item.status === "selected" ? names[item.variantId] ?? item.variantId : item.status === "other" ? "something else" : null;
+      if (name) counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+  }
+  if (!judged || !counts.size) return "";
+  const top = [...counts].sort((a, b) => b[1] - a[1]).slice(0, 4);
+  return `Used most: ${top.map(([name, n]) => `${name} (${n})`).join(", ")} · ${judged} uses of the word`;
+}
+
+/** The summary step: the first sentence of the written summary. */
+function writtenSummary(section) {
+  for (const request of section.requests) {
+    try {
+      const text = String(JSON.parse(request.answer)?.summary ?? "");
+      if (text) return text.split(/(?<=[.!?])\s/)[0];
+    } catch {
+      // not finished
+    }
+  }
+  return "";
+}
+
 /** One line saying what a step found: its last finding, else its last line. */
 export function sectionSummary(section) {
+  if (section.heading === "Summary") {
+    const written = writtenSummary(section);
+    if (written) return written;
+  }
+  if (section.items.some((item) => item.kind === "line" && /^Cancelled\b/.test(item.entry.text ?? ""))) {
+    return "You cancelled the research here; it went on below when you resumed it.";
+  }
+  if (/^Counting\b/.test(section.heading ?? "")) {
+    const agreement = section.items.find((item) => item.kind === "result" && item.resultKind === "agreement");
+    if (!agreement) {
+      const counted = countingSummary(section);
+      if (counted) return counted;
+    }
+  }
   for (let index = section.items.length - 1; index >= 0; index -= 1) {
     const item = section.items[index];
+    // The dictionary entry itself is for reading; its count line sums it up.
+    if (item.kind === "result" && item.resultKind === "dictionary") continue;
     if (item.kind === "result") {
       const summarize = RESULT_SUMMARIES[item.resultKind];
       if (summarize && item.data) {

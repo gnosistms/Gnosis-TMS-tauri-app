@@ -841,7 +841,7 @@ test("the word that sets a passing translation's score is sorted by meaning and 
   const fateful = store.data.checks.candidates.find((c) => c.target === "fateful");
   assert.equal(sortedFateful, 1, "the deciding word is sorted once");
   assert.equal(fateful.verdict, "fail");
-  assert.match(fateful.reasons.join(" "), /not used in general English in the meaning needed/);
+  assert.match(fateful.reasons.join(" "), /never used in everyday English in the meaning needed/);
   assert.ok(fateful.words[0].measure?.needed, "the report can show the meaning's score");
 });
 

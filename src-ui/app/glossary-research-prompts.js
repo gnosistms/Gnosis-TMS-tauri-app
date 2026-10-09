@@ -80,7 +80,7 @@ export function writingRule(ctx) {
   const example = /^en\b/i.test(ctx.reportCode || "en")
     ? ` (in English: "noun", "adjective", "used as a noun", "plural", "the word's meaning"; not "substantive", "substantivized", "nominal", "lemma", "lexeme", "attested")`
     : "";
-  return `WRITING. Every text you write is in ${report}, except quotations, ${ctx.targetName ?? "target-language"} renderings and the fields these instructions say are in another language. Write it in plain, everyday ${report} for a translator, not for a linguist. Name grammar the way an ordinary ${report} schoolbook does${example}. Never use a learned ${report} word because it resembles the ${ctx.sourceName ?? "source-language"} word for the idea; use the everyday ${report} word.`;
+  return `WRITING. Every text you write is in ${report}, except quotations, ${ctx.targetName ?? "target-language"} renderings and the fields these instructions say are in another language. Write it in plain, everyday ${report} for a translator, not for a linguist. Name grammar the way an ordinary ${report} schoolbook does${example}. Never use a learned ${report} word because it resembles the ${ctx.sourceName ?? "source-language"} word for the idea; use the everyday ${report} word.${ctx.authorName ? ` Call the author by his full name, ${ctx.authorName}.` : ""} Do not refer to your inputs ("the supplied readings", "the passages provided"); name what they are (the sample passages, the dictionary entry). Call a translation a "translation", not a "variant", "rendering" or "candidate group".`;
 }
 
 // --- editor flow: find the source-language term ------------------------------
@@ -368,7 +368,7 @@ export const PROSE_SCHEMA = object({
 });
 
 export function proseInstructions(ctx) {
-  return `Write the opening summary of a research report about translating the ${ctx.sourceName} word “${ctx.headword}” into ${ctx.targetName} for a glossary. Write in ${ctx.reportName}. Keep proposed ${ctx.targetName} wording and the wording of source-language quotations. ${quotationRule(ctx.reportName, ctx.reportCode)} Summary at most 120 words; at most 6 recommendations of at most 30 words; unresolvedExplanation at most 80 words. The counts measure which proposed variant was judged most appropriate in each sampled context: contextual preference, not frequency in ${ctx.targetName} or exclusive correctness. Use only the data given.`;
+  return `Write the opening summary of a research report about translating the ${ctx.sourceName} word “${ctx.headword}” into ${ctx.targetName} for a glossary. Write in ${ctx.reportName}. Keep proposed ${ctx.targetName} wording and the wording of source-language quotations. ${quotationRule(ctx.reportName, ctx.reportCode)} Summary at most 120 words; at most 6 recommendations of at most 30 words; unresolvedExplanation at most 80 words. The counts measure which proposed variant was judged most appropriate in each sampled context: contextual preference, not frequency in ${ctx.targetName} or exclusive correctness. Give counts per use of the word (as one judge counted them, or where the judges agreed); never add the two judges' counts together. Use only the data given.`;
 }
 
 // --- dictionary fallback via web search -------------------------------------
