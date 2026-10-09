@@ -1,7 +1,7 @@
 // Prompt texts and strict JSON schemas for Glossary Research.
 // Bump RESEARCH_PROMPT_VERSION on any change that could alter a judgment.
 
-export const RESEARCH_PROMPT_VERSION = "2026-10-08.10";
+export const RESEARCH_PROMPT_VERSION = "2026-10-09.1";
 
 const STR = { type: "string" };
 const NSTR = { anyOf: [{ type: "string" }, { type: "null" }] };
@@ -184,6 +184,9 @@ export const SOURCES_SCHEMA = object({
     originalLanguage: NSTR,
     originalTerm: NSTR,
     originalTermBasis: STR,
+    citesBook: { type: "boolean" },
+    exclusivity: oneOf("only", "mainly", "several", "none"),
+    firstUseYear: { anyOf: [{ type: "integer" }, { type: "null" }] },
     meaningInSource: STR,
     authorUsage: STR,
     equivalences: arrayOf(object({ term: STR, relation: oneOf("identity", "related", "symbol", "part"), evidence: STR })),
@@ -199,7 +202,8 @@ Work out:
 1. Which senses the author uses that the dictionary does not cover (also list the dictionary senses he uses, briefly, with inDictionary true). For each non-dictionary sense, where it comes from: which book or tradition, with evidence from the passages. Frequency alone is not evidence of borrowing: look for the author naming or quoting the book, and for the same distinctive usage.
 2. If that book is a translation, the original-language word or phrase that the ${ctx.sourceName} term translates. Use the records and the passages of the original text when given (e.g. the book's glossary pairs) and say what they are; if they do not settle it, give your belief and say it is unverified in originalTermBasis (it will be checked against the original text). Never invent a record.
 3. What the term means in the source book: what it is, what it does, how it relates to the neighbouring concepts of that system. Quote the book.
-4. How the author uses it: whether he follows the source, and which other terms he equates it with. relation "identity" only for explicit statements that X is Y; say whether the equated terms are names for the same thing in other systems.
+4. For each non-dictionary sense with a source book: citesBook: true only when a passage under "Where the author names those books next to the term" shows him naming that book in connection with this sense. exclusivity: does the source book use the term in this sense (even once), judging from its passages? "only": yes, and no other reference book (the books he read) does; "mainly": yes, and other books only a few times; "several": yes, and several other books too; "none": the source book does not use it in this sense. Judge the sense, not the word: an ordinary word's other uses do not count. firstUseYear: the earliest year among "The author's earliest dated uses of the term" in which he uses the term in this sense; null if none of those passages uses this sense. ("none" and null for a sense without a source book.)
+5. How the author uses it: whether he follows the source, and which other terms he equates it with. relation "identity" only for explicit statements that X is Y; say whether the equated terms are names for the same thing in other systems.
 List the senses the author uses most first. For each sense give label: the sense in 2 to 4 plain words (e.g. "inner, deep"; "the divine Innermost"), and ${partOfSpeechRule("this sense")}
 Do not discuss translating the term. Write label, summary, evidence, originalTermBasis, meaningInSource, authorUsage and relations in ${ctx.reportName}; keep the wording of quotations. ${quotationRule(ctx.reportName, ctx.reportCode)}
 

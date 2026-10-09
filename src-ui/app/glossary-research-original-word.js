@@ -53,11 +53,58 @@ function sameWord(rendering, key) {
   return !/\s/.test(rest) && (at === 0 ? /^\s/.test(text.slice(key.length)) : /[\s'’]$/.test(text.slice(0, at)));
 }
 
-/** The original words that bind this glossary: verified, and in its target language. */
+const yearOf = (value) => {
+  const match = /(\d{4})/.exec(String(value ?? ""));
+  return match ? Number(match[1]) : null;
+};
+
+/**
+ * Whether the author borrowed this sense of the term from its source book (Hans,
+ * 2026-10-09): yes when the sense is not the ordinary one (not in the dictionary)
+ * and it occurs in one of the books he read, even once. He may have met it
+ * elsewhere too, but he certainly met it there. Dates are shown, not required.
+ * Returns { strength, reasons, notes, spanishYear, firstYear }.
+ */
+export function borrowingStrength(sense, record, { citations = 0, glossaryPair = false } = {}) {
+  if (!sense?.sourceBook || !record) return null;
+  const spanishYear = record.translated ? yearOf(record.firstSpanishTranslation) : yearOf(record.firstPrinting ?? record.originalFirstPrinting);
+  const firstYear = Number.isInteger(sense.firstUseYear) ? sense.firstUseYear : null;
+  const reasons = [];
+  if (["only", "mainly", "several"].includes(sense.exclusivity)) reasons.push("in-book");
+  if (sense.citesBook === true && citations > 0) reasons.push("cites");
+  if (glossaryPair) reasons.push("glossary");
+  const special = sense.inDictionary === false;
+  const notes = [];
+  if (spanishYear != null && firstYear != null && spanishYear > firstYear) notes.push(`the Spanish edition (${spanishYear}) is later than his first use in this sense (${firstYear})`);
+  const strength = special && reasons.length ? "strong" : "weak";
+  const doubts = [];
+  if (!special) doubts.push("this is an ordinary meaning of the word");
+  if (!reasons.length) doubts.push("the sense was not found in the book");
+  return { strength, reasons, notes, doubts, spanishYear, firstYear };
+}
+
+/** One plain line saying what the borrowing rests on. */
+export function borrowingText(sense, borrowing, { author = "The author", term = "", translationTitle = "" } = {}) {
+  if (!borrowing) return "";
+  const where = translationTitle || sense.sourceBook;
+  if (borrowing.strength === "weak") {
+    return `${where} may be where ${author} found “${term}” in this sense, but it is not certain (${borrowing.doubts.join("; ")}).`;
+  }
+  const bases = ["the sense is not the ordinary one"];
+  if (borrowing.reasons.includes("in-book")) bases.push(sense.exclusivity === "only" ? "the book uses it, and no other book he read does" : "the book uses it");
+  if (borrowing.reasons.includes("cites")) bases.push("he names the book next to the term");
+  if (borrowing.reasons.includes("glossary")) bases.push("the book's own glossary gives it");
+  const dates = borrowing.spanishYear != null ? ` Spanish edition ${borrowing.spanishYear}${borrowing.firstYear != null ? `; his first use in this sense ${borrowing.firstYear}` : ""}${borrowing.notes.length ? ` (note: ${borrowing.notes.join("; ")})` : ""}.` : "";
+  return `${author} read “${term}” in this sense in ${where}: ${bases.join("; ")}.${dates}`;
+}
+
+/** The original words that bind this glossary: verified, borrowed with certainty, and in its target language. */
 export function requiredOriginalWords(study, targetCode) {
   const seen = new Set();
   return (study?.senses ?? [])
     .filter((sense) => sense.originalWord?.verified && baseLanguage(sense.originalWord.languageCode) === baseLanguage(targetCode))
+    // A borrowing that is not certain does not impose the book's word (runs before 2026-10-09 have no strength).
+    .filter((sense) => sense.borrowing?.strength !== "weak")
     .map((sense) => ({ ...sense.originalWord, sense: sense.sense, partOfSpeech: sense.partOfSpeech ?? null }))
     .filter((word) => !seen.has(fold(word.term)) && seen.add(fold(word.term)));
 }

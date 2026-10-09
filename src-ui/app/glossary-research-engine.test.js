@@ -863,3 +863,24 @@ test("every request that writes for the reader carries the plain-writing rule, o
   assert.match(writing[0].instructions, /not "substantive"/, "English reports get the everyday grammar words");
   assert.ok(requests.filter((r) => r.stage === "frequency").every((r) => !r.instructions.includes("WRITING.")));
 });
+
+test("the origin study sees where the author names a book next to the term, and his earliest dated uses", async () => {
+  const requests = [];
+  const model = fakeModel();
+  const call = model.call;
+  model.call = (request, onDelta) => {
+    requests.push(request);
+    return call(request, onDelta);
+  };
+  const corpus = fakeCorpus(passages(40));
+  corpus.authorName = "Samael Aun Weor";
+  corpus.authorCitations = async (phrases, forms) => [{ itemId: "c1", text: `Como dice Libro fuente, el ${forms[0]} guía.`, occurrences: [{ start: 26, end: 26 + forms[0].length }], reference: { title: "EL FALSO SENTIMIENTO DEL YO" } }];
+  corpus.earliestUses = async (forms) => [{ itemId: "e1", year: 1950, text: `El ${forms[0]} primero.`, occurrences: [{ start: 3, end: 3 + forms[0].length }], reference: { title: "LA REVOLUCIÓN DE BEL" } }];
+  const { engine: research, store } = engine({ model, corpus });
+  await research.runToReview();
+  const sources = requests.find((request) => request.stage === "sources" && /trace|where each of his meanings/.test(request.purpose));
+  assert.match(sources.content, /## Where the author names those books next to the term[\s\S]*Como dice Libro fuente/);
+  assert.match(sources.content, /## The author's earliest dated uses of the term \(year: work\)[\s\S]*\[1950: LA REVOLUCIÓN DE BEL\]/);
+  const sense = store.data.sources.study.senses[0];
+  assert.ok(sense.borrowing, "the borrowing is judged for a sense from a source book");
+});

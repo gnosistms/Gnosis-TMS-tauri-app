@@ -48,6 +48,22 @@ export function contentNeighbours(neighbours, forms, languageCode) {
   });
 }
 
+/** Whether the text contains one of the forms as a whole word (case ignored). */
+export function containsAnyForm(text, forms) {
+  const value = String(text ?? "").normalize("NFC").toLowerCase();
+  return forms.some((form) => {
+    const key = String(form).normalize("NFC").toLowerCase();
+    let at = value.indexOf(key);
+    while (at >= 0) {
+      const before = value[at - 1] ?? "";
+      const after = value[at + key.length] ?? "";
+      if (!/\p{L}/u.test(before) && !/\p{L}/u.test(after)) return true;
+      at = value.indexOf(key, at + 1);
+    }
+    return false;
+  });
+}
+
 export function createSamaelCorpus({ baseUrl = samaelCorpusUrl(), fetchImpl = globalThis.fetch } = {}) {
   async function get(path, params) {
     const query = new URLSearchParams(params).toString();
@@ -88,6 +104,7 @@ export function createSamaelCorpus({ baseUrl = samaelCorpusUrl(), fetchImpl = gl
       copyCount: raw.copy_count ?? 1,
       reference: {
         title: representative.title,
+        year: representative.year ?? null,
         chapter: representative.chapter_title ?? "",
         paragraph: representative.n,
         url: representative.reader_url ? `${baseUrl}${representative.reader_url}` : null,
@@ -156,8 +173,10 @@ export function createSamaelCorpus({ baseUrl = samaelCorpusUrl(), fetchImpl = gl
           originalAuthor: book.original_author ?? null,
           originalFirstPrinting: book.original_first_printing ?? null,
           firstSpanishTranslation: book.first_spanish_translation ?? null,
+          firstPrinting: book.first_printing ?? null,
           headwordPairs: book.headword_pairs ?? [],
           originalBookId: book.original_book_id ?? null,
+          paragraphs: book.paragraphs ?? null,
           originalAccess: book.original_access ?? null,
         }));
       } catch {
@@ -189,6 +208,26 @@ export function createSamaelCorpus({ baseUrl = samaelCorpusUrl(), fetchImpl = gl
     async authorMentions(phrase, seed, n = 8) {
       const result = await get("/api/sample", { forms: phrase, n, seed, kind: "samael", context: 0 });
       return result.items.map(toPassage);
+    },
+    /**
+     * Where the author names a book next to the term: paragraphs with one of the
+     * title phrases that also contain one of the forms. A server without the
+     * require filter returns title paragraphs only; they are filtered here.
+     */
+    async authorCitations(phrases, forms, seed, n = 8) {
+      const result = await get("/api/sample", { forms: phrases.join(","), require: forms.join(","), n: 200, seed, kind: "samael", context: 0 });
+      const items = result.items.map(toPassage);
+      if (Array.isArray(result.require) && result.require.length) return items.slice(0, n);
+      return items.filter((item) => containsAnyForm(item.text, forms)).slice(0, n);
+    },
+    /** The author's earliest dated uses of the term (a few paragraphs from each early work), or null. */
+    async earliestUses(forms, n = 6) {
+      try {
+        const result = await get("/api/sample/earliest", { forms: forms.join(","), kind: "samael", n, per_doc: 3 });
+        return result.items.map((raw) => ({ ...toPassage(raw), year: raw.year ?? null }));
+      } catch {
+        return null; // a server without the endpoint: the study goes on without dates
+      }
     },
   };
 }

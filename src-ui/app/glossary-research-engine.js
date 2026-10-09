@@ -27,7 +27,7 @@ import * as prompts from "./glossary-research-prompts.js";
 import { coOccurrence, convergenceContent, sharedRenderings } from "./glossary-research-convergence.js";
 import { aggregateCounts, mergeJudgeCountings } from "./glossary-research-aggregate.js";
 import {
-  bookName, enforceOriginalWords, noteNamesTheBook, originalFor, originalWordOf, originalWordsText, placeOriginalWords, requiredOriginalWords,
+  bookName, borrowingStrength, borrowingText, enforceOriginalWords, noteNamesTheBook, originalFor, originalWordOf, originalWordsText, placeOriginalWords, requiredOriginalWords,
 } from "./glossary-research-original-word.js";
 import {
   MIN_SENSE_SAMPLE,
@@ -983,15 +983,27 @@ export function createResearchEngine(deps) {
       const top = ranked.filter((book) => book.occurrences / total >= 0.1).slice(0, 3);
       if (!top.length) top.push(ranked[0]);
       const others = ranked.filter((book) => !top.includes(book)).slice(0, 8);
+      // Where the author names each of these books: first the paragraphs that name it next
+      // to the term (the strongest evidence of borrowing), then a sample of the others.
       const mentions = [];
+      const citations = [];
+      const citationsByBook = new Map();
       for (const book of top) {
         const name = book.title.split(" — ")[0];
-        const phrases = new Set([name.replace(/\s*\([^)]*\)\s*/g, " ").trim(), ...[...name.matchAll(/\(([^)]+)\)/g)].map((m) => m[1].trim())]);
-        for (const phrase of [...phrases].filter((p) => p.length > 3)) {
-          const found = corpus.authorMentions ? await corpus.authorMentions(phrase, settings.seed) : [];
+        const phrases = [...new Set([name.replace(/\s*\([^)]*\)\s*/g, " ").trim(), ...[...name.matchAll(/\(([^)]+)\)/g)].map((m) => m[1].trim())])].filter((p) => p.length > 3);
+        if (corpus.authorCitations && phrases.length) {
+          info(`Looking for places where ${corpus.authorName ?? "the author"} names ${name} next to “${settings.term}”…`);
+          const found = await corpus.authorCitations(phrases, forms, settings.seed).catch(() => []);
+          citationsByBook.set(book.title, found.length);
+          citations.push(...found.map((item) => passageSnippet(item, 900)));
+        }
+        for (const phrase of phrases) {
+          const found = corpus.authorMentions ? await corpus.authorMentions(phrase, settings.seed, 6) : [];
           mentions.push(...found.map((item) => passageSnippet(item, 900)));
         }
       }
+      // When the author first used the term, for comparing with when each book appeared in Spanish.
+      const earliest = corpus.earliestUses ? await corpus.earliestUses(forms) : null;
       const records = (corpus.sourceBooks ? await corpus.sourceBooks() : [])
         .filter((record) => ranked.slice(0, 11).some((book) => book.title === record.title));
       const recordLines = records.map((record) => {
@@ -1035,12 +1047,17 @@ export function createResearchEngine(deps) {
       const content = [
         `# Term: ${settings.term}\nSpellings searched: ${forms.join(", ")}`,
         section("Dictionary entry", [ctx().dictionaryText || "(none found)"]),
-        section("Occurrences in the reference books", [ranked.map((book) => `- ${book.title}: ${book.occurrences} occurrences in ${book.passages} passages`).join("\n")]),
+        section("Occurrences in the reference books (books the author read)", [ranked.map((book) => {
+          const length = records.find((record) => record.title === book.title)?.paragraphs;
+          return `- ${book.title}: ${book.occurrences} occurrences in ${book.passages} paragraphs${length ? ` (the book has ${length} paragraphs: ${((1000 * book.occurrences) / length).toFixed(1)} per 1,000)` : ""}`;
+        }).join("\n")]),
         section("Records of the reference books", [recordLines.join("\n") || "(no records)"]),
         section(`Passages from the books that use it most (${top.map((book) => book.title).join("; ")})`, top.flatMap((book) => book.items.slice(0, 14).map((item) => passageSnippet(item)))),
         ...originalSections,
         section("One passage from each of the other books", others.map((book) => passageSnippet(book.items[0]))),
-        section("Where the author names those books", mentions),
+        section("Where the author names those books next to the term", citations),
+        section("Where the author names those books (a sample)", mentions),
+        ...(earliest ? [section("The author's earliest dated uses of the term (year: work)", earliest.map((item) => `[${item.year ?? "undated"}: ${item.reference?.title ?? ""}]\n${snippet(item.text, item.occurrences[0]?.start ?? 0, item.occurrences[0]?.end ?? 0, 300)}`))] : []),
         section("A sample of the author's own uses", authorPassages()),
       ].join("\n\n");
       const study = await client.callJson({
@@ -1053,7 +1070,16 @@ export function createResearchEngine(deps) {
       await checkOriginalTerms(study, top, records, searched);
       for (const sense of study.senses) {
         const book = bookOfSense(sense, top);
-        const word = originalWordOf(sense, book && records.find((item) => item.title === book.title), { forms, pairReads });
+        const record = book && records.find((item) => item.title === book.title);
+        const word = originalWordOf(sense, record, { forms, pairReads });
+        if (!sense.inDictionary && record) {
+          sense.borrowing = borrowingStrength(sense, record, {
+            citations: citationsByBook.get(book.title) ?? 0,
+            glossaryPair: Boolean(word?.verified && /glossary/.test(word.basis)),
+          });
+          const line = borrowingText(sense, sense.borrowing, { author: corpus.authorName ?? "The author", term: settings.term, translationTitle: record.title.split(" — ")[0].replace(/\s*\([^)]*\)\s*$/, "") });
+          if (line) fact(line);
+        }
         if (!word) continue;
         sense.originalWord = word;
         if (word.verified && requiredOriginalWords({ senses: [sense] }, settings.targetLanguageCode).length) {

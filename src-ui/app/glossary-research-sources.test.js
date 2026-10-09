@@ -130,3 +130,19 @@ test("after the DLE fails to answer, later lookups skip it for a while", async (
   await dictionary.lookup("tres");
   assert.equal(dleCalls, 2, "it is tried again after a while");
 });
+
+test("citations next to the term: the server filters when it can, the app filters otherwise", async () => {
+  const item = (text) => ({ item_id: text.slice(0, 6), text, copy_count: 1, occurrences: [{ start: 0, end: 5, surface: text.slice(0, 5) }],
+    representative: { title: "EL FALSO SENTIMIENTO DEL YO", n: 1, year: 1977 }, copies: [], context_before: [], context_after: [] });
+  const page = (filtered) => ({ require: filtered ? ["íntimo"] : undefined, items: [item("Dioses Atómicos dice: alabaron al Íntimo."), item("Dioses Atómicos desprecia el cuerpo astral.")] });
+  const urls = [];
+  const old = createSamaelCorpus({ baseUrl: "https://example.test", fetchImpl: async (url) => { urls.push(url); return jsonResponse(page(false)); } });
+  const found = await old.authorCitations(["Dioses Atómicos"], ["íntimo"], "s");
+  assert.match(urls[0], /require=%C3%ADntimo/);
+  assert.equal(found.length, 1, "an older server: only the paragraph that also has the term");
+  assert.equal(found[0].reference.year, 1977);
+  const fresh = createSamaelCorpus({ baseUrl: "https://example.test", fetchImpl: async () => jsonResponse(page(true)) });
+  assert.equal((await fresh.authorCitations(["Dioses Atómicos"], ["íntimo"], "s")).length, 2, "the server already filtered");
+  const none = createSamaelCorpus({ baseUrl: "https://example.test", fetchImpl: async () => jsonResponse({}, 404) });
+  assert.equal(await none.earliestUses(["íntimo"]), null, "no dates from a server without them; the study goes on");
+});

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  enforceOriginalWords, noteNamesTheBook, originalFor, originalSourceLabel, originalWordOf, placeOriginalWords, requiredOriginalWords,
+  borrowingStrength, borrowingText, enforceOriginalWords, noteNamesTheBook, originalFor, originalSourceLabel, originalWordOf, placeOriginalWords, requiredOriginalWords,
 } from "./glossary-research-original-word.js";
 import { frozenEntryText } from "./glossary-research-prompts.js";
 
@@ -149,4 +149,19 @@ test("the word as written wins over a lower-case variant listed for another mean
   ] }] };
   enforceOriginalWords(proposal, placed, { headword: "íntimo" });
   assert.deepEqual(proposal.entries[0].variants.map((v) => [v.target, Boolean(v.original)]), [["Innermost", true], ["innermost", false]]);
+});
+
+test("a borrowing is certain when the sense is not the ordinary one and the book uses it, even once", () => {
+  const record = { translated: true, firstSpanishTranslation: "1950", title: "Dioses Atómicos (La aurora de la juventud) — M." };
+  const divine = { sense: "the divine Innermost", inDictionary: false, sourceBook: "Dioses Atómicos", exclusivity: "several", firstUseYear: 1950 };
+  const strong = borrowingStrength(divine, record);
+  assert.equal(strong.strength, "strong");
+  assert.match(borrowingText(divine, strong, { author: "Samael Aun Weor", term: "Íntimo", translationTitle: "Dioses Atómicos" }), /^Samael Aun Weor read “Íntimo” in this sense in Dioses Atómicos: the sense is not the ordinary one; the book uses it\. Spanish edition 1950; his first use in this sense 1950\.$/);
+  assert.equal(borrowingStrength({ ...divine, inDictionary: true }, record).strength, "weak", "an ordinary meaning is not a borrowing");
+  assert.equal(borrowingStrength({ ...divine, exclusivity: "none" }, record).strength, "weak", "the book does not use it in this sense");
+  const late = borrowingStrength({ ...divine, firstUseYear: 1948 }, record);
+  assert.equal(late.strength, "strong", "dates are shown, not required");
+  assert.deepEqual(late.notes, ["the Spanish edition (1950) is later than his first use in this sense (1948)"]);
+  const weakStudy = { senses: [{ ...divine, borrowing: { strength: "weak" }, originalWord: { verified: true, languageCode: "en", term: "Innermost" } }] };
+  assert.deepEqual(requiredOriginalWords(weakStudy, "en"), [], "an uncertain borrowing does not impose the book's word");
 });
