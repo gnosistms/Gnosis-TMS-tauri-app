@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  borrowingStrength, borrowingText, enforceOriginalWords, noteNamesTheBook, originalFor, originalSourceLabel, originalWordOf, placeOriginalWords, requiredOriginalWords,
+  borrowingStrength, borrowingText, enforceOriginalWords, languageNameOf, noteNamesTheBook, originalFor, originalSourceLabel, originalWordOf, pairFact, placeOriginalWords, requiredOriginalWords,
 } from "./glossary-research-original-word.js";
 import { frozenEntryText } from "./glossary-research-prompts.js";
 
@@ -164,4 +164,76 @@ test("a borrowing is certain when the sense is not the ordinary one and the book
   assert.deepEqual(late.notes, ["the Spanish edition (1950) is later than his first use in this sense (1948)"]);
   const weakStudy = { senses: [{ ...divine, borrowing: { strength: "weak" }, originalWord: { verified: true, languageCode: "en", term: "Innermost" } }] };
   assert.deepEqual(requiredOriginalWords(weakStudy, "en"), [], "an uncertain borrowing does not impose the book's word");
+});
+
+// A book whose pairs come from the search site's comparison of the translation with its original.
+const isis = {
+  title: "Isis sin velo — H. P. Blavatsky",
+  translated: true,
+  originalLanguage: "en",
+  originalTitle: "Isis Unveiled",
+  originalAuthor: "H. P. Blavatsky",
+  originalBookId: "blavatsky_isis",
+  headwordPairs: [],
+  termPairs: [{ source: "Daimón", original: "demon", also: ["daimonion"], originalForms: ["demon", "daimonion", "demons"], status: "equivalent_found", basis: "aligned" }],
+};
+const daimon = { sense: "the inner divine guide", inDictionary: false, sourceBook: "Isis sin velo — H. P. Blavatsky", originalTerm: "demon", exclusivity: "several" };
+
+test("a pair from the site's comparison with the original gives the book's word, like a glossary pair", () => {
+  const reads = new Map([["blavatsky_isis", 134]]);
+  const word = originalWordOf(daimon, isis, { forms: ["daimón"], pairReads: reads });
+  assert.equal(word.verified, true);
+  assert.equal(word.pairBasis, "aligned");
+  assert.match(word.basis, /^the search site's comparison of the translation with the original pairs it with the term/);
+  assert.equal(originalWordOf({ ...daimon, originalTerm: "Daimonion" }, isis, { pairReads: reads }).verified, true, "the book's other wording for the term");
+  assert.equal(originalWordOf({ ...daimon, originalTerm: "spirit" }, isis, { pairReads: reads }).verified, false, "a word the pair does not name");
+  assert.equal(originalWordOf(daimon, isis, { pairReads: new Map() }).verified, false, "not found in the original text");
+  const printed = originalWordOf(noun, { ...dayspring, termPairs: [{ source: "Íntimo", original: "Innermost", basis: "printed" }] }, { pairReads: new Map([["dayspring", 3]]) });
+  assert.equal(printed.pairBasis, "printed");
+  assert.match(printed.basis, /^the book's own glossary pairs it/);
+});
+
+test("an aligned pair counts like a glossary pair for borrowing, under the same rules", () => {
+  const strong = borrowingStrength({ ...daimon, exclusivity: "none" }, isis, { pair: "aligned" });
+  assert.deepEqual([strong.strength, strong.reasons], ["strong", ["aligned"]]);
+  assert.match(borrowingText(daimon, strong, { author: "Samael Aun Weor", term: "daimón", translationTitle: "Isis sin velo" }), /the search site's comparison with the original pairs it with the book's word/);
+  assert.equal(borrowingStrength({ ...daimon, inDictionary: true }, isis, { pair: "aligned" }).strength, "weak", "an ordinary meaning is not a borrowing");
+  assert.deepEqual(borrowingStrength(daimon, isis, { pair: "printed" }).reasons, ["in-book", "glossary"]);
+  assert.deepEqual(borrowingStrength(daimon, isis, { glossaryPair: true }).reasons, ["in-book", "glossary"], "the older option still works");
+});
+
+test("an aligned pair's word binds only a glossary in the original's language", () => {
+  const word = originalWordOf(daimon, isis, { forms: ["daimón"], pairReads: new Map([["blavatsky_isis", 134]]) });
+  const study = { senses: [{ ...daimon, originalWord: word, borrowing: { strength: "strong" } }] };
+  assert.deepEqual(requiredOriginalWords(study, "en-GB").map((w) => w.term), ["demon"]);
+  for (const code of ["vi", "fr", "zh-Hant", "pt-BR"]) assert.deepEqual(requiredOriginalWords(study, code), [], code);
+  const levi = { ...isis, originalLanguage: "fr", originalBookId: "levi_dogma_ritual", termPairs: [{ source: "Adepto", original: "adepte", basis: "aligned" }] };
+  const french = originalWordOf({ ...daimon, originalTerm: "adepte" }, levi, { pairReads: new Map([["levi_dogma_ritual", 9]]) });
+  const frenchStudy = { senses: [{ ...daimon, originalWord: french }] };
+  assert.deepEqual(requiredOriginalWords(frenchStudy, "fr").map((w) => w.term), ["adepte"]);
+  assert.deepEqual(requiredOriginalWords(frenchStudy, "en"), []);
+});
+
+test("the pair facts say where each pair comes from", () => {
+  const base = { site: "Samael Aun Weor", author: "Samael Aun Weor" };
+  assert.equal(
+    pairFact({ ...base, shortTitle: "Dioses Atómicos (La aurora de la juventud)", record: dayspring, term: "íntimo", pairs: [{ original: "Innermost", basis: "printed" }], occurrences: 189, searched: ["Innermost"] }),
+    "The Samael Aun Weor search site lists Dioses Atómicos (La aurora de la juventud) among the books Samael Aun Weor read: the Spanish translation of The Dayspring of Youth, written in English by M. Both editions end with a glossary; matched entry by entry, they pair “íntimo” with “Innermost”, which the English original uses 189 times.",
+  );
+  assert.equal(
+    pairFact({ ...base, shortTitle: "Isis sin velo", record: isis, term: "daimón", pairs: isis.termPairs, occurrences: 134, searched: ["demon", "daimonion", "demons"] }),
+    "The Samael Aun Weor search site lists Isis sin velo among the books Samael Aun Weor read: the Spanish translation of Isis Unveiled, written in English by H. P. Blavatsky. The site compared the two texts passage by passage (an AI paired the words; a program then found each English word in the passages cited for it) and pairs “daimón” with “demon” and “daimonion”, which the English original uses 134 times (counting “demons”).",
+  );
+  const kundalini = { ...isis, title: "Kundalini Yoga — Sivananda", originalTitle: "Kundalini Yoga", originalAuthor: "Sivananda" };
+  assert.match(
+    pairFact({ ...base, shortTitle: "Kundalini Yoga", record: kundalini, term: "kundalini", pairs: [{ original: "Kundalini", status: "passthrough", basis: "aligned" }], occurrences: 300, searched: ["Kundalini"] }),
+    /and finds the word unchanged in the English original: “Kundalini”, used 300 times\.$/,
+  );
+  const levi = { ...isis, originalLanguage: "fr", originalTitle: null, originalAuthor: "Eliphas Levi" };
+  assert.match(
+    pairFact({ ...base, shortTitle: "Dogma y ritual de la alta magia", record: levi, term: "adepto", pairs: [{ original: "adepte", basis: "aligned" }], occurrences: 12, searched: ["adepte", "adeptes"] }),
+    /the Spanish translation of Dogma y ritual de la alta magia, written in French by Eliphas Levi\. .*each French word .* pairs “adepto” with “adepte”, which the French original uses 12 times \(counting “adeptes”\)\.$/,
+  );
+  assert.equal(languageNameOf("de"), "German");
+  assert.equal(languageNameOf(null), "");
 });

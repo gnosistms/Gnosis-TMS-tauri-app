@@ -166,6 +166,7 @@ export function createSamaelCorpus({ baseUrl = samaelCorpusUrl(), fetchImpl = gl
       try {
         const result = await get("/api/sample/source-books", {});
         return (result.books ?? []).map((book) => ({
+          docId: book.doc_id ?? null,
           title: book.title,
           translated: book.translated === true,
           originalLanguage: book.original_language ?? null,
@@ -181,6 +182,35 @@ export function createSamaelCorpus({ baseUrl = samaelCorpusUrl(), fetchImpl = gl
         }));
       } catch {
         return []; // an older site without book records: the study works from the passages alone
+      }
+    },
+    /**
+     * The reference books that pair the term (any of its forms) with a word of
+     * the book's original, and on what basis: "printed" (both editions end with a
+     * glossary, matched entry by entry) or "aligned" (the search site's comparison
+     * of the translation with its original). Null when the site cannot say.
+     */
+    async originalTerms(forms) {
+      try {
+        const result = await get("/api/sample/original-terms", { forms: forms.join(",") });
+        return (result.pairs ?? []).map((pair) => ({
+          docId: pair.doc_id ?? null,
+          bookId: pair.book_id ?? null,
+          title: pair.title ?? null,
+          originalLanguage: pair.original_language ?? null,
+          originalTitle: pair.original_title ?? null,
+          originalAuthor: pair.original_author ?? null,
+          source: pair.spanish_term ?? "",
+          original: pair.original_term ?? "",
+          also: pair.also ?? [],
+          originalForms: pair.original_forms ?? [],
+          renderings: pair.renderings ?? [],
+          originalCount: pair.original_count ?? null,
+          status: pair.status ?? null,
+          basis: pair.basis === "printed_glossaries" ? "printed" : "aligned",
+        })).filter((pair) => pair.original);
+      } catch {
+        return null; // an older site without the endpoint: the books' own glossary pairs still apply
       }
     },
     /** Every passage of the reference books that uses the forms, in seeded random order. */

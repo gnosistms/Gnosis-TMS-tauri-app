@@ -27,7 +27,7 @@ import * as prompts from "./glossary-research-prompts.js";
 import { coOccurrence, convergenceContent, sharedRenderings } from "./glossary-research-convergence.js";
 import { aggregateCounts, mergeJudgeCountings } from "./glossary-research-aggregate.js";
 import {
-  bookName, borrowingStrength, borrowingText, enforceOriginalWords, noteNamesTheBook, originalFor, originalWordOf, originalWordsText, placeOriginalWords, requiredOriginalWords,
+  bookName, borrowingStrength, borrowingText, enforceOriginalWords, noteNamesTheBook, originalFor, originalWordOf, originalWordsText, pairFact, pairWords, placeOriginalWords, requiredOriginalWords, termPairsOf,
 } from "./glossary-research-original-word.js";
 import {
   MIN_SENSE_SAMPLE,
@@ -1006,6 +1006,24 @@ export function createResearchEngine(deps) {
       const earliest = corpus.earliestUses ? await corpus.earliestUses(forms) : null;
       const records = (corpus.sourceBooks ? await corpus.sourceBooks() : [])
         .filter((record) => ranked.slice(0, 11).some((book) => book.title === record.title));
+      // Pairs of the term with each book's original word, from the search site: the
+      // book's own glossaries, or the site's comparison of the translation with its
+      // original. A site without them leaves each book's own glossary pairs.
+      const sitePairs = records.length && corpus.originalTerms ? await corpus.originalTerms(forms) : null;
+      if (sitePairs) {
+        for (const record of records) {
+          const own = sitePairs.filter((pair) => (record.docId ? pair.docId === record.docId : pair.title === record.title));
+          const printed = termPairsOf({ headwordPairs: record.headwordPairs }, forms)
+            .filter((pair) => !own.some((item) => item.basis === "printed" && fold(item.original) === fold(pair.original)));
+          record.termPairs = [...own, ...printed];
+          const named = own.find((pair) => pair.originalTitle || pair.originalAuthor);
+          if (named) {
+            record.originalTitle ??= named.originalTitle;
+            record.originalAuthor ??= named.originalAuthor;
+          }
+        }
+      }
+      const pairText = (pair) => `${pair.source} = ${pairWords(pair).join(" / ")}${pair.status === "passthrough" ? " (the original keeps the word)" : ""}${pair.renderings?.length ? ` (the original uses ${pair.renderings.map((r) => `${r.form} ${r.count} times`).join(", ")})` : ""}`;
       const recordLines = records.map((record) => {
         const parts = [record.title];
         if (record.translated) {
@@ -1018,36 +1036,49 @@ export function createResearchEngine(deps) {
         const pairs = record.headwordPairs.length
           ? `\n  The book's own glossary pairs (${settings.sourceLanguageName} = original): ${record.headwordPairs.map((pair) => `${pair.source} = ${pair.original}`).join("; ")}`
           : "";
-        return `- ${parts.join("; ")}${pairs}`;
+        const aligned = (record.termPairs ?? []).filter((pair) => pair.basis === "aligned");
+        const alignedLine = aligned.length
+          ? `\n  The term paired with the original's word by the search site's comparison of this translation with its original (matched by AI; each original word then found in the passages cited for it) (${settings.sourceLanguageName} = original): ${aligned.map(pairText).join("; ")}`
+          : "";
+        return `- ${parts.join("; ")}${pairs}${alignedLine}`;
       });
       const section = (title, lines) => `## ${title}\n${lines.length ? lines.join("\n\n") : "(none)"}`;
-      // Where a book's own glossary pairs name the term's original word, read
-      // that word in the book's original text before writing the study.
-      const formKeys = new Set(forms.map((form) => fold(form).trim()));
+      // Where a pair names the term's original word in a book (its own glossaries,
+      // or the search site's comparison with the original), read that word in the
+      // book's original text before writing the study.
       const originalSections = [];
       const searched = new Set();
-      const pairReads = new Map(); // original book id → occurrences of its glossary-pair words
-      const pairedBooks = []; // books whose glossary already pairs the term with an original word
+      const pairReads = new Map(); // original book id → occurrences of its paired words
+      const pairedBooks = []; // books that already pair the term with an original word
       for (const book of top) {
         const record = records.find((item) => item.title === book.title);
         if (!record?.originalBookId || !corpus.originalSample) continue;
-        const originals = [...new Set(record.headwordPairs
-          .filter((pair) => formKeys.has(fold(pair.source).trim()))
-          .map((pair) => pair.original))];
-        if (!originals.length) continue;
-        const found = await corpus.originalSample(record.originalBookId, originals, settings.seed);
-        searched.add(`${record.originalBookId}:${fold(originals.join(",")).trim()}`);
-        pairReads.set(record.originalBookId, found.occurrences ?? 0);
-        const name = record.originalTitle ?? book.title;
-        pairedBooks.push(book.title.split(" — ")[0]);
-        // Says where it comes from, so it is not taken for the AI's answer (Hans, 2026-10-09).
-        const language = record.originalLanguage === "en" ? "English" : "";
-        const author = corpus.authorName ?? "the author";
-        fact(`The ${corpus.authorName ?? "author's"} search site lists ${book.title.split(" — ")[0]} among the books ${author} read: the Spanish translation of ${name}${record.originalAuthor ? `, written${language ? ` in ${language}` : ""} by ${record.originalAuthor}` : ""}. Both editions end with a glossary; matched entry by entry, they pair “${settings.term}” with ${originals.map((o) => `“${o}”`).join(", ")}, which the ${language ? `${language} ` : ""}original uses ${found.occurrences} times.`);
-        originalSections.push(section(
-          `The original text of ${name}: ${found.occurrences} occurrences of ${originals.map((o) => `“${o}”`).join(", ")} in ${found.paragraphs} passages (a sample)`,
-          found.items.map((item) => passageSnippet({ ...item, reference: { title: name } })),
-        ));
+        const pairs = termPairsOf(record, forms);
+        // One reading per kind of pair, so each fact names its own source.
+        for (const group of [pairs.filter((pair) => pair.basis !== "aligned"), pairs.filter((pair) => pair.basis === "aligned")]) {
+          if (!group.length) continue;
+          const originals = [...new Set(group.flatMap(pairWords))];
+          // The forms of the words the original uses ("demons" for "demon"), at most 20.
+          const lookFor = [];
+          for (const form of [...originals, ...group.flatMap((pair) => pair.originalForms ?? []), ...group.flatMap((pair) => (pair.renderings ?? []).map((r) => r.form))]) {
+            if (form && !lookFor.some((seen) => fold(seen) === fold(form))) lookFor.push(form);
+          }
+          const found = await corpus.originalSample(record.originalBookId, lookFor.slice(0, 20), settings.seed);
+          searched.add(`${record.originalBookId}:${fold(originals.join(",")).trim()}`);
+          for (const word of originals) searched.add(`${record.originalBookId}:${fold(word).trim()}`);
+          pairReads.set(record.originalBookId, (pairReads.get(record.originalBookId) ?? 0) + (found.occurrences ?? 0));
+          const name = record.originalTitle ?? book.title;
+          if (!pairedBooks.includes(book.title.split(" — ")[0])) pairedBooks.push(book.title.split(" — ")[0]);
+          fact(pairFact({
+            site: corpus.authorName ?? "author's", author: corpus.authorName ?? "the author",
+            shortTitle: book.title.split(" — ")[0], record, term: settings.term, pairs: group,
+            occurrences: found.occurrences, searched: lookFor.slice(0, 20),
+          }));
+          originalSections.push(section(
+            `The original text of ${name}: ${found.occurrences} occurrences of ${lookFor.slice(0, 20).map((o) => `“${o}”`).join(", ")} in ${found.paragraphs} passages (a sample)`,
+            found.items.map((item) => passageSnippet({ ...item, reference: { title: name } })),
+          ));
+        }
       }
       const content = [
         `# Term: ${settings.term}\nSpellings searched: ${forms.join(", ")}`,
@@ -1080,7 +1111,7 @@ export function createResearchEngine(deps) {
         if (!sense.inDictionary && record) {
           sense.borrowing = borrowingStrength(sense, record, {
             citations: citationsByBook.get(book.title) ?? 0,
-            glossaryPair: Boolean(word?.verified && /glossary/.test(word.basis)),
+            pair: word?.verified ? word.pairBasis ?? null : null,
           });
           const line = borrowingText(sense, sense.borrowing, { author: corpus.authorName ?? "The author", term: settings.term, translationTitle: record.title.split(" — ")[0].replace(/\s*\([^)]*\)\s*$/, "") });
           if (line) fact(line);

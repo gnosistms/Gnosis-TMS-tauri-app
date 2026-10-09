@@ -250,6 +250,43 @@ test("the proposal is made without the glossary, from the source study and the c
   assert.equal(requests.filter((r) => r.schemaName === "original_check").length, 0, "no check needed when the pair names the word");
 });
 
+test("a pair from the site's comparison with the original is read in the original and named as such", async () => {
+  const requests = [];
+  const logs = [];
+  const model = fakeModel();
+  const call = model.call;
+  model.call = (request, onDelta) => {
+    requests.push(request);
+    return call(request, onDelta);
+  };
+  const corpus = fakeCorpus(passages(40), []);
+  corpus.originalTerms = async (forms) => {
+    corpus.pairRequests = forms;
+    return [{ docId: null, title: "Libro fuente — M.", originalLanguage: "en", originalTitle: "The Source Book", originalAuthor: "M.", source: "Fatal", original: "Fateful One", also: [], originalForms: ["Fateful One", "Fateful Ones"], renderings: [{ form: "Fateful Ones", count: 2 }], originalCount: 3, status: "equivalent_found", basis: "aligned" }];
+  };
+  const { engine: research, store } = engine({ model, corpus, log: (event) => logs.push(event) });
+  await research.runToReview();
+  assert.deepEqual(corpus.pairRequests, ["fatal", "fatales"]);
+  assert.deepEqual(corpus.originalSearches, [{ bookId: "fuente", forms: ["Fateful One", "Fateful Ones"] }]);
+  const sources = requests.find((r) => r.stage === "sources" && r.schemaName === "sources");
+  assert.match(sources.content, /by the search site's comparison of this translation with its original .*: Fatal = Fateful One \(the original uses Fateful Ones 2 times\)/);
+  assert.equal(requests.filter((r) => r.schemaName === "original_check").length, 0, "no check needed when the pair names the word");
+  const facts = logs.filter((event) => event.type === "fact").map((event) => event.text);
+  assert.ok(facts.includes("The the author search site lists Libro fuente among the books the author read: the Spanish translation of The Source Book, written in English by M. The site compared the two texts passage by passage (an AI paired the words; a program then found each English word in the passages cited for it) and pairs “fatal” with “Fateful One”, which the English original uses 1 time (counting “Fateful Ones”)."), facts.join("\n"));
+  const sense = store.data.sources.study.senses[0];
+  assert.equal(sense.originalWord.pairBasis, "aligned");
+  assert.deepEqual(sense.borrowing.reasons, ["aligned"]);
+});
+
+test("a site without the pairs endpoint still reads the book's own glossary pairs", async () => {
+  const corpus = fakeCorpus(passages(40));
+  corpus.originalTerms = async () => null;
+  const { engine: research, store } = engine({ corpus });
+  await research.runToReview();
+  assert.deepEqual(corpus.originalSearches, [{ bookId: "fuente", forms: ["Fateful One"] }]);
+  assert.equal(store.data.sources.study.senses[0].originalWord.pairBasis, "printed");
+});
+
 test("a believed original word is checked against the original text", async () => {
   const requests = [];
   const model = fakeModel();

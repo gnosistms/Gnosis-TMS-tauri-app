@@ -7,30 +7,58 @@
 //     are left out (other meanings of the term keep their own translations);
 //   - the counting step is told so, and its glossary note says so.
 // "With confidence" means the word was read in the original text: confirmed or
-// corrected by the original-word check, or given by the book's own glossary pairs
-// and found in the original text.
+// corrected by the original-word check, or given by a pair of the term with the
+// book's word and found in the original text. A pair comes from the book's own
+// glossaries (both editions end with one, matched entry by entry: Dioses
+// Atómicos) or from the search site's comparison of the translation with its
+// original; both name the book's word for the term.
 
 const fold = (text) => String(text ?? "").normalize("NFC").toLowerCase().trim();
 const baseLanguage = (code) => String(code ?? "").toLowerCase().split(/[-_]/)[0];
 
 /**
+ * The pairs of the term with the book's original word: `record.termPairs` when
+ * the search site gave them for this term ({ source, original, also, basis:
+ * "printed" | "aligned" }), else the book's own glossary pairs whose Spanish
+ * side is one of the forms.
+ */
+export function termPairsOf(record, forms = []) {
+  if (Array.isArray(record?.termPairs)) return record.termPairs;
+  const formKeys = new Set(forms.map(fold));
+  return (record?.headwordPairs ?? [])
+    .filter((pair) => formKeys.has(fold(pair.source)))
+    .map((pair) => ({ ...pair, also: [], basis: "printed" }));
+}
+
+/** The paired words of a pair: its word and the book's other wordings for the term. */
+export const pairWords = (pair) => [pair.original, ...(pair.also ?? [])].filter(Boolean);
+
+const PAIR_BASIS = {
+  printed: "the book's own glossary pairs it with the term, and the original text uses it",
+  aligned: "the search site's comparison of the translation with the original pairs it with the term, and the original text uses it",
+};
+
+/**
  * The original word a study sense carries, or null. `record` is the reference
  * book's record; `forms` the term's searched forms; `pairReads` maps
- * an original book id to the occurrences of its glossary-pair words found in the
- * original text.
+ * an original book id to the occurrences of its paired words found in the
+ * original text. `pairBasis` says which kind of pair gave the word, if one did.
  */
 export function originalWordOf(sense, record, { forms = [], pairReads = new Map() } = {}) {
-  const formKeys = new Set(forms.map(fold));
   if (!sense || sense.inDictionary || !sense.originalTerm || !record?.translated) return null;
   const term = String(sense.originalTerm).trim();
   if (!term) return null;
   const check = sense.originalCheck ?? null;
   let basis = "";
+  let pairBasis = null;
   if (check?.confirmed === true) basis = "checked in the original text";
   else if (check && check.originalTerm && fold(check.originalTerm) === fold(term)) basis = "corrected from the original text";
-  else if (!check && (pairReads.get(record.originalBookId) ?? 0) > 0
-    && (record.headwordPairs ?? []).some((pair) => formKeys.has(fold(pair.source)) && fold(pair.original) === fold(term))) {
-    basis = "the book's own glossary pairs it with the term, and the original text uses it";
+  else if (!check && (pairReads.get(record.originalBookId) ?? 0) > 0) {
+    const pair = termPairsOf(record, forms).find((item) => pairWords(item).some((word) => fold(word) === fold(term)));
+    if (pair) {
+      pairBasis = pair.basis === "aligned" ? "aligned" : "printed";
+      basis = PAIR_BASIS[pairBasis];
+    }
   }
   return {
     term,
@@ -40,6 +68,7 @@ export function originalWordOf(sense, record, { forms = [], pairReads = new Map(
     translationTitle: record.title ?? null,
     verified: Boolean(basis),
     basis,
+    pairBasis,
   };
 }
 
@@ -65,14 +94,16 @@ const yearOf = (value) => {
  * elsewhere too, but he certainly met it there. Dates are shown, not required.
  * Returns { strength, reasons, notes, spanishYear, firstYear }.
  */
-export function borrowingStrength(sense, record, { citations = 0, glossaryPair = false } = {}) {
+export function borrowingStrength(sense, record, { citations = 0, glossaryPair = false, pair = null } = {}) {
   if (!sense?.sourceBook || !record) return null;
   const spanishYear = record.translated ? yearOf(record.firstSpanishTranslation) : yearOf(record.firstPrinting ?? record.originalFirstPrinting);
   const firstYear = Number.isInteger(sense.firstUseYear) ? sense.firstUseYear : null;
   const reasons = [];
   if (["only", "mainly", "several"].includes(sense.exclusivity)) reasons.push("in-book");
   if (sense.citesBook === true && citations > 0) reasons.push("cites");
-  if (glossaryPair) reasons.push("glossary");
+  // A pair of the term with the book's word (either kind) shows the book uses the term.
+  if (pair === "aligned") reasons.push("aligned");
+  else if (glossaryPair || pair === "printed") reasons.push("glossary");
   const special = sense.inDictionary === false;
   const notes = [];
   if (spanishYear != null && firstYear != null && spanishYear > firstYear) notes.push(`the Spanish edition (${spanishYear}) is later than his first use in this sense (${firstYear})`);
@@ -94,6 +125,7 @@ export function borrowingText(sense, borrowing, { author = "The author", term = 
   if (borrowing.reasons.includes("in-book")) bases.push(sense.exclusivity === "only" ? "the book uses it, and no other book he read does" : "the book uses it");
   if (borrowing.reasons.includes("cites")) bases.push("he names the book next to the term");
   if (borrowing.reasons.includes("glossary")) bases.push("the book's own glossary gives it");
+  if (borrowing.reasons.includes("aligned")) bases.push("the search site's comparison with the original pairs it with the book's word");
   const dates = borrowing.spanishYear != null ? ` Spanish edition ${borrowing.spanishYear}${borrowing.firstYear != null ? `; his first use in this sense ${borrowing.firstYear}` : ""}${borrowing.notes.length ? ` (note: ${borrowing.notes.join("; ")})` : ""}.` : "";
   return `${author} read “${term}” in this sense in ${where}: ${bases.join("; ")}.${dates}`;
 }
@@ -107,6 +139,50 @@ export function requiredOriginalWords(study, targetCode) {
     .filter((sense) => sense.borrowing?.strength !== "weak")
     .map((sense) => ({ ...sense.originalWord, sense: sense.sense, partOfSpeech: sense.partOfSpeech ?? null }))
     .filter((word) => !seen.has(fold(word.term)) && seen.add(fold(word.term)));
+}
+
+/** "English" for "en": the name of a language in English, or "" when unknown. */
+export function languageNameOf(code) {
+  if (!code) return "";
+  try {
+    const name = new Intl.DisplayNames(["en"], { type: "language" }).of(String(code));
+    return name && name !== String(code) ? name : "";
+  } catch {
+    return "";
+  }
+}
+
+const quoted = (words) => {
+  const marked = words.map((word) => `“${word}”`);
+  return marked.length > 1 ? `${marked.slice(0, -1).join(", ")} and ${marked.at(-1)}` : marked.join("");
+};
+
+/**
+ * The step's fact for the pairs of the term in one book. It says where the pair
+ * comes from, so it is not taken for the AI's answer (Hans, 2026-10-09): the
+ * book's own glossaries (`printed`), or the search site's comparison of the
+ * translation with its original (`aligned`: matched by AI, then each original
+ * word found by a program in the original passages cited for it).
+ * `searched` are the forms counted in the original text; `occurrences` their count.
+ */
+export function pairFact({ site = "author's", author = "the author", shortTitle, record, term, pairs, occurrences, searched = [] }) {
+  const language = languageNameOf(record?.originalLanguage);
+  const name = record?.originalTitle ?? shortTitle;
+  const sentence = `The ${site} search site lists ${shortTitle} among the books ${author} read: the Spanish translation of ${name}${record?.originalAuthor ? `, written${language ? ` in ${language}` : ""} by ${record.originalAuthor}` : ""}`;
+  const intro = sentence.endsWith(".") ? sentence : `${sentence}.`; // "by M." ends the sentence
+  const original = `${language ? `${language} ` : ""}original`;
+  const times = `${occurrences} time${occurrences === 1 ? "" : "s"}`;
+  const words = [...new Set(pairs.flatMap(pairWords))];
+  if (pairs.every((pair) => pair.basis !== "aligned")) {
+    return `${intro} Both editions end with a glossary; matched entry by entry, they pair “${term}” with ${words.map((o) => `“${o}”`).join(", ")}, which the ${original} uses ${times}.`;
+  }
+  const extra = searched.filter((form) => !words.some((word) => fold(word) === fold(form)));
+  const counting = extra.length ? ` (counting ${quoted(extra)})` : "";
+  const how = `The site compared the two texts passage by passage (an AI paired the words; a program then found each ${language || "original"} word in the passages cited for it)`;
+  if (pairs.every((pair) => pair.status === "passthrough")) {
+    return `${intro} ${how} and finds the word unchanged in the ${original}: ${quoted(words)}, used ${times}${counting}.`;
+  }
+  return `${intro} ${how} and pairs “${term}” with ${quoted(words)}, which the ${original} uses ${times}${counting}.`;
 }
 
 /** "The Dayspring of Youth (M.)", or the translation's title when the original's is unknown. */

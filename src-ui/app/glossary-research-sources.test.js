@@ -146,3 +146,27 @@ test("citations next to the term: the server filters when it can, the app filter
   const none = createSamaelCorpus({ baseUrl: "https://example.test", fetchImpl: async () => jsonResponse({}, 404) });
   assert.equal(await none.earliestUses(["íntimo"]), null, "no dates from a server without them; the study goes on");
 });
+
+test("pairs of the term with a book's original word, with their basis; an older site gives none", async () => {
+  const urls = [];
+  const fetchImpl = async (url) => {
+    urls.push(url);
+    return jsonResponse({ pairs: [
+      { doc_id: "source-blavatsky_isis", book_id: "blavatsky_isis", title: "Isis sin velo — H. P. Blavatsky", original_language: "en",
+        original_title: "Isis Unveiled", original_author: "H. P. Blavatsky", spanish_term: "Daimón", original_term: "demon", also: [],
+        original_forms: ["demon", "daimonion"], renderings: [{ form: "demons", count: 83 }], original_count: 134, status: "equivalent_found", basis: "aligned_translation" },
+      { doc_id: "source-dioses_atomicos", spanish_term: "Íntimo", original_term: "Innermost", basis: "printed_glossaries" },
+      { doc_id: "source-x", spanish_term: "Nada", original_term: null, basis: "aligned_translation" },
+    ] });
+  };
+  const corpus = createSamaelCorpus({ baseUrl: "https://example.test", fetchImpl });
+  const pairs = await corpus.originalTerms(["daimón", "daimones"]);
+  assert.match(urls[0], /\/api\/sample\/original-terms\?forms=daim%C3%B3n%2Cdaimones$/);
+  assert.deepEqual(pairs.map((p) => [p.docId, p.source, p.original, p.basis]), [
+    ["source-blavatsky_isis", "Daimón", "demon", "aligned"], ["source-dioses_atomicos", "Íntimo", "Innermost", "printed"],
+  ]);
+  assert.equal(pairs[0].originalCount, 134);
+  assert.deepEqual(pairs[0].originalForms, ["demon", "daimonion"]);
+  const old = createSamaelCorpus({ baseUrl: "https://example.test", fetchImpl: async () => jsonResponse({}, 404) });
+  assert.equal(await old.originalTerms(["daimón"]), null);
+});
