@@ -1042,7 +1042,8 @@ export function createResearchEngine(deps) {
         pairedBooks.push(book.title.split(" — ")[0]);
         // Says where it comes from, so it is not taken for the AI's answer (Hans, 2026-10-09).
         const language = record.originalLanguage === "en" ? "English" : "";
-        fact(`Not from the AI: the records of the texts say ${corpus.authorName ?? "the author"} read ${book.title.split(" — ")[0]}, the Spanish translation of ${name}${record.originalAuthor ? `, written${language ? ` in ${language}` : ""} by ${record.originalAuthor}` : ""}. The glossary printed in both editions of the book pairs “${settings.term}” with ${originals.map((o) => `“${o}”`).join(", ")}, which the ${language ? `${language} ` : ""}original uses ${found.occurrences} times.`);
+        const author = corpus.authorName ?? "the author";
+        fact(`The ${corpus.authorName ?? "author's"} search site lists ${book.title.split(" — ")[0]} among the books ${author} read: the Spanish translation of ${name}${record.originalAuthor ? `, written${language ? ` in ${language}` : ""} by ${record.originalAuthor}` : ""}. Both editions end with a glossary; matched entry by entry, they pair “${settings.term}” with ${originals.map((o) => `“${o}”`).join(", ")}, which the ${language ? `${language} ` : ""}original uses ${found.occurrences} times.`);
         originalSections.push(section(
           `The original text of ${name}: ${found.occurrences} occurrences of ${originals.map((o) => `“${o}”`).join(", ")} in ${found.paragraphs} passages (a sample)`,
           found.items.map((item) => passageSnippet({ ...item, reference: { title: name } })),
