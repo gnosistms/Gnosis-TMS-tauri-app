@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   borrowingStrength, borrowingText, enforceOriginalWords, languageNameOf, noteNamesTheBook, originalFor, originalSourceLabel,
-  signedOnly, originalWordOf, pairFact, placeOriginalWords, requiredOriginalWords,
+  bookTitleText, signedOnly, originalWordOf, pairFact, placeOriginalWords, requiredOriginalWords,
 } from "./glossary-research-original-word.js";
 import { frozenEntryText } from "./glossary-research-prompts.js";
 
@@ -247,4 +247,10 @@ test("the pair facts say where each pair comes from", () => {
   );
   assert.equal(languageNameOf("de"), "German");
   assert.equal(languageNameOf(null), "");
+});
+
+test("a book named by the site with an author's initials only says it is signed so", () => {
+  assert.equal(bookTitleText("Dioses Atómicos (La aurora de la juventud) — M."), "Dioses Atómicos (La aurora de la juventud) (signed only “M.”)");
+  assert.equal(bookTitleText("Isis sin velo — H. P. Blavatsky"), "Isis sin velo — H. P. Blavatsky");
+  assert.equal(bookTitleText("Libro"), "Libro");
 });

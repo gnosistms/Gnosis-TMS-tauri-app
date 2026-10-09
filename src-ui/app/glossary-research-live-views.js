@@ -7,6 +7,7 @@
 import { parsePartialJson } from "./glossary-research-partial-json.js";
 import { commonness } from "./glossary-research-frequency.js";
 import { tooltipAttributes } from "../lib/ui.js";
+import { bookTitleText } from "./glossary-research-original-word.js";
 
 /** The app's own tooltip (quick, styled), around a chip or a mark; nothing when there is nothing to say. */
 const tip = (text, html) => (str(text).trim() ? `<span${tooltipAttributes(text)}>${html}</span>` : html);
@@ -109,7 +110,7 @@ function sourcesView(request, value) {
       <div class="research-view__card">
         <div class="research-view__title">${sense.label ? `<strong>${esc(sense.label)}</strong> ` : ""}${sense.partOfSpeech || sense.wordClass ? muted(`(${sense.partOfSpeech || sense.wordClass})`) : ""} ${sense.inDictionary === true ? label("in the dictionary") : sense.inDictionary === false ? label("not in the dictionary", "accent") : ""}</div>
         <div class="research-view__line">${esc(sense.sense)}</div>
-        ${sense.sourceBook ? `<div class="research-view__line">From <strong>${esc(sense.sourceBook)}</strong>${sense.originalTerm ? `, original ${esc(sense.originalLanguage)} <strong>“${esc(sense.originalTerm)}”</strong>` : ""}</div>` : ""}
+        ${sense.sourceBook ? `<div class="research-view__line">From <strong>${esc(bookTitleText(sense.sourceBook))}</strong>${sense.originalTerm ? `, original ${esc(sense.originalLanguage)} <strong>“${esc(sense.originalTerm)}”</strong>` : ""}</div>` : ""}
         ${sense.meaningInSource && sense.inDictionary === false ? `<div class="research-view__line">${muted("Meaning there:")} ${esc(sense.meaningInSource)}</div>` : ""}
         ${sense.authorUsage ? `<div class="research-view__line">${muted("How the author uses it:")} ${esc(sense.authorUsage)}</div>` : ""}
         ${list(sense.equivalences).length ? `<div class="research-view__chips">${list(sense.equivalences).filter((e) => str(e?.term)).map((e) => tip(e.evidence, chip(`${e.relation === "identity" ? "= " : e.relation === "part" ? "⊂ " : "~ "}${e.term}`))).join("")}</div>` : ""}

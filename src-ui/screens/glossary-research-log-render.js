@@ -194,10 +194,13 @@ function groupBlock(group, current) {
   const parts = [];
   const view = groupViewHtml(group);
   const request = viewRequest(group);
+  // Says whose words these are, so the program's findings beside them are not
+  // taken for the AI's answer, nor the answer for a finding (Hans, 2026-10-09).
+  const label = `<p class="research-step__source">The AI's answer</p>`;
   if (view) {
-    parts.push(`<div class="research-step__view" data-view-key="${esc(group.key)}">${view}</div>`);
+    parts.push(`<div class="research-step__view" data-view-key="${esc(group.key)}">${label}${view}</div>`);
   }
-  else if (request && !VIEW_LEFT_OUT.has(request.stage)) parts.push(`<div class="research-step__view research-step__view--plain" data-view-key="${esc(group.key)}">${exchangeHtml(request)}</div>`);
+  else if (request && !VIEW_LEFT_OUT.has(request.stage)) parts.push(`<div class="research-step__view research-step__view--plain" data-view-key="${esc(group.key)}">${request.answer ? label : ""}${exchangeHtml(request)}</div>`);
   return parts.join("");
 }
 

@@ -152,6 +152,12 @@ export const authorPhrase = (name, language = "") => (signedOnly(name)
   ? ` (written${language ? ` in ${language}` : ""}; the author signs only “${String(name).trim()}”)`
   : `, written${language ? ` in ${language}` : ""} by ${name}`);
 
+/** A book as the search site names it, "Title — Author": "Title (signed only “M.”)" when the name is only initials. */
+export function bookTitleText(title) {
+  const match = /^(.*\S)\s+—\s+(.+)$/.exec(String(title ?? ""));
+  return match && signedOnly(match[2]) ? `${match[1]} (signed only “${match[2].trim()}”)` : String(title ?? "");
+}
+
 /** "English" for "en": the name of a language in English, or "" when unknown. */
 export function languageNameOf(code) {
   if (!code) return "";
