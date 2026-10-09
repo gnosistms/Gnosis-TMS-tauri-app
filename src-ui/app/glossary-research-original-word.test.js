@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  borrowingStrength, borrowingText, enforceOriginalWords, languageNameOf, noteNamesTheBook, originalFor, originalSourceLabel, originalWordOf, pairFact, placeOriginalWords, requiredOriginalWords,
+  borrowingStrength, borrowingText, enforceOriginalWords, languageNameOf, noteNamesTheBook, originalFor, originalSourceLabel,
+  signedOnly, originalWordOf, pairFact, placeOriginalWords, requiredOriginalWords,
 } from "./glossary-research-original-word.js";
 import { frozenEntryText } from "./glossary-research-prompts.js";
 
@@ -91,7 +92,7 @@ test("the proposal keeps the original word first and drops other renderings of i
   assert.deepEqual(added, []);
   assert.deepEqual(removed.map((r) => r.target), ["inner Being"]);
   assert.deepEqual(proposal.entries[0].variants.map((v) => v.target), ["Innermost", "inner"]);
-  assert.equal(proposal.entries[0].variants[0].original.book, "The Dayspring of Youth (M.)");
+  assert.equal(proposal.entries[0].variants[0].original.book, "The Dayspring of Youth (signed “M.”)");
   assert.match(proposal.leftOutRenderings[0].reason, /original word/);
   assert.deepEqual(proposal.entries[1].variants.map((v) => v.target), ["inner"], "the adjective-only entry is untouched");
 });
@@ -114,7 +115,7 @@ test("the note must name the book; the counting judges see the mark", () => {
   assert.equal(noteNamesTheBook(variant), true);
   assert.equal(noteNamesTheBook(proposal.entries[0].variants[1]), true, "an ordinary variant needs no book");
   const text = frozenEntryText({ entries: [{ ...proposal.entries[0], generalNote: "" }] }, "English");
-  assert.match(text, /TRADITIONAL ENGLISH TERM: the original word of The Dayspring of Youth \(M\.\)/);
+  assert.match(text, /TRADITIONAL ENGLISH TERM: the original word of The Dayspring of Youth \(signed “M\.”\)/);
 });
 
 test("the word with an article counts as the word, a longer rendering does not", () => {
@@ -128,8 +129,13 @@ test("the word with an article counts as the word, a longer rendering does not",
 });
 
 test("an original word is labelled by the author of its book", () => {
-  assert.equal(originalSourceLabel({ author: "M.", book: "The Dayspring of Youth (M.)" }), "from M.");
-  assert.equal(originalSourceLabel({ book: "The Dayspring of Youth (M.)", originalTitle: "The Dayspring of Youth" }), "from M.", "older runs: from the book's name");
+  assert.equal(originalSourceLabel({ author: "H. P. Blavatsky", book: "Isis Unveiled (H. P. Blavatsky)" }), "from H. P. Blavatsky");
+  assert.equal(originalSourceLabel({ book: "Isis Unveiled (H. P. Blavatsky)", originalTitle: "Isis Unveiled" }), "from H. P. Blavatsky", "older runs: from the book's name");
+  // A book signed only with initials is named by its title: "from M." says nothing.
+  assert.equal(originalSourceLabel({ author: "M.", book: "The Dayspring of Youth (signed “M.”)", originalTitle: "The Dayspring of Youth" }), "from The Dayspring of Youth");
+  assert.equal(originalSourceLabel({ book: "The Dayspring of Youth (M.)" }), "from The Dayspring of Youth", "older runs");
+  assert.equal(signedOnly("M."), true);
+  assert.equal(signedOnly("H. P. Blavatsky"), false);
   assert.equal(originalSourceLabel({ book: "Isis Unveiled", originalTitle: "Isis Unveiled" }), "from Isis Unveiled", "no author known");
 });
 
@@ -218,7 +224,7 @@ test("the pair facts say where each pair comes from", () => {
   const base = { site: "Samael Aun Weor", author: "Samael Aun Weor" };
   assert.equal(
     pairFact({ ...base, shortTitle: "Dioses Atómicos (La aurora de la juventud)", record: dayspring, term: "íntimo", pairs: [{ original: "Innermost", basis: "printed" }], occurrences: 189, searched: ["Innermost"] }),
-    "The Samael Aun Weor search site lists Dioses Atómicos (La aurora de la juventud) among the books Samael Aun Weor read: the Spanish translation of The Dayspring of Youth, written in English by M. Both editions end with a glossary; matched entry by entry, they pair “íntimo” with “Innermost”, which the English original uses 189 times.",
+    "The Samael Aun Weor search site lists Dioses Atómicos (La aurora de la juventud) among the books Samael Aun Weor read: the Spanish translation of The Dayspring of Youth (written in English; the author signs only “M.”). Both editions end with a glossary; matched entry by entry, they pair “íntimo” with “Innermost”, which the English original uses 189 times.",
   );
   assert.equal(
     pairFact({ ...base, shortTitle: "Isis sin velo", record: isis, term: "daimón", pairs: isis.termPairs, occurrences: 134, searched: ["demon", "daimonion", "demons"] }),

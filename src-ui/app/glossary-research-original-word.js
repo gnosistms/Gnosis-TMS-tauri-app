@@ -141,6 +141,17 @@ export function requiredOriginalWords(study, targetCode) {
     .filter((word) => !seen.has(fold(word.term)) && seen.add(fold(word.term)));
 }
 
+/**
+ * A name made only of initials ("M.", "A. B.") does not name the author: the book
+ * is signed with it. Said as such, it is not taken for an abbreviation or a typo.
+ */
+export const signedOnly = (name) => /^(\p{Lu}\.\s*)+$/u.test(String(name ?? "").trim());
+
+/** "(the author signs only “M.”)" or "by H. P. Blavatsky", after a book's title. */
+export const authorPhrase = (name, language = "") => (signedOnly(name)
+  ? ` (written${language ? ` in ${language}` : ""}; the author signs only “${String(name).trim()}”)`
+  : `, written${language ? ` in ${language}` : ""} by ${name}`);
+
 /** "English" for "en": the name of a language in English, or "" when unknown. */
 export function languageNameOf(code) {
   if (!code) return "";
@@ -168,8 +179,8 @@ const quoted = (words) => {
 export function pairFact({ site = "author's", author = "the author", shortTitle, record, term, pairs, occurrences, searched = [] }) {
   const language = languageNameOf(record?.originalLanguage);
   const name = record?.originalTitle ?? shortTitle;
-  const sentence = `The ${site} search site lists ${shortTitle} among the books ${author} read: the Spanish translation of ${name}${record?.originalAuthor ? `, written${language ? ` in ${language}` : ""} by ${record.originalAuthor}` : ""}`;
-  const intro = sentence.endsWith(".") ? sentence : `${sentence}.`; // "by M." ends the sentence
+  const sentence = `The ${site} search site lists ${shortTitle} among the books ${author} read: the Spanish translation of ${name}${record?.originalAuthor ? authorPhrase(record.originalAuthor, language) : ""}`;
+  const intro = sentence.endsWith(".") ? sentence : `${sentence}.`; // "by A. B." ends the sentence
   const original = `${language ? `${language} ` : ""}original`;
   const times = occurrences === 1 ? "once" : `${occurrences} times`;
   const words = [...new Set(pairs.flatMap(pairWords))];
@@ -194,7 +205,8 @@ export function pairFact({ site = "author's", author = "the author", shortTitle,
 /** "The Dayspring of Youth (M.)", or the translation's title when the original's is unknown. */
 export function bookName(word) {
   const title = word.originalTitle || word.translationTitle || "";
-  return word.originalAuthor ? `${title} (${word.originalAuthor})` : title;
+  if (!word.originalAuthor) return title;
+  return signedOnly(word.originalAuthor) ? `${title} (signed “${word.originalAuthor.trim()}”)` : `${title} (${word.originalAuthor})`;
 }
 
 /** Lines for the AI, naming each original word and the meaning it is required for. */
@@ -299,8 +311,10 @@ export function enforceOriginalWords(proposal, placed, { headword = "" } = {}) {
  * borrowed from (runs saved before the author was kept: from the book's name).
  */
 export function originalSourceLabel(original) {
-  const author = original?.author || /\(([^()]+)\)\s*$/.exec(original?.book ?? "")?.[1] || "";
-  return `from ${author || original?.originalTitle || original?.book || "the source book"}`;
+  let author = original?.author || /\(([^()]+)\)\s*$/.exec(original?.book ?? "")?.[1] || "";
+  // "from M." says nothing: a book signed only with initials is named by its title.
+  if (signedOnly(author) || /^signed /.test(author)) author = "";
+  return `from ${author || original?.originalTitle || String(original?.book ?? "").replace(/\s*\([^()]*\)\s*$/, "") || "the source book"}`;
 }
 
 /** What the "from <author>" label means, for its tooltip. */

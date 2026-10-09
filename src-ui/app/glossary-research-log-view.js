@@ -1,4 +1,5 @@
 import { commonness } from "./glossary-research-frequency.js";
+import { signedOnly } from "./glossary-research-original-word.js";
 
 // Turns the stored research log (a flat list of events) into what the log
 // shows: headings and findings as lines, and one item per AI request holding
@@ -368,7 +369,7 @@ const RESULT_SUMMARIES = {
       const article = /^[aeiou]/i.test(pos(sense)) ? "an" : "a";
       const head = pos(sense) ? `as ${article} ${pos(sense)} (${label(sense)})` : label(sense);
       const book = sense.originalTitle
-        ? `from ${sense.originalTitle}${sense.originalAuthor ? ` by ${sense.originalAuthor}` : ""}${sense.translationTitle ? ` (in Spanish: ${sense.translationTitle})` : ""}`
+        ? `from ${sense.originalTitle}${sense.originalAuthor ? (signedOnly(sense.originalAuthor) ? ` (signed only “${sense.originalAuthor.trim()}”)` : ` by ${sense.originalAuthor}`) : ""}${sense.translationTitle ? ` (in Spanish: ${sense.translationTitle})` : ""}`
         : sense.sourceBook ? `from ${sense.sourceBook}` : "the author's own";
       const origin = [
         book,

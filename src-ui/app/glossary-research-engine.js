@@ -27,7 +27,7 @@ import * as prompts from "./glossary-research-prompts.js";
 import { coOccurrence, convergenceContent, sharedRenderings } from "./glossary-research-convergence.js";
 import { aggregateCounts, mergeJudgeCountings } from "./glossary-research-aggregate.js";
 import {
-  bookName, borrowingStrength, borrowingText, enforceOriginalWords, noteNamesTheBook, originalFor, originalWordOf, originalWordsText, pairFact, pairWords, placeOriginalWords, requiredOriginalWords, termPairsOf,
+  bookName, borrowingStrength, borrowingText, enforceOriginalWords, noteNamesTheBook, originalFor, originalWordOf, originalWordsText, pairFact, pairWords, placeOriginalWords, requiredOriginalWords, signedOnly, termPairsOf,
 } from "./glossary-research-original-word.js";
 import {
   MIN_SENSE_SAMPLE,
@@ -1107,7 +1107,7 @@ export function createResearchEngine(deps) {
       const recordLines = records.map((record) => {
         const parts = [record.title];
         if (record.translated) {
-          parts.push(`translated from ${record.originalLanguage ?? "another language"}${record.originalTitle ? `: “${record.originalTitle}”${record.originalAuthor ? ` by ${record.originalAuthor}` : ""}` : ""}`);
+          parts.push(`translated from ${record.originalLanguage ?? "another language"}${record.originalTitle ? `: “${record.originalTitle}”${record.originalAuthor ? (signedOnly(record.originalAuthor) ? ` (the author signs only “${record.originalAuthor.trim()}”)` : ` by ${record.originalAuthor}`) : ""}` : ""}`);
           if (record.originalFirstPrinting) parts.push(`original first printed ${record.originalFirstPrinting}`);
           if (record.firstSpanishTranslation) parts.push(`first Spanish translation ${record.firstSpanishTranslation}`);
         } else {

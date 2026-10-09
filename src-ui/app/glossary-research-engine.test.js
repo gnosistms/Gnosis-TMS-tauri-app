@@ -273,7 +273,7 @@ test("a pair from the site's comparison with the original is read in the origina
   assert.match(sources.content, /by the search site's comparison of this translation with its original .*: Fatal = Fateful One \(the original uses Fateful Ones 2 times\)/);
   assert.equal(requests.filter((r) => r.schemaName === "original_check").length, 0, "no check needed when the pair names the word");
   const facts = logs.filter((event) => event.type === "fact").map((event) => event.text);
-  assert.ok(facts.includes("The the author search site lists Libro fuente among the books the author read: the Spanish translation of The Source Book, written in English by M. The site compared the Spanish translation with the English original passage by passage: an AI matched the words, and a program then confirmed that each English word appears in the matching English passages. It pairs “fatal” with “Fateful One”, which the English original uses once (counting “Fateful Ones”)."), facts.join("\n"));
+  assert.ok(facts.includes("The the author search site lists Libro fuente among the books the author read: the Spanish translation of The Source Book (written in English; the author signs only “M.”). The site compared the Spanish translation with the English original passage by passage: an AI matched the words, and a program then confirmed that each English word appears in the matching English passages. It pairs “fatal” with “Fateful One”, which the English original uses once (counting “Fateful Ones”)."), facts.join("\n"));
   const sense = store.data.sources.study.senses[0];
   assert.equal(sense.originalWord.pairBasis, "aligned");
   assert.deepEqual(sense.borrowing.reasons, ["aligned"]);
