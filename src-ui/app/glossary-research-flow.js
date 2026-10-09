@@ -22,10 +22,10 @@ import {
 } from "./glossary-research-budget.js";
 import { collectMeasurements, createResearchEngine, familyGroups, mergeMeasurements, ResearchStop } from "./glossary-research-engine.js";
 import {
+  buildLogSections,
   buildLogView,
   isRequestRunning,
   requestState,
-  requestStatusText,
 } from "./glossary-research-log-view.js";
 import { createProjectsCorpus, createSamaelCorpus } from "./glossary-research-corpus.js";
 import { createDictionary, DICTIONARY_DOMAINS } from "./glossary-research-dictionary.js";
@@ -38,8 +38,8 @@ import {
   recordRunSpend,
 } from "./glossary-research-family-budget.js";
 import { fold } from "./glossary-research-occurrences.js";
-import { formatJsonStream, formatThinking } from "./glossary-research-stream-format.js";
-import { liveAnswerHtml } from "./glossary-research-live-views.js";
+import { formatJsonStream, formatThinkingLive } from "./glossary-research-stream-format.js";
+import { currentStepStatus, groupViewHtml } from "./glossary-research-step-view.js";
 import { liveStatusHtml, recordStepTiming, seedStepTimings, stepTimings, timingsSeeded, usualRange } from "./glossary-research-live-progress.js";
 import { parseMoneyValue } from "./money-input.js";
 import { maybeStartGlossaryBackgroundSync } from "./glossary-background-sync.js";
@@ -759,9 +759,10 @@ const VIEW_INTERVAL_MS = 250;
 const viewDrawnAt = new Map();
 
 /**
- * Streamed text without a full render: the live panel's status and text when
- * the text belongs to the request it shows; nothing for other requests until
- * their state changes. Returns false when the page must render instead.
+ * Streamed text without a full render, inside the step running now: its status
+ * line, the thinking of a request still thinking, and the readable view (or the
+ * plain answer) of the request being written. A request changing state, or a
+ * block the page does not show yet, needs a full render: returns false.
  */
 function updateStreamInDom(entry) {
   if (typeof document === "undefined" || !(entry.type === "answer-delta" || entry.type === "thinking")) return false;
@@ -770,51 +771,54 @@ function updateStreamInDom(entry) {
   const state = requestState(request);
   const changed = streamStates.get(entry.requestId) !== state;
   streamStates.set(entry.requestId, state);
-  const panel = document.querySelector("[data-research-live]");
-  if (!panel || panel.dataset.liveRequest !== String(entry.requestId)) return !changed && Boolean(logContainer());
-  if (panel.dataset.liveState !== state) return false;
-  const status = panel.querySelector("[data-live-status]");
-  if (status) status.innerHTML = liveStatusFor(request, state);
-  if (panel.dataset.liveOpen !== "true") return true;
-  const block = panel.querySelector(`[data-live-type="${entry.type}"]`);
-  if (!block) return false;
-  const body = panel.querySelector("[data-live-body]");
-  const pinned = body && body.scrollTop + body.clientHeight >= body.scrollHeight - 24;
+  if (changed) return false;
+  const log = logContainer();
+  const step = log?.querySelector("[data-step-current]");
+  if (!step) return Boolean(log) || !changed;
+  const pinned = log.scrollTop + log.clientHeight >= log.scrollHeight - 24;
+  const status = step.querySelector("[data-step-status]");
+  if (status && isRequestRunning(request)) status.innerHTML = liveStatusFor(request, state);
   if (entry.type === "thinking") {
-    block.innerHTML = formatThinking(entry.text);
+    const box = step.querySelector(`[data-live-thinking="${cssEscape(entry.requestId)}"]`);
+    if (box) box.innerHTML = formatThinkingLive(request.thinking);
   } else {
-    // A step with a readable view shows it; the block is re-rendered whole when
-    // the answer switches between the view and the plain JSON.
-    const isView = block.classList.contains("research-live__view");
+    const batch = findLogBatch(request);
+    const key = batch && request.batch?.total > 1 ? `batch:${request.batch.key}` : `request:${request.requestId}`;
     const now = Date.now();
-    if (isView && now - (viewDrawnAt.get(entry.requestId) ?? 0) < VIEW_INTERVAL_MS) return true;
-    const view = liveAnswerHtml(request, { batch: findLogBatch(request) });
-    if (Boolean(view) !== isView) return false;
-    viewDrawnAt.set(entry.requestId, now);
-    block.innerHTML = view ?? formatJsonStream(entry.text);
+    if (now - (viewDrawnAt.get(key) ?? 0) < VIEW_INTERVAL_MS) return true;
+    const container = step.querySelector(`[data-view-key="${cssEscape(key)}"]`);
+    if (!container) return false;
+    const view = groupViewHtml({ key, requests: batch?.length ? batch : [request] });
+    const plain = container.classList.contains("research-step__view--plain");
+    if (Boolean(view) === plain) return false;
+    viewDrawnAt.set(key, now);
+    if (view) {
+      container.innerHTML = view;
+    } else {
+      const answer = container.querySelector("[data-live-answer]");
+      if (!answer) return false;
+      answer.innerHTML = formatJsonStream(request.answer);
+    }
   }
-  if (body && pinned) body.scrollTop = body.scrollHeight;
+  if (pinned) log.scrollTop = log.scrollHeight;
   return true;
 }
 
-/** The live panel's status line for a running request, or the plain status when it has finished. */
+const cssEscape = (value) => (typeof CSS !== "undefined" && CSS.escape ? CSS.escape(String(value)) : String(value).replace(/["\\]/g, "\\$&"));
+
+/** The status of a running request: what it is doing, a clock, and how long its step usually takes. */
 function liveStatusFor(request, phase) {
-  if (!isRequestRunning(request)) return escapeStatus(requestStatusText(request, formatUsd));
   return liveStatusHtml(request, phase, usualRange(stepTimings(research()?.modelId, request.stage)));
 }
 
-function escapeStatus(text) {
-  return String(text).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
-}
-
-/** Ticks the live panel's clock every second while a research runs. */
+/** Ticks the current step's clock every second while a research runs. */
 function startLiveClock() {
   if (typeof document === "undefined" || typeof setInterval !== "function") return () => {};
   const timer = setInterval(() => {
-    const panel = document.querySelector("[data-research-live]");
-    const request = panel ? findLogRequest(panel.dataset.liveRequest) : null;
-    const status = panel?.querySelector("[data-live-status]");
-    if (request && status && isRequestRunning(request)) status.innerHTML = liveStatusFor(request, requestState(request));
+    const status = document.querySelector("[data-step-current] [data-step-status]");
+    const draft = research();
+    if (!status || !draft?.log) return;
+    status.innerHTML = currentStepStatus(buildLogSections(draft.log), (stage) => usualRange(stepTimings(draft.modelId, stage)));
   }, 1000);
   return () => clearInterval(timer);
 }
@@ -837,14 +841,6 @@ async function seedTimingsFromSavedRuns(installationId, glossaryId) {
   }
 }
 
-/** The batch switcher: watch another running request of the batch. */
-export function showResearchRequest(render, requestId) {
-  const draft = research();
-  draft.liveChoice = requestId;
-  draft.liveOpen = true;
-  renderKeepingLogPinned(render);
-}
-
 /** "details": unfold or fold a finished step. */
 export function toggleResearchSection(render, sectionId) {
   const draft = research();
@@ -852,30 +848,12 @@ export function toggleResearchSection(render, sectionId) {
   renderKeepingLogPinned(render);
 }
 
-/** Unfold or fold one finished AI exchange inside its step. */
-export function toggleResearchExchange(render, requestId) {
-  const draft = research();
-  draft.exchangeOpen = { ...(draft.exchangeOpen ?? {}), [requestId]: !(draft.exchangeOpen?.[requestId] === true) };
-  renderKeepingLogPinned(render);
-}
-
-export function toggleResearchLive(render) {
-  const draft = research();
-  draft.liveOpen = draft.liveOpen === false;
-  renderKeepingLogPinned(render);
-}
-
 export function renderKeepingLogPinned(render) {
   const before = logContainer();
   const pinned = !before || before.scrollTop + before.clientHeight >= before.scrollHeight - 24;
-  const liveBefore = typeof document !== "undefined" ? document.querySelector("[data-live-body]") : null;
-  const livePinned = !liveBefore || liveBefore.scrollTop + liveBefore.clientHeight >= liveBefore.scrollHeight - 24;
-  const liveScroll = liveBefore?.scrollTop ?? 0;
   render();
   const after = logContainer();
   if (after && pinned) after.scrollTop = after.scrollHeight;
-  const liveAfter = typeof document !== "undefined" ? document.querySelector("[data-live-body]") : null;
-  if (liveAfter) liveAfter.scrollTop = livePinned ? liveAfter.scrollHeight : liveScroll;
 }
 
 // --- review and counting -------------------------------------------------------------

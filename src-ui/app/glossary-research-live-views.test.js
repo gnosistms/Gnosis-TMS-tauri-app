@@ -27,7 +27,7 @@ test("batch steps tally the whole batch by translation name", () => {
     answer: '{"items":[{"occId":"o1","status":"selected","variantId":"e1v2","sentenceTranslation":"the Innermost","chosenWording":"Innermost"}' };
   const other = { answer: '{"items":[{"occId":"o2","status":"selected","variantId":"e1v1"},{"occId":"o3","status":"selected","variantId":"e2v1"}]}' };
   const html = liveAnswerHtml(request, { batch: [request, other] });
-  assert.match(html, /this batch so far/);
+  assert.match(html, /all batches so far/);
   assert.equal((html.match(/title="inner: 2"/g) ?? []).length, 1, "one bar for “inner” across entries");
   assert.match(html, /title="Innermost: 1"/);
   assert.match(html, /<mark>Innermost<\/mark>/);
@@ -49,4 +49,14 @@ test("every step has a view that survives any cut of its answer", () => {
     }
     assert.ok(liveAnswerHtml({ stage, answer }), `${stage}: a view of the whole answer`);
   }
+});
+
+test("a finished batch step tallies every use and folds the uses behind one line", () => {
+  const request = { stage: "counting", usage: {}, progress: { variants: { e1v1: "inner" } }, answer: '{"items":[{"occId":"o1","status":"selected","variantId":"e1v1","sentenceTranslation":"inner life","chosenWording":"inner"}]}' };
+  const other = { usage: {}, answer: '{"items":[{"occId":"o2","status":"selected","variantId":"e1v1","sentenceTranslation":"the inner man","chosenWording":"inner"}]}' };
+  const html = liveAnswerHtml(request, { batch: [request, other], final: true });
+  assert.match(html, /Which translation fits each use \(2 uses\)/);
+  assert.match(html, /title="inner: 2"/);
+  assert.match(html, /<details class="research-view__more"><summary>Show the 2 uses<\/summary>/);
+  assert.doesNotMatch(html, /o1|o2/, "no internal ids");
 });

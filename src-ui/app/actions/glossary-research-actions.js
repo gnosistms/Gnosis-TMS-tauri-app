@@ -25,10 +25,7 @@ import {
   toggleAllResearchPickerProjects,
   toggleResearchAdvanced,
   toggleResearchLog,
-  showResearchRequest,
-  toggleResearchLive,
   toggleResearchSection,
-  toggleResearchExchange,
   toggleResearchPickerProject,
   toggleResearchFamilyWord,
 } from "../glossary-research-flow.js";
@@ -73,7 +70,6 @@ export function createGlossaryResearchActions(render) {
     "cancel-glossary-research-run": () => cancelGlossaryResearchRun(render),
     "count-glossary-research": () => countGlossaryResearch(render),
     "continue-research-family": () => continueResearchFamily(render),
-    "toggle-research-live": () => toggleResearchLive(render),
 
     "raise-research-limit": () => raiseResearchLimitAndContinue(render),
     "close-research-report": () => closeResearchReport(render),
@@ -110,9 +106,7 @@ export function createGlossaryResearchActions(render) {
     }],
     ["add-research-entry-variant:", (rest) => addResearchEntryVariant(render, rest)],
     ["save-research-entry:", (rest) => saveResearchEntry(render, rest)],
-    ["show-research-request:", (rest) => showResearchRequest(render, rest)],
     ["toggle-research-section:", (rest) => toggleResearchSection(render, rest)],
-    ["toggle-research-exchange:", (rest) => toggleResearchExchange(render, rest)],
     ["open-research-source:", (rest) => openExternalUrl(rest)],
     ["select-research-prep-language:", (rest) => selectResearchPrepLanguage(render, rest)],
   ];

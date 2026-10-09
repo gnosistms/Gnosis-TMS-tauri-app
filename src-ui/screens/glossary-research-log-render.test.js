@@ -13,19 +13,61 @@ test("while research runs, the last step is open and the earlier ones fold to a 
   const html = renderResults(buildLogSections(log), { running: true });
   const [dictionary, forms] = html.split("<section").slice(1);
   assert.match(dictionary, /research-section__summary">DLE: found \(2 senses\)/);
-  assert.match(dictionary, /data-action="toggle-research-section:s1"[^>]*>details ›/);
+  assert.match(dictionary, /data-action="toggle-research-section:s1" aria-expanded="false"/);
   assert.doesNotMatch(dictionary, /research-section__body/);
   assert.match(forms, /is-current/);
+  assert.match(forms, /data-step-current/);
   assert.match(forms, /research-section__body/);
   assert.doesNotMatch(forms, /toggle-research-section/);
 });
 
-test("details unfolds a finished step", () => {
+test("a finished step opens to its final state", () => {
   const html = renderResults(buildLogSections(log), { running: false, openSections: { s1: true } });
   const [dictionary, forms] = html.split("<section").slice(1);
   assert.match(dictionary, /research-section__body/);
-  assert.match(dictionary, />hide</);
+  assert.match(dictionary, /aria-expanded="true"/);
   assert.doesNotMatch(forms, /research-section__body/);
+});
+
+const request = (id, stage, extra = {}) => ({ type: "request", requestId: id, stage, purpose: "p", text: "SENT TEXT", instructions: "SENT RULES", ...extra });
+const usage = (id) => ({ type: "usage", requestId: id, record: { status: "ok", seconds: 3, costUsd: 0.01 } });
+
+test("a step with a readable view shows the view, not the conversation", () => {
+  const steps = [
+    { type: "heading", text: "Word forms" },
+    request("r1", "forms"),
+    { type: "thinking", requestId: "r1", text: "**Listing forms**\nthe forms" },
+    { type: "answer-delta", requestId: "r1", text: '{"forms":[{"form":"íntimo","kind":"inflection","confidence":"high"}]}' },
+    usage("r1"),
+    { type: "heading", text: "Proposal" },
+  ];
+  const [forms] = renderResults(buildLogSections(steps), { running: false, openSections: { s1: true } }).split("<section").slice(1);
+  assert.match(forms, /research-view--forms/);
+  assert.match(forms, /íntimo/);
+  assert.doesNotMatch(forms, /SENT TEXT|Listing forms|&quot;forms&quot;/, "no exchange, thinking or JSON");
+});
+
+test("a step without a view yet shows the conversation; a step still thinking shows its thinking live", () => {
+  const steps = [
+    { type: "heading", text: "Proposal" },
+    request("r2", "original-note"),
+    { type: "thinking", requestId: "r2", text: "**Wording the note**" },
+    { type: "answer-delta", requestId: "r2", text: '{"note":"Traditional term"}' },
+    usage("r2"),
+    { type: "heading", text: "Counting" },
+    request("r3", "counting"),
+    { type: "thinking", requestId: "r3", text: "**Weighing the variants**\nreading the passage" },
+  ];
+  const html = renderResults(buildLogSections(steps), { running: true, openSections: { s1: true } });
+  const [proposal, counting] = html.split("<section").slice(1);
+  assert.match(proposal, /research-step__view--plain/);
+  assert.match(proposal, /Traditional term/);
+  assert.match(proposal, /What was sent/);
+  assert.match(proposal, /How the AI got there \(1 step\)/, "finished: the thinking is folded");
+  assert.match(counting, /data-live-thinking="r3"/);
+  assert.match(counting, /research-thought__title">Weighing the variants/);
+  assert.match(counting, /reading the passage/);
+  assert.match(counting, /data-step-status/);
 });
 
 test("the stage line marks the stages done, the one in progress and those to come", () => {
@@ -35,4 +77,19 @@ test("the stage line marks the stages done, the one in progress and those to com
   assert.equal((html.match(/research-steps__item--done/g) ?? []).length, 2);
   assert.match(html, /research-steps__item--current" aria-current="step">\s*<span class="research-steps__dot" aria-hidden="true"><\/span>\s*<span class="research-steps__label">Candidates/);
   assert.equal((html.match(/research-steps__item--todo/g) ?? []).length, 4);
+});
+
+test("a finished thinking-heavy step keeps how the AI got there, folded", () => {
+  const steps = [
+    { type: "heading", text: "Candidate translations" },
+    request("r4", "candidates"),
+    { type: "thinking", requestId: "r4", text: "**Reading the origin**\nIt is a noun.\n\n**Grouping**\nTwo groups." },
+    { type: "answer-delta", requestId: "r4", text: '{"senses":[{"senseId":"s1","sense":"divine","groups":[{"members":["Innermost"],"recommended":true,"note":"n","rationale":"r"}]}]}' },
+    usage("r4"),
+    { type: "heading", text: "Proposal" },
+  ];
+  const [candidates] = renderResults(buildLogSections(steps), { running: false, openSections: { s1: true } }).split("<section").slice(1);
+  assert.match(candidates, /research-view--candidates/);
+  assert.match(candidates, /How the AI got there \(2 steps\)/);
+  assert.match(candidates, /<summary>Reading the origin<\/summary><p>It is a noun\.<\/p>/);
 });

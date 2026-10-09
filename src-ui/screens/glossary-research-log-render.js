@@ -12,9 +12,8 @@ import {
   sectionSummary,
   stageName,
 } from "../app/glossary-research-log-view.js";
-import { formatJsonStream, formatThinking } from "../app/glossary-research-stream-format.js";
-import { liveStatusHtml } from "../app/glossary-research-live-progress.js";
-import { liveAnswerHtml } from "../app/glossary-research-live-views.js";
+import { formatJsonStream, formatThinkingLive, formatThinkingSteps, thinkingSteps } from "../app/glossary-research-stream-format.js";
+import { groupViewHtml, requestGroups, stepStatus, viewRequest, VIEW_LEFT_OUT } from "../app/glossary-research-step-view.js";
 
 function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -154,83 +153,130 @@ function collapseDownloads(items) {
   return out;
 }
 
-function usageText(usage) {
-  if (usage.line) return usage.line;
-  return `${(usage.inputTokens ?? 0).toLocaleString("en-US")} tokens in (${(usage.cachedTokens ?? 0).toLocaleString("en-US")} cached), `
-    + `${(usage.outputTokens ?? 0).toLocaleString("en-US")} out (${(usage.reasoningTokens ?? 0).toLocaleString("en-US")} thinking) · `
-    + `${formatUsd(usage.costUsd)}${usage.costIsEstimate ? " (reserved; outcome unknown)" : ""} · ${Number(usage.seconds ?? 0).toFixed(1)} s`;
+
+// --- steps -------------------------------------------------------------------------
+
+// A step's AI answers are shown as their readable views; these finished-step
+// findings say the same as a view, so they are left out when the view is there.
+const COVERED_BY_VIEW = { candidates: "candidates", proposal: "proposal", sources: "senses", discovery: "discovery" };
+// Steps where thinking is most of the work: their finished views keep how the AI got there.
+const THINKING_STEPS = new Set(["sources", "candidates", "proposal", "parts", "family", "checks"]);
+
+/**
+ * A request whose answer has no readable view yet: the exchange itself (the
+ * answer as indented JSON, the thinking and what was sent folded), so nothing
+ * is hidden until a view exists for it.
+ */
+function exchangeHtml(request) {
+  const running = isRequestRunning(request);
+  return `<div class="research-exchange-plain">
+      ${request.thinking && !running ? howItWorked(request) : ""}
+      ${request.answer ? `<pre class="research-live__answer" data-live-answer>${formatJsonStream(request.answer)}</pre>` : ""}
+      ${request.text || request.instructions ? `<details class="research-step__fold"><summary>What was sent</summary>${request.instructions ? `<div class="research-live__label">Instructions</div><div class="research-live__text">${esc(request.instructions)}</div>` : ""}${request.text ? `<div class="research-live__label">Texts and question</div><div class="research-live__text">${esc(request.text)}</div>` : ""}</details>` : ""}
+    </div>`;
 }
 
-/** What was sent, the thinking and the answer of one request, laid out for reading. */
-/** The answer: its readable view when the step has one, else the indented JSON. */
-function answerBlock(request, batch = null) {
-  const view = liveAnswerHtml(request, { batch });
-  return view
-    ? `<div class="research-live__label">Answer</div><div class="research-live__view" data-live-type="answer-delta">${view}</div>`
-    : `<div class="research-live__label">Answer</div><pre class="research-live__answer" data-live-type="answer-delta">${formatJsonStream(request.answer)}</pre>`;
+/** The thinking of a request still thinking: the only thing that arrives in real time until its answer starts. */
+function thinkingHtml(request) {
+  return `<div class="research-step__thinking" data-live-thinking="${esc(request.requestId)}">${formatThinkingLive(request.thinking)}</div>`;
 }
 
-function exchangeBody(request, batch = null) {
-  return `${request.text || request.instructions ? `<details class="research-live__sent"><summary>What was sent</summary>`
-      + `${request.instructions ? `<div class="research-live__label">Instructions</div><div class="research-live__text">${esc(request.instructions)}</div>` : ""}`
-      + `${request.text ? `<div class="research-live__label">Texts and question</div><div class="research-live__text">${esc(request.text)}</div>` : ""}</details>` : ""}
-    ${request.thinking ? `<div class="research-live__label">Thinking</div><div class="research-live__thinking" data-live-type="thinking">${formatThinking(request.thinking)}</div>` : ""}
-    ${request.answer ? answerBlock(request, batch) : ""}
-    ${request.problem ? `<p class="research-line research-line--problem">${esc(request.problem)}</p>` : ""}
-    ${request.usage ? `<div class="research-live__usage">${esc(usageText(request.usage))}</div>` : ""}`;
+/** A finished request's thinking, folded to one line: how the AI got to its answer, step by step. */
+function howItWorked(request) {
+  const steps = thinkingSteps(request.thinking).filter((step) => step.title).length;
+  if (!steps) return "";
+  return `<details class="research-step__fold"><summary>How the AI got there (${steps} ${steps === 1 ? "step" : "steps"})</summary><div class="research-thought">${formatThinkingSteps(request.thinking)}</div></details>`;
 }
 
-function renderExchanges(section, openExchanges) {
-  const done = section.requests.filter((request) => !isRequestRunning(request));
-  if (!done.length) return "";
-  return `<div class="research-exchanges">${done.map((request) => {
-    const open = openExchanges?.[request.requestId] === true;
-    return `<div class="research-exchange${open ? " is-open" : ""}">
-        <button type="button" class="research-exchange__toggle" data-action="toggle-research-exchange:${esc(request.requestId)}" aria-expanded="${open}">
-          <svg class="research-disclosure__chevron" viewBox="0 0 10 10" aria-hidden="true"><path d="M3 1.5 6.5 5 3 8.5" /></svg>
-          <span>AI exchange · ${esc(requestTitle(request))}</span>
-          <span class="research-exchange__status">${esc(requestStatusText(request, formatUsd))}</span>
-        </button>
-        ${open ? `<div class="research-exchange__body">${exchangeBody(request)}</div>` : ""}
-      </div>`;
-  }).join("")}</div>`;
+/** One group of requests as the step shows it: its view, else the exchange; and the thinking while it thinks. */
+function groupBlock(group, current) {
+  const parts = [];
+  const view = groupViewHtml(group);
+  const request = viewRequest(group);
+  if (view) {
+    const thoughtful = !group.requests.some(isRequestRunning) && group.requests.length === 1 && THINKING_STEPS.has(request.stage) && request.thinking;
+    parts.push(`<div class="research-step__view" data-view-key="${esc(group.key)}">${view}</div>${thoughtful ? howItWorked(request) : ""}`);
+  }
+  else if (request && !VIEW_LEFT_OUT.has(request.stage)) parts.push(`<div class="research-step__view research-step__view--plain" data-view-key="${esc(group.key)}">${exchangeHtml(request)}</div>`);
+  if (current) {
+    const thinking = group.requests.filter((r) => ["thinking", "waiting"].includes(requestState(r)) && r.thinking);
+    const latest = thinking.length ? thinking.reduce((a, b) => (b.updatedAt >= a.updatedAt ? b : a)) : null;
+    if (latest) parts.push(thinkingHtml(latest));
+  }
+  return parts.join("");
 }
 
 /**
- * One step. The step running now is open and shows everything as it comes
- * in; a finished step folds to one line of what it found, and "details"
- * unfolds the full account with its AI exchanges.
+ * Everything a step shows, the same while it runs and afterwards: the readable
+ * views of its AI answers (the exchange itself where an answer has no view yet,
+ * and the thinking while it thinks), the findings the views do not cover, and
+ * its notes and problems. Progress lines are left out.
  */
-function renderSection(section, { current, open, openExchanges }) {
-  const body = collapseDownloads(section.items)
+function stepBody(section, current) {
+  const groups = requestGroups(section.requests);
+  const covered = new Set();
+  const views = groups.map((group) => {
+    const stage = group.requests[0]?.stage;
+    if (COVERED_BY_VIEW[stage] && groupViewHtml(group)) covered.add(COVERED_BY_VIEW[stage]);
+    return groupBlock(group, current);
+  }).join("");
+  const findings = collapseDownloads(section.items)
+    .filter((item) => (item.kind === "result" ? !covered.has(item.resultKind) : item.entry.type === "fact" || item.entry.type === "problem"))
     .map((item) => (item.kind === "result" ? renderResult(item) : renderLine(item.entry)))
     .join("");
-  if (!section.heading) return body ? `<section class="research-section research-section--untitled">${body}</section>` : "";
+  const failed = section.requests.filter((request) => requestState(request) === "failed")
+    .map((request) => renderLine({ type: "problem", text: `${stageName(request.stage)}: ${request.problem || "the AI request failed"}` })).join("");
+  return `${views}${findings}${failed}`;
+}
+
+function stepMetaText(section) {
+  const { seconds, costUsd } = section.meta;
+  return [seconds ? `${Math.round(seconds)} s` : "", costUsd ? formatUsd(costUsd) : ""].filter(Boolean).join(" · ");
+}
+
+/**
+ * One step. The step running now is open and fills in as it goes; a finished
+ * step folds to one line of what it found and opens to its final state.
+ */
+function renderSection(section, { current, open, usualFor }) {
+  if (!section.heading) {
+    const body = stepBody(section, current);
+    return body ? `<section class="research-section research-section--untitled">${body}</section>` : "";
+  }
   const expanded = current || open;
-  const meta = sectionMetaText(section);
-  const summary = expanded ? "" : sectionSummary(section);
-  const hasMore = Boolean(body) || section.requests.length > 0;
-  const toggle = !current && hasMore
-    ? `<button type="button" class="research-section__details" data-action="toggle-research-section:${esc(section.id)}" aria-expanded="${expanded}">${expanded ? "hide" : "details ›"}</button>`
-    : "";
-  return `<section class="research-section${current ? " is-current" : ""}${expanded ? " is-open" : ""}" data-section-id="${esc(section.id)}">
-      <div class="research-section__head">
-        <h4 class="research-section__title">${current ? '<span class="navigation-loading-modal__spinner research-section__spinner" aria-hidden="true"></span>' : ""}${esc(section.heading)}</h4>
+  const body = expanded ? stepBody(section, current) : "";
+  const summary = current ? "" : sectionSummary(section);
+  const meta = current ? "" : stepMetaText(section);
+  const status = current ? stepStatus(section, usualFor) : "";
+  const title = `${esc(section.heading)}`;
+  const head = current
+    ? `<div class="research-section__head">
+        <h4 class="research-section__title"><span class="navigation-loading-modal__spinner research-section__spinner" aria-hidden="true"></span>${title}</h4>
+        <span class="research-section__status" data-step-status>${status}</span>
+      </div>`
+    : `<button type="button" class="research-section__head research-section__toggle" data-action="toggle-research-section:${esc(section.id)}" aria-expanded="${expanded}">
+        <svg class="research-disclosure__chevron" viewBox="0 0 10 10" aria-hidden="true"><path d="M3 1.5 6.5 5 3 8.5" /></svg>
+        <h4 class="research-section__title">${title}</h4>
         ${summary ? `<span class="research-section__summary">${esc(summary)}</span>` : ""}
-        <span class="research-section__meta">${meta}${meta && toggle ? " · " : ""}${toggle}</span>
-      </div>
-      ${expanded && (body || section.requests.length) ? `<div class="research-section__body">${body}${current ? "" : renderExchanges(section, openExchanges)}</div>` : ""}
+        ${meta ? `<span class="research-section__meta">${meta}</span>` : ""}
+      </button>`;
+  return `<section class="research-section${current ? " is-current" : ""}${expanded ? " is-open" : ""}" data-section-id="${esc(section.id)}"${current ? " data-step-current" : ""}>
+      ${head}
+      ${body ? `<div class="research-section__body">${body}</div>` : ""}
     </section>`;
 }
 
-/** The steps: while research runs the last one is the step in progress. */
-export function renderResults(sections, { running = false, openSections = {}, openExchanges = {} } = {}) {
+/**
+ * The steps, oldest first: while research runs the last one is the step in
+ * progress. `usualFor(stage)` gives a step's usual duration for the clock.
+ */
+export function renderResults(sections, { running = false, openSections = {}, usualFor = null } = {}) {
   const titled = sections.filter((section) => section.heading);
   const currentId = running ? titled.at(-1)?.id : null;
   return sections.map((section) => renderSection(section, {
     current: section.id === currentId,
     open: openSections[section.id] === true,
-    openExchanges,
+    usualFor,
   })).join("");
 }
 
@@ -268,55 +314,3 @@ export function renderStageLine({ stepLabel, runStatus }) {
   }).join("")}</ol>`;
 }
 
-// --- live panel ------------------------------------------------------------------
-
-/** The thinking and answer blocks, also used to update the panel while text streams in. */
-export function liveBlockHtml(type, text) {
-  return type === "thinking" ? formatThinking(text) : formatJsonStream(text);
-}
-
-function liveTitle(request) {
-  return request.batch && request.batch.total > 1 ? `${stageName(request.stage)} · ${requestTitle(request)}` : requestTitle(request);
-}
-
-function batchSwitcher(batch, shown) {
-  return `<span class="research-live__batch">
-      <span data-live-batch-progress>${batch.done} of ${batch.total} done${batch.running ? `, ${batch.running} running` : ""}</span>
-      <span class="research-live__switcher">${batch.requests.map((request) => `<button type="button"
-          class="research-live__pick research-live__pick--${requestState(request)}${request.requestId === shown.requestId ? " is-current" : ""}"
-          data-action="show-research-request:${esc(request.requestId)}" aria-label="Show batch ${request.batch.number}">${request.batch.number}</button>`).join("")}</span>
-    </span>`;
-}
-
-/**
- * The panel under the results: the AI request running now, streaming in.
- * Between requests it stays as one line; after the run it is not shown.
- */
-/** The requests of a request's batch, for batch-wide tallies; null outside a batch. */
-function batchOf(sections, request) {
-  const key = request?.batch?.key;
-  if (!key) return null;
-  return (sections ?? []).flatMap((section) => section.requests ?? []).filter((r) => r.batch?.key === key);
-}
-
-export function renderLivePanel({ sections, request, running, open, usual = null }) {
-  if (!running) return "";
-  if (!request) {
-    return `<div class="research-live research-live--idle"><div class="research-live__head"><span class="research-live__title">Waiting for the next AI request…</span></div></div>`;
-  }
-  const state = requestState(request);
-  const batch = requestBatch(sections, request);
-  const id = esc(request.requestId);
-  return `<div class="research-live research-live--${state}${open ? " is-open" : ""}" data-research-live data-live-request="${id}" data-live-state="${state}" data-live-open="${open}">
-      <div class="research-live__head">
-        <button type="button" class="research-live__toggle" data-action="toggle-research-live" aria-expanded="${open}">
-          <svg class="research-disclosure__chevron" viewBox="0 0 10 10" aria-hidden="true"><path d="M3 1.5 6.5 5 3 8.5" /></svg>
-          <span class="research-live__title">${esc(liveTitle(request))}</span>
-        </button>
-        <span class="research-live__status" data-live-status>${isRequestRunning(request) ? liveStatusHtml(request, state, usual) : esc(requestStatusText(request, formatUsd))}</span>
-        ${isRequestRunning(request) ? '<span class="navigation-loading-modal__spinner research-live__spinner" aria-hidden="true"></span>' : ""}
-        ${batch ? batchSwitcher(batch, request) : ""}
-      </div>
-      ${open ? `<div class="research-live__body" data-live-body>${exchangeBody(request, batchOf(sections, request))}</div>` : ""}
-    </div>`;
-}

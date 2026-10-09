@@ -16,8 +16,8 @@ import {
 } from "../app/glossary-research-flow.js";
 import { batchSpent } from "../app/glossary-research-family-budget.js";
 import { formatUsd, researchModelsWithPrices } from "../app/glossary-research-budget.js";
-import { buildLogSections, isRequestRunning, liveRequest } from "../app/glossary-research-log-view.js";
-import { renderLivePanel, renderResults, renderStageLine } from "./glossary-research-log-render.js";
+import { buildLogSections } from "../app/glossary-research-log-view.js";
+import { renderResults, renderStageLine } from "./glossary-research-log-render.js";
 
 const esc = escapeHtml;
 
@@ -319,13 +319,9 @@ function renderRun(state) {
     ? renderReview(research, targetName, state.glossaryEditor?.targetLanguage?.code ?? "")
     : research.runStatus === "family" ? renderFamilyChoice(research) : "";
   const sections = buildLogSections(research.log);
-  const shown = liveRequest(sections, research.liveChoice, research.liveFollow);
-  // The panel keeps following one request until it finishes.
-  research.liveFollow = shown && isRequestRunning(shown) ? shown.requestId : null;
-  const usual = shown ? usualRange(stepTimings(research.modelId, shown.stage)) : null;
-  const livePanel = renderLivePanel({ sections, request: shown, running, open: research.liveOpen !== false, usual });
+  const usualFor = (stage) => usualRange(stepTimings(research.modelId, stage));
   const logLines = `<div class="research-results" data-research-log aria-live="off">${renderResults(sections, {
-    running, openSections: research.sectionOpen ?? {}, openExchanges: research.exchangeOpen ?? {},
+    running, openSections: research.sectionOpen ?? {}, usualFor,
   })}</div>`;
   // While research runs the log is the main view; afterwards it folds away.
   const log = running
@@ -336,7 +332,7 @@ function renderRun(state) {
         </button>
         ${research.logOpen ? logLines : ""}
       </div>`;
-  const logArea = `${log}${livePanel}`;
+  const logArea = log;
   let actions;
   if (running) {
     actions = secondaryButton("Cancel", "cancel-glossary-research-run", { modalCancel: true });

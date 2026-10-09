@@ -98,3 +98,40 @@ export function formatThinking(text) {
   flush();
   return blocks.join("");
 }
+
+/** The thinking as its steps: [{ title, text }] (text before the first title has an empty title). */
+export function thinkingSteps(text) {
+  const steps = [];
+  for (const line of String(text ?? "").split("\n")) {
+    const title = /^\s*\*\*(.+?)\*\*\s*$/.exec(line);
+    if (title) steps.push({ title: title[1].trim(), text: "" });
+    else if (steps.length) steps.at(-1).text += `${line}\n`;
+    else if (line.trim()) steps.push({ title: "", text: `${line}\n` });
+  }
+  return steps.map((step) => ({ ...step, text: step.text.trim() }));
+}
+
+function paragraphs(text) {
+  return String(text ?? "").split(/\n\s*\n/).filter((p) => p.trim())
+    .map((p) => `<p>${p.split("\n").map(escapeHtml).join("<br>")}</p>`).join("");
+}
+
+/**
+ * The thinking while it arrives: the steps so far as one line each, the step
+ * being thought now with its text (what the AI is doing, without the wall of text).
+ */
+export function formatThinkingLive(text) {
+  const steps = thinkingSteps(text);
+  if (!steps.length) return "";
+  const done = steps.slice(0, -1).filter((step) => step.title);
+  const now = steps.at(-1);
+  return `${done.length ? `<ol class="research-thought__done">${done.map((step) => `<li>${escapeHtml(step.title)}</li>`).join("")}</ol>` : ""}
+    <div class="research-thought__now">${now.title ? `<div class="research-thought__title">${escapeHtml(now.title)}</div>` : ""}${paragraphs(now.text)}</div>`;
+}
+
+/** A finished thinking: each step a fold, its title the line and its text inside. */
+export function formatThinkingSteps(text) {
+  return thinkingSteps(text).map((step) => (step.title
+    ? `<details class="research-thought__step"><summary>${escapeHtml(step.title)}</summary>${paragraphs(step.text)}</details>`
+    : `<div class="research-thought__step">${paragraphs(step.text)}</div>`)).join("");
+}

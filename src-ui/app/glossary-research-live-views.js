@@ -93,7 +93,8 @@ function sourcesView(request, value) {
        ${value.meaningInOriginal ? `<p>${esc(value.meaningInOriginal)}</p>` : ""}`);
   }
   const senses = list(value?.senses).filter((sense) => str(sense?.sense));
-  return view("sources", "Where the term comes from", `
+  // The step is already titled "Where the term comes from".
+  return view("sources", "", `
     ${value?.summary ? `<p class="research-view__summary">${esc(value.summary)}</p>` : ""}
     ${senses.map((sense) => `
       <div class="research-view__card">
@@ -170,13 +171,23 @@ function tallyRows(items, keyOf, nameOf) {
   return [...counts].sort((a, b) => b[1] - a[1]);
 }
 
-function discoveryView(request, value, batch) {
+/**
+ * The rows of a batch step: while it runs, the uses of the request being written;
+ * when the step is finished, every use, folded behind one line.
+ */
+function useRows(items, all, final, unit, row) {
+  if (!final) return `<div class="research-view__rows">${items.map(row).join("")}</div>`;
+  if (!all.length) return "";
+  return `<details class="research-view__more"><summary>Show the ${plural(all.length, unit)}</summary><div class="research-view__rows">${all.map(row).join("")}</div></details>`;
+}
+
+function discoveryView(request, value, batch, final) {
   const items = list(value?.items).filter((item) => str(item?.occId));
-  const all = [...batchItems(request, batch), ...items];
+  const all = [...batchItems(request, batch), ...items].filter((item) => str(item?.occId));
   const rows = tallyRows(all, (item) => str(item?.rendering), (key) => key).slice(0, 8);
-  return view("discovery", `Open reading: what a translator reaches for${batch?.length > 1 ? " (this batch so far)" : ""}`,
-    `${rows.length ? bars(rows, 0, "Renderings used") : ""}
-     <div class="research-view__rows">${items.map((item) => `<div class="research-view__row">${muted(item.occId)} <strong>${esc(item.rendering)}</strong> ${muted(item.phraseTranslation)}${item.expressionCandidate ? ` ${label(`expression: ${item.expressionCandidate}`, "accent")}` : ""}</div>`).join("")}</div>`);
+  const row = (item) => `<div class="research-view__row"><strong>${esc(item.rendering)}</strong> ${muted(item.phraseTranslation)}${item.expressionCandidate ? ` ${label(`expression: ${item.expressionCandidate}`, "accent")}` : ""}</div>`;
+  return view("discovery", `Open reading: what a translator reaches for${final ? ` (${plural(all.length, "use")})` : batch?.length > 1 ? " (all batches so far)" : ""}`,
+    `${rows.length ? bars(rows, 0, "Renderings used") : ""}${useRows(items, all, final, "use", row)}`);
 }
 
 function highlightIn(sentence, wording) {
@@ -185,18 +196,18 @@ function highlightIn(sentence, wording) {
   return at < 0 ? esc(text) : `${esc(text.slice(0, at))}<mark>${esc(text.slice(at, at + wording.length))}</mark>${esc(text.slice(at + wording.length))}`;
 }
 
-function countingView(request, value, batch) {
+function countingView(request, value, batch, final) {
   const names = request.progress?.variants ?? {};
   const items = list(value?.items).filter((item) => str(item?.occId));
-  const all = [...batchItems(request, batch), ...items];
+  const all = [...batchItems(request, batch), ...items].filter((item) => str(item?.occId));
   const rows = tallyRows(all, (item) => (item.status === "selected" ? item.variantId : item.status ? `__${item.status}` : ""),
     (key) => (key === "__other" ? "something else" : key === "__unresolved" ? "could not tell" : names[key] ?? key));
-  return view("counting", `Which translation fits each use${batch?.length > 1 ? " (this batch so far)" : ""}`,
-    `${rows.length ? bars(rows.map(([text, n]) => [text, n, text === "something else" || text === "could not tell" ? "rest" : "sense"]), 0, "Chosen translations") : ""}
-     <div class="research-view__rows">${items.map((item) => `<div class="research-view__row">
-        ${muted(item.occId)} ${item.status && item.status !== "selected" ? label(item.status === "other" ? `something else${item.otherRendering ? `: ${item.otherRendering}` : ""}` : "could not tell", "warn") : ""}${item.fit === "poor" ? ` ${label("poor fit", "warn")}` : ""}
+  const row = (item) => `<div class="research-view__row">
+        ${item.status && item.status !== "selected" ? label(item.status === "other" ? `something else${item.otherRendering ? `: ${item.otherRendering}` : ""}` : "could not tell", "warn") : ""}${item.fit === "poor" ? ` ${label("poor fit", "warn")}` : ""}
         <div class="research-view__sentence">${highlightIn(item.sentenceTranslation, item.chosenWording)}</div>
-      </div>`).join("")}</div>`);
+      </div>`;
+  return view("counting", `Which translation fits each use${final ? ` (${plural(all.length, "use")})` : batch?.length > 1 ? " (all batches so far)" : ""}`,
+    `${rows.length ? bars(rows.map(([text, n]) => [text, n, text === "something else" || text === "could not tell" ? "rest" : "sense"]), 0, "Chosen translations") : ""}${useRows(items, all, final, "use", row)}`);
 }
 
 function proposalView(request, value) {
@@ -268,13 +279,13 @@ const VIEWS = {
  * HTML for the answer of a request so far, or null when there is no view for it
  * (then the plain JSON is shown). `batch` lists the requests of its batch.
  */
-export function liveAnswerHtml(request, { batch = null } = {}) {
+export function liveAnswerHtml(request, { batch = null, final = false } = {}) {
   const render = VIEWS[request?.stage];
   if (!render || !request.answer) return null;
   const value = parsePartialJson(request.answer);
   if (!value) return null;
   try {
-    return render(request, value, batch);
+    return render(request, value, batch, final);
   } catch {
     return null;
   }
