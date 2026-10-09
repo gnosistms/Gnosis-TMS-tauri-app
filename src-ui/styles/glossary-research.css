@@ -1573,11 +1573,13 @@
 /* What happens now stays in view at the foot of the list, however long the step's display. */
 .research-step__now {
   position: sticky;
-  bottom: 0;
-  z-index: 1;
-  margin: 0 -2px;
-  padding: 8px 2px 6px;
+  /* Flush with the bottom edge: the list's own bottom padding (8px) is covered too. */
+  bottom: -8px;
+  z-index: 2;
+  /* Edge to edge across the list (its side padding is 2px left, 12px right). */
+  margin: 0 -12px 0 -2px;
+  padding: 9px 12px 14px 2px;
   border-top: 1px solid var(--surface-border);
   background: rgb(255, 250, 244);
-  box-shadow: 0 -8px 12px -8px rgba(164, 112, 41, 0.18);
+  box-shadow: 0 -10px 14px -10px rgba(164, 112, 41, 0.22);
 }
