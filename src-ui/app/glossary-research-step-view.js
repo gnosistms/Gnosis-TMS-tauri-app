@@ -53,6 +53,8 @@ export function runningRequest(section) {
 
 /** What the step running now is doing: its AI request's status, else its latest progress line. */
 export function stepStatus(section, usualFor) {
+  // After a cancel nothing is happening in the step, whatever requests were cut short.
+  if (section.items.some((item) => item.kind === "line" && /^Cancelled\b/.test(item.entry.text ?? ""))) return "";
   const request = runningRequest(section);
   if (request) return liveStatusHtml(request, requestState(request), usualFor?.(request.stage) ?? null);
   // A progress line is what happens now until a finding, or an AI request, comes after it.

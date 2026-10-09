@@ -27,7 +27,7 @@ test("batch steps tally the whole batch by translation name", () => {
     answer: '{"items":[{"occId":"o1","status":"selected","variantId":"e1v2","sentenceTranslation":"the Innermost","chosenWording":"Innermost"}' };
   const other = { answer: '{"items":[{"occId":"o2","status":"selected","variantId":"e1v1"},{"occId":"o3","status":"selected","variantId":"e2v1"}]}' };
   const html = liveAnswerHtml(request, { batch: [request, other] });
-  assert.match(html, /\(3 uses of the word so far\)/);
+  assert.match(html, /\(3 uses of the word\)/);
   assert.equal((html.match(/title="inner: 2"/g) ?? []).length, 1, "one bar for “inner” across entries");
   assert.match(html, /title="Innermost: 1"/);
   assert.match(html, /<mark>Innermost<\/mark>/);

@@ -446,8 +446,9 @@ export function sectionSummary(section) {
   }
   for (let index = section.items.length - 1; index >= 0; index -= 1) {
     const item = section.items[index];
-    // The dictionary entry itself is for reading; its count line sums it up.
-    if (item.kind === "result" && item.resultKind === "dictionary") continue;
+    // Findings that fill a display (the dictionary entry, each word's count) are not
+    // what the step concluded; its last line sums it up.
+    if (item.kind === "result" && ["dictionary", "formCount", "familyCount"].includes(item.resultKind)) continue;
     if (item.kind === "result") {
       const summarize = RESULT_SUMMARIES[item.resultKind];
       if (summarize && item.data) {

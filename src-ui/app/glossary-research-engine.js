@@ -716,6 +716,8 @@ export function createResearchEngine(deps) {
   async function lookUpDictionary() {
     return stage("dictionary", async () => {
       heading("Dictionary");
+      // Lookups can take a while (the DLE up to two minutes): say what is happening.
+      info(`Looking up “${settings.term}” in a ${settings.sourceLanguageName} dictionary…`);
       let result = await dictionary.lookup(settings.term, (line) => info(line));
       if (result.status !== "found" && settings.webDictionaryDomains?.length) {
         info("No dictionary entry yet; asking the AI to search dictionary sites.");
@@ -763,6 +765,7 @@ export function createResearchEngine(deps) {
   async function findForms() {
     return stage("forms", async () => {
       heading("Word forms");
+      info(`Finding the spellings of “${settings.term}” used in the texts…`);
       const hint = corpus.formsHint ? await corpus.formsHint(settings.term) : null;
       const proposeCtx = ctx({
         userVariants: settings.variants,
@@ -833,6 +836,7 @@ export function createResearchEngine(deps) {
       const known = new Set((forms.candidates ?? []).map((c) => fold(c.form).trim()));
       const proposed = await client.callJson({
         stage: "family", purpose: `find related words built on “${settings.term}”`,
+        progress: { key: "form", total: null, unit: "word" },
         instructions: prompts.familyInstructions(ctx()),
         content: [
           `Headword: ${settings.term}`,
@@ -860,8 +864,12 @@ export function createResearchEngine(deps) {
         found.add(key);
         const count = await corpus.countForm(form).catch(() => ({ rows: 0 }));
         if (count.rows) members.push({ form, kind, rows: count.rows, ...(of ? { of } : {}) });
+        // Lands in the related-words display, next to its word.
+        logResult("familyCount", [{ form, rows: count.rows, of }], `“${form}”: ${count.rows} passages`);
         return count.rows > 0;
       };
+      // Counting takes up to a minute: say so.
+      if (candidates.length) info("Counting how many passages use each related word…");
       for (const candidate of candidates) {
         const present = await add(candidate.form, candidate.kind);
         // A member found in the texts brings its own inflections from the texts' word list.
@@ -903,6 +911,7 @@ export function createResearchEngine(deps) {
   async function drawSample() {
     return stage("sample", async () => {
       heading("Sampling");
+      info("Finding every passage that uses the word, to pick a random sample…");
       const forms = store.load("forms").searched;
       if (!forms.length) {
         throw new ResearchStop(`“${settings.term}” does not occur in the selected texts.`, "no-texts");
@@ -952,6 +961,7 @@ export function createResearchEngine(deps) {
         return { skipped: true };
       }
       const forms = store.load("forms").searched;
+      info(`Finding the reference books that use “${settings.term}”…`);
       const usage = await corpus.sourceUsage(forms, settings.seed);
       if (!usage.length) {
         fact("None of the reference books uses the term.");
@@ -1033,6 +1043,7 @@ export function createResearchEngine(deps) {
       ].join("\n\n");
       const study = await client.callJson({
         stage: "sources", purpose: `find out where the author took “${settings.term}” from`,
+        progress: { key: "sense", total: null, unit: "meaning" },
         instructions: prompts.sourcesInstructions(ctx()), content,
         schema: prompts.SOURCES_SCHEMA, schemaName: "sources",
         maxOutputTokens: 16000, effort: settings.effortStudy,
@@ -1092,8 +1103,9 @@ export function createResearchEngine(deps) {
       const book = bookOfSense(sense, top);
       const record = book && records.find((item) => item.title === book.title);
       if (!record?.originalBookId || searched.has(`${record.originalBookId}:${fold(sense.originalTerm).trim()}`)) continue;
-      const found = await corpus.originalSample(record.originalBookId, [sense.originalTerm], settings.seed, 10);
       const name = record.originalTitle ?? book.title;
+      info(`Reading the original book, ${name}, to check “${sense.originalTerm}”…`);
+      const found = await corpus.originalSample(record.originalBookId, [sense.originalTerm], settings.seed, 10);
       info(`Reading the original book, ${name}: “${sense.originalTerm}” appears ${found.occurrences} times`);
       const content = [
         `Term: ${settings.term}. Proposed original word: “${sense.originalTerm}” (${sense.originalTermBasis}).`,
@@ -1173,6 +1185,7 @@ export function createResearchEngine(deps) {
       ].filter(Boolean).join("\n\n");
       const study = await client.callJson({
         stage: "parts", purpose: `list the meanings of “${settings.term}”`,
+        progress: { key: "gloss", total: null, unit: "meaning" },
         instructions: prompts.partsInstructions(ctx()), content,
         schema: prompts.PARTS_SCHEMA, schemaName: "parts",
         maxOutputTokens: 6000, effort: settings.effortProposal,
@@ -1333,6 +1346,7 @@ export function createResearchEngine(deps) {
         for (const candidate of analysis.candidates) {
           candidate.target ??= toCheck.find((c) => c.n === candidate.n)?.target ?? "";
         }
+        info(`Looking up how common each candidate's words are in everyday ${name}…`);
         await joinListedUnits(languageData, code, analysis.candidates, (candidate) => toCheck.find((c) => c.n === candidate.n)?.sense);
       }
       const byNumber = new Map(analysis.candidates.map((c) => [c.n, c]));
@@ -1676,7 +1690,7 @@ export function createResearchEngine(deps) {
 
   async function makeProposal(extraLines = []) {
     const proposal = await client.callJson({
-      stage: "proposal", purpose: extraLines.length ? "revise the proposal so no translation is shared with a word of different meaning" : "put the findings together into a proposed glossary entry",
+      stage: "proposal", progress: { key: "target", total: null, unit: "translation" }, purpose: extraLines.length ? "revise the proposal so no translation is shared with a word of different meaning" : "put the findings together into a proposed glossary entry",
       instructions: prompts.proposalInstructions(ctx()), content: [proposalContent(), ...extraLines].join("\n"),
       schema: prompts.PROPOSAL_SCHEMA, schemaName: "proposal",
       maxOutputTokens: 24000, effort: settings.effortProposal,

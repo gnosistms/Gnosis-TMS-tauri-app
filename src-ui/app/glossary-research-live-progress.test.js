@@ -56,7 +56,7 @@ test("the live status says what the request is doing, with the clock and the usu
   assert.match(thinking, /Asking the AI to propose Vietnamese translations for each meaning \(thinking\)/, "what it was asked stays in view; the thinking shows below");
   assert.match(thinking, /1:40 · usually 3–4 min/);
   const writing = liveStatusHtml({ startedAt: started, answer: '{"candidates":[{"n":1},{"n":2', progress: { key: "n", total: 4, unit: "translation" } }, "writing", usual, started + 5_000);
-  assert.match(writing, /2 of 4 translations so far/, "the answer is on screen; only how far it has got is added");
+  assert.match(writing, /2 of 4 translations/, "the answer is on screen; only how far it has got is added");
   assert.match(writing, /role="progressbar"/);
   assert.match(liveStatusHtml({ startedAt: started }, "waiting", usual, started + 900_000), /taking much longer than usual/);
 });

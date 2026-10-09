@@ -201,7 +201,7 @@ function discoveryView(request, value, batch, final) {
   }
   const rows = tallyRows(all, (item) => str(item?.rendering).toLowerCase(), (key) => spelled.get(key) ?? key).slice(0, 8);
   const row = (item) => `<div class="research-view__row"><strong>${esc(item.rendering)}</strong> ${muted(item.phraseTranslation)}${item.expressionCandidate ? ` ${label(`expression: ${item.expressionCandidate}`, "accent")}` : ""}</div>`;
-  return view("discovery", `What the AI wrote, with no suggestions (${usesIn(all)}${final ? "" : " so far"})`,
+  return view("discovery", `What the AI wrote, with no suggestions (${usesIn(all)})`,
     `${rows.length ? bars(rows, 0, "Renderings used") : ""}${useRows(items, all, final, "use", row)}`);
 }
 
@@ -221,7 +221,7 @@ function countingView(request, value, batch, final) {
         ${item.status && item.status !== "selected" ? label(item.status === "other" ? `something else${item.otherRendering ? `: ${item.otherRendering}` : ""}` : "could not tell", "warn") : ""}${item.fit === "poor" ? ` ${label("poor fit", "warn")}` : ""}
         <div class="research-view__sentence">${highlightIn(item.sentenceTranslation, item.chosenWording)}</div>
       </div>`;
-  return view("counting", `Translation chosen for each use of the word (${usesIn(all)}${final ? "" : " so far"})`,
+  return view("counting", `Translation chosen for each use of the word (${usesIn(all)})`,
     `${rows.length ? bars(rows.map(([text, n]) => [text, n, text === "something else" || text === "could not tell" ? "rest" : "sense"]), 0, "Chosen translations") : ""}${useRows(items, all, final, "use", row)}`);
 }
 
@@ -379,23 +379,27 @@ function familyDisplay(section) {
   const request = section.requests.find((item) => item.stage === "family");
   const words = list(answerOf(request)?.words).filter((word) => str(word?.form) && word.kind !== "phrase");
   if (!words.length) return null;
+  // Counts arrive one by one as data; older runs logged them in one line at the end.
+  const checked = new Map(resultData(section, "familyCount").map((item) => [lower(item.form), item.rows]));
   const fact = lineTexts(section, "fact").find((text) => /^(Related words in the texts|Word family in the texts)/.test(text));
-  const counts = fact ? countList(fact.slice(fact.indexOf(":") + 1)) : null;
+  if (fact) for (const [form, rows] of countList(fact.slice(fact.indexOf(":") + 1))) if (!checked.has(form)) checked.set(form, rows);
+  const finished = Boolean(fact) || lineTexts(section, "fact").some((text) => /^No other words built on the term/.test(text));
   const row = (form, reason, count) => `<div class="research-view__row"><strong>${esc(form)}</strong>${count != null ? ` (${count})` : ""} ${muted(reason)}</div>`;
-  if (!counts) {
-    return {
-      html: view("family", `Possible related words${isRunning(request) ? " so far" : ""}`, `<div class="research-view__rows">${words.map((word) => row(word.form, word.reason)).join("")}</div>`),
-      requests: new Set([request.requestId]), results: new Set(), facts: [],
-    };
+  const drawn = { requests: new Set([request.requestId]), results: new Set(["familyCount"]), facts: [/^(Related words in the texts|Word family in the texts|No other words built on the term)/] };
+  if (!checked.size && !finished) {
+    return { ...drawn, html: view("family", "Possible related words", `<div class="research-view__rows">${words.map((word) => row(word.form, word.reason)).join("")}</div>`) };
   }
   const reasons = new Map(words.map((word) => [lower(word.form), word.reason]));
-  const found = [...counts].sort((a, b) => b[1] - a[1]);
-  const missing = words.filter((word) => !counts.has(lower(word.form)));
+  const spelled = new Map(words.map((word) => [lower(word.form), word.form]));
+  const found = [...checked].filter(([, rows]) => rows > 0).sort((a, b) => b[1] - a[1]);
+  const missing = words.filter((word) => checked.get(lower(word.form)) === 0 || (finished && !checked.has(lower(word.form))));
+  const waiting = finished ? [] : words.filter((word) => !checked.has(lower(word.form)));
   return {
-    html: view("family", found.length ? "Related words in the texts, and how many passages use each" : "None of the possible related words is in the texts", `
-      <div class="research-view__rows">${found.map(([form, count]) => row(words.find((word) => lower(word.form) === form)?.form ?? form, reasons.get(form) ?? "", count)).join("")}</div>
-      ${missing.length ? `<details class="research-view__more"><summary>${plural(missing.length, "other possible word")} not in the texts</summary><div class="research-view__rows">${missing.map((word) => row(word.form, word.reason)).join("")}</div></details>` : ""}`),
-    requests: new Set([request.requestId]), results: new Set(), facts: [/^(Related words in the texts|Word family in the texts|No other words built on the term)/],
+    ...drawn,
+    html: view("family", found.length || !finished ? "Related words in the texts, and how many passages use each" : "None of the possible related words is in the texts", `
+      <div class="research-view__rows">${found.map(([form, count]) => row(spelled.get(form) ?? form, reasons.get(form) ?? "", count)).join("")}</div>
+      ${waiting.length ? `<p class="research-view__explain">${plural(waiting.length, "more word")} to search for</p>` : ""}
+      ${missing.length ? `<details class="research-view__more"><summary>${plural(missing.length, "possible word")} not in the texts</summary><div class="research-view__rows">${missing.map((word) => row(word.form, word.reason)).join("")}</div></details>` : ""}`),
   };
 }
 
@@ -423,11 +427,11 @@ function meaningsDisplay(section, context) {
   ];
   const total = sorting?.progress?.total ?? sorted;
   const equation = parts.length > 1 ? `<div class="research-view__equation">${parts.map((part, index) => `${index ? '<span class="research-view__plus">+</span>' : ""}<span class="research-view__part"><strong>${esc(part.part)}</strong>${muted(part.meaning)}</span>`).join("")}</div>` : "";
-  const body = sorting
-    ? `${bars(rows, total, "Sentences per meaning")}<p class="research-view__explain">Bars: how many of ${total} everyday ${esc(language)} sentences (news) use each meaning${sorting && isRunning(sorting) ? ", so far" : ""}. Darker: meanings the author uses.</p>`
+  const body = sorted
+    ? `${bars(rows, total, "Sentences per meaning")}<p class="research-view__explain">Bars: how many of ${total} everyday ${esc(language)} sentences (news) use each meaning. Darker: meanings the author uses.</p>`
     : `<ol class="research-view__definitions">${senses.map((sense) => `<li>${sense.partOfSpeech ? `${muted(`(${sense.partOfSpeech})`)} ` : ""}${esc(sense.gloss)}${sense.usedByAuthor ? ` ${label("used by the author", "accent")}` : ""}</li>`).join("")}</ol>`;
   return {
-    html: view("parts", sorting ? `Meanings of “${esc(word)}”, and how often each is used` : `Meanings of “${esc(word)}”`, `${equation}${body}`),
+    html: view("parts", sorted ? `Meanings of “${esc(word)}”, and how often each is used` : `Meanings of “${esc(word)}”`, `${equation}${body}`),
     requests: new Set([request.requestId, ...(sorting ? [sorting.requestId] : [])]),
     results: new Set(["frequency"]),
     facts: [],
