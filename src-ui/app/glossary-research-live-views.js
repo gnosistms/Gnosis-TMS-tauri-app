@@ -6,6 +6,10 @@
 
 import { parsePartialJson } from "./glossary-research-partial-json.js";
 import { commonness } from "./glossary-research-frequency.js";
+import { tooltipAttributes } from "../lib/ui.js";
+
+/** The app's own tooltip (quick, styled), around a chip or a mark; nothing when there is nothing to say. */
+const tip = (text, html) => (str(text).trim() ? `<span${tooltipAttributes(text)}>${html}</span>` : html);
 
 const esc = (text) => String(text ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 const list = (value) => (Array.isArray(value) ? value : []);
@@ -23,7 +27,7 @@ function view(kind, heading, body) {
 function bars(rows, scale, ariaLabel) {
   const top = Math.max(scale, ...rows.map(([, n]) => n), 1);
   return `<div class="research-chart" role="table" aria-label="${esc(ariaLabel)}">${rows.map(([text, n, kind = "sense", tag = ""]) => `
-    <div class="research-chart__row research-chart__row--${kind}" role="row" title="${esc(text)}: ${n}">
+    <div class="research-chart__row research-chart__row--${kind}" role="row">
       <span class="research-chart__label" role="cell">${tag ? `<span class="research-chart__tag">${esc(tag)}</span> ` : ""}${esc(text)}</span>
       <span class="research-chart__track" role="cell"><span class="research-chart__bar" style="width:${(100 * n) / top}%"></span><span class="research-chart__value">${n}</span></span>
     </div>`).join("")}</div>`;
@@ -61,11 +65,11 @@ function formsView(request, value) {
   if (forms.some((form) => "keep" in form)) {
     const dropped = forms.some((form) => form.keep === false);
     return view("forms", "Which spellings really are this word",
-      `<div class="research-view__chips">${forms.map((form) => `<span title="${esc(form.reason)}">${chip(form.form, form.keep === false ? "dropped" : "")}</span>`).join("")}</div>
+      `<div class="research-view__chips">${forms.map((form) => tip(form.reason, chip(form.form, form.keep === false ? "dropped" : ""))).join("")}</div>
        <p class="research-view__explain">${dropped ? "Crossed out: dropped (hover to see why)." : "All confirmed."}</p>`);
   }
   return view("forms", "Spellings to search for",
-    `<div class="research-view__chips">${forms.map((form) => `<span title="${esc([form.kind, form.confidence].filter(Boolean).join(", "))}">${chip(form.form, [form.kind === "spelling" ? "outline" : "", form.confidence === "low" ? "faint" : ""].filter(Boolean).join(" research-view__chip--"))}</span>`).join("")}</div>
+    `<div class="research-view__chips">${forms.map((form) => chip(form.form, [form.kind === "spelling" ? "outline" : "", form.confidence === "low" ? "faint" : ""].filter(Boolean).join(" research-view__chip--"))).join("")}</div>
      <p class="research-view__explain">${[
        forms.some((form) => form.kind !== "spelling") ? "Solid: grammatical forms." : "",
        forms.some((form) => form.kind === "spelling") ? "Outlined: other spellings." : "",
@@ -108,7 +112,7 @@ function sourcesView(request, value) {
         ${sense.sourceBook ? `<div class="research-view__line">From <strong>${esc(sense.sourceBook)}</strong>${sense.originalTerm ? `, original ${esc(sense.originalLanguage)} <strong>“${esc(sense.originalTerm)}”</strong>` : ""}</div>` : ""}
         ${sense.meaningInSource && sense.inDictionary === false ? `<div class="research-view__line">${muted("Meaning there:")} ${esc(sense.meaningInSource)}</div>` : ""}
         ${sense.authorUsage ? `<div class="research-view__line">${muted("How the author uses it:")} ${esc(sense.authorUsage)}</div>` : ""}
-        ${list(sense.equivalences).length ? `<div class="research-view__chips">${list(sense.equivalences).filter((e) => str(e?.term)).map((e) => `<span title="${esc(e.evidence)}">${chip(`${e.relation === "identity" ? "= " : e.relation === "part" ? "⊂ " : "~ "}${e.term}`)}</span>`).join("")}</div>` : ""}
+        ${list(sense.equivalences).length ? `<div class="research-view__chips">${list(sense.equivalences).filter((e) => str(e?.term)).map((e) => tip(e.evidence, chip(`${e.relation === "identity" ? "= " : e.relation === "part" ? "⊂ " : "~ "}${e.term}`))).join("")}</div>` : ""}
       </div>`).join("")}`);
 }
 
@@ -131,7 +135,7 @@ function candidatesView(request, value) {
       return `<div class="research-view__block">
         <div class="research-view__title">${esc(sense.sense)}</div>
         ${ordered.map((group) => `<div class="research-view__group${group.recommended ? " is-recommended" : ""}">
-          <div class="research-view__chips">${group.recommended ? '<span class="research-view__star" title="recommended">★</span>' : ""}${list(group.members).filter(str).map((member, index) => chip(member, index === 0 ? "lead" : "")).join("")}</div>
+          <div class="research-view__chips">${group.recommended ? `<span class="research-view__star"${tooltipAttributes("Recommended")}>★</span>` : ""}${list(group.members).filter(str).map((member, index) => chip(member, index === 0 ? "lead" : "")).join("")}</div>
           ${group.note ? `<div class="research-view__note">${esc(group.note)}</div>` : ""}
         </div>`).join("")}
       </div>`;
@@ -391,7 +395,7 @@ function formsDisplay(section, context) {
     const kind = [form.kind === "spelling" || form.kind === "text" ? "outline" : "", form.confidence === "low" ? "faint" : "", decision?.keep === false ? "dropped" : ""].filter(Boolean);
     // Each spelling's check shows on its chip as soon as it arrives.
     const text = `${decision?.keep === true ? "✓ " : ""}${form.form}${count ? ` (${count.rows})` : ""}`;
-    return `<span title="${esc([decision?.reason, form.added ? "added: found in the texts or spelled without accents" : ""].filter(Boolean).join("; "))}">${chip(text, kind.join(" research-view__chip--"))}</span>`;
+    return tip([decision?.reason, form.added ? "Added: found in the texts or spelled without accents." : ""].filter(Boolean).join(" "), chip(text, kind.join(" research-view__chip--")));
   }).join("");
   const anyDropped = [...decisions.values()].some((form) => form.keep === false);
   const legend = [
@@ -447,9 +451,12 @@ function familyDisplay(section) {
   const chipOf = (group) => {
     const s = state(group);
     const others = group.members.filter((m) => m.form !== group.lead.form);
-    const tip = [group.lead.reason, ...group.members.map((m) => `${m.form}${m.item ? `: ${m.item.rows} ${m.item.rows === 1 ? "paragraph" : "paragraphs"}` : ""}${m.inflection ? " (a form of it)" : ""}`)].filter(Boolean).join("\n");
+    // One or two sentences: the app's tooltip is a single block of up to four lines.
+    const spellings = group.members.length > 1
+      ? ` Written ${group.members.map((m) => `${m.form}${m.item ? ` (${m.item.rows})` : ""}${m.inflection ? " (a form)" : ""}`).join(", ")}.`
+      : "";
     const text = `${group.lead.form}${s.found ? ` (${s.rows})` : ""}${others.length ? ` +${others.length}` : ""}`;
-    return `<span title="${esc(tip)}">${chip(text, s.missing ? "faint" : "")}</span>`;
+    return tip(`${str(group.lead.reason)}${spellings}`, chip(text, s.missing ? "faint" : ""));
   };
   const all = [...groups.values()];
   const drawn = { requests: new Set([request.requestId]), results: new Set(["familyCount"]), facts: [/^(Related words in the texts|Word family in the texts|No other words built on the term)/] };

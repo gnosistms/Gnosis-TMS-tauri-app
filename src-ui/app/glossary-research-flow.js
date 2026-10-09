@@ -863,6 +863,28 @@ export function scrollResearchLogToLatest() {
   log.parentElement?.classList.remove("is-away");
 }
 
+/**
+ * The app's tooltips are centred above their element; inside the research list,
+ * whose edges clip them, a tooltip opens towards the side with room: aligned to
+ * the element's start or end, and below it near the top of the list.
+ */
+export function placeResearchTooltip(element) {
+  const log = element?.closest?.("[data-research-log]");
+  if (!log) return;
+  const box = log.getBoundingClientRect();
+  const rect = element.getBoundingClientRect();
+  element.dataset.tooltipAlign = rect.left + rect.width / 2 < box.left + box.width / 2 ? "start" : "end";
+  if (rect.top - box.top < 110) element.dataset.tooltipSide = "bottom";
+  else delete element.dataset.tooltipSide;
+}
+
+if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
+  document.addEventListener("mouseover", (event) => {
+    const element = event.target?.closest?.("[data-research-log] [data-tooltip]");
+    if (element) placeResearchTooltip(element);
+  }, true);
+}
+
 // The list is "away" when the person has scrolled up from the end: it stops following and offers "↓ Latest".
 if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
   document.addEventListener("scroll", (event) => {

@@ -28,8 +28,9 @@ test("batch steps tally the whole batch by translation name", () => {
   const other = { answer: '{"items":[{"occId":"o2","status":"selected","variantId":"e1v1"},{"occId":"o3","status":"selected","variantId":"e2v1"}]}' };
   const html = liveAnswerHtml(request, { batch: [request, other] });
   assert.match(html, /\(3 uses of the word\)/);
-  assert.equal((html.match(/title="inner: 2"/g) ?? []).length, 1, "one bar for “inner” across entries");
-  assert.match(html, /title="Innermost: 1"/);
+  const bar = (name, n) => new RegExp(`research-chart__label" role="cell">${name}</span>\\s*<span class="research-chart__track" role="cell"><span class="research-chart__bar" style="width:[^"]*"></span><span class="research-chart__value">${n}<`, "g");
+  assert.equal((html.match(bar("inner", 2)) ?? []).length, 1, "one bar for “inner” across entries");
+  assert.match(html, bar("Innermost", 1));
   assert.match(html, /<mark>Innermost<\/mark>/);
 });
 
@@ -56,7 +57,7 @@ test("a finished batch step tallies every use and folds the uses behind one line
   const other = { usage: {}, answer: '{"items":[{"occId":"o2","status":"selected","variantId":"e1v1","sentenceTranslation":"the inner man","chosenWording":"inner"}]}' };
   const html = liveAnswerHtml(request, { batch: [request, other], final: true });
   assert.match(html, /Translation chosen for each use of the word \(2 uses of the word\)/);
-  assert.match(html, /title="inner: 2"/);
+  assert.match(html, /research-chart__label" role="cell">inner<\/span>[\s\S]*?research-chart__value">2</);
   assert.match(html, /<details class="research-view__more"><summary>Show the 2 uses<\/summary>/);
   assert.doesNotMatch(html, /o1|o2/, "no internal ids");
 });
