@@ -117,7 +117,7 @@ test("findings and answers keep their order of arrival", () => {
   assert.ok(before < view && view < after, "fact, then the answer, then the later fact");
 });
 
-test("an AI answer is labelled as such; the program's findings beside it are not", () => {
+test("a finding and an AI answer appear in order of arrival, with no label on the answer", () => {
   const steps = [
     { type: "heading", text: "Where the term comes from" },
     { type: "fact", text: "The search site lists Libro among the books the author read." },
@@ -125,11 +125,9 @@ test("an AI answer is labelled as such; the program's findings beside it are not
     { type: "answer-delta", requestId: "r4", text: '{"summary":"From M.","senses":[{"sense":"divine Being","inDictionary":false,"sourceBook":"Dioses Atómicos — M.","originalLanguage":"English","originalTerm":"Innermost"}]}' },
     usage("r4"),
     { type: "heading", text: "Proposal" },
-    request("r5", "original-note"),
   ];
-  const [sources, proposal] = renderResults(buildLogSections(steps), { running: true, openSections: { s1: true } }).split("<section").slice(1);
-  assert.equal((sources.match(/The AI's answer/g) ?? []).length, 1);
-  assert.ok(sources.indexOf("The search site lists") < sources.indexOf("The AI's answer"), "the finding comes first, unlabelled");
+  const [sources] = renderResults(buildLogSections(steps), { running: true, openSections: { s1: true } }).split("<section").slice(1);
+  assert.doesNotMatch(sources, /The AI's answer/, "Hans, 2026-10-10: nearly everything shown is the AI's");
+  assert.ok(sources.indexOf("The search site lists") < sources.indexOf("From M."), "the finding comes first");
   assert.match(sources, /Dioses Atómicos \(signed only “M\.”\)/);
-  assert.doesNotMatch(proposal, /The AI's answer/, "no label before an answer arrives");
 });
