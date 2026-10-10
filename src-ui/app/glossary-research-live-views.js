@@ -318,10 +318,18 @@ function footnotesView(request, value) {
 }
 
 function summaryView(request, value) {
-  return view("summary", "Summary", `
+  const recommendations = list(value?.recommendations).filter(str);
+  // The step is already titled "Summary": the parts get their own small headings.
+  return view("summary", "", `
     ${value?.summary ? `<p class="research-view__summary">${esc(value.summary)}</p>` : ""}
-    ${list(value?.recommendations).filter(str).length ? `<ul class="research-view__list">${list(value.recommendations).filter(str).map((r) => `<li>${esc(r)}</li>`).join("")}</ul>` : ""}
-    ${value?.unresolvedExplanation ? `<p class="research-view__explain">${esc(value.unresolvedExplanation)}</p>` : ""}`);
+    ${recommendations.length ? `<div class="research-view__part-block">
+      <p class="research-view__title">Recommendations</p>
+      <ul class="research-view__list research-view__list--spaced">${recommendations.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>
+    </div>` : ""}
+    ${str(value?.unresolvedExplanation) ? `<div class="research-view__part-block">
+      <p class="research-view__title">Still open</p>
+      <p class="research-view__summary">${esc(value.unresolvedExplanation)}</p>
+    </div>` : ""}`);
 }
 
 const VIEWS = {

@@ -1308,6 +1308,18 @@
   line-height: 1.45;
 }
 
+.research-view__part-block {
+  margin-top: 16px;
+}
+
+.research-view__part-block .research-view__summary {
+  margin: 0;
+}
+
+.research-view__list.research-view__list--spaced li + li {
+  margin-top: 8px;
+}
+
 .research-view__definitions li + li,
 .research-view__list li + li {
   margin-top: 3px;
