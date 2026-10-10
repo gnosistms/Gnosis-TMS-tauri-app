@@ -524,6 +524,12 @@ async function beginResearchRun(render, resume = null, family = null) {
   };
   meta.settings.spendingLimitUsd = draft.spendingLimitUsd;
   meta.spendingLimitUsd = draft.spendingLimitUsd;
+  if (resume) {
+    // A resumed run is running again, until it pauses, finishes or stops.
+    meta.status = "running";
+    delete meta.error;
+    delete meta.interruptedDuring;
+  }
   store.save("meta", meta);
 
   const projects = researchableProjects().filter((project) => meta.projectIds.includes(project.id));
@@ -1186,12 +1192,34 @@ async function researchNextFamilyWord(render) {
 
 // --- past runs ------------------------------------------------------------------
 
+/**
+ * The saved record of a run that says it is running or counting while this app
+ * is not running it: the app closed or reloaded during the run, so nothing could
+ * mark it stopped. Returns the record marked stopped (it can be resumed), or null
+ * when the record is right as it is.
+ */
+export function interruptedRunMeta(meta, activeRunId = null) {
+  if (!meta || !["running", "counting"].includes(meta.status) || meta.runId === activeRunId) return null;
+  return {
+    ...meta, status: "stopped", interruptedDuring: meta.status,
+    error: meta.error || "Stopped: the app was closed or reloaded while the research ran. Finished work is saved.",
+  };
+}
+
 export async function loadPastRuns(render) {
   const installationId = selectedProjectsTeamInstallationId() ?? selectedTeam()?.installationId;
   const glossaryId = state.glossaryEditor?.glossaryId;
   if (installationId == null || !glossaryId) return;
   try {
     const runs = await invoke("list_glossary_research_runs", { installationId, glossaryId });
+    for (const run of runs) {
+      const fixed = interruptedRunMeta(run.meta, activeRun?.runId ?? null);
+      if (!fixed) continue;
+      run.meta = fixed;
+      void invoke("save_glossary_research_stage", {
+        input: { installationId, glossaryId, runId: fixed.runId, stage: "meta", value: fixed },
+      }).catch(() => {});
+    }
     if (research()?.isOpen) {
       research().pastRuns = runs.filter((run) => run.meta);
       render();
@@ -1214,7 +1242,7 @@ export async function resumeGlossaryResearchRun(render, runId) {
     spendingLimitUsd: Math.max(draft.spendingLimitUsd, meta.spendingLimitUsd ?? 0), seed: meta.seed,
     existingMatches: (state.glossaryEditor?.terms ?? []).filter((term) => (meta.existingTermIds ?? []).includes(term.termId)),
   });
-  const wasCounting = meta.status === "counting" || Boolean(stages.frozen && !stages.aggregate);
+  const wasCounting = meta.status === "counting" || meta.interruptedDuring === "counting" || Boolean(stages.frozen && !stages.aggregate);
   await beginResearchRun(render, { runId, stages });
   if (stages.confirmedProposal && research()?.runStatus === "review") {
     research().proposalDraft = structuredClone(stages.confirmedProposal);
