@@ -1047,6 +1047,22 @@ test("the books the author read are searched for the term's other spellings ther
   assert.equal(store.data.sources.spellings, undefined, "the study keeps its own record");
 });
 
+test("the origin step saves how many books use the term, the counts, and the citations", async () => {
+  const logs = [];
+  const base = fakeCorpus(passages(40));
+  const corpus = { ...base, async authorCitations() { return [{ itemId: "c1", text: "Libro fuente dice: el Fatal.", occurrences: [{ start: 0, end: 5, surface: "Libro" }], reference: { title: "Obra" } }]; } };
+  const { engine: research } = engine({ corpus, log: (event) => logs.push(event) });
+  await research.runToReview();
+  const counts = logs.find((event) => event.type === "result" && event.kind === "bookCounts").data[0];
+  assert.equal(counts.term, "fatal");
+  assert.equal(counts.held, 1);
+  assert.equal(counts.using, 1);
+  assert.deepEqual(counts.books, [{ title: "Libro fuente — M.", occurrences: 3, passages: 3 }]);
+  assert.deepEqual(counts.citations, [{ title: "Libro fuente — M.", passages: 1 }]);
+  const senses = logs.filter((event) => event.type === "result" && event.kind === "senses").flatMap((event) => event.data);
+  assert.ok(senses.every((sense) => "why" in sense && "strength" in sense));
+});
+
 test("when no book the author read uses the term, the step says how many books were searched", async () => {
   const base = fakeCorpus(passages(40));
   const corpus = { ...base, async sourceUsage() { return []; }, async sourceBooks() { return [{ title: "A" }, { title: "B" }]; } };

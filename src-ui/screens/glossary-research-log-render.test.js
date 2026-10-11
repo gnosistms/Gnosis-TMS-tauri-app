@@ -117,7 +117,7 @@ test("findings and answers keep their order of arrival", () => {
   assert.ok(before < view && view < after, "fact, then the answer, then the later fact");
 });
 
-test("a finding and an AI answer appear in order of arrival, with no label on the answer", () => {
+test("the origin step answers first and lists the search's findings under it, with no label on the AI's part", () => {
   const steps = [
     { type: "heading", text: "Where the term comes from" },
     { type: "fact", text: "The search site lists Libro among the books the author read." },
@@ -128,6 +128,8 @@ test("a finding and an AI answer appear in order of arrival, with no label on th
   ];
   const [sources] = renderResults(buildLogSections(steps), { running: true, openSections: { s1: true } }).split("<section").slice(1);
   assert.doesNotMatch(sources, /The AI's answer/, "Hans, 2026-10-10: nearly everything shown is the AI's");
-  assert.ok(sources.indexOf("The search site lists") < sources.indexOf("From M."), "the finding comes first");
+  const body = sources.slice(sources.indexOf("research-section__body"));
+  assert.ok(body.indexOf("Original word") < body.indexOf("The search site lists"), "the answer first, then what it is based on");
+  assert.equal((body.match(/The search site lists/g) ?? []).length, 1, "the finding is drawn once");
   assert.match(sources, /Dioses Atómicos \(signed only “M\.”\)/);
 });

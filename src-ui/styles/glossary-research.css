@@ -1586,6 +1586,81 @@
   font-weight: 600;
 }
 
+/* where the term comes from: meanings table, findings, details */
+.research-origin {
+  display: grid;
+  border-top: 1px solid var(--surface-border);
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+.research-origin__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.3fr) minmax(0, 1fr);
+  gap: 14px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--surface-border);
+}
+
+.research-origin__row--head {
+  padding: 6px 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.research-origin__sub {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.research-origin__note {
+  margin: 10px 0 0;
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+.research-origin__part {
+  margin-top: 16px;
+  font-size: 13.5px;
+}
+
+.research-origin__detail {
+  margin-top: 12px;
+}
+
+.research-origin__facts {
+  display: grid;
+  grid-template-columns: 11em minmax(0, 1fr);
+  gap: 8px 14px;
+  margin: 8px 0 0;
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+.research-origin__facts dt {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.research-origin__facts dd {
+  margin: 0;
+}
+
+@media (max-width: 560px) {
+  .research-origin__row,
+  .research-origin__facts {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+
+  .research-origin__row--head {
+    display: none;
+  }
+}
+
 /* where the two counting AIs chose differently: one card per use */
 .research-diff {
   display: grid;

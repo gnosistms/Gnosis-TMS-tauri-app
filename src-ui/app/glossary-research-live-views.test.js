@@ -110,3 +110,42 @@ test("a form of a related word that the check rejects is not shown with it", () 
   assert.match(shown.html, /intimidades \(4\) \(a form\)/);
   assert.doesNotMatch(shown.html, /intimidado/);
 });
+
+test("where the term comes from: a table of meanings first, then what the search found, then the details", () => {
+  const study = { requestId: "s1", stage: "sources", purpose: "trace where “íntimo” comes from", usage: {}, answer: JSON.stringify({
+    summary: "The divine noun comes from M.'s book.",
+    senses: [
+      { sense: "An individual's divine spirit.", label: "the inner God", partOfSpeech: "noun", inDictionary: false, sourceBook: "Dioses Atómicos — M.", originalLanguage: "English", originalTerm: "Innermost",
+        meaningInSource: "The higher ruler within.", authorUsage: "He follows it.", equivalences: [{ term: "Atman", relation: "identity", evidence: "“¡Atman! El Íntimo”" }, { term: "Cristo Íntimo", relation: "related", evidence: "e" }] },
+      { sense: "Inner, deep.", label: "inner, deep", partOfSpeech: "adjective", inDictionary: true, sourceBook: null },
+    ] }) };
+  const result = (kind, data) => ({ kind: "result", resultKind: kind, data });
+  const fact = (text) => ({ kind: "line", entry: { type: "fact", text } });
+  const section = {
+    heading: "Where the term comes from",
+    requests: [study],
+    items: [
+      result("bookCounts", [{ term: "íntimo", held: 43, using: 34, books: [{ title: "Dioses Atómicos — M.", occurrences: 186, passages: 150 }, { title: "Isis sin velo — H. P. Blavatsky", occurrences: 68, passages: 64 }], citations: [{ title: "Dioses Atómicos — M.", passages: 3 }, { title: "Isis sin velo — H. P. Blavatsky", passages: 0 }] }]),
+      fact("The Samael Aun Weor search site lists Dioses Atómicos among the books Samael Aun Weor read: the Spanish translation of The Dayspring of Youth."),
+      fact("“Innermost” is the original English word of The Dayspring of Youth (signed “M.”) for “An individual's divine spirit.” (checked): it will be the translation for that meaning, whatever its frequency."),
+      fact("Samael Aun Weor read “íntimo” in this sense in Dioses Atómicos: the sense is not the ordinary one; the book uses it."),
+      result("senses", [{ sense: "An individual's divine spirit.", label: "the inner God", partOfSpeech: "noun", inDictionary: false, sourceBook: "Dioses Atómicos — M.", originalTerm: "Innermost", originalLanguage: "English", verified: true, originalTitle: "The Dayspring of Youth", originalAuthor: "M.", translationTitle: "Dioses Atómicos", why: "The sense is not the ordinary one; the book uses it.", strength: "strong" },
+        { sense: "Inner, deep.", label: "inner, deep", partOfSpeech: "adjective", inDictionary: true, sourceBook: null }]),
+    ],
+  };
+  const shown = stepDisplay(section, { author: "Samael Aun Weor", source: "Spanish", target: "English", term: "Íntimo" });
+  const html = shown.html;
+  const at = (text) => html.indexOf(text);
+  assert.ok(at("Meaning") < at("What this is based on") && at("What this is based on") < at("in detail"), "answer, then findings, then details");
+  assert.match(html, /<strong>the inner God<\/strong>[\s\S]*<em>The Dayspring of Youth<\/em>, signed only “M\.”[\s\S]*Spanish: Dioses Atómicos[\s\S]*English <strong>“Innermost”<\/strong>[\s\S]*✓ checked in the original/);
+  assert.match(html, /<strong>inner, deep<\/strong>[\s\S]*ordinary Spanish/);
+  assert.match(html, /For “the inner God”, “Innermost” will be the English translation, however rare it is in everyday English/);
+  assert.match(html, /“íntimo” appears in 34 books of the 43 Samael Aun Weor read; most in Dioses Atómicos \(186\), Isis sin velo \(68\)\./);
+  assert.match(html, /He names Dioses Atómicos next to the word in 3 passages\./);
+  assert.match(html, /He never names Isis sin velo next to the word\./);
+  assert.match(html, /<dt>Why we say he took it from this book<\/dt><dd>The sense is not the ordinary one; the book uses it\.<\/dd>/);
+  assert.match(html, /<dt>The same as<\/dt>[\s\S]*Atman[\s\S]*<dt>Related, not the same<\/dt>[\s\S]*Cristo Íntimo/);
+  assert.doesNotMatch(html, /The divine noun comes from M\.'s book|in this sense in Dioses/, "no AI summary; the borrowing sentence is in the details");
+  assert.ok(shown.requests.has("s1") && shown.results.has("senses") && shown.results.has("bookCounts"));
+  assert.ok(section.items.filter((item) => item.kind === "line").every((item) => shown.facts.some((pattern) => pattern.test(item.entry.text))), "every finding is drawn once, by the display");
+});

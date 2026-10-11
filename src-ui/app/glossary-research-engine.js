@@ -27,7 +27,7 @@ import * as prompts from "./glossary-research-prompts.js";
 import { coOccurrence, convergenceContent, sharedRenderings } from "./glossary-research-convergence.js";
 import { aggregateCounts, mergeJudgeCountings } from "./glossary-research-aggregate.js";
 import {
-  bookName, borrowingStrength, borrowingText, enforceOriginalWords, noteNamesTheBook, originalFor, originalWordOf, originalWordsText, pairFact, pairWords, placeOriginalWords, requiredOriginalWords, signedOnly, termPairsOf,
+  bookName, borrowingStrength, borrowingText, enforceOriginalWords, noteNamesTheBook, originalFor, originalWordOf, originalWordsText, pairFact, pairWords, placeOriginalWords, requiredOriginalWords, signedOnly, termPairsOf, borrowingWhy,
 } from "./glossary-research-original-word.js";
 import {
   MIN_SENSE_SAMPLE,
@@ -1124,9 +1124,17 @@ export function createResearchEngine(deps) {
           mentions.push(...found.map((item) => passageSnippet(item, 900)));
         }
       }
+      // What the search found, for the step's display: how many of the books use the
+      // term, the counts, and how often he names the most-used ones next to it.
+      const allRecords = corpus.sourceBooks ? await corpus.sourceBooks() : [];
+      logResult("bookCounts", [{
+        term: headword(), held: allRecords.length, using: ranked.length,
+        books: ranked.slice(0, 12).map((book) => ({ title: book.title, occurrences: book.occurrences, passages: book.passages })),
+        citations: corpus.authorCitations ? top.map((book) => ({ title: book.title, passages: citationsByBook.get(book.title) ?? 0 })) : [],
+      }], `“${headword()}” appears in ${ranked.length} ${ranked.length === 1 ? "book" : "books"}${allRecords.length ? ` of the ${allRecords.length}` : ""} ${author} read: ${ranked.slice(0, 5).map((book) => `${book.title.split(" — ")[0]} (${book.occurrences})`).join(", ")}`);
       // When the author first used the term, for comparing with when each book appeared in Spanish.
       const earliest = corpus.earliestUses ? await corpus.earliestUses(forms) : null;
-      const records = (corpus.sourceBooks ? await corpus.sourceBooks() : [])
+      const records = allRecords
         .filter((record) => ranked.slice(0, 11).some((book) => book.title === record.title));
       // Pairs of the term with each book's original word, from the search site: the
       // book's own glossaries, or the site's comparison of the translation with its
@@ -1252,6 +1260,7 @@ export function createResearchEngine(deps) {
           sense: sense.sense, label: sense.label ?? "", partOfSpeech: sense.partOfSpeech ?? sense.wordClass ?? "", inDictionary: sense.inDictionary === true,
           sourceBook: sense.sourceBook ?? null, originalTerm: sense.originalTerm ?? null, originalLanguage: sense.originalLanguage ?? null,
           verified, term: headword(), language: settings.sourceLanguageName,
+          why: borrowingWhy(sense, sense.borrowing), strength: sense.borrowing?.strength ?? null,
           originalTitle: sense.originalWord?.originalTitle ?? null, originalAuthor: sense.originalWord?.originalAuthor ?? null,
           translationTitle: sense.originalWord?.translationTitle ? sense.originalWord.translationTitle.split(" — ")[0].replace(/\s*\([^)]*\)\s*$/, "") : null,
         }], `${sense.sense}${sense.sourceBook ? ` — from ${sense.sourceBook}` : ""}${sense.originalTerm ? ` (original ${sense.originalLanguage ?? ""} term “${sense.originalTerm}”)` : ""}`);

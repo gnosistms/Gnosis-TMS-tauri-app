@@ -115,19 +115,33 @@ export function borrowingStrength(sense, record, { citations = 0, glossaryPair =
 }
 
 /** One plain line saying what the borrowing rests on. */
-export function borrowingText(sense, borrowing, { author = "The author", term = "", translationTitle = "" } = {}) {
+/**
+ * Why a meaning counts as taken from its book, in words: "the sense is not the
+ * ordinary one; the book uses it; he names the book next to the term. Spanish
+ * edition 1950; his first use in this sense 1952." For a weak case, why it is
+ * not certain. Empty without a borrowing.
+ */
+export function borrowingWhy(sense, borrowing) {
   if (!borrowing) return "";
-  const where = translationTitle || sense.sourceBook;
-  if (borrowing.strength === "weak") {
-    return `${where} may be where ${author} found “${term}” in this sense, but it is not certain (${borrowing.doubts.join("; ")}).`;
-  }
+  if (borrowing.strength === "weak") return `Not certain: ${borrowing.doubts.join("; ")}.`;
   const bases = ["the sense is not the ordinary one"];
   if (borrowing.reasons.includes("in-book")) bases.push(sense.exclusivity === "only" ? "the book uses it, and no other book he read does" : "the book uses it");
   if (borrowing.reasons.includes("cites")) bases.push("he names the book next to the term");
   if (borrowing.reasons.includes("glossary")) bases.push("the book's own glossary gives it");
   if (borrowing.reasons.includes("aligned")) bases.push("the search site's comparison with the original pairs it with the book's word");
   const dates = borrowing.spanishYear != null ? ` Spanish edition ${borrowing.spanishYear}${borrowing.firstYear != null ? `; his first use in this sense ${borrowing.firstYear}` : ""}${borrowing.notes.length ? ` (note: ${borrowing.notes.join("; ")})` : ""}.` : "";
-  return `${author} read “${term}” in this sense in ${where}: ${bases.join("; ")}.${dates}`;
+  const text = bases.join("; ");
+  return `${text.charAt(0).toUpperCase()}${text.slice(1)}.${dates}`;
+}
+
+export function borrowingText(sense, borrowing, { author = "The author", term = "", translationTitle = "" } = {}) {
+  if (!borrowing) return "";
+  const where = translationTitle || sense.sourceBook;
+  if (borrowing.strength === "weak") {
+    return `${where} may be where ${author} found “${term}” in this sense, but it is not certain (${borrowing.doubts.join("; ")}).`;
+  }
+  const why = borrowingWhy(sense, borrowing);
+  return `${author} read “${term}” in this sense in ${where}: ${why.charAt(0).toLowerCase()}${why.slice(1)}`;
 }
 
 /** The original words that bind this glossary: verified, borrowed with certainty, and in its target language. */

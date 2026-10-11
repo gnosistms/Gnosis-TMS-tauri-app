@@ -7,7 +7,7 @@
 import { parsePartialJson } from "./glossary-research-partial-json.js";
 import { commonness } from "./glossary-research-frequency.js";
 import { tooltipAttributes } from "../lib/ui.js";
-import { bookTitleText } from "./glossary-research-original-word.js";
+import { bookTitleText, signedOnly } from "./glossary-research-original-word.js";
 
 /** The app's own tooltip (quick, styled), around a chip or a mark; nothing when there is nothing to say. */
 const tip = (text, html) => (str(text).trim() ? `<span${tooltipAttributes(text)}>${html}</span>` : html);
@@ -639,7 +639,143 @@ function disagreementsDisplay(section, context) {
   };
 }
 
+// --- where the term comes from ---------------------------------------------------
+//
+// Answer first: a table of the term's meanings, each with where it comes from and
+// the original word; then what the search found; then each borrowed meaning in
+// detail, folded (Hans, 2026-10-11).
+
+const ORIGIN_FACTS = {
+  consequence: /^“.+” is the original .+ word of .+: it will be the translation for that meaning/,
+  evidence: [
+    /search site lists .+ among the books .+ read/,
+    /^Searched too, as other spellings of/,
+    /^None of the \d+ books the search site holds|^The one book the search site holds|^None of the reference books uses the term/,
+  ],
+  borrowing: /^.+ read “.+” in this sense in |may be where .+ found “.+” in this sense/,
+};
+
+const RELATION_NAMES = [
+  ["identity", "The same as"],
+  ["symbol", "Symbols of it"],
+  ["part", "Linked as part and whole"],
+  ["related", "Related, not the same"],
+];
+
+const capitalized = (text) => `${str(text).charAt(0).toUpperCase()}${str(text).slice(1)}`;
+
+function originDisplay(section, context) {
+  const requests = section.requests.filter((request) => request.stage === "sources");
+  const kindOf = (request) => {
+    const value = answerOf(request);
+    if (Array.isArray(value?.forms) || /one letter away/.test(request.purpose ?? "")) return "near";
+    if ((value && "confirmed" in value) || /^confirm in the original book/.test(request.purpose ?? "")) return "check";
+    return "study";
+  };
+  const study = answerOf(requests.find((request) => kindOf(request) === "study"));
+  const studySenses = list(study?.senses).filter((sense) => str(sense?.sense));
+  // The program's record of each meaning (after the checks) wins over the AI's draft.
+  const recorded = resultData(section, "senses");
+  const senses = (recorded.length ? recorded : studySenses).map((sense) => ({
+    ...(studySenses.find((other) => other.sense === sense.sense) ?? {}), ...sense,
+  }));
+  const counts = resultData(section, "bookCounts")[0] ?? null;
+  const facts = lineTexts(section, "fact");
+  const evidenceFacts = facts.filter((text) => ORIGIN_FACTS.evidence.some((pattern) => pattern.test(text)));
+  const consequences = facts.filter((text) => ORIGIN_FACTS.consequence.test(text));
+  const whyKnown = recorded.some((sense) => "why" in sense);
+  const borrowingFacts = whyKnown ? [] : facts.filter((text) => ORIGIN_FACTS.borrowing.test(text));
+  if (!senses.length && !counts && !evidenceFacts.length) return null;
+
+  const author = context.author ?? "the author";
+  const source = context.source ?? "source-language";
+  const shortTitle = (title) => str(title).split(" — ")[0];
+  const meaningName = (sense) => str(sense.label) || str(sense.sense);
+  const pos = (sense) => str(sense.partOfSpeech) || str(sense.wordClass);
+  const borrowed = senses.filter((sense) => sense.inDictionary !== true);
+  const ordinary = senses.filter((sense) => sense.inDictionary === true);
+
+  const bookCell = (sense) => {
+    if (!str(sense.sourceBook)) return `${esc(author)}'s own use${muted(" no book he read has it")}`;
+    const original = str(sense.originalTitle)
+      ? `<em>${esc(sense.originalTitle)}</em>${str(sense.originalAuthor) ? (signedOnly(sense.originalAuthor) ? `, signed only “${esc(sense.originalAuthor.trim())}”` : `, by ${esc(sense.originalAuthor)}`) : ""}`
+      : `<em>${esc(bookTitleText(sense.sourceBook))}</em>`;
+    const spanish = str(sense.originalTitle) ? `<span class="research-origin__sub">${esc(source)}: ${esc(sense.translationTitle || shortTitle(sense.sourceBook))}</span>` : "";
+    return `${original}${spanish}${sense.strength === "weak" ? `<span class="research-origin__sub">${label("not certain", "warn")}</span>` : ""}`;
+  };
+  const wordCell = (sense) => {
+    if (!str(sense.originalTerm)) return muted("–");
+    const checked = recorded.length ? (sense.verified ? label("✓ checked in the original", "good") : label("not checked in the original", "warn")) : "";
+    return `${str(sense.originalLanguage) ? `${esc(sense.originalLanguage)} ` : ""}<strong>“${esc(sense.originalTerm)}”</strong>${checked ? `<span class="research-origin__sub">${checked}</span>` : ""}`;
+  };
+  const row = (meaning, from, word) => `<div class="research-origin__row" role="row"><div role="cell">${meaning}</div><div role="cell">${from}</div><div role="cell">${word}</div></div>`;
+  const rows = [
+    ...borrowed.map((sense) => row(
+      `<strong>${esc(meaningName(sense))}</strong>${pos(sense) ? ` ${muted(`(${pos(sense)})`)}` : ""}${str(sense.label) ? `<span class="research-origin__sub">${esc(sense.sense)}</span>` : ""}`,
+      bookCell(sense), wordCell(sense))),
+    ...(ordinary.length ? [row(
+      ordinary.map((sense) => `<strong>${esc(meaningName(sense))}</strong>${pos(sense) ? ` ${muted(`(${pos(sense)})`)}` : ""}`).join("<br>"),
+      `ordinary ${esc(source)}${muted(" in the dictionary")}`, muted("–"))] : []),
+  ];
+  // What a required original word means for the glossary, said briefly when the
+  // meaning it belongs to is known; otherwise the program's own sentence.
+  const target = str(context.target);
+  const notes = consequences.map((text) => {
+    const sense = borrowed.find((item) => str(item.originalTerm) && text.startsWith(`“${item.originalTerm}”`) && text.includes(`“${item.sense}”`));
+    return sense
+      ? `For “${meaningName(sense)}”, “${sense.originalTerm}” will be the ${target || "glossary"} translation, however rare it is in everyday ${target || "use"}: it is the book's own word.`
+      : text;
+  });
+  const table = rows.length ? `<div class="research-origin" role="table" aria-label="Where each meaning comes from">
+      <div class="research-origin__row research-origin__row--head" role="row"><div role="columnheader">Meaning</div><div role="columnheader">Comes from</div><div role="columnheader">Original word</div></div>
+      ${rows.join("")}
+    </div>${notes.map((text) => `<p class="research-origin__note">${esc(text)}</p>`).join("")}` : "";
+
+  // What the search found: the program's findings, never the AI's.
+  const evidence = [];
+  if (counts) {
+    const books = list(counts.books);
+    if (books.length) {
+      evidence.push(`“${esc(counts.term ?? context.term ?? "the term")}” appears in ${counts.using ?? books.length} ${(counts.using ?? books.length) === 1 ? "book" : "books"}${counts.held ? ` of the ${counts.held}` : ""} ${esc(author)} read; most in ${books.slice(0, 4).map((book) => `${esc(shortTitle(book.title))} (${book.occurrences})`).join(", ")}.`);
+    }
+    const cited = list(counts.citations);
+    for (const item of cited.filter((entry) => entry.passages > 0)) {
+      evidence.push(`He names ${esc(shortTitle(item.title))} next to the word in ${plural(item.passages, "passage")}.`);
+    }
+    const never = cited.filter((entry) => entry.passages === 0);
+    if (never.length) evidence.push(`He never names ${never.map((entry) => esc(shortTitle(entry.title))).join(" or ")} next to the word.`);
+  }
+  evidence.push(...evidenceFacts.map(esc), ...borrowingFacts.map(esc));
+  const evidenceHtml = evidence.length
+    ? `<div class="research-origin__part"><p class="research-view__title">${rows.length ? "What this is based on" : "What the search found"}</p><ul class="research-view__list research-view__list--spaced">${evidence.map((line) => `<li>${line}</li>`).join("")}</ul></div>`
+    : "";
+
+  // Each borrowed meaning in detail, folded.
+  const details = borrowed.filter((sense) => str(sense.sourceBook)).map((sense) => {
+    const lines = [
+      ["Why we say he took it from this book", sense.why],
+      ["Meaning in that book", sense.meaningInSource],
+      [`How ${author} uses it`, sense.authorUsage],
+      ...RELATION_NAMES.map(([relation, name]) => [name, list(sense.equivalences).filter((item) => item?.relation === relation && str(item.term))]),
+    ].filter(([, value]) => (Array.isArray(value) ? value.length : str(value)));
+    if (!lines.length) return "";
+    return `<details class="research-view__more research-origin__detail"><summary>${esc(capitalized(meaningName(sense)))}, in detail</summary>
+      <dl class="research-origin__facts">${lines.map(([name, value]) => `<dt>${esc(name)}</dt><dd>${Array.isArray(value)
+        ? `<div class="research-view__chips">${value.map((item) => tip(item.evidence, chip(item.term))).join("")}</div>`
+        : esc(value)}</dd>`).join("")}</dl>
+    </details>`;
+  }).join("");
+
+  return {
+    html: `<div class="research-view research-view--origin">${table}${evidenceHtml}${details}</div>`,
+    requests: new Set(requests.map((request) => request.requestId)),
+    results: new Set(["senses", "bookCounts"]),
+    facts: [ORIGIN_FACTS.consequence, ...ORIGIN_FACTS.evidence, ORIGIN_FACTS.borrowing],
+  };
+}
+
 const STEP_DISPLAYS = {
+  "Where the term comes from": originDisplay,
   "Word forms": formsDisplay,
   "Word family": familyDisplay,
   "Parts and frequency": meaningsDisplay,
