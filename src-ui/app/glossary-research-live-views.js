@@ -619,14 +619,22 @@ function disagreementsDisplay(section, context) {
   const compared = [...two.keys()].filter((occId) => one.has(occId)).length;
   if (!compared) return null;
   const sources = sourceSnippets(...[...first.requests, ...section.requests].map((request) => request.text));
-  const rows = differ.map(([occId, item]) => {
-    const a = one.get(occId);
-    return `<div class="research-view__row">${sourceLine(sources.get(occId))}
-      <div class="research-view__sentence">${label(`first: ${a.name}`)} ${highlightIn(a.sentenceTranslation, a.chosenWording)}</div>
-      <div class="research-view__sentence">${label(`second: ${item.name}`)} ${highlightIn(item.sentenceTranslation, item.chosenWording)}</div></div>`;
+  // One card per use: the source sentence, then each AI's choice beside its translation.
+  const choice = (who, answer) => `<div class="research-diff__choice">
+      <div class="research-diff__who">${who}<strong>${esc(answer.name)}</strong></div>
+      <div class="research-diff__text">${highlightIn(answer.sentenceTranslation, answer.chosenWording)}</div>
+    </div>`;
+  const cards = differ.map(([occId, item]) => {
+    const snippet = sources.get(occId);
+    return `<div class="research-diff__case">
+      ${snippet ? `<p class="research-diff__source" lang="es">${esc(snippet.before)}<mark>${esc(snippet.word)}</mark>${esc(snippet.after)}</p>` : ""}
+      ${choice("First AI", one.get(occId))}
+      ${choice("Second AI", item)}
+    </div>`;
   }).join("");
+  const explain = `<p class="research-view__explain">Each card: the ${esc(context.source ?? "source")} sentence, then the word each AI chose and its translation of the sentence.</p>`;
   return {
-    html: view("disagreements", differ.length ? `The two AIs chose differently for ${differ.length} of ${compared} uses` : `The two AIs chose the same translation for all ${compared} uses`, differ.length ? `<div class="research-view__rows">${rows}</div>` : ""),
+    html: view("disagreements", differ.length ? `The two AIs chose differently for ${differ.length} of ${compared} uses` : `The two AIs chose the same translation for all ${compared} uses`, differ.length ? `${explain}<div class="research-diff">${cards}</div>` : ""),
     requests: new Set(), results: new Set(["agreement"]), facts: [], after: true,
   };
 }

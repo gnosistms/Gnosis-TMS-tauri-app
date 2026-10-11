@@ -75,10 +75,11 @@ test("after the second count, the uses where the two AIs differ are listed with 
   const req = (answer) => ({ stage: "counting", text, usage: {}, progress: { variants: { a: "Innermost", b: "within" } }, answer });
   const first = { heading: "Counting", items: [], requests: [req('{"items":[{"occId":"o1.1","status":"selected","variantId":"a","sentenceTranslation":"the Innermost","chosenWording":"Innermost"},{"occId":"o2.1","status":"selected","variantId":"a","sentenceTranslation":"x Innermost","chosenWording":"Innermost"}]}')] };
   const second = { heading: "Counting (second judge)", items: [], requests: [req('{"items":[{"occId":"o1.1","status":"selected","variantId":"a","sentenceTranslation":"the Innermost","chosenWording":"Innermost"},{"occId":"o2.1","status":"selected","variantId":"b","sentenceTranslation":"Christ within","chosenWording":"within"}]}')] };
-  const shown = stepDisplay(second, { sections: [first, second] });
+  const shown = stepDisplay(second, { sections: [first, second], source: "Spanish" });
   assert.match(shown.html, /The two AIs chose differently for 1 of 2 uses/);
   assert.match(shown.html, /Dos <mark>íntima<\/mark> allí\./);
-  assert.match(shown.html, /first: Innermost[\s\S]*second: within/);
+  assert.match(shown.html, /First AI<strong>Innermost<\/strong>[\s\S]*x <mark>Innermost<\/mark>[\s\S]*Second AI<strong>within<\/strong>[\s\S]*Christ <mark>within<\/mark>/);
+  assert.match(shown.html, /Each card: the Spanish sentence/);
   assert.ok(shown.after && shown.results.has("agreement"));
 });
 

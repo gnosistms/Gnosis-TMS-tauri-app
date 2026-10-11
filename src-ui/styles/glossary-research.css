@@ -1586,6 +1586,78 @@
   font-weight: 600;
 }
 
+/* where the two counting AIs chose differently: one card per use */
+.research-diff {
+  display: grid;
+  gap: 10px;
+  margin-top: 4px;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.research-diff__case {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.research-diff__source {
+  margin: 0 0 2px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--surface-border);
+  color: var(--text);
+}
+
+.research-diff__source mark {
+  background: none;
+  color: inherit;
+  font-weight: 700;
+}
+
+.research-diff__choice {
+  display: grid;
+  grid-template-columns: 8.5em minmax(0, 1fr);
+  gap: 12px;
+}
+
+.research-diff__who {
+  display: flex;
+  flex-direction: column;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.research-diff__who strong {
+  color: var(--link);
+  font-size: 13.5px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.research-diff__text mark {
+  padding: 0 1px;
+  border-radius: 2px;
+  background: var(--control-selected-surface);
+  color: var(--link);
+  font-weight: 600;
+}
+
+@media (max-width: 560px) {
+  .research-diff__choice {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+
+  .research-diff__who {
+    flex-direction: row;
+    gap: 6px;
+  }
+}
+
 /* What happens now: the last line of the open running step (the list scrolls itself to show it). */
 .research-step__now {
   padding-top: 2px;
