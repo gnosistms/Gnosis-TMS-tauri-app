@@ -181,6 +181,15 @@
   gap: 10px;
 }
 
+.research-past__saved {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--message-success-bg);
+  color: var(--message-success-text);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .research-past__actions {
   display: flex;
   flex-shrink: 0;

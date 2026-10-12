@@ -145,7 +145,7 @@ function renderPastRuns(research) {
           const meta = run.meta;
           const done = meta.status === "done";
           return `<li>
-            <span><strong>${esc(meta.term)}</strong> → ${esc(meta.targetLanguage?.name ?? "")} · ${esc((meta.startedAt ?? "").slice(0, 10))} · ${esc(meta.status)}${meta.spentUsd != null ? ` · ${formatUsd(meta.spentUsd)}` : ""}</span>
+            <span><strong>${esc(meta.term)}</strong> → ${esc(meta.targetLanguage?.name ?? "")} · ${esc((meta.startedAt ?? "").slice(0, 10))} · ${esc(meta.status)}${meta.spentUsd != null ? ` · ${formatUsd(meta.spentUsd)}` : ""}${savedMark(meta)}</span>
             ${done
               ? `<span class="research-past__actions">
                   ${meta.settings?.familyBatch ? "" : `<button type="button" class="button button--secondary button--compact" data-action="research-related-words:${esc(run.runId)}">Related words</button>`}
@@ -250,6 +250,15 @@ function renderReview(research, targetName, targetCode) {
       ${entries}
       ${research.reviewError ? `<p class="modal__error" role="alert">${esc(research.reviewError)}</p>` : ""}
     </div>`;
+}
+
+/** "✓ saved" for a run whose results were saved to the glossary, with when and what on hover. */
+export function savedMark(meta) {
+  const saved = meta.savedToGlossary;
+  if (!saved?.entries?.length) return "";
+  const what = saved.entries.map((entry) => (entry.sourceTerms ?? []).slice(0, 3).join(", ")).filter(Boolean).join("; ");
+  const tip = `Saved to the glossary on ${String(saved.at ?? "").slice(0, 10)}${what ? `: ${what}` : ""}.`;
+  return ` <span class="research-past__saved" tabindex="0"${tooltipAttributes(tip)}>✓ saved</span>`;
 }
 
 function renderFamilyChoice(research) {

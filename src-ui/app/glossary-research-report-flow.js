@@ -351,6 +351,7 @@ export async function saveResearchEntry(render, entryId) {
     resetGlossaryTermEditor();
   } else {
     draft.saveStatus = "saved";
+    await rememberSaved(report, draft);
     if (!existing) {
       const created = (state.glossaryEditor?.terms ?? []).find((term) => overlaps(term.sourceTerms ?? [], draft.sourceTerms));
       if (created) {
@@ -360,6 +361,30 @@ export async function saveResearchEntry(render, entryId) {
     }
   }
   render();
+}
+
+/**
+ * Notes in the run's saved record that an entry went into the glossary, so the
+ * list of past research can mark the run (Hans, 2026-10-12). Best effort: a
+ * failure here does not undo the save.
+ */
+async function rememberSaved(report, draft) {
+  const meta = report.run?.meta;
+  if (!meta || !report.runId) return;
+  const record = meta.savedToGlossary ?? { entries: [] };
+  record.at = new Date().toISOString();
+  record.entries = [
+    ...(record.entries ?? []).filter((entry) => entry.draftId !== (draft.id ?? draft.entryId)),
+    { draftId: draft.id ?? draft.entryId, sourceTerms: draft.sourceTerms, at: record.at },
+  ];
+  meta.savedToGlossary = record;
+  try {
+    await invoke("save_glossary_research_stage", {
+      input: { installationId: installationId(), glossaryId: report.glossaryId, runId: report.runId, stage: "meta", value: meta },
+    });
+  } catch {
+    // The mark in the list is a convenience; the glossary entry is saved.
+  }
 }
 
 /** Save every entry that is not set to keep the current one, one after another. */
