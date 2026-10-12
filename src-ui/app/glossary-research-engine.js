@@ -417,6 +417,26 @@ export function familyGroups(members) {
     .sort((a, b) => b.rows - a.rows);
 }
 
+/** The person skipped the step running now: it ends with what it has, and research goes on. */
+export class SkipStep extends Error {
+  constructor() {
+    super("Skipped by you.");
+    this.name = "SkipStep";
+  }
+}
+
+/**
+ * The steps the person may skip (Hans, 2026-10-12), by their log headings. The
+ * others feed the steps after them and cannot be left out: Word forms (what to
+ * search for), Sampling (the passages everything is tried on), Meanings (the
+ * senses the candidates and checks work with), Candidate translations, Proposal,
+ * Review (that is you) and the first count ("Choosing a translation for each use").
+ */
+export const SKIPPABLE_STEPS = new Set([
+  "Dictionary", "Word family", "Where the term comes from", "Candidate checks", "Candidate frequency",
+  "Discovery", "Shared translations", "Existing glossary entry", "Counting (second judge)", "Rare translations", "Summary",
+]);
+
 export class ResearchStop extends Error {
   constructor(message, kind = "stopped") {
     super(message);
@@ -559,7 +579,7 @@ function batchContent(batch, entryLabel) {
 
 // --- the budgeted model client ---------------------------------------------------
 
-export function createModelClient({ model, prices, budget, log, isCancelled, maxRetries, prepare = (request) => request, waitWhilePaused = async () => {} }) {
+export function createModelClient({ model, prices, budget, log, isCancelled, maxRetries, prepare = (request) => request, waitWhilePaused = async () => {}, isSkipped = () => false }) {
   let sequence = 0;
   // `prepare` adds what every request carries (the writing rule); applied once per request.
   const done = new WeakSet();
@@ -577,6 +597,7 @@ export function createModelClient({ model, prices, budget, log, isCancelled, max
       // While the person has paused the research no new request starts; those already sent finish.
       await waitWhilePaused();
       if (isCancelled()) throw new ResearchStop("Research was cancelled.", "cancelled");
+      if (isSkipped()) throw new SkipStep();
       const reserve = worstCaseCost(prices, request.instructions, request.content, maxOutputTokens, request.webSearchDomains?.length ? 4 : 0);
       if (!budget.fitsAtAll(reserve)) {
         throw new BudgetExceededError(reserve, budget.spent, budget.reserved, budget.limit);
@@ -604,7 +625,7 @@ export function createModelClient({ model, prices, budget, log, isCancelled, max
         reasoningTokens: usage?.reasoningTokens ?? null, costIsEstimate: unknown,
       });
       log({ type: "usage", requestId, record, spent: budget.spent, limit: budget.limit });
-      if (outcome.status === "cancelled") throw new ResearchStop("Research was cancelled.", "cancelled");
+      if (outcome.status === "cancelled") throw isSkipped() && !isCancelled() ? new SkipStep() : new ResearchStop("Research was cancelled.", "cancelled");
       if (outcome.status === "ok") {
         try {
           const parsed = JSON.parse(outcome.text);
@@ -689,11 +710,53 @@ export function createResearchEngine(deps) {
     model: deps.model, prices: deps.prices, budget, log,
     isCancelled: () => cancelled, maxRetries: settings.maxRetries,
     waitWhilePaused: deps.waitWhilePaused,
+    isSkipped: () => isSkipped(),
     // Sorting sentences by meaning only returns numbers: no writing rule needed.
     prepare: (request) => (request.stage === "frequency" ? request : { ...request, instructions: `${request.instructions}\n\n${prompts.writingRule(ctx())}` }),
   });
   const saveUsage = () => store.save("usage", budget.records);
-  const heading = (text) => log({ type: "heading", text });
+  // The step running now, and whether the person asked to skip it.
+  let currentStep = null;
+  let skipping = null;
+  let skipWaiters = [];
+  const isSkipped = () => skipping != null && skipping === currentStep;
+  const heading = (text) => {
+    currentStep = text;
+    log({ type: "heading", text });
+  };
+  /** Throws SkipStep when the person skipped the step running now (for loops that do no AI request). */
+  const checkSkip = () => {
+    if (isSkipped()) throw new SkipStep();
+  };
+  /** A wait that ends early when the step is skipped (e.g. a dictionary page that waits for a check box). */
+  const unlessSkipped = (promise) => (isSkipped() ? Promise.reject(new SkipStep()) : Promise.race([
+    promise,
+    new Promise((_, reject) => { skipWaiters.push(() => reject(new SkipStep())); }),
+  ]));
+  /**
+   * Runs a step the person may skip. Skipped while it runs, it ends with `fallback`
+   * (or with what it already has, when the step stopped by itself) and says so.
+   */
+  async function skippable(fallback, fn, { partial = true } = {}) {
+    try {
+      const value = await fn();
+      if (isSkipped()) {
+        skipping = null;
+        // A half-finished second count would weigh some uses twice and others once: dropped.
+        if (!partial) {
+          fact("Skipped by you: research went on to the next step.");
+          return typeof fallback === "function" ? fallback() : fallback;
+        }
+        fact("Skipped by you: this step ended with what it had.");
+      }
+      return value;
+    } catch (error) {
+      if (!(error instanceof SkipStep)) throw error;
+      fact("Skipped by you: research went on to the next step.");
+      skipping = null;
+      return typeof fallback === "function" ? fallback() : fallback;
+    }
+  }
   const fact = (text) => log({ type: "fact", text });
   const info = (text) => log({ type: "info", text });
   /** A finding with its data for display; text is the same line a fact would log. */
@@ -825,11 +888,11 @@ export function createResearchEngine(deps) {
   }
 
   async function lookUpDictionary() {
-    return stage("dictionary", async () => {
+    return stage("dictionary", () => skippable({ status: "skipped", text: "", tried: [], notes: [], senseCount: 0 }, async () => {
       heading("Dictionary");
       // Lookups can take a while (the DLE up to two minutes): say what is happening.
       info(`Looking up “${settings.term}” in a ${settings.sourceLanguageName} dictionary…`);
-      let result = await dictionary.lookup(settings.term, (line) => info(line));
+      let result = await unlessSkipped(dictionary.lookup(settings.term, (line) => info(line)));
       if (result.status !== "found" && settings.webDictionaryDomains?.length) {
         info("No dictionary entry yet; asking the AI to search dictionary sites.");
         const found = await client.callJson({
@@ -870,7 +933,7 @@ export function createResearchEngine(deps) {
           ? `No dictionary entry found (${result.tried.join(", ")})`
           : `Dictionary unreachable (${result.tried.join(", ")}) — continuing without it`);
       return result;
-    });
+    }));
   }
 
   async function findForms() {
@@ -958,7 +1021,7 @@ export function createResearchEngine(deps) {
 
   /** Words built on the headword (prefixed, suffixed, compounds, phrases) that occur in the texts. */
   async function findFamily() {
-    return stage("family", async () => {
+    return stage("family", () => skippable({ members: [], searched: 0, skipped: true }, async () => {
       heading("Word family");
       const forms = store.load("forms");
       // The term's own spellings; a word the spelling check rejected as a form
@@ -1007,6 +1070,7 @@ export function createResearchEngine(deps) {
         logResult("familyCount", [{ form, rows, of }], `“${form}”: ${rows} passages`);
       };
       const search = async (form, kind, of = null) => {
+        checkSkip();
         const key = fold(form).trim();
         if (!key || found.has(key)) return false;
         const count = await corpus.countForm(form).catch(() => ({ rows: 0, examples: [] }));
@@ -1087,7 +1151,7 @@ export function createResearchEngine(deps) {
         ? `Related words in the texts (paragraphs): ${members.map((m) => `${m.form} (${m.rows})`).join(", ")}`
         : "No other words built on the term occur in the texts.");
       return { members, searched: suggested.length, listed: listed.length, stems };
-    });
+    }));
   }
 
   /** The person ticks the related words to research after this one, each as its own entry. */
@@ -1192,7 +1256,7 @@ export function createResearchEngine(deps) {
 
   /** Where the term comes from: the reference books the author read. */
   async function traceSources() {
-    return stage("sources", async () => {
+    return stage("sources", () => skippable({ skipped: true, counts: [] }, async () => {
       heading("Where the term comes from");
       if (!corpus.sourceUsage) {
         info("The selected texts have no reference books to trace the term in.");
@@ -1407,7 +1471,7 @@ export function createResearchEngine(deps) {
         topBooks: top.map((book) => book.title),
         study,
       };
-    });
+    }));
   }
 
   /** The reference book (of the most-used ones) a study sense names as its source. */
@@ -1657,24 +1721,38 @@ export function createResearchEngine(deps) {
       const parts40 = [];
       for (let i = 0; i < toCheck.length; i += 40) parts40.push(toCheck.slice(i, i + 40));
       const answers = [];
-      for (const [index, part] of parts40.entries()) {
-        answers.push(await client.callJson({
-          stage: "checks",
-          purpose: parts40.length > 1
-            ? `take each candidate apart into its words, and say which meaning each word needs (candidates ${part[0].n}–${part.at(-1).n} of ${toCheck.length})`
-            : "take each candidate apart into its words, and say which meaning each word needs",
-          progress: { key: "n", total: part.length, unit: "translation", part: index + 1, parts: parts40.length },
-          instructions: prompts.checkInstructions(ctx()),
-          content: [
-            `# Term: ${headword()}`,
-            `## Candidates (number. rendering — the sense it must render)\n${part.map((c) => `${c.n}. ${c.target} — ${c.sense}`).join("\n")}`,
-            parts?.study ? `## Parts of the term\n${parts.study.parts.map((p) => `- ${p.part}: ${p.meaning}`).join("\n")}` : "",
-            sources ? `## Where the term comes from\n${JSON.stringify(sources.senses.map((x) => ({ sense: x.sense, sourceBook: x.sourceBook, originalLanguage: x.originalLanguage, originalTerm: x.originalTerm })), null, 1)}` : "",
-            priorsText(priorMeasurements(code)),
-          ].filter(Boolean).join("\n\n"),
-          schema: prompts.CHECK_SCHEMA, schemaName: "checks",
-          maxOutputTokens: 1500 + 300 * part.length, effort: settings.effortLight,
-        }));
+      // Skipped while the AI analyses them: every candidate goes on unchecked (and reaches the vote).
+      const unchecked = () => ({
+        available: false,
+        groups: groups.map((g) => ({ senseId: g.senseId, sense: g.sense, recommended: g.recommended, note: g.note, representative: g.representative, ...(g.original ? { original: true } : {}), members: g.members.map((m) => ({ target: m, zipf: null })) })),
+        candidates: toCheck.map((c) => ({ target: c.target, sense: c.sense, senseId: c.senseId, words: [], verdict: "unchecked", reasons: [], notes: [], zipf: null, established: false, establishedBasis: "", clashes: findClashes(c.target) })),
+        failedWords: [], failedTargets: [], skipped: true,
+      });
+      try {
+        for (const [index, part] of parts40.entries()) {
+          answers.push(await client.callJson({
+            stage: "checks",
+            purpose: parts40.length > 1
+              ? `take each candidate apart into its words, and say which meaning each word needs (candidates ${part[0].n}–${part.at(-1).n} of ${toCheck.length})`
+              : "take each candidate apart into its words, and say which meaning each word needs",
+            progress: { key: "n", total: part.length, unit: "translation", part: index + 1, parts: parts40.length },
+            instructions: prompts.checkInstructions(ctx()),
+            content: [
+              `# Term: ${headword()}`,
+              `## Candidates (number. rendering — the sense it must render)\n${part.map((c) => `${c.n}. ${c.target} — ${c.sense}`).join("\n")}`,
+              parts?.study ? `## Parts of the term\n${parts.study.parts.map((p) => `- ${p.part}: ${p.meaning}`).join("\n")}` : "",
+              sources ? `## Where the term comes from\n${JSON.stringify(sources.senses.map((x) => ({ sense: x.sense, sourceBook: x.sourceBook, originalLanguage: x.originalLanguage, originalTerm: x.originalTerm })), null, 1)}` : "",
+              priorsText(priorMeasurements(code)),
+            ].filter(Boolean).join("\n\n"),
+            schema: prompts.CHECK_SCHEMA, schemaName: "checks",
+            maxOutputTokens: 1500 + 300 * part.length, effort: settings.effortLight,
+          }));
+        }
+      } catch (error) {
+        if (!(error instanceof SkipStep)) throw error;
+        fact("Skipped by you: the candidates go on unchecked, and all of them reach the vote.");
+        skipping = null;
+        return unchecked();
       }
       const analysis = { candidates: answers.flatMap((answer) => answer?.candidates ?? []) };
       // Safety net: a candidate word that contains the spelling of a base word of the
@@ -1717,96 +1795,104 @@ export function createResearchEngine(deps) {
       }
       const measured = new Map();
       if (ready) {
-        // Look-alikes are measured sense by sense; where a search also matches
-        // letters inside other words, the other words get an instance check.
-        // The likeliest false friends first: a word spelled like the term, one of its
-        // forms or parts; then a look-alike that is a whole candidate; then the rest
-        // by how much of its spelling it shares with the source words.
-        const exact = new Set([...sourceWords, ...(store.load("family")?.members ?? []).map((m) => m.form)].map((w) => fold(w).trim()));
-        const wholeCandidates = new Set(toCheck.map((c) => fold(c.target).trim())); // compared with fold() below
-        const rank = (w) => {
-          const key = fold(w.word).trim();
-          if (exact.has(key)) return 0;
-          if (wholeCandidates.has(key)) return 1;
-          return 2 + (looksLike(w.word, sourceWords) ? 0 : 1);
-        };
-        const lookalikes = words.filter((w) => w.lookalike).sort((a, b) => rank(a) - rank(b));
-        const measure = (w) => measureSenses({
-          code, name, forms: [...new Set([w.word, ...(w.forms ?? [])])], listZipf: zipfOf.get(textKey(w.word, code)),
-          senses: w.lookalike
-            ? [{ id: "needed", gloss: w.neededSense }, ...w.otherSenses.slice(0, 5).map((gloss, i) => ({ id: `o${i + 1}`, gloss }))]
-            : [{ id: "needed", gloss: w.neededSense }],
-          purpose: `sort everyday ${name} sentences with “${w.word}” by meaning`,
-        });
-        // Only measurements that had sentences to sort count against the limit: a
-        // word absent from the general corpus costs nothing and must not crowd out
-        // the words whose senses can be measured.
-        // Words measured in an earlier run of the batch, in the same sense, are not measured again.
-        const priors = priorMeasurements(code);
-        for (const w of lookalikes) {
-          const reused = reusedMeasure(priors, w.reuse, w.word);
-          if (reused) {
-            measured.set(measureKey(w), reused);
-            info(`“${w.word}” was measured in an earlier run in this sense; reused.`);
-          }
-        }
-        const toMeasure = lookalikes.filter((x) => !measured.has(measureKey(x)));
-        if (toMeasure.length) info(`${toMeasure.length === 1 ? "One candidate word looks" : `${toMeasure.length} candidate words look`} like the ${sourceName} word, so ${toMeasure.length === 1 ? "it might be a false friend: its meanings" : "they might be false friends: their meanings"} in everyday ${name} are checked.`);
-        let sorted = 0;
-        for (const [index, w] of toMeasure.entries()) {
-          if (sorted >= settings.maxSenseChecks) {
-            info(`Measurement limit reached (${settings.maxSenseChecks} words with sentences to sort); ${toMeasure.length - index} left unmeasured.`);
-            break;
-          }
-          info(`“${w.word}” looks like the ${sourceName} word: finding everyday ${name} sentences that use it, to see which meanings it has…`);
-          const m = await measure(w);
-          measured.set(measureKey(w), m);
-          if (m.classified) sorted += 1;
-          else info(`“${w.word}” does not occur in the general ${name} corpus.`);
-        }
-        if (corpusCounted(code)) {
-          const unspaced = words.filter((x) => !x.lookalike).slice(0, 4);
-          for (const [index, w] of unspaced.entries()) {
-            info(`Word ${index + 1} of ${unspaced.length}, “${w.word}”: finding everyday ${name} sentences that really contain it (in ${name}, a search also matches parts of other words)…`);
-            measured.set(measureKey(w), await measure(w));
-          }
-        }
-        // A whole-word score counts every meaning of the word; a translation is
-        // used in one. So the word that sets a translation's score is sorted by
-        // meaning too, where it can change the outcome: the translation passes on
-        // the whole word (sorting can only lower a score) in a meaning with a minimum.
-        if (source && !source.invented) {
-          const deciding = [];
-          for (const c of toCheck) {
-            const ref = source.term.senses[c.senseId];
-            if (ref?.zipf == null) continue;
-            const scored = (byNumber.get(c.n)?.words ?? [])
-              .filter((w) => !w.partOf)
-              .map((w) => ({ w, z: zipfOf.get(textKey(w.word, code)) }))
-              .filter((x) => x.z != null && x.z > 0);
-            if (!scored.length) continue;
-            const rarest = scored.reduce((a, b) => (b.z < a.z ? b : a));
-            if (rarest.z < ref.zipf - 1 || measured.has(measureKey(rarest.w))) continue;
-            deciding.push(rarest.w);
-          }
-          const unique = [...new Map(deciding.map((w) => [measureKey(w), w])).values()];
-          for (const w of unique) {
+        // Skipped while words are sorted by meaning: the words not sorted yet are
+        // judged on all their uses (their whole-word frequency).
+        try {
+          // Look-alikes are measured sense by sense; where a search also matches
+          // letters inside other words, the other words get an instance check.
+          // The likeliest false friends first: a word spelled like the term, one of its
+          // forms or parts; then a look-alike that is a whole candidate; then the rest
+          // by how much of its spelling it shares with the source words.
+          const exact = new Set([...sourceWords, ...(store.load("family")?.members ?? []).map((m) => m.form)].map((w) => fold(w).trim()));
+          const wholeCandidates = new Set(toCheck.map((c) => fold(c.target).trim())); // compared with fold() below
+          const rank = (w) => {
+            const key = fold(w.word).trim();
+            if (exact.has(key)) return 0;
+            if (wholeCandidates.has(key)) return 1;
+            return 2 + (looksLike(w.word, sourceWords) ? 0 : 1);
+          };
+          const lookalikes = words.filter((w) => w.lookalike).sort((a, b) => rank(a) - rank(b));
+          const measure = (w) => measureSenses({
+            code, name, forms: [...new Set([w.word, ...(w.forms ?? [])])], listZipf: zipfOf.get(textKey(w.word, code)),
+            senses: w.lookalike
+              ? [{ id: "needed", gloss: w.neededSense }, ...w.otherSenses.slice(0, 5).map((gloss, i) => ({ id: `o${i + 1}`, gloss }))]
+              : [{ id: "needed", gloss: w.neededSense }],
+            purpose: `sort everyday ${name} sentences with “${w.word}” by meaning`,
+          });
+          // Only measurements that had sentences to sort count against the limit: a
+          // word absent from the general corpus costs nothing and must not crowd out
+          // the words whose senses can be measured.
+          // Words measured in an earlier run of the batch, in the same sense, are not measured again.
+          const priors = priorMeasurements(code);
+          for (const w of lookalikes) {
             const reused = reusedMeasure(priors, w.reuse, w.word);
-            if (reused) measured.set(measureKey(w), reused);
+            if (reused) {
+              measured.set(measureKey(w), reused);
+              info(`“${w.word}” was measured in an earlier run in this sense; reused.`);
+            }
           }
-          const todo = unique.filter((w) => !measured.has(measureKey(w)));
-          if (todo.length) info(`${todo.length} ${todo.length === 1 ? "word decides" : "words decide"} whether ${todo.length === 1 ? "its candidate passes" : "their candidates pass"}: checking how often each is used in the meaning needed. (Very common words pass without this.)`);
-          let sortedDeciding = 0;
-          for (const [index, w] of todo.entries()) {
-            if (sortedDeciding >= settings.maxDecidingChecks) {
-              info(`Limit reached (${settings.maxDecidingChecks} words sorted by meaning); ${todo.length - index} scored on all their uses.`);
+          const toMeasure = lookalikes.filter((x) => !measured.has(measureKey(x)));
+          if (toMeasure.length) info(`${toMeasure.length === 1 ? "One candidate word looks" : `${toMeasure.length} candidate words look`} like the ${sourceName} word, so ${toMeasure.length === 1 ? "it might be a false friend: its meanings" : "they might be false friends: their meanings"} in everyday ${name} are checked.`);
+          let sorted = 0;
+          for (const [index, w] of toMeasure.entries()) {
+            if (sorted >= settings.maxSenseChecks) {
+              info(`Measurement limit reached (${settings.maxSenseChecks} words with sentences to sort); ${toMeasure.length - index} left unmeasured.`);
               break;
             }
-            info(`Word ${index + 1} of ${todo.length}, “${w.word}”: finding everyday ${name} sentences that use it…`);
+            info(`“${w.word}” looks like the ${sourceName} word: finding everyday ${name} sentences that use it, to see which meanings it has…`);
             const m = await measure(w);
             measured.set(measureKey(w), m);
-            if (m.classified) sortedDeciding += 1;
+            if (m.classified) sorted += 1;
+            else info(`“${w.word}” does not occur in the general ${name} corpus.`);
           }
+          if (corpusCounted(code)) {
+            const unspaced = words.filter((x) => !x.lookalike).slice(0, 4);
+            for (const [index, w] of unspaced.entries()) {
+              info(`Word ${index + 1} of ${unspaced.length}, “${w.word}”: finding everyday ${name} sentences that really contain it (in ${name}, a search also matches parts of other words)…`);
+              measured.set(measureKey(w), await measure(w));
+            }
+          }
+          // A whole-word score counts every meaning of the word; a translation is
+          // used in one. So the word that sets a translation's score is sorted by
+          // meaning too, where it can change the outcome: the translation passes on
+          // the whole word (sorting can only lower a score) in a meaning with a minimum.
+          if (source && !source.invented) {
+            const deciding = [];
+            for (const c of toCheck) {
+              const ref = source.term.senses[c.senseId];
+              if (ref?.zipf == null) continue;
+              const scored = (byNumber.get(c.n)?.words ?? [])
+                .filter((w) => !w.partOf)
+                .map((w) => ({ w, z: zipfOf.get(textKey(w.word, code)) }))
+                .filter((x) => x.z != null && x.z > 0);
+              if (!scored.length) continue;
+              const rarest = scored.reduce((a, b) => (b.z < a.z ? b : a));
+              if (rarest.z < ref.zipf - 1 || measured.has(measureKey(rarest.w))) continue;
+              deciding.push(rarest.w);
+            }
+            const unique = [...new Map(deciding.map((w) => [measureKey(w), w])).values()];
+            for (const w of unique) {
+              const reused = reusedMeasure(priors, w.reuse, w.word);
+              if (reused) measured.set(measureKey(w), reused);
+            }
+            const todo = unique.filter((w) => !measured.has(measureKey(w)));
+            if (todo.length) info(`${todo.length} ${todo.length === 1 ? "word decides" : "words decide"} whether ${todo.length === 1 ? "its candidate passes" : "their candidates pass"}: checking how often each is used in the meaning needed. (Very common words pass without this.)`);
+            let sortedDeciding = 0;
+            for (const [index, w] of todo.entries()) {
+              if (sortedDeciding >= settings.maxDecidingChecks) {
+                info(`Limit reached (${settings.maxDecidingChecks} words sorted by meaning); ${todo.length - index} scored on all their uses.`);
+                break;
+              }
+              info(`Word ${index + 1} of ${todo.length}, “${w.word}”: finding everyday ${name} sentences that use it…`);
+              const m = await measure(w);
+              measured.set(measureKey(w), m);
+              if (m.classified) sortedDeciding += 1;
+            }
+          }
+        } catch (error) {
+          if (!(error instanceof SkipStep)) throw error;
+          fact("Skipped by you: the words not yet sorted by meaning are judged on all their uses.");
+          skipping = null;
         }
       }
       const failedWords = [];
@@ -1961,7 +2047,7 @@ export function createResearchEngine(deps) {
   }
 
   async function discover() {
-    return stage("discovery", async () => {
+    return stage("discovery", () => skippable({ occurrences: [], readings: {}, skipped: true }, async () => {
       heading("Discovery");
       const sample = store.load("sample");
       const items = sample.discoveryIds.map((id) => sample.items[id]);
@@ -1993,7 +2079,7 @@ export function createResearchEngine(deps) {
       logResult("discovery", [{ read: Object.keys(readings).length, total: occurrences.length, renderings: Object.keys(tally).length, top }],
         `${Object.keys(readings).length} of ${occurrences.length} occurrences read; ${Object.keys(tally).length} different renderings; most common: ${top.map(([k, v]) => `${k} (${v})`).join(", ")}`);
       return { occurrences, readings };
-    });
+    }));
   }
 
   function proposalContent() {
@@ -2123,7 +2209,7 @@ export function createResearchEngine(deps) {
    * differ, the proposal is revised once without the shared rendering.
    */
   async function checkConvergence(proposal) {
-    return stage("convergence", async () => {
+    return stage("convergence", () => skippable({ pairs: [], conflicts: [], proposal: null, skipped: true }, async () => {
       // Related words researched after this one get new entries: their old ones are not compared.
       const own = new Set([
         ...(store.load("forms")?.confirmed ?? []), ...(settings.familyForms ?? []),
@@ -2183,11 +2269,15 @@ export function createResearchEngine(deps) {
         }
       }
       return { pairs, conflicts, proposal: revised };
-    });
+    }));
   }
 
   /** The existing glossary entry, compared only after the proposal was made without it. */
   async function compareWithExisting(proposal) {
+    return skippable([], () => compareWithExistingNow(proposal));
+  }
+
+  async function compareWithExistingNow(proposal) {
     const existing = settings.existingEntries.flatMap((entry) => entry.targetTerms.map((target, index) => ({
       target, note: entry.targetVariantNotes?.[index] ?? "",
     })));
@@ -2291,16 +2381,19 @@ export function createResearchEngine(deps) {
       const counting = await stage("counting", () => count(frozen, 1));
       let aggregate = aggregateCounts(counting, frozen, store.load("sample"));
       if (settings.judges >= 2) {
-        const second = await stage("counting2", () => count(frozen, 2));
-        const merged = mergeJudgeCountings(counting, second);
-        const combined = aggregateCounts(merged.counting, frozen, store.load("sample"));
-        combined.totals.occurrencesSampled = counting.occurrences.length;
-        combined.totals.judges = 2;
-        combined.totals.votes = merged.counting.occurrences.length;
-        combined.totals.agreement = merged.agreement;
-        aggregate = combined;
-        logResult("agreement", [{ agreed: merged.agreement.agreed, compared: merged.agreement.compared }],
-          `Two judges agreed on ${merged.agreement.agreed} of ${merged.agreement.compared} occurrences.`);
+        const second = await stage("counting2", () => skippable({ skipped: true }, () => count(frozen, 2), { partial: false }));
+        // Skipped: the first count alone decides.
+        if (!second?.skipped) {
+          const merged = mergeJudgeCountings(counting, second);
+          const combined = aggregateCounts(merged.counting, frozen, store.load("sample"));
+          combined.totals.occurrencesSampled = counting.occurrences.length;
+          combined.totals.judges = 2;
+          combined.totals.votes = merged.counting.occurrences.length;
+          combined.totals.agreement = merged.agreement;
+          aggregate = combined;
+          logResult("agreement", [{ agreed: merged.agreement.agreed, compared: merged.agreement.compared }],
+            `Two judges agreed on ${merged.agreement.agreed} of ${merged.agreement.compared} occurrences.`);
+        }
       }
       const failedWords = (store.load("checks")?.failedWords ?? []).map((w) => textKey(w)).filter(Boolean);
       for (const other of aggregate.otherRenderings) {
@@ -2308,12 +2401,12 @@ export function createResearchEngine(deps) {
         if (word) other.failedWord = word;
       }
       store.save("aggregate", aggregate);
-      const footnotes = await stage("footnotes", () => rareWinners(frozen, aggregate).catch((error) => {
+      const footnotes = await stage("footnotes", () => skippable([], () => rareWinners(frozen, aggregate)).catch((error) => {
         info(`rare translations not checked: ${error.message}`);
         return [];
       }));
       heading("Summary");
-      const prose = await summarize(frozen, confirmedProposal, aggregate, footnotes).catch((error) => {
+      const prose = await skippable(null, () => summarize(frozen, confirmedProposal, aggregate, footnotes)).catch((error) => {
         info(`summary not written: ${error.message}`);
         return null;
       });
@@ -2461,6 +2554,15 @@ export function createResearchEngine(deps) {
     cancel() {
       cancelled = true;
     },
+    /** Skip the step running now, when it may be skipped: true if it will stop. */
+    skip() {
+      if (cancelled || !currentStep || !SKIPPABLE_STEPS.has(currentStep)) return false;
+      skipping = currentStep;
+      for (const end of skipWaiters.splice(0)) end();
+      return true;
+    },
+    /** The step running now (its log heading), for the Skip button. */
+    currentStep: () => currentStep,
     budget,
     freeze,
   };

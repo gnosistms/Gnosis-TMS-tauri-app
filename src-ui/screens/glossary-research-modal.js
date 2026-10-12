@@ -18,6 +18,7 @@ import { batchSpent } from "../app/glossary-research-family-budget.js";
 import { formatUsd, researchModelsWithPrices } from "../app/glossary-research-budget.js";
 import { buildLogSections } from "../app/glossary-research-log-view.js";
 import { stepTitle } from "../app/glossary-research-step-view.js";
+import { SKIPPABLE_STEPS } from "../app/glossary-research-engine.js";
 import { renderResults, renderStageLine } from "./glossary-research-log-render.js";
 
 const esc = escapeHtml;
@@ -348,7 +349,16 @@ function renderRun(state) {
   const logArea = log;
   let actions;
   if (running) {
+    // Some steps feed the ones after them and cannot be skipped (SKIPPABLE_STEPS).
+    const canSkip = SKIPPABLE_STEPS.has(research.stageLabel);
+    const skip = secondaryButton("Skip to next step", "skip-glossary-research-step", {
+      disabled: !canSkip,
+      tooltip: canSkip
+        ? "End this step now with what it has found, and go on to the next step."
+        : `“${stepTitle(research.stageLabel || "")}” can't be skipped: the steps after it need its result.`,
+    });
     actions = `${secondaryButton("Cancel", "cancel-glossary-research-run", { modalCancel: true })}
+      ${skip}
       ${paused
         ? primaryButton("Continue", "continue-glossary-research-run", { modalDefault: true })
         : secondaryButton("Pause", "pause-glossary-research-run")}`;

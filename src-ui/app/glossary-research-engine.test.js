@@ -15,6 +15,7 @@ import {
   writtenForm,
   familyStems,
   addPassedCandidates,
+  SKIPPABLE_STEPS,
   mergeMeasurements,
   looksLike,
   pickRepresentative,
@@ -189,11 +190,11 @@ function memoryStore(initial = {}) {
   return { data, load: (name) => data[name], save: (name, value) => { data[name] = value; } };
 }
 
-function engine({ model = fakeModel(), store = memoryStore(), limit = 4, items = passages(40), log = () => {}, corpus = fakeCorpus(items), judges = 1, languageData = null, glossaryTerms = [], chooseFamily = undefined, extraSettings = {} } = {}) {
+function engine({ model = fakeModel(), store = memoryStore(), limit = 4, items = passages(40), log = () => {}, corpus = fakeCorpus(items), judges = 1, languageData = null, glossaryTerms = [], chooseFamily = undefined, extraSettings = {}, dictionary: dict = dictionary } = {}) {
   return {
     model, store, corpus,
     engine: createResearchEngine({
-      model, prices: PRICES, corpus, dictionary, store, log, languageData, glossaryTerms, chooseFamily,
+      model, prices: PRICES, corpus, dictionary: dict, store, log, languageData, glossaryTerms, chooseFamily,
       settings: {
         judges, sourceLanguageCode: "es",
         term: "fatal", variants: [], existingEntries: [{ sourceTerms: ["fatal"], targetTerms: ["fateful"], targetVariantNotes: [""], notesToTranslators: "" }],
@@ -1253,4 +1254,73 @@ test("the counting lines name the texts being searched", async () => {
   const { engine: research } = engine({ corpus, log: (event) => logs.push(event) });
   await research.runToReview();
   assert.ok(logs.some((event) => event.type === "info" && event.text === "Counting how many paragraphs in Samael Aun Weor's books and lectures use each spelling…"));
+});
+
+test("a step the person may skip ends with what it has; a step the others need cannot be skipped", async () => {
+  // The dictionary page waits (a check box): skipping ends the wait, research goes on.
+  let research;
+  const logs = [];
+  const waiting = { lookup: () => new Promise(() => {}) };
+  const made = engine({ dictionary: waiting, log: (event) => {
+    logs.push(event);
+    if (event.type === "info" && /^Looking up/.test(event.text)) setTimeout(() => research.skip(), 0);
+  } });
+  research = made.engine;
+  const review = await research.runToReview();
+  assert.equal(review.status, "review");
+  assert.equal(made.store.data.dictionary.status, "skipped");
+  assert.ok(logs.some((event) => event.type === "fact" && /^Skipped by you/.test(event.text)));
+
+  // Word forms feeds everything after it: no skip.
+  const second = engine({ log: (event) => {
+    if (event.type === "heading" && event.text === "Word forms") assert.equal(second.engine.skip(), false);
+  } });
+  await second.engine.runToReview();
+  assert.ok(!SKIPPABLE_STEPS.has("Word forms") && !SKIPPABLE_STEPS.has("Proposal") && !SKIPPABLE_STEPS.has("Counting"));
+});
+
+test("skipping the candidate check sends every candidate on unchecked, and all reach the vote", async () => {
+  const inner = fakeModel();
+  let research;
+  const model = {
+    calls: inner.calls,
+    async call(request, onDelta) {
+      if (request.stage === "checks") {
+        assert.equal(research.currentStep(), "Candidate checks");
+        assert.equal(research.skip(), true);
+        return { status: "cancelled" };
+      }
+      return inner.call(request, onDelta);
+    },
+  };
+  const made = engine({ model });
+  research = made.engine;
+  const review = await research.runToReview();
+  assert.equal(made.store.data.checks.skipped, true);
+  assert.ok(made.store.data.checks.candidates.every((c) => c.verdict === "unchecked"));
+  const targets = review.proposal.entries.flatMap((entry) => entry.variants.map((variant) => variant.target));
+  for (const c of made.store.data.checks.candidates) assert.ok(targets.includes(c.target), `${c.target} reaches the vote`);
+});
+
+test("skipping the second translator leaves the first count to decide", async () => {
+  const inner = fakeModel();
+  let research;
+  const model = {
+    calls: inner.calls,
+    async call(request, onDelta) {
+      if (request.stage === "counting" && research.currentStep() === "Counting (second judge)") {
+        research.skip();
+        return { status: "cancelled" };
+      }
+      return inner.call(request, onDelta);
+    },
+  };
+  const made = engine({ model, judges: 2 });
+  research = made.engine;
+  const review = await research.runToReview();
+  const done = await research.runCounting(review.proposal);
+  assert.equal(done.status, "done");
+  assert.equal(made.store.data.counting2.skipped, true);
+  assert.notEqual(done.aggregate.totals.judges, 2, "one count only");
+  assert.ok(done.aggregate.totals.occurrencesSampled > 0);
 });

@@ -674,6 +674,21 @@ export function pauseGlossaryResearchRun(render) {
   render();
 }
 
+/**
+ * Skip the step running now, when it may be skipped (SKIPPABLE_STEPS): the step
+ * ends with what it has and research goes on. Its requests in flight are
+ * stopped; nothing else is.
+ */
+export function skipGlossaryResearchStep(render) {
+  const draft = research();
+  if (!activeRun || !["running", "counting"].includes(draft?.runStatus)) return;
+  if (!activeRun.engine.skip()) return;
+  for (const requestId of activeRun.requestIds) {
+    void invoke("cancel_glossary_research_request", { requestId }).catch(() => {});
+  }
+  render();
+}
+
 export function continueGlossaryResearchRun(render) {
   const draft = research();
   if (!draft?.paused) return;
