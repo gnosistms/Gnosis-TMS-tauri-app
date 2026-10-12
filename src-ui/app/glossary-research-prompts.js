@@ -1,7 +1,7 @@
 // Prompt texts and strict JSON schemas for Glossary Research.
 // Bump RESEARCH_PROMPT_VERSION on any change that could alter a judgment.
 
-export const RESEARCH_PROMPT_VERSION = "2026-10-12.2";
+export const RESEARCH_PROMPT_VERSION = "2026-10-12.4";
 
 const STR = { type: "string" };
 const NSTR = { anyOf: [{ type: "string" }, { type: "null" }] };
@@ -236,7 +236,7 @@ export function candidatesInstructions(ctx) {
 
 Rules:
 - Work sense by sense. A candidate must render the meaning the term has in these texts (the study of where the term comes from, when given, explains special senses). senseId: the id of the sense in the list of the term's senses below ("s1", …), or "none" for a sense not in that list.
-- GROUPS share a note, nothing else: every member of every group is checked on its own and offered to the translators, who choose among all of them in the passages; the votes decide which are needed. Put renderings in one group only when they fit every passage of this sense equally (e.g. the same wording spelled with or without a hyphen). A rendering with its own shade, or one that keeps this sense apart from another sense of the term that another rendering would also cover, gets its own group. Every rendering you consider goes into some group: nothing is dropped. The note (when to use the group's renderings) and the rationale are written once per group.
+- One rendering per group, with its own note (when to use it) and rationale; only the same wording spelled differently (a hyphen, a space) shares a group. Every rendering is checked on its own and offered to the translators, who choose among all of them in the passages; the votes decide which are needed, and a later test standardises renderings the translator takes turns between. Every rendering you consider is listed: nothing is dropped.
 - Prefer renderings that translate the term's own meaning over substituting another term the author equates it with. A synonym names the same thing with a different word; list it only if a translator might really need it, and say in its note that it is a synonym and what is lost.
 - ORIGINAL WORDS. When "Original words (required)" names one for a meaning, that word is the traditional ${ctx.targetName} term for the meaning: put it alone in its own group for that sense, recommended, and recommend no other group of that sense. List other renderings of that meaning only if the passages show the author using the term in that meaning in a way the original word cannot render. Otherwise, if a sense of the term translates an original-language term and ${ctx.targetName} IS that original language, the original term must be one of the candidates for that sense.
 - Notes are written in ${ctx.targetName}, at most 40 words. Rationales are in ${ctx.reportName}, at most 25 words each. sense at most 20 words. ${quotationRules(ctx)}
@@ -347,6 +347,15 @@ export const TRANSLATE_SCHEMA = object({
     note: STR,
   })),
 });
+
+export const CONSISTENCY_SCHEMA = object({
+  items: arrayOf(object({ occId: STR, sameMeaning: { type: "boolean" }, reason: STR })),
+});
+
+export function consistencyInstructions(ctx) {
+  return `A translator translated each ${ctx.sourceName} sentence below several times with the same glossary entry for “${ctx.headword}”, and chose a different ${ctx.targetName} translation of it on different tries. For each sentence you get the source sentence and the translated sentence with each choice.
+sameMeaning: true when a reader of the ${ctx.targetName} translations would understand the sentence the same way with either choice (a difference of style or emphasis only); false when the choice could significantly change how the reader understands the sentence. Judge each sentence on its own. Give every sentence; occId as given. reason: at most 15 words, in ${ctx.reportName}.`;
+}
 
 export function translateInstructions(ctx, frozenText) {
   return `You check how occurrences of the ${ctx.sourceName} word “${ctx.headword}” should be translated into ${ctx.targetName}, using fixed glossary entries. ${corpusLine(ctx)} Judge each occurrence on its own merits: what a skilled ${ctx.targetName} translator would actually write in this passage.

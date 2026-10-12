@@ -1324,3 +1324,76 @@ test("skipping the second translator leaves the first count to decide", async ()
   assert.notEqual(done.aggregate.totals.judges, 2, "one count only");
   assert.ok(done.aggregate.totals.occurrencesSampled > 0);
 });
+
+/** A model whose translator takes turns on one sentence: `pattern` gives its choice per try. */
+function flippingModel({ pattern, sameMeaning }) {
+  const inner = fakeModel();
+  let flipped = null;
+  let tries = 0;
+  const seen = [];
+  return {
+    calls: inner.calls, seen,
+    async call(request, onDelta) {
+      if (request.schemaName === "consistency") {
+        const answer = await inner.call({ ...request, stage: "counting" }, onDelta);
+        const parsed = JSON.parse(answer.text);
+        flipped ??= parsed.items.find((row) => row.variantId === "e1v1")?.occId;
+        for (const row of parsed.items) {
+          if (row.occId !== flipped) continue;
+          const choice = pattern[tries % pattern.length];
+          tries += 1;
+          if (choice === "other") Object.assign(row, { status: "unresolved", variantId: null, unresolvedReason: "insufficient_context" });
+          else Object.assign(row, { variantId: choice, sentenceTranslation: `It was a ${choice} thing.` });
+        }
+        return { ...answer, text: JSON.stringify(parsed) };
+      }
+      if (request.schemaName === "consistency_meaning") {
+        seen.push(request);
+        const ids = [...request.content.matchAll(/^### (\S+)$/gm)].map((m) => m[1]);
+        return { status: "ok", text: JSON.stringify({ items: ids.map((occId) => ({ occId, sameMeaning, reason: "r" })) }), usage: { inputTokens: 10, outputTokens: 10 } };
+      }
+      return inner.call(request, onDelta);
+    },
+    flipped: () => flipped,
+  };
+}
+
+test("consistency test: a flip that keeps the meaning is standardised; a translation another meaning uses is kept", async () => {
+  const model = flippingModel({ pattern: ["e1v1", "e1v2", "e1v1", "e1v2", "e1v1"], sameMeaning: true });
+  const { engine: research, store } = engine({ model });
+  const review = await research.runToReview();
+  await research.runCounting(review.proposal);
+  const result = store.data.consistency;
+  assert.equal(result.flips.length, 1);
+  assert.match(model.seen[0].content, /with “disastrous” \(3 of 5 tries\)[\s\S]*with “fateful” \(2 of 5 tries\)/);
+  assert.equal(result.conflicts.length, 0);
+  assert.equal(result.standardised[0].keep, "e1v1");
+  // "fateful" (e1v2) is listed for another meaning (sense 4): it stays, taken off this one only.
+  assert.deepEqual(result.standardised[0].dropped, []);
+  assert.deepEqual(result.standardised[0].narrowed.map((n) => n.variantId), ["e1v2"]);
+});
+
+test("consistency test: a flip that changes the meaning is left to the person", async () => {
+  const model = flippingModel({ pattern: ["e1v1", "e1v2", "e1v1", "e1v2", "e1v1"], sameMeaning: false });
+  const logs = [];
+  const { engine: research, store } = engine({ model, log: (event) => logs.push(event) });
+  const review = await research.runToReview();
+  await research.runCounting(review.proposal);
+  const result = store.data.consistency;
+  assert.deepEqual(result.standardised, []);
+  assert.equal(result.conflicts.length, 1);
+  assert.equal(result.conflicts[0].kind, "meaning");
+  assert.deepEqual(result.conflicts[0].variantIds.sort(), ["e1v1", "e1v2"]);
+  assert.ok(logs.some((event) => event.type === "fact" && /Your decision is needed before saving/.test(event.text)));
+});
+
+test("consistency test: a tie is broken by translating the same sentences again", async () => {
+  // Two each and one unclear in the first five tries, then "fateful" every time.
+  const model = flippingModel({ pattern: ["e1v1", "e1v2", "e1v1", "e1v2", "other", "e1v2", "e1v2", "e1v2", "e1v2", "e1v2"], sameMeaning: true });
+  const { engine: research, store } = engine({ model });
+  const review = await research.runToReview();
+  await research.runCounting(review.proposal);
+  const result = store.data.consistency;
+  assert.equal(result.standardised[0].keep, "e1v2");
+  assert.deepEqual(result.standardised[0].votes, { e1v1: 2, e1v2: 7 });
+});

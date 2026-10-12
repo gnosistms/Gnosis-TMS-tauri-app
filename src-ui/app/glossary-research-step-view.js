@@ -137,6 +137,7 @@ export function stepExplanation(heading, context = {}) {
     "Review": "Your turn: check the proposed translations (you can remove or add some), then press Count to try them on the sample paragraphs.",
     "Counting": `An AI translates each sample paragraph from ${texts} with the proposed entry and chooses a translation for each use; we count the choices.`,
     "Counting (second judge)": "A second AI does the same on its own, to check the first.",
+    "Consistency test": `A few sentences per meaning are translated five times each with the finished entry: does the translator keep to one translation? Where it takes turns between translations that mean the same, the one chosen most becomes the standard; where they change the meaning, you decide before saving.`,
     "Rare translations": "Do translations that are rare in everyday use need a note?",
     "Summary": "A short written summary for the report.",
   };

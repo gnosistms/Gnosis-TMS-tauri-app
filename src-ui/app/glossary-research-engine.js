@@ -24,6 +24,9 @@ import {
   snippet,
 } from "./glossary-research-occurrences.js";
 import * as prompts from "./glossary-research-prompts.js";
+import {
+  CONSISTENCY_ROUNDS, MAX_CONSISTENCY_TRANSLATIONS, addRound, flipSets, flipsOf, pickSentences, setVotes, standardise, winnerOf,
+} from "./glossary-research-consistency.js";
 import { coOccurrence, convergenceContent, sharedRenderings } from "./glossary-research-convergence.js";
 import { aggregateCounts, mergeJudgeCountings } from "./glossary-research-aggregate.js";
 import {
@@ -434,7 +437,7 @@ export class SkipStep extends Error {
  */
 export const SKIPPABLE_STEPS = new Set([
   "Dictionary", "Word family", "Where the term comes from", "Candidate checks", "Candidate frequency",
-  "Discovery", "Shared translations", "Existing glossary entry", "Counting (second judge)", "Rare translations", "Summary",
+  "Discovery", "Shared translations", "Existing glossary entry", "Counting (second judge)", "Consistency test", "Rare translations", "Summary",
 ]);
 
 export class ResearchStop extends Error {
@@ -2401,6 +2404,8 @@ export function createResearchEngine(deps) {
         if (word) other.failedWord = word;
       }
       store.save("aggregate", aggregate);
+      // The finished entry, translated five times per test sentence: does the translator keep to one choice?
+      await stage("consistency", () => skippable({ skipped: true, sentences: [], flips: [], standardised: [], conflicts: [] }, () => testConsistency(frozen)));
       const footnotes = await stage("footnotes", () => skippable([], () => rareWinners(frozen, aggregate)).catch((error) => {
         info(`rare translations not checked: ${error.message}`);
         return [];
@@ -2526,6 +2531,116 @@ export function createResearchEngine(deps) {
       judgments[occurrence.occId] = { occId: occurrence.occId, status: "unresolved", unresolvedReason: "no_entry", variantId: null, note: `form “${occurrence.surface}” is in no entry` };
     }
     return { frozenVersion: frozen.version, occurrences, judgments };
+  }
+
+  /**
+   * The consistency test (see glossary-research-consistency.js): up to 3 counted
+   * uses per meaning, each translated five times with the finished entry. Flips
+   * that keep the meaning are standardised on the translation chosen most often
+   * (ties: the same sentences again, five more times); flips that change it are
+   * left to the person, before saving.
+   */
+  async function testConsistency(frozen) {
+    heading("Consistency test");
+    const counting = store.load("counting");
+    const proposal = store.load("confirmedProposal") ?? store.load("proposal");
+    const picks = pickSentences({ frozen, proposal, counting, counting2: store.load("counting2") });
+    const empty = { sentences: [], flips: [], standardised: [], conflicts: [] };
+    if (!picks.length) {
+      fact("Nothing to test: no entry has two translations that were chosen in the count.");
+      return empty;
+    }
+    const sample = store.load("sample");
+    const byOcc = new Map((counting?.occurrences ?? []).map((occurrence) => [occurrence.occId, occurrence]));
+    const meaningOf = new Map(picks.map((pick) => [pick.occId, pick.meaning]));
+    const entryOf = (occId) => byOcc.get(occId)?.entryId;
+    const entryById = Object.fromEntries(frozen.entries.map((entry) => [entry.id, entry]));
+    const label = (entryId) => (entryById[entryId] ? `${entryById[entryId].kind === "expression" ? "expression " : ""}entry [${entryId}] “${entryById[entryId].sourceTerms.join(" / ")}”` : "no entry");
+    const instructions = prompts.translateInstructions(ctx(), prompts.frozenEntryText(frozen, settings.targetLanguageName));
+    const names = Object.fromEntries(frozen.entries.flatMap((entry) => entry.variants.map((variant) => [variant.id, variant.target])));
+    const tally = new Map();
+    // Each round translates the sentences once; the rounds run side by side.
+    const translateRounds = async (occIds, rounds, from) => {
+      const occurrences = occIds.map((occId) => byOcc.get(occId)).filter(Boolean);
+      const items = [...new Set(occurrences.map((occurrence) => occurrence.itemId))].map((id) => sample.items[id]).filter(Boolean);
+      const batches = batchOccurrences(items, occurrences, settings.countBatch * 2);
+      const keyed = [];
+      for (let round = 0; round < rounds; round += 1) {
+        batches.forEach((batch, index) => keyed.push([`${round}:${index}`, {
+          stage: "consistency", purpose: `translate the test sentences with the finished entry (round ${from + round + 1})`,
+          progress: { key: "occId", total: batch.occurrences.length, unit: "use", variants: names },
+          instructions, content: batchContent(batch, label),
+          schema: prompts.TRANSLATE_SCHEMA, schemaName: "consistency",
+          maxOutputTokens: 1200 + 330 * batch.occurrences.length, effort: settings.effortLight,
+        }]));
+      }
+      const results = await client.callMany(keyed, settings.workers);
+      for (const value of results.values()) {
+        if (value && !(value instanceof Error)) addRound(tally, value.items.filter((row) => occIds.includes(row.occId)));
+      }
+    };
+    info(`Translating ${picks.length} test ${picks.length === 1 ? "sentence" : "sentences"} ${CONSISTENCY_ROUNDS} times each with the finished entry, to see whether the translator keeps to one translation…`);
+    await translateRounds(picks.map((pick) => pick.occId), CONSISTENCY_ROUNDS, 0);
+    if (![...tally.values()].some((entry) => entry.rounds)) {
+      fact("The consistency test could not be done: no translation came back.");
+      return { ...empty, sentences: picks, failed: true };
+    }
+    const flips = flipsOf(tally);
+    if (!flips.length) {
+      fact(`The translator kept to one translation in all ${picks.length} test ${picks.length === 1 ? "sentence" : "sentences"}, ${CONSISTENCY_ROUNDS} times each.`);
+      return { ...empty, sentences: picks };
+    }
+    fact(`The translator took turns between translations in ${flips.length} of ${picks.length} test ${picks.length === 1 ? "sentence" : "sentences"}.`);
+    // Does taking turns change what the reader understands?
+    const item = (occId) => sample.items[byOcc.get(occId)?.itemId];
+    const verdict = await client.callJson({
+      stage: "consistency", purpose: "check whether the translations the translator took turns between change the meaning",
+      progress: { key: "occId", total: flips.length, unit: "sentence", verb: "checked" },
+      instructions: prompts.consistencyInstructions(ctx()),
+      content: flips.map((flip) => {
+        const occurrence = byOcc.get(flip.occId);
+        const source = item(flip.occId) ? markedPassage(item(flip.occId), [occurrence]) : occurrence?.surface ?? "";
+        return [`### ${flip.occId}`, `Source: ${source}`, ...flip.variantIds.map((id) => `- with “${names[id] ?? id}” (${flip.choices[id]} of ${tally.get(flip.occId)?.rounds ?? CONSISTENCY_ROUNDS} tries): ${flip.translations[id] ?? ""}`)].join("\n");
+      }).join("\n\n"),
+      schema: prompts.CONSISTENCY_SCHEMA, schemaName: "consistency_meaning",
+      maxOutputTokens: 800 + 120 * flips.length, effort: settings.effortLight,
+    });
+    const verdicts = new Map((verdict.items ?? []).map((row) => [row.occId, row]));
+    for (const flip of flips) {
+      flip.sameMeaning = verdicts.get(flip.occId)?.sameMeaning !== false;
+      flip.reason = verdicts.get(flip.occId)?.reason ?? "";
+    }
+    const sets = flipSets(flips, entryOf, new Map(flips.map((flip) => [flip.occId, flip.sameMeaning])));
+    const senses = new Map((proposal?.entries ?? []).flatMap((entry) => entry.variants.map((variant) => [variant.id, variant.senses ?? []])));
+    const standardised = [];
+    const conflicts = [];
+    for (const set of sets) {
+      if (!set.same) {
+        conflicts.push({ entryId: set.entryId, kind: "meaning", variantIds: set.variantIds, occIds: set.occIds });
+        fact(`Your decision is needed before saving: in “${entryById[set.entryId]?.sourceTerms.join(" / ")}”, ${set.variantIds.map((id) => `“${names[id]}”`).join(" and ")} change the meaning of ${set.occIds.length === 1 ? "a test sentence" : `${set.occIds.length} test sentences`}. The report shows them.`);
+        continue;
+      }
+      // Ties: the same sentences again, five more times, until one is chosen most.
+      let winner = winnerOf(setVotes(set, tally));
+      while (!winner && Object.values(setVotes(set, tally)).reduce((a, b) => a + b, 0) < MAX_CONSISTENCY_TRANSLATIONS) {
+        info(`${set.variantIds.map((id) => `“${names[id]}”`).join(" and ")} are tied: translating the same sentences ${CONSISTENCY_ROUNDS} more times…`);
+        const before = [...tally.values()].reduce((n, entry) => n + entry.rounds, 0);
+        await translateRounds(set.occIds, CONSISTENCY_ROUNDS, CONSISTENCY_ROUNDS);
+        if ([...tally.values()].reduce((n, entry) => n + entry.rounds, 0) === before) break; // no answer came back
+        winner = winnerOf(setVotes(set, tally));
+      }
+      const votes = setVotes(set, tally);
+      if (!winner) {
+        conflicts.push({ entryId: set.entryId, kind: "tie", variantIds: set.variantIds, occIds: set.occIds, votes });
+        fact(`Your decision is needed before saving: in “${entryById[set.entryId]?.sourceTerms.join(" / ")}”, the translator chose ${set.variantIds.map((id) => `“${names[id]}”`).join(" and ")} equally often. The report shows them.`);
+        continue;
+      }
+      const result = standardise(set, winner, tally, { senses, meaningOf });
+      standardised.push({ entryId: set.entryId, keep: winner, ...result, votes, occIds: set.occIds, meanings: [...new Set(set.occIds.map((id) => meaningOf.get(id)).filter(Boolean))] });
+      const total = Object.values(votes).reduce((a, b) => a + b, 0);
+      fact(`Standardised: “${names[winner]}” (chosen ${votes[winner]} of ${total} times) is the translation in these sentences; they read the same with ${set.variantIds.filter((id) => id !== winner).map((id) => `“${names[id]}”`).join(" or ")}.${result.dropped.length ? ` Dropped: ${result.dropped.map((id) => `“${names[id]}”`).join(", ")}.` : ""}${result.narrowed.length ? ` Kept for their other meanings: ${result.narrowed.map((n) => `“${names[n.variantId]}”`).join(", ")}.` : ""}`);
+    }
+    return { sentences: picks, tally: Object.fromEntries(tally), flips, standardised, conflicts };
   }
 
   async function summarize(frozen, proposal, aggregate, footnotes = []) {
