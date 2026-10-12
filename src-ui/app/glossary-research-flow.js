@@ -833,7 +833,11 @@ function updateStreamInDom(entry) {
   if (!step) return Boolean(log) || !changed;
   const pinned = log.scrollTop + log.clientHeight >= log.scrollHeight - 24;
   const status = step.querySelector("[data-step-status]");
-  if (status && isRequestRunning(request)) status.innerHTML = liveStatusFor(request, state);
+  // Requests running side by side in one batch each have their own "n of k" and
+  // bar: written here they took turns on the one status line, which flickered
+  // (Hans, 2026-10-12). The line then shows the batch's total, which the clock
+  // redraws every second.
+  if (status && isRequestRunning(request) && !(request.batch?.total > 1)) status.innerHTML = liveStatusFor(request, state);
   if (entry.type === "thinking") {
     const box = step.querySelector(`[data-live-thinking="${cssEscape(entry.requestId)}"]`);
     if (box) box.innerHTML = formatThinkingLive(request.thinking);
