@@ -29,25 +29,46 @@ export function recordStepTiming(modelId, stage, seconds, { read = readPersisten
   write(TIMINGS_KEY, all);
 }
 
-/** True once the timings of saved runs have been added. */
-export function timingsSeeded(read = readPersistentValue) {
-  return Boolean((read(TIMINGS_KEY, {}) ?? {}).__seeded);
+/** The saved runs whose timings are already counted (by their run ids). */
+export function timedRuns(read = readPersistentValue) {
+  const runs = (read(TIMINGS_KEY, {}) ?? {}).__runs;
+  return new Set(Array.isArray(runs) ? runs : []);
 }
 
-/** Add the timings of saved runs once, so the first run after an update already has a usual range. */
+/**
+ * Add the timings of saved runs not counted yet, so the clock knows how long a
+ * step usually takes. Earlier the runs were read once ever, at the first opening
+ * of research, when there were hardly any: the clock then lacked a usual time for
+ * most steps (Hans, 2026-10-12). `runs`: [{ runId, modelId, usage }].
+ */
 export function seedStepTimings(runs, { read = readPersistentValue, write = writePersistentValue } = {}) {
   const all = { ...(read(TIMINGS_KEY, {}) ?? {}) };
-  if (all.__seeded) return false;
+  const seen = new Set(Array.isArray(all.__runs) ? all.__runs : []);
+  let added = false;
   for (const run of runs) {
+    if (!run.runId || seen.has(run.runId)) continue;
+    seen.add(run.runId);
+    added = true;
     for (const record of run.usage ?? []) {
       if (record.status !== "ok" || !(record.seconds > 0) || !run.modelId) continue;
       const key = timingKey(run.modelId, record.stage);
       all[key] = [...(all[key] ?? []), Math.round(record.seconds * 10) / 10].slice(-KEEP);
     }
   }
-  all.__seeded = true;
+  if (!added) return false;
+  all.__runs = [...seen].slice(-2000);
   write(TIMINGS_KEY, all);
   return true;
+}
+
+/** A run being recorded live is counted already: reading its saved timings later would count it twice. */
+export function markRunTimed(runId, { read = readPersistentValue, write = writePersistentValue } = {}) {
+  if (!runId) return;
+  const all = { ...(read(TIMINGS_KEY, {}) ?? {}) };
+  const seen = new Set(Array.isArray(all.__runs) ? all.__runs : []);
+  if (seen.has(runId)) return;
+  all.__runs = [...seen, runId].slice(-2000);
+  write(TIMINGS_KEY, all);
 }
 
 function quantile(sorted, q) {
@@ -132,7 +153,11 @@ export function liveStatusHtml(request, phase, usual, now = Date.now()) {
   let bar = "";
   if (phase === "thinking") {
     // What it was asked stays in view; its thinking shows below the status.
-    doing = request.purpose ? `Asking the AI to ${request.purpose} (thinking)` : "The AI is thinking";
+    // How far its reasoning has got, without showing it (Hans, 2026-10-12): the
+    // points it has worked through so far.
+    const points = [...String(request.thinking ?? "").matchAll(/^\s*\*\*(.+?)\*\*\s*$/gm)].length;
+    const thinking = points ? `thinking, point ${points}` : "thinking";
+    doing = request.purpose ? `Asking the AI to ${request.purpose} (${thinking})` : `The AI is ${thinking}`;
   } else if (phase === "writing") {
     const progress = writingProgress(request.answer, request.progress);
     // The answer itself is on screen above; only how far it has got is added.

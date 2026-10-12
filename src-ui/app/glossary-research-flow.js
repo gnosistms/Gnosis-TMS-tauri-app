@@ -40,7 +40,7 @@ import {
 import { fold } from "./glossary-research-occurrences.js";
 import { formatJsonStream, formatThinkingLive } from "./glossary-research-stream-format.js";
 import { currentStepStatus, groupViewHtml } from "./glossary-research-step-view.js";
-import { liveStatusHtml, recordStepTiming, seedStepTimings, stepTimings, timingsSeeded, usualRange } from "./glossary-research-live-progress.js";
+import { liveStatusHtml, markRunTimed, recordStepTiming, seedStepTimings, stepTimings, timedRuns, usualRange } from "./glossary-research-live-progress.js";
 import { parseMoneyValue } from "./money-input.js";
 import { maybeStartGlossaryBackgroundSync } from "./glossary-background-sync.js";
 
@@ -567,6 +567,8 @@ async function beginResearchRun(render, resume = null, family = null) {
     stopProgress?.();
     stopClock();
   };
+  // This run's timings are recorded as they come; its saved copy is not read again.
+  markRunTimed(runId);
   void seedTimingsFromSavedRuns(installationId, glossaryId);
   activeRun = { engine, requestIds, store, runId, glossaryId, installationId, meta };
   Object.assign(draft, {
@@ -832,14 +834,15 @@ function startLiveClock() {
 /** Once: take the step timings of the runs saved for this glossary, so the clock has a usual range from the start. */
 async function seedTimingsFromSavedRuns(installationId, glossaryId) {
   try {
-    if (timingsSeeded()) return;
     const summaries = await invoke("list_glossary_research_runs", { installationId, glossaryId });
+    const counted = timedRuns();
     const runs = [];
-    for (const summary of (summaries ?? []).slice(0, 30)) {
-      const runId = summary.runId ?? summary.run_id ?? summary.id;
-      if (!runId) continue;
+    for (const summary of summaries ?? []) {
+      const runId = summary.runId ?? summary.run_id ?? summary.id ?? summary.meta?.runId;
+      if (!runId || counted.has(runId)) continue;
       const run = await invoke("load_glossary_research_run", { installationId, glossaryId, runId }).catch(() => null);
-      if (run?.usage) runs.push({ modelId: run.meta?.modelId, usage: run.usage });
+      if (run?.usage) runs.push({ runId, modelId: run.meta?.modelId, usage: run.usage });
+      if (runs.length >= 60) break;
     }
     seedStepTimings(runs);
   } catch {

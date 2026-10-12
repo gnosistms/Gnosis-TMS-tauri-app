@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   elapsedText, isSlow, latestThinkingTitle, liveStatusHtml, recordStepTiming, seedStepTimings,
-  stepTimings, timingsSeeded, usualRange, usualText, writingProgress, writingText,
+  stepTimings, markRunTimed, timedRuns, usualRange, usualText, writingProgress, writingText,
 } from "./glossary-research-live-progress.js";
 
 function memory() {
@@ -30,16 +30,28 @@ test("the clock reads minutes and seconds", () => {
   assert.equal(elapsedText(3_725_000), "1:02:05");
 });
 
-test("timings are kept per model and step, and saved runs are added once", () => {
+test("timings are kept per model and step; each saved run is added once, also runs saved later", () => {
   const store = memory();
   recordStepTiming("gpt", "checks", 61.23, store);
   recordStepTiming("gpt", "checks", 70, store);
   recordStepTiming("other", "checks", 5, store);
   assert.deepEqual(stepTimings("gpt", "checks", store.read), [61.2, 70]);
-  assert.equal(timingsSeeded(store.read), false);
-  assert.equal(seedStepTimings([{ modelId: "gpt", usage: [{ stage: "checks", status: "ok", seconds: 80 }, { stage: "checks", status: "failed", seconds: 1 }] }], store), true);
+  assert.equal(timedRuns(store.read).size, 0);
+  assert.equal(seedStepTimings([{ runId: "r1", modelId: "gpt", usage: [{ stage: "checks", status: "ok", seconds: 80 }, { stage: "checks", status: "failed", seconds: 1 }] }], store), true);
   assert.deepEqual(stepTimings("gpt", "checks", store.read), [61.2, 70, 80]);
-  assert.equal(seedStepTimings([{ modelId: "gpt", usage: [{ stage: "checks", status: "ok", seconds: 90 }] }], store), false, "only once");
+  assert.equal(seedStepTimings([{ runId: "r1", modelId: "gpt", usage: [{ stage: "checks", status: "ok", seconds: 80 }] }], store), false, "a run is added once");
+  assert.equal(seedStepTimings([{ runId: "r2", modelId: "gpt", usage: [{ stage: "checks", status: "ok", seconds: 90 }] }], store), true, "a run saved later is added at the next opening");
+  markRunTimed("r3", store);
+  assert.equal(seedStepTimings([{ runId: "r3", modelId: "gpt", usage: [{ stage: "checks", status: "ok", seconds: 99 }] }], store), false, "the run recorded live is not counted twice");
+  assert.deepEqual(stepTimings("gpt", "checks", store.read), [61.2, 70, 80, 90]);
+});
+
+test("while the AI thinks, the line shows how far its reasoning has got, not what it thinks", () => {
+  const request = { purpose: "propose English translations for each of the 3 meanings", startedAt: 1000, thinking: "**Weighing inner**\nsecret text\n\n**Checking within**\nmore" };
+  const html = liveStatusHtml(request, "thinking", null, 71_000);
+  assert.match(html, /Asking the AI to propose English translations for each of the 3 meanings \(thinking, point 2\)/);
+  assert.doesNotMatch(html, /Weighing|secret/);
+  assert.match(liveStatusHtml({ ...request, thinking: "" }, "thinking", null, 71_000), /\(thinking\)/);
 });
 
 test("the item being written is counted from the field that opens each item", () => {
@@ -53,7 +65,7 @@ test("the live status says what the request is doing, with the clock and the usu
   const usual = usualRange([150, 180, 200, 240]);
   const started = 1_000_000;
   const thinking = liveStatusHtml({ startedAt: started, purpose: "propose Vietnamese translations for each meaning", thinking: "**Evaluating Vietnamese translations**\n…" }, "thinking", usual, started + 100_000);
-  assert.match(thinking, /Asking the AI to propose Vietnamese translations for each meaning \(thinking\)/, "what it was asked stays in view; the thinking shows below");
+  assert.match(thinking, /Asking the AI to propose Vietnamese translations for each meaning \(thinking, point 1\)/, "what it was asked stays in view; the thinking shows below");
   assert.match(thinking, /1:40 · usually 3–4 min/);
   const writing = liveStatusHtml({ startedAt: started, answer: '{"candidates":[{"n":1},{"n":2', progress: { key: "n", total: 4, unit: "translation" } }, "writing", usual, started + 5_000);
   assert.match(writing, /The AI is writing: 2 of 4 translations/, "the answer is on screen; only how far it has got is added");

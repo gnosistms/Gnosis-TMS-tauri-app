@@ -1422,7 +1422,10 @@ export function createResearchEngine(deps) {
         `## Passages from the texts\n${authorPassages().join("\n\n")}`,
       ].filter(Boolean).join("\n\n");
       const result = await client.callJson({
-        stage: "candidates", purpose: `propose ${settings.targetLanguageName} translations for each meaning`,
+        stage: "candidates", purpose: (() => {
+          const meanings = store.load("parts")?.study?.senses?.length ?? 0;
+          return `propose ${settings.targetLanguageName} translations for ${meanings > 1 ? `each of the ${meanings} meanings` : "each meaning"}`;
+        })(),
         // One block per meaning; the model may leave some meanings out, so no total.
         progress: { key: "senseId", total: null, unit: "meaning" },
         instructions: prompts.candidatesInstructions(ctx()), content,
