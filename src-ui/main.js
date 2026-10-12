@@ -138,6 +138,7 @@ import {
   setProjectsVirtualizationDisabled,
 } from "./app/projects-virtual-list.js";
 import {
+  deferProjectsRenderWhileScrolling,
   deferProjectsRenderWhileSelectEngaged,
   installProjectsRenderHold,
 } from "./app/projects-render-hold.js";
@@ -363,8 +364,13 @@ function patchFixtureEditorRowState(rowId, updates = {}) {
 function render(options = {}) {
   // While a protected projects-page select is engaged, full renders defer so
   // the open dropdown isn't destroyed mid-selection; the hold flushes on
-  // commit/disengage. See projects-render-hold.js.
-  if (deferProjectsRenderWhileSelectEngaged(state, () => renderWithOptions(options))) {
+  // commit/disengage. Full renders also defer while the user scrolls the
+  // projects list and flush once scrolling stops. See projects-render-hold.js.
+  const performRender = () => renderWithOptions(options);
+  if (
+    deferProjectsRenderWhileSelectEngaged(state, performRender)
+    || deferProjectsRenderWhileScrolling(state, options, performRender)
+  ) {
     return undefined;
   }
   return renderWithOptions(options);
