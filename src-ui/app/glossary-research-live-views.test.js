@@ -189,3 +189,20 @@ test("checking the candidates and measuring how common they are are two steps", 
   assert.match(measured.html, /passes/);
   assert.ok(measured.requests.has("q1"));
 });
+
+test("while the AI looks for translations, the meanings it works on are listed and fill in as the answer arrives", () => {
+  const parts = { requestId: "p1", stage: "parts", usage: {}, answer: JSON.stringify({ senses: [
+    { id: "s1", gloss: "Everything that exists.", partOfSpeech: "noun", usedByAuthor: true },
+    { id: "s2", gloss: "Earth or another planet.", partOfSpeech: "noun", usedByAuthor: true },
+  ] }) };
+  const meanings = { heading: "Parts and frequency", items: [], requests: [parts] };
+  const thinking = { requestId: "c1", stage: "candidates", thinking: "**Weighing**" };
+  const waiting = stepDisplay({ heading: "Candidate translations", items: [], requests: [thinking] }, { sections: [meanings], target: "English" });
+  assert.match(waiting.html, /The 2 meanings the AI is finding English translations for/);
+  assert.match(waiting.html, /1\. Everything that exists\.[\s\S]*used by the author[\s\S]*…[\s\S]*2\. Earth or another planet\./);
+  const partial = { ...thinking, answer: '{"senses":[{"senseId":"s2","sense":"Earth or another planet.","groups":[{"members":["world"],"recommended":true,"note":"Default."},{"members":["planet"],"recommended":false,"note":"A physical planet."}]}' };
+  const filling = stepDisplay({ heading: "Candidate translations", items: [], requests: [partial] }, { sections: [meanings], target: "English" });
+  assert.match(filling.html, /2 possible English translations for 2 meanings/);
+  assert.match(filling.html, /1\. Everything that exists\.[\s\S]*…[\s\S]*2\. Earth or another planet\.[\s\S]*★[\s\S]*world[\s\S]*planet/);
+  assert.ok(filling.requests.has("c1"));
+});

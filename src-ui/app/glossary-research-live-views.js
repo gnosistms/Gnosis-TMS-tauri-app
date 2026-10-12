@@ -138,20 +138,61 @@ function partsView(request, value) {
     ${bases.length ? `<div class="research-view__rows">${bases.map((base) => `<div class="research-view__row">Base word <strong>${esc(base.word)}</strong>: ${esc(base.neededSense)} ${list(base.otherSenses).length ? muted(`+${plural(list(base.otherSenses).length, "other meaning")}`) : ""}</div>`).join("")}</div>` : ""}`);
 }
 
+/** One meaning's proposed translations: each group's words with its note, the recommended group first. */
+function candidateGroupsHtml(groups) {
+  const ordered = [...list(groups)].sort((a, b) => Number(b?.recommended === true) - Number(a?.recommended === true));
+  return ordered.map((group) => `<div class="research-view__group${group.recommended ? " is-recommended" : ""}">
+      <div class="research-view__chips">${group.recommended ? `<span class="research-view__star"${tooltipAttributes("Recommended")}>★</span>` : ""}${list(group.members).filter(str).map((member) => chip(member)).join("")}</div>
+      ${group.note ? `<div class="research-view__note">${esc(group.note)}</div>` : ""}
+    </div>`).join("");
+}
+
 function candidatesView(request, value) {
   const senses = list(value?.senses).filter((sense) => str(sense?.sense));
-  const groups = senses.reduce((n, sense) => n + list(sense.groups).length, 0);
-  return view("candidates", senses.length ? `${plural(groups, "option")} for ${plural(senses.length, "meaning")} <span class="research-view__muted">(★ recommended; words on one row can replace each other)</span>` : "Possible translations",
-    senses.map((sense) => {
-      const ordered = [...list(sense.groups)].sort((a, b) => Number(b?.recommended === true) - Number(a?.recommended === true));
-      return `<div class="research-view__block">
+  const words = senses.reduce((n, sense) => n + list(sense.groups).reduce((m, group) => m + list(group.members).filter(str).length, 0), 0);
+  return view("candidates", senses.length ? `${plural(words, "possible translation")} for ${plural(senses.length, "meaning")} <span class="research-view__muted">(★ recommended; words on one row share a note; each is tested on its own)</span>` : "Possible translations",
+    senses.map((sense) => `<div class="research-view__block">
         <div class="research-view__title">${esc(sense.sense)}</div>
-        ${ordered.map((group) => `<div class="research-view__group${group.recommended ? " is-recommended" : ""}">
-          <div class="research-view__chips">${group.recommended ? `<span class="research-view__star"${tooltipAttributes("Recommended")}>★</span>` : ""}${list(group.members).filter(str).map((member, index) => chip(member, index === 0 ? "lead" : "")).join("")}</div>
-          ${group.note ? `<div class="research-view__note">${esc(group.note)}</div>` : ""}
-        </div>`).join("")}
-      </div>`;
-    }).join(""));
+        ${candidateGroupsHtml(sense.groups)}
+      </div>`).join(""));
+}
+
+/**
+ * The candidates step: the meanings found in the step before are listed at once,
+ * so the long thinking has something to show; each fills with its proposed
+ * translations as the answer arrives (Hans, 2026-10-12).
+ */
+function candidatesDisplay(section, context) {
+  const request = section.requests.find((item) => item.stage === "candidates");
+  const before = [...(context.sections ?? [])].reverse().find((other) => other.heading === "Parts and frequency");
+  const meanings = list(answerOf(before?.requests.find((item) => item.stage === "parts"))?.senses).filter((sense) => str(sense?.gloss));
+  const proposed = list(answerOf(request)?.senses).filter((sense) => str(sense?.sense) || str(sense?.senseId));
+  if (!meanings.length) return null; // runs without the meanings step: the answer's own view
+  const running = !request || isRunning(request);
+  const bySense = new Map();
+  for (const sense of proposed) bySense.set(sense.senseId, [...(bySense.get(sense.senseId) ?? []), ...list(sense.groups)]);
+  const target = esc(context.target ?? "");
+  const block = (title, groups, extra = "") => `<div class="research-view__block">
+      <div class="research-view__title">${title}${extra}</div>
+      ${groups.length ? candidateGroupsHtml(groups) : muted(running ? "…" : "No translation proposed for this meaning.")}
+    </div>`;
+  const blocks = [
+    ...meanings.map((meaning, index) => block(
+      `${index + 1}. ${esc(meaning.gloss)}`, bySense.get(meaning.id) ?? [],
+      `${meaning.partOfSpeech ? ` ${muted(`(${meaning.partOfSpeech})`)}` : ""}${meaning.usedByAuthor ? ` ${label("used by the author", "accent")}` : ""}`)),
+    // A meaning the AI found that the list did not have.
+    ...proposed.filter((sense) => !meanings.some((meaning) => meaning.id === sense.senseId)).map((sense) => block(esc(sense.sense), list(sense.groups))),
+  ];
+  const words = [...bySense.values()].flat().reduce((n, group) => n + list(group.members).filter(str).length, 0);
+  const heading = words
+    ? `${plural(words, `possible ${target} translation`)} for ${plural(meanings.length, "meaning")} <span class="research-view__muted">(★ recommended; words on one row share a note; each is tested on its own)</span>`
+    : `The ${plural(meanings.length, "meaning")} the AI is finding ${target} translations for`;
+  return {
+    html: view("candidates", heading, blocks.join("")),
+    requests: new Set(request ? [request.requestId] : []),
+    results: new Set(["candidates"]),
+    facts: [],
+  };
 }
 
 function checksView(request, value) {
@@ -816,6 +857,7 @@ function originDisplay(section, context) {
 }
 
 const STEP_DISPLAYS = {
+  "Candidate translations": candidatesDisplay,
   "Where the term comes from": originDisplay,
   "Word forms": formsDisplay,
   "Word family": familyDisplay,
