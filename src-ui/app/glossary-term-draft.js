@@ -427,6 +427,7 @@ async function runGlossaryTermSaveIntent(render, intent) {
     if (intent.value?.isCreate || !remindOfSiblings(confirmedTerm, render)) {
       showNoticeBadge(intent.value?.isCreate ? "Glossary term added." : "Glossary term saved.", render);
     }
+    return confirmedTerm;
   } catch (error) {
     clearGlossaryEditorStatus(render);
     throw error;
@@ -704,7 +705,7 @@ export function resolveGlossaryTermWriteRepo() {
   return glossary;
 }
 
-export async function submitGlossaryTermEditor(render) {
+export async function submitGlossaryTermEditor(render, { awaitCompletion = false } = {}) {
   const team = selectedTeam();
   const repoName = selectedGlossaryRepoName();
   const draft = state.glossaryTermEditor;
@@ -793,6 +794,9 @@ export async function submitGlossaryTermEditor(render) {
   resetGlossaryTermEditor();
   render();
 
+  let finish;
+  const completion = awaitCompletion ? new Promise((resolve) => { finish = resolve; }) : null;
+  let confirmedTerm = null;
   requestGlossaryTermWriteIntent({
     key: glossaryTermSaveIntentKey(repoInput.glossaryId, visibleTermId),
     scope: glossaryTermWriteScope(team, repoName),
@@ -811,13 +815,17 @@ export async function submitGlossaryTermEditor(render) {
     },
   }, {
     clearOnSuccess: true,
-    run: (intent) => runGlossaryTermSaveIntent(render, intent),
+    run: async (intent) => {
+      confirmedTerm = await runGlossaryTermSaveIntent(render, intent);
+    },
     onSuccess: () => {
+      finish?.({ status: "saved", term: confirmedTerm });
       render();
     },
     onError: (error, intent) => {
       clearGlossaryEditorStatus(render);
       const errorMessage = error?.message ?? String(error);
+      finish?.({ status: "failed", error: errorMessage });
       if (glossarySaveContextMatches(intent) && state.glossaryTermEditor?.isOpen && state.glossaryTermEditor.notice) {
         render();
         return;
@@ -828,4 +836,5 @@ export async function submitGlossaryTermEditor(render) {
       }
     },
   });
+  return completion;
 }

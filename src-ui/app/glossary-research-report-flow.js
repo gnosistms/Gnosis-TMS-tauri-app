@@ -141,7 +141,8 @@ export async function retestResearchConflict(render, draftId, index) {
   const conflict = draft?.conflicts?.[index];
   const run = report?.run;
   if (!conflict || !run) return;
-  conflict.retest = { status: "running" };
+  const pending = { status: "running" };
+  conflict.retest = pending;
   render();
   try {
     const client = researchRequestClient({
@@ -151,12 +152,14 @@ export async function retestResearchConflict(render, draftId, index) {
       .map((variant) => ({ id: variant.id, target: variant.target.trim(), note: variant.note ?? "", ...(variant.partOfSpeech ? { partOfSpeech: variant.partOfSpeech } : {}) }));
     const entry = { id: draft.entryId, kind: draft.kind, sourceTerms: draft.sourceTerms, generalNote: draft.generalNote ?? "", variants };
     const result = await retestConsistency({ client, run, entry, occIds: conflict.occIds });
-    conflict.retest = !result.answered
-      ? { status: "failed", message: "No translation came back. Try again." }
+    if (conflict.retest !== pending) return;
+    conflict.retest = !result.complete
+      ? { status: "failed", message: "The test did not receive all five valid translations for every sentence. Try again." }
       : result.flips.length
         ? { status: "flips", flips: result.flips.length, of: conflict.occIds.length }
         : { status: "consistent" };
   } catch (error) {
+    if (conflict.retest !== pending) return;
     conflict.retest = { status: "failed", message: error?.message ?? String(error) };
   }
   render();
@@ -302,21 +305,28 @@ export function updateResearchEntryField(entryId, field, value, variantIndex = n
   else if (field === "generalNote") draft.generalNote = value;
   else if (field === "target" || field === "note") draft.variants[variantIndex][field] = value;
   else if (field === "include") draft.variants[variantIndex].include = value === true;
+  for (const conflict of draft.conflicts ?? []) conflict.retest = null;
   if (draft.saveStatus === "saved") draft.saveStatus = "idle";
   draft.saveError = "";
 }
 
 export function addResearchEntryVariant(render, entryId) {
   const draft = state.glossaryResearchReport.entryDrafts[entryId];
+  for (const conflict of draft.conflicts ?? []) conflict.retest = null;
+  if (draft.saveStatus === "saved") draft.saveStatus = "idle";
   draft.variants.push({ id: `${entryId}new${draft.variants.length}`, target: "", note: "", count: 0, fromExisting: false, include: true, added: true });
   render();
+}
+
+function entrySaveSnapshot(draft) {
+  return JSON.stringify({ sourceTerms: draft.sourceTerms, generalNote: draft.generalNote, variants: draft.variants });
 }
 
 /** Save one entry through the glossary term editor's normal save path. */
 export async function saveResearchEntry(render, entryId) {
   const report = state.glossaryResearchReport;
   const draft = report.entryDrafts[entryId];
-  if (!draft || draft.decision === "keep") return;
+  if (!draft || draft.decision === "keep" || draft.saveStatus === "saving") return;
   if (unresolvedConflicts(draft).length) {
     draft.saveError = "Decide first: the consistency test found translations the translator takes turns between that change the meaning (see below).";
     render();
@@ -332,6 +342,8 @@ export async function saveResearchEntry(render, entryId) {
   const existing = draft.decision === "update" && draft.existingTermId
     ? (state.glossaryEditor?.terms ?? []).find((term) => term.termId === draft.existingTermId)
     : null;
+  const submittedSnapshot = entrySaveSnapshot(draft);
+  const submittedForms = [...draft.sourceTerms];
   draft.saveStatus = "saving";
   render();
   state.glossaryTermEditor = {
@@ -350,26 +362,17 @@ export async function saveResearchEntry(render, entryId) {
     footnote: existing?.footnote ?? "",
     untranslated: false,
   };
-  await submitGlossaryTermEditor(render);
-  const editor = state.glossaryTermEditor;
-  if (editor?.isOpen && editor.error) {
+  const termEditor = state.glossaryTermEditor;
+  const result = await submitGlossaryTermEditor(render, { awaitCompletion: true });
+  if (result?.status !== "saved" || !result.term?.termId) {
     draft.saveStatus = "idle";
-    draft.saveError = editor.error;
-    resetGlossaryTermEditor();
-  } else if (editor?.isOpen) {
-    draft.saveStatus = "idle";
-    draft.saveError = "The entry could not be saved right now. Try again.";
-    resetGlossaryTermEditor();
+    draft.saveError = result?.error || state.glossaryTermEditor?.error || "The entry could not be saved right now. Try again.";
+    if (state.glossaryTermEditor === termEditor) resetGlossaryTermEditor();
   } else {
-    draft.saveStatus = "saved";
-    await rememberSaved(report, draft);
-    if (!existing) {
-      const created = (state.glossaryEditor?.terms ?? []).find((term) => overlaps(term.sourceTerms ?? [], draft.sourceTerms));
-      if (created) {
-        draft.existingTermId = created.termId;
-        draft.decision = "update";
-      }
-    }
+    draft.existingTermId = result.term.termId;
+    draft.decision = "update";
+    draft.saveStatus = entrySaveSnapshot(draft) === submittedSnapshot ? "saved" : "idle";
+    await rememberSaved(report, draft, submittedForms);
   }
   render();
 }
@@ -379,14 +382,14 @@ export async function saveResearchEntry(render, entryId) {
  * list of past research can mark the run (Hans, 2026-10-12). Best effort: a
  * failure here does not undo the save.
  */
-async function rememberSaved(report, draft) {
+async function rememberSaved(report, draft, sourceTerms) {
   const meta = report.run?.meta;
   if (!meta || !report.runId) return;
   const record = meta.savedToGlossary ?? { entries: [] };
   record.at = new Date().toISOString();
   record.entries = [
     ...(record.entries ?? []).filter((entry) => entry.draftId !== (draft.id ?? draft.entryId)),
-    { draftId: draft.id ?? draft.entryId, sourceTerms: draft.sourceTerms, at: record.at },
+    { draftId: draft.id ?? draft.entryId, sourceTerms, at: record.at },
   ];
   meta.savedToGlossary = record;
   try {
@@ -409,7 +412,7 @@ export async function saveResearchReport(render) {
   // entries, so a later change to one is a reminder to check the other.
   const byStudyEntry = new Map();
   for (const draft of drafts) {
-    if (!draft.splitFrom || !draft.existingTermId) continue;
+    if (!draft.splitFrom || !draft.existingTermId || draft.saveStatus !== "saved") continue;
     byStudyEntry.set(draft.entryId, [...(byStudyEntry.get(draft.entryId) ?? []), draft.existingTermId]);
   }
   for (const termIds of byStudyEntry.values()) {
