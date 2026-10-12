@@ -41,6 +41,7 @@ import {
   openResearchReport,
   saveResearchEntry,
   saveResearchReport,
+  retestResearchConflict,
   setResearchEntryDecision,
   showAllResearchExamples,
   toggleResearchVariantExamples,
@@ -115,6 +116,10 @@ export function createGlossaryResearchActions(render) {
     }],
     ["add-research-entry-variant:", (rest) => addResearchEntryVariant(render, rest)],
     ["save-research-entry:", (rest) => saveResearchEntry(render, rest)],
+    ["retest-research-conflict:", (rest) => {
+      const cut = rest.lastIndexOf(":");
+      retestResearchConflict(render, rest.slice(0, cut), Number.parseInt(rest.slice(cut + 1), 10));
+    }],
     ["toggle-research-section:", (rest) => toggleResearchSection(render, rest)],
     ["toggle-research-current:", (rest) => toggleResearchCurrent(render, rest)],
     ["open-research-source:", (rest) => openExternalUrl(rest)],

@@ -15,6 +15,7 @@ import {
   writtenForm,
   familyStems,
   addPassedCandidates,
+  retestConsistency,
   SKIPPABLE_STEPS,
   mergeMeasurements,
   looksLike,
@@ -1369,8 +1370,8 @@ test("consistency test: a flip that keeps the meaning is standardised; a transla
   assert.equal(result.conflicts.length, 0);
   assert.equal(result.standardised[0].keep, "e1v1");
   // "fateful" (e1v2) is listed for another meaning (sense 4): it stays, taken off this one only.
-  assert.deepEqual(result.standardised[0].dropped, []);
-  assert.deepEqual(result.standardised[0].narrowed.map((n) => n.variantId), ["e1v2"]);
+  assert.deepEqual(result.dropped, []);
+  assert.deepEqual(result.narrowed.map((n) => [n.variantId, n.removed, n.kept]), [["e1v2", ["2"], ["4"]]]);
 });
 
 test("consistency test: a flip that changes the meaning is left to the person", async () => {
@@ -1396,4 +1397,26 @@ test("consistency test: a tie is broken by translating the same sentences again"
   const result = store.data.consistency;
   assert.equal(result.standardised[0].keep, "e1v2");
   assert.deepEqual(result.standardised[0].votes, { e1v1: 2, e1v2: 7 });
+});
+
+test("test again translates the conflict's sentences with the edited entry and says whether the translator still takes turns", async () => {
+  const runSaved = {
+    meta: { term: "mundo", sourceLanguage: { name: "Spanish" }, targetLanguage: { name: "English" }, reportLanguage: { name: "English", code: "en" } },
+    counting: { occurrences: [{ occId: "o1.1", entryId: "e1", itemId: "p1", start: 10, end: 15, surface: "mundos", sentenceStart: 0, sentenceEnd: 22 }] },
+    sample: { items: { p1: { itemId: "p1", text: "En otros mundos viven.", occurrences: [{ start: 9, end: 15, surface: "mundos" }] } } },
+  };
+  const entry = { id: "e1", kind: "word", sourceTerms: ["mundo"], generalNote: "", variants: [{ id: "v1", target: "world", note: "Spiritual worlds." }, { id: "v2", target: "planet", note: "A physical planet." }] };
+  const sent = [];
+  const client = (choices) => ({
+    async callMany(keyed) {
+      sent.push(...keyed.map(([, request]) => request));
+      return new Map(keyed.map(([key], index) => [key, { items: [{ occId: "o1.1", status: "selected", variantId: choices[index % choices.length], sentenceTranslation: "x" }] }]));
+    },
+  });
+  const steady = await retestConsistency({ client: client(["v2"]), run: runSaved, entry, occIds: ["o1.1"] });
+  assert.equal(steady.flips.length, 0);
+  assert.equal(steady.answered, 5);
+  assert.match(sent[0].instructions, /\[v2\] planet — A physical planet\./, "the edited note is what the translator sees");
+  const turns = await retestConsistency({ client: client(["v1", "v2"]), run: runSaved, entry, occIds: ["o1.1"] });
+  assert.equal(turns.flips.length, 1);
 });

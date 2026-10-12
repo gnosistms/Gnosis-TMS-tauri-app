@@ -848,3 +848,29 @@
   font-size: 13px;
   line-height: 1.5;
 }
+
+/* the consistency test's open decisions in an entry */
+.rr-conflict {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.rr-conflict__sentences {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+.rr-conflict__sentences p {
+  margin: 0;
+}
+
+.rr-conflict__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}

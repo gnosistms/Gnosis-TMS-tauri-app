@@ -12,6 +12,8 @@ import { fold } from "./glossary-research-occurrences.js";
 import { groupForms } from "./glossary-research-form-split.js";
 import { linkGlossaryTerms } from "./glossary-term-siblings.js";
 import { showNoticeBadge } from "./status-feedback.js";
+import { retestConsistency } from "./glossary-research-engine.js";
+import { researchRequestClient } from "./glossary-research-flow.js";
 
 function installationId() {
   return selectedProjectsTeamInstallationId() ?? selectedTeam()?.installationId;
@@ -74,6 +76,92 @@ function existingSummary(existing) {
  * frozen entry, or one per group of its forms when the count shows that the forms
  * mostly take different translations (see glossary-research-form-split.js).
  */
+/** What the consistency test did to a translation, in words, or "". */
+function consistencyNote(run, variantId) {
+  const consistency = run.consistency;
+  const names = new Map((run.frozen?.entries ?? []).flatMap((entry) => entry.variants.map((variant) => [variant.id, variant.target])));
+  if ((consistency?.dropped ?? []).includes(variantId)) {
+    const set = (consistency.standardised ?? []).find((item) => item.variantIds.includes(variantId) && item.keep !== variantId);
+    return `Removed by the consistency test: no meaning uses it any more${set ? `; the translator standardised on “${names.get(set.keep) ?? set.keep}”` : ""}.`;
+  }
+  const narrowed = (consistency?.narrowed ?? []).find((item) => item.variantId === variantId);
+  return narrowed ? `Still used for ${narrowed.kept.map((m) => `“${m}”`).join(", ")}, but no longer for ${narrowed.removed.map((m) => `“${m}”`).join(", ")}: check that its note does not send the translator there.` : "";
+}
+
+/**
+ * The consistency conflicts of an entry, for the person to decide: the
+ * translations the translator took turns between, with the test sentences and
+ * each translated sentence, and the notes as they were at the test.
+ */
+function consistencyConflicts(run, entry, variants) {
+  const flips = new Map((run.consistency?.flips ?? []).map((flip) => [flip.occId, flip]));
+  const byOcc = new Map((run.counting?.occurrences ?? []).map((occurrence) => [occurrence.occId, occurrence]));
+  return (run.consistency?.conflicts ?? [])
+    .filter((conflict) => conflict.entryId === entry.id && conflict.variantIds.filter((id) => variants.some((v) => v.id === id)).length > 1)
+    .map((conflict) => ({
+      kind: conflict.kind, variantIds: conflict.variantIds, occIds: conflict.occIds,
+      sentences: conflict.occIds.map((occId) => {
+        const occurrence = byOcc.get(occId);
+        const item = run.sample?.items?.[occurrence?.itemId];
+        const flip = flips.get(occId);
+        return {
+          occId, source: item && occurrence ? item.text.slice(occurrence.sentenceStart ?? 0, occurrence.sentenceEnd ?? item.text.length).trim() : "",
+          surface: occurrence?.surface ?? "",
+          translations: (flip?.variantIds ?? []).map((id) => ({ variantId: id, times: flip.choices[id], text: flip.translations[id] ?? "" })),
+          reason: flip?.reason ?? "",
+        };
+      }),
+      notesAtTest: Object.fromEntries(variants.filter((v) => conflict.variantIds.includes(v.id)).map((v) => [v.id, v.note])),
+      retest: null,
+    }));
+}
+
+/**
+ * A conflict is settled when at most one of its translations is still ticked, or
+ * when "Test again" found the translator no longer takes turns (after the notes
+ * were edited to tell the translations apart).
+ */
+export function unresolvedConflicts(draft) {
+  return (draft?.conflicts ?? []).filter((conflict) => {
+    const ticked = draft.variants.filter((variant) => variant.include && conflict.variantIds.includes(variant.id));
+    return ticked.length > 1 && conflict.retest?.status !== "consistent";
+  });
+}
+
+/** True when the notes of the conflict's ticked translations changed since the test. */
+export function conflictNotesEdited(draft, conflict) {
+  return draft.variants.some((variant) => variant.include && conflict.variantIds.includes(variant.id)
+    && (variant.note ?? "") !== (conflict.notesAtTest?.[variant.id] ?? ""));
+}
+
+/** "Test again": the conflict's sentences translated five times with the entry as edited. */
+export async function retestResearchConflict(render, draftId, index) {
+  const report = state.glossaryResearchReport;
+  const draft = report?.entryDrafts?.[draftId];
+  const conflict = draft?.conflicts?.[index];
+  const run = report?.run;
+  if (!conflict || !run) return;
+  conflict.retest = { status: "running" };
+  render();
+  try {
+    const client = researchRequestClient({
+      installationId: installationId(), providerId: run.meta?.providerId, modelId: run.meta?.modelId, limitUsd: 1,
+    });
+    const variants = draft.variants.filter((variant) => variant.include && variant.target.trim())
+      .map((variant) => ({ id: variant.id, target: variant.target.trim(), note: variant.note ?? "", ...(variant.partOfSpeech ? { partOfSpeech: variant.partOfSpeech } : {}) }));
+    const entry = { id: draft.entryId, kind: draft.kind, sourceTerms: draft.sourceTerms, generalNote: draft.generalNote ?? "", variants };
+    const result = await retestConsistency({ client, run, entry, occIds: conflict.occIds });
+    conflict.retest = !result.answered
+      ? { status: "failed", message: "No translation came back. Try again." }
+      : result.flips.length
+        ? { status: "flips", flips: result.flips.length, of: conflict.occIds.length }
+        : { status: "consistent" };
+  } catch (error) {
+    conflict.retest = { status: "failed", message: error?.message ?? String(error) };
+  }
+  render();
+}
+
 export function buildEntryDrafts(run, glossaryTerms) {
   const frozen = run.frozen;
   const aggregate = run.aggregate?.entries ?? {};
@@ -81,6 +169,7 @@ export function buildEntryDrafts(run, glossaryTerms) {
   // Forms the study covered: an existing entry keeps its other forms when it is updated.
   const studied = new Set(frozen.entries.flatMap((entry) => entry.sourceTerms.map((form) => fold(form).trim())));
   const drafts = {};
+  const consistencyDropped = new Set(run.consistency?.dropped ?? []);
   for (const entry of frozen.entries) {
     const existing = glossaryTerms.find((term) => overlaps(term.sourceTerms ?? [], entry.sourceTerms)) ?? null;
     const proposalEntry = (run.confirmedProposal ?? run.proposal)?.entries?.find((e) => e.id === entry.id);
@@ -111,8 +200,11 @@ export function buildEntryDrafts(run, glossaryTerms) {
             ...(variant.partOfSpeech ? { partOfSpeech: variant.partOfSpeech } : {}),
             // Chosen in under 2% of the sample (or never): proposed for removal, since
             // every variant is sent to the translating AI; the user can keep it. The
-            // original word of a borrowed meaning always stays.
-            include: Boolean(variant.original) || counts.occurrences === 0 || count / counts.occurrences >= RARELY_CHOSEN_SHARE,
+            // original word of a borrowed meaning always stays. The consistency test
+            // removes a translation no meaning uses any more (the user can keep it).
+            include: !consistencyDropped.has(variant.id)
+              && (Boolean(variant.original) || counts.occurrences === 0 || count / counts.occurrences >= RARELY_CHOSEN_SHARE),
+            ...(consistencyNote(run, variant.id) ? { consistency: consistencyNote(run, variant.id) } : {}),
           };
         })
         .sort((a, b) => b.count - a.count);
@@ -131,6 +223,7 @@ export function buildEntryDrafts(run, glossaryTerms) {
         sourceTerms: entry.sourceTerms.filter((form) => forms.has(form.normalize("NFC").toLowerCase().trim())),
         generalNote: entry.generalNote,
         variants,
+        conflicts: consistencyConflicts(run, entry, variants),
         saveStatus: "idle",
         saveError: "",
       };
@@ -211,6 +304,11 @@ export async function saveResearchEntry(render, entryId) {
   const report = state.glossaryResearchReport;
   const draft = report.entryDrafts[entryId];
   if (!draft || draft.decision === "keep") return;
+  if (unresolvedConflicts(draft).length) {
+    draft.saveError = "Decide first: the consistency test found translations the translator takes turns between that change the meaning (see below).";
+    render();
+    return;
+  }
   const variants = draft.variants.filter((variant) => variant.include && variant.target.trim());
   if (!draft.sourceTerms.length || !variants.length) {
     draft.saveError = "An entry needs at least one source term and one translation.";

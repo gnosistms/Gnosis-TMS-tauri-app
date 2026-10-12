@@ -9,7 +9,7 @@ import {
   tooltipAttributes,
 } from "../lib/ui.js";
 import { formatUsd } from "../app/glossary-research-budget.js";
-import { RARELY_CHOSEN_SHARE } from "../app/glossary-research-report-flow.js";
+import { RARELY_CHOSEN_SHARE, unresolvedConflicts } from "../app/glossary-research-report-flow.js";
 import { originalSourceLabel, originalSourceTooltip } from "../app/glossary-research-original-word.js";
 import { describeSense, formatZipf } from "../app/glossary-research-frequency.js";
 
@@ -141,6 +141,46 @@ function renderCurrentEntry(run, draft, meta) {
     </section>`;
 }
 
+/**
+ * The consistency test's open decisions for one entry: the translator took turns
+ * between translations that change the meaning. Saving waits until all but one
+ * are unticked, or their notes tell them apart and "Test again" finds the
+ * translator keeps to one choice.
+ */
+function renderConflicts(draft, meta) {
+  if (!(draft.conflicts ?? []).length) return "";
+  const open = new Set(unresolvedConflicts(draft));
+  const name = (id) => draft.variants.find((variant) => variant.id === id)?.target ?? id;
+  const src = esc(meta.sourceLanguage.code);
+  const tgt = esc(meta.targetLanguage.code);
+  return draft.conflicts.map((conflict, index) => {
+    const names = conflict.variantIds.map((id) => `“${esc(name(id))}”`).join(" and ");
+    const retest = conflict.retest;
+    const status = !retest ? ""
+      : retest.status === "running" ? "Testing again…"
+        : retest.status === "consistent" ? "Tested again: the translator now keeps to one choice in every sentence."
+          : retest.status === "flips" ? `Tested again: the translator still takes turns in ${retest.flips} of ${retest.of} ${retest.of === 1 ? "sentence" : "sentences"}.`
+            : `Test again failed: ${esc(retest.message ?? "")}`;
+    return `
+      <section class="rr-block rr-conflict${open.has(conflict) ? " is-open" : " is-settled"}">
+        <p class="${open.has(conflict) ? "rr-alert" : "rr-saved"}">${open.has(conflict)
+          ? `Your decision is needed before saving: translated five times, the same sentences got ${names} on different tries, and the choice ${conflict.kind === "tie" ? "was a true coin-flip" : "changes the meaning"}.`
+          : `Settled: ${names}.`}</p>
+        <ul class="rr-conflict__sentences">${conflict.sentences.map((sentence) => `
+          <li>
+            <p class="rr-muted" lang="${src}">${esc(sentence.source)}</p>
+            ${sentence.translations.map((t) => `<p lang="${tgt}"><strong>${esc(name(t.variantId))}</strong> (${t.times}×): ${esc(t.text)}</p>`).join("")}
+            ${sentence.reason ? `<p class="rr-muted">${esc(sentence.reason)}</p>` : ""}
+          </li>`).join("")}</ul>
+        ${open.has(conflict) ? `<p>Untick all but one of ${names}, or edit their notes so the translator knows when to use each, then press Test again.</p>` : ""}
+        <div class="rr-conflict__actions">
+          ${secondaryButton(retest?.status === "running" ? "Testing…" : "Test again", `retest-research-conflict:${esc(draft.id)}:${index}`, { compact: true, disabled: retest?.status === "running" || !open.has(conflict) })}
+          ${status ? `<span class="rr-muted">${status}</span>` : ""}
+        </div>
+      </section>`;
+  }).join("");
+}
+
 function renderEntryCard(report, run, draft) {
   // A draft is one frozen entry, or the forms of one that the count put in their own entry.
   const entry = { id: draft.id, kind: draft.kind, sourceTerms: draft.sourceTerms };
@@ -169,6 +209,7 @@ function renderEntryCard(report, run, draft) {
             ${variant.original ? `<span class="rr-pill rr-pill--ok" tabindex="0" ${tooltipAttributes(originalSourceTooltip(variant.original, variant.target))}>${esc(originalSourceLabel(variant.original))}</span>` : ""}
             ${variant.fromExisting ? `<span class="rr-pill">in current entry</span>` : ""}
             ${rarelyChosen ? `<span class="rr-pill rr-pill--warn">${c.occurrences ? "rarely chosen" : "never chosen"}</span>` : ""}
+            ${variant.consistency ? `<span class="rr-pill rr-pill--warn" tabindex="0" ${tooltipAttributes(variant.consistency)}>consistency test</span>` : ""}
           </div>
           <textarea class="rr-variant__note" rows="1" lang="${esc(tgt)}" placeholder="When to use it" data-research-entry="${esc(entry.id)}:note:${index}" aria-label="Usage note for ${esc(variant.target)}">${esc(variant.note)}</textarea>
         </div>
@@ -201,6 +242,7 @@ function renderEntryCard(report, run, draft) {
       ${draft.saveError ? `<p class="rr-alert" role="alert">${esc(draft.saveError)}</p>` : ""}
       ${draft.saveStatus === "saved" ? `<p class="rr-saved">Saved to the glossary</p>` : ""}
       ${showingCurrent ? renderCurrentEntry(run, draft, meta) : `
+      ${renderConflicts(draft, meta)}
       <fieldset class="rr-entry__fields">
         <label class="rr-field">
           <span class="rr-field__label">Note for all translations (TMX)</span>
@@ -474,7 +516,12 @@ function renderSaveButton(report) {
   const pending = drafts.filter((draft) => draft.decision !== "keep" && draft.saveStatus !== "saved");
   const saving = drafts.some((draft) => draft.saveStatus === "saving");
   const label = saving ? "Saving…" : !pending.length && drafts.some((draft) => draft.saveStatus === "saved") ? "Saved" : "Save to glossary";
-  return primaryButton(label, "save-research-report", { disabled: saving || !pending.length });
+  // The consistency test's open decisions come first (Hans, 2026-10-12).
+  const undecided = pending.filter((draft) => unresolvedConflicts(draft).length);
+  return primaryButton(label, "save-research-report", {
+    disabled: saving || !pending.length || undecided.length > 0,
+    ...(undecided.length ? { tooltip: "Decide first: the consistency test found translations the translator takes turns between that change the meaning (see the entry)." } : {}),
+  });
 }
 
 export function renderGlossaryResearchReportScreen(state) {

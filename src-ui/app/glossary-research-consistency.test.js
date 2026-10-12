@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { addRound, flipSets, flipsOf, pickSentences, setVotes, standardise, winnerOf } from "./glossary-research-consistency.js";
+import { addRound, flipSets, flipsOf, meaningsOfVariants, pickSentences, setVotes, settleMeanings, winnerOf } from "./glossary-research-consistency.js";
 
 const frozen = { entries: [
   { id: "e1", kind: "word", variants: [{ id: "v1" }, { id: "v2" }, { id: "v3" }] },
@@ -43,16 +43,11 @@ test("flips: a sentence translated with more than one translation; sets join tra
   assert.equal(winnerOf(votes), "v1");
   assert.equal(winnerOf({ v1: 4, v2: 4 }), null, "a tie has no winner");
   const meaningOf = new Map([["o1", "planet"], ["o2", "planet"], ["o5", "society"]]);
-  // "v2" is listed only for the meaning tested: dropped from the entry.
-  assert.deepEqual(standardise(sets[0], "v1", tally, { senses: new Map([["v2", ["planet"]]]), meaningOf }), { dropped: ["v2"], narrowed: [] });
-  // "v2" is also listed for another meaning: it stays, only taken off this one.
-  assert.deepEqual(standardise(sets[0], "v1", tally, { senses: new Map([["v2", ["planet", "everything"]]]), meaningOf }),
-    { dropped: [], narrowed: [{ variantId: "v2", meanings: ["planet"] }] });
-  // Chosen even once for a tested sentence with another meaning: it stays.
-  const elsewhere = new Map(tally);
-  elsewhere.set("o5", { choices: { v3: 4, v2: 1 }, translations: {}, other: 0, rounds: 5 });
-  assert.deepEqual(standardise(sets[0], "v1", elsewhere, { senses: new Map([["v2", ["planet"]]]), meaningOf }),
-    { dropped: [], narrowed: [{ variantId: "v2", meanings: ["planet"] }] });
+  const meanings = meaningsOfVariants({ senses: new Map([["v1", ["planet"]], ["v2", ["planet", "everything"]], ["v3", ["society"]]]), tally, meaningOf });
+  assert.deepEqual([...meanings.get("v2")], ["planet", "everything"]);
+  // "v2" loses "planet" but still serves "everything": it stays, narrowed.
+  assert.deepEqual(settleMeanings([{ keep: "v1", variantIds: ["v1", "v2"], meanings: ["planet"] }], meanings),
+    { dropped: [], narrowed: [{ variantId: "v2", removed: ["planet"], kept: ["everything"] }] });
 });
 
 test("flips that keep and that change the meaning make separate sets", () => {
@@ -66,4 +61,17 @@ test("flips that keep and that change the meaning make separate sets", () => {
     [true, ["v1", "v2", "v3"], ["o1", "o2"]],
     [false, ["v1", "v3"], ["o3"]],
   ]);
+});
+
+test("a translation two meanings both standardise away from is dropped: neither keeps it for the other", () => {
+  // "world" serves "planet" and "level of existence"; each meaning standardises on another word.
+  const meanings = new Map([["world", new Set(["planet", "level"])], ["planet", new Set(["planet"])], ["realm", new Set(["level"])]]);
+  const settled = settleMeanings([
+    { keep: "planet", variantIds: ["planet", "world"], meanings: ["planet"] },
+    { keep: "realm", variantIds: ["realm", "world"], meanings: ["level"] },
+  ], meanings);
+  assert.deepEqual(settled, { dropped: ["world"], narrowed: [] });
+  // Only one of them standardises away: "world" stays for the other.
+  assert.deepEqual(settleMeanings([{ keep: "planet", variantIds: ["planet", "world"], meanings: ["planet"] }], meanings),
+    { dropped: [], narrowed: [{ variantId: "world", removed: ["planet"], kept: ["level"] }] });
 });

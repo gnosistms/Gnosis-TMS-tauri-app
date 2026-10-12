@@ -14,13 +14,14 @@ import {
   createGlossaryResearchState,
 } from "./glossary-research-state.js";
 import {
+  createBudget,
   BudgetExceededError,
   formatUsd,
   modelPrices,
   RESEARCH_PROVIDERS,
   researchProviderSupported,
 } from "./glossary-research-budget.js";
-import { collectMeasurements, createResearchEngine, familyGroups, mergeMeasurements, ResearchStop } from "./glossary-research-engine.js";
+import { collectMeasurements, createModelClient, createResearchEngine, familyGroups, mergeMeasurements, ResearchStop } from "./glossary-research-engine.js";
 import {
   buildLogSections,
   buildLogView,
@@ -470,6 +471,15 @@ function createAppModel({ installationId, providerId, modelId, requestIds }) {
       }
     },
   };
+}
+
+/** A model client for one-off research requests outside a run (the report's "Test again"). */
+export function researchRequestClient({ installationId, providerId, modelId, limitUsd = 1 }) {
+  return createModelClient({
+    model: createAppModel({ installationId, providerId, modelId, requestIds: new Set() }),
+    prices: modelPrices(providerId, modelId), budget: createBudget(limitUsd),
+    log: () => {}, isCancelled: () => false, maxRetries: 2,
+  });
 }
 
 function engineSettings(draft, languages) {

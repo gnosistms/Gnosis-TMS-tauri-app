@@ -124,28 +124,50 @@ export function winnerOf(votes) {
 }
 
 /**
- * What standardising a set does to the translations that lost (Hans, 2026-10-12:
- * "we can't drop a word if it's in use by another meaning"). A loser is DROPPED
- * from the entry only when no other meaning uses it; otherwise it stays and is
- * only taken off the set's meanings ("narrowed"). A translation is in use by
- * another meaning when the entry gives it a meaning the set's sentences do not
- * have, or when the translator chose it, even once, for a tested sentence with
- * another meaning.
- * `senses`: variantId → its meaning labels; `meaningOf`: occId → the meaning of
- * a tested sentence. Returns { dropped: [ids], narrowed: [{ variantId, meanings }] }.
+ * The meanings each translation serves, as an explicit list (Hans, 2026-10-12):
+ * the meanings the entry gives it, and the meaning of every tested sentence the
+ * translator chose it for. `senses`: variantId → its meaning labels; `meaningOf`:
+ * occId → the meaning of a tested sentence. Returns Map variantId → Set(meanings).
  */
-export function standardise(set, winner, tally, { senses = new Map(), meaningOf = new Map() } = {}) {
-  const setMeanings = new Set(set.occIds.map((occId) => meaningOf.get(occId)).filter(Boolean));
+export function meaningsOfVariants({ senses = new Map(), tally = new Map(), meaningOf = new Map() } = {}) {
+  const meanings = new Map();
+  const add = (id, meaning) => {
+    if (!meaning) return;
+    if (!meanings.has(id)) meanings.set(id, new Set());
+    meanings.get(id).add(meaning);
+  };
+  for (const [id, labels] of senses) for (const label of labels ?? []) add(id, label);
+  for (const [occId, entry] of tally) {
+    for (const [id, n] of Object.entries(entry.choices ?? {})) if (n > 0) add(id, meaningOf.get(occId));
+  }
+  return meanings;
+}
+
+/**
+ * Settles every standardised meaning at once (Hans, 2026-10-12: a word is removed
+ * only when no meaning uses it; deciding meaning by meaning, two meanings sharing a
+ * word could each keep it for the other). Each set takes its meanings off the
+ * translations that lost there; only then is a translation with no meaning left
+ * dropped. `standardised`: [{ keep, variantIds, meanings }]. Returns
+ * { dropped: [ids], narrowed: [{ variantId, removed: [meanings], kept: [meanings] }] }.
+ */
+export function settleMeanings(standardised, meanings) {
+  const left = new Map([...meanings].map(([id, set]) => [id, new Set(set)]));
+  const removed = new Map();
+  for (const set of standardised) {
+    for (const id of set.variantIds) {
+      if (id === set.keep) continue;
+      for (const meaning of set.meanings ?? []) {
+        left.get(id)?.delete(meaning);
+        removed.set(id, new Set([...(removed.get(id) ?? []), meaning]));
+      }
+    }
+  }
   const dropped = [];
   const narrowed = [];
-  for (const id of set.variantIds) {
-    if (id === winner) continue;
-    const listed = (senses.get(id) ?? []).filter((meaning) => !setMeanings.has(meaning));
-    const chosenElsewhere = [...tally].some(([occId, entry]) => (
-      !set.occIds.includes(occId) && (entry.choices[id] ?? 0) > 0 && !setMeanings.has(meaningOf.get(occId))
-    ));
-    if (listed.length || chosenElsewhere) narrowed.push({ variantId: id, meanings: [...setMeanings] });
-    else dropped.push(id);
+  for (const [id, gone] of removed) {
+    if (!(left.get(id)?.size)) dropped.push(id);
+    else narrowed.push({ variantId: id, removed: [...gone], kept: [...left.get(id)] });
   }
   return { dropped, narrowed };
 }

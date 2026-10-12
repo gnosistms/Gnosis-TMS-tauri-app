@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { renderGlossaryResearchReportScreen, zipfRange } from "./glossary-research-report.js";
-import { buildEntryDrafts } from "../app/glossary-research-report-flow.js";
+import { buildEntryDrafts, unresolvedConflicts } from "../app/glossary-research-report-flow.js";
 
 function run() {
   return {
@@ -93,4 +93,46 @@ test("a split entry becomes two drafts: the larger updates the existing entry an
   assert.deepEqual(drafts[0].keepForms, ["vano", "vanos"]);
   const html = renderGlossaryResearchReportScreen({ glossaryResearchReport: { status: "ready", run: r, entryDrafts: Object.fromEntries(drafts.map((d) => [d.id, d])), expandedVariants: {}, showAllExamples: {} }, offline: {} });
   assert.match(html, /A separate entry: in the sample, <span lang="es">vanidades<\/span> mostly took other translations than <span lang="es">vanidad<\/span>/);
+});
+
+function consistencyRun() {
+  const r = run();
+  r.frozen.entries[0].variants = [
+    { id: "v1", target: "world", note: "Default." }, { id: "v2", target: "planet", note: "A physical planet." }, { id: "v3", target: "orb", note: "" },
+  ];
+  r.aggregate.entries.e1 = { occurrences: 100, passages: 80, variants: { v1: { occurrences: 60, passages: 50 }, v2: { occurrences: 30, passages: 25 }, v3: { occurrences: 10, passages: 9 } }, other: 0, unresolved: {}, failed: 0 };
+  r.counting = { occurrences: [{ occId: "o1.1", entryId: "e1", itemId: "p1", sentenceStart: 0, sentenceEnd: 22, surface: "mundo" }], judgments: {} };
+  r.sample = { items: { p1: { itemId: "p1", text: "En otros mundos viven." } } };
+  r.consistency = {
+    flips: [{ occId: "o1.1", variantIds: ["v1", "v2"], choices: { v1: 3, v2: 2 }, translations: { v1: "In other worlds they live.", v2: "On other planets they live." }, reason: "planets are physical; worlds may be spiritual" }],
+    standardised: [{ entryId: "e1", keep: "v1", variantIds: ["v1", "v3"], meanings: ["universe"] }],
+    conflicts: [{ entryId: "e1", kind: "meaning", variantIds: ["v1", "v2"], occIds: ["o1.1"] }],
+    dropped: ["v3"], narrowed: [],
+  };
+  return r;
+}
+
+test("the consistency test: a translation no meaning uses comes unticked; a meaning-changing flip blocks saving until settled", () => {
+  const r = consistencyRun();
+  const drafts = buildEntryDrafts(r, []);
+  const variants = Object.fromEntries(drafts.e1.variants.map((v) => [v.target, v]));
+  assert.equal(variants.orb.include, false);
+  assert.match(variants.orb.consistency, /Removed by the consistency test: no meaning uses it any more; the translator standardised on “world”/);
+  assert.equal(variants.world.include, true);
+  assert.equal(drafts.e1.conflicts.length, 1);
+  assert.equal(unresolvedConflicts(drafts.e1).length, 1);
+  const html = renderGlossaryResearchReportScreen({ glossaryResearchReport: { status: "ready", run: r, entryDrafts: drafts, expandedVariants: {}, showAllExamples: {} }, offline: {} });
+  assert.match(html, /Your decision is needed before saving[\s\S]*“world” and “planet”[\s\S]*changes the meaning/);
+  assert.match(html, /En otros mundos viven\.[\s\S]*<strong>world<\/strong> \(3×\): In other worlds they live\.[\s\S]*<strong>planet<\/strong> \(2×\): On other planets they live\./);
+  assert.match(html, /data-action="retest-research-conflict:e1:0"/);
+  assert.match(html, /data-action="save-research-report"[^>]*disabled/);
+  // Unticking all but one settles it.
+  drafts.e1.variants.find((v) => v.target === "planet").include = false;
+  assert.equal(unresolvedConflicts(drafts.e1).length, 0);
+  // Or a test again that finds the translator keeps to one choice.
+  drafts.e1.variants.find((v) => v.target === "planet").include = true;
+  drafts.e1.conflicts[0].retest = { status: "consistent" };
+  assert.equal(unresolvedConflicts(drafts.e1).length, 0);
+  drafts.e1.conflicts[0].retest = { status: "flips", flips: 1, of: 1 };
+  assert.equal(unresolvedConflicts(drafts.e1).length, 1);
 });
