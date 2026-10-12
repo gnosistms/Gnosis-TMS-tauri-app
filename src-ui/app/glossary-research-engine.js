@@ -67,6 +67,38 @@ export function writtenForm(term, items) {
   return best && best.count > (counts.get(String(term).normalize("NFC")) ?? 0) ? best.surface : term;
 }
 
+/**
+ * The stems whose words make up a term's word family in the texts: per first
+ * letter (íntimo / intimo), the forms' common beginning without its final
+ * vowels, at most 6 letters ("mundo, mundos" → "mund"; "sensible, sensibles" →
+ * "sensib"). Stems under 4 letters are left out (they match too many words).
+ */
+export function familyStems(forms) {
+  const groups = new Map();
+  for (const form of forms ?? []) {
+    const word = String(form ?? "").normalize("NFC").toLowerCase().trim();
+    if (!word || /\s/.test(word) || !isWord(word)) continue;
+    const first = [...word][0];
+    groups.set(first, [...(groups.get(first) ?? []), word]);
+  }
+  const stems = [];
+  for (const words of groups.values()) {
+    let prefix = [...words[0]];
+    for (const word of words.slice(1)) {
+      const letters = [...word];
+      let i = 0;
+      while (i < prefix.length && i < letters.length && prefix[i] === letters[i]) i += 1;
+      prefix = prefix.slice(0, i);
+    }
+    while (prefix.length > 4 && /[aeiouáéíóúàèìòùâêîôûäëïöü]/.test(prefix.at(-1))) prefix.pop();
+    const stem = prefix.slice(0, 6).join("");
+    if ([...stem].filter((ch) => /\p{L}/u.test(ch)).length >= 4 && !stems.includes(stem)) stems.push(stem);
+  }
+  return stems;
+}
+
+const str = (value) => (typeof value === "string" ? value.trim() : "");
+
 export const isWord = (form) => !/\p{N}/u.test(String(form ?? ""));
 
 /** How many words of the texts that begin with the term's letters are checked as its possible forms. */
@@ -886,60 +918,107 @@ export function createResearchEngine(deps) {
     return stage("family", async () => {
       heading("Word family");
       const forms = store.load("forms");
-      const known = new Set((forms.candidates ?? []).map((c) => fold(c.form).trim()));
+      // The term's own spellings; a word the spelling check rejected as a form
+      // ("fatalmente" for "fatal") may still be a related word.
+      const known = new Set([...(forms.confirmed ?? []), ...(forms.searched ?? [])].map((form) => fold(form).trim()));
+      // The texts' own words that contain the term's stem ("mund": mundial, submundo,
+      // mundanalidad, and look-alikes such as inmundo or Raimundo). A site without
+      // that list, or a stem under 4 letters, leaves the words that begin like the term.
+      const stems = familyStems(forms.searched ?? forms.confirmed ?? []);
+      const fromTexts = stems.length && corpus.stemWords ? await corpus.stemWords(stems) : null;
+      const listed = (fromTexts ?? (forms.related ?? []))
+        .filter((w) => isWord(w.form) && !known.has(fold(w.form).trim()));
+      const rowsOf = new Map(listed.map((w) => [fold(w.form).trim(), w.rows ?? null]));
+      const listName = fromTexts
+        ? `Words of the texts that contain ${stems.map((stem) => `“${stem}”`).join(" or ")} (paragraphs)`
+        : "Words of the texts that begin with the headword's letters (paragraphs)";
+      // One light request: the AI sorts the listed words from its knowledge, and
+      // suggests the words the list cannot hold (a changed stem).
       const proposed = await client.callJson({
-        stage: "family", purpose: `find related words built on “${headword()}”`,
+        stage: "family", purpose: `find the words built on “${headword()}” among the texts' words`,
         progress: { key: "form", total: null, unit: "word" },
-        instructions: prompts.familyInstructions(ctx()),
+        instructions: prompts.familyInstructions(ctx({ suggestions: fromTexts ? 15 : 40, completeList: Boolean(fromTexts) })),
         content: [
           `Headword: ${headword()}`,
           `Forms in the study: ${forms.confirmed.join(", ")}`,
-          `Words of the texts that begin with the headword's letters and are not its forms: ${(forms.related ?? []).filter((r) => isWord(r.form)).map((r) => r.form).join(", ") || "none"}`,
+          `${listName}: ${listed.map((w) => (w.rows != null ? `${w.form} (${w.rows})` : w.form)).join(", ") || "none"}`,
           dictionaryText(),
         ].join("\n"),
         schema: prompts.FAMILY_SCHEMA, schemaName: "family",
         maxOutputTokens: 3000, effort: settings.effortLight,
       }).catch((error) => {
         info(`word family not listed: ${error.message}`);
-        return { words: [] };
+        return { words: [], suggested: [] };
       });
-      // Only the words the AI lists: a word that merely begins with the same
-      // letters ("intimidado" next to "íntimo") is not related.
-      const candidates = mergeCaseVariants(
-        // Phrases are not related words: the study of the word gives one an entry
-        // only when its words' own translations do not compose it.
-        proposed.words.filter((w) => w.kind !== "phrase" && isWord(w.form)),
-        (w) => w.form,
-      ).filter((w) => !known.has(fold(w.form).trim())).slice(0, 45);
+      const usable = (w) => w && str(w.form) && w.kind !== "phrase" && isWord(w.form) && !known.has(fold(w.form).trim());
+      const words = mergeCaseVariants((proposed.words ?? []).filter(usable), (w) => w.form);
       const members = [];
-      const examples = new Map(); // a related word's possible form → example passages
+      const examples = new Map(); // a word's example passages, for the checks
       const found = new Set(known);
-      const add = async (form, kind, of = null) => {
+      const record = (form, kind, rows, of = null) => {
+        const key = fold(form).trim();
+        if (!key || found.has(key)) return;
+        found.add(key);
+        if (rows) members.push({ form, kind, rows, ...(of ? { of } : {}) });
+        // Lands in the related-words display, next to its word.
+        logResult("familyCount", [{ form, rows, of }], `“${form}”: ${rows} passages`);
+      };
+      const search = async (form, kind, of = null) => {
         const key = fold(form).trim();
         if (!key || found.has(key)) return false;
-        found.add(key);
-        const count = await corpus.countForm(form).catch(() => ({ rows: 0 }));
-        if (count.rows) members.push({ form, kind, rows: count.rows, ...(of ? { of } : {}) });
-        if (count.rows && of) examples.set(key, count.examples ?? []);
-        // Lands in the related-words display, next to its word.
-        logResult("familyCount", [{ form, rows: count.rows, of }], `“${form}”: ${count.rows} passages`);
+        const count = await corpus.countForm(form).catch(() => ({ rows: 0, examples: [] }));
+        examples.set(key, count.examples ?? []);
+        record(form, kind, count.rows, of);
         return count.rows > 0;
       };
-      // Counting takes up to a minute: say so.
-      if (candidates.length) info("Counting how many paragraphs use each related word…");
-      for (const candidate of candidates) {
-        const present = await add(candidate.form, candidate.kind);
-        // A member found in the texts brings its own inflections from the texts' word list.
-        if (present && corpus.formsHint && !/\s/.test(candidate.form.trim())) {
-          const hint = await corpus.formsHint(candidate.form).catch(() => null);
-          // Rare words may have no inflection links in the word list; their plurals
-          // then appear among the words that extend their stem.
-          for (const f of [...(hint?.forms ?? []), ...(hint?.related ?? [])]) if (isWord(f.form)) await add(f.form, candidate.kind, candidate.form);
+      // Words of the list the AI is sure of: their counts are known, nothing to search.
+      const unsure = [];
+      for (const word of words) {
+        const rows = rowsOf.get(fold(word.form).trim());
+        if (word.verdict === "unsure") unsure.push(word);
+        else if (rows != null) record(word.form, word.kind, rows, str(word.of) ? word.of : null);
+        else await search(word.form, word.kind, str(word.of) ? word.of : null);
+      }
+      // Words the AI is unsure of: one example each, judged in one request.
+      if (unsure.length) {
+        info("Reading an example of each word the AI was unsure of…");
+        for (const word of unsure) {
+          const count = await corpus.countForm(word.form).catch(() => ({ rows: 0, examples: [] }));
+          examples.set(fold(word.form).trim(), count.examples ?? []);
+          word.rows = rowsOf.get(fold(word.form).trim()) ?? count.rows;
+        }
+        const present = unsure.filter((word) => word.rows > 0);
+        const checked = present.length ? await client.callJson({
+          stage: "family", purpose: `check in an example whether each word is built on “${headword()}”`,
+          progress: { key: "form", total: present.length, unit: "word", verb: "checked" },
+          instructions: prompts.familyCheckInstructions(ctx()),
+          content: present.map((word) => [
+            `“${word.form}”: ${word.rows} passages`,
+            ...(examples.get(fold(word.form).trim()) ?? []).slice(0, 1).map((e) => `   ${snippet(e.text, e.start, e.end, 90)}`),
+          ].join("\n")).join("\n"),
+          schema: prompts.FORMS_CONFIRM_SCHEMA, schemaName: "family_check",
+          maxOutputTokens: 1500, effort: settings.effortLight,
+        }).catch((error) => {
+          info(`the unsure words were not checked: ${error.message}`);
+          return null;
+        }) : null;
+        const kept = new Set((checked?.forms ?? []).filter((f) => f.keep === true).map((f) => fold(f.form).trim()));
+        for (const word of present) if (kept.has(fold(word.form).trim())) record(word.form, word.kind, word.rows, str(word.of) ? word.of : null);
+      }
+      // Words the AI suggests beyond the list: searched; those in the texts bring their forms.
+      const suggested = mergeCaseVariants((proposed.suggested ?? []).filter(usable), (w) => w.form)
+        .filter((w) => !found.has(fold(w.form).trim())).slice(0, fromTexts ? 15 : 45);
+      if (suggested.length) info("Counting how many paragraphs use each suggested word…");
+      for (const word of suggested) {
+        const present = await search(word.form, word.kind);
+        if (present && corpus.formsHint && !/\s/.test(word.form.trim())) {
+          const hint = await corpus.formsHint(word.form).catch(() => null);
+          for (const f of [...(hint?.forms ?? []), ...(hint?.related ?? [])]) if (isWord(f.form)) await search(f.form, word.kind, word.form);
         }
       }
-      // The word list links forms loosely and words that begin alike are not forms
-      // ("intimidado" is not a form of "intimidad"): the AI checks each one.
-      const possible = members.filter((m) => m.of);
+      // Forms found through the word list for a suggested word are checked: the list
+      // links forms loosely ("intimidado" is not a form of "intimidad").
+      const possible = members.filter((m) => m.of && examples.has(fold(m.form).trim()) && suggested.some((w) => fold(w.form) === fold(m.of)));
       if (possible.length) {
         const checked = await client.callJson({
           stage: "family", purpose: "check that each word found as a form of a related word is that word",
@@ -964,7 +1043,7 @@ export function createResearchEngine(deps) {
       fact(members.length
         ? `Related words in the texts (paragraphs): ${members.map((m) => `${m.form} (${m.rows})`).join(", ")}`
         : "No other words built on the term occur in the texts.");
-      return { members, searched: candidates.length };
+      return { members, searched: suggested.length, listed: listed.length, stems };
     });
   }
 

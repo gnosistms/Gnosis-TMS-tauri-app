@@ -12,6 +12,7 @@ import {
   textKey,
   familyGroups,
   writtenForm,
+  familyStems,
   mergeMeasurements,
   looksLike,
   pickRepresentative,
@@ -665,7 +666,7 @@ test("words that only begin like the term are checked, not taken as related word
       }
       if (request.schemaName === "family") {
         inner.calls.push(request.stage);
-        return answer({ words: [{ form: "sobrefatal", kind: "prefixed", reason: "test" }] });
+        return answer({ words: [], suggested: [{ form: "sobrefatal", kind: "prefixed", reason: "test" }] });
       }
       if (request.schemaName === "family_forms") {
         inner.calls.push(request.stage);
@@ -682,7 +683,7 @@ test("words that only begin like the term are checked, not taken as related word
   assert.ok(store.data.forms.confirmed.includes("fatalitos"), "a form found among the words that begin alike joins the study");
   assert.deepEqual(store.data.forms.related.map((f) => f.form), ["fatalmente"], "the rest go to the word family");
   const family = requests.find((request) => request.schemaName === "family");
-  assert.match(family.content, /are not its forms: fatalmente$/m);
+  assert.match(family.content, /begin with the headword's letters \(paragraphs\): fatalmente \(2\)$/m);
   assert.deepEqual(store.data.family.members.map((m) => m.form).sort(), ["sobrefatal", "sobrefatales"],
     "only words the AI lists are related words; a form the check rejects is left out");
 });
@@ -1070,4 +1071,64 @@ test("when no book the author read uses the term, the step says how many books w
   const { engine: research } = engine({ corpus, log: (event) => logs.push(event) });
   await research.runToReview();
   assert.ok(logs.some((event) => event.type === "fact" && event.text === "None of the 2 books the search site holds of those the author read uses “fatal”."));
+});
+
+test("the word family starts from the texts' own words containing the stem, sorted by the AI", async () => {
+  assert.deepEqual(familyStems(["mundo", "mundos"]), ["mund"]);
+  assert.deepEqual(familyStems(["íntimo", "íntima", "intimo", "intimas"]), ["íntim", "intim"]);
+  assert.deepEqual(familyStems(["sensible", "sensibles"]), ["sensib"]);
+  assert.deepEqual(familyStems(["fe", "fes"]), [], "a stem under 4 letters matches too many words");
+
+  const base = fakeCorpus(passages(40));
+  const rows = { celestial: 4, inmundo: 0, fatalismo: 3 };
+  const corpus = {
+    ...base,
+    stemsAsked: null,
+    async stemWords(stems) {
+      this.stemsAsked = stems;
+      return [{ form: "fatalidad", rows: 9 }, { form: "fatalidades", rows: 2 }, { form: "fatalismo", rows: 3 }, { form: "rafatalo", rows: 1 }, { form: "fatal21", rows: 1 }];
+    },
+    async countForm(form) {
+      return form in rows ? { rows: rows[form], examples: [{ text: `Un ${form} aquí.`, start: 3, end: 3 + form.length }] } : base.countForm(form);
+    },
+  };
+  const inner = fakeModel();
+  const requests = [];
+  const answer = (out) => ({ status: "ok", text: JSON.stringify(out), usage: { inputTokens: 10, outputTokens: 10 } });
+  const model = {
+    calls: inner.calls,
+    async call(request, onDelta) {
+      requests.push(request);
+      if (request.schemaName === "family") {
+        inner.calls.push(request.stage);
+        return answer({
+          words: [
+            { form: "fatalidad", kind: "suffixed", of: null, verdict: "related", reason: "noun" },
+            { form: "fatalidades", kind: "suffixed", of: "fatalidad", verdict: "related", reason: "plural" },
+            { form: "fatalismo", kind: "suffixed", of: null, verdict: "unsure", reason: "may be" },
+          ],
+          suggested: [{ form: "celestial", kind: "suffixed", reason: "changed stem" }, { form: "inmundo", kind: "prefixed", reason: "x" }],
+        });
+      }
+      if (request.schemaName === "family_check") {
+        inner.calls.push(request.stage);
+        return answer({ forms: [{ form: "fatalismo", keep: true, reason: "built on it" }] });
+      }
+      return inner.call(request, onDelta);
+    },
+  };
+  const { engine: research, store } = engine({ model, corpus });
+  await research.runToReview();
+  assert.deepEqual(corpus.stemsAsked, ["fatal"]);
+  const family = requests.find((request) => request.schemaName === "family");
+  assert.match(family.content, /contain “fatal” \(paragraphs\): fatalidad \(9\), fatalidades \(2\), fatalismo \(3\), rafatalo \(1\)$/m);
+  assert.doesNotMatch(family.content, /fatal21/, "a word with a footnote number is not a word");
+  assert.match(family.instructions, /stem is changed/);
+  const check = requests.find((request) => request.schemaName === "family_check");
+  assert.match(check.content, /^“fatalismo”: 3 passages\n   Un ⟦fatalismo⟧ aquí\./m, "only the unsure word is read in an example");
+  const members = Object.fromEntries(store.data.family.members.map((m) => [m.form, m]));
+  assert.deepEqual(Object.keys(members).sort(), ["celestial", "fatalidad", "fatalidades", "fatalismo"]);
+  assert.equal(members.fatalidad.rows, 9, "listed words keep the list's count");
+  assert.equal(members.fatalidades.of, "fatalidad");
+  assert.ok(!members.inmundo, "a suggestion not in the texts is dropped");
 });

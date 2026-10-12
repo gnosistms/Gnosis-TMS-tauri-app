@@ -230,6 +230,19 @@ export function createSamaelCorpus({ baseUrl = samaelCorpusUrl(), fetchImpl = gl
         return null; // an older site without the endpoint: only the spellings themselves are searched
       }
     },
+    /**
+     * Every word of the author's texts that contains one of the stems anywhere
+     * ("mund": mundial, submundo, inmundo, Raimundo), with its paragraphs: the
+     * candidates for the term's word family. Null when the site cannot say.
+     */
+    async stemWords(stems) {
+      try {
+        const result = await get("/api/sample/stem-words", { stems: stems.join(","), kind: "samael" });
+        return (result.words ?? []).map((word) => ({ form: word.form, rows: word.rows ?? 0 }));
+      } catch {
+        return null; // an older site: the words that begin like the term are used instead
+      }
+    },
     /** Every passage of the reference books that uses the forms, in seeded random order. */
     async sourceUsage(forms, seed) {
       const result = await get("/api/sample", { forms: forms.join(","), n: 2000, seed, kind: "source", context: 0 });

@@ -448,10 +448,15 @@ const spellingKey = (text) => str(text).normalize("NFD").replace(/[\u0300-\u036f
 
 function familyDisplay(section) {
   const request = section.requests.find((item) => item.stage === "family");
-  // The second request checks the forms found for the related words.
-  const formCheck = section.requests.find((item) => item.stage === "family" && item !== request);
-  const notForms = new Set(list(answerOf(formCheck)?.forms).filter((form) => form?.keep === false).map((form) => lower(form.form)));
-  const words = list(answerOf(request)?.words).filter((word) => str(word?.form) && word.kind !== "phrase");
+  // Later requests check words: the unsure ones in an example, and the forms found
+  // for suggested words. What they reject is not shown.
+  const checks = section.requests.filter((item) => item.stage === "family" && item !== request);
+  const notForms = new Set(checks.flatMap((check) => list(answerOf(check)?.forms)).filter((form) => form?.keep === false).map((form) => lower(form.form)));
+  const answer = answerOf(request);
+  // The words of the texts the AI took as related (a form of another goes with it),
+  // then its suggestions; runs before 2026-10-12 have only the first list.
+  const words = [...list(answer?.words), ...list(answer?.suggested)]
+    .filter((word) => str(word?.form) && word.kind !== "phrase" && !str(word.of) && !notForms.has(lower(word.form)));
   if (!words.length) return null;
   // Counts arrive one by one as data; older runs logged them in one line at the end.
   const checked = new Map(resultData(section, "familyCount").map((item) => [lower(item.form), item]));
@@ -490,7 +495,7 @@ function familyDisplay(section) {
     return tip(`${str(group.lead.reason)}${spellings}`, chip(text, s.missing ? "faint" : ""));
   };
   const all = [...groups.values()];
-  const drawn = { requests: new Set([request.requestId, ...(formCheck ? [formCheck.requestId] : [])]), results: new Set(["familyCount"]), facts: [/^(Related words in the texts|Word family in the texts|No other words built on the term)/] };
+  const drawn = { requests: new Set([request.requestId, ...checks.map((check) => check.requestId)]), results: new Set(["familyCount"]), facts: [/^(Related words in the texts|Word family in the texts|No other words built on the term)/] };
   const legend = (pending) => [
     "Hover a word for what it is and how it is spelled; +n: other spellings or forms of it.",
     [...checked.values()].length ? "The number is how many paragraphs use it." : "",

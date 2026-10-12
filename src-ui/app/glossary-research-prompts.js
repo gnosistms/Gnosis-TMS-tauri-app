@@ -1,7 +1,7 @@
 // Prompt texts and strict JSON schemas for Glossary Research.
 // Bump RESEARCH_PROMPT_VERSION on any change that could alter a judgment.
 
-export const RESEARCH_PROMPT_VERSION = "2026-10-09.3";
+export const RESEARCH_PROMPT_VERSION = "2026-10-12.1";
 
 const STR = { type: "string" };
 const NSTR = { anyOf: [{ type: "string" }, { type: "null" }] };
@@ -389,7 +389,8 @@ export const WEB_DICTIONARY_SCHEMA = object({
 // --- word family ------------------------------------------------------------
 
 export const FAMILY_SCHEMA = object({
-  words: arrayOf(object({ form: STR, kind: oneOf("prefixed", "suffixed", "compound", "phrase"), reason: STR })),
+  words: arrayOf(object({ form: STR, kind: oneOf("prefixed", "suffixed", "compound", "phrase"), of: NSTR, verdict: oneOf("related", "unsure"), reason: STR })),
+  suggested: arrayOf(object({ form: STR, kind: oneOf("prefixed", "suffixed", "compound", "phrase"), reason: STR })),
 });
 
 export function nearFormsInstructions(ctx) {
@@ -403,8 +404,18 @@ Each line is a word of the texts found as a possible form of a related word (fro
 }
 
 export function familyInstructions(ctx) {
-  return `You list the word family of the ${ctx.sourceName} word “${ctx.headword}” for a corpus study. ${corpusLine(ctx)}
-List ${ctx.sourceName} words that contain the headword (or its stem) as one of their parts: the word with a prefix (also written with a hyphen or a space after the prefix), the word with a suffix that makes another word, and compounds. Do not list phrases of separate words: a phrase needs its own entry only when translating its words with their own translations does not work, and the study of the word decides that from its passages. Go through the productive prefixes and suffixes of ${ctx.sourceName} one by one rather than listing only the obvious ones; authors coin words with them. Include the spellings a text might use (joined, hyphenated, spaced; with and without accents). Do not list the inflections of the headword itself; they are already in the study. From the words of the texts that begin with the headword's letters, list those built on the headword, and leave out words that merely share its first letters. At most 40, the most plausible for these texts first. Each one is searched in the texts and dropped if it does not occur. reason: at most 8 words, in ${ctx.reportName}.`;
+  const limit = ctx.suggestions ?? 15;
+  return `You build the word family of the ${ctx.sourceName} word “${ctx.headword}” for a corpus study. ${corpusLine(ctx)}
+words: from the listed words of the texts, give those built on the headword: the word with a prefix (also written with a hyphen or a space after the prefix), with a suffix that makes another word, or in a compound. Leave out the headword's own inflections (they are already in the study), and leave out every word that merely contains its letters: a different word, a name, a word in another language. Omitted words count as not related. When a word you give is a form of another word you give (plural, feminine, a verb form), name that word in "of"; otherwise "of" is null. verdict "related" when you know it from the word itself; "unsure" when only a passage could tell (it is then checked in an example). Use only the listed words, written as listed.
+suggested: at most ${limit} words built on the headword that ${ctx.completeList
+    ? "the list cannot contain: words whose stem is changed (a learned or older form of the stem), and words a text may write with a hyphen or a space after a prefix (the list holds those as two words)"
+    : `are not in the list; go through the productive prefixes and suffixes of ${ctx.sourceName}, since authors coin words with them`}. Each is searched in the texts and dropped if it does not occur. Do not repeat listed words. Do not list phrases of separate words: a phrase needs its own entry only when translating its words with their own translations does not work, and the study of the word decides that.
+reason: at most 6 words, in ${ctx.reportName}.`;
+}
+
+export function familyCheckInstructions(ctx) {
+  return `You check words of the texts that may be built on the ${ctx.sourceName} word “${ctx.headword}”. ${corpusLine(ctx)}
+Each line is a word with its number of passages and an example. Keep it when the example shows a word built on the headword (with a prefix, a suffix that makes another word, or in a compound). Drop it when it is a different word that merely contains the letters, or a name. Give every line; form: the word as written. Reasons at most 8 words, in ${ctx.reportName}.`;
 }
 
 // --- parts and senses of the term ----------------------------------------------

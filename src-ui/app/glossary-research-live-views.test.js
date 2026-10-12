@@ -149,3 +149,26 @@ test("where the term comes from: a table of meanings first, then what the search
   assert.ok(shown.requests.has("s1") && shown.results.has("senses") && shown.results.has("bookCounts"));
   assert.ok(section.items.filter((item) => item.kind === "line").every((item) => shown.facts.some((pattern) => pattern.test(item.entry.text))), "every finding is drawn once, by the display");
 });
+
+test("the related words: forms go with their word, suggestions join, words the check rejects are not shown", () => {
+  const family = { requestId: "f1", stage: "family", usage: {}, answer: JSON.stringify({
+    words: [
+      { form: "submundo", kind: "prefixed", of: null, verdict: "related", reason: "under-world" },
+      { form: "submundos", kind: "prefixed", of: "submundo", verdict: "related", reason: "plural" },
+      { form: "mundillo", kind: "suffixed", of: null, verdict: "unsure", reason: "small world?" },
+    ],
+    suggested: [{ form: "supermundo", kind: "prefixed", reason: "above" }],
+  }) };
+  const check = { requestId: "f2", stage: "family", usage: {}, answer: '{"forms":[{"form":"mundillo","keep":false,"reason":"another word"}]}' };
+  const count = (form, rows, of) => ({ kind: "result", resultKind: "familyCount", data: [{ form, rows, ...(of ? { of } : {}) }] });
+  const shown = stepDisplay({
+    heading: "Word family",
+    items: [count("submundo", 24), count("submundos", 1, "submundo"), count("supermundo", 1),
+      { kind: "line", entry: { type: "fact", text: "Related words in the texts (paragraphs): submundo (24), submundos (1), supermundo (1)" } }],
+    requests: [family, check],
+  });
+  assert.match(shown.html, /submundo \(24\) \+1/);
+  assert.match(shown.html, /supermundo \(1\)/);
+  assert.doesNotMatch(shown.html, /mundillo/);
+  assert.ok(shown.requests.has("f2"));
+});
