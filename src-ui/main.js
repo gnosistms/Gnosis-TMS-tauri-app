@@ -138,7 +138,6 @@ import {
   setProjectsVirtualizationDisabled,
 } from "./app/projects-virtual-list.js";
 import {
-  deferProjectsRenderWhileScrolling,
   deferProjectsRenderWhileSelectEngaged,
   installProjectsRenderHold,
 } from "./app/projects-render-hold.js";
@@ -406,18 +405,14 @@ function render(options = {}) {
   }
   // While a protected projects-page select is engaged, full renders defer so
   // the open dropdown isn't destroyed mid-selection; the hold flushes on
-  // commit/disengage. While the user scrolls the projects list, full renders
-  // are limited to one every few seconds. See projects-render-hold.js.
+  // commit/disengage. See projects-render-hold.js.
   // A held render may have become a no-op by the time it runs.
   const performRender = () => {
     if (!skipUnchangedProjectsRender(options)) {
       renderWithOptions(options);
     }
   };
-  if (
-    deferProjectsRenderWhileSelectEngaged(state, performRender)
-    || deferProjectsRenderWhileScrolling(state, options, performRender)
-  ) {
+  if (deferProjectsRenderWhileSelectEngaged(state, performRender)) {
     return undefined;
   }
   return renderWithOptions(options);
