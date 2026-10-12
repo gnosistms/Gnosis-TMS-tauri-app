@@ -1246,3 +1246,11 @@ test("passed candidates are added to the word entries; failed ones, original-wor
   assert.equal(proposal.entries[2].variants.length, 1, "expressions keep their own translations");
   assert.deepEqual(proposal.leftOutRenderings, [], "no longer listed as left out");
 });
+
+test("the counting lines name the texts being searched", async () => {
+  const logs = [];
+  const corpus = { ...fakeCorpus(passages(40)), textsName: "Samael Aun Weor's books and lectures" };
+  const { engine: research } = engine({ corpus, log: (event) => logs.push(event) });
+  await research.runToReview();
+  assert.ok(logs.some((event) => event.type === "info" && event.text === "Counting how many paragraphs in Samael Aun Weor's books and lectures use each spelling…"));
+});

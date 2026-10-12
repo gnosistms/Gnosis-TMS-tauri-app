@@ -122,6 +122,8 @@ export function createSamaelCorpus({ baseUrl = samaelCorpusUrl(), fetchImpl = gl
 
   return {
     description: "the complete works of Samael Aun Weor (Spanish books and lectures)",
+    // What the person reads in the steps: "Counting how many paragraphs in … use each word".
+    textsName: "Samael Aun Weor's books and lectures",
     sourceLabel: "Complete works of Samael Aun Weor",
     async formsHint(term) {
       const word = term.trim().split(/\s+/).length === 1 ? term.trim() : null;
@@ -323,6 +325,7 @@ export function createProjectsCorpus({ invoke, installationId, projects, languag
   };
   return {
     description: `the team's projects: ${projects.map((project) => project.title).join(", ")}`,
+    textsName: projects.length === 1 ? `the project “${projects[0].title}”` : projects.length <= 3 ? `the projects ${projects.map((project) => `“${project.title}”`).join(", ")}` : `the ${projects.length} selected projects`,
     sourceLabel: projects.map((project) => project.title).join(", "),
     formsHint: null,
     async countForm(form) {

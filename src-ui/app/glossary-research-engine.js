@@ -917,7 +917,7 @@ export function createResearchEngine(deps) {
         ...extensions,
       ], (f) => f.form).filter((f) => !proposedForms.some((p) => p.form.toLowerCase() === f.form.toLowerCase()));
       const counted = [];
-      info("Counting how many paragraphs use each spelling…");
+      info(`Counting how many paragraphs in ${corpus.textsName ?? "the texts"} use each spelling…`);
       for (const candidate of [...proposedForms, ...extra]) {
         const count = await corpus.countForm(candidate.form);
         const added = !proposedForms.includes(candidate);
@@ -1051,7 +1051,7 @@ export function createResearchEngine(deps) {
       // Words the AI suggests beyond the list: searched; those in the texts bring their forms.
       const suggested = mergeCaseVariants((proposed.suggested ?? []).filter(usable), (w) => w.form)
         .filter((w) => !found.has(fold(w.form).trim())).slice(0, fromTexts ? 15 : 45);
-      if (suggested.length) info("Counting how many paragraphs use each suggested word…");
+      if (suggested.length) info(`Counting how many paragraphs in ${corpus.textsName ?? "the texts"} use each suggested word…`);
       for (const word of suggested) {
         const present = await search(word.form, word.kind);
         if (present && corpus.formsHint && !/\s/.test(word.form.trim())) {

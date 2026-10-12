@@ -446,7 +446,7 @@ function formsDisplay(section, context) {
 /** One word written several ways (with or without accents, hyphens, spaces) is one key. */
 const spellingKey = (text) => str(text).normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[-\s]/g, "").toLowerCase();
 
-function familyDisplay(section) {
+function familyDisplay(section, context = {}) {
   const request = section.requests.find((item) => item.stage === "family");
   // Later requests check words: the unsure ones in an example, and the forms found
   // for suggested words. What they reject is not shown.
@@ -506,7 +506,7 @@ function familyDisplay(section) {
     const pending = all.filter((group) => state(group).pending).length;
     return {
       ...drawn,
-      html: view("family", checked.size ? "Possible related words, and how many paragraphs use each" : "Possible related words (each is then searched for in the texts)",
+      html: view("family", checked.size ? `Possible related words, and how many paragraphs in ${esc(context.texts ?? "the texts")} use each` : `Possible related words (each is then searched for in ${esc(context.texts ?? "the texts")})`,
         `<div class="research-view__chips">${all.map(chipOf).join("")}</div><p class="research-view__explain">${legend(checked.size ? pending : 0)}</p>`),
     };
   }
@@ -515,7 +515,7 @@ function familyDisplay(section) {
   const missing = all.filter((group) => !state(group).found);
   return {
     ...drawn,
-    html: view("family", found.length ? "Related words in the texts, and how many paragraphs use each" : "None of the possible related words is in the texts", `
+    html: view("family", found.length ? `Related words in ${esc(context.texts ?? "the texts")}, and how many paragraphs use each` : `None of the possible related words is in ${esc(context.texts ?? "the texts")}`, `
       <div class="research-view__chips">${found.map(chipOf).join("")}</div>
       ${missing.length ? `<details class="research-view__more"><summary>${plural(missing.length, "possible word")} not in the texts</summary><div class="research-view__chips">${missing.map(chipOf).join("")}</div></details>` : ""}
       <p class="research-view__explain">${legend(0)}</p>`),
