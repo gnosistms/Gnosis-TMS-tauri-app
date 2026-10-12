@@ -580,11 +580,35 @@ function batchContent(batch, entryLabel) {
   return `${parts.join("\n\n")}\n\nReturn one item for each of: ${ids}`;
 }
 
+function addConsistencyResults(tally, results, expectedByKey, entryById) {
+  let complete = expectedByKey.size > 0;
+  for (const [key, occurrences] of expectedByKey) {
+    const value = results.get(key);
+    const rows = value && !(value instanceof Error) && Array.isArray(value.items) ? value.items : [];
+    const expected = new Map(occurrences.map((occurrence) => [occurrence.occId, occurrence]));
+    const seen = new Set();
+    const valid = [];
+    for (const row of rows) {
+      const occurrence = expected.get(row?.occId);
+      if (!occurrence || seen.has(row.occId) || row.status !== "selected"
+        || !entryById[occurrence.entryId]?.variants.some((variant) => variant.id === row.variantId)) {
+        complete = false;
+        continue;
+      }
+      seen.add(row.occId);
+      valid.push(row);
+    }
+    if (seen.size !== expected.size) complete = false;
+    addRound(tally, valid);
+  }
+  return complete;
+}
+
 /**
  * The report's "Test again": the sentences of a consistency conflict translated
  * `rounds` times each with the entry as the person left it (their notes, the
  * translations still ticked). `client`: a model client (createModelClient);
- * `run`: the saved run (meta, counting, sample, forms). Returns { flips, answered }:
+ * `run`: the saved run (meta, counting, sample, forms). Returns { flips, answered, complete }:
  * the sentences where the translator still takes turns, and how many answers came.
  */
 export async function retestConsistency({ client, run, entry, occIds, rounds = CONSISTENCY_ROUNDS }) {
@@ -601,20 +625,24 @@ export async function retestConsistency({ client, run, entry, occIds, rounds = C
   const items = [...new Set(occurrences.map((occurrence) => occurrence.itemId))].map((id) => run.sample?.items?.[id]).filter(Boolean);
   const label = () => `${entry.kind === "expression" ? "expression " : ""}entry [${entry.id}] “${entry.sourceTerms.join(" / ")}”`;
   const keyed = [];
+  const expectedByKey = new Map();
   for (let round = 0; round < rounds; round += 1) {
-    batchOccurrences(items, occurrences, 16).forEach((batch, index) => keyed.push([`${round}:${index}`, {
-      stage: "consistency", purpose: `translate the test sentences again with the edited entry (round ${round + 1})`,
-      instructions, content: batchContent(batch, label),
-      schema: prompts.TRANSLATE_SCHEMA, schemaName: "consistency",
-      maxOutputTokens: 1200 + 330 * batch.occurrences.length, effort: "low",
-    }]));
+    batchOccurrences(items, occurrences, 16).forEach((batch, index) => {
+      expectedByKey.set(`${round}:${index}`, batch.occurrences);
+      keyed.push([`${round}:${index}`, {
+        stage: "consistency", purpose: `translate the test sentences again with the edited entry (round ${round + 1})`,
+        instructions, content: batchContent(batch, label),
+        schema: prompts.TRANSLATE_SCHEMA, schemaName: "consistency",
+        maxOutputTokens: 1200 + 330 * batch.occurrences.length, effort: "low",
+      }]);
+    });
   }
   const results = await client.callMany(keyed, 5);
   const tally = new Map();
-  for (const value of results.values()) {
-    if (value && !(value instanceof Error)) addRound(tally, value.items.filter((row) => occIds.includes(row.occId)));
-  }
-  return { flips: flipsOf(tally), answered: [...tally.values()].reduce((n, row) => n + row.rounds, 0) };
+  const covered = addConsistencyResults(tally, results, expectedByKey, { [entry.id]: entry });
+  const complete = covered && occurrences.length === new Set(occIds).size
+    && occurrences.every((occurrence) => tally.get(occurrence.occId)?.rounds === rounds);
+  return { flips: flipsOf(tally), answered: [...tally.values()].reduce((n, row) => n + row.rounds, 0), complete };
 }
 
 // --- the budgeted model client ---------------------------------------------------
@@ -758,7 +786,7 @@ export function createResearchEngine(deps) {
   // The step running now, and whether the person asked to skip it.
   let currentStep = null;
   let skipping = null;
-  let skipWaiters = [];
+  const skipWaiters = [];
   const isSkipped = () => skipping != null && skipping === currentStep;
   const heading = (text) => {
     currentStep = text;
@@ -2413,7 +2441,7 @@ export function createResearchEngine(deps) {
       const frozen = freeze(confirmedProposal);
       const previous = store.load("frozen");
       if (previous && previous.version !== frozen.version) {
-        store.save("counting", null);
+        for (const name of ["counting", "counting2", "aggregate", "consistency", "footnotes", "prose"]) store.save(name, null);
         info(`proposal edited: new version ${frozen.version}; earlier counts discarded`);
       }
       store.save("frozen", frozen);
@@ -2602,26 +2630,28 @@ export function createResearchEngine(deps) {
       const items = [...new Set(occurrences.map((occurrence) => occurrence.itemId))].map((id) => sample.items[id]).filter(Boolean);
       const batches = batchOccurrences(items, occurrences, settings.countBatch * 2);
       const keyed = [];
+      const expectedByKey = new Map();
       for (let round = 0; round < rounds; round += 1) {
-        batches.forEach((batch, index) => keyed.push([`${round}:${index}`, {
-          stage: "consistency", purpose: `translate the test sentences with the finished entry (round ${from + round + 1})`,
-          progress: { key: "occId", total: batch.occurrences.length, unit: "use", variants: names },
-          instructions, content: batchContent(batch, label),
-          schema: prompts.TRANSLATE_SCHEMA, schemaName: "consistency",
-          maxOutputTokens: 1200 + 330 * batch.occurrences.length, effort: settings.effortLight,
-        }]));
+        batches.forEach((batch, index) => {
+          expectedByKey.set(`${round}:${index}`, batch.occurrences);
+          keyed.push([`${round}:${index}`, {
+            stage: "consistency", purpose: `translate the test sentences with the finished entry (round ${from + round + 1})`,
+            progress: { key: "occId", total: batch.occurrences.length, unit: "use", variants: names },
+            instructions, content: batchContent(batch, label),
+            schema: prompts.TRANSLATE_SCHEMA, schemaName: "consistency",
+            maxOutputTokens: 1200 + 330 * batch.occurrences.length, effort: settings.effortLight,
+          }]);
+        });
       }
       const results = await client.callMany(keyed, settings.workers);
-      for (const value of results.values()) {
-        if (value && !(value instanceof Error)) addRound(tally, value.items.filter((row) => occIds.includes(row.occId)));
+      checkSkip();
+      if (!addConsistencyResults(tally, results, expectedByKey, entryById)
+        || occurrences.length !== new Set(occIds).size) {
+        throw new ResearchStop("The consistency test did not receive a valid translation for every sentence on every try. Resume to try the test again.", "failed");
       }
     };
     info(`Translating ${picks.length} test ${picks.length === 1 ? "sentence" : "sentences"} ${CONSISTENCY_ROUNDS} times each with the finished entry, to see whether the translator keeps to one translation…`);
     await translateRounds(picks.map((pick) => pick.occId), CONSISTENCY_ROUNDS, 0);
-    if (![...tally.values()].some((entry) => entry.rounds)) {
-      fact("The consistency test could not be done: no translation came back.");
-      return { ...empty, sentences: picks, failed: true };
-    }
     const flips = flipsOf(tally);
     if (!flips.length) {
       fact(`The translator kept to one translation in all ${picks.length} test ${picks.length === 1 ? "sentence" : "sentences"}, ${CONSISTENCY_ROUNDS} times each.`);
@@ -2642,9 +2672,19 @@ export function createResearchEngine(deps) {
       schema: prompts.CONSISTENCY_SCHEMA, schemaName: "consistency_meaning",
       maxOutputTokens: 800 + 120 * flips.length, effort: settings.effortLight,
     });
-    const verdicts = new Map((verdict.items ?? []).map((row) => [row.occId, row]));
+    const verdicts = new Map();
+    const expectedVerdicts = new Set(flips.map((flip) => flip.occId));
+    for (const row of Array.isArray(verdict.items) ? verdict.items : []) {
+      if (!expectedVerdicts.has(row?.occId) || verdicts.has(row.occId) || typeof row.sameMeaning !== "boolean") {
+        throw new ResearchStop("The consistency test returned an invalid meaning verdict. Resume to try the test again.", "failed");
+      }
+      verdicts.set(row.occId, row);
+    }
+    if (verdicts.size !== expectedVerdicts.size) {
+      throw new ResearchStop("The consistency test did not judge the meaning of every sentence. Resume to try the test again.", "failed");
+    }
     for (const flip of flips) {
-      flip.sameMeaning = verdicts.get(flip.occId)?.sameMeaning !== false;
+      flip.sameMeaning = verdicts.get(flip.occId).sameMeaning;
       flip.reason = verdicts.get(flip.occId)?.reason ?? "";
     }
     const sets = flipSets(flips, entryOf, new Map(flips.map((flip) => [flip.occId, flip.sameMeaning])));

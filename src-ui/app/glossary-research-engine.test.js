@@ -163,7 +163,7 @@ function fakeModel({ failFirstCounting = false, relation = "same" } = {}) {
         out = { items: [{ existing: "fateful", verdict: "proposed", proposedVariantId: "e1v2", reason: "same" }] };
       } else if (request.stage === "proposal") {
         out = PROPOSAL;
-      } else if (request.stage === "counting") {
+      } else if (request.stage === "counting" || request.schemaName === "consistency") {
         countingCalls += 1;
         if (failFirstCounting && countingCalls === 1) {
           return { status: "failed", message: "HTTP 529", retryable: true, billedUnknown: false };
@@ -1259,14 +1259,13 @@ test("the counting lines name the texts being searched", async () => {
 
 test("a step the person may skip ends with what it has; a step the others need cannot be skipped", async () => {
   // The dictionary page waits (a check box): skipping ends the wait, research goes on.
-  let research;
   const logs = [];
   const waiting = { lookup: () => new Promise(() => {}) };
   const made = engine({ dictionary: waiting, log: (event) => {
     logs.push(event);
     if (event.type === "info" && /^Looking up/.test(event.text)) setTimeout(() => research.skip(), 0);
   } });
-  research = made.engine;
+  const research = made.engine;
   const review = await research.runToReview();
   assert.equal(review.status, "review");
   assert.equal(made.store.data.dictionary.status, "skipped");
@@ -1282,7 +1281,6 @@ test("a step the person may skip ends with what it has; a step the others need c
 
 test("skipping the candidate check sends every candidate on unchecked, and all reach the vote", async () => {
   const inner = fakeModel();
-  let research;
   const model = {
     calls: inner.calls,
     async call(request, onDelta) {
@@ -1295,7 +1293,7 @@ test("skipping the candidate check sends every candidate on unchecked, and all r
     },
   };
   const made = engine({ model });
-  research = made.engine;
+  const research = made.engine;
   const review = await research.runToReview();
   assert.equal(made.store.data.checks.skipped, true);
   assert.ok(made.store.data.checks.candidates.every((c) => c.verdict === "unchecked"));
@@ -1305,7 +1303,6 @@ test("skipping the candidate check sends every candidate on unchecked, and all r
 
 test("skipping the second translator leaves the first count to decide", async () => {
   const inner = fakeModel();
-  let research;
   const model = {
     calls: inner.calls,
     async call(request, onDelta) {
@@ -1317,7 +1314,7 @@ test("skipping the second translator leaves the first count to decide", async ()
     },
   };
   const made = engine({ model, judges: 2 });
-  research = made.engine;
+  const research = made.engine;
   const review = await research.runToReview();
   const done = await research.runCounting(review.proposal);
   assert.equal(done.status, "done");
@@ -1327,9 +1324,10 @@ test("skipping the second translator leaves the first count to decide", async ()
 });
 
 /** A model whose translator takes turns on one sentence: `pattern` gives its choice per try. */
-function flippingModel({ pattern, sameMeaning }) {
+function flippingModel({ pattern, sameMeaning, flipCount = 1 }) {
   const inner = fakeModel();
   let flipped = null;
+  let flippedIds = null;
   let tries = 0;
   const seen = [];
   return {
@@ -1338,9 +1336,10 @@ function flippingModel({ pattern, sameMeaning }) {
       if (request.schemaName === "consistency") {
         const answer = await inner.call({ ...request, stage: "counting" }, onDelta);
         const parsed = JSON.parse(answer.text);
-        flipped ??= parsed.items.find((row) => row.variantId === "e1v1")?.occId;
+        flippedIds ??= parsed.items.filter((row) => row.variantId === "e1v1").slice(0, flipCount).map((row) => row.occId);
+        flipped ??= flippedIds[0];
         for (const row of parsed.items) {
-          if (row.occId !== flipped) continue;
+          if (!flippedIds.includes(row.occId)) continue;
           const choice = pattern[tries % pattern.length];
           tries += 1;
           if (choice === "other") Object.assign(row, { status: "unresolved", variantId: null, unresolvedReason: "insufficient_context" });
@@ -1389,14 +1388,14 @@ test("consistency test: a flip that changes the meaning is left to the person", 
 });
 
 test("consistency test: a tie is broken by translating the same sentences again", async () => {
-  // Two each and one unclear in the first five tries, then "fateful" every time.
-  const model = flippingModel({ pattern: ["e1v1", "e1v2", "e1v1", "e1v2", "other", "e1v2", "e1v2", "e1v2", "e1v2", "e1v2"], sameMeaning: true });
+  // Two sentences flip in opposite directions: five votes each, then ten for "fateful".
+  const model = flippingModel({ pattern: [...Array(5).fill("e1v1"), ...Array(15).fill("e1v2")], sameMeaning: true, flipCount: 2 });
   const { engine: research, store } = engine({ model });
   const review = await research.runToReview();
   await research.runCounting(review.proposal);
   const result = store.data.consistency;
   assert.equal(result.standardised[0].keep, "e1v2");
-  assert.deepEqual(result.standardised[0].votes, { e1v1: 2, e1v2: 7 });
+  assert.deepEqual(result.standardised[0].votes, { e1v1: 5, e1v2: 15 });
 });
 
 test("test again translates the conflict's sentences with the edited entry and says whether the translator still takes turns", async () => {
@@ -1416,7 +1415,126 @@ test("test again translates the conflict's sentences with the edited entry and s
   const steady = await retestConsistency({ client: client(["v2"]), run: runSaved, entry, occIds: ["o1.1"] });
   assert.equal(steady.flips.length, 0);
   assert.equal(steady.answered, 5);
+  assert.equal(steady.complete, true);
   assert.match(sent[0].instructions, /\[v2\] planet — A physical planet\./, "the edited note is what the translator sees");
   const turns = await retestConsistency({ client: client(["v1", "v2"]), run: runSaved, entry, occIds: ["o1.1"] });
   assert.equal(turns.flips.length, 1);
+});
+
+for (const failure of ["failed rounds", "missing sentence", "other", "unknown variant", "duplicate rows"]) {
+  test(`consistency retest remains incomplete with ${failure}`, async () => {
+    const run = {
+      meta: { term: "mundo" },
+      counting: { occurrences: [{ occId: "o1.1", entryId: "e1", itemId: "p1", start: 0, end: 5, surface: "mundo", sentenceStart: 0, sentenceEnd: 6 }] },
+      sample: { items: { p1: { itemId: "p1", text: "mundo.", occurrences: [{ start: 0, end: 5, surface: "mundo" }] } } },
+    };
+    const entry = { id: "e1", kind: "word", sourceTerms: ["mundo"], generalNote: "", variants: [{ id: "v1", target: "world", note: "" }] };
+    const client = { async callMany(keyed) {
+      return new Map(keyed.map(([key], i) => {
+        const row = { occId: "o1.1", status: "selected", variantId: "v1" };
+        if (i > 0 && failure === "failed rounds") return [key, new Error("failed")];
+        if (i === 1 && failure === "missing sentence") return [key, { items: [] }];
+        if (i === 1 && failure === "other") row.status = "other";
+        if (i === 1 && failure === "unknown variant") row.variantId = "unknown";
+        return [key, { items: i === 1 && failure === "duplicate rows" ? [row, row] : [row] }];
+      }));
+    } };
+    const result = await retestConsistency({ client, run, entry, occIds: ["o1.1"] });
+    assert.equal(result.complete, false);
+  });
+}
+
+test("a changed proposal rebuilds both judges and all dependent checkpoints on resume", async () => {
+  const made = engine({ judges: 2 });
+  const review = await made.engine.runToReview();
+  await made.engine.runCounting(review.proposal);
+  const previous = structuredClone(made.store.data);
+  const edited = structuredClone(review.proposal);
+  edited.entries[0].variants[0].note = "New usage rule";
+  made.store.data.footnotes = [{ target: "obsolete note" }];
+  made.store.data.consistency = { obsolete: true, dropped: ["e1v1"] };
+  const resumed = engine({ store: made.store, judges: 2 });
+  const done = await resumed.engine.runCounting(edited);
+  assert.notEqual(done.frozen.version, previous.frozen.version);
+  assert.equal(made.store.data.counting.frozenVersion, done.frozen.version);
+  assert.equal(made.store.data.counting2.frozenVersion, done.frozen.version);
+  assert.equal(made.store.data.aggregate.frozenVersion, done.frozen.version);
+  assert.equal(made.store.data.consistency.obsolete, undefined);
+  assert.deepEqual(made.store.data.footnotes, []);
+  assert.ok(resumed.model.calls.includes("consistency"));
+  assert.ok(resumed.model.calls.includes("summary"));
+});
+
+for (const failure of ["failed rounds", "missing sentence", "unknown variant", "duplicate rows", "unresolved", "null row"]) {
+  test(`initial consistency test cannot finish with ${failure}`, async () => {
+    const inner = fakeModel();
+    let rounds = 0;
+    let failing = true;
+    const logs = [];
+    const model = { calls: inner.calls, async call(request, onDelta) {
+      if (request.schemaName !== "consistency") return inner.call(request, onDelta);
+      const round = ++rounds;
+      if (failing && failure === "failed rounds" && round > 1) return { status: "failed", message: "HTTP 400", retryable: false, billedUnknown: false };
+      const answer = await inner.call(request, onDelta);
+      if (failing && round === 2) {
+        const out = JSON.parse(answer.text);
+        if (failure === "missing sentence") out.items.pop();
+        if (failure === "unknown variant") out.items[0].variantId = "unknown";
+        if (failure === "duplicate rows") out.items.push(out.items[0]);
+        if (failure === "unresolved") out.items[0].status = "unresolved";
+        if (failure === "null row") out.items[0] = null;
+        return { ...answer, text: JSON.stringify(out) };
+      }
+      return answer;
+    } };
+    const made = engine({ model, log: (event) => logs.push(event) });
+    const review = await made.engine.runToReview();
+    await assert.rejects(made.engine.runCounting(review.proposal), /valid translation for every sentence/);
+    assert.equal(made.store.data.consistency, undefined);
+    assert.ok(!logs.some((event) => event.type === "fact" && /kept to one translation/.test(event.text)));
+    const counting = made.store.data.counting;
+    failing = false;
+    await made.engine.runCounting(review.proposal);
+    assert.equal(made.store.data.counting, counting, "completed counts survive a retry");
+    assert.ok(made.store.data.consistency);
+  });
+}
+
+for (const failure of ["missing", "duplicate", "unknown sentence", "non-boolean", "null row"]) {
+  test(`consistency does not standardise translations with a ${failure} meaning verdict`, async () => {
+    const model = flippingModel({ pattern: ["e1v1", "e1v2"], sameMeaning: true });
+    const call = model.call.bind(model);
+    model.call = async (request, onDelta) => {
+      const answer = await call(request, onDelta);
+      if (request.schemaName !== "consistency_meaning") return answer;
+      const out = JSON.parse(answer.text);
+      if (failure === "missing") out.items = [];
+      if (failure === "duplicate") out.items.push(out.items[0]);
+      if (failure === "unknown sentence") out.items[0].occId = "unknown";
+      if (failure === "non-boolean") out.items[0].sameMeaning = null;
+      if (failure === "null row") out.items[0] = null;
+      return { ...answer, text: JSON.stringify(out) };
+    };
+    const made = engine({ model });
+    const review = await made.engine.runToReview();
+    await assert.rejects(made.engine.runCounting(review.proposal), /meaning verdict|judge the meaning/);
+    assert.equal(made.store.data.consistency, undefined);
+  });
+}
+
+test("explicitly skipping the consistency test still advances after its requests are cancelled", async () => {
+  const inner = fakeModel();
+  const model = { calls: inner.calls, async call(request, onDelta) {
+    if (request.schemaName === "consistency") {
+      research.skip();
+      return { status: "cancelled" };
+    }
+    return inner.call(request, onDelta);
+  } };
+  const made = engine({ model });
+  const research = made.engine;
+  const review = await research.runToReview();
+  const done = await research.runCounting(review.proposal);
+  assert.equal(done.status, "done");
+  assert.equal(made.store.data.consistency.skipped, true);
 });
