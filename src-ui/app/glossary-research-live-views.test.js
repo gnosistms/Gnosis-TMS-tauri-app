@@ -207,3 +207,13 @@ test("while the AI looks for translations, the meanings it works on are listed a
   assert.match(filling.html, /1\. Everything that exists\.[\s\S]*…[\s\S]*2\. Earth or another planet\.[\s\S]*★[\s\S]*world[\s\S]*planet/);
   assert.ok(filling.requests.has("c1"));
 });
+
+test("while the AI studies where the term comes from, the step says what it is reading", () => {
+  const study = { requestId: "s1", stage: "sources", purpose: "study how the author uses “regenerar”", thinking: "**Comparing**",
+    progress: { reading: ["the dictionary entry (5 meanings)", "30 passages from the 3 books that use it most (Las moradas filosofales 12, Dogma y ritual de la alta magia 10, Isis sin velo 8)", "30 of his own uses, picked at random"] } };
+  const section = { heading: "Where the term comes from", items: [], requests: [study] };
+  const shown = stepDisplay(section, { author: "Samael Aun Weor", source: "Spanish" });
+  assert.match(shown.html, /What the AI is reading[\s\S]*The dictionary entry \(5 meanings\)[\s\S]*30 passages from the 3 books[\s\S]*30 of his own uses/);
+  const answered = stepDisplay({ ...section, requests: [{ ...study, usage: {}, answer: '{"senses":[{"sense":"To restore.","inDictionary":true}]}' }] }, { author: "Samael Aun Weor", source: "Spanish" });
+  assert.doesNotMatch(answered.html, /What the AI is reading/, "the answer replaces it");
+});

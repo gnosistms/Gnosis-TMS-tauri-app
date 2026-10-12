@@ -791,7 +791,8 @@ function originDisplay(section, context) {
     if ((value && "confirmed" in value) || /^confirm in the original book/.test(request.purpose ?? "")) return "check";
     return "study";
   };
-  const study = answerOf(requests.find((request) => kindOf(request) === "study"));
+  const studyRequest = requests.find((request) => kindOf(request) === "study");
+  const study = answerOf(studyRequest);
   const studySenses = list(study?.senses).filter((sense) => str(sense?.sense));
   // The program's record of each meaning (after the checks) wins over the AI's draft.
   const recorded = resultData(section, "senses");
@@ -804,7 +805,9 @@ function originDisplay(section, context) {
   const consequences = facts.filter((text) => ORIGIN_FACTS.consequence.test(text));
   const whyKnown = recorded.some((sense) => "why" in sense);
   const borrowingFacts = whyKnown ? [] : facts.filter((text) => ORIGIN_FACTS.borrowing.test(text));
-  if (!senses.length && !counts && !evidenceFacts.length) return null;
+  // While the AI studies the term (minutes), what it is reading.
+  const reading = studyRequest && isRunning(studyRequest) && !list(study?.senses).length ? list(studyRequest.progress?.reading).filter(str) : [];
+  if (!senses.length && !counts && !evidenceFacts.length && !reading.length) return null;
 
   const author = context.author ?? "the author";
   const source = context.source ?? "source-language";
@@ -885,8 +888,12 @@ function originDisplay(section, context) {
     </details>`;
   }).join("");
 
+  const readingHtml = reading.length
+    ? `<div class="research-origin__part"><p class="research-view__title">What the AI is reading</p><ul class="research-view__list research-view__list--spaced">${reading.map((line) => `<li>${esc(capitalized(line))}</li>`).join("")}</ul>
+       <p class="research-view__explain">From all this it works out, meaning by meaning, which uses are ordinary and which come from one of those books, and the book's original word.</p></div>`
+    : "";
   return {
-    html: `<div class="research-view research-view--origin">${table}${evidenceHtml}${details}</div>`,
+    html: `<div class="research-view research-view--origin">${table}${evidenceHtml}${readingHtml}${details}</div>`,
     requests: new Set(requests.map((request) => request.requestId)),
     results: new Set(["senses", "bookCounts"]),
     facts: [ORIGIN_FACTS.consequence, ...ORIGIN_FACTS.evidence, ORIGIN_FACTS.borrowing],

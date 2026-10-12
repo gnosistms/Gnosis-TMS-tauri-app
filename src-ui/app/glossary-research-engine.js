@@ -1348,9 +1348,24 @@ export function createResearchEngine(deps) {
         ...(earliest ? [section("The author's earliest dated uses of the term (year: work)", earliest.map((item) => `[${item.year ?? "undated"}: ${item.reference?.title ?? ""}]\n${snippet(item.text, item.occurrences[0]?.start ?? 0, item.occurrences[0]?.end ?? 0, 300)}`))] : []),
         section("A sample of the author's own uses", authorPassages()),
       ].join("\n\n");
+      // What the AI reads, said while it thinks (Hans, 2026-10-12: minutes passed with
+      // nothing to read on screen): only counts the program knows, not its thinking.
+      const short = (title) => title.split(" — ")[0];
+      const dictionarySenses = (ctx().dictionaryText.match(/^\s*\d+\.\s/gm) ?? []).length;
+      const topPassages = top.reduce((n, book) => n + Math.min(14, book.items.length), 0);
+      const reading = [
+        ctx().dictionaryText ? `the dictionary entry${dictionarySenses ? ` (${dictionarySenses} ${dictionarySenses === 1 ? "meaning" : "meanings"})` : ""}` : "",
+        `${topPassages} ${topPassages === 1 ? "passage" : "passages"} from the ${top.length === 1 ? "book" : `${top.length} books`} that use it most (${top.map((book) => `${short(book.title)} ${Math.min(14, book.items.length)}`).join(", ")})`,
+        originalSections.length ? `passages of the ${originalSections.length === 1 ? "original text" : `${originalSections.length} original texts`} with the paired word` : "",
+        others.length ? `one passage from each of ${others.length} other ${others.length === 1 ? "book" : "books"}` : "",
+        citations.length ? `${citations.length} ${citations.length === 1 ? "passage" : "passages"} where ${author} names those books next to the word` : "",
+        mentions.length ? `${mentions.length} ${mentions.length === 1 ? "passage" : "passages"} where he names those books` : "",
+        earliest?.length ? `his ${earliest.length} earliest dated uses of the word` : "",
+        `${authorPassages().length} of his own uses, picked at random`,
+      ].filter(Boolean);
       const study = await client.callJson({
         stage: "sources", purpose: sourcesPurpose(corpus.authorName ?? "the author", headword(), pairedBooks),
-        progress: { key: "sense", total: null, unit: "meaning" },
+        progress: { key: "sense", total: null, unit: "meaning", reading },
         instructions: prompts.sourcesInstructions(ctx()), content,
         schema: prompts.SOURCES_SCHEMA, schemaName: "sources",
         maxOutputTokens: 16000, effort: settings.effortStudy,
