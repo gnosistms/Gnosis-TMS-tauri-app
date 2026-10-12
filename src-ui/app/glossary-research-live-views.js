@@ -900,7 +900,59 @@ function originDisplay(section, context) {
   };
 }
 
+/**
+ * The consistency test (Hans, 2026-10-12: it showed the AI's raw answers): each
+ * test sentence once, with the translations the translator chose on its tries
+ * and how often ("inner ×5"; "world ×3 · planet ×2"), and for the sentences where
+ * it took turns, whether that changes the meaning (the check's reason on hover).
+ */
+function consistencyDisplay(section, context) {
+  const requests = section.requests.filter((request) => request.stage === "consistency");
+  if (!requests.length) return null;
+  const isCheck = (request) => /check whether/.test(request.purpose ?? "") || list(answerOf(request)?.items).some((item) => "sameMeaning" in (item ?? {}));
+  const rounds = requests.filter((request) => !isCheck(request));
+  const check = requests.find(isCheck);
+  const names = Object.assign({}, ...rounds.map((request) => request.progress?.variants ?? {}));
+  const sources = sourceSnippets(...rounds.map((request) => request.text));
+  const order = [];
+  const choices = new Map();
+  for (const request of rounds) {
+    for (const item of list(answerOf(request)?.items)) {
+      if (!str(item?.occId)) continue;
+      if (!choices.has(item.occId)) { choices.set(item.occId, new Map()); order.push(item.occId); }
+      const name = item.status === "selected" && item.variantId ? names[item.variantId] ?? item.variantId : "something else";
+      choices.get(item.occId).set(name, (choices.get(item.occId).get(name) ?? 0) + 1);
+    }
+  }
+  if (!order.length) return null;
+  const verdicts = new Map(list(answerOf(check)?.items).filter((item) => str(item?.occId)).map((item) => [item.occId, item]));
+  let steady = 0;
+  const rows = order.map((occId) => {
+    const tally = [...choices.get(occId)].sort((a, b) => b[1] - a[1]);
+    const turns = tally.length > 1;
+    if (!turns) steady += 1;
+    const verdict = verdicts.get(occId);
+    const judged = turns && verdict ? tip(verdict.reason, label(verdict.sameMeaning === false ? "changes the meaning" : "same meaning", verdict.sameMeaning === false ? "warn" : "good")) : "";
+    const snippet = sources.get(occId);
+    return `<div class="research-diff__case">
+      ${snippet ? `<p class="research-diff__source">${esc(snippet.before)}<mark>${esc(snippet.word)}</mark>${esc(snippet.after)}</p>` : ""}
+      <div class="research-view__chips">${tally.map(([name, n]) => chip(`${name} ×${n}`, turns ? "" : "outline")).join("")} ${judged}</div>
+    </div>`;
+  }).join("");
+  const turning = order.length - steady;
+  const tries = Math.max(...order.map((occId) => [...choices.get(occId).values()].reduce((a, b) => a + b, 0)));
+  const heading = `${plural(order.length, "test sentence")}, each translated ${tries === 1 ? "once" : `${tries} times`} with the finished entry: ${steady} kept to one translation${turning ? `, ${turning} took turns` : ""}`;
+  return {
+    html: view("consistency", heading, `<p class="research-view__explain">Next to each sentence: the translations chosen on the tries, and how often. Where the translator took turns, the check says whether the choice changes the meaning (hover for why).</p><div class="research-diff">${rows}</div>`),
+    requests: new Set(requests.map((request) => request.requestId)),
+    results: new Set(),
+    // The heading says it already.
+    facts: [/^The translator kept to one translation in all /, /^The translator took turns between translations in /],
+  };
+}
+
 const STEP_DISPLAYS = {
+  "Consistency test": consistencyDisplay,
   "Candidate translations": candidatesDisplay,
   "Where the term comes from": originDisplay,
   "Word forms": formsDisplay,
