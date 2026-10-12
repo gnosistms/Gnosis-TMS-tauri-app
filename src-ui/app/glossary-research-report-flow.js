@@ -170,6 +170,13 @@ export function buildEntryDrafts(run, glossaryTerms) {
   const studied = new Set(frozen.entries.flatMap((entry) => entry.sourceTerms.map((form) => fold(form).trim())));
   const drafts = {};
   const consistencyDropped = new Set(run.consistency?.dropped ?? []);
+  // The forms found in the texts (the spelling step's search), and the typed term.
+  // Accents count: "regenero" is not "regeneró" (the search tells them apart).
+  const exact = (form) => String(form ?? "").normalize("NFC").toLowerCase().trim();
+  const found = Array.isArray(run.forms?.searched) ? new Set(run.forms.searched.map(exact)) : null;
+  const typed = exact(run.meta?.term);
+  const inTexts = (form, entry) => !found || found.has(exact(form)) || exact(form) === typed
+    || exact(form) === exact(entry.sourceTerms[0]) || entry.kind === "expression";
   for (const entry of frozen.entries) {
     const existing = glossaryTerms.find((term) => overlaps(term.sourceTerms ?? [], entry.sourceTerms)) ?? null;
     const proposalEntry = (run.confirmedProposal ?? run.proposal)?.entries?.find((e) => e.id === entry.id);
@@ -220,7 +227,11 @@ export function buildEntryDrafts(run, glossaryTerms) {
         existingTermId: mine?.termId ?? null,
         existing: existingSummary(mine),
         keepForms: mine ? (mine.sourceTerms ?? []).filter((form) => !studied.has(fold(form).trim())) : [],
-        sourceTerms: entry.sourceTerms.filter((form) => forms.has(form.normalize("NFC").toLowerCase().trim())),
+        // Only the forms found in the texts go into the glossary, and the typed
+        // term (Hans, 2026-10-12: a verb's 70 forms, 54 of them never used, made
+        // the entry a mess). Runs without that record keep every form.
+        sourceTerms: entry.sourceTerms.filter((form) => forms.has(form.normalize("NFC").toLowerCase().trim()) && inTexts(form, entry)),
+        notInTexts: entry.sourceTerms.filter((form) => forms.has(form.normalize("NFC").toLowerCase().trim()) && !inTexts(form, entry)),
         // Uses of each form of the study's entry in the sample, for the heading.
         formUses: Object.fromEntries(entry.sourceTerms.map((form) => [form, uses.get(form.normalize("NFC").toLowerCase().trim()) ?? 0])),
         generalNote: entry.generalNote,

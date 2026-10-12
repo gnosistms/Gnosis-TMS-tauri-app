@@ -144,8 +144,14 @@ test("the heading lists the forms used in the sample with their uses; the unused
     ...Array.from({ length: 3 }, (_, i) => ({ occId: `a${i}`, entryId: "e1", itemId: `i${i}`, surface: "regenerar" })),
     { occId: "b0", entryId: "e1", itemId: "j0", surface: "regenera" },
   ], judgments: {} };
+  // The spelling step found "regeneramos" in the texts, not "regenerasteis".
+  r.forms = { searched: ["regenerar", "regenera", "regeneramos"] };
+  r.meta.term = "Regenerar";
   const drafts = buildEntryDrafts(r, []);
+  assert.deepEqual(drafts.e1.sourceTerms, ["regenerar", "regenera", "regeneramos"], "only the forms found in the texts are saved");
+  assert.deepEqual(drafts.e1.notInTexts, ["regenerasteis"]);
   const html = renderGlossaryResearchReportScreen({ glossaryResearchReport: { status: "ready", run: r, entryDrafts: drafts, expandedVariants: {}, showAllExamples: {} }, offline: {} });
   assert.match(html, /Forms in this entry, with their uses in the sample:<\/span> regenerar 3 · regenera 1</);
-  assert.match(html, /<summary>and 2 forms not in the sample<\/summary>[\s\S]*regeneramos · regenerasteis/);
+  assert.match(html, /<summary>and 1 form in the texts but not in the sample<\/summary>[\s\S]*regeneramos/);
+  assert.match(html, /<summary>1 form never found in the texts: left out of the entry<\/summary>[\s\S]*regenerasteis/);
 });
