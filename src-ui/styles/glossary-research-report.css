@@ -874,3 +874,10 @@
   align-items: center;
   gap: 10px;
 }
+
+.rr-entry__unused > summary {
+  width: fit-content;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}

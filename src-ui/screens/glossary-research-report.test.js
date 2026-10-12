@@ -92,7 +92,7 @@ test("a split entry becomes two drafts: the larger updates the existing entry an
   ]);
   assert.deepEqual(drafts[0].keepForms, ["vano", "vanos"]);
   const html = renderGlossaryResearchReportScreen({ glossaryResearchReport: { status: "ready", run: r, entryDrafts: Object.fromEntries(drafts.map((d) => [d.id, d])), expandedVariants: {}, showAllExamples: {} }, offline: {} });
-  assert.match(html, /A separate entry: in the sample, <span lang="es">vanidades<\/span> mostly took other translations than <span lang="es">vanidad<\/span>/);
+  assert.match(html, /A separate entry:<\/span> <strong>vanidades<\/strong> mostly took other translations in the sample than <strong>vanidad<\/strong>, which have their own entry\./);
 });
 
 function consistencyRun() {
@@ -135,4 +135,17 @@ test("the consistency test: a translation no meaning uses comes unticked; a mean
   assert.equal(unresolvedConflicts(drafts.e1).length, 0);
   drafts.e1.conflicts[0].retest = { status: "flips", flips: 1, of: 1 };
   assert.equal(unresolvedConflicts(drafts.e1).length, 1);
+});
+
+test("the heading lists the forms used in the sample with their uses; the unused ones fold away", () => {
+  const r = run();
+  r.frozen.entries[0] = { id: "e1", kind: "word", sourceTerms: ["regenerar", "regenera", "regeneramos", "regenerasteis"], generalNote: "", variants: [{ id: "v1", target: "regenerate", note: "" }] };
+  r.counting = { occurrences: [
+    ...Array.from({ length: 3 }, (_, i) => ({ occId: `a${i}`, entryId: "e1", itemId: `i${i}`, surface: "regenerar" })),
+    { occId: "b0", entryId: "e1", itemId: "j0", surface: "regenera" },
+  ], judgments: {} };
+  const drafts = buildEntryDrafts(r, []);
+  const html = renderGlossaryResearchReportScreen({ glossaryResearchReport: { status: "ready", run: r, entryDrafts: drafts, expandedVariants: {}, showAllExamples: {} }, offline: {} });
+  assert.match(html, /Forms in this entry, with their uses in the sample:<\/span> regenerar 3 · regenera 1</);
+  assert.match(html, /<summary>and 2 forms not in the sample<\/summary>[\s\S]*regeneramos · regenerasteis/);
 });

@@ -221,6 +221,8 @@ export function buildEntryDrafts(run, glossaryTerms) {
         existing: existingSummary(mine),
         keepForms: mine ? (mine.sourceTerms ?? []).filter((form) => !studied.has(fold(form).trim())) : [],
         sourceTerms: entry.sourceTerms.filter((form) => forms.has(form.normalize("NFC").toLowerCase().trim())),
+        // Uses of each form of the study's entry in the sample, for the heading.
+        formUses: Object.fromEntries(entry.sourceTerms.map((form) => [form, uses.get(form.normalize("NFC").toLowerCase().trim()) ?? 0])),
         generalNote: entry.generalNote,
         variants,
         conflicts: consistencyConflicts(run, entry, variants),

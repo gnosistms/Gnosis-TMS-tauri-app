@@ -220,15 +220,29 @@ function renderEntryCard(report, run, draft) {
   const unresolved = Object.values(counts.unresolved).reduce((a, b) => a + b, 0);
   const otherKey = `${entry.id}:__other`;
   const otherCount = counts.other + unresolved + (counts.failed ?? 0);
-  const variantsLabel = entry.sourceTerms.slice(1);
+  // The forms with uses in the sample, most used first, with their counts; the
+  // others (often most of a verb's forms) fold away (Hans, 2026-10-12).
+  const usesOf = (form) => draft.formUses?.[form] ?? 0;
+  const used = (forms) => forms.filter((form) => usesOf(form) > 0).sort((a, b) => usesOf(b) - usesOf(a));
+  const usedHere = used(entry.sourceTerms);
+  const unusedHere = entry.sourceTerms.filter((form) => usesOf(form) === 0);
+  const formList = (forms, max = 5) => {
+    const shown = forms.slice(0, max).map((form) => `<strong>${esc(form)}</strong>`).join(", ");
+    return forms.length > max ? `${shown} and ${forms.length - max} more` : shown;
+  };
   return `
     <article class="rr-entry">
       <header class="rr-entry__head">
         <div>
           <p class="rr-eyebrow">${entry.kind === "expression" ? "Expression" : "Entry"} · ${uses} uses in ${counts.passages} passages</p>
           <h2 class="rr-entry__title" lang="${esc(meta.sourceLanguage.code)}">${esc(entry.sourceTerms[0] ?? "")}</h2>
-          ${variantsLabel.length ? `<p class="rr-entry__forms" lang="${esc(meta.sourceLanguage.code)}">${esc(variantsLabel.join(" · "))}</p>` : ""}
-          ${draft.splitFrom ? `<p class="rr-entry__split">A separate entry: in the sample, <span lang="${esc(meta.sourceLanguage.code)}">${esc(entry.sourceTerms.join(", "))}</span> mostly took other translations than <span lang="${esc(meta.sourceLanguage.code)}">${esc(draft.splitFrom.forms.join(", "))}</span>.${draft.splitFrom.thin.length ? ` Too few uses to tell for ${esc(draft.splitFrom.thin.join(", "))}; placed here as the closest match.` : ""}</p>` : ""}
+          ${draft.formUses && entry.sourceTerms.length > 1 ? `
+          <p class="rr-entry__forms" lang="${esc(meta.sourceLanguage.code)}"><span class="rr-muted">Forms in this entry, with their uses in the sample:</span> ${usedHere.map((form) => `${esc(form)} ${usesOf(form)}`).join(" · ") || "none used"}</p>
+          ${unusedHere.length ? `<details class="rr-entry__unused"><summary>and ${unusedHere.length} ${unusedHere.length === 1 ? "form" : "forms"} not in the sample</summary><p class="rr-entry__forms" lang="${esc(meta.sourceLanguage.code)}">${esc(unusedHere.join(" · "))}</p></details>` : ""}`
+            : entry.sourceTerms.length > 1 ? `<p class="rr-entry__forms" lang="${esc(meta.sourceLanguage.code)}">${esc(entry.sourceTerms.slice(1).join(" · "))}</p>` : ""}
+          ${draft.splitFrom ? `<p class="rr-entry__split" lang="${esc(meta.sourceLanguage.code)}"><span lang="en">A separate entry:</span> ${draft.formUses
+            ? `${formList(usedHere)} mostly took other translations in the sample than ${formList(used(draft.splitFrom.forms))}, which have their own entry.${draft.splitFrom.thin.length ? " Forms with too few uses to tell stay here." : ""}`
+            : `${esc(entry.sourceTerms.join(", "))} mostly took other translations in the sample than ${esc(draft.splitFrom.forms.join(", "))}.`}</p>` : ""}
         </div>
         ${hasCurrent ? `
         <div class="rr-segmented" role="radiogroup" aria-label="Which version to show">
