@@ -57,6 +57,7 @@ const STAGE_PROGRESS = {
 let activeRun = null; // { engine, requestIds:Set, unlisten, store, context }
 let activeRunCleanup = null;
 let pendingFamilyChoice = null; // resolves the engine's question about related words
+let pauseWaiters = []; // requests held back while the research is paused
 
 /** Download progress of a language's frequency data, as log lines (one per ~10 MB). */
 function listenForDataDownloads(render) {
@@ -546,6 +547,7 @@ async function beginResearchRun(render, resume = null, family = null) {
     dictionary: createDictionary({ languageCode: languages.sourceCode, invoke }),
     store,
     log: (event) => onEngineLog(render, event),
+    waitWhilePaused,
     settings: meta.settings,
     languageData,
     glossaryTerms: (state.glossaryEditor?.terms ?? []).map((term) => ({
@@ -620,6 +622,7 @@ function handleRunStop(render, error, store, meta) {
     : error instanceof ResearchStop || error?.kind ? error.kind : "failed";
   draft.runStatus = kind === "cancelled" ? "stopped" : "failed";
   draft.stopKind = kind;
+  draft.paused = false;
   draft.runError = kind === "budget"
     ? `The spending limit was reached. ${error.message} Finished work is saved.`
     : error.message ?? String(error);
@@ -653,12 +656,42 @@ export function cancelGlossaryResearchRun(render) {
     pendingFamilyChoice = null;
   }
   activeRun.engine.cancel();
+  research().paused = false;
+  releasePausedRequests(); // they wake to find the research cancelled
   for (const requestId of activeRun.requestIds) {
     void invoke("cancel_glossary_research_request", { requestId }).catch(() => {});
   }
   research().runStatus = "stopped";
   appendLog({ type: "problem", text: "Cancelled. Finished work is saved on this computer." });
   render();
+}
+
+/** Pause: no new AI request starts until the person continues; those already sent finish. */
+export function pauseGlossaryResearchRun(render) {
+  const draft = research();
+  if (!activeRun || !["running", "counting"].includes(draft?.runStatus)) return;
+  draft.paused = true;
+  render();
+}
+
+export function continueGlossaryResearchRun(render) {
+  const draft = research();
+  if (!draft?.paused) return;
+  draft.paused = false;
+  releasePausedRequests();
+  render();
+}
+
+async function waitWhilePaused() {
+  while (research()?.paused) {
+    await new Promise((resolve) => pauseWaiters.push(resolve));
+  }
+}
+
+function releasePausedRequests() {
+  const waiting = pauseWaiters;
+  pauseWaiters = [];
+  for (const resolve of waiting) resolve();
 }
 
 // --- live log --------------------------------------------------------------------
@@ -826,7 +859,7 @@ function startLiveClock() {
     const status = document.querySelector("[data-step-current] [data-step-status]");
     const draft = research();
     if (!status || !draft?.log) return;
-    status.innerHTML = currentStepStatus(buildLogSections(draft.log), (stage) => usualRange(stepTimings(draft.modelId, stage)));
+    status.innerHTML = currentStepStatus(buildLogSections(draft.log), (stage) => usualRange(stepTimings(draft.modelId, stage)), { paused: draft.paused === true });
   }, 1000);
   return () => clearInterval(timer);
 }

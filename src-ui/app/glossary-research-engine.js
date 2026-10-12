@@ -519,7 +519,7 @@ function batchContent(batch, entryLabel) {
 
 // --- the budgeted model client ---------------------------------------------------
 
-export function createModelClient({ model, prices, budget, log, isCancelled, maxRetries, prepare = (request) => request }) {
+export function createModelClient({ model, prices, budget, log, isCancelled, maxRetries, prepare = (request) => request, waitWhilePaused = async () => {} }) {
   let sequence = 0;
   // `prepare` adds what every request carries (the writing rule); applied once per request.
   const done = new WeakSet();
@@ -534,6 +534,8 @@ export function createModelClient({ model, prices, budget, log, isCancelled, max
     let attempt = 0;
     let maxOutputTokens = request.maxOutputTokens;
     for (;;) {
+      // While the person has paused the research no new request starts; those already sent finish.
+      await waitWhilePaused();
       if (isCancelled()) throw new ResearchStop("Research was cancelled.", "cancelled");
       const reserve = worstCaseCost(prices, request.instructions, request.content, maxOutputTokens, request.webSearchDomains?.length ? 4 : 0);
       if (!budget.fitsAtAll(reserve)) {
@@ -646,6 +648,7 @@ export function createResearchEngine(deps) {
   const client = createModelClient({
     model: deps.model, prices: deps.prices, budget, log,
     isCancelled: () => cancelled, maxRetries: settings.maxRetries,
+    waitWhilePaused: deps.waitWhilePaused,
     // Sorting sentences by meaning only returns numbers: no writing rule needed.
     prepare: (request) => (request.stage === "frequency" ? request : { ...request, instructions: `${request.instructions}\n\n${prompts.writingRule(ctx())}` }),
   });

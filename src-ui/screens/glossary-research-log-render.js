@@ -251,7 +251,7 @@ function stepMetaText(section) {
  * One step. The step running now is open and fills in as it goes; a finished
  * step folds to one line of what it found and opens to its final state.
  */
-function renderSection(section, { current, open, usualFor, context, later }) {
+function renderSection(section, { current, open, usualFor, context, later, paused }) {
   if (!section.heading) {
     const body = stepBody(section, current);
     return body ? `<section class="research-section research-section--untitled">${body}</section>` : "";
@@ -266,7 +266,7 @@ function renderSection(section, { current, open, usualFor, context, later }) {
   const expanded = current ? open !== false : open === true && !plain;
   const body = current ? (expanded ? stepBody(section, true, context) : "") : expanded ? full : "";
   const meta = current ? "" : stepMetaText(section);
-  const status = current ? stepStatus(section, usualFor) : "";
+  const status = current ? stepStatus(section, usualFor, { paused }) : "";
   const title = esc(stepTitle(section.heading));
   const explanation = expanded ? stepExplanation(section.heading, context) : "";
   const head = current
@@ -299,7 +299,7 @@ function renderSection(section, { current, open, usualFor, context, later }) {
  * The steps, oldest first: while research runs the last one is the step in
  * progress. `usualFor(stage)` gives a step's usual duration for the clock.
  */
-export function renderResults(sections, { running = false, openSections = {}, usualFor = null, context: given = {} } = {}) {
+export function renderResults(sections, { running = false, paused = false, openSections = {}, usualFor = null, context: given = {} } = {}) {
   const context = { ...given, sections };
   const titled = sections.filter((section) => section.heading);
   const currentId = running ? titled.at(-1)?.id : null;
@@ -310,6 +310,7 @@ export function renderResults(sections, { running = false, openSections = {}, us
     usualFor,
     context,
     later: section.id !== lastId,
+    paused,
   })).join("");
 }
 
