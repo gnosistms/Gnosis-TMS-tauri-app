@@ -664,17 +664,54 @@ function checksDisplay(section, context) {
   };
 }
 
-/** How common the candidates are: the analysis of the step before, measured here. */
+/**
+ * How common the candidates are: only the counting. The list of candidates and
+ * their words is in the step before (Hans, 2026-10-12: the long list hid the
+ * measuring). One row per word measured, the word being sorted now below (its
+ * own live chart), and at the end which candidates pass and which fail, and why.
+ */
 function frequencyDisplay(section, context) {
-  const before = [...(context.sections ?? [])].reverse().find((other) => other.heading === "Candidate checks");
-  const requests = (before?.requests ?? []).filter((item) => item.stage === "checks");
+  const target = esc(context.target ?? "");
   const sortings = section.requests.filter((item) => item.stage === "frequency");
-  const verdicts = new Map(resultData(section, "checks").map((check) => [lower(check.target), check]));
-  const html = requests.length && candidateTable(requests, sortings, verdicts, context, { measuring: true });
-  if (!html) return null;
+  const finished = sortings.filter((sorting) => !isRunning(sorting));
+  const verdicts = resultData(section, "checks");
+  if (!finished.length && !verdicts.length) return null;
+  const rows = finished.map((sorting) => {
+    const items = list(answerOf(sorting)?.items).filter((item) => str(item?.sense));
+    const needed = list(sorting.progress?.senses)[0]?.gloss ?? "";
+    const inSense = items.filter((item) => item.sense === "needed").length;
+    const share = items.length ? inSense / items.length : 0;
+    return `<div class="research-freq__row">
+      <div>${chip(str(sorting.progress?.word))}</div>
+      <div class="research-freq__meaning">${esc(needed)}</div>
+      <div class="research-freq__count">${items.length ? `${inSense} of ${items.length}` : muted("no sentences")}<span class="research-freq__bar"><span style="width:${Math.round(100 * share)}%"></span></span></div>
+    </div>`;
+  }).join("");
+  const measured = rows ? `<div class="research-freq" role="table" aria-label="How often each word is used in the meaning needed">
+      <div class="research-freq__row research-freq__row--head"><div>Word</div><div>Meaning needed</div><div>Sentences using it this way</div></div>
+      ${rows}
+    </div>` : "";
+  // The result, once the checks are done: failures with their reasons, passes in one line.
+  // A word checked for two meanings is listed once: under "fails" only when it fails in every meaning.
+  const byWord = new Map();
+  for (const check of verdicts) byWord.set(lower(check.target), [...(byWord.get(lower(check.target)) ?? []), check]);
+  const outcome = (checks) => (checks.some((c) => c.verdict !== "fail" && c.verdict !== "unclear") ? "pass" : checks.some((c) => c.verdict === "unclear") ? "unclear" : "fail");
+  const words = [...byWord.values()].map((checks) => ({ ...checks.find((c) => c.verdict === outcome(checks)) ?? checks[0], verdict: outcome(checks) }));
+  const failed = words.filter((check) => check.verdict === "fail");
+  const unclear = words.filter((check) => check.verdict === "unclear");
+  const passed = words.filter((check) => check.verdict === "pass");
+  const result = verdicts.length ? `<div class="research-origin__part">
+      <p class="research-view__title">Result: ${plural(passed.length, "candidate")} ${passed.length === 1 ? "passes" : "pass"}${unclear.length ? `, ${unclear.length} unclear` : ""}, ${failed.length} ${failed.length === 1 ? "fails" : "fail"}</p>
+      ${failed.length ? `<ul class="research-view__list research-view__list--spaced">${failed.map((check) => `<li><strong>${esc(check.target)}</strong> ${label("fails", "warn")} ${muted(list(check.reasons)[0] ?? "")}</li>`).join("")}</ul>` : ""}
+      ${unclear.length ? `<ul class="research-view__list research-view__list--spaced">${unclear.map((check) => `<li><strong>${esc(check.target)}</strong> ${label("unclear", "warn")} ${muted([...list(check.reasons), ...list(check.notes)][0] ?? "")}</li>`).join("")}</ul>` : ""}
+      ${passed.length ? `<div class="research-view__chips">${passed.map((check) => tip([...list(check.notes)][0], chip(check.target))).join("")}</div>` : ""}
+    </div>` : "";
+  const heading = verdicts.length
+    ? "How common the candidates are, and which pass"
+    : `How often each word is used in everyday ${target} (news), in the meaning needed`;
   return {
-    html,
-    requests: new Set(sortings.filter((sorting) => !isRunning(sorting)).map((sorting) => sorting.requestId)),
+    html: view("frequency", heading, `${rows ? `<p class="research-view__explain">For each word: how many of the sorted ${target} news sentences use it in the meaning needed. The list of candidates and their words is in the step before.</p>` : ""}${measured}${result}`),
+    requests: new Set(finished.map((sorting) => sorting.requestId)),
     results: new Set(["checks"]),
     facts: [],
   };

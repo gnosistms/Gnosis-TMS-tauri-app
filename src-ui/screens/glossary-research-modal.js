@@ -17,6 +17,7 @@ import {
 import { batchSpent } from "../app/glossary-research-family-budget.js";
 import { formatUsd, researchModelsWithPrices } from "../app/glossary-research-budget.js";
 import { buildLogSections } from "../app/glossary-research-log-view.js";
+import { stepTitle } from "../app/glossary-research-step-view.js";
 import { renderResults, renderStageLine } from "./glossary-research-log-render.js";
 
 const esc = escapeHtml;
@@ -287,7 +288,8 @@ function renderRun(state) {
   const running = research.runStatus === "running" || research.runStatus === "counting";
   const paused = running && research.paused === true;
   const statusText = paused ? "Paused" : {
-    running: research.stageLabel || "Working",
+    // The step's name as the person reads it ("How common the candidates are"), not the log's.
+    running: research.stageLabel ? stepTitle(research.stageLabel) : "Working",
     counting: "Choosing a translation for each use",
     review: "Waiting for your review",
     family: "Related words",

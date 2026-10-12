@@ -1661,6 +1661,67 @@
   }
 }
 
+/* how common the candidates are: one row per word measured */
+.research-freq {
+  display: grid;
+  border-top: 1px solid var(--surface-border);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.research-freq__row {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 2fr) minmax(9em, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--surface-border);
+}
+
+.research-freq__row--head {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.research-freq__meaning {
+  color: var(--muted);
+}
+
+.research-freq__count {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.research-freq__bar {
+  flex: 1 1 auto;
+  height: 6px;
+  min-width: 40px;
+  border-radius: 3px;
+  background: var(--surface-border);
+  overflow: hidden;
+}
+
+.research-freq__bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent, #b06a1f);
+}
+
+@media (max-width: 560px) {
+  .research-freq__row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+
+  .research-freq__row--head {
+    display: none;
+  }
+}
+
 /* where the two counting AIs chose differently: one card per use */
 .research-diff {
   display: grid;
