@@ -207,6 +207,11 @@ test("research pauses for review, then counts and reconciles every occurrence", 
   const logs = [];
   const { engine: research, model, store } = engine({ log: (event) => logs.push(event) });
   const review = await research.runToReview();
+  const headings = logs.filter((event) => event.type === "heading").map((event) => event.text);
+  if (headings.includes("Candidate checks")) {
+    // Measuring how common the candidates are is its own step, when it can be measured.
+    assert.ok(!headings.includes("Candidate frequency") || headings.indexOf("Candidate frequency") === headings.indexOf("Candidate checks") + 1);
+  }
   assert.equal(review.status, "review");
   assert.equal(model.calls.filter((stage) => stage === "counting").length, 0, "nothing is counted before review");
   assert.deepEqual(store.data.forms.confirmed, ["fatal", "fatales"]);
@@ -1131,4 +1136,16 @@ test("the word family starts from the texts' own words containing the stem, sort
   assert.equal(members.fatalidad.rows, 9, "listed words keep the list's count");
   assert.equal(members.fatalidades.of, "fatalidad");
   assert.ok(!members.inmundo, "a suggestion not in the texts is dropped");
+});
+
+test("measuring how common the candidates are is its own step, right after checking them", async () => {
+  const logs = [];
+  const { engine: research } = engine({ model: lookalikeModel(), languageData: fakeLanguageData(), log: (event) => logs.push(event) });
+  await research.runToReview();
+  const headings = logs.filter((event) => event.type === "heading").map((event) => event.text);
+  assert.equal(headings[headings.indexOf("Candidate checks") + 1], "Candidate frequency");
+  const at = (predicate) => logs.findIndex(predicate);
+  const frequencyHeading = at((event) => event.type === "heading" && event.text === "Candidate frequency");
+  assert.ok(at((event) => event.type === "request" && event.stage === "checks") < frequencyHeading, "the analysis belongs to the check");
+  assert.ok(logs.slice(frequencyHeading).some((event) => event.type === "result" && event.kind === "checks"), "the verdicts belong to the measuring step");
 });

@@ -11,7 +11,7 @@ const STAGE_NAMES = {
   forms: "Word forms",
   discovery: "Discovery",
   proposal: "Proposal",
-  counting: "Counting",
+  counting: "Choosing a translation for each use",
   summary: "Summary",
   pivot: "Pivot",
 };

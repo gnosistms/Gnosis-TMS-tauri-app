@@ -1616,6 +1616,9 @@ export function createResearchEngine(deps) {
           }
         }
       }
+      // Measuring how common each candidate is in everyday use is its own step: the
+      // check above says what the candidates are made of (Hans, 2026-10-12).
+      if (ready) heading("Candidate frequency");
       if (ready) {
         for (const candidate of analysis.candidates) {
           candidate.target ??= toCheck.find((c) => c.n === candidate.n)?.target ?? "";

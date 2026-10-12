@@ -559,11 +559,15 @@ function meaningsDisplay(section, context) {
   };
 }
 
-function checksDisplay(section, context) {
-  const request = section.requests.find((item) => item.stage === "checks");
+/**
+ * The candidates as a table: each with its words and the meaning each must have;
+ * with the measurements and verdicts when there are any. `request` is the AI's
+ * analysis of the candidates; `sortings` and `verdicts` come from the step that
+ * measures them (the same step in runs before 2026-10-12).
+ */
+function candidateTable(request, sortings, verdicts, context, { measuring }) {
   const candidates = list(answerOf(request)?.candidates).filter((candidate) => str(candidate?.target));
   if (!candidates.length) return null;
-  const sortings = section.requests.filter((item) => item.stage === "frequency");
   const measured = new Map();
   for (const sorting of sortings) {
     const items = list(answerOf(sorting)?.items).filter((item) => str(item?.sense));
@@ -571,7 +575,6 @@ function checksDisplay(section, context) {
     measured.set(`${lower(sorting.progress?.word)}\u0000${lower(list(sorting.progress?.senses)[0]?.gloss)}`,
       { inSense: items.filter((item) => item.sense === "needed").length, of: items.length });
   }
-  const verdicts = new Map(resultData(section, "checks").map((check) => [lower(check.target), check]));
   const verdictLabel = { pass: ["passes", "good"], fail: ["fails", "warn"], unclear: ["unclear", "warn"] };
   const rows = candidates.map((candidate) => {
     const words = list(candidate.words).filter((w) => str(w?.word));
@@ -591,13 +594,44 @@ function checksDisplay(section, context) {
       }).join("")}</div>
     </div>`;
   }).join("");
+  const target = esc(context.target ?? "");
   const done = verdicts.size > 0;
+  const heading = measuring
+    ? (done ? "Each candidate, how common its words are, and whether it passes" : `How common each candidate's words are in everyday ${target}`)
+    : `Each candidate's words, and the meaning each must have (${candidates.length}${request.progress?.total ? ` of ${request.progress.total}` : ""})`;
+  const explain = measuring
+    ? `Each word is measured in everyday ${target} sentences (news): how often is it used in the meaning needed? Highlighted: looks like the word being researched, so it may be a false friend.`
+    : "Highlighted: looks like the word being researched, so it may be a false friend. The next step measures how common each word is.";
+  return view("checks", heading, `<p class="research-view__explain">${explain}</p><div class="research-view__table">${rows}</div>`);
+}
+
+function checksDisplay(section, context) {
+  const request = section.requests.find((item) => item.stage === "checks");
+  const sortings = section.requests.filter((item) => item.stage === "frequency");
+  const verdicts = new Map(resultData(section, "checks").map((check) => [lower(check.target), check]));
+  // Runs before 2026-10-12 measured in this step too.
+  const html = request && candidateTable(request, sortings, verdicts, context, { measuring: sortings.length > 0 || verdicts.size > 0 });
+  if (!html) return null;
   return {
-    html: view("checks", done ? "Each candidate, its words, and whether it passes" : `Each candidate's words, and the meaning each must have (${candidates.length}${request.progress?.total ? ` of ${request.progress.total}` : ""})`,
-      `<p class="research-view__explain">Each word is measured in everyday ${esc(context.target ?? "")} sentences (news): how often is it used in the meaning needed? Highlighted: looks like the word being researched, so it may be a false friend.</p>
-       <div class="research-view__table">${rows}</div>`),
+    html,
     // A word being sorted right now keeps its own live chart below the table.
     requests: new Set([request.requestId, ...sortings.filter((sorting) => !isRunning(sorting)).map((sorting) => sorting.requestId)]),
+    results: new Set(["checks"]),
+    facts: [],
+  };
+}
+
+/** How common the candidates are: the analysis of the step before, measured here. */
+function frequencyDisplay(section, context) {
+  const before = [...(context.sections ?? [])].reverse().find((other) => other.heading === "Candidate checks");
+  const request = before?.requests.find((item) => item.stage === "checks");
+  const sortings = section.requests.filter((item) => item.stage === "frequency");
+  const verdicts = new Map(resultData(section, "checks").map((check) => [lower(check.target), check]));
+  const html = request && candidateTable(request, sortings, verdicts, context, { measuring: true });
+  if (!html) return null;
+  return {
+    html,
+    requests: new Set(sortings.filter((sorting) => !isRunning(sorting)).map((sorting) => sorting.requestId)),
     results: new Set(["checks"]),
     facts: [],
   };
@@ -785,6 +819,7 @@ const STEP_DISPLAYS = {
   "Word family": familyDisplay,
   "Parts and frequency": meaningsDisplay,
   "Candidate checks": checksDisplay,
+  "Candidate frequency": frequencyDisplay,
   "Counting (second judge)": disagreementsDisplay,
 };
 

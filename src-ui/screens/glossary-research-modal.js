@@ -287,7 +287,7 @@ function renderRun(state) {
   const running = research.runStatus === "running" || research.runStatus === "counting";
   const statusText = {
     running: research.stageLabel || "Working",
-    counting: "Counting",
+    counting: "Choosing a translation for each use",
     review: "Waiting for your review",
     family: "Related words",
     done: "Research finished",

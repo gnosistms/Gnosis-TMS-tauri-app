@@ -172,3 +172,20 @@ test("the related words: forms go with their word, suggestions join, words the c
   assert.doesNotMatch(shown.html, /mundillo/);
   assert.ok(shown.requests.has("f2"));
 });
+
+test("checking the candidates and measuring how common they are are two steps", () => {
+  const checks = { requestId: "c1", stage: "checks", usage: {}, progress: { total: 1 }, answer: JSON.stringify({ candidates: [{ n: 1, target: "inward", words: [{ word: "inward", neededSense: "Inside.", lookalike: false }] }] }) };
+  const sorting = { requestId: "q1", stage: "frequency", usage: {}, progress: { word: "inward", senses: [{ id: "needed", gloss: "Inside." }] }, answer: '{"items":[{"n":1,"sense":"needed"},{"n":2,"sense":"other"}]}' };
+  const first = { heading: "Candidate checks", items: [], requests: [checks] };
+  const second = { heading: "Candidate frequency", items: [{ kind: "result", resultKind: "checks", data: [{ target: "inward", verdict: "pass", reasons: [], notes: [], words: [{ word: "inward", zipf: 3.4 }] }] }], requests: [sorting] };
+  const sections = [first, second];
+  const analysis = stepDisplay(first, { sections, target: "English" });
+  assert.match(analysis.html, /Each candidate's words, and the meaning each must have \(1 of 1\)/);
+  assert.match(analysis.html, /The next step measures how common each word is/);
+  assert.doesNotMatch(analysis.html, /everyday sentences|passes/);
+  const measured = stepDisplay(second, { sections, target: "English" });
+  assert.match(measured.html, /Each candidate, how common its words are, and whether it passes/);
+  assert.match(measured.html, /used this way in 1 of 2 everyday sentences/);
+  assert.match(measured.html, /passes/);
+  assert.ok(measured.requests.has("q1"));
+});
