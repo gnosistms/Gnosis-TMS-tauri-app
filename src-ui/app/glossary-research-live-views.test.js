@@ -184,7 +184,7 @@ test("checking the candidates and measuring how common they are are two steps", 
   assert.match(analysis.html, /The next step measures how common each word is/);
   assert.doesNotMatch(analysis.html, /everyday sentences|passes/);
   const measured = stepDisplay(second, { sections, target: "English" });
-  assert.match(measured.html, /How common the candidates are, and which pass/);
+  assert.match(measured.html, /Usage frequency in general language, and which candidates pass/);
   assert.match(measured.html, /inward[\s\S]*Inside\.[\s\S]*1 of 2/, "one row per word measured: the word, the meaning needed, the count");
   assert.match(measured.html, /Result: 1 candidate passes, 0 fail/);
   assert.doesNotMatch(measured.html, /research-view__trow/, "the list of candidates stays in the step before");

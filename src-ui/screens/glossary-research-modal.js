@@ -289,7 +289,7 @@ function renderRun(state) {
   const running = research.runStatus === "running" || research.runStatus === "counting";
   const paused = running && research.paused === true;
   const statusText = paused ? "Paused" : {
-    // The step's name as the person reads it ("How common the candidates are"), not the log's.
+    // The step's name as the person reads it ("Check usage frequency in general language"), not the log's.
     running: research.stageLabel ? stepTitle(research.stageLabel) : "Working",
     counting: "Choosing a translation for each use",
     review: "Waiting for your review",

@@ -100,7 +100,7 @@ const STEP_TITLES = {
   "Sampling": "Sample paragraphs",
   "Parts and frequency": "Meanings",
   "Candidate checks": "Checking the candidates",
-  "Candidate frequency": "How common the candidates are",
+  "Candidate frequency": "Check usage frequency in general language",
   "Counting": "Choosing a translation for each use",
   "Discovery": "Free translation",
   "Rare translations": "Notes for rare translations",

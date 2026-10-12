@@ -665,7 +665,7 @@ function checksDisplay(section, context) {
 }
 
 /**
- * How common the candidates are: only the counting. The list of candidates and
+ * Check usage frequency in general language: only the counting. The list of candidates and
  * their words is in the step before (Hans, 2026-10-12: the long list hid the
  * measuring). One row per word measured, the word being sorted now below (its
  * own live chart), and at the end which candidates pass and which fail, and why.
@@ -707,7 +707,7 @@ function frequencyDisplay(section, context) {
       ${passed.length ? `<div class="research-view__chips">${passed.map((check) => tip([...list(check.notes)][0], chip(check.target))).join("")}</div>` : ""}
     </div>` : "";
   const heading = verdicts.length
-    ? "How common the candidates are, and which pass"
+    ? "Usage frequency in general language, and which candidates pass"
     : `How often each word is used in everyday ${target} (news), in the meaning needed`;
   return {
     html: view("frequency", heading, `${rows ? `<p class="research-view__explain">For each word: how many of the sorted ${target} news sentences use it in the meaning needed. The list of candidates and their words is in the step before.</p>` : ""}${measured}${result}`),
