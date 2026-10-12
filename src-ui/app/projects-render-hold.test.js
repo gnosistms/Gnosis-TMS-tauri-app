@@ -180,9 +180,9 @@ test("commit target detection matches chapter and transfer modal selects", () =>
   assert.equal(isProjectsSelectCommitTarget(null), false);
 });
 
-test.describe("scroll hold", () => {
+test.describe("scroll rate limit", () => {
   test.beforeEach(() => {
-    mock.timers.enable({ apis: ["setTimeout"] });
+    mock.timers.enable({ apis: ["setTimeout", "Date"], now: 100_000 });
   });
 
   test.afterEach(() => {
@@ -190,13 +190,25 @@ test.describe("scroll hold", () => {
     mock.timers.reset();
   });
 
+  // A full render that runs (is not deferred) marks the start of the interval.
+  function renderNow() {
+    return deferProjectsRenderWhileScrolling(projectsState, {}, () => {});
+  }
+
   test("full renders pass through when the user is not scrolling", () => {
-    assert.equal(deferProjectsRenderWhileScrolling(projectsState, {}, () => {}), false);
+    assert.equal(renderNow(), false);
+    assert.equal(renderNow(), false);
   });
 
-  test("wheel scrolling holds the newest full render until scrolling is idle", () => {
+  test("the first full render while scrolling runs at once", () => {
+    dispatch("wheel", { target: projectsBody() });
+    assert.equal(renderNow(), false);
+  });
+
+  test("later renders within the interval collapse into one when scrolling stops", () => {
     const performed = [];
     dispatch("wheel", { target: projectsBody() });
+    assert.equal(renderNow(), false);
     assert.equal(
       deferProjectsRenderWhileScrolling(projectsState, {}, () => performed.push("first")),
       true,
@@ -214,12 +226,53 @@ test.describe("scroll hold", () => {
     mock.timers.tick(50);
     assert.deepEqual(performed, ["second"]);
 
-    mock.timers.tick(1000);
+    mock.timers.tick(5000);
     assert.deepEqual(performed, ["second"]);
+  });
+
+  test("a render shortly before scrolling starts the interval", () => {
+    assert.equal(renderNow(), false);
+    mock.timers.tick(1000);
+    dispatch("wheel", { target: projectsBody() });
+    assert.equal(renderNow(), true);
+  });
+
+  test("a long scroll renders at most once per interval", () => {
+    let held = 0;
+    dispatch("wheel", { target: projectsBody() });
+    assert.equal(renderNow(), false);
+
+    // Background renders every 100 ms during 2.9 s of continuous scrolling.
+    for (let elapsed = 0; elapsed < 2900; elapsed += 100) {
+      mock.timers.tick(100);
+      dispatch("wheel", { target: projectsBody() });
+      deferProjectsRenderWhileScrolling(projectsState, {}, () => { held += 1; });
+    }
+    assert.equal(held, 0);
+
+    mock.timers.tick(100);
+    assert.equal(held, 1);
+
+    // The next interval starts at that render.
+    dispatch("wheel", { target: projectsBody() });
+    assert.equal(renderNow(), true);
+  });
+
+  test("a render that runs replaces a held one", () => {
+    let held = 0;
+    dispatch("wheel", { target: projectsBody() });
+    renderNow();
+    deferProjectsRenderWhileScrolling(projectsState, {}, () => { held += 1; });
+
+    mock.timers.tick(3000);
+    dispatch("wheel", { target: projectsBody() });
+    // The interval timer already flushed the held render.
+    assert.equal(held, 1);
   });
 
   test("status-bar and update-badge renders pass through while scrolling", () => {
     dispatch("wheel", { target: projectsBody() });
+    renderNow();
     assert.equal(
       deferProjectsRenderWhileScrolling(projectsState, { scope: "status-surface" }, () => {}),
       false,
@@ -232,62 +285,52 @@ test.describe("scroll hold", () => {
 
   test("renders pass through on other screens while scrolling", () => {
     dispatch("wheel", { target: projectsBody() });
+    renderNow();
     assert.equal(
       deferProjectsRenderWhileScrolling({ screen: "translate" }, {}, () => {}),
       false,
     );
   });
 
-  test("a long scroll still flushes after the maximum hold", () => {
-    let rendered = 0;
-    dispatch("wheel", { target: projectsBody() });
-    deferProjectsRenderWhileScrolling(projectsState, {}, () => { rendered += 1; });
-
-    for (let elapsed = 0; elapsed < 2900; elapsed += 100) {
-      mock.timers.tick(100);
-      dispatch("wheel", { target: projectsBody() });
-    }
-    assert.equal(rendered, 0);
-
-    mock.timers.tick(100);
-    assert.equal(rendered, 1);
-  });
-
-  test("wheel input outside the projects list does not hold renders", () => {
+  test("wheel input outside the projects list does not limit renders", () => {
+    renderNow();
     dispatch("wheel", { target: fakeTarget() });
-    assert.equal(deferProjectsRenderWhileScrolling(projectsState, {}, () => {}), false);
+    assert.equal(renderNow(), false);
   });
 
   test("scroll events count only while a pointer is down", () => {
+    renderNow();
     // A render restoring the list position fires a scroll event with no
-    // pointer down; that must not hold the next render.
+    // pointer down; that must not limit the next render.
     dispatch("scroll", { target: projectsBody() });
-    assert.equal(deferProjectsRenderWhileScrolling(projectsState, {}, () => {}), false);
+    assert.equal(renderNow(), false);
 
     dispatch("pointerdown", { target: projectsBody() });
     dispatch("scroll", { target: projectsBody() });
-    assert.equal(deferProjectsRenderWhileScrolling(projectsState, {}, () => {}), true);
+    assert.equal(renderNow(), true);
 
     dispatch("pointerup", { target: projectsBody() });
     mock.timers.tick(200);
     dispatch("scroll", { target: projectsBody() });
-    assert.equal(deferProjectsRenderWhileScrolling(projectsState, {}, () => {}), false);
+    assert.equal(renderNow(), false);
   });
 
-  test("scroll keys hold renders except while typing in a field", () => {
+  test("scroll keys count except while typing in a field", () => {
+    renderNow();
     dispatch("keydown", { key: "ArrowDown", target: fakeTarget({ editable: true }) });
-    assert.equal(deferProjectsRenderWhileScrolling(projectsState, {}, () => {}), false);
+    assert.equal(renderNow(), false);
 
     dispatch("keydown", { key: "a", target: fakeTarget() });
-    assert.equal(deferProjectsRenderWhileScrolling(projectsState, {}, () => {}), false);
+    assert.equal(renderNow(), false);
 
     dispatch("keydown", { key: "PageDown", target: fakeTarget() });
-    assert.equal(deferProjectsRenderWhileScrolling(projectsState, {}, () => {}), true);
+    assert.equal(renderNow(), true);
   });
 
   test("scroll idle leaves a render held by an engaged select to the select hold", () => {
     let rendered = 0;
     dispatch("wheel", { target: projectsBody() });
+    renderNow();
     deferProjectsRenderWhileScrolling(projectsState, {}, () => { rendered += 1; });
     globalThis.document.activeElement = transferTeamSelect();
 
@@ -303,10 +346,11 @@ test.describe("scroll hold", () => {
   test("a select commit supersedes a render held for scrolling", () => {
     let backgroundRendered = 0;
     dispatch("wheel", { target: projectsBody() });
+    renderNow();
     deferProjectsRenderWhileScrolling(projectsState, {}, () => { backgroundRendered += 1; });
 
     withProjectsSelectCommit(() => {
-      assert.equal(deferProjectsRenderWhileScrolling(projectsState, {}, () => {}), false);
+      assert.equal(renderNow(), false);
     });
 
     mock.timers.tick(5000);

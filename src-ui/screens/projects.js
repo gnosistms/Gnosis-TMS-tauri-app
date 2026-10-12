@@ -368,7 +368,9 @@ export function buildProjectsScreenListState(state) {
   return { items, context };
 }
 
-export function renderProjectsScreen(state) {
+// options.fullList renders every list item instead of the scroll-dependent
+// virtual window; projects-render-key.js uses it to compare renders.
+export function renderProjectsScreen(state, options = {}) {
   const {
     selectedTeam,
     canCreateProjects,
@@ -434,7 +436,7 @@ export function renderProjectsScreen(state) {
           : renderProjectsVirtualList(
               listItems,
               listRenderContext,
-              resolveProjectsInitialWindowState(state, listItems),
+              options.fullList === true ? null : resolveProjectsInitialWindowState(state, listItems),
             );
 
   const body = `

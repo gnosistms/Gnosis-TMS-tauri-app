@@ -13,20 +13,22 @@
 // popup is open closes the menu, and leaving or committing the field always
 // provides a deterministic flush point.
 //
-// Full renders also defer while the user is scrolling the projects list. A full
-// render replaces the scroll container, which cuts off trackpad momentum and
-// makes the virtual list re-place itself, so background sync renders landing
-// mid-scroll feel like hitches. Only real scroll input counts (wheel, touch,
-// scroll keys, scrollbar drags); the programmatic scroll a render's own
-// position restore causes does not, or typing into the search field would
-// start holding its own renders. The held render flushes once scrolling has
-// been idle briefly, or after a maximum hold so a long scroll still shows
-// updates. Status-bar and update-badge renders touch only their own surfaces
-// and always pass through.
+// Full renders are also rate-limited while the user is scrolling the projects
+// list. A full render replaces the scroll container, which cuts off trackpad
+// momentum and makes the virtual list re-place itself; one such render is
+// barely noticeable, but background sync renders arriving many times during a
+// scroll feel like constant hitching. So while scrolling, a full render runs
+// at once if none has run for a while, and later ones within that interval
+// collapse into one that runs when the interval ends or scrolling stops.
+// Only real scroll input counts (wheel, touch, scroll keys, scrollbar drags);
+// the programmatic scroll a render's own position restore causes does not, or
+// typing into the search field would start limiting its own renders.
+// Status-bar and update-badge renders touch only their own surfaces and always
+// pass through.
 
 const PROJECTS_RENDER_HOLD_SAFETY_MS = 4000;
 const PROJECTS_SCROLL_IDLE_MS = 200;
-const PROJECTS_SCROLL_MAX_HOLD_MS = 3000;
+const PROJECTS_SCROLL_MIN_RENDER_INTERVAL_MS = 3000;
 const PROJECTS_SCROLL_CONTAINER_SELECTOR = '[data-screen="projects"] .page-body';
 const SCROLL_HOLD_PASS_THROUGH_SCOPES = new Set(["status-surface", "app-update-progress"]);
 const SCROLL_KEYS = new Set([
@@ -55,7 +57,8 @@ let installed = false;
 let userScrolling = false;
 let pointerIsDown = false;
 let scrollIdleTimerId = 0;
-let scrollMaxHoldTimerId = 0;
+let scrollIntervalTimerId = 0;
+let lastFullRenderAt = Number.NEGATIVE_INFINITY;
 
 function isEngagedHoldSelect(element) {
   return (
@@ -78,9 +81,9 @@ function clearHoldTimers() {
     clearTimeout(safetyTimerId);
     safetyTimerId = 0;
   }
-  if (scrollMaxHoldTimerId) {
-    clearTimeout(scrollMaxHoldTimerId);
-    scrollMaxHoldTimerId = 0;
+  if (scrollIntervalTimerId) {
+    clearTimeout(scrollIntervalTimerId);
+    scrollIntervalTimerId = 0;
   }
 }
 
@@ -101,7 +104,10 @@ export function flushProjectsHeldRender() {
 
   const performRender = pendingRender;
   pendingRender = null;
-  performRender?.();
+  if (performRender) {
+    lastFullRenderAt = Date.now();
+    performRender();
+  }
 }
 
 /**
@@ -132,24 +138,36 @@ export function deferProjectsRenderWhileSelectEngaged(appState, performRender) {
 
 /**
  * Called by the render entry point after the select hold. Returns true when a
- * full render was deferred because the user is scrolling the projects list.
+ * full render was deferred because another one ran too recently while the
+ * user is scrolling the projects list.
  */
 export function deferProjectsRenderWhileScrolling(appState, options, performRender) {
+  if (appState?.screen !== "projects" || SCROLL_HOLD_PASS_THROUGH_SCOPES.has(options?.scope)) {
+    return false;
+  }
+
+  const now = Date.now();
+  const sinceLastRender = now - lastFullRenderAt;
   if (
     !userScrolling
-    || appState?.screen !== "projects"
     || commitBypassDepth > 0
-    || SCROLL_HOLD_PASS_THROUGH_SCOPES.has(options?.scope)
+    || sinceLastRender >= PROJECTS_SCROLL_MIN_RENDER_INTERVAL_MS
   ) {
+    // This render shows current state, so a render held earlier is redundant.
+    if (pendingRender) {
+      pendingRender = null;
+      clearHoldTimers();
+    }
+    lastFullRenderAt = now;
     return false;
   }
 
   pendingRender = performRender;
-  if (!scrollMaxHoldTimerId) {
-    scrollMaxHoldTimerId = setTimeout(() => {
-      scrollMaxHoldTimerId = 0;
+  if (!scrollIntervalTimerId) {
+    scrollIntervalTimerId = setTimeout(() => {
+      scrollIntervalTimerId = 0;
       flushScrollHeldRender();
-    }, PROJECTS_SCROLL_MAX_HOLD_MS);
+    }, PROJECTS_SCROLL_MIN_RENDER_INTERVAL_MS - sinceLastRender);
   }
   return true;
 }
@@ -250,6 +268,7 @@ export function resetProjectsRenderHoldForTests() {
   commitBypassDepth = 0;
   userScrolling = false;
   pointerIsDown = false;
+  lastFullRenderAt = Number.NEGATIVE_INFINITY;
   clearHoldTimers();
   if (scrollIdleTimerId) {
     clearTimeout(scrollIdleTimerId);
