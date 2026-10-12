@@ -565,8 +565,10 @@ function meaningsDisplay(section, context) {
  * analysis of the candidates; `sortings` and `verdicts` come from the step that
  * measures them (the same step in runs before 2026-10-12).
  */
-function candidateTable(request, sortings, verdicts, context, { measuring }) {
-  const candidates = list(answerOf(request)?.candidates).filter((candidate) => str(candidate?.target));
+function candidateTable(requests, sortings, verdicts, context, { measuring }) {
+  // Long lists are checked in parts: one table for all of them.
+  const candidates = requests.flatMap((request) => list(answerOf(request)?.candidates)).filter((candidate) => str(candidate?.target));
+  const total = requests.reduce((sum, request) => sum + (request.progress?.total ?? 0), 0);
   if (!candidates.length) return null;
   const measured = new Map();
   for (const sorting of sortings) {
@@ -598,7 +600,7 @@ function candidateTable(request, sortings, verdicts, context, { measuring }) {
   const done = verdicts.size > 0;
   const heading = measuring
     ? (done ? "Each candidate, how common its words are, and whether it passes" : `How common each candidate's words are in everyday ${target}`)
-    : `Each candidate's words, and the meaning each must have (${candidates.length}${request.progress?.total ? ` of ${request.progress.total}` : ""})`;
+    : `Each candidate's words, and the meaning each must have (${candidates.length}${total ? ` of ${total}` : ""})`;
   const explain = measuring
     ? `Each word is measured in everyday ${target} sentences (news): how often is it used in the meaning needed? Highlighted: looks like the word being researched, so it may be a false friend.`
     : "Highlighted: looks like the word being researched, so it may be a false friend. The next step measures how common each word is.";
@@ -606,16 +608,16 @@ function candidateTable(request, sortings, verdicts, context, { measuring }) {
 }
 
 function checksDisplay(section, context) {
-  const request = section.requests.find((item) => item.stage === "checks");
+  const requests = section.requests.filter((item) => item.stage === "checks");
   const sortings = section.requests.filter((item) => item.stage === "frequency");
   const verdicts = new Map(resultData(section, "checks").map((check) => [lower(check.target), check]));
   // Runs before 2026-10-12 measured in this step too.
-  const html = request && candidateTable(request, sortings, verdicts, context, { measuring: sortings.length > 0 || verdicts.size > 0 });
+  const html = requests.length && candidateTable(requests, sortings, verdicts, context, { measuring: sortings.length > 0 || verdicts.size > 0 });
   if (!html) return null;
   return {
     html,
     // A word being sorted right now keeps its own live chart below the table.
-    requests: new Set([request.requestId, ...sortings.filter((sorting) => !isRunning(sorting)).map((sorting) => sorting.requestId)]),
+    requests: new Set([...requests.map((request) => request.requestId), ...sortings.filter((sorting) => !isRunning(sorting)).map((sorting) => sorting.requestId)]),
     results: new Set(["checks"]),
     facts: [],
   };
@@ -624,10 +626,10 @@ function checksDisplay(section, context) {
 /** How common the candidates are: the analysis of the step before, measured here. */
 function frequencyDisplay(section, context) {
   const before = [...(context.sections ?? [])].reverse().find((other) => other.heading === "Candidate checks");
-  const request = before?.requests.find((item) => item.stage === "checks");
+  const requests = (before?.requests ?? []).filter((item) => item.stage === "checks");
   const sortings = section.requests.filter((item) => item.stage === "frequency");
   const verdicts = new Map(resultData(section, "checks").map((check) => [lower(check.target), check]));
-  const html = request && candidateTable(request, sortings, verdicts, context, { measuring: true });
+  const html = requests.length && candidateTable(requests, sortings, verdicts, context, { measuring: true });
   if (!html) return null;
   return {
     html,

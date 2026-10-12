@@ -104,6 +104,46 @@ export const isWord = (form) => !/\p{N}/u.test(String(form ?? ""));
 /** How many words of the texts that begin with the term's letters are checked as its possible forms. */
 const MAX_STEM_EXTENSIONS = 25;
 
+/**
+ * Every candidate that passed its check and is not yet a variant becomes one, in
+ * every word entry (expressions keep their own translations), with its group's
+ * note: the translators' votes decide which are needed, not the proposal. A sense
+ * whose original word is required keeps that word alone. Returns the targets added.
+ */
+export function addPassedCandidates(proposal, checks, candidates, originalSenses = new Set()) {
+  const added = [];
+  const words = (proposal?.entries ?? []).filter((entry) => entry.kind !== "expression");
+  if (!checks?.candidates?.length || !words.length) return added;
+  const spelling = (text) => String(text ?? "").normalize("NFC").toLowerCase().replace(/[-\s‐-―]/g, "");
+  const notes = new Map();
+  for (const sense of candidates?.senses ?? []) {
+    for (const group of sense.groups ?? []) {
+      for (const member of group.members ?? []) {
+        if (!notes.has(spelling(member))) notes.set(spelling(member), group.note ?? "");
+      }
+    }
+  }
+  const present = new Set(proposal.entries.flatMap((entry) => entry.variants.map((variant) => spelling(variant.target))));
+  for (const candidate of checks.candidates) {
+    const key = spelling(candidate.target);
+    if (candidate.verdict === "fail" || present.has(key) || originalSenses.has(candidate.senseId)) continue;
+    present.add(key);
+    // The group note's first sentence: when to use it.
+    const note = (notes.get(key) ?? "").split(/(?<=[.!?])\s/)[0].trim();
+    for (const entry of words) {
+      let n = entry.variants.length + 1;
+      while (entry.variants.some((variant) => variant.id === `${entry.id}v${n}`)) n += 1;
+      entry.variants.push({
+        id: `${entry.id}v${n}`, target: candidate.target, note, senses: [candidate.sense], corpusSense: null,
+        fromExisting: false, rationale: "Passed its checks; the translators' votes decide whether it is needed.", addedForVote: true,
+      });
+    }
+    proposal.leftOutRenderings = (proposal.leftOutRenderings ?? []).filter((item) => spelling(item.rendering) !== key);
+    added.push(candidate.target);
+  }
+  return added;
+}
+
 export const RESEARCH_DEFAULTS = {
   sampleSize: 100,
   discoverySize: 30,
@@ -1578,32 +1618,47 @@ export function createResearchEngine(deps) {
         group.representative = group.original ? group.members[0] : pickRepresentative(group.members, (m) => (ready ? renderingScore(m, zipfOf) : null), target);
         group.lookalikes = group.members.filter((m) => m !== group.representative && looksLike(m, sourceWords));
       }
-      // One check per rendering and sense: a word can carry one sense and lack another.
+      // Every candidate is checked, once per sense it renders: a word can carry one
+      // sense and lack another. No group member stands in for another: before the
+      // tests nobody knows whether one is enough, or which is the most used (Hans,
+      // 2026-10-12, after "planet" vanished behind "world"). Only the same wording
+      // spelled differently (a hyphen, a space, capitals) is checked once.
+      const spellingKey = (text) => textKey(text, code).replace(/[-\s‐-―]/g, "");
       const toCheck = [];
       const seen = new Set();
       for (const group of groups) {
-        for (const target of [group.representative, ...group.lookalikes]) {
-          const key = `${textKey(target, code)}\u0000${group.senseId}`;
+        for (const target of group.members) {
+          const key = `${spellingKey(target)}\u0000${group.senseId}`;
           if (seen.has(key)) continue;
           seen.add(key);
           toCheck.push({ n: toCheck.length + 1, target, sense: group.sense, senseId: group.senseId });
         }
       }
       const sources = store.load("sources")?.study;
-      const analysis = await client.callJson({
-        stage: "checks", purpose: "take each candidate apart into its words, and say which meaning each word needs",
-        progress: { key: "n", total: toCheck.length, unit: "translation" },
-        instructions: prompts.checkInstructions(ctx()),
-        content: [
-          `# Term: ${headword()}`,
-          `## Candidates (number. rendering — the sense it must render)\n${toCheck.map((c) => `${c.n}. ${c.target} — ${c.sense}`).join("\n")}`,
-          parts?.study ? `## Parts of the term\n${parts.study.parts.map((p) => `- ${p.part}: ${p.meaning}`).join("\n")}` : "",
-          sources ? `## Where the term comes from\n${JSON.stringify(sources.senses.map((x) => ({ sense: x.sense, sourceBook: x.sourceBook, originalLanguage: x.originalLanguage, originalTerm: x.originalTerm })), null, 1)}` : "",
-          priorsText(priorMeasurements(code)),
-        ].filter(Boolean).join("\n\n"),
-        schema: prompts.CHECK_SCHEMA, schemaName: "checks",
-        maxOutputTokens: 1500 + 300 * toCheck.length, effort: settings.effortLight,
-      });
+      // Long lists go in parts of at most 40 candidates, each a light request.
+      const parts40 = [];
+      for (let i = 0; i < toCheck.length; i += 40) parts40.push(toCheck.slice(i, i + 40));
+      const answers = [];
+      for (const [index, part] of parts40.entries()) {
+        answers.push(await client.callJson({
+          stage: "checks",
+          purpose: parts40.length > 1
+            ? `take each candidate apart into its words, and say which meaning each word needs (candidates ${part[0].n}–${part.at(-1).n} of ${toCheck.length})`
+            : "take each candidate apart into its words, and say which meaning each word needs",
+          progress: { key: "n", total: part.length, unit: "translation", part: index + 1, parts: parts40.length },
+          instructions: prompts.checkInstructions(ctx()),
+          content: [
+            `# Term: ${headword()}`,
+            `## Candidates (number. rendering — the sense it must render)\n${part.map((c) => `${c.n}. ${c.target} — ${c.sense}`).join("\n")}`,
+            parts?.study ? `## Parts of the term\n${parts.study.parts.map((p) => `- ${p.part}: ${p.meaning}`).join("\n")}` : "",
+            sources ? `## Where the term comes from\n${JSON.stringify(sources.senses.map((x) => ({ sense: x.sense, sourceBook: x.sourceBook, originalLanguage: x.originalLanguage, originalTerm: x.originalTerm })), null, 1)}` : "",
+            priorsText(priorMeasurements(code)),
+          ].filter(Boolean).join("\n\n"),
+          schema: prompts.CHECK_SCHEMA, schemaName: "checks",
+          maxOutputTokens: 1500 + 300 * part.length, effort: settings.effortLight,
+        }));
+      }
+      const analysis = { candidates: answers.flatMap((answer) => answer?.candidates ?? []) };
       // Safety net: a candidate word that contains the spelling of a base word of the
       // source term (a calque built on it) has that base measured too, in the sense it
       // needs, even when the model did not split the word.
@@ -1876,13 +1931,14 @@ export function createResearchEngine(deps) {
       return `${c.target}: ${c.verdict.toUpperCase()}${c.original ? ` (ORIGINAL WORD of ${c.original})` : ""}${c.reasons.length ? ` (${c.reasons.join("; ")})` : ""}${words ? ` [${words}]` : ""}${c.clashes.length ? ` [already used for: ${c.clashes.map((x) => x.sourceTerms.join(" / ")).join("; ")}]` : ""}`;
     };
     if (!checks.groups?.length) return checks.candidates.map((c) => `- ${line(c)}`).join("\n");
+    // Every candidate with its own check, by sense; a group only shares a note.
+    // (Runs before 2026-10-12 checked one member per group: the others show their score.)
     return checks.groups.map((g) => {
-      const rep = byTarget.get(textKey(g.representative));
-      const others = g.members.filter((m) => m.target !== g.representative).map((m) => {
-        const checked = byTarget.get(textKey(m.target));
-        return checked ? line(checked) : `${m.target} ${formatZipf(m.zipf)}`;
+      const members = g.members.map((m) => {
+        const checked = checks.candidates.find((c) => textKey(c.target) === textKey(m.target) && (c.senseId == null || c.senseId === g.senseId)) ?? byTarget.get(textKey(m.target));
+        return checked ? line(checked) : `${m.target} ${formatZipf(m.zipf)} (not checked)`;
       });
-      return `- [${g.sense}]${g.recommended ? " (recommended)" : ""} ${rep ? line(rep) : g.representative}${others.length ? `\n    also: ${others.join(" | ")}` : ""}`;
+      return `- [${g.sense}]${g.recommended ? " (recommended)" : ""}\n${members.map((m) => `    ${m}`).join("\n")}`;
     }).join("\n");
   }
 
@@ -1941,7 +1997,7 @@ export function createResearchEngine(deps) {
         const text = originalWordsText(requiredOriginals(), settings.targetLanguageName);
         return text ? ["Original words (required; see the rule on original words):", text, ""] : [];
       })(),
-      "Candidate study (translations proposed for the term as a whole, in groups of interchangeable renderings), with the checks against general usage (Zipf: 0 = not in ordinary use, 3 = everyday word, 5+ = very common):",
+      "Candidate study (translations proposed for the term as a whole, sense by sense; every candidate with its own check against general usage) (Zipf: 0 = not in ordinary use, 3 = everyday word, 5+ = very common):",
       checksText(),
       "",
       "Notes of the candidate groups:",
@@ -1996,6 +2052,11 @@ export function createResearchEngine(deps) {
       (proposal.removedByChecks ??= []).push(removed);
       log({ type: "problem", text: `Removed “${removed.target}” from entry ${removed.entryId}: it contains “${removed.word}”, whose frequency check failed.` });
     }
+    // Every candidate that passed its checks reaches the vote: the votes decide
+    // which are needed, not the proposal (Hans, 2026-10-12).
+    const originalSenses = new Set((store.load("candidates")?.originalWords ?? []).map((word) => word.senseId).filter(Boolean));
+    const added = addPassedCandidates(proposal, store.load("checks"), store.load("candidates"), originalSenses);
+    if (added.length) fact(`Added to the translators' choice because ${added.length === 1 ? "it" : "they"} passed the checks: ${added.map((target) => `“${target}”`).join(", ")}. The votes decide whether ${added.length === 1 ? "it is" : "they are"} needed.`);
     await enforceOriginals(proposal);
     const problems = validateProposal(proposal, store.load("forms").confirmed);
     problems.push(...unmeasuredRenderings(proposal, store.load("discovery")));

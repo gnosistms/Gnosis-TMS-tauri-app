@@ -13,6 +13,7 @@ import {
   familyGroups,
   writtenForm,
   familyStems,
+  addPassedCandidates,
   mergeMeasurements,
   looksLike,
   pickRepresentative,
@@ -1148,4 +1149,64 @@ test("measuring how common the candidates are is its own step, right after check
   const frequencyHeading = at((event) => event.type === "heading" && event.text === "Candidate frequency");
   assert.ok(at((event) => event.type === "request" && event.stage === "checks") < frequencyHeading, "the analysis belongs to the check");
   assert.ok(logs.slice(frequencyHeading).some((event) => event.type === "result" && event.kind === "checks"), "the verdicts belong to the measuring step");
+});
+
+test("every candidate is checked and reaches the vote; a group member is never hidden behind another", async () => {
+  const inner = fakeModel();
+  const requests = [];
+  const answer = (out) => ({ status: "ok", text: JSON.stringify(out), usage: { inputTokens: 10, outputTokens: 10 } });
+  const many = Array.from({ length: 44 }, (_, i) => `rendering ${i + 1}`);
+  const model = {
+    calls: inner.calls,
+    async call(request, onDelta) {
+      requests.push(request);
+      if (request.stage === "candidates") {
+        inner.calls.push(request.stage);
+        return answer({ senses: [
+          { senseId: "s1", sense: "Earth or another planet.", groups: [{ members: ["world", "planet", "plan-et"], recommended: true, note: "For a planet. Also for Earth.", rationale: "r" }] },
+          { senseId: "s2", sense: "Many things.", groups: [{ members: many, recommended: false, note: "n", rationale: "r" }] },
+        ] });
+      }
+      if (request.stage === "checks") {
+        inner.calls.push(request.stage);
+        const numbers = [...request.content.matchAll(/^(\d+)\. (.+?) — /gm)].map((m) => [Number(m[1]), m[2]]);
+        return answer({ candidates: numbers.map(([n, target]) => ({ n, target, establishedUsage: false, establishedBasis: "", words: [{ word: target, neededSense: "x", lookalike: false, resembles: null, otherSenses: [] }] })) });
+      }
+      return inner.call(request, onDelta);
+    },
+  };
+  const logs = [];
+  const { engine: research, store } = engine({ model, log: (event) => logs.push(event) });
+  const review = await research.runToReview();
+  const checks = requests.filter((request) => request.stage === "checks");
+  assert.equal(checks.length, 2, "46 candidates are checked in two parts of at most 40");
+  const checked = checks.flatMap((request) => [...request.content.matchAll(/^\d+\. (.+?) — /gm)].map((m) => m[1]));
+  assert.ok(checked.includes("world") && checked.includes("planet"), "both members of the group are checked");
+  assert.ok(!checked.includes("plan-et"), "the same wording spelled with a hyphen is checked once");
+  // 46 candidates, plus the required original word of the test's source book, placed in its sense.
+  assert.deepEqual(store.data.checks.candidates.map((c) => c.target).filter((t) => !/^rendering /.test(t)).sort(), ["Fateful One", "planet", "world"].sort());
+  const targets = review.proposal.entries.flatMap((entry) => entry.variants.map((variant) => variant.target));
+  assert.ok(targets.includes("planet") && targets.includes("world"), "every passed candidate reaches the vote");
+  assert.ok(logs.some((event) => event.type === "fact" && /Added to the translators' choice because they passed the checks: .*“planet”/.test(event.text)));
+});
+
+test("passed candidates are added to the word entries; failed ones, original-word senses and expressions are not", () => {
+  const proposal = { entries: [
+    { id: "e1", kind: "word", sourceTerms: ["mundo"], variants: [{ id: "e1v1", target: "world", note: "Default.", senses: ["s1"] }] },
+    { id: "e2", kind: "word", sourceTerms: ["mundos"], variants: [{ id: "e2v1", target: "worlds", note: "Default.", senses: ["s1"] }] },
+    { id: "e3", kind: "expression", sourceTerms: ["venir al mundo"], variants: [{ id: "e3v1", target: "be born", note: "", senses: [] }] },
+  ], leftOutRenderings: [{ rendering: "planet", count: 0, reason: "near-synonym" }] };
+  const checks = { candidates: [
+    { target: "World", senseId: "s2", sense: "Earth.", verdict: "pass" },
+    { target: "planet", senseId: "s2", sense: "Earth or another planet.", verdict: "pass" },
+    { target: "orb", senseId: "s2", sense: "Earth.", verdict: "fail" },
+    { target: "Innermost", senseId: "s5", sense: "Divine spirit.", verdict: "pass" },
+  ] };
+  const candidates = { senses: [{ senseId: "s2", groups: [{ members: ["planet"], note: "For a physical planet. Not for spiritual worlds." }] }] };
+  const added = addPassedCandidates(proposal, checks, candidates, new Set(["s5"]));
+  assert.deepEqual(added, ["planet"]);
+  assert.deepEqual(proposal.entries[0].variants.at(-1), { id: "e1v2", target: "planet", note: "For a physical planet.", senses: ["Earth or another planet."], corpusSense: null, fromExisting: false, rationale: "Passed its checks; the translators' votes decide whether it is needed.", addedForVote: true });
+  assert.equal(proposal.entries[1].variants.at(-1).target, "planet");
+  assert.equal(proposal.entries[2].variants.length, 1, "expressions keep their own translations");
+  assert.deepEqual(proposal.leftOutRenderings, [], "no longer listed as left out");
 });
