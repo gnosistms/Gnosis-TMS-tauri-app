@@ -53,10 +53,12 @@ export function runningRequest(section) {
 }
 
 /** What the step running now is doing: its AI request's status, else its latest progress line. */
-export function stepStatus(section, usualFor) {
+export function stepStatus(section, usualFor, { paused = false } = {}) {
   // After a cancel nothing is happening in the step, whatever requests were cut short.
   if (section.items.some((item) => item.kind === "line" && /^Cancelled\b/.test(item.entry.text ?? ""))) return "";
   const request = runningRequest(section);
+  // Paused: requests already sent still finish (shown below); once they have, the step waits.
+  if (paused && !request) return '<span class="research-live__doing">Paused</span>';
   if (request?.batch?.total > 1) {
     const members = section.requests.filter((other) => other.batch?.key === request.batch.key);
     // All the uses of the batch, also those of batches not sent yet.
@@ -86,10 +88,10 @@ export function stepStatus(section, usualFor) {
 }
 
 /** The current step's head status, for the clock and the stream updates. */
-export function currentStepStatus(sections, usualFor) {
+export function currentStepStatus(sections, usualFor, options = {}) {
   const titled = sections.filter((section) => section.heading);
   const section = titled.at(-1);
-  return section ? stepStatus(section, usualFor) : "";
+  return section ? stepStatus(section, usualFor, options) : "";
 }
 
 // Step names as the person reads them (the log keeps the engine's names, so

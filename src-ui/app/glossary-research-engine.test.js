@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   accentCounterparts,
+  createModelClient,
   createResearchEngine,
   collectMeasurements,
   failedVariants,
@@ -329,6 +330,41 @@ test("the spending limit stops work before a request that could exceed it", asyn
   await assert.rejects(research.runToReview(), (error) => error.kind === "budget" || /could cost up to/.test(error.message));
   assert.ok(research.budget.spent <= 0.05 + 1e-9);
   assert.ok(Array.isArray(store.data.usage));
+});
+
+test("a paused research starts no new request until it continues, and a cancel while paused stops it", async () => {
+  let paused = true;
+  let release = null;
+  let cancelled = false;
+  const calls = [];
+  const client = createModelClient({
+    model: { call: async (request) => { calls.push(request.stage); return { status: "ok", text: "{}", usage: { inputTokens: 1, outputTokens: 1 } }; } },
+    prices: { input: 1, cached: 0.1, cacheWrite: 1, output: 1 },
+    budget: createBudget(10),
+    log: () => {},
+    isCancelled: () => cancelled,
+    maxRetries: 0,
+    waitWhilePaused: async () => {
+      while (paused) await new Promise((resolve) => { release = resolve; });
+    },
+  });
+  const request = { stage: "forms", instructions: "i", content: "c", maxOutputTokens: 10 };
+  const first = client.callJson(request);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(calls, []);
+  paused = false;
+  release();
+  assert.deepEqual(await first, {});
+  assert.deepEqual(calls, ["forms"]);
+
+  paused = true;
+  const second = client.callJson({ ...request });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  cancelled = true;
+  paused = false;
+  release();
+  await assert.rejects(second, (error) => error.kind === "cancelled");
+  assert.deepEqual(calls, ["forms"]);
 });
 
 test("retryable failures are retried; finished stages are reused on resume", async () => {

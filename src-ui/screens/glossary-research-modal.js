@@ -285,7 +285,8 @@ function renderRun(state) {
   const research = state.glossaryResearch;
   const targetName = state.glossaryEditor?.targetLanguage?.name ?? "target language";
   const running = research.runStatus === "running" || research.runStatus === "counting";
-  const statusText = {
+  const paused = running && research.paused === true;
+  const statusText = paused ? "Paused" : {
     running: research.stageLabel || "Working",
     counting: "Choosing a translation for each use",
     review: "Waiting for your review",
@@ -298,6 +299,7 @@ function renderRun(state) {
     <div class="research-run__head">
       ${renderStageLine({ stepLabel: research.stageLabel, runStatus: research.runStatus })}
       <div class="research-run__status"><strong>${esc(statusText)}</strong><span class="research-run__cost">${formatUsd(research.spent)} of ${formatUsd(research.limit)}</span></div>
+      ${paused ? '<p class="muted">No new AI request starts until you continue; requests already sent finish.</p>' : ""}
       ${research.familyQueue ? `<p class="muted">${research.familyQueue.words.length ? `Then, one after another: ${esc(research.familyQueue.words.map((word) => word.form).join(", "))} · ` : ""}related words ${formatUsd(batchSpent(research.familyQueue))} spent of ${formatUsd(research.familyQueue.totalLimit)} in all</p>` : ""}
     </div>`;
   const budgetStop = research.stopKind === "budget";
@@ -329,7 +331,7 @@ function renderRun(state) {
     target: targetName,
   };
   const logLines = `<div class="research-results" data-research-log aria-live="off">${renderResults(sections, {
-    running, openSections: research.sectionOpen ?? {}, usualFor, context,
+    running, paused, openSections: research.sectionOpen ?? {}, usualFor, context,
   })}</div>`;
   // While research runs the log is the main view; afterwards it folds away.
   // While research runs the list follows the latest; "↓ Latest" brings it back after scrolling up.
@@ -344,7 +346,10 @@ function renderRun(state) {
   const logArea = log;
   let actions;
   if (running) {
-    actions = secondaryButton("Cancel", "cancel-glossary-research-run", { modalCancel: true });
+    actions = `${secondaryButton("Cancel", "cancel-glossary-research-run", { modalCancel: true })}
+      ${paused
+        ? primaryButton("Continue", "continue-glossary-research-run", { modalDefault: true })
+        : secondaryButton("Pause", "pause-glossary-research-run")}`;
   } else if (research.runStatus === "family") {
     actions = `${secondaryButton("Cancel", "cancel-glossary-research-run", { modalCancel: true })}
       ${primaryButton("Continue", "continue-research-family", { modalDefault: true })}`;

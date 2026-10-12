@@ -33,6 +33,7 @@ export function createGlossaryResearchState() {
     log: [],
     runError: "",
     stopKind: "",
+    paused: false, // no new AI request starts until the person continues
     proposalDraft: null,
     reviewError: "",
     // where the user came from (editor flow returns there on cancel)
