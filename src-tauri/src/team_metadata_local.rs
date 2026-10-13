@@ -295,8 +295,15 @@ pub(crate) async fn inspect_and_migrate_local_repo_bindings(
     tauri::async_runtime::spawn_blocking(move || {
         // Each kind costs a git scan of all its local repos, so a caller that
         // only shows glossaries can skip the projects and QA lists.
-        let wants = |kind: &str| kinds.as_ref().is_none_or(|kinds| kinds.iter().any(|k| k == kind));
-        let empty = || LocalRepoRepairScanResult { issues: Vec::new(), auto_repaired_count: 0 };
+        let wants = |kind: &str| {
+            kinds
+                .as_ref()
+                .is_none_or(|kinds| kinds.iter().any(|k| k == kind))
+        };
+        let empty = || LocalRepoRepairScanResult {
+            issues: Vec::new(),
+            auto_repaired_count: 0,
+        };
         let repo_path = require_local_metadata_repo(&app, installation_id)?;
 
         let project_scan = if wants("project") {
@@ -308,8 +315,9 @@ pub(crate) async fn inspect_and_migrate_local_repo_bindings(
             empty()
         };
         let glossary_scan = if wants("glossary") {
-            let listing =
-                list_local_metadata_records::<GithubGlossaryMetadataRecord>(&repo_path, "glossary")?;
+            let listing = list_local_metadata_records::<GithubGlossaryMetadataRecord>(
+                &repo_path, "glossary",
+            )?;
             report_skipped_metadata_records(&app, &listing.skipped_record_files);
             inspect_glossary_repo_repairs(&app, installation_id, &listing.records)?
         } else {

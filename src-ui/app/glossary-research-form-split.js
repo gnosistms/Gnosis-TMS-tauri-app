@@ -54,7 +54,7 @@ export function groupForms(forms, votes, uses, options = {}) {
   const thin = keys.filter((k) => usesOf(k) < minUses);
   if (judged.length < 2) return [{ forms: keys, thin: judged.length ? thin : keys }];
 
-  let groups = judged.map((k) => [k]);
+  const groups = judged.map((k) => [k]);
   const worstPair = (a, b) => {
     let worst = 1;
     for (const x of a) for (const y of b) worst = Math.min(worst, overlap(serves.get(x), serves.get(y)));

@@ -171,7 +171,10 @@ pub(crate) async fn glossary_research_fetch_dle(
     let closed = Arc::new(AtomicBool::new(false));
     let closed_flag = closed.clone();
     window.on_window_event(move |event| {
-        if matches!(event, WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed) {
+        if matches!(
+            event,
+            WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed
+        ) {
             closed_flag.store(true, Ordering::SeqCst);
         }
     });

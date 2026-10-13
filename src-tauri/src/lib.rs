@@ -1,7 +1,4 @@
 mod ai;
-mod glossary_research_dle;
-mod glossary_research_language_data;
-mod glossary_research_storage;
 mod ai_secret_storage;
 mod broker;
 mod broker_auth;
@@ -11,6 +8,9 @@ mod constants;
 mod git_commit;
 mod github;
 mod glossary_repo_sync;
+mod glossary_research_dle;
+mod glossary_research_language_data;
+mod glossary_research_storage;
 mod glossary_storage;
 mod insecure_github_app_config;
 mod installation_access;
@@ -104,11 +104,11 @@ use crate::{
     },
     glossary_storage::{
         delete_gtms_glossary_term, export_gtms_glossary_to_tmx, import_tmx_to_gtms_glossary_repo,
-        initialize_gtms_glossary_repo, inspect_tmx_glossary_import, list_local_gtms_glossaries,
-        link_gtms_glossary_terms, load_gtms_glossary_editor_data, load_gtms_glossary_term,
-        prepare_local_gtms_glossary_repo,
-        purge_local_gtms_glossary_repo, rename_gtms_glossary, restore_gtms_glossary,
-        rollback_gtms_glossary_term_upsert, soft_delete_gtms_glossary, upsert_gtms_glossary_term,
+        initialize_gtms_glossary_repo, inspect_tmx_glossary_import, link_gtms_glossary_terms,
+        list_local_gtms_glossaries, load_gtms_glossary_editor_data, load_gtms_glossary_term,
+        prepare_local_gtms_glossary_repo, purge_local_gtms_glossary_repo, rename_gtms_glossary,
+        restore_gtms_glossary, rollback_gtms_glossary_term_upsert, soft_delete_gtms_glossary,
+        upsert_gtms_glossary_term,
     },
     project_import::{
         acknowledge_gtms_project_transfer_status, apply_aligned_translation_to_gtms_chapter,

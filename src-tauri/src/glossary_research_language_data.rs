@@ -32,7 +32,8 @@ fn data_root(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|error| format!("Could not resolve the app data directory: {error}"))?
         .join("research-data")
         .join("v1");
-    fs::create_dir_all(&dir).map_err(|error| format!("Could not create {}: {error}", dir.display()))?;
+    fs::create_dir_all(&dir)
+        .map_err(|error| format!("Could not create {}: {error}", dir.display()))?;
     Ok(dir)
 }
 
@@ -70,14 +71,21 @@ fn conversion_cache() -> &'static Mutex<Option<CharMap>> {
 /// Traditional → Simplified characters (from the Chinese data's `t2s.tsv.gz`).
 fn to_simplified(app: &AppHandle, text: &str) -> Result<String, String> {
     let map = {
-        let cached = conversion_cache().lock().map_err(|e| e.to_string())?.clone();
+        let cached = conversion_cache()
+            .lock()
+            .map_err(|e| e.to_string())?
+            .clone();
         match cached {
             Some(map) => map,
             None => {
                 let entry = language_entry(app, "zh")?.ok_or("No research data for Chinese.")?;
-                let file = entry.get("traditionalToSimplified").ok_or("The Chinese data has no Traditional conversion table.")?;
+                let file = entry
+                    .get("traditionalToSimplified")
+                    .ok_or("The Chinese data has no Traditional conversion table.")?;
                 let path = ensure_file(app, "zh", file)?;
-                let reader = BufReader::new(GzDecoder::new(fs::File::open(&path).map_err(|e| e.to_string())?));
+                let reader = BufReader::new(GzDecoder::new(
+                    fs::File::open(&path).map_err(|e| e.to_string())?,
+                ));
                 let mut map = HashMap::new();
                 for line in reader.lines() {
                     let line = line.map_err(|e| e.to_string())?;
@@ -93,7 +101,10 @@ fn to_simplified(app: &AppHandle, text: &str) -> Result<String, String> {
             }
         }
     };
-    Ok(text.chars().map(|c| map.get(&c).cloned().unwrap_or_else(|| c.to_string())).collect())
+    Ok(text
+        .chars()
+        .map(|c| map.get(&c).cloned().unwrap_or_else(|| c.to_string()))
+        .collect())
 }
 
 fn client() -> Result<reqwest::blocking::Client, String> {
@@ -131,7 +142,11 @@ fn manifest(app: &AppHandle) -> Result<Value, String> {
             // Offline: an older copy still works.
             _ if path.exists() => {}
             Ok(_) => return Err("The research data list could not be read.".into()),
-            Err(error) => return Err(format!("The research data list could not be downloaded: {error}")),
+            Err(error) => {
+                return Err(format!(
+                    "The research data list could not be downloaded: {error}"
+                ))
+            }
         }
     }
     let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
@@ -163,15 +178,25 @@ struct DownloadProgress {
 
 /// The local copy of one manifest file, downloaded and verified if missing or stale.
 fn ensure_file(app: &AppHandle, language: &str, entry: &Value) -> Result<PathBuf, String> {
-    let file = entry.get("file").and_then(Value::as_str).ok_or("manifest entry without a file")?;
-    let expected = entry.get("sha256").and_then(Value::as_str).ok_or("manifest entry without a checksum")?;
+    let file = entry
+        .get("file")
+        .and_then(Value::as_str)
+        .ok_or("manifest entry without a file")?;
+    let expected = entry
+        .get("sha256")
+        .and_then(Value::as_str)
+        .ok_or("manifest entry without a checksum")?;
     let total = entry.get("bytes").and_then(Value::as_u64).unwrap_or(0);
     if file.contains("..") {
         return Err("Invalid file in the research data list.".into());
     }
     let path = data_root(app)?.join(file);
     let marker = path.with_extension("sha256");
-    if path.exists() && fs::read_to_string(&marker).map(|s| s.trim() == expected).unwrap_or(false) {
+    if path.exists()
+        && fs::read_to_string(&marker)
+            .map(|s| s.trim() == expected)
+            .unwrap_or(false)
+    {
         return Ok(path);
     }
     if let Some(parent) = path.parent() {
@@ -188,17 +213,26 @@ fn ensure_file(app: &AppHandle, language: &str, entry: &Value) -> Result<PathBuf
     let mut received: u64 = 0;
     let mut reported: u64 = 0;
     loop {
-        let read = response.read(&mut buffer).map_err(|error| format!("Download of {file} failed: {error}"))?;
+        let read = response
+            .read(&mut buffer)
+            .map_err(|error| format!("Download of {file} failed: {error}"))?;
         if read == 0 {
             break;
         }
-        out.write_all(&buffer[..read]).map_err(|error| error.to_string())?;
+        out.write_all(&buffer[..read])
+            .map_err(|error| error.to_string())?;
         received += read as u64;
         if received - reported >= 2 << 20 {
             reported = received;
-            let _ = app.emit("glossary-research-data-progress", DownloadProgress {
-                language: language.to_string(), file: file.to_string(), received, total,
-            });
+            let _ = app.emit(
+                "glossary-research-data-progress",
+                DownloadProgress {
+                    language: language.to_string(),
+                    file: file.to_string(),
+                    received,
+                    total,
+                },
+            );
         }
     }
     drop(out);
@@ -209,9 +243,15 @@ fn ensure_file(app: &AppHandle, language: &str, entry: &Value) -> Result<PathBuf
     }
     fs::rename(&partial, &path).map_err(|error| error.to_string())?;
     fs::write(&marker, expected).map_err(|error| error.to_string())?;
-    let _ = app.emit("glossary-research-data-progress", DownloadProgress {
-        language: language.to_string(), file: file.to_string(), received, total: received,
-    });
+    let _ = app.emit(
+        "glossary-research-data-progress",
+        DownloadProgress {
+            language: language.to_string(),
+            file: file.to_string(),
+            received,
+            total: received,
+        },
+    );
     Ok(path)
 }
 
@@ -229,12 +269,18 @@ pub(crate) struct LanguageData {
 
 fn language_entry(app: &AppHandle, language: &str) -> Result<Option<Value>, String> {
     let manifest = manifest(app)?;
-    Ok(manifest.get("languages").and_then(|l| l.get(language)).cloned())
+    Ok(manifest
+        .get("languages")
+        .and_then(|l| l.get(language))
+        .cloned())
 }
 
 /// Make sure a language's data is on this computer (downloading it the first time).
 #[tauri::command]
-pub(crate) async fn glossary_research_language_data(app: AppHandle, language: String) -> Result<LanguageData, String> {
+pub(crate) async fn glossary_research_language_data(
+    app: AppHandle,
+    language: String,
+) -> Result<LanguageData, String> {
     let (language, traditional) = resolve_language(&safe_language(&language)?);
     tauri::async_runtime::spawn_blocking(move || {
         if traditional {
@@ -242,8 +288,13 @@ pub(crate) async fn glossary_research_language_data(app: AppHandle, language: St
         }
         let Some(entry) = language_entry(&app, &language)? else {
             return Ok(LanguageData {
-                language, available: false, corpus: None, sentences: None, tokens: None,
-                frequency_source: None, sentences_source: None,
+                language,
+                available: false,
+                corpus: None,
+                sentences: None,
+                tokens: None,
+                frequency_source: None,
+                sentences_source: None,
             });
         };
         let frequency = entry.get("frequency").ok_or("manifest without frequency")?;
@@ -253,11 +304,20 @@ pub(crate) async fn glossary_research_language_data(app: AppHandle, language: St
         Ok(LanguageData {
             language,
             available: true,
-            corpus: sentences.get("corpus").and_then(Value::as_str).map(str::to_string),
+            corpus: sentences
+                .get("corpus")
+                .and_then(Value::as_str)
+                .map(str::to_string),
             sentences: sentences.get("sentences").and_then(Value::as_u64),
             tokens: sentences.get("tokens").and_then(Value::as_u64),
-            frequency_source: frequency.get("source").and_then(Value::as_str).map(str::to_string),
-            sentences_source: sentences.get("source").and_then(Value::as_str).map(str::to_string),
+            frequency_source: frequency
+                .get("source")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            sentences_source: sentences
+                .get("source")
+                .and_then(Value::as_str)
+                .map(str::to_string),
         })
     })
     .await
@@ -272,12 +332,23 @@ fn frequency_cache() -> &'static Mutex<HashMap<String, FrequencyTable>> {
 }
 
 fn frequency_table(app: &AppHandle, language: &str) -> Result<FrequencyTable, String> {
-    if let Some(table) = frequency_cache().lock().map_err(|e| e.to_string())?.get(language) {
+    if let Some(table) = frequency_cache()
+        .lock()
+        .map_err(|e| e.to_string())?
+        .get(language)
+    {
         return Ok(table.clone());
     }
-    let entry = language_entry(app, language)?.ok_or_else(|| format!("No research data for language '{language}'."))?;
-    let path = ensure_file(app, language, entry.get("frequency").ok_or("manifest without frequency")?)?;
-    let reader = BufReader::new(GzDecoder::new(fs::File::open(&path).map_err(|e| e.to_string())?));
+    let entry = language_entry(app, language)?
+        .ok_or_else(|| format!("No research data for language '{language}'."))?;
+    let path = ensure_file(
+        app,
+        language,
+        entry.get("frequency").ok_or("manifest without frequency")?,
+    )?;
+    let reader = BufReader::new(GzDecoder::new(
+        fs::File::open(&path).map_err(|e| e.to_string())?,
+    ));
     let mut table = HashMap::new();
     for line in reader.lines() {
         let line = line.map_err(|e| e.to_string())?;
@@ -288,19 +359,30 @@ fn frequency_table(app: &AppHandle, language: &str) -> Result<FrequencyTable, St
         }
     }
     let table = Arc::new(table);
-    frequency_cache().lock().map_err(|e| e.to_string())?.insert(language.to_string(), table.clone());
+    frequency_cache()
+        .lock()
+        .map_err(|e| e.to_string())?
+        .insert(language.to_string(), table.clone());
     Ok(table)
 }
 
 /// Zipf score of each word (0 when the word is below the list's threshold).
 #[tauri::command]
-pub(crate) async fn glossary_research_zipf(app: AppHandle, language: String, words: Vec<String>) -> Result<Vec<f32>, String> {
+pub(crate) async fn glossary_research_zipf(
+    app: AppHandle,
+    language: String,
+    words: Vec<String>,
+) -> Result<Vec<f32>, String> {
     let (language, traditional) = resolve_language(&safe_language(&language)?);
     tauri::async_runtime::spawn_blocking(move || {
         let table = frequency_table(&app, &language)?;
         let mut scores = Vec::with_capacity(words.len());
         for word in &words {
-            let key = if traditional { to_simplified(&app, word.trim())? } else { word.trim().to_string() };
+            let key = if traditional {
+                to_simplified(&app, word.trim())?
+            } else {
+                word.trim().to_string()
+            };
             scores.push(*table.get(&key.to_lowercase()).unwrap_or(&0.0));
         }
         Ok(scores)
@@ -339,7 +421,10 @@ const WORD_CHARS: &str = r"\p{L}\p{N}\p{M}_\x{200C}\x{200D}";
 
 /// Languages written without spaces between words: match inside text, not at word edges.
 fn unspaced(language: &str) -> bool {
-    matches!(language.split('-').next().unwrap_or(""), "zh" | "ja" | "th" | "lo" | "km" | "my")
+    matches!(
+        language.split('-').next().unwrap_or(""),
+        "zh" | "ja" | "th" | "lo" | "km" | "my"
+    )
 }
 
 /// A seeded uniform draw of at most `limit` items from a stream of any length
@@ -374,15 +459,23 @@ where
 
 /// A seeded random sample of general-corpus sentences that contain any of the forms.
 #[tauri::command]
-pub(crate) async fn glossary_research_general_sentences(app: AppHandle, input: SentencesInput) -> Result<SentencesResult, String> {
+pub(crate) async fn glossary_research_general_sentences(
+    app: AppHandle,
+    input: SentencesInput,
+) -> Result<SentencesResult, String> {
     let (language, traditional) = resolve_language(&safe_language(&input.language)?);
     tauri::async_runtime::spawn_blocking(move || {
-        let entry = language_entry(&app, &language)?.ok_or_else(|| format!("No research data for language '{language}'."))?;
+        let entry = language_entry(&app, &language)?
+            .ok_or_else(|| format!("No research data for language '{language}'."))?;
         let sentences = entry.get("sentences").ok_or("manifest without sentences")?;
         let path = ensure_file(&app, &language, sentences)?;
         let mut forms: Vec<String> = Vec::new();
         for form in &input.forms {
-            let form = if traditional { to_simplified(&app, form.trim())? } else { form.trim().to_string() };
+            let form = if traditional {
+                to_simplified(&app, form.trim())?
+            } else {
+                form.trim().to_string()
+            };
             if !form.is_empty() {
                 forms.push(regex::escape(&form));
             }
@@ -400,7 +493,9 @@ pub(crate) async fn glossary_research_general_sentences(app: AppHandle, input: S
             .case_insensitive(true)
             .build()
             .map_err(|error| error.to_string())?;
-        let reader = BufReader::new(GzDecoder::new(fs::File::open(&path).map_err(|e| e.to_string())?));
+        let reader = BufReader::new(GzDecoder::new(
+            fs::File::open(&path).map_err(|e| e.to_string())?,
+        ));
         let matching = reader
             .lines()
             .map(|line| line.map_err(|e| e.to_string()))
@@ -412,7 +507,10 @@ pub(crate) async fn glossary_research_general_sentences(app: AppHandle, input: S
             corpus_sentences: sentences.get("sentences").and_then(Value::as_u64),
             corpus_tokens: sentences.get("tokens").and_then(Value::as_u64),
             zipf_offset: sentences.get("zipfOffset").and_then(Value::as_f64),
-            corpus: sentences.get("corpus").and_then(Value::as_str).map(str::to_string),
+            corpus: sentences
+                .get("corpus")
+                .and_then(Value::as_str)
+                .map(str::to_string),
         })
     })
     .await
@@ -445,8 +543,7 @@ struct CountProgress {
 }
 
 fn is_word_char(c: char) -> bool {
-    c.is_alphanumeric() || c == '_' || c == '\u{200C}' || c == '\u{200D}'
-        || matches!(unicode_general_mark(c), true)
+    c.is_alphanumeric() || c == '_' || c == '\u{200C}' || c == '\u{200D}' || unicode_general_mark(c)
 }
 
 /// Combining marks (vowel signs, decomposed accents) belong to the word they sit on.
@@ -463,21 +560,38 @@ fn unicode_general_mark(c: char) -> bool {
 /// Sentences containing each phrase as a whole, in one pass over the corpus: each
 /// sentence is lower-cased once, one literal search finds candidate matches
 /// (longest phrases first), and word edges are checked by hand in spaced scripts.
-fn count_whole_phrases(path: &Path, language: &str, phrases: &[String], progress: impl Fn(u64)) -> Result<Vec<u64>, String> {
+fn count_whole_phrases(
+    path: &Path,
+    language: &str,
+    phrases: &[String],
+    progress: impl Fn(u64),
+) -> Result<Vec<u64>, String> {
     let mut order: Vec<usize> = (0..phrases.len()).collect();
     order.sort_by_key(|&i| std::cmp::Reverse(phrases[i].chars().count()));
-    let alternation = order.iter().map(|&i| regex::escape(&phrases[i])).collect::<Vec<_>>().join("|");
-    let matcher = RegexBuilder::new(&alternation).build().map_err(|error| error.to_string())?;
-    let index_of: HashMap<&str, usize> = phrases.iter().enumerate().map(|(i, p)| (p.as_str(), i)).collect();
+    let alternation = order
+        .iter()
+        .map(|&i| regex::escape(&phrases[i]))
+        .collect::<Vec<_>>()
+        .join("|");
+    let matcher = RegexBuilder::new(&alternation)
+        .build()
+        .map_err(|error| error.to_string())?;
+    let index_of: HashMap<&str, usize> = phrases
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (p.as_str(), i))
+        .collect();
     let check_edges = !unspaced(language);
     let mut counts = vec![0u64; phrases.len()];
     let mut seen = vec![false; phrases.len()];
-    let reader = BufReader::new(GzDecoder::new(fs::File::open(path).map_err(|e| e.to_string())?));
+    let reader = BufReader::new(GzDecoder::new(
+        fs::File::open(path).map_err(|e| e.to_string())?,
+    ));
     let mut lines = 0u64;
     for line in reader.lines() {
         let line = line.map_err(|e| e.to_string())?.to_lowercase();
         lines += 1;
-        if lines % 100_000 == 0 {
+        if lines.is_multiple_of(100_000) {
             progress(lines);
         }
         let mut hit_any = false;
@@ -525,32 +639,56 @@ fn zipf_from_hits(hits: u64, tokens: u64) -> f32 {
 /// Used where a frequency list cannot score compounds: lists that count
 /// syllables (Vietnamese) and scripts written without spaces.
 #[tauri::command]
-pub(crate) async fn glossary_research_corpus_zipf(app: AppHandle, language: String, phrases: Vec<String>) -> Result<Vec<CorpusCount>, String> {
+pub(crate) async fn glossary_research_corpus_zipf(
+    app: AppHandle,
+    language: String,
+    phrases: Vec<String>,
+) -> Result<Vec<CorpusCount>, String> {
     let (language, traditional) = resolve_language(&safe_language(&language)?);
     tauri::async_runtime::spawn_blocking(move || {
-        let entry = language_entry(&app, &language)?.ok_or_else(|| format!("No research data for language '{language}'."))?;
+        let entry = language_entry(&app, &language)?
+            .ok_or_else(|| format!("No research data for language '{language}'."))?;
         let sentences = entry.get("sentences").ok_or("manifest without sentences")?;
         let tokens = sentences.get("tokens").and_then(Value::as_u64).unwrap_or(0);
         let offset = sentences.get("zipfOffset").and_then(Value::as_f64);
         let mut searched: Vec<String> = Vec::with_capacity(phrases.len());
         for phrase in &phrases {
             let phrase = phrase.trim();
-            let phrase = if traditional { to_simplified(&app, phrase)? } else { phrase.to_string() };
+            let phrase = if traditional {
+                to_simplified(&app, phrase)?
+            } else {
+                phrase.to_string()
+            };
             searched.push(phrase.to_lowercase());
         }
         let key = |phrase: &str| format!("{language}\u{0}{phrase}");
         let missing: Vec<String> = {
             let cache = corpus_count_cache().lock().map_err(|e| e.to_string())?;
-            let mut unique: Vec<String> = searched.iter().filter(|p| !p.is_empty() && !cache.contains_key(&key(p))).cloned().collect();
+            let mut unique: Vec<String> = searched
+                .iter()
+                .filter(|p| !p.is_empty() && !cache.contains_key(&key(p)))
+                .cloned()
+                .collect();
             unique.sort();
             unique.dedup();
             unique
         };
         if !missing.is_empty() {
             let path = ensure_file(&app, &language, sentences)?;
-            let total = sentences.get("sentences").and_then(Value::as_u64).unwrap_or(0);
+            let total = sentences
+                .get("sentences")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
             let counts = count_whole_phrases(&path, &language, &missing, |done| {
-                let _ = app.emit("glossary-research-count-progress", CountProgress { language: language.clone(), done, total, words: missing.len() });
+                let _ = app.emit(
+                    "glossary-research-count-progress",
+                    CountProgress {
+                        language: language.clone(),
+                        done,
+                        total,
+                        words: missing.len(),
+                    },
+                );
             })?;
             let mut cache = corpus_count_cache().lock().map_err(|e| e.to_string())?;
             for (phrase, count) in missing.iter().zip(counts) {
@@ -562,8 +700,16 @@ pub(crate) async fn glossary_research_corpus_zipf(app: AppHandle, language: Stri
             .iter()
             .zip(&searched)
             .map(|(original, phrase)| {
-                let hits = if phrase.is_empty() { 0 } else { *cache.get(&key(phrase)).unwrap_or(&0) };
-                CorpusCount { phrase: original.clone(), hits, zipf: corpus_zipf(hits, offset, tokens) }
+                let hits = if phrase.is_empty() {
+                    0
+                } else {
+                    *cache.get(&key(phrase)).unwrap_or(&0)
+                };
+                CorpusCount {
+                    phrase: original.clone(),
+                    hits,
+                    zipf: corpus_zipf(hits, offset, tokens),
+                }
             })
             .collect())
     })
@@ -605,18 +751,38 @@ mod tests {
             encoder.finish().unwrap();
             path
         };
-        let vi = write("vi.gz", &[
-            "Nước Trong Suốt như gương, trong suốt cả ngày.",
-            "Nước trongsuốt.",
-            "chương trong suốtnăm",
-            "Đó là sự phù phiếm.",
-        ]);
-        let counts = count_whole_phrases(&vi, "vi", &["trong suốt".into(), "phù phiếm".into(), "phù".into()], |_| {}).unwrap();
-        assert_eq!(counts, vec![1, 1, 0], "once per sentence, whole words only, the longer phrase wins");
+        let vi = write(
+            "vi.gz",
+            &[
+                "Nước Trong Suốt như gương, trong suốt cả ngày.",
+                "Nước trongsuốt.",
+                "chương trong suốtnăm",
+                "Đó là sự phù phiếm.",
+            ],
+        );
+        let counts = count_whole_phrases(
+            &vi,
+            "vi",
+            &["trong suốt".into(), "phù phiếm".into(), "phù".into()],
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(
+            counts,
+            vec![1, 1, 0],
+            "once per sentence, whole words only, the longer phrase wins"
+        );
         let fa = write("fa.gz", &["او خود\u{200C}پسندی دارد", "او پسندی دارد"]);
-        assert_eq!(count_whole_phrases(&fa, "fa", &["پسندی".into()], |_| {}).unwrap(), vec![1], "a ZWNJ joins the compound");
+        assert_eq!(
+            count_whole_phrases(&fa, "fa", &["پسندی".into()], |_| {}).unwrap(),
+            vec![1],
+            "a ZWNJ joins the compound"
+        );
         let zh = write("zh.gz", &["他很爱慕虚荣。", "虚荣心很强"]);
-        assert_eq!(count_whole_phrases(&zh, "zh", &["虚荣".into()], |_| {}).unwrap(), vec![2]);
+        assert_eq!(
+            count_whole_phrases(&zh, "zh", &["虚荣".into()], |_| {}).unwrap(),
+            vec![2]
+        );
         assert!(zipf_from_hits(0, 1000) == 0.0);
         assert!((corpus_zipf(100, Some(1.5), 0) - 3.5).abs() < 1e-6);
         assert!(corpus_zipf(0, Some(1.5), 0) == 0.0);
@@ -629,18 +795,35 @@ mod tests {
         let (seen, first) = seeded_draw(stream(200_000), 100, "1:es:íntimo").unwrap();
         assert_eq!(seen, 200_000);
         assert_eq!(first.len(), 100);
-        assert_eq!(seeded_draw(stream(200_000), 100, "1:es:íntimo").unwrap().1, first, "same seed, same draw");
-        assert_ne!(seeded_draw(stream(200_000), 100, "2:es:íntimo").unwrap().1, first);
+        assert_eq!(
+            seeded_draw(stream(200_000), 100, "1:es:íntimo").unwrap().1,
+            first,
+            "same seed, same draw"
+        );
+        assert_ne!(
+            seeded_draw(stream(200_000), 100, "2:es:íntimo").unwrap().1,
+            first
+        );
         // Items from late in the stream are drawn as often as early ones.
         let mut late = 0usize;
         for round in 0..200 {
             let (_, drawn) = seeded_draw(stream(100_000), 100, &format!("round {round}")).unwrap();
-            late += drawn.iter().filter(|item| item.parse::<usize>().unwrap() >= 50_000).count();
+            late += drawn
+                .iter()
+                .filter(|item| item.parse::<usize>().unwrap() >= 50_000)
+                .count();
         }
         let share = late as f64 / 20_000.0;
-        assert!((0.47..0.53).contains(&share), "second half drawn {share:.3} of the time");
+        assert!(
+            (0.47..0.53).contains(&share),
+            "second half drawn {share:.3} of the time"
+        );
         let (seen, few) = seeded_draw(stream(7), 100, "x").unwrap();
-        assert_eq!((seen, few.len()), (7, 7), "fewer items than the limit: all of them");
+        assert_eq!(
+            (seen, few.len()),
+            (7, 7),
+            "fewer items than the limit: all of them"
+        );
         assert!(seeded_draw(stream(5), 0, "x").unwrap().1.is_empty());
     }
 
