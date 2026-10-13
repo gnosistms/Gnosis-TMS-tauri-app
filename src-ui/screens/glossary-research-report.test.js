@@ -153,5 +153,5 @@ test("the heading lists the forms used in the sample with their uses; the unused
   const html = renderGlossaryResearchReportScreen({ glossaryResearchReport: { status: "ready", run: r, entryDrafts: drafts, expandedVariants: {}, showAllExamples: {} }, offline: {} });
   assert.match(html, /Forms in this entry, with their uses in the sample:<\/span> regenerar 3 · regenera 1</);
   assert.match(html, /<summary>and 1 form in the texts but not in the sample<\/summary>[\s\S]*regeneramos/);
-  assert.match(html, /<summary>1 form never found in the texts: left out of the entry<\/summary>[\s\S]*regenerasteis/);
+  assert.doesNotMatch(html, /regenerasteis/, "forms never found in the texts are not listed (Hans, 2026-10-12)");
 });

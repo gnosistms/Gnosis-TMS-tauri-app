@@ -217,3 +217,21 @@ test("while the AI studies where the term comes from, the step says what it is r
   const answered = stepDisplay({ ...section, requests: [{ ...study, usage: {}, answer: '{"senses":[{"sense":"To restore.","inDictionary":true}]}' }] }, { author: "Samael Aun Weor", source: "Spanish" });
   assert.doesNotMatch(answered.html, /What the AI is reading/, "the answer replaces it");
 });
+
+test("the consistency test shows each sentence with the translations chosen on its tries, and the check's verdict", () => {
+  const text = "### Passage o1\no1.1: use entry [e1]\nEn otros ⟦mundos⟧ [o1.1] viven.\no2.1: use entry [e1]\nEl ⟦mundo⟧ [o2.1] entero.";
+  const round = (a, b) => ({ requestId: `r${a}${b}${Math.random()}`, stage: "consistency", purpose: "translate the test sentences with the finished entry (round 1)", usage: {}, text,
+    progress: { variants: { v1: "world", v2: "planet" } },
+    answer: JSON.stringify({ items: [{ occId: "o1.1", status: "selected", variantId: a }, { occId: "o2.1", status: "selected", variantId: b }] }) });
+  const check = { requestId: "c", stage: "consistency", purpose: "check whether the translations the translator took turns between change the meaning", usage: {},
+    answer: '{"items":[{"occId":"o1.1","sameMeaning":false,"reason":"planets are physical"}]}' };
+  const section = { heading: "Consistency test", items: [{ kind: "line", entry: { type: "fact", text: "The translator took turns between translations in 1 of 2 test sentences." } }],
+    requests: [round("v1", "v1"), round("v2", "v1"), round("v1", "v1"), round("v2", "v1"), round("v1", "v1"), check] };
+  const shown = stepDisplay(section, { target: "English" });
+  assert.match(shown.html, /2 test sentences, each translated 5 times with the finished entry: 1 kept to one translation, 1 took turns/);
+  assert.match(shown.html, /En otros <mark>mundos<\/mark> viven\.[\s\S]*world ×3[\s\S]*planet ×2[\s\S]*changes the meaning/);
+  assert.match(shown.html, /El <mark>mundo<\/mark> entero\.[\s\S]*world ×5/);
+  assert.doesNotMatch(shown.html, /"occId"/, "no raw answers");
+  assert.ok(shown.facts.some((pattern) => pattern.test(section.items[0].entry.text)));
+  assert.equal(shown.requests.size, 6);
+});
