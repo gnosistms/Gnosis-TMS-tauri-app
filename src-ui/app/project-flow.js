@@ -388,17 +388,18 @@ export function primeProjectsLoadingState(teamId = state.selectedTeamId, options
     state.selectedTeamId = teamId;
   }
   const team = options.team ?? state.teams.find((item) => item?.id === teamId);
+  const canPreserveTeamContext =
+    projectsPageOwnsTeam(team) || canPreserveActiveEditorProjectContext(team);
   const canPreserveVisibleData =
-    (
-      projectsPageOwnsTeam(team)
-      || canPreserveActiveEditorProjectContext(team)
-    )
+    canPreserveTeamContext
     && (state.projects.length > 0 || state.deletedProjects.length > 0);
 
   if (!canPreserveVisibleData) {
     state.projects = [];
     state.deletedProjects = [];
-    clearResourcePageDataOwner(state.projectsPage);
+    if (!canPreserveTeamContext) {
+      clearResourcePageDataOwner(state.projectsPage);
+    }
   }
   if (!glossariesPageOwnsTeam(team)) {
     state.glossaries = [];
@@ -417,7 +418,9 @@ export function primeProjectsLoadingState(teamId = state.selectedTeamId, options
     recoveryMessage: "",
   };
   setResourcePageRefreshing(state.projectsPage, true);
-  resetProjectSearchState();
+  if (!canPreserveTeamContext) {
+    resetProjectSearchState();
+  }
   resetProjectCreation();
   resetProjectRename();
   resetProjectTransfer();
