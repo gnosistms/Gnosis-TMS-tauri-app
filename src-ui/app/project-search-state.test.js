@@ -66,7 +66,7 @@ test("projectSearchVisibleResults hides weaker rows until requested", () => {
   );
 });
 
-test("buildProjectSearchTree counts rows and sorts hierarchy deterministically", () => {
+test("buildProjectSearchTree sorts names naturally regardless of score and keeps chapter row order", () => {
   const tree = buildProjectSearchTree([
     {
       projectId: "project-b",
@@ -75,31 +75,31 @@ test("buildProjectSearchTree counts rows and sorts hierarchy deterministically",
       chapterTitle: "Second",
       rowId: "row-2",
       rowOrderKey: "b0",
-      score: 5,
+      score: 50,
     },
     {
       projectId: "project-a",
-      projectTitle: "Alpha",
+      projectTitle: "alpha",
       chapterId: "chapter-low",
-      chapterTitle: "Low",
+      chapterTitle: "Chapter 10",
       rowId: "row-3",
       rowOrderKey: "c0",
-      score: 2,
+      score: 20,
     },
     {
       projectId: "project-a",
-      projectTitle: "Alpha",
+      projectTitle: "alpha",
       chapterId: "chapter-high",
-      chapterTitle: "High",
+      chapterTitle: "chapter 2",
       rowId: "row-4",
       rowOrderKey: "d0",
       score: 10,
     },
     {
       projectId: "project-a",
-      projectTitle: "Alpha",
+      projectTitle: "alpha",
       chapterId: "chapter-high",
-      chapterTitle: "High",
+      chapterTitle: "chapter 2",
       rowId: "row-1",
       rowOrderKey: "a0",
       score: 8,
