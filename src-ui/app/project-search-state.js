@@ -44,12 +44,19 @@ export function projectSearchVisibleResults(projectsSearch = {}) {
   return results.filter((row) => row?.qualityTier !== "weaker");
 }
 
-function compareScoreThenTitle(left, right) {
-  const scoreDifference = Number(right?.score ?? 0) - Number(left?.score ?? 0);
-  if (scoreDifference !== 0) {
-    return scoreDifference;
+function compareTitleThenId(left, right) {
+  const titleComparison = String(left?.title ?? "").trim().localeCompare(
+    String(right?.title ?? "").trim(),
+    undefined,
+    { sensitivity: "base", numeric: true },
+  );
+  if (titleComparison !== 0) {
+    return titleComparison;
   }
-  return String(left?.title ?? "").localeCompare(String(right?.title ?? ""));
+  return String(left?.id ?? "").localeCompare(String(right?.id ?? ""), undefined, {
+    sensitivity: "base",
+    numeric: true,
+  });
 }
 
 export function buildProjectSearchTree(results = []) {
@@ -103,7 +110,7 @@ export function buildProjectSearchTree(results = []) {
             String(left?.rowOrderKey ?? "").localeCompare(String(right?.rowOrderKey ?? ""))
             || String(left?.rowId ?? "").localeCompare(String(right?.rowId ?? ""))),
         }))
-        .sort(compareScoreThenTitle),
+        .sort(compareTitleThenId),
     }))
-    .sort(compareScoreThenTitle);
+    .sort(compareTitleThenId);
 }
