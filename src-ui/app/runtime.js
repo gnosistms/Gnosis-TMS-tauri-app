@@ -402,10 +402,24 @@ export function convertLocalFileSrc(filePath) {
   return normalizedPath;
 }
 
-export function waitForNextPaint() {
+/**
+ * Resolves once the current state has been painted, so a loading view shows
+ * before heavy work starts. A hidden or covered window is not repainted
+ * (WebKit pauses animation frames), so it also resolves after a short delay:
+ * otherwise work behind this wait would stall until the window is shown.
+ */
+export function waitForNextPaint(fallbackMs = 100) {
   return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      globalThis.clearTimeout(timer);
+      resolve();
+    };
+    const timer = globalThis.setTimeout(finish, fallbackMs);
     window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => resolve());
+      window.requestAnimationFrame(finish);
     });
   });
 }

@@ -115,6 +115,7 @@ import {
   updateProjectTransferName,
 } from "./project-transfer-flow.js";
 import { normalizedConfirmationValue } from "./resource-entity-modal.js";
+import { handleGlossaryResearchInput } from "./glossary-research-input.js";
 
 let liveReviewSidebarRenderPending = false;
 
@@ -372,6 +373,17 @@ function handleGlossaryTermVariantInput(event) {
   updateGlossaryTermVariant(side, index, input.value);
   syncAutoSizeTextarea(input, { minHeight: 44, maxHeight: 96 });
   syncGlossaryTermInlineStyleButtons();
+  return true;
+}
+
+function handleGlossaryTermSiblingInput(event) {
+  const input = event.target.closest("[data-glossary-term-sibling-input]");
+  if (!input || !state.glossaryTermEditor) {
+    return false;
+  }
+
+  state.glossaryTermEditor.siblingInput = input.value;
+  state.glossaryTermEditor.siblingError = "";
   return true;
 }
 
@@ -1225,7 +1237,9 @@ const inputHandlers = [
   handleGlossaryTermVariantInput,
   handleGlossaryTermVariantNoteInput,
   handleGlossaryTermNotesInput,
+  handleGlossaryTermSiblingInput,
   handleGlossaryTermFootnoteInput,
+  handleGlossaryResearchInput,
   handleQaListTitleInput,
   handleQaListLanguageInput,
   handleQaListRenameInput,

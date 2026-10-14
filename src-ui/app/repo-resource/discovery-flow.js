@@ -148,7 +148,12 @@ export function createRepoResourceDiscoveryFlow(descriptor) {
     }
 
     beginPageSync();
-    showScopedSyncBadge(badgeScope, `Loading ${pluralNoun}...`, render);
+    // What is on disk is already shown; the rest of the load only looks for changes.
+    showScopedSyncBadge(
+      badgeScope,
+      state[collectionField].length > 0 ? "Checking for changes..." : `Loading ${pluralNoun}...`,
+      render,
+    );
     render?.();
     await waitForNextPaint();
     if (!isLoadCurrent(team)) {

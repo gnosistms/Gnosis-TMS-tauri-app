@@ -134,6 +134,12 @@ export function canApplyGlossaryEditorSnapshot(expectedContext) {
   if (glossaryEditorHasOpenDraft()) {
     return { canApply: false, reason: "open-draft" };
   }
+  // With no term list on screen yet there is nothing a write or sync could
+  // overwrite, and refusing here left the editor loading forever: show what
+  // is on disk; the sync that is running refreshes it when it finishes.
+  if (state.glossaryEditor?.status !== "ready") {
+    return { canApply: true, reason: "ready" };
+  }
   if (glossaryEditorHasActiveTermWrite()) {
     return { canApply: false, reason: "active-write" };
   }

@@ -4,6 +4,7 @@ mod assistant_cache_eval;
 mod effort_eval;
 pub(crate) mod glossary_matcher;
 pub mod providers;
+pub(crate) mod research;
 pub mod types;
 
 use regex::Regex;
@@ -504,7 +505,7 @@ fn subtitle_cue_review_rule() -> &'static str {
 }
 
 fn translation_glossary_rules() -> &'static str {
-    "Glossary rules:\nGlossary hints are compact JSON. Apply a glossary hint only when its sourceTerm appears in source_text. targetVariants contains non-empty target text sorted in order of preference, best first. Use later variants only when grammar or context requires it. noTranslation means this glossary term may be omitted from the translation; noTranslation.position ranks omission against targetVariants: \"only\" means omit the source term because no target text is recommended, \"first\" means omission is preferred and targetVariants are fallbacks, and \"later\" means targetVariants are preferred while omission is allowed when smoother or clearer. If a target variant text uses the notation base[ruby: annotation], preserve that ruby annotation when using the term. Use target variant notes, noTranslation.note, globalNotes, and footnotes as translation guidance when present."
+    "Glossary rules:\nGlossary hints are compact JSON. Apply a glossary hint only when its sourceTerm appears in source_text. targetVariants contains non-empty target text sorted in order of preference, best first. Use later variants only when grammar or context requires it. noTranslation means this glossary term may be omitted from the translation; noTranslation.position ranks omission against targetVariants: \"only\" means omit the source term because no target text is recommended, \"first\" means omission is preferred and targetVariants are fallbacks, and \"later\" means targetVariants are preferred while omission is allowed when smoother or clearer. If a target variant text uses the notation base[ruby: annotation], preserve that ruby annotation when using the term. Use target variant notes, noTranslation.note, globalNotes, and footnotes as translation guidance when present. If two different source terms that mean the same thing in the sentence call for the same target text, write it once instead of repeating it."
 }
 
 // ---- Batch translate / review ----------------------------------------------

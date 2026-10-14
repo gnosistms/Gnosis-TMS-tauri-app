@@ -1,4 +1,5 @@
 import { buildEditorCommentsButtonState, normalizeEditorSidebarTab } from "./editor-comments.js";
+import { canManageGlossaries } from "./glossary-shared.js";
 import { buildEditorSectionChangeView } from "./editor-change-view.js";
 import {
   changedAfterMyEditFilterIsActive,
@@ -603,6 +604,8 @@ export function buildEditorScreenViewModel(appState) {
             targetLanguageCode: targetCode,
             seenRevisions: commentSeenRevisions,
           }),
+          showResearchButton:
+            section.code === sourceCode && Boolean(row?.rowId) && canManageGlossaries(),
           isAiTranslating,
           changeView: isAiTranslating ? null : changeView,
           // A footnote or caption someone deleted still gets its box, showing the

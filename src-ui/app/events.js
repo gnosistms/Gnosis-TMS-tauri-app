@@ -36,6 +36,7 @@ import {
   isProjectsSelectCommitTarget,
   withProjectsSelectCommit,
 } from "./projects-render-hold.js";
+import { registerMoneyInputEvents } from "./money-input.js";
 
 const SYNC_WITH_SERVER_EVENT = "sync-with-server";
 const ERROR_REPORTING_EVENT = "open-error-reporting";
@@ -49,6 +50,7 @@ export function registerAppEvents(render) {
   registerListboxControlEvents();
   registerRovingChoiceEvents();
   registerModalDialogEvents();
+  registerMoneyInputEvents();
   registerGlossaryTooltipEvents();
   registerProjectAddTranslationProgress(render);
 

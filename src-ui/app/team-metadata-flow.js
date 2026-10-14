@@ -299,7 +299,8 @@ function syncTeamMetadataRepoShared(team) {
     queryFn: async () => {
       const syncInfo = await syncLocalTeamMetadataRepo(team);
       void reconcileSelectedTeamAiAfterMetadataSync(team, syncInfo).catch(() => null);
-      return syncInfo;
+      // The query cache rejects `undefined`; an empty answer is still a finished pull.
+      return syncInfo ?? null;
     },
     staleTime: TEAM_METADATA_SYNC_STALE_MS,
   });
@@ -711,7 +712,8 @@ export async function refreshQaListMetadataRecords(team) {
     .filter(Boolean);
 }
 
-export async function inspectAndMigrateLocalRepoBindings(team) {
+// `kinds` (e.g. ["glossary"]) limits the scan to those resources; omitted, all are scanned.
+export async function inspectAndMigrateLocalRepoBindings(team, { kinds = null } = {}) {
   if (!Number.isFinite(team?.installationId)) {
     return {
       issues: [],
@@ -722,6 +724,7 @@ export async function inspectAndMigrateLocalRepoBindings(team) {
   await ensureLocalTeamMetadataRepo(team);
   const result = await invoke("inspect_and_migrate_local_repo_bindings", {
     installationId: team.installationId,
+    ...(Array.isArray(kinds) ? { kinds } : {}),
   });
 
   return {

@@ -49,6 +49,7 @@ import {
 } from "./glossary-term-write-coordinator.js";
 import { removeGlossaryEditorQuery } from "./glossary-editor-query.js";
 import { refreshEditorGlossaryAfterLocalChange } from "./editor-glossary-flow.js";
+import { remindOfSiblings } from "./glossary-term-siblings.js";
 
 const SOURCE_TERM_DUPLICATE_WARNING =
   "Some source variants are duplicated within this term or elsewhere in the glossary. Remove or change the marked variants before saving.";
@@ -198,6 +199,11 @@ function createGlossaryTermEditorModalState(term = null, overrides = {}) {
     notesToTranslators: term?.notesToTranslators ?? "",
     footnote: term?.footnote ?? "",
     untranslated: term?.untranslated === true,
+    // Related entries (kept apart, linked as a reminder): shown and edited in place.
+    siblingTermIds: [...(term?.siblingTermIds ?? [])],
+    siblingInput: "",
+    siblingError: "",
+    relatedOpen: false,
     attemptedDraft: overrides.attemptedDraft ?? null,
   };
 }
@@ -418,7 +424,10 @@ async function runGlossaryTermSaveIntent(render, intent) {
       if (state.glossaryEditor.status === "ready") markGlossaryBackgroundSyncDirty();
     }
     clearGlossaryEditorStatus(render);
-    showNoticeBadge(intent.value?.isCreate ? "Glossary term added." : "Glossary term saved.", render);
+    if (intent.value?.isCreate || !remindOfSiblings(confirmedTerm, render)) {
+      showNoticeBadge(intent.value?.isCreate ? "Glossary term added." : "Glossary term saved.", render);
+    }
+    return confirmedTerm;
   } catch (error) {
     clearGlossaryEditorStatus(render);
     throw error;
@@ -696,7 +705,7 @@ export function resolveGlossaryTermWriteRepo() {
   return glossary;
 }
 
-export async function submitGlossaryTermEditor(render) {
+export async function submitGlossaryTermEditor(render, { awaitCompletion = false } = {}) {
   const team = selectedTeam();
   const repoName = selectedGlossaryRepoName();
   const draft = state.glossaryTermEditor;
@@ -762,6 +771,7 @@ export async function submitGlossaryTermEditor(render) {
     notesToTranslators: draft.notesToTranslators,
     footnote: draft.footnote,
     untranslated: draft.untranslated === true,
+    siblingTermIds: [...(draft.siblingTermIds ?? [])],
   };
   const repoInput = {
     installationId: team.installationId,
@@ -784,6 +794,9 @@ export async function submitGlossaryTermEditor(render) {
   resetGlossaryTermEditor();
   render();
 
+  let finish;
+  const completion = awaitCompletion ? new Promise((resolve) => { finish = resolve; }) : null;
+  let confirmedTerm = null;
   requestGlossaryTermWriteIntent({
     key: glossaryTermSaveIntentKey(repoInput.glossaryId, visibleTermId),
     scope: glossaryTermWriteScope(team, repoName),
@@ -802,13 +815,17 @@ export async function submitGlossaryTermEditor(render) {
     },
   }, {
     clearOnSuccess: true,
-    run: (intent) => runGlossaryTermSaveIntent(render, intent),
+    run: async (intent) => {
+      confirmedTerm = await runGlossaryTermSaveIntent(render, intent);
+    },
     onSuccess: () => {
+      finish?.({ status: "saved", term: confirmedTerm });
       render();
     },
     onError: (error, intent) => {
       clearGlossaryEditorStatus(render);
       const errorMessage = error?.message ?? String(error);
+      finish?.({ status: "failed", error: errorMessage });
       if (glossarySaveContextMatches(intent) && state.glossaryTermEditor?.isOpen && state.glossaryTermEditor.notice) {
         render();
         return;
@@ -819,4 +836,5 @@ export async function submitGlossaryTermEditor(render) {
       }
     },
   });
+  return completion;
 }

@@ -165,6 +165,9 @@ export function normalizeGlossaryTerm(term) {
       typeof term.notesToTranslators === "string" ? term.notesToTranslators : "",
     footnote: typeof term.footnote === "string" ? term.footnote : "",
     untranslated: term.untranslated === true,
+    siblingTermIds: Array.isArray(term.siblingTermIds)
+      ? term.siblingTermIds.filter((id) => typeof id === "string" && id)
+      : [],
     lifecycleState: isDeletedLifecycleState ? "deleted" : "active",
     freshness: "fresh",
     remotelyDeleted: false,

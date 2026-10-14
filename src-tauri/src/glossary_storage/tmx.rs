@@ -317,6 +317,7 @@ pub(super) fn parse_tmx_glossary(
             notes_to_translators: clean_tmx_text(&unit.note),
             footnote: clean_tmx_text(&unit.footnote),
             untranslated: unit.untranslated,
+            sibling_term_ids: Vec::new(),
             lifecycle: StoredLifecycle {
                 state: "active".to_string(),
             },
