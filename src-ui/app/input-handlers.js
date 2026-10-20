@@ -734,6 +734,12 @@ function handleEditorCommentDraftInput(event, render) {
 }
 
 function handleEditorAssistantDraftInput(event) {
+  // Replacing the focused composer on send can fire change with its old value.
+  // The draft already tracks input events; a blur commit must not restore it.
+  if (event.type !== "input") {
+    return false;
+  }
+
   const input = event.target.closest("[data-editor-assistant-draft]");
   if (!input) {
     return false;
