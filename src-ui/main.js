@@ -19,6 +19,12 @@ import {
 import { loadUserTeams, setGithubAppInstallation } from "./app/team-setup-flow.js";
 import { syncLanguagePickerAlphabetIndexes } from "./app/language-picker-alphabet-index.js";
 import { initializeConnectivity } from "./app/offline-connectivity.js";
+import {
+  noteStartupStep,
+  rememberLaunchedVersion,
+  startStartupWatch,
+  stopStartupWatch,
+} from "./app/startup-watch.js";
 import { registerLoadingSpinnerContinuity } from "./app/loading-spinner-continuity.js";
 import {
   initializePersistentStorage,
@@ -1137,9 +1143,12 @@ window.__gnosisDebug = {
 };
 
 async function bootstrap() {
+  startStartupWatch();
   registerLoadingSpinnerContinuity(app);
   render();
   await initializePersistentStorage();
+  noteStartupStep("storage_ready");
+  rememberLaunchedVersion();
   const needsTelemetryDisclosure = openTelemetryDisclosureIfNeeded(render);
   if (!needsTelemetryDisclosure) {
     // Telemetry needs the persistent store (consent + install id); fire-and-forget so it
@@ -1147,17 +1156,21 @@ async function bootstrap() {
     void initTelemetry();
   }
   hydratePersistentAppState();
+  noteStartupStep("app_state_loaded");
   await initializeWindowPresentation();
+  noteStartupStep("window_ready");
   registerAppEvents(render);
   registerTranslateEditorDomEvents(app, render);
   const devRuntimeFlags = readDevRuntimeFlags();
   if (devRuntimeFlags.editorFixture) {
+    stopStartupWatch();
     applyEditorRegressionFixture(state, devRuntimeFlags.editorFixture);
     render();
     return;
   }
 
   const storedBrokerSession = await prepareStoredBrokerSessionRestore();
+  noteStartupStep("saved_login_loaded");
   const brokerSessionInspection = beginStoredBrokerSessionInspection(storedBrokerSession);
   void registerBrokerAuthListener(render, loadUserTeams);
   void registerGithubAppInstallListener(render, setGithubAppInstallation);
