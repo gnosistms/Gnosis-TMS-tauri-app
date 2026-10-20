@@ -27,6 +27,13 @@
     rgba(255, 251, 246, 0.66);
 }
 
+/* A dialog with no enabled control (progress and wait modals) takes focus itself.
+   Without this, WebView2 on Windows draws its dark default focus ring around the
+   card. Controls inside the dialog keep their own focus styles. */
+[data-modal-dialog]:focus {
+  outline: none;
+}
+
 .modal-card--compact {
   width: min(620px, 100%);
 }
