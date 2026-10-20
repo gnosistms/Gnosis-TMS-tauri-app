@@ -18,6 +18,7 @@ import {
 } from "./app/editor-virtualization.js";
 import { loadUserTeams, setGithubAppInstallation } from "./app/team-setup-flow.js";
 import { syncLanguagePickerAlphabetIndexes } from "./app/language-picker-alphabet-index.js";
+import { renderResearchModals, researchModalHostContains, researchModalOpen } from "./app/research-modal-host.js";
 import { initializeConnectivity } from "./app/offline-connectivity.js";
 import { registerLoadingSpinnerContinuity } from "./app/loading-spinner-continuity.js";
 import {
@@ -130,6 +131,7 @@ import { renderEditorImagePreviewOverlay } from "./screens/editor-image-preview-
 import { renderEditorInsertLinkModal } from "./screens/editor-insert-link-modal.js";
 import { renderGlossariesScreen } from "./screens/glossaries.js";
 import { renderGlossaryEditorScreen } from "./screens/glossary-editor.js";
+import { renderGlossaryResearchReportScreen } from "./screens/glossary-research-report.js";
 import { renderNavigationLoadingModal } from "./screens/navigation-loading-modal.js";
 import { buildProjectsScreenListState, renderProjectsScreen } from "./screens/projects.js";
 import { renderProjectsListItemsRange } from "./screens/project-list-flat-render.js";
@@ -191,6 +193,7 @@ const screenRenderers = {
   qa: () => renderQaScreen(state),
   qaListEditor: () => renderQaListEditorScreen(state),
   glossaryEditor: () => renderGlossaryEditorScreen(state),
+  glossaryResearchReport: () => renderGlossaryResearchReportScreen(state),
   translate: () => renderTranslateScreen(state),
 };
 
@@ -204,6 +207,7 @@ const titles = {
   qa: "QA Lists - Gnosis TMS",
   qaListEditor: "QA List Editor - Gnosis TMS",
   glossaryEditor: "Glossary Editor - Gnosis TMS",
+  glossaryResearchReport: "Research Report - Gnosis TMS",
   translate: "Translate - Gnosis TMS",
 };
 
@@ -786,7 +790,8 @@ function renderWithOptionsImpl(options = {}) {
   // Must run before the screen renderer: the projects initial window is
   // computed from the session anchor this reconciliation seeds or clears.
   reconcileProjectsScrollOnRender(previousScreen, state);
-  const focusSnapshot = captureFocusedInputState();
+  // Focus inside a research window stays where it is: that window is not rebuilt.
+  const focusSnapshot = researchModalHostContains(document.activeElement) ? null : captureFocusedInputState();
   const {
     anchor: translateAnchor,
     hadPendingAnchor,
@@ -847,7 +852,10 @@ function renderWithOptionsImpl(options = {}) {
   const restoredFocus = shouldRestoreFocusedInputStateForScope(focusSnapshot, "full")
     ? restoreFocusedInputState(focusSnapshot)
     : false;
-  reconcileModalRenderState(app, modalSnapshot);
+  // An open research window owns the dialog focus; see research-modal-host.js.
+  if (!researchModalOpen()) {
+    reconcileModalRenderState(app, modalSnapshot);
+  }
   if (focusSnapshot?.kind === "editor-row-field" && !restoredFocus && focusSnapshot.rowId) {
     scheduleDirtyEditorRowScan(render, focusSnapshot.rowId);
   }
@@ -859,6 +867,7 @@ function renderWithOptionsImpl(options = {}) {
   restoreAssistantTranscriptScrollTop(assistantTranscriptScrollTop, app);
   scrollActivePreviewSearchMatchIntoView(app);
   syncLanguagePickerAlphabetIndexes(app);
+  renderResearchModals(state);
   restoreTargetLanguageManagerPickerScrollTop(targetLanguageManagerPickerScrollTop);
   refreshTranslateSessionAnchorAfterRender();
   document.title = titles[state.screen] ?? "Gnosis TMS";

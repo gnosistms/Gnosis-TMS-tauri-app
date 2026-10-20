@@ -1253,6 +1253,64 @@
   background: transparent;
 }
 
+/* related entries: kept apart, linked as a reminder */
+.glossary-term-modal__related {
+  display: grid;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+/* a small, quiet button at the start of the bottom row */
+.glossary-term-modal__related-button {
+  margin-right: auto;
+  padding: 4px 6px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.glossary-term-modal__related-button:hover,
+.glossary-term-modal__related-button.is-open {
+  color: var(--link-hover);
+}
+
+.glossary-term-modal__related-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.glossary-term-modal__related-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-control);
+  background: var(--surface-strong);
+}
+
+.glossary-term-modal__related-targets {
+  color: var(--muted);
+}
+
+.glossary-term-modal__related-add {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.glossary-term-modal__related-add .field__input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .term-lane__header {
   display: flex;
   align-items: baseline;

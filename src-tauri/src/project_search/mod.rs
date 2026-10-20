@@ -8,6 +8,7 @@ mod discovery;
 mod indexer;
 mod query;
 mod refresh;
+pub(crate) mod research_sample;
 mod schema;
 mod scoring;
 

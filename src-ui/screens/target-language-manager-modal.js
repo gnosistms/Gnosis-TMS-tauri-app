@@ -6,28 +6,8 @@ import {
   tooltipAttributes,
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
-import { findIsoLanguageOption, isoLanguageOptions } from "../lib/language-options.js";
+import { pickerSelectedCode, renderLanguagePickerModal } from "./language-picker-modal.js";
 import { languageBaseCode, languageDisplayName } from "../app/editor-language-utils.js";
-
-function renderPickerLanguageOption(language, selectedCode, disabled = false) {
-  const isSelected = language.code === selectedCode;
-  return `
-    <button
-      class="language-picker-modal__option${isSelected ? " is-selected" : ""}"
-      type="button"
-      data-action="select-target-language-manager-picker-language:${escapeHtml(language.code)}"
-      data-roving-choice-option
-      role="option"
-      aria-selected="${isSelected ? "true" : "false"}"
-      aria-pressed="${isSelected ? "true" : "false"}"
-      tabindex="${isSelected ? "0" : "-1"}"
-      ${disabled ? 'disabled aria-disabled="true"' : ""}
-    >
-      <span>${escapeHtml(language.name)}</span>
-      <span class="language-picker-modal__code">${escapeHtml(language.code)}</span>
-    </button>
-  `;
-}
 
 function renderManagedLanguageRow(language, index, total, isSubmitting) {
   const code = String(language?.code ?? "").trim();
@@ -91,48 +71,35 @@ function renderManagedLanguageRow(language, index, total, isSubmitting) {
   `;
 }
 
-function renderLanguagePickerModal(state) {
+function renderTargetLanguagePickerModal(state) {
   const modal = state.targetLanguageManager;
   if (!modal?.isOpen || modal.isPickerOpen !== true) {
     return "";
   }
 
-  const availableLanguages = isoLanguageOptions
-    .slice()
-    .sort((left, right) => left.name.localeCompare(right.name));
-  const rawSelectedCode = findIsoLanguageOption(modal.pickerSelectedLanguageCode)?.code ?? "";
-  const selectedCode = availableLanguages.some((language) => language.code === rawSelectedCode)
-    ? rawSelectedCode
-    : "";
   const offlineMode = state.offline?.isEnabled === true;
-
-  return `
-    <div class="modal-backdrop modal-backdrop--nested-picker">
-      <section class="card modal-card modal-card--compact modal-card--language-picker" role="dialog" aria-modal="true" aria-labelledby="target-language-picker-modal-title" data-modal-dialog="target-language-manager:picker" tabindex="-1">
-        <div class="card__body modal-card__body language-picker-modal">
-          <p class="card__eyebrow">CHAPTER LANGUAGES</p>
-          <h2 class="modal__title" id="target-language-picker-modal-title">Add Language</h2>
-          <p class="modal__supporting">Choose a language to add to this file.</p>
-          <div class="language-picker-modal__list-frame">
-            <div class="language-picker-modal__list" role="listbox" aria-label="Language to add" data-target-language-manager-picker-list data-roving-choice-group data-roving-choice-axis="vertical">
-              ${availableLanguages.length > 0
-                ? availableLanguages.map((language) => renderPickerLanguageOption(language, selectedCode, offlineMode)).join("")
-                : '<p class="language-picker-modal__empty">No supported languages are available.</p>'}
-            </div>
-          </div>
-          <div class="modal__actions">
+  const selectedCode = pickerSelectedCode(modal.pickerSelectedLanguageCode);
+  return renderLanguagePickerModal({
+    dialogName: "target-language-manager:picker",
+    titleId: "target-language-picker-modal-title",
+    eyebrow: "CHAPTER LANGUAGES",
+    title: "Add Language",
+    supporting: "Choose a language to add to this file.",
+    listLabel: "Language to add",
+    listAttribute: "data-target-language-manager-picker-list",
+    selectedCode,
+    selectAction: "select-target-language-manager-picker-language",
+    disabled: offlineMode,
+    nested: true,
+    actionsHtml: `
             ${secondaryButton("Cancel", "close-target-language-manager-picker", {
               modalCancel: true,
             })}
             ${primaryButton("Add language", "add-target-language-manager-language", {
               disabled: offlineMode || !selectedCode,
               modalDefault: true,
-            })}
-          </div>
-        </div>
-      </section>
-    </div>
-  `;
+            })}`,
+  });
 }
 
 export function renderTargetLanguageManagerModal(state) {
@@ -198,7 +165,7 @@ export function renderTargetLanguageManagerModal(state) {
           </div>
         </div>
       </section>
-      ${renderLanguagePickerModal(state)}
+      ${renderTargetLanguagePickerModal(state)}
     </div>
   `;
 }

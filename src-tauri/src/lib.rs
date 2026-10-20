@@ -8,6 +8,9 @@ mod constants;
 mod git_commit;
 mod github;
 mod glossary_repo_sync;
+mod glossary_research_dle;
+mod glossary_research_language_data;
+mod glossary_research_storage;
 mod glossary_storage;
 mod insecure_github_app_config;
 mod installation_access;
@@ -101,10 +104,11 @@ use crate::{
     },
     glossary_storage::{
         delete_gtms_glossary_term, export_gtms_glossary_to_tmx, import_tmx_to_gtms_glossary_repo,
-        initialize_gtms_glossary_repo, inspect_tmx_glossary_import, list_local_gtms_glossaries,
-        load_gtms_glossary_editor_data, load_gtms_glossary_term, prepare_local_gtms_glossary_repo,
-        purge_local_gtms_glossary_repo, rename_gtms_glossary, restore_gtms_glossary,
-        rollback_gtms_glossary_term_upsert, soft_delete_gtms_glossary, upsert_gtms_glossary_term,
+        initialize_gtms_glossary_repo, inspect_tmx_glossary_import, link_gtms_glossary_terms,
+        list_local_gtms_glossaries, load_gtms_glossary_editor_data, load_gtms_glossary_term,
+        prepare_local_gtms_glossary_repo, purge_local_gtms_glossary_repo, rename_gtms_glossary,
+        restore_gtms_glossary, rollback_gtms_glossary_term_upsert, soft_delete_gtms_glossary,
+        upsert_gtms_glossary_term,
     },
     project_import::{
         acknowledge_gtms_project_transfer_status, apply_aligned_translation_to_gtms_chapter,
@@ -288,6 +292,21 @@ async fn run_ai_translation(
     tauri::async_runtime::spawn_blocking(move || run_ai_translation_task(&app, request))
         .await
         .map_err(|error| format!("The AI translation worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn run_glossary_research_request(
+    app: tauri::AppHandle,
+    request: ai::research::ResearchModelRequest,
+) -> Result<ai::research::ResearchOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || ai::research::run_research_request(&app, request))
+        .await
+        .map_err(|error| format!("The glossary research worker failed: {error}"))?
+}
+
+#[tauri::command]
+fn cancel_glossary_research_request(request_id: String) {
+    ai::research::cancel_research_request(&request_id);
 }
 
 #[tauri::command]
@@ -626,6 +645,19 @@ pub fn run() {
             prepare_editor_ai_translated_glossary_batch,
             run_ai_translation,
             run_ai_translation_batch,
+            run_glossary_research_request,
+            project_search::research_sample::glossary_research_project_passages,
+            project_search::research_sample::glossary_research_list_projects,
+            glossary_research_dle::glossary_research_fetch_dle,
+            glossary_research_language_data::glossary_research_language_data,
+            glossary_research_language_data::glossary_research_zipf,
+            glossary_research_language_data::glossary_research_general_sentences,
+            glossary_research_language_data::glossary_research_corpus_zipf,
+            glossary_research_storage::save_glossary_research_stage,
+            glossary_research_storage::load_glossary_research_run,
+            glossary_research_storage::list_glossary_research_runs,
+            glossary_research_storage::delete_glossary_research_run,
+            cancel_glossary_research_request,
             run_ai_review_batch,
             run_ai_assistant_turn,
             probe_ai_provider_model,
@@ -744,6 +776,7 @@ pub fn run() {
             load_gtms_glossary_editor_data,
             load_gtms_glossary_term,
             upsert_gtms_glossary_term,
+            link_gtms_glossary_terms,
             rollback_gtms_glossary_term_upsert,
             delete_gtms_glossary_term,
             rollback_created_gnosis_glossary_repo,

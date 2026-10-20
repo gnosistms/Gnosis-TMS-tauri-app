@@ -124,6 +124,23 @@ function renderLanguageMarkerButton(kind, rowId, language) {
   `;
 }
 
+// Same icon as the toolbar's "Derive glossaries" action.
+const RESEARCH_MARKER_ICON = `
+  <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+    <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20" />
+    <path d="m8 13 4-7 4 7" />
+    <path d="M9.1 11h5.7" />
+  </svg>`;
+
+function renderResearchMarkerButton(rowId, language) {
+  if (language.showResearchButton !== true) {
+    return "";
+  }
+  return `<button class="translation-marker-button translation-marker-button--research" type="button"
+    data-action="open-research-prep" data-row-id="${escapeHtml(rowId)}" data-language-code="${escapeHtml(language.code)}"
+    aria-label="Research glossary terms" ${tooltipAttributes("Research glossary terms", { align: "end", side: "bottom" })}>${RESEARCH_MARKER_ICON}</button>`;
+}
+
 function renderCommentsMarkerButton(rowId, language) {
   if (language.showCommentsButton !== true) {
     return "";
@@ -1192,6 +1209,7 @@ export function renderTranslationContentRow(
                         <span class="translation-language-panel__label${language.hasConflict ? " translation-language-panel__label--conflict" : ""}">${escapeHtml(language.name)}</span>
                       </button>
                       <div class="translation-language-panel__actions">
+                        ${renderResearchMarkerButton(row.id, language)}
                         ${renderCommentsMarkerButton(row.id, language)}
                         ${renderLanguageMarkerButton("reviewed", row.id, language)}
                         ${renderLanguageMarkerButton("please-check", row.id, language)}

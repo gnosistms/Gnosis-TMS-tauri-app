@@ -138,6 +138,10 @@ struct StoredGlossaryTermFile {
     footnote: String,
     #[serde(default)]
     untranslated: bool,
+    /// Other entries of this glossary to check when this one changes (forms of one
+    /// word that take different translations). Kept in both entries' files.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    sibling_term_ids: Vec<String>,
     lifecycle: StoredLifecycle,
 }
 
@@ -302,7 +306,26 @@ pub(crate) struct GlossaryTermEditorRecord {
     notes_to_translators: String,
     footnote: String,
     untranslated: bool,
+    sibling_term_ids: Vec<String>,
     lifecycle_state: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LinkGlossaryTermsInput {
+    installation_id: i64,
+    repo_name: String,
+    glossary_id: Option<String>,
+    term_ids: Vec<String>,
+    /// true links every pair of the terms as siblings; false removes those links.
+    linked: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LinkGlossaryTermsResponse {
+    terms: Vec<GlossaryTermEditorRecord>,
+    changed: bool,
 }
 
 #[derive(Serialize)]
@@ -474,6 +497,19 @@ pub(crate) async fn purge_local_gtms_glossary_repo(
     tauri::async_runtime::spawn_blocking(move || purge_local_gtms_glossary_repo_sync(&app, input))
         .await
         .map_err(|error| format!("The glossary cleanup worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn link_gtms_glossary_terms(
+    app: AppHandle,
+    input: LinkGlossaryTermsInput,
+) -> Result<LinkGlossaryTermsResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_glossary_writes(&app, input.installation_id)?;
+        link_gtms_glossary_terms_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The glossary term link worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -1143,8 +1179,122 @@ fn upsert_gtms_glossary_term_sync(
             notes_to_translators: input.notes_to_translators.trim().to_string(),
             footnote: input.footnote.trim().to_string(),
             untranslated: input.untranslated,
+            sibling_term_ids: string_list(term_value.get("sibling_term_ids")),
             lifecycle_state: "active".to_string(),
         },
+    })
+}
+
+/// A term's sibling ids after linking (or unlinking) it with the other ids of a group.
+fn sibling_list(before: &[String], id: &str, group: &[String], linked: bool) -> Vec<String> {
+    let mut after = before.to_vec();
+    for other in group.iter().filter(|other| other.as_str() != id) {
+        if linked {
+            if !after.contains(other) {
+                after.push(other.clone());
+            }
+        } else {
+            after.retain(|existing| existing != other);
+        }
+    }
+    after
+}
+
+fn string_list(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Link (or unlink) every pair of the given terms as siblings, in both terms'
+/// files, in one commit. Unknown term ids are refused; nothing is written then.
+fn link_gtms_glossary_terms_sync(
+    app: &AppHandle,
+    input: LinkGlossaryTermsInput,
+) -> Result<LinkGlossaryTermsResponse, String> {
+    let repo_path = glossary_repo_path(
+        app,
+        input.installation_id,
+        input.glossary_id.as_deref(),
+        Some(&input.repo_name),
+    )?;
+    let repo_lock = repo_sync_lock(&repo_path);
+    let _repo_lock_guard = acquire_repo_sync_lock(&repo_lock);
+    let mut ids: Vec<String> = Vec::new();
+    for id in &input.term_ids {
+        let id = id.trim().to_string();
+        if !id.is_empty() && !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    if ids.len() < 2 {
+        return Err("Linking needs at least two glossary terms.".to_string());
+    }
+    let mut files = Vec::new();
+    for id in &ids {
+        if id.contains('/') || id.contains("..") {
+            return Err("Invalid glossary term id.".to_string());
+        }
+        let path = repo_path.join("terms").join(format!("{id}.json"));
+        let text = fs::read_to_string(&path)
+            .map_err(|error| format!("Could not read glossary term {id}: {error}"))?;
+        let value = serde_json::from_str::<Value>(&text)
+            .map_err(|error| format!("Could not parse glossary term {id}: {error}"))?;
+        files.push((id.clone(), path, value));
+    }
+    let mut changed_paths = Vec::new();
+    for (id, path, value) in files.iter_mut() {
+        let object = value
+            .as_object_mut()
+            .ok_or_else(|| format!("Glossary term {id} is not a JSON object."))?;
+        let before = string_list(object.get("sibling_term_ids"));
+        let after = sibling_list(&before, id, &ids, input.linked);
+        if after == before {
+            continue;
+        }
+        if after.is_empty() {
+            object.remove("sibling_term_ids");
+        } else {
+            object.insert(
+                "sibling_term_ids".to_string(),
+                Value::Array(after.into_iter().map(Value::String).collect()),
+            );
+        }
+        write_json_pretty(path, value)?;
+        let relative = path
+            .strip_prefix(&repo_path)
+            .map_err(|error| format!("Could not resolve the term path for git: {error}"))?
+            .to_string_lossy()
+            .to_string();
+        changed_paths.push(relative);
+    }
+    if !changed_paths.is_empty() {
+        let mut add_args = vec!["add"];
+        add_args.extend(changed_paths.iter().map(String::as_str));
+        git_output(&repo_path, &add_args)?;
+        let message = if input.linked {
+            format!("Link related glossary terms {}", ids.join(", "))
+        } else {
+            format!("Unlink related glossary terms {}", ids.join(", "))
+        };
+        let paths: Vec<&str> = changed_paths.iter().map(String::as_str).collect();
+        git_commit_as_signed_in_user(app, &repo_path, &message, &paths)?;
+    }
+    let terms = files
+        .into_iter()
+        .filter_map(|(_, _, value)| serde_json::from_value::<StoredGlossaryTermFile>(value).ok())
+        .map(map_term_record)
+        .collect();
+    Ok(LinkGlossaryTermsResponse {
+        terms,
+        changed: !changed_paths.is_empty(),
     })
 }
 
@@ -1323,7 +1473,35 @@ fn map_term_record(term: StoredGlossaryTermFile) -> GlossaryTermEditorRecord {
         notes_to_translators: term.notes_to_translators,
         footnote: term.footnote,
         untranslated: term.untranslated,
+        sibling_term_ids: term.sibling_term_ids,
         lifecycle_state: term.lifecycle.state,
+    }
+}
+
+#[cfg(test)]
+mod sibling_tests {
+    use super::*;
+
+    #[test]
+    fn linking_adds_the_other_terms_of_the_group_once_and_unlinking_removes_only_them() {
+        let group = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let linked = sibling_list(&["x".to_string(), "b".to_string()], "a", &group, true);
+        assert_eq!(linked, vec!["x", "b", "c"]);
+        let unlinked = sibling_list(&linked, "a", &["a".to_string(), "b".to_string()], false);
+        assert_eq!(unlinked, vec!["x", "c"]);
+    }
+
+    #[test]
+    fn a_term_file_without_links_reads_as_none_and_writes_none() {
+        let term: StoredGlossaryTermFile = serde_json::from_value(json!({
+            "term_id": "t", "source_terms": ["a"], "target_terms": ["b"], "lifecycle": { "state": "active" }
+        }))
+        .unwrap();
+        assert!(term.sibling_term_ids.is_empty());
+        assert!(serde_json::to_value(&term)
+            .unwrap()
+            .get("sibling_term_ids")
+            .is_none());
     }
 }
 
@@ -1439,6 +1617,7 @@ mod tests {
             notes_to_translators: "Use the canonical term & avoid variants.".to_string(),
             footnote: "Footnote with <markup> & quotes \"here\".".to_string(),
             untranslated: true,
+            sibling_term_ids: Vec::new(),
             lifecycle: StoredLifecycle {
                 state: "active".to_string(),
             },

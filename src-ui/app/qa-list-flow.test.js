@@ -757,6 +757,89 @@ test("repo-backed QA list load purges local checkout for tombstoned metadata rec
   assert.deepEqual(state.qaLists, []);
 });
 
+test("repo-backed QA list load keeps a live QA list whose repo name an older deleted one used", async () => {
+  setupQaTeams();
+  const qaList = repoBackedQaList();
+  const purged = [];
+  state.qaLists = [qaList];
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "list_local_gtms_qa_lists") {
+      return [qaList];
+    }
+    if (command === "list_gnosis_qa_lists_for_installation") {
+      return [{
+        name: qaList.repoName,
+        fullName: qaList.fullName,
+        repoId: qaList.repoId,
+        nodeId: qaList.nodeId,
+        defaultBranchName: "main",
+      }];
+    }
+    if (command === "list_local_gnosis_qa_list_metadata_records") {
+      return [
+        qaListMetadataRecord(),
+        qaListMetadataRecord({
+          id: "qa-list-old",
+          githubRepoId: null,
+          githubNodeId: null,
+          fullName: null,
+          lifecycleState: "deleted",
+          remoteState: "deleted",
+          recordState: "tombstone",
+          deletedAt: "2026-06-01T00:00:00.000Z",
+        }),
+      ];
+    }
+    if (command === "purge_local_gtms_qa_list_repo") {
+      purged.push(payload.input);
+    }
+    return { commitCreated: false };
+  };
+
+  const result = await loadRepoBackedQaListsForTeam(state.teams[0]);
+
+  assert.deepEqual(purged, []);
+  assert.deepEqual(result.qaLists.map((item) => item.id), [qaList.id]);
+});
+
+test("repo-backed QA list load scans local repos once when nothing can be repaired", async () => {
+  setupQaTeams();
+  const qaList = repoBackedQaList();
+  const inspected = [];
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "list_local_gtms_qa_lists") {
+      return [qaList];
+    }
+    if (command === "list_gnosis_qa_lists_for_installation") {
+      return [{ name: qaList.repoName, fullName: qaList.fullName, repoId: qaList.repoId, nodeId: qaList.nodeId, defaultBranchName: "main" }];
+    }
+    if (command === "list_local_gnosis_qa_list_metadata_records") {
+      return [qaListMetadataRecord()];
+    }
+    if (command === "inspect_and_migrate_local_repo_bindings") {
+      inspected.push(payload.kinds);
+      return {
+        issues: [{
+          kind: "qaList",
+          resourceId: "qa-list-2",
+          repoName: null,
+          expectedRepoName: "qa-list-other",
+          issueType: "missingLocalRepo",
+          canAutoRepair: true,
+          message: "Its local repo is missing.",
+        }],
+      };
+    }
+    return { commitCreated: false };
+  };
+
+  await loadRepoBackedQaListsForTeam(state.teams[0]);
+
+  assert.deepEqual(inspected, [["qaList"]]);
+});
+
 test("repo-backed QA list load does not purge local checkout for live metadata records", async () => {
   setupQaTeams();
   const qaList = repoBackedQaList();
