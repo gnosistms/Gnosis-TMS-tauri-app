@@ -1938,6 +1938,50 @@ test.describe("editor regressions", () => {
     await expect(page.locator(".assistant-composer__hint")).toContainText("Shift + Return to send");
   });
 
+  test("sending assistant messages clears the composer and preserves the next draft", async ({ page }) => {
+    await page.addInitScript(() => {
+      const replies = [];
+      globalThis.__releaseAssistantReply = () => replies.shift()?.();
+      globalThis.__gnosisMockTauriHandlers = {
+        load_ai_provider_secret() {
+          return "mock-key";
+        },
+        async run_ai_assistant_turn() {
+          await new Promise((resolve) => replies.push(resolve));
+          return { assistantText: "Mock assistant reply" };
+        },
+      };
+    });
+    await mountEditorFixture(page, {
+      rowCount: 1,
+      aiActionConfig: {
+        detailedConfiguration: false,
+        unified: { providerId: "openai", modelId: "gpt-5.4" },
+      },
+    }, { mockTauri: true });
+    await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
+    const composer = page.locator("[data-editor-assistant-draft]");
+
+    for (const message of ["Explain the first sentence.", "Explain the second sentence."]) {
+      await composer.fill(message);
+      await composer.press("Shift+Enter");
+      await expect(page.locator(".assistant-item").filter({ hasText: message })).toHaveCount(1);
+      await expect(composer).toHaveValue("");
+      await expect(composer).toBeFocused();
+      await expect.poll(async () => {
+        const mock = await readMockTauriState(page);
+        return mock.invocations.filter((entry) => entry.command === "run_ai_assistant_turn").length;
+      }).toBe(message.includes("first") ? 1 : 2);
+
+      await composer.fill("Next unsent question");
+      await page.evaluate(() => window.__releaseAssistantReply());
+      await expect(page.locator(".assistant-item").filter({ hasText: "Mock assistant reply" })).toHaveCount(
+        message.includes("first") ? 1 : 2,
+      );
+      await expect(composer).toHaveValue("Next unsent question");
+    }
+  });
+
   for (const position of ["bottom", "middle"]) {
     test(`typing in a full assistant composer preserves transcript scroll at the ${position}`, async ({ page }) => {
       await mountEditorFixture(page, {
