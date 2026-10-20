@@ -227,7 +227,8 @@ export function updateResearchField(field, value) {
   const draft = research();
   if (!draft?.isOpen) return;
   if (field === "raiseLimitTo") draft.raiseLimitTo = parseMoneyValue(value) ?? draft.raiseLimitTo;
-  else if (field === "sampleSize") draft.sampleSize = Math.max(1, Math.min(1000, Number.parseInt(value, 10) || 100));
+  else if (field === "sampleSize") draft.sampleSize = Math.max(1, Math.min(1000, Number.parseInt(value, 10) || 40));
+  else if (field === "researchProcedure") draft.researchProcedure = value === "full" ? "full" : "compact";
   else if (field === "spendingLimitUsd") draft.spendingLimitUsd = parseMoneyValue(value) ?? draft.spendingLimitUsd;
   else if (field === "familyWordLimitUsd") draft.familyWordLimitUsd = parseMoneyValue(value) ?? draft.familyWordLimitUsd;
   else if (field === "familyTotalLimitUsd") draft.familyTotalLimitUsd = parseMoneyValue(value) ?? draft.familyTotalLimitUsd;
@@ -485,6 +486,7 @@ export function researchRequestClient({ installationId, providerId, modelId, lim
 function engineSettings(draft, languages) {
   return {
     term: draft.term.trim(),
+    researchProcedure: draft.researchProcedure === "full" ? "full" : "compact",
     variants: draft.variants.map((value) => value.trim()).filter(Boolean),
     existingEntries: draft.existingMatches.map((term) => ({
       termId: term.termId, sourceTerms: term.sourceTerms ?? [], targetTerms: term.targetTerms ?? [],
@@ -501,8 +503,8 @@ function engineSettings(draft, languages) {
     seed: draft.seed || "1",
     pauseForReview: draft.pauseForReview === true,
     webDictionaryDomains: DICTIONARY_DOMAINS,
-    judges: 2,
-    frequencyChecks: true,
+    judges: draft.researchProcedure === "full" ? 2 : 1,
+    frequencyChecks: draft.researchProcedure === "full",
   };
 }
 
@@ -585,7 +587,9 @@ async function beginResearchRun(render, resume = null, family = null) {
   activeRun = { engine, requestIds, store, runId, glossaryId, installationId, meta };
   Object.assign(draft, {
     step: "run", runId, runStatus: "running", stageLabel: "Starting", progress: 0.01, modelId: meta.modelId ?? status.modelId,
+    researchProcedure: meta.settings.researchProcedure ?? "full",
     spent: engine.budget.spent, limit: engine.budget.limit, runError: "", stopKind: "",
+    spellingSuggestions: [], spellingTicked: [], spellingError: "",
     log: resume?.stages?.log ?? [],
   });
   render();
@@ -627,6 +631,14 @@ async function beginResearchRun(render, resume = null, family = null) {
 
 function handleRunStop(render, error, store, meta) {
   const draft = research();
+  if (error?.kind === "spelling-choice" && error.suggestions?.length) {
+    Object.assign(draft, { runStatus: "spellings", stageLabel: "Word forms", paused: false, runError: "", stopKind: "",
+      spellingSuggestions: error.suggestions, spellingTicked: error.suggestions.map((p) => p.recommended === true), spellingError: "" });
+    meta.status = "spellings";
+    delete meta.error;
+    store.save("meta", meta);
+    return;
+  }
   const kind = error instanceof BudgetExceededError
     ? "budget"
     : error instanceof ResearchStop || error?.kind ? error.kind : "failed";
@@ -648,6 +660,42 @@ function handleRunStop(render, error, store, meta) {
   meta.status = draft.runStatus;
   meta.error = draft.runError;
   store.save("meta", meta);
+}
+
+export function toggleResearchSpelling(render, index) {
+  const draft = research();
+  if (draft?.runStatus !== "spellings" || !Number.isInteger(index) || !draft.spellingSuggestions?.[index]) return;
+  draft.spellingTicked[index] = !draft.spellingTicked[index];
+  draft.spellingError = "";
+  render();
+}
+
+/** Add approved source spellings; evidence from the empty search cannot be reused. */
+export function researchStagesWithSpellings(stages, selected) {
+  const allowed = new Set((stages.spellingChoice?.suggestions ?? []).map((p) => p.form));
+  if (!selected.length || selected.some((form) => !allowed.has(form))) throw new Error("Select at least one suggested spelling to continue.");
+  const variants = [...new Map([...(stages.meta.variants ?? []), ...selected].map((form) => [fold(form).trim(), form])).values()];
+  const next = { ...stages, meta: { ...stages.meta, variants, settings: { ...stages.meta.settings, variants } } };
+  for (const key of ["forms", "sample", "sources", "dictionary", "coverage", "proposal", "confirmedProposal", "frozen", "counting", "counting2", "aggregate", "consistency", "footnotes", "prose", "spellingChoice"]) next[key] = null;
+  return next;
+}
+
+export async function continueResearchSpellings(render) {
+  const draft = research();
+  if (draft?.runStatus !== "spellings" || activeRun?.runId !== draft.runId) return;
+  const selected = draft.spellingSuggestions.filter((_p, i) => draft.spellingTicked[i]).map((p) => p.form);
+  let stages;
+  try { stages = researchStagesWithSpellings(activeRun.store.data, selected); }
+  catch (error) { draft.spellingError = error.message; render(); return; }
+  const { store, runId } = activeRun;
+  draft.variants = stages.meta.variants;
+  // Disable double submission while the updated checkpoints are flushed.
+  draft.runStatus = "running";
+  render();
+  for (const [key, value] of Object.entries(stages)) if (key === "meta" || value === null) store.save(key, value);
+  await store.flush();
+  if (!research()?.isOpen || research().runId !== runId || research().runStatus !== "running") return;
+  await beginResearchRun(render, { runId, stages });
 }
 
 export function cancelGlossaryResearchRun(render) {
@@ -1046,7 +1094,7 @@ export function removeResearchProposalEntry(render, entryIndex) {
   render();
 }
 
-export async function countGlossaryResearch(render) {
+export async function countGlossaryResearch(render, { skipCounting = false } = {}) {
   const draft = research();
   if (!activeRun || !draft.proposalDraft) return;
   const proposal = structuredClone(draft.proposalDraft);
@@ -1063,7 +1111,8 @@ export async function countGlossaryResearch(render) {
   store.save("meta", meta);
   render();
   try {
-    await engine.runCounting(proposal);
+    await engine.runCounting(proposal, { skipCounting });
+    meta.countingSkipped = skipCounting;
     meta.status = "done";
     meta.finishedAt = new Date().toISOString();
     meta.spentUsd = engine.budget.spent;
@@ -1090,6 +1139,7 @@ export async function countGlossaryResearch(render) {
   render();
   if (draft.runStatus === "done" && draft.familyQueue) await researchNextFamilyWord(render);
   else if (draft.runStatus === "failed" && draft.familyQueue) await skipFamilyWord(render);
+  return draft.runStatus === "done";
 }
 
 // --- related words, researched one after another ---------------------------------

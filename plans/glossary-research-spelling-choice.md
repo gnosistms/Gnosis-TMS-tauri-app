@@ -1,0 +1,15 @@
+# Choose corpus spellings during research
+
+Replace focused research's no-hit spelling error with a reviewable selection step in the existing research modal. Suggested author-corpus spellings have checkboxes, recommended alternatives start checked, and the footer uses secondary Cancel / primary Continue. Keep ambiguous look-alikes unchecked; recommendation requires the same source-book/name/numeric-unit proof already used by the deterministic route, rather than edit distance alone.
+
+1. Return structured spelling choices when no source form is found, preserve examples for proof, and cache the choice for resumption. Continue adds only checked alternatives while keeping the original requested headword. Make the verified-name shortcut use the actual attested source spelling when a user adds an alternative.
+2. Add modal state, rendering, checkbox actions and a Continue handler that persists selected alternatives and invalidates dependent zero-hit checkpoints before resuming the same run. Cancel closes the modal without applying alternatives or issuing further requests. No glossary entries or source texts change.
+3. Test checked/unchecked defaults, rendering/affordance, empty selection, cache invalidation, persisted/resumed choices and the engine's continuation. Verify the live corpus and running dev server with AI requests prohibited; inspect the browser UI against fixtures without editing the user's stored research data.
+
+Use the existing native research-stage persistence and configured model paths. Preserve unrelated checkout changes and the prior research plans. No backend rebuild, provider calls, release or remote writes are needed.
+
+## Completed — 2026-10-13
+
+Focused research now persists a spelling-choice checkpoint and opens a normal selection step instead of a stopped error when alternatives exist. Corpus examples support conservative numeric-unit/source-book proof; proven alternatives start checked, look-alikes remain unchecked. The modal shows passage counts and recommendation reasons, with secondary Cancel and primary Continue. No selection disables Continue. Only checked forms are added, the requested headword and run id remain unchanged, and stale search/proposal/counting checkpoints are cleared before resumption. The source-name shortcut now verifies the attested source spelling, including one added by the user.
+
+Verification: all 2,557 application unit tests pass (218 research tests); changed-file ESLint and `git diff --check` pass; frontend production build succeeds with the existing chunk-size warning. Live API/engine checks for both ES–EN and ES–VI precheck Hooltampanas for Hooltanpanas and continue to the correct Hooltanpanas proposal from two passages, using zero model or dictionary requests. An isolated browser fixture exercised the actual flow/actions with in-memory native storage and AI requests prohibited: checked recommendation, disabled empty selection, successful same-run Continue to Review, and Cancel returning to idle. The layout and button hierarchy were inspected visually. The temporary fixture/tab were removed; the user's saved runs and glossary content were left intact.

@@ -10,6 +10,7 @@ const STAGE_NAMES = {
   dictionary: "Dictionary",
   forms: "Word forms",
   discovery: "Discovery",
+  coverage: "Choose paragraphs that cover every meaning",
   proposal: "Proposal",
   counting: "Choosing a translation for each use",
   summary: "Summary",

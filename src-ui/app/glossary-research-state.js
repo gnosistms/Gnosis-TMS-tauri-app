@@ -16,7 +16,8 @@ export function createGlossaryResearchState() {
     projectPickerOpen: false,
     projectPickerDraft: [],
     advancedOpen: false,
-    sampleSize: 100,
+    researchProcedure: "compact",
+    sampleSize: 40,
     spendingLimitUsd: 4,
     seed: "1",
     pauseForReview: true,
@@ -25,7 +26,10 @@ export function createGlossaryResearchState() {
     unsupportedProviderName: "",
     // run view
     runId: null,
-    runStatus: "idle", // running | review | counting | done | stopped | failed
+    runStatus: "idle", // running | spellings | review | counting | done | stopped | failed
+    spellingSuggestions: [],
+    spellingTicked: [],
+    spellingError: "",
     stageLabel: "",
     progress: 0,
     spent: 0,

@@ -118,6 +118,13 @@ function renderAdvanced(research) {
       ${research.advancedOpen ? `
         <div class="research-advanced__grid">
           <label class="field">
+            <span class="field__label">Research procedure</span>
+            <select class="field__input" data-research-field="researchProcedure">
+              <option value="compact" ${research.researchProcedure !== "full" ? "selected" : ""}>Focused research</option>
+              <option value="full" ${research.researchProcedure === "full" ? "selected" : ""}>Full diagnostic research</option>
+            </select>
+          </label>
+          <label class="field">
             <span class="field__label">Sample size</span>
             <input class="field__input" type="number" min="1" max="1000" value="${esc(research.sampleSize)}" data-research-field="sampleSize" />
           </label>
@@ -130,7 +137,7 @@ function renderAdvanced(research) {
           <input type="checkbox" data-research-field="pauseForReview" ${research.pauseForReview ? "checked" : ""} />
           <span>Pause to review the proposed translations before counting</span>
         </label>
-        <p class="modal__supporting research-small">Sample size is the maximum number of paragraphs of source text containing the research term to be considered for research. The run stops before any AI request that could go over the spending limit.</p>` : ""}
+        <p class="modal__supporting research-small">Sample size limits the paragraphs used for contextual counting. Focused research may read more source passages to discover meanings. The run stops before any AI request that could go over the spending limit.</p>` : ""}
     </div>`;
 }
 
@@ -215,7 +222,7 @@ export function reviewIntro(entries, term) {
   const main = entries[0]?.sourceTerms?.[0] ?? term ?? "";
   const related = entries.length - 1;
   if (related <= 0) {
-    return `Below are possible translations of “${main}”. In the next step, we will count how many times each one would actually be the most appropriate translation in the corpus texts. Based on the results, we will keep the most important translations and drop the less useful ones. Before we count, please review the list: remove any you don't want the AI to consider, and add any you would like to suggest.`;
+    return `Below are possible translations of “${main}”. In the next step, we will count which translations fit the sampled corpus passages. These choices do not prove improvement over translation without a glossary, and an unused meaning may still be needed elsewhere. Before we count, please review the list: remove any you don't want the AI to consider, and add any you would like to suggest.`;
   }
   return `Below are “${main}” and ${related} related term${related === 1 ? "" : "s"}, each with its possible translations. In the next step, we will count how many times each translation would actually be the most appropriate one in the corpus texts. Based on the results, we will keep the most important translations and drop the less useful ones. Before we count, please review the lists: remove any translations you don't want the AI to consider, and add any you would like to suggest.`;
 }
@@ -292,6 +299,22 @@ function renderFamilyChoice(research) {
     </div>`;
 }
 
+function renderSpellingChoice(research, sourceCode) {
+  return `<div class="research-spellings">
+    <p class="modal__supporting">“${esc(research.term)}” does not occur in the selected texts. Choose alternative spellings to include in this research.</p>
+    <div class="research-project-list" role="group" aria-label="Suggested alternative spellings">
+      ${(research.spellingSuggestions ?? []).map((suggestion, index) => `<label class="research-project-row">
+        <input type="checkbox" data-action="toggle-research-spelling:${index}" aria-label="Include ${esc(suggestion.form)}" ${research.spellingTicked?.[index] ? "checked" : ""} />
+        <span><strong lang="${esc(sourceCode)}">${esc(suggestion.form)}</strong>
+          <span class="muted"> · ${esc(suggestion.rows)} ${suggestion.rows === 1 ? "passage" : "passages"}</span>
+          <span class="modal__supporting research-small">${suggestion.recommended ? "Recommended. " : ""}${esc(suggestion.reason)}</span>
+        </span>
+      </label>`).join("")}
+    </div>
+    ${research.spellingError ? `<p class="modal__error" role="alert">${esc(research.spellingError)}</p>` : ""}
+  </div>`;
+}
+
 function renderRun(state) {
   const research = state.glossaryResearch;
   const targetName = state.glossaryEditor?.targetLanguage?.name ?? "target language";
@@ -306,6 +329,7 @@ function renderRun(state) {
     done: "Research finished",
     stopped: "Stopped",
     failed: "Stopped",
+    spellings: "Choose spellings",
   }[research.runStatus] ?? research.runStatus;
   const head = `
     <div class="research-run__head">
@@ -331,7 +355,8 @@ function renderRun(state) {
     : "";
   const review = research.runStatus === "review"
     ? renderReview(research, targetName, state.glossaryEditor?.targetLanguage?.code ?? "")
-    : research.runStatus === "family" ? renderFamilyChoice(research) : "";
+    : research.runStatus === "family" ? renderFamilyChoice(research)
+    : research.runStatus === "spellings" ? renderSpellingChoice(research, state.glossaryEditor?.sourceLanguage?.code ?? "") : "";
   const sections = buildLogSections(research.log);
   const usualFor = (stage) => usualRange(stepTimings(research.modelId, stage));
   const samael = research.sourceMode === "samael";
@@ -371,11 +396,15 @@ function renderRun(state) {
       ${paused
         ? primaryButton("Continue", "continue-glossary-research-run", { modalDefault: true })
         : secondaryButton("Pause", "pause-glossary-research-run")}`;
+  } else if (research.runStatus === "spellings") {
+    actions = `${secondaryButton("Cancel", "close-glossary-research", { modalCancel: true })}
+      ${primaryButton("Continue", "continue-research-spellings", { modalDefault: true, disabled: !(research.spellingTicked ?? []).some(Boolean) })}`;
   } else if (research.runStatus === "family") {
     actions = `${secondaryButton("Cancel", "cancel-glossary-research-run", { modalCancel: true })}
       ${primaryButton("Continue", "continue-research-family", { modalDefault: true })}`;
   } else if (research.runStatus === "review") {
     actions = `${secondaryButton("Cancel", "close-glossary-research", { modalCancel: true })}
+      ${research.researchProcedure === "compact" ? secondaryButton("Open report without counting", "open-research-proposal") : ""}
       ${primaryButton("Count", "count-glossary-research", { modalDefault: true })}`;
   } else if (research.runStatus === "done") {
     actions = `${secondaryButton("Close", "close-glossary-research", { modalCancel: true })}

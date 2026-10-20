@@ -41,6 +41,23 @@ test("a site without the sampling API gives a clear message", async () => {
   await assert.rejects(corpus.population(["fatal"]), /does not offer research sampling yet/);
 });
 
+test("an empty population is handled locally; rejected API requests include the endpoint and server explanation", async () => {
+  let requests = 0;
+  const corpus = createSamaelCorpus({ baseUrl: "https://example.test", fetchImpl: async () => { requests += 1; return jsonResponse({ error: "forms is required" }, 400); } });
+  assert.deepEqual(await corpus.population([]), { rows: 0, distinct: 0, duplicateGroups: 0 });
+  assert.equal(requests, 0);
+  await assert.rejects(corpus.population(["term"]), /HTTP 400.*\/api\/sample: forms is required/);
+});
+
+test("author-corpus spelling suggestions stay separate from reference-book spelling lookup", async () => {
+  const urls = [];
+  const corpus = createSamaelCorpus({ baseUrl: "https://example.test", fetchImpl: async (url) => { urls.push(new URL(url)); return jsonResponse({ near: [{ form: "Vornag", rows: 2 }] }); } });
+  assert.deepEqual(await corpus.nearCorpusForms(["Vornak"]), [{ form: "Vornag", rows: 2, examples: [] }]);
+  await corpus.nearForms(["Vornak"]);
+  assert.equal(urls[0].searchParams.get("kind"), "samael");
+  assert.equal(urls[1].searchParams.get("kind"), "source");
+});
+
 test("Spanish neighbour tables drop pure function-word pairs", () => {
   const kept = contentNeighbours([
     { phrase: "fatal de", occurrences: 51, paragraphs: 51 },

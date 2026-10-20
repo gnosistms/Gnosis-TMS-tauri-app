@@ -103,6 +103,7 @@ const STEP_TITLES = {
   "Candidate frequency": "Check usage frequency in general language",
   "Counting": "Choosing a translation for each use",
   "Discovery": "Free translation",
+  "Coverage": "Choose paragraphs that cover every meaning",
   "Rare translations": "Notes for rare translations",
   "Counting (second judge)": "Choosing again, by a second AI",
 };
@@ -131,6 +132,7 @@ export function stepExplanation(heading, context = {}) {
     "Candidate checks": "What each candidate is made of, the meaning each of its words must have, and which might be false friends.",
     "Candidate frequency": `How often each candidate is used in everyday ${target} (news sentences), in the meaning needed; too rare fails.`,
     "Discovery": "An AI translates some of the sample paragraphs freely, with no suggestions: what comes naturally?",
+    "Coverage": `Too many paragraphs to read them all: an AI picks up to 12 from ${texts} that together show every meaning of ${term}.`,
     "Proposal": "The proposed glossary entry: its translations, and when to use each.",
     "Shared translations": "Is a proposed translation already used for a word with a different meaning?",
     "Existing glossary entry": "The proposal compared with the glossary's current entry.",

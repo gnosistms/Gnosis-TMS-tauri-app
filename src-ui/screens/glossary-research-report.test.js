@@ -25,6 +25,25 @@ function screen(glossaryTerms, decision) {
 
 const current = [{ termId: "t1", sourceTerms: ["vanidoso"], targetTerms: ["phù phiếm"], targetVariantNotes: [""], notesToTranslators: "" }];
 
+test("focused reports preserve meaning guidance and source proof without presenting skipped counting as zero preferences", () => {
+  const r = run();
+  r.meta.settings = { researchProcedure: "compact" };
+  r.counting.skipped = true;
+  r.aggregate.entries.e1.variants.v1.occurrences = 0;
+  r.proposal.meanings = [{ partOfSpeech: "noun", sourceDefinition: "Una designación técnica.", selectionNote: "Tên riêng đã được xác minh." }];
+  r.sources = { compact: true, pairs: [], verifiedName: { observed: "Vornag", canonical: "Vornak", book: "Source Book", author: "Source Author", sourceText: "Un Vornak representa 1.234.567 unidades." } };
+  const report = { status: "ready", run: r, expandedVariants: { __method: true }, showAllExamples: {}, entryDrafts: buildEntryDrafts(r, []) };
+  // Deselecting a candidate after review must not manufacture a never-chosen badge.
+  report.entryDrafts.e1.variants[0].include = false;
+  const html = renderGlossaryResearchReportScreen({ glossaryResearchReport: report, offline: {} });
+  assert.match(html, /Not counted/);
+  assert.match(html, /Counting was not run/);
+  assert.match(html, /Una designación técnica/);
+  assert.match(html, /Tên riêng đã được xác minh/);
+  assert.match(html, /Vornak[\s\S]*Source Book[\s\S]*Source Author/);
+  assert.doesNotMatch(html, /Each occurrence's sentence was translated|never chosen|None of these fit|rr-count__figure|before counting/);
+});
+
 test("an entry not yet in the glossary has no switch and can be saved", () => {
   const html = screen([]);
   assert.doesNotMatch(html, /rr-segmented/);

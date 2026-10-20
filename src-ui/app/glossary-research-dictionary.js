@@ -109,6 +109,45 @@ async function lookUpWiktionary(term, languageCode, { fetchImpl }) {
 const DLE_RETRY_MS = 30 * 60 * 1000;
 const sharedDleState = { failedAt: 0 };
 
+/** Source-language definitions only; translation tables never enter research. */
+export function spanishDefinitionSection(text) {
+  const start = String(text).search(/^==\s*\{\{lengua\|es\}\}\s*==/mu);
+  if (start < 0) return "";
+  return String(text).slice(start).split(/\n==\s*\{\{lengua\|/u)[0]
+    .split(/\n={2,5}\s*Traducciones\s*={2,5}/iu)[0].slice(0, 6000);
+}
+
+async function compactDictionary(term, languageCode, alternatives, fetchImpl, log) {
+  if (languageCode !== "es") {
+    const result = await lookUpWiktionary(term, languageCode, { fetchImpl });
+    return { ...result, sourceName: "Wiktionary (CC BY-SA 4.0)", tried: ["Wiktionary"], notes: [], complexFormCount: 0 };
+  }
+  const lemmas = [...new Set([term.toLowerCase(), ...alternatives.map((p) => p.toLowerCase()).sort((a, b) => a.length - b.length)])].slice(0, 3);
+  let unreachable = false;
+  for (const lemma of lemmas) {
+    const url = new URL("https://es.wiktionary.org/w/api.php");
+    url.search = new URLSearchParams({ action: "parse", page: lemma, prop: "wikitext", format: "json", origin: "*" });
+    const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 8000);
+    try {
+      const response = await fetchImpl(url.toString(), { signal: controller.signal, headers: { Accept: "application/json" } });
+      if (response.status === 404) continue;
+      if (!response.ok) { unreachable = true; continue; }
+      const result = await response.json(), text = spanishDefinitionSection(result.parse?.wikitext?.["*"] ?? "");
+      const senses = [...text.matchAll(/^;\s*\d+/gmu)].length;
+      if (!senses) continue;
+      const page = `https://es.wiktionary.org/wiki/${encodeURIComponent(lemma)}`;
+      log(`Spanish Wiktionary: ${senses} definitions for “${lemma}”.`);
+      return { status: "found", sourceName: "Spanish Wiktionary (CC BY-SA 4.0)", url: page,
+        text: `Published Spanish Wiktionary (CC BY-SA 4.0), ${page}:\n${text}`, senseCount: senses,
+        complexFormCount: 0, tried: ["Spanish Wiktionary"], notes: [] };
+    } catch { unreachable = true; }
+    finally { clearTimeout(timeout); }
+  }
+  return { status: unreachable ? "unreachable" : "not_found", sourceName: "Spanish Wiktionary (CC BY-SA 4.0)",
+    url: null, text: "", senseCount: 0, complexFormCount: 0, tried: ["Spanish Wiktionary"],
+    notes: ["This bounded lookup does not establish that no dictionary has an entry; no model-generated dictionary evidence was used."] };
+}
+
 /**
  * The dictionary used by the engine. `languageCode` is the research (source)
  * language. Returns { status, sourceName, url, text, senseCount,
@@ -116,6 +155,9 @@ const sharedDleState = { failedAt: 0 };
  */
 export function createDictionary({ languageCode, invoke, fetchImpl = globalThis.fetch, dleState = sharedDleState, now = () => Date.now() }) {
   return {
+    lookupCompact(term, log = () => {}, alternatives = []) {
+      return compactDictionary(term, languageCode, alternatives, fetchImpl, log);
+    },
     async lookup(term, log = () => {}) {
       const tried = [];
       const notes = [];

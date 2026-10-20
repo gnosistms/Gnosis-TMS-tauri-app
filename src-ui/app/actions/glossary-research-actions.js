@@ -9,6 +9,7 @@ import {
   closeResearchProjectPicker,
   continueGlossaryResearchRun,
   continueResearchFamily,
+  continueResearchSpellings,
   countGlossaryResearch,
   openGlossaryResearch,
   openResearchLanguagePicker,
@@ -20,6 +21,7 @@ import {
   removeResearchProposalVariant,
   removeResearchVariant,
   researchRelatedWordsOf,
+  toggleResearchSpelling,
   resumeGlossaryResearchRun,
   selectResearchPickerLanguage,
   setResearchReportLanguage,
@@ -56,6 +58,7 @@ import {
   selectResearchPrepLanguage,
 } from "../glossary-research-prep-flow.js";
 import { openExternalUrl } from "../runtime.js";
+import { state } from "../state.js";
 
 export function createGlossaryResearchActions(render) {
   const exact = {
@@ -79,7 +82,13 @@ export function createGlossaryResearchActions(render) {
     "skip-glossary-research-step": () => skipGlossaryResearchStep(render),
     "continue-glossary-research-run": () => continueGlossaryResearchRun(render),
     "count-glossary-research": () => countGlossaryResearch(render),
+    "open-research-proposal": async () => {
+      if (await countGlossaryResearch(render, { skipCounting: true })) {
+        await openResearchReport(render, state.glossaryResearch.runId);
+      }
+    },
     "continue-research-family": () => continueResearchFamily(render),
+    "continue-research-spellings": () => continueResearchSpellings(render),
 
     "raise-research-limit": () => raiseResearchLimitAndContinue(render),
     "close-research-report": () => closeResearchReport(render),
@@ -98,6 +107,7 @@ export function createGlossaryResearchActions(render) {
     ["select-research-picker-language:", (rest) => selectResearchPickerLanguage(render, rest)],
     ["toggle-research-picker-project:", (rest) => toggleResearchPickerProject(render, rest)],
     ["toggle-research-family:", (rest) => toggleResearchFamilyWord(render, Number.parseInt(rest, 10))],
+    ["toggle-research-spelling:", (rest) => toggleResearchSpelling(render, Number.parseInt(rest, 10))],
     ["open-research-report:", (rest) => openResearchReport(render, rest)],
     ["resume-research-run:", (rest) => resumeGlossaryResearchRun(render, rest)],
     ["research-related-words:", (rest) => researchRelatedWordsOf(render, rest)],

@@ -85,7 +85,14 @@ export function createSamaelCorpus({ baseUrl = samaelCorpusUrl(), fetchImpl = gl
       if (response.status === 404 && path.startsWith("/api/sample")) {
         throw new Error("The Samael Aun Weor search site does not offer research sampling yet.");
       }
-      if (!response.ok) throw new Error(`The Samael Aun Weor search site returned HTTP ${response.status}.`);
+      if (!response.ok) {
+        let detail = "";
+        try {
+          const body = await response.json();
+          if (typeof body.error === "string") detail = ` (${path}: ${body.error.slice(0, 240)})`;
+        } catch { /* Some servers return HTML instead of a JSON error. */ }
+        throw new Error(`The Samael Aun Weor search site returned HTTP ${response.status}${detail}.`);
+      }
       return response.json();
     }
     throw new Error(`The Samael Aun Weor search site could not be reached${lastError ? `: ${lastError.message}` : "."}`);
@@ -139,6 +146,7 @@ export function createSamaelCorpus({ baseUrl = samaelCorpusUrl(), fetchImpl = gl
       };
     },
     async population(forms) {
+      if (!forms.length) return { rows: 0, distinct: 0, duplicateGroups: 0 };
       const result = await get("/api/sample", { forms: forms.join(","), n: 0, kind: "samael" });
       return { rows: result.population_rows, distinct: result.population_distinct, duplicateGroups: result.duplicate_groups };
     },
@@ -163,6 +171,12 @@ export function createSamaelCorpus({ baseUrl = samaelCorpusUrl(), fetchImpl = gl
       return contentNeighbours(result.collocations ?? [], forms, "es").slice(0, 60);
     },
     authorName: "Samael Aun Weor",
+    /** Suggestions only: a near spelling in the author's corpus may be another word. */
+    async nearCorpusForms(forms) {
+      const result = await get("/api/sample/near-forms", { forms: forms.join(","), kind: "samael" });
+      return (result.near ?? []).map((item) => ({ form: item.form, rows: item.rows ?? 0,
+        examples: (item.examples ?? []).map((p) => ({ text: p.text, reference: { title: p.title } })) }));
+    },
     /** The reference books the author read, with what is known of their originals. */
     async sourceBooks() {
       try {
@@ -254,6 +268,9 @@ export function createSamaelCorpus({ baseUrl = samaelCorpusUrl(), fetchImpl = gl
     async originalSample(bookId, forms, seed, n = 12) {
       const result = await get("/api/original/sample", { book_id: bookId, forms: forms.join(","), seed, n });
       return {
+        bookId: result.book_id ?? bookId,
+        language: result.language ?? null,
+        author: result.author ?? null,
         paragraphs: result.paragraphs ?? 0,
         occurrences: result.occurrences ?? 0,
         items: (result.items ?? []).map((raw) => {

@@ -187,6 +187,7 @@ function renderEntryCard(report, run, draft) {
   const counts = draft.counts ?? run.aggregate.entries[draft.entryId] ?? { occurrences: 0, passages: 0, variants: {}, other: 0, unresolved: {}, failed: 0, notRun: 0 };
   const meta = run.meta;
   const tgt = meta.targetLanguage.code;
+  const countingSkipped = run.counting?.skipped === true;
   // With two judges every use is counted twice: the counts are votes.
   const judges = run.aggregate.totals?.judges ?? 1;
   const unit = judges > 1 ? "votes" : "uses";
@@ -197,7 +198,7 @@ function renderEntryCard(report, run, draft) {
   const variantRows = draft.variants.map((variant, index) => {
     const key = `${entry.id}:${variant.id}`;
     const c = counts.variants[variant.id] ?? { occurrences: 0, passages: 0 };
-    const rarelyChosen = !variant.include && !variant.added && !variant.original
+    const rarelyChosen = !countingSkipped && !variant.include && !variant.added && !variant.original
       && (counts.occurrences ? c.occurrences / counts.occurrences : 0) < RARELY_CHOSEN_SHARE;
     return `
       <div class="rr-variant${variant.include ? "" : " is-excluded"}">
@@ -213,8 +214,8 @@ function renderEntryCard(report, run, draft) {
           </div>
           <textarea class="rr-variant__note" rows="1" lang="${esc(tgt)}" placeholder="When to use it" data-research-entry="${esc(entry.id)}:note:${index}" aria-label="Usage note for ${esc(variant.target)}">${esc(variant.note)}</textarea>
         </div>
-        ${countCell(key, c.occurrences, counts.occurrences, c.passages, report.expandedVariants[key], unit)}
-        ${renderVariantExamples(report, run, draft, variant.id, meta)}
+        ${countingSkipped ? `<p class="rr-muted">Not counted</p>` : countCell(key, c.occurrences, counts.occurrences, c.passages, report.expandedVariants[key], unit)}
+        ${countingSkipped ? "" : renderVariantExamples(report, run, draft, variant.id, meta)}
       </div>`;
   }).join("");
   const unresolved = Object.values(counts.unresolved).reduce((a, b) => a + b, 0);
@@ -263,15 +264,15 @@ function renderEntryCard(report, run, draft) {
           <textarea class="field__input rr-autosize" rows="2" lang="${esc(tgt)}" data-research-entry="${esc(entry.id)}:generalNote">${esc(draft.generalNote)}</textarea>
         </label>
         <section class="rr-block">
-          <div class="rr-table-head"><span>Translation and when to use it</span><span>Chosen in the sample</span></div>
+          <div class="rr-table-head"><span>Translation and when to use it</span><span>${countingSkipped ? "Counting skipped" : "Chosen in the sample"}</span></div>
           ${variantRows}
-          <div class="rr-variant rr-variant--other">
+          ${countingSkipped ? "" : `<div class="rr-variant rr-variant--other">
             <span></span>
             <div class="rr-variant__main"><span class="rr-variant__label">None of these fit</span>
               <p class="rr-muted">The translator wrote something else${unresolved ? `; ${unresolved} not decided` : ""}${counts.failed ? `; ${counts.failed} failed` : ""}.</p></div>
             ${countCell(otherKey, otherCount, counts.occurrences, null, report.expandedVariants[otherKey], unit)}
             ${renderVariantExamples(report, run, draft, "__other", meta)}
-          </div>
+          </div>`}
           <button class="rr-link rr-add" type="button" data-action="add-research-entry-variant:${esc(entry.id)}">+ Add a translation</button>
         </section>
       </fieldset>`}
@@ -471,6 +472,8 @@ function renderSecondary(run, report) {
   const methodOpen = report?.expandedVariants?.__method === true;
   const study = run.sources?.study;
   const origins = study?.senses?.filter((sense) => !sense.inDictionary) ?? [];
+  const compactSources = run.sources?.compact ? run.sources : null;
+  const proof = compactSources?.verifiedName;
   const sources = study ? `
     <section class="rr-section">
       <h2>Where the term comes from</h2>
@@ -484,9 +487,20 @@ function renderSecondary(run, report) {
           <li>How the author uses it: ${esc(sense.authorUsage)}</li>
           ${sense.equivalences?.length ? `<li>Equated with: ${sense.equivalences.map((e) => `${esc(e.term)} (${esc(e.relation)})`).join(", ")}</li>` : ""}
         </ul>`).join("")}
+    </section>` : compactSources && (proof || compactSources.pairs?.length) ? `
+    <section class="rr-section">
+      <h2>Where the term comes from</h2>
+      ${proof ? `<p>${esc(proof.observed)} → <strong>${esc(proof.canonical)}</strong> — ${esc(proof.book)}; ${esc(proof.author)}.</p>
+        <p>Matching numeric definition in the source book; the original edition also attests the name. This does not establish first coinage or who introduced the spelling variation.</p>
+        <blockquote lang="${esc(meta.sourceLanguage.code)}">${esc(proof.sourceText)}</blockquote>` : ""}
+      ${compactSources.pairs?.length ? `<ul>${compactSources.pairs.map((pair) => `<li>${esc(pair.source)} → ${esc(pair.original)} — ${esc(pair.originalTitle || pair.title)}${pair.originalAuthor ? `; ${esc(pair.originalAuthor)}` : ""} (${esc(pair.basis)} evidence)</li>`).join("")}</ul>` : ""}
     </section>` : "";
   return `
     ${sources}
+    ${meta.settings?.researchProcedure === "compact" && proposal.meanings?.length ? `<section class="rr-section">
+      <h2>Researched meanings</h2>
+      ${proposal.meanings.map((meaning) => `<h3>${esc(meaning.partOfSpeech)}</h3><p lang="${esc(meta.sourceLanguage.code)}">${esc(meaning.sourceDefinition)}</p><p lang="${esc(meta.targetLanguage.code)}">${esc(meaning.selectionNote)}</p>`).join("")}
+    </section>` : ""}
     ${renderFrequency(run)}
     ${renderConvergence(run)}
     ${run.prose ? `<section class="rr-section"><h2>Summary</h2><p>${esc(run.prose.summary)}</p>
@@ -508,15 +522,16 @@ function renderSecondary(run, report) {
       ${methodOpen ? `
       <div class="rr-fold__body">
       <h3>Method</h3>
-      <p>Counts show which proposed translation was judged most appropriate in each sampled context. They measure contextual preference, not frequency in ${esc(meta.targetLanguage.name)} or exclusive correctness.</p>
+      ${run.counting?.skipped ? `<p>Counting was not run. The proposed entries can be reviewed and saved, but no contextual preferences or translation-quality improvements were measured.</p>` : `<p>Counts show which proposed translation was judged most appropriate in each sampled context. They measure contextual preference, not frequency in ${esc(meta.targetLanguage.name)} or exclusive correctness.</p>`}
+      ${meta.settings?.researchProcedure === "compact" ? `<p>Focused research reads bounded source evidence and verifies source-book words where available. Counts do not establish improvement over translation without a glossary. Supported meanings remain available even when this sample does not use them; routine frequency and repeated consistency tests were not run.</p>` : ""}
       <ul>
         <li>Texts: ${meta.sourceMode === "samael" ? "complete works of Samael Aun Weor" : "selected team projects"}; ${totals.populationDistinct} distinct passages (${totals.populationRows} before merging ${totals.duplicateGroups} groups of identical passages).</li>
-        <li>Sample: ${totals.passagesSampled} passages (${totals.sampleRequested} requested), ${totals.occurrencesSampled} occurrences; seed ${esc(meta.seed)}. The translations and notes were fixed (version ${esc(run.frozen.version)}) before counting.</li>
+        <li>Sample: ${totals.passagesSampled} passages (${totals.sampleRequested} requested), ${totals.occurrencesSampled} occurrences; seed ${esc(meta.seed)}. The translations and notes were fixed (version ${esc(run.frozen.version)})${run.counting?.skipped ? " for review" : " before counting"}.</li>
         ${totals.judges === 2 ? `<li>Two judges translated every occurrence independently, each seeing the translations in a different order; the counts are their ${totals.votes} votes. They agreed on ${totals.agreement.agreed} of ${totals.agreement.compared} occurrences.</li>` : ""}
-        <li>Each occurrence's sentence was translated, then the translation it used was identified. Model: ${esc(meta.modelId)}.</li>
+        ${run.counting?.skipped ? "" : `<li>Each occurrence's sentence was translated, then the translation it used was identified. Model: ${esc(meta.modelId)}.</li>`}
               </ul>
       <h3>Dictionary</h3>
-      ${dictionary.status === "found" ? `<p class="muted">${esc(dictionary.sourceName)}${dictionary.url ? ` — ${esc(dictionary.url)}` : ""}</p><pre class="research-dictionary" lang="${esc(meta.sourceLanguage.code)}">${esc(dictionary.text)}</pre>` : `<p>No dictionary entry was found (${esc((dictionary.tried ?? []).join(", "))}).</p>`}
+      ${dictionary.status === "found" ? `<p class="muted">${esc(dictionary.sourceName)}${dictionary.url ? ` — ${esc(dictionary.url)}` : ""}</p><pre class="research-dictionary" lang="${esc(meta.sourceLanguage.code)}">${esc(dictionary.text)}</pre>` : dictionary.status === "skipped" ? `<p>Dictionary lookup was skipped.</p>` : dictionary.status === "unreachable" ? `<p>The dictionary could not be reached; absence of an entry was not established.</p>` : `<p>No dictionary entry was found in the dictionaries checked (${esc((dictionary.tried ?? []).join(", "))}).</p>`}
       ${(dictionary.notes ?? []).map((note) => `<p>${esc(note)}</p>`).join("")}
       <h3>Cost</h3>
       <p>${usage.length} AI requests, US${formatUsd(cost)} (limit US${formatUsd(meta.spendingLimitUsd)}).</p>

@@ -1,7 +1,7 @@
 // Prompt texts and strict JSON schemas for Glossary Research.
 // Bump RESEARCH_PROMPT_VERSION on any change that could alter a judgment.
 
-export const RESEARCH_PROMPT_VERSION = "2026-10-12.4";
+export const RESEARCH_PROMPT_VERSION = "2026-10-13.1";
 
 const STR = { type: "string" };
 const NSTR = { anyOf: [{ type: "string" }, { type: "null" }] };
@@ -363,7 +363,7 @@ export function translateInstructions(ctx, frozenText) {
 The glossary entries (frozen; do not change them):
 ${frozenText}
 
-Each passage marks one occurrence per id as ⟦…⟧ [id] and states which entry applies. Choose only among that entry's variants. A variant marked TRADITIONAL ${ctx.targetName.toUpperCase()} TERM is the original word of the book the author took that meaning from: whenever the occurrence has that meaning, translate it with that variant, even where another wording would read more smoothly; use another variant only when the occurrence has a different meaning that does not come from that book. An "existing translation" line, when present, may be wrong; do not copy it.
+Each passage marks one occurrence per id as ⟦…⟧ [id] and states which entry applies. Apply each entry conditionally from its meaning and selection notes, not by inserting a word mechanically. A preferred narrower sense is appropriate only while every relevant named or enumerated member fits its category; never narrow a source category in conflict with its members. Otherwise use a source-supported broader alternative or report "other". Preserve an idiomatic whole-expression rendering when the marked word is already conveyed implicitly; do not force a separate literal word into it. Still use a more precise preferred translation when the source supports it, even if a broad wording would be understandable. A variant marked TRADITIONAL ${ctx.targetName.toUpperCase()} TERM is the verified source-book designation: use it when this occurrence has that borrowed meaning; ordinary noun or adjective uses retain their own translations. An "existing translation" line, when present, may be wrong; do not copy it.
 
 For every id: first translate into ${ctx.targetName} the complete sentence that contains the marked occurrence (sentenceTranslation), naturally and faithfully, using the entry as guidance. Then:
 - chosenWording: the exact characters of your translation that render the marked word or expression (a verbatim substring of sentenceTranslation).

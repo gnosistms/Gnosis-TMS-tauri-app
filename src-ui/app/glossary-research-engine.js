@@ -24,6 +24,7 @@ import {
   snippet,
 } from "./glossary-research-occurrences.js";
 import * as prompts from "./glossary-research-prompts.js";
+import { createCompactResearch } from "./glossary-research-compact.js";
 import {
   CONSISTENCY_ROUNDS, MAX_CONSISTENCY_TRANSLATIONS, addRound, flipSets, flipsOf, meaningsOfVariants, pickSentences, setVotes, settleMeanings, winnerOf,
 } from "./glossary-research-consistency.js";
@@ -437,7 +438,7 @@ export class SkipStep extends Error {
  */
 export const SKIPPABLE_STEPS = new Set([
   "Dictionary", "Word family", "Where the term comes from", "Candidate checks", "Candidate frequency",
-  "Discovery", "Shared translations", "Existing glossary entry", "Counting (second judge)", "Consistency test", "Rare translations", "Summary",
+  "Discovery", "Coverage", "Shared translations", "Existing glossary entry", "Counting (second judge)", "Consistency test", "Rare translations", "Summary",
 ]);
 
 export class ResearchStop extends Error {
@@ -2381,6 +2382,16 @@ export function createResearchEngine(deps) {
   /** Research up to the proposal (the review pause, when asked for). */
   async function runToReview() {
     try {
+      if (settings.researchProcedure === "compact") {
+        const compact = createCompactResearch({ settings, corpus, dictionary, store, client, stage, ctx, heading, info, fact,
+          skippable, unlessSkipped, checkSkip,
+          validateProposal,
+          legacyForms: findForms, checkCancelled: () => { if (cancelled) throw new ResearchStop("Research cancelled.", "cancelled"); } });
+        const result = await compact.runToReview();
+        const problems = validateProposal(result.proposal, store.load("forms").confirmed);
+        if (problems.length) throw new ResearchStop(`The proposal needs correction: ${problems.join("; ")}`, "failed");
+        return { ...result, spent: budget.spent };
+      }
       await lookUpDictionary();
       await findForms();
       const fresh = store.load("proposal") == null;
@@ -2434,8 +2445,9 @@ export function createResearchEngine(deps) {
   }
 
   /** Continue after the user confirmed (possibly edited) the proposal. */
-  async function runCounting(confirmedProposal) {
+  async function runCounting(confirmedProposal, { skipCounting = false } = {}) {
     try {
+      if (skipCounting && settings.researchProcedure !== "compact") throw new ResearchStop("Counting can only be skipped for focused research.", "failed");
       const problems = validateProposal(confirmedProposal, store.load("forms").confirmed, { strict: true });
       if (problems.length) throw new ResearchStop(`The proposal cannot be counted: ${problems.join("; ")}`, "failed");
       const frozen = freeze(confirmedProposal);
@@ -2446,9 +2458,21 @@ export function createResearchEngine(deps) {
       }
       store.save("frozen", frozen);
       store.save("confirmedProposal", confirmedProposal);
+      if (skipCounting) {
+        const sample = store.load("sample");
+        const items = sample.measuredIds.map((id) => sample.items[id]);
+        const counting = { frozenVersion: frozen.version, occurrences: buildOccurrences(items, frozen.entries, "o", settings.sourceLanguageCode), judgments: {}, skipped: true };
+        const aggregate = aggregateCounts(counting, frozen, sample);
+        store.save("counting", counting); store.save("aggregate", aggregate);
+        store.save("consistency", { skipped: true, sentences: [], flips: [], standardised: [], conflicts: [] });
+        store.save("footnotes", []); store.save("prose", null);
+        heading("Done"); fact("Proposal ready for saving. Counting was not run; no translation-quality improvement is claimed.");
+        return { status: "done", frozen, aggregate, prose: null, spent: budget.spent };
+      }
+      if (store.load("counting")?.skipped) store.save("counting", null);
       const counting = await stage("counting", () => count(frozen, 1));
       let aggregate = aggregateCounts(counting, frozen, store.load("sample"));
-      if (settings.judges >= 2) {
+      if (settings.judges >= 2 && settings.researchProcedure !== "compact") {
         const second = await stage("counting2", () => skippable({ skipped: true }, () => count(frozen, 2), { partial: false }));
         // Skipped: the first count alone decides.
         if (!second?.skipped) {
@@ -2469,6 +2493,17 @@ export function createResearchEngine(deps) {
         if (word) other.failedWord = word;
       }
       store.save("aggregate", aggregate);
+      if (settings.researchProcedure === "compact") {
+        // Context counts remain available, but five repeated translations,
+        // frequency downloads and a second summarising model call are optional
+        // diagnostics, not proof that a glossary improves on no glossary.
+        store.save("consistency", { skipped: true, sentences: [], flips: [], standardised: [], conflicts: [] });
+        store.save("footnotes", []);
+        store.save("prose", null);
+        heading("Done");
+        fact(`Finished. Review the examples and save the entry. Counts show contextual choices, not improvement over translation without a glossary. Cost: ${formatUsd(budget.spent)}.`);
+        return { status: "done", frozen, aggregate, prose: null, spent: budget.spent };
+      }
       // The finished entry, translated five times per test sentence: does the translator keep to one choice?
       await stage("consistency", () => skippable({ skipped: true, sentences: [], flips: [], standardised: [], conflicts: [] }, () => testConsistency(frozen)));
       const footnotes = await stage("footnotes", () => skippable([], () => rareWinners(frozen, aggregate)).catch((error) => {

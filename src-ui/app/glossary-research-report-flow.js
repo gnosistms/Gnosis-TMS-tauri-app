@@ -188,7 +188,8 @@ export function buildEntryDrafts(run, glossaryTerms) {
     for (const occurrence of run.counting?.occurrences ?? []) {
       if (occurrence.entryId === entry.id) uses.set(formOf(occurrence), (uses.get(formOf(occurrence)) ?? 0) + 1);
     }
-    const groups = entry.kind === "expression" || !entryVotes.length
+    const compact = run.meta?.settings?.researchProcedure === "compact";
+    const groups = compact || entry.kind === "expression" || !entryVotes.length
       ? [{ forms: entry.sourceTerms.map((f) => f.normalize("NFC").toLowerCase().trim()), thin: [] }]
       : groupForms(entry.sourceTerms, entryVotes.map((v) => ({ form: formOf(v.occurrence), variantId: v.variantId })), uses);
     const split = groups.length > 1;
@@ -213,7 +214,7 @@ export function buildEntryDrafts(run, glossaryTerms) {
             // original word of a borrowed meaning always stays. The consistency test
             // removes a translation no meaning uses any more (the user can keep it).
             include: !consistencyDropped.has(variant.id)
-              && (Boolean(variant.original) || counts.occurrences === 0 || count / counts.occurrences >= RARELY_CHOSEN_SHARE),
+              && (compact || Boolean(variant.original) || counts.occurrences === 0 || count / counts.occurrences >= RARELY_CHOSEN_SHARE),
             ...(consistencyNote(run, variant.id) ? { consistency: consistencyNote(run, variant.id) } : {}),
           };
         })

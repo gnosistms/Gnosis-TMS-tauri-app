@@ -321,7 +321,7 @@ export const RESEARCH_STAGES = [
   { label: "Dictionary", steps: ["Dictionary", "Word forms", "Word family"] },
   { label: "Texts", steps: ["Sampling", "Where the term comes from"] },
   { label: "Candidates", steps: ["Parts and frequency", "Candidate translations", "Candidate checks", "Candidate frequency"] },
-  { label: "Proposal", steps: ["Discovery", "Proposal", "Existing glossary entry", "Shared translations"] },
+  { label: "Proposal", steps: ["Discovery", "Coverage", "Proposal", "Existing glossary entry", "Shared translations"] },
   { label: "Review", steps: ["Review"] },
   { label: "Choosing", steps: ["Counting", "Counting (second judge)", "Consistency test"] },
   { label: "Report", steps: ["Rare translations", "Summary", "Done"] },
