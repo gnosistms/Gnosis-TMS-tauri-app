@@ -31,6 +31,7 @@ import {
   updateTargetLanguageManagerDrag,
 } from "./events/target-language-drag.js";
 import { registerProjectAddTranslationProgress } from "./project-add-translation-flow.js";
+import { installImeCompositionHold } from "./ime-composition-hold.js";
 import {
   installProjectsRenderHold,
   isProjectsSelectCommitTarget,
@@ -53,6 +54,7 @@ export function registerAppEvents(render) {
   registerProjectAddTranslationProgress(render);
 
   installProjectsRenderHold();
+  installImeCompositionHold(render);
   document.addEventListener("input", (event) => handleInputEvent(event, render));
   document.addEventListener("change", (event) => {
     // A protected select commit must render its state update immediately,
