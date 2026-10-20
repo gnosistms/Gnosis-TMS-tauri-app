@@ -141,6 +141,7 @@ import {
   deferProjectsRenderWhileSelectEngaged,
   installProjectsRenderHold,
 } from "./app/projects-render-hold.js";
+import { deferRenderWhileComposing } from "./app/ime-composition-hold.js";
 import { reconcileProjectsScrollOnRender } from "./app/projects-scroll-store.js";
 import { renderQaListEditorScreen } from "./screens/qa-list-editor.js";
 import { renderQaScreen } from "./screens/qa.js";
@@ -361,6 +362,12 @@ function patchFixtureEditorRowState(rowId, updates = {}) {
 }
 
 function render(options = {}) {
+  // While an input method is composing a word in a field, renders defer so
+  // the field isn't replaced mid-word (scrambled Telex/IME text); the hold
+  // flushes when the composition ends. See ime-composition-hold.js.
+  if (deferRenderWhileComposing(options)) {
+    return undefined;
+  }
   // While a protected projects-page select is engaged, full renders defer so
   // the open dropdown isn't destroyed mid-selection; the hold flushes on
   // commit/disengage. See projects-render-hold.js.

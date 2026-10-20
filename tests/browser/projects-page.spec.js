@@ -48,6 +48,36 @@ test("project search case toggle updates through the action dispatcher", async (
   await expect(toggle).toHaveAttribute("aria-pressed", "false");
 });
 
+// Windows Vietnamese Telex composes each word in the field ("vieejt" →
+// "việt") until the word ends. A render that replaces the field mid-word cut
+// the composition off and scrambled the typed text.
+async function typeWithInputMethod(page, words) {
+  const session = await page.context().newCDPSession(page);
+  for (const [index, steps] of words.entries()) {
+    for (const text of steps) {
+      await session.send("Input.imeSetComposition", { text, selectionStart: text.length, selectionEnd: text.length });
+      await page.waitForTimeout(30);
+    }
+    await session.send("Input.insertText", { text: steps.at(-1) });
+    await page.waitForTimeout(30);
+    if (index < words.length - 1) {
+      await page.keyboard.type(" ");
+    }
+  }
+}
+
+test("project search keeps text typed with an input method (Vietnamese Telex)", async ({ page }) => {
+  await mountProjectsFixture(page, { projectCount: 2 });
+  const input = page.locator("[data-project-search-input]");
+  await input.click();
+  await typeWithInputMethod(page, [
+    ["v", "vi", "vie", "viê", "việ", "việt"],
+    ["n", "na", "nam"],
+  ]);
+  await expect(input).toHaveValue("việt nam");
+  await expect(input).toBeFocused();
+});
+
 function renderedItemKeys(page) {
   return page.evaluate(() =>
     [...document.querySelectorAll("[data-projects-item-key]")].map(
