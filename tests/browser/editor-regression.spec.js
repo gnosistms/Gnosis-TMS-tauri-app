@@ -1541,6 +1541,49 @@ async function openPlatformEditorFixture(page, platform) {
 }
 
 test.describe("editor regressions", () => {
+  for (const kind of ["paragraph", "heading1", "image", "image-caption", "footnote", "separator", "custom-html"]) {
+    test(`preview ${kind} double-click returns to its editor row and language`, async ({ page }) => {
+      const rowId = "fixture-row-0020";
+      await mountEditorFixture(page, { rowCount: 40, chapterStatus: "ready" }, { mockTauri: true });
+      await patchFixtureRow(page, rowId, {
+        fields: { es: kind === "custom-html" ? "<div>Custom preview content</div>" : "Preview body [1]<hr>After separator" },
+        textStyle: kind === "heading1" ? "heading1" : kind === "custom-html" ? "custom_html" : "paragraph",
+      });
+      await page.evaluate(async (targetRowId) => {
+        const { state } = await import(new URL("/app/state.js", window.location.href).href);
+        const row = state.editorChapter.rows.find((row) => row.rowId === targetRowId);
+        row.footnotes.es = [{ marker: 1, text: "A preview footnote" }];
+        row.images.es = { kind: "url", url: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Crect width='80' height='80' fill='orange'/%3E%3C/svg%3E" };
+        row.imageCaptions.es = "Preview image caption";
+      }, rowId);
+      await page.locator('[data-action="set-editor-mode:preview"]').click();
+      await page.locator("[data-editor-preview-language-select]").selectOption("es");
+      const block = page.locator(`[data-editor-preview-document] [data-preview-block="${kind}"][data-row-id="${rowId}"]`).first();
+      await expect(block).toHaveAttribute("data-tooltip", "Double-click to edit.");
+      await expect(block).toHaveAttribute("lang", "es");
+      // A preview jump must reveal its source even when translate-mode filters
+      // would otherwise hide that row.
+      await page.evaluate(async () => {
+        const { state } = await import(new URL("/app/state.js", window.location.href).href);
+        state.editorChapter.filters.searchQuery = "no rows match this filter";
+        state.editorChapter.filters.rowFilterMode = "needs-review";
+      });
+      const target = kind === "image" ? block.locator("img") : block;
+      await expect(block).not.toHaveAttribute("title");
+      await target.hover();
+      await expect.poll(() => block.evaluate((element) => getComputedStyle(element, "::before").content)).toBe('"Double-click to edit."');
+      await expect.poll(() => block.evaluate((element) => getComputedStyle(element, "::before").opacity)).toBe("1");
+      if (kind === "image-caption") {
+        const figure = block.locator("..");
+        await expect.poll(() => figure.evaluate((element) => getComputedStyle(element, "::before").content)).toBe("none");
+      }
+      await target.dblclick();
+      await expect(page.locator(".translate-layout--preview")).toHaveCount(0);
+      await expect(page.locator(`[data-editor-language-panel][data-row-id="${rowId}"][data-language-code="es"]`)).toBeInViewport();
+      await expect(page.locator("[data-editor-search-input]")).toHaveValue("");
+    });
+  }
+
   for (const platform of ["macos", "windows"]) {
     test(`card whitespace selects through edges and dividers without editing (${platform})`, async ({ page }) => {
       await mountEditorFixture(page, { rowCount: 6, chapterStatus: "ready" }, {

@@ -543,7 +543,7 @@ function renderTextWithWordPressFootnoteRefs(block, footnoteState, options = {})
 }
 
 function renderPreviewSeparatorBlock(block) {
-  return `<hr class="translate-preview__separator" data-preview-block="separator" data-row-id="${escapeHtml(block?.rowId ?? "")}" aria-hidden="true">`;
+  return `<hr class="translate-preview__separator" data-preview-block="separator" data-row-id="${escapeHtml(block?.rowId ?? "")}" lang="${escapeHtml(block?.languageCode ?? "")}" data-tooltip="Double-click to edit." aria-hidden="true">`;
 }
 
 function renderWordPressFootnotesList(footnoteState, renderSegment, options = {}) {
@@ -555,7 +555,7 @@ function renderWordPressFootnotesList(footnoteState, renderSegment, options = {}
     const backLink = options.serialize
       ? `<a href="#fnref-${escapeHtml(item.id)}" aria-label="Jump to footnote reference ${escapeHtml(item.number)}">&#8617;</a>`
       : `<a class="translate-preview__footnote-backlink" href="#fnref-${escapeHtml(item.id)}" aria-label="Jump to footnote reference ${escapeHtml(item.number)}">&#8617;</a>`;
-    return `<li id="fn-${escapeHtml(item.id)}">${renderSegment(item.text, item.languageCode)} ${backLink}</li>`;
+    return `<li id="fn-${escapeHtml(item.id)}" data-preview-block="footnote" data-row-id="${escapeHtml(item.rowId)}" lang="${escapeHtml(item.languageCode)}" data-tooltip="Double-click to edit.">${renderSegment(item.text, item.languageCode)} ${backLink}</li>`;
   }).join("");
 
   return `<ol class="wp-block-footnotes">${items}</ol>`;
@@ -579,9 +579,9 @@ export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
 
         const caption = String(block.caption ?? "").trim();
         const captionHtml = caption
-          ? `<figcaption class="translate-preview__image-caption" lang="${escapeHtml(block.languageCode ?? "")}">${renderPreviewHighlightedText(block.caption, searchState, matchCounter, block.languageCode)}</figcaption>`
+          ? `<figcaption class="translate-preview__image-caption" data-preview-block="image-caption" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}" data-tooltip="Double-click to edit.">${renderPreviewHighlightedText(block.caption, searchState, matchCounter, block.languageCode)}</figcaption>`
           : "";
-        return `<figure class="translate-preview__image-block" data-preview-block="image" data-row-id="${escapeHtml(block.rowId ?? "")}"><img class="translate-preview__image" src="${escapeHtml(imageSrc)}" alt="" loading="eager" />${captionHtml}</figure>`;
+        return `<figure class="translate-preview__image-block" data-preview-block="image" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}" data-tooltip="Double-click to edit."><img class="translate-preview__image" src="${escapeHtml(imageSrc)}" alt="" loading="eager" />${captionHtml}</figure>`;
       }
 
       if (block?.kind !== "text") {
@@ -593,7 +593,7 @@ export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
         if (!customHtml.trim()) {
           return "";
         }
-        return `<div class="translate-preview__block translate-preview__block--custom-html" data-preview-block="custom-html" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}">${customHtml}</div>`;
+        return `<div class="translate-preview__block translate-preview__block--custom-html" data-preview-block="custom-html" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}" data-tooltip="Double-click to edit.">${customHtml}</div>`;
       }
 
       const tagName = previewTextTagForStyle(block.textStyle);
@@ -620,7 +620,7 @@ export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
           if (!textHtml.trim()) {
             return "";
           }
-          return `<${tagName} class="translate-preview__block translate-preview__block--${variant}" data-preview-block="${escapeHtml(variant)}" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}">${textHtml}</${tagName}>`;
+          return `<${tagName} class="translate-preview__block translate-preview__block--${variant}" data-preview-block="${escapeHtml(variant)}" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}" data-tooltip="Double-click to edit.">${textHtml}</${tagName}>`;
         })
         .filter(Boolean)
         .join("");

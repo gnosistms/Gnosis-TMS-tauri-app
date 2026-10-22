@@ -993,6 +993,13 @@ a {
   margin-top: 15.6px;
 }
 
+.editor-glossary-info-card__footnote a {
+  color: var(--link);
+  text-decoration: underline;
+  text-decoration-thickness: 0.06em;
+  text-underline-offset: 0.16em;
+}
+
 .editor-glossary-info-card__comment {
   color: rgba(74, 45, 19, 0.74);
   font-size: 16.1px;
