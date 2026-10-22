@@ -16,6 +16,88 @@ const MAX_SRT_IMPORTED_ROWS: usize = 20_000;
 // anything at or below this duration is a collapse candidate.
 const ROLLING_FILLER_MAX_DURATION_MS: u64 = 100;
 
+#[derive(Clone, Debug)]
+pub(crate) struct SubtitleCue {
+    pub(crate) start_ms: u64,
+    pub(crate) end_ms: u64,
+    pub(crate) text: String,
+}
+
+/// Translation uploads require standard SRT blocks; do not collapse rolling cues
+/// or reinterpret line breaks as alignment units in the timestamp-only path.
+pub(crate) fn parse_translation_srt(
+    bytes: &[u8],
+    file_name: &str,
+) -> Result<Vec<SubtitleCue>, String> {
+    crate::constants::ensure_within_import_size_limit(bytes.len() as u64, file_name)?;
+    let decoded = decode_text_file(bytes)?
+        .replace("\r\n", "\n")
+        .replace('\r', "\n");
+    let lines = decoded.lines().collect::<Vec<_>>();
+    let timing = regex::Regex::new(
+        r"^\s*\d{2,3}:[0-5]\d:[0-5]\d,\d{3}[ \t]+-->[ \t]+\d{2,3}:[0-5]\d:[0-5]\d,\d{3}[ \t]*$",
+    )
+    .map_err(|_| "Could not validate SRT timestamps.".to_string())?;
+    let error =
+        |line: usize, detail: &str| format!("Line {}: Invalid SRT file. {detail}", line + 1);
+    let mut cues = Vec::new();
+    let mut index = 0;
+    while index < lines.len() {
+        if lines[index].trim().is_empty() {
+            index += 1;
+            continue;
+        }
+        if lines[index]
+            .trim()
+            .parse::<u64>()
+            .ok()
+            .filter(|n| *n > 0)
+            .is_none()
+        {
+            return Err(error(
+                index,
+                "Each subtitle must start with a positive numeric cue number.",
+            ));
+        }
+        index += 1;
+        let line = lines.get(index).copied().unwrap_or_default();
+        if !timing.is_match(line) {
+            return Err(error(index, "Expected HH:MM:SS,mmm --> HH:MM:SS,mmm."));
+        }
+        let (start_ms, end_ms) = parse_srt_timing_line(line)
+            .ok_or_else(|| error(index, "The subtitle timestamps are invalid."))?;
+        if end_ms < start_ms {
+            return Err(error(
+                index,
+                "The subtitle end time is before its start time.",
+            ));
+        }
+        index += 1;
+        let start = index;
+        while index < lines.len() && !lines[index].trim().is_empty() {
+            if timing.is_match(lines[index]) {
+                return Err(error(index, "Separate subtitle blocks with a blank line."));
+            }
+            index += 1;
+        }
+        if start == index {
+            return Err(error(index, "Each subtitle must contain text."));
+        }
+        cues.push(SubtitleCue {
+            start_ms,
+            end_ms,
+            text: lines[start..index].join("\n"),
+        });
+        if cues.len() > MAX_SRT_IMPORTED_ROWS {
+            return Err("The selected subtitle file contains too many rows to import.".into());
+        }
+    }
+    if cues.is_empty() {
+        return Err("The selected file does not contain any SRT subtitle entries.".into());
+    }
+    Ok(cues)
+}
+
 #[derive(Clone)]
 pub(super) struct SrtRowMetadata {
     pub(super) sequence_number: Option<u64>,
@@ -370,6 +452,47 @@ pub(crate) fn format_srt_timestamp(total_ms: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn translation_srt_requires_valid_standard_blocks() {
+        for text in [
+            "not srt",
+            "00:00:01,000 --> 00:00:02,000\nNo index\n",
+            "1\n00:00:01.000 --> 00:00:02.000\nWrong separator\n",
+            "1\n00:00:01,000 --> 00:00:02,000\n\n",
+            "1\n00:00:03,000 --> 00:00:02,000\nBackwards\n",
+            "1\n00:00:01,000 --> 00:00:02,000\nFirst\n2\n00:00:03,000 --> 00:00:04,000\nSecond\n",
+            "1\n00:61:01,000 --> 00:62:02,000\nBad minutes\n",
+        ] {
+            assert!(
+                parse_translation_srt(text.as_bytes(), "translation.srt").is_err(),
+                "accepted {text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn translation_srt_preserves_multiline_text_and_rolling_cues() {
+        let text = "\u{feff}1\r\n00:00:01,000 --> 00:00:02,000\r\n First line \r\nSecond line\r\n\r\n2\r\n00:00:02,000 --> 00:00:02,010\r\nSecond line\r\n";
+        let cues = parse_translation_srt(text.as_bytes(), "translation.srt").unwrap();
+        assert_eq!(cues.len(), 2);
+        assert_eq!(cues[0].text, " First line \nSecond line");
+        assert_eq!(cues[1].start_ms, 2000);
+        assert_eq!(cues[1].end_ms, 2010);
+    }
+
+    #[test]
+    fn translation_srt_rejects_oversized_and_excessive_cue_inputs() {
+        assert!(
+            parse_translation_srt(&vec![b'x'; 25 * 1024 * 1024 + 1], "translation.srt")
+                .unwrap_err()
+                .contains("too large")
+        );
+        let text = "1\n00:00:01,000 --> 00:00:02,000\nText\n\n".repeat(20_001);
+        assert!(parse_translation_srt(text.as_bytes(), "translation.srt")
+            .unwrap_err()
+            .contains("too many rows"));
+    }
 
     fn srt_input(bytes: Vec<u8>) -> ImportSrtInput {
         ImportSrtInput {

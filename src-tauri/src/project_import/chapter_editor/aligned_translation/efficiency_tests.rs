@@ -46,6 +46,27 @@ fn answer(job: &AlignmentJob, ids: &[usize]) -> Value {
 }
 
 struct TempCache(PathBuf);
+
+#[test]
+fn canceling_split_work_prevents_later_waves_from_starting() {
+    let id = uuid::Uuid::now_v7().to_string();
+    let registration = alignment_cancellation::Registration::new(Some(id.clone())).unwrap();
+    let calls = AtomicUsize::new(0);
+    registration
+        .run(|| {
+            let result = splits::run_split_workers(&(0..12).collect::<Vec<_>>(), |_| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                alignment_cancellation::cancel(&id)?;
+                alignment_cancellation::check()?;
+                Ok(())
+            });
+            assert!(result.is_err());
+            assert!((1..=4).contains(&calls.load(Ordering::SeqCst)));
+            Ok(())
+        })
+        .unwrap_err();
+}
+
 impl TempCache {
     fn new() -> Self {
         Self(std::env::temp_dir().join(format!("alignment-efficiency-{}", uuid::Uuid::now_v7())))

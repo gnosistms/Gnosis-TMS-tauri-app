@@ -1,3 +1,4 @@
+mod alignment_cancellation;
 mod chapter_editor;
 mod chapter_editor_comments;
 mod chapter_import;
@@ -25,8 +26,9 @@ pub(crate) use self::chapter_editor::{
 
 use self::{
     chapter_editor::{
-        acknowledge_project_transfer_status, apply_aligned_translation_to_gtms_chapter_sync,
-        apply_gtms_editor_ai_review_result_sync, apply_gtms_editor_ai_review_results_batch_sync,
+        acknowledge_project_transfer_status, add_subtitle_translation_sync,
+        apply_aligned_translation_to_gtms_chapter_sync, apply_gtms_editor_ai_review_result_sync,
+        apply_gtms_editor_ai_review_results_batch_sync,
         approve_gtms_chapter_pdf_fonts as approve_gtms_chapter_pdf_fonts_task,
         cancel_gtms_chapter_pdf_export as cancel_gtms_chapter_pdf_export_task,
         clear_gtms_editor_imported_conflict_sync, clear_gtms_editor_reviewed_markers_sync,
@@ -49,7 +51,7 @@ use self::{
         update_gtms_editor_row_field_flag_sync, update_gtms_editor_row_fields_batch_sync,
         update_gtms_editor_row_fields_sync, update_gtms_editor_row_lifecycle_sync,
         update_gtms_editor_row_text_style_sync, upload_gtms_editor_language_image_sync,
-        AlignedTranslationApplyInput, AlignedTranslationApplyResponse,
+        AddSubtitleTranslationInput, AlignedTranslationApplyInput, AlignedTranslationApplyResponse,
         AlignedTranslationPreflightInput, AlignedTranslationPreflightResponse,
         ApplyEditorAiReviewResultInput, ApplyEditorAiReviewResultResponse,
         ApplyEditorAiReviewResultsBatchInput, ApplyEditorAiReviewResultsBatchResponse,
@@ -373,6 +375,7 @@ pub(crate) async fn acknowledge_gtms_project_transfer_status(
 pub(crate) async fn preflight_aligned_translation_to_gtms_chapter(
     app: AppHandle,
     input: AlignedTranslationPreflightInput,
+    request_id: Option<String>,
 ) -> Result<AlignedTranslationPreflightResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
         crate::installation_access::require_command_access(
@@ -380,7 +383,8 @@ pub(crate) async fn preflight_aligned_translation_to_gtms_chapter(
             input.installation_id,
             ensure_installation_allows_chapter_writes,
         )?;
-        preflight_aligned_translation_to_gtms_chapter_sync(&app, input)
+        let cancellation = alignment_cancellation::Registration::new(request_id)?;
+        cancellation.run(|| preflight_aligned_translation_to_gtms_chapter_sync(&app, input))
     })
     .await
     .map_err(|error| format!("The aligned translation preflight worker failed: {error}"))?
@@ -390,6 +394,7 @@ pub(crate) async fn preflight_aligned_translation_to_gtms_chapter(
 pub(crate) async fn apply_aligned_translation_to_gtms_chapter(
     app: AppHandle,
     input: AlignedTranslationApplyInput,
+    request_id: Option<String>,
 ) -> Result<AlignedTranslationApplyResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
         crate::installation_access::require_command_access(
@@ -397,10 +402,51 @@ pub(crate) async fn apply_aligned_translation_to_gtms_chapter(
             input.installation_id,
             ensure_installation_allows_chapter_writes,
         )?;
-        apply_aligned_translation_to_gtms_chapter_sync(&app, input)
+        let cancellation = alignment_cancellation::Registration::new(request_id)?;
+        cancellation.run(|| apply_aligned_translation_to_gtms_chapter_sync(&app, input))
     })
     .await
     .map_err(|error| format!("The aligned translation apply worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) fn cancel_aligned_translation(request_id: String) -> Result<bool, String> {
+    alignment_cancellation::cancel(&request_id)
+}
+
+#[tauri::command]
+/// Returns immediately after access preflight; results arrive on subtitle-translation-result.
+pub(crate) async fn add_srt_translation_to_gtms_chapter(
+    app: AppHandle,
+    input: AddSubtitleTranslationInput,
+    request_id: Option<String>,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_chapter_writes,
+        )?;
+        let request_id = request_id.unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+        let cancellation = alignment_cancellation::Registration::new(Some(request_id.clone()))?;
+        let completion_app = app.clone();
+        let worker = tauri::async_runtime::spawn_blocking(move || {
+            cancellation.run(|| add_subtitle_translation_sync(&app, input))
+        });
+        tauri::async_runtime::spawn(async move {
+            let result = worker
+                .await
+                .unwrap_or_else(|_| Err("The subtitle translation worker failed.".into()));
+            let payload = match result {
+                Ok(response) => serde_json::json!({"requestId":request_id,"response":response}),
+                Err(error) => serde_json::json!({"requestId":request_id,"error":error}),
+            };
+            let _ = tauri::Emitter::emit(&completion_app, "subtitle-translation-result", payload);
+        });
+        Ok(serde_json::json!({"status":"started"}))
+    })
+    .await
+    .map_err(|_| "Could not start subtitle translation.".to_string())?
 }
 
 #[tauri::command]
