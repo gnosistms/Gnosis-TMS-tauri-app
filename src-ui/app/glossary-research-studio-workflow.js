@@ -626,4 +626,3 @@ export function collisionChanges(draft, entries, choices, language = "und") {
   }
   return updates;
 }
-
