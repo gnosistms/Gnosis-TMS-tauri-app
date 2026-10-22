@@ -112,7 +112,13 @@ pub(super) fn run_split_workers<T: Sync, R: Send>(
                 .iter()
                 .map(|item| {
                     let run = &run;
-                    scope.spawn(move || run(item))
+                    let token = alignment_cancellation::current();
+                    scope.spawn(move || {
+                        alignment_cancellation::with_token(token, || {
+                            alignment_cancellation::check()?;
+                            run(item)
+                        })
+                    })
                 })
                 .collect::<Vec<_>>();
             handles
@@ -226,9 +232,11 @@ pub(super) fn resolve_split_batch(
     request: &(impl Fn(&[usize], bool) -> Result<Value, AlignmentPromptError> + Sync),
     cache_hit: &(impl Fn(usize) + Sync),
 ) -> Result<Vec<SplitTarget>, String> {
+    alignment_cancellation::check()?;
     let mut completed = Vec::new();
     let mut pending = Vec::new();
     for id in ids {
+        alignment_cancellation::check()?;
         let cached = read_validated_response::<SplitTargetResponse>(
             &split_checkpoint(job, cache_dir, *id)?,
             |response| validate_split_response(job, response, &[*id]).map(|_| ()),
@@ -312,10 +320,13 @@ pub(super) fn with_request_slot<T>(
         .lock()
         .map_err(|_| "Could not acquire an alignment request slot.".to_string())?;
     while *active >= SPLIT_CONCURRENCY {
+        alignment_cancellation::check()?;
         active = AVAILABLE
-            .wait(active)
-            .map_err(|_| "Could not wait for an alignment request slot.".to_string())?;
+            .wait_timeout(active, std::time::Duration::from_millis(100))
+            .map_err(|_| "Could not wait for an alignment request slot.".to_string())?
+            .0;
     }
+    alignment_cancellation::check()?;
     *active += 1;
     drop(active);
     struct Permit;

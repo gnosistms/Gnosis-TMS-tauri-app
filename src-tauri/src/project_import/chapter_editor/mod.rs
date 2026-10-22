@@ -50,10 +50,10 @@ mod shared;
 mod team_copy;
 
 pub(crate) use self::aligned_translation::{
-    apply_aligned_translation_to_gtms_chapter_sync,
-    preflight_aligned_translation_to_gtms_chapter_sync, AlignedTranslationApplyInput,
-    AlignedTranslationApplyResponse, AlignedTranslationPreflightInput,
-    AlignedTranslationPreflightResponse,
+    add_subtitle_translation_sync, apply_aligned_translation_to_gtms_chapter_sync,
+    preflight_aligned_translation_to_gtms_chapter_sync, AddSubtitleTranslationInput,
+    AlignedTranslationApplyInput, AlignedTranslationApplyResponse,
+    AlignedTranslationPreflightInput, AlignedTranslationPreflightResponse,
 };
 pub(super) use self::changed_after_my_edit::{
     load_gtms_editor_changed_after_my_edit_sync, LoadEditorChangedAfterMyEditInput,

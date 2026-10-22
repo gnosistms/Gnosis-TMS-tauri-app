@@ -1,7 +1,8 @@
 import { AI_ACTION_LABELS } from "./ai-action-config.js";
 import { formatErrorForDisplay } from "./error-display.js";
 import { findIsoLanguageOption, normalizeSupportedLanguageCode } from "../lib/language-options.js";
-import { invoke, listen } from "./runtime.js";
+import { invoke, listen, resolveCommandFailureReport } from "./runtime.js";
+import { reportCommandFailure } from "./telemetry.js";
 import { findChapterContext, selectedProjectsTeam } from "./project-context.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { createProjectAddTranslationState, state } from "./state.js";
@@ -21,14 +22,15 @@ import { normalizeProjectDocumentInputMode } from "./project-document-input.js";
 
 export const ALIGNED_TRANSLATION_PROGRESS_EVENT = "aligned-translation-progress";
 export const PROJECT_ADD_TRANSLATION_ACCEPT =
-  ".txt,text/plain,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.rtf,application/rtf,text/rtf";
+  ".txt,text/plain,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.rtf,application/rtf,text/rtf,.srt,application/x-subrip";
 export const PROJECT_ADD_TRANSLATION_DIALOG_FILTERS = [{
   name: "Translation documents",
-  extensions: ["txt", "docx", "rtf"],
+  extensions: ["txt", "docx", "rtf", "srt"],
 }];
 
 let progressUnlistenPromise = null;
 let inputRequestSequence = 0;
+const pendingAlignmentCancellations = new Map();
 
 function inputFileName(value, fallback = "translation") {
   const name = typeof value?.name === "string" ? value.name.trim() : "";
@@ -40,7 +42,26 @@ function pathFileName(path) {
 }
 
 function supportedTranslationFileName(fileName) {
-  return /\.(txt|docx|rtf)$/i.test(String(fileName ?? "").trim());
+  return /\.(txt|docx|rtf|srt)$/i.test(String(fileName ?? "").trim());
+}
+
+function requiresSrtFile() {
+  const modal = state.projectAddTranslation;
+  const sourceFormats = currentContext()?.chapter?.sourceFormats
+    ?? (state.editorChapter?.chapterId === modal?.chapterId ? state.editorChapter.sourceFormats : []);
+  return modal?.requiresSrtFile === true || sourceFormats?.includes("srt") === true;
+}
+
+function refuseNonSrtInput(render) {
+  if (!requiresSrtFile()) return false;
+  state.projectAddTranslation = {
+    ...state.projectAddTranslation,
+    requiresSrtFile: true, step: "input", inputMode: "upload", status: "idle",
+    linkErrorModal: null,
+    error: "Choose a valid SRT file to add a subtitle translation.",
+  };
+  render();
+  return true;
 }
 
 function decodeBase64ToBytes(value) {
@@ -108,6 +129,15 @@ function selectedSourceLanguageCode(chapter) {
 
 function resetProjectAddTranslation() {
   state.projectAddTranslation = createProjectAddTranslationState();
+}
+
+function newAlignmentRequestId() {
+  return globalThis.crypto?.randomUUID?.() ?? `alignment-${Date.now()}-${++inputRequestSequence}`;
+}
+
+function alignmentRequestIsCurrent(requestId) {
+  return state.projectAddTranslation?.isOpen
+    && state.projectAddTranslation.alignmentRequestId === requestId;
 }
 
 function applyProjectAddTranslationNotice(response) {
@@ -207,6 +237,8 @@ export function registerProjectAddTranslationProgress(render) {
       && (modal?.step === "aligning" || modal?.step === "applying");
     if (
       !modal?.isOpen
+      || (modal.step !== "aligning" && modal.step !== "applying")
+      || (payload.requestId && payload.requestId !== modal.alignmentRequestId)
       || !payloadJobId
       || (modalJobId && payloadJobId !== modalJobId)
       || (!modalJobId && !canClaimJob)
@@ -254,16 +286,21 @@ export function openProjectAddTranslation(render, chapterId) {
     chapterName: context.chapter.name ?? "file",
     sourceLanguageCode,
   };
+  state.projectAddTranslation.requiresSrtFile = requiresSrtFile();
   render();
 }
 
 export function updateProjectAddTranslationPaste(render, value) {
-  if (!state.projectAddTranslation?.isOpen) {
+  if (!state.projectAddTranslation?.isOpen || requiresSrtFile()) {
     return;
   }
   state.projectAddTranslation = {
     ...state.projectAddTranslation,
     pastedText: typeof value === "string" ? value : "",
+    subtitleFile: null,
+    subtitleMismatch: null,
+    subtitleConfirmations: [],
+    subtitleMeaningCheckReady: false,
     error: "",
   };
 }
@@ -277,7 +314,11 @@ export function selectProjectAddTranslationInputMode(render, mode) {
   state.projectAddTranslation = {
     ...modal,
     step: "input",
-    inputMode: normalizeProjectDocumentInputMode(mode),
+    inputMode: requiresSrtFile() ? "upload" : normalizeProjectDocumentInputMode(mode),
+    subtitleFile: null,
+    subtitleMismatch: null,
+    subtitleConfirmations: [],
+    subtitleMeaningCheckReady: false,
     status: "idle",
     error: "",
     linkErrorModal: null,
@@ -288,7 +329,7 @@ export function selectProjectAddTranslationInputMode(render, mode) {
 
 export function updateProjectAddTranslationLink(render, value) {
   const modal = state.projectAddTranslation;
-  if (!modal?.isOpen || modal.status === "extracting" || modal.status === "resolvingLink") {
+  if (!modal?.isOpen || requiresSrtFile() || modal.status === "extracting" || modal.status === "resolvingLink") {
     return;
   }
   state.projectAddTranslation = {
@@ -305,11 +346,15 @@ async function extractProjectAddTranslationFile(render, file) {
   if (!modal?.isOpen) {
     return;
   }
+  if (requiresSrtFile() && !/\.srt$/i.test(fileName)) {
+    refuseNonSrtInput(render);
+    return;
+  }
   if (!supportedTranslationFileName(fileName)) {
     state.projectAddTranslation = {
       ...modal,
       status: "idle",
-      error: "Choose a TXT, DOCX, or RTF file.",
+      error: "Choose a TXT, DOCX, RTF, or SRT file.",
     };
     render();
     return;
@@ -342,6 +387,10 @@ async function extractProjectAddTranslationFile(render, file) {
     state.projectAddTranslation = {
       ...current,
       pastedText: plainText,
+      subtitleFile: /\.srt$/i.test(fileName) ? { fileName, bytes } : null,
+      subtitleMismatch: null,
+      subtitleConfirmations: [],
+      subtitleMeaningCheckReady: false,
       step: "selectLanguage",
       status: "idle",
       pendingFileName: fileName,
@@ -369,11 +418,11 @@ export async function selectProjectAddTranslationFile(render) {
   }
   const paths = await openLocalFilePathPicker({
     multiple: false,
-    filters: PROJECT_ADD_TRANSLATION_DIALOG_FILTERS,
+    filters: requiresSrtFile() ? [{ name: "SRT subtitles", extensions: ["srt"] }] : PROJECT_ADD_TRANSLATION_DIALOG_FILTERS,
   });
   if (paths === null) {
     const file = await openLocalFilePicker({
-      accept: PROJECT_ADD_TRANSLATION_ACCEPT,
+      accept: requiresSrtFile() ? ".srt,application/x-subrip" : PROJECT_ADD_TRANSLATION_ACCEPT,
       multiple: false,
     });
     if (file) {
@@ -392,7 +441,7 @@ export async function handleDroppedProjectAddTranslationFiles(render, files) {
   if (normalized.length !== 1) {
     state.projectAddTranslation = {
       ...state.projectAddTranslation,
-      error: "Drop one TXT, DOCX, or RTF file.",
+      error: requiresSrtFile() ? "Drop one SRT file." : "Drop one TXT, DOCX, RTF, or SRT file.",
     };
     render();
     return;
@@ -407,7 +456,7 @@ export async function handleDroppedProjectAddTranslationPaths(render, paths) {
   if (normalized.length !== 1) {
     state.projectAddTranslation = {
       ...state.projectAddTranslation,
-      error: "Drop one TXT, DOCX, or RTF file.",
+      error: requiresSrtFile() ? "Drop one SRT file." : "Drop one TXT, DOCX, RTF, or SRT file.",
     };
     render();
     return;
@@ -421,6 +470,7 @@ export async function submitProjectAddTranslationLink(render) {
   if (!modal?.isOpen || modal.status === "extracting" || modal.status === "resolvingLink") {
     return;
   }
+  if (refuseNonSrtInput(render)) return;
   const url = String(modal.linkUrl ?? "").trim();
   if (!isGoogleDocsDocumentUrl(url)) {
     state.projectAddTranslation = {
@@ -484,7 +534,36 @@ export async function retryProjectAddTranslationLink(render) {
   await submitProjectAddTranslationLink(render);
 }
 
-export function cancelProjectAddTranslation(render) {
+export async function cancelProjectAddTranslation(render) {
+  const modal = state.projectAddTranslation;
+  if (modal?.status === "canceling" || (modal?.status === "running" && modal?.progress?.stageId === "apply")) return;
+  if (modal?.alignmentRequestId && modal.status === "running") {
+    const requestId = modal.alignmentRequestId;
+    state.projectAddTranslation = { ...modal, status: "canceling", error: "" };
+    render();
+    try {
+      const cancellation = invoke("cancel_aligned_translation", { requestId });
+      pendingAlignmentCancellations.set(requestId, cancellation);
+      const canceled = await cancellation;
+      if (!alignmentRequestIsCurrent(requestId)) return;
+      if (!canceled) {
+        state.projectAddTranslation = {
+          ...state.projectAddTranslation,
+          status: "running",
+          error: "The translation is being saved and can no longer be canceled.",
+        };
+        render();
+        return;
+      }
+    } catch (error) {
+      if (!alignmentRequestIsCurrent(requestId)) return;
+      state.projectAddTranslation = { ...state.projectAddTranslation, status: "running", error: formatErrorForDisplay(error) };
+      render();
+      return;
+    } finally {
+      pendingAlignmentCancellations.delete(requestId);
+    }
+  }
   inputRequestSequence += 1;
   resetProjectAddTranslation();
   render();
@@ -495,6 +574,7 @@ export function submitProjectAddTranslationPaste(render) {
   if (!modal?.isOpen) {
     return;
   }
+  if (refuseNonSrtInput(render)) return;
   if (!String(modal.pastedText ?? "").trim()) {
     state.projectAddTranslation = {
       ...modal,
@@ -506,6 +586,7 @@ export function submitProjectAddTranslationPaste(render) {
   state.projectAddTranslation = {
     ...modal,
     step: "selectLanguage",
+    subtitleFile: null,
     error: "",
   };
   render();
@@ -581,6 +662,15 @@ export async function continueProjectAddTranslationAfterMismatch(render) {
   if (!modal?.isOpen) {
     return;
   }
+  if (modal.subtitleFile) {
+    if (modal.step !== "mismatchWarning" || !modal.subtitleMismatch?.confirmation) return;
+    state.projectAddTranslation = {
+      ...modal,
+      subtitleConfirmations: [...new Set([...(modal.subtitleConfirmations ?? []), modal.subtitleMismatch.confirmation])],
+    };
+    await addSubtitleTranslation(render);
+    return;
+  }
   await applyProjectAddTranslation(render, { continueOnMismatch: true });
 }
 
@@ -617,6 +707,12 @@ export async function runProjectAddTranslationPreflight(render) {
     return;
   }
 
+  if (modal.subtitleFile) {
+    await addSubtitleTranslation(render);
+    return;
+  }
+  if (refuseNonSrtInput(render)) return;
+
   const { providerId, modelId } = resolveAlignmentProviderAndModel();
   if (!ALIGNMENT_PROVIDER_IDS.has(providerId)) {
     state.projectAddTranslation = {
@@ -642,9 +738,11 @@ export async function runProjectAddTranslationPreflight(render) {
     return;
   }
 
+  const requestId = newAlignmentRequestId();
   state.projectAddTranslation = {
     ...state.projectAddTranslation,
     step: "aligning",
+    alignmentRequestId: requestId,
     status: "running",
     error: "",
     providerId,
@@ -664,12 +762,15 @@ export async function runProjectAddTranslationPreflight(render) {
 
   try {
     const response = await invoke("preflight_aligned_translation_to_gtms_chapter", {
+      requestId,
       input: baseInvokeInput({
         pastedText: state.projectAddTranslation.pastedText,
         providerId,
         modelId,
       }),
     });
+    await pendingAlignmentCancellations.get(requestId)?.catch(() => false);
+    if (!alignmentRequestIsCurrent(requestId) || state.projectAddTranslation.status === "canceling") return;
     const next = {
       ...state.projectAddTranslation,
       jobId: response?.jobId ?? "",
@@ -707,11 +808,89 @@ export async function runProjectAddTranslationPreflight(render) {
     }
     render();
   } catch (error) {
+    await pendingAlignmentCancellations.get(requestId)?.catch(() => false);
+    if (!alignmentRequestIsCurrent(requestId) || state.projectAddTranslation.status === "canceling") return;
     state.projectAddTranslation = {
       ...state.projectAddTranslation,
       step: "selectLanguage",
       status: "idle",
       error: formatErrorForDisplay(error).replace(/^ALIGNMENT_(?:SOURCE_CHANGED|SPLIT_REVIEW):\s*/, ""),
+    };
+    render();
+  }
+}
+
+async function invokeSubtitleTranslation(requestId, input) {
+  let complete;
+  const completion = new Promise((resolve) => { complete = resolve; });
+  const unlisten = await listen("subtitle-translation-result", (event) => {
+    if (event?.payload?.requestId === requestId) complete(event.payload);
+  });
+  try {
+    const response = await invoke("add_srt_translation_to_gtms_chapter", { requestId, input });
+    if (response?.status !== "started") return response;
+    const result = await completion;
+    if (result.error) {
+      const error = new Error(result.error);
+      const report = resolveCommandFailureReport("add_srt_translation_to_gtms_chapter", error);
+      if (report) reportCommandFailure("add_srt_translation_to_gtms_chapter", report.error, report.options);
+      throw error;
+    }
+    return result.response;
+  } finally {
+    unlisten?.();
+  }
+}
+
+async function addSubtitleTranslation(render) {
+  const modal = state.projectAddTranslation;
+  const requestId = newAlignmentRequestId();
+  state.projectAddTranslation = {
+    ...modal, step: "aligning", status: "running", alignmentRequestId: requestId,
+    jobId: "", flow: "subtitle", error: "",
+    progress: { stageId: "validate_subtitles", status: "complete", completed: 1, total: 1 },
+  };
+  render();
+  try {
+    const response = await invokeSubtitleTranslation(requestId, baseInvokeInput({
+      fileName: modal.subtitleFile.fileName, bytes: modal.subtitleFile.bytes,
+      confirmations: modal.subtitleConfirmations ?? [],
+      performMeaningCheck: modal.subtitleMeaningCheckReady === true,
+      ...(modal.subtitleMeaningCheckReady ? { providerId: modal.providerId, modelId: modal.modelId } : {}),
+    }));
+    await pendingAlignmentCancellations.get(requestId)?.catch(() => false);
+    if (!alignmentRequestIsCurrent(requestId) || state.projectAddTranslation.status === "canceling") return;
+    if (response?.status === "needsAiCheck") {
+      const { providerId, modelId } = resolveAlignmentProviderAndModel();
+      if (!ALIGNMENT_PROVIDER_IDS.has(providerId) || !modelId) {
+        throw new Error("Select an OpenAI or Claude model in AI Settings for the subtitle meaning check.");
+      }
+      if (!(await ensureAlignmentProviderReady(render, providerId))) {
+        if (alignmentRequestIsCurrent(requestId)) {
+          state.projectAddTranslation = { ...state.projectAddTranslation, step: "selectLanguage", status: "idle" };
+          render();
+        }
+        return;
+      }
+      if (!alignmentRequestIsCurrent(requestId) || state.projectAddTranslation.status === "canceling") return;
+      state.projectAddTranslation = { ...state.projectAddTranslation, subtitleMeaningCheckReady: true, providerId, modelId };
+      await addSubtitleTranslation(render);
+      return;
+    }
+    if (response?.status === "mismatch") {
+      state.projectAddTranslation = {
+        ...state.projectAddTranslation, step: "mismatchWarning", status: "idle",
+        subtitleMismatch: response.mismatch, progress: null,
+      };
+      render();
+      return;
+    }
+    finishProjectAddTranslationApply(render, response?.result ?? response);
+  } catch (error) {
+    await pendingAlignmentCancellations.get(requestId)?.catch(() => false);
+    if (!alignmentRequestIsCurrent(requestId) || state.projectAddTranslation.status === "canceling") return;
+    state.projectAddTranslation = {
+      ...state.projectAddTranslation, step: "selectLanguage", status: "idle", error: formatErrorForDisplay(error),
     };
     render();
   }
@@ -741,9 +920,11 @@ export async function applyProjectAddTranslation(render, options = {}) {
     return;
   }
   const applyJobId = modal.jobId;
+  const requestId = newAlignmentRequestId();
   state.projectAddTranslation = {
     ...modal,
     step: "applying",
+    alignmentRequestId: requestId,
     status: "running",
     error: "",
     applyContinueOnMismatch: options.continueOnMismatch === true,
@@ -752,14 +933,19 @@ export async function applyProjectAddTranslation(render, options = {}) {
 
   try {
     const response = await invoke("apply_aligned_translation_to_gtms_chapter", {
+      requestId,
       input: baseInvokeInput({
         jobId: modal.jobId,
         continueOnMismatch: options.continueOnMismatch === true,
         writeMode: "fillEmptyOnly",
       }),
     });
+    await pendingAlignmentCancellations.get(requestId)?.catch(() => false);
+    if (!alignmentRequestIsCurrent(requestId) || state.projectAddTranslation.status === "canceling") return;
     finishProjectAddTranslationApply(render, response, applyJobId);
   } catch (error) {
+    await pendingAlignmentCancellations.get(requestId)?.catch(() => false);
+    if (!alignmentRequestIsCurrent(requestId) || state.projectAddTranslation.status === "canceling") return;
     const current = state.projectAddTranslation;
     if (!current?.isOpen || (current.jobId && current.jobId !== applyJobId)) {
       showNoticeBadge(formatErrorForDisplay(error), render, 3200);

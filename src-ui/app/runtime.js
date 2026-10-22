@@ -259,6 +259,9 @@ export function resolveCommandFailureReport(command, error) {
   if (rawMessage.startsWith("APP_UPDATE_REQUIRED:")) {
     return null;
   }
+  if (rawMessage.startsWith("ALIGNMENT_CANCELED:")) {
+    return null;
+  }
   // Offline / broker unreachable / DNS / connection reset.
   if (classifySyncError(error).type === "connection_unavailable") {
     return null;

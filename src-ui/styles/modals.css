@@ -2291,3 +2291,13 @@
     display: none;
   }
 }
+.subtitle-meaning-examples {
+  max-height: 40vh;
+  overflow-y: auto;
+  padding-left: 1.5rem;
+  overflow-wrap: anywhere;
+}
+
+.subtitle-meaning-examples li + li {
+  margin-top: 1rem;
+}

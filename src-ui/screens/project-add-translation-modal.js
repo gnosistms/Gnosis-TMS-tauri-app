@@ -16,11 +16,15 @@ function renderError(error) {
 function renderInputModal(modal) {
   const isResolvingLink = modal.status === "resolvingLink";
   const isExtracting = modal.status === "extracting";
+  const uploadOnly = modal.requiresSrtFile === true;
   return renderProjectDocumentInputModal(modal, {
+    uploadOnly,
     modalId: "project-add-translation",
     eyebrow: "ADD TRANSLATIONS",
-    title: "Add translation text",
-    supportingText: "Choose how to provide the translation for this entire file. The text will be automatically aligned and inserted.",
+    title: uploadOnly ? "Add subtitle translation" : "Add translation text",
+    supportingText: uploadOnly
+      ? "Upload an SRT file to align the translation using subtitle timestamps."
+      : "Choose how to provide the translation for this entire file. The text will be automatically aligned and inserted.",
     modeAriaLabel: "Add translation method",
     selectModeAction: "select-project-add-translation-input-mode",
     selectFileAction: "select-project-add-translation-file",
@@ -28,8 +32,10 @@ function renderInputModal(modal) {
     submitPasteAction: "submit-project-add-translation-paste",
     cancelAction: "cancel-project-add-translation",
     dropzoneAttribute: "data-project-add-translation-dropzone",
-    dropzoneLabel: "Drop one file here or click to open the file selector.",
-    uploadHint: "Supported formats: .txt, .docx, or .rtf. Only plain text is added; the existing chapter keeps its formatting.",
+    dropzoneLabel: uploadOnly ? "Drop one SRT file here or click to open the file selector." : "Drop one file here or click to open the file selector.",
+    uploadHint: uploadOnly
+      ? "A valid .srt file is required for subtitle chapters."
+      : "Supported formats: .txt, .docx, .rtf, or .srt. Only plain text is added; the existing chapter keeps its formatting and timing.",
     linkInputId: "project-add-translation-link-input",
     linkInputAttribute: "data-project-add-translation-link-input",
     linkPlaceholder: "https://docs.google.com/document/d/...",
@@ -112,6 +118,17 @@ const SINGLE_ALIGNMENT_PROGRESS_STEPS = [
 ];
 
 function progressStepsForFlow(flow) {
+  if (flow === "subtitleOverlap") return [
+    { id: "match_timestamps", label: "Matching start times", stageIds: ["match_timestamps"] },
+    { id: "match_overlap", label: "Matching overlapping subtitles", stageIds: ["match_overlap"] },
+    { id: "check_meaning", label: "Checking subtitle meanings", stageIds: ["check_meaning"] },
+    { id: "apply", label: "Adding subtitle translation", stageIds: ["apply"] },
+  ];
+  if (flow === "subtitle") return [
+    { id: "validate_subtitles", label: "Checking SRT format", stageIds: ["validate_subtitles"] },
+    { id: "match_timestamps", label: "Matching start times", stageIds: ["match_timestamps"] },
+    { id: "apply", label: "Adding subtitle translation", stageIds: ["apply"] },
+  ];
   return flow === "single" ? SINGLE_ALIGNMENT_PROGRESS_STEPS : MULTI_ALIGNMENT_PROGRESS_STEPS;
 }
 
@@ -197,14 +214,22 @@ function renderProgressModal(modal) {
     <div class="modal-backdrop">
       <section class="card modal-card modal-card--compact modal-card--navigation-loading modal-card--add-translation-progress" role="dialog" aria-modal="true" aria-labelledby="project-add-translation-progress-modal-title" aria-busy="true" data-modal-dialog="project-add-translation:progress" tabindex="-1">
         <div class="card__body modal-card__body">
-          <p class="card__eyebrow">Aligning and inserting</p>
+          <p class="card__eyebrow">${modal.flow?.startsWith("subtitle") ? "Adding subtitle translation" : "Aligning and inserting"}</p>
           <h2 class="modal__title" id="project-add-translation-progress-modal-title">Please wait</h2>
-          <p class="modal__supporting">Aligning your translation text with this file. This may take a few minutes.</p>
+          <p class="modal__supporting">${modal.flow?.startsWith("subtitle")
+            ? "Matching exact start times and inserting unmatched subtitles in time order."
+            : "Aligning your translation text with this file. This may take a few minutes."}</p>
           <ol class="add-translation-progress" aria-label="Alignment and insertion progress">
             ${steps.map((step, index) => renderProgressStep(step, progress, index, activeIndex)).join("")}
           </ol>
           ${detail ? `<p class="modal__supporting add-translation-progress__detail">${escapeHtml(detail)}</p>` : ""}
           ${renderError(modal.error)}
+          <div class="modal__actions">
+            ${secondaryButton(modal.status === "canceling" ? "Canceling..." : "Cancel", "cancel-project-add-translation", {
+              modalCancel: true,
+              disabled: modal.status === "canceling" || progress.stageId === "apply",
+            })}
+          </div>
         </div>
       </section>
     </div>
@@ -252,6 +277,38 @@ function renderExistingTranslationsModal(modal) {
 }
 
 function renderMismatchModal(modal) {
+  if (modal.subtitleMismatch) {
+    const mismatch = modal.subtitleMismatch;
+    const percent = Number(mismatch.unmatchedPercent).toLocaleString(undefined, { maximumFractionDigits: 3 });
+    const stage = mismatch.stage ?? "exact";
+    const examples = Array.isArray(mismatch.examples) ? mismatch.examples : [];
+    const messages = {
+      exact: `For ${percent}% of the subtitles you are adding, there is no subtitle in the original file that starts at the same time. Since Gnosis TMS shares the timing between both languages, this will make a mess of your file. We can attempt to fix this by matching each subtitle in the new file with the nearest time subtitle in the old file, but that will cause you to lose the timing data in the new file. Do you want to try it anyway?`,
+      overlap: `Even with this looser matching criteria, ${percent}% of your new subtitles still didn't match up with the original file. This will be a messy match. Do you still want to continue?`,
+      meaning: "We have checked the old subtitles against the new ones you are aligning and we found that many of them don't look like they have the same meaning. Here are some examples:",
+    };
+    return `
+      <div class="modal-backdrop">
+        <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="project-add-translation-subtitle-mismatch-title" data-modal-dialog="project-add-translation:subtitle-mismatch" tabindex="-1">
+          <div class="card__body modal-card__body">
+            <p class="card__eyebrow">SUBTITLE ${stage === "meaning" ? "MEANING" : "TIMESTAMP"} MISMATCH</p>
+            <h2 class="modal__title" id="project-add-translation-subtitle-mismatch-title">${stage === "meaning" ? "These subtitles may not match" : "Subtitle timestamps don’t match"}</h2>
+            <p class="modal__supporting">${escapeHtml(messages[stage] ?? messages.exact)}</p>
+            ${stage === "meaning" ? `
+              <ol class="subtitle-meaning-examples">${examples.map((pair) => `
+                <li>
+                  <p><strong>Original subtitle ${Number(pair.sourceLine)}:</strong> ${escapeHtml(pair.sourceText)}</p>
+                  <p><strong>New subtitle ${Number(pair.targetLine)}:</strong> ${escapeHtml(pair.targetText)}</p>
+                </li>`).join("")}</ol>
+              <p class="modal__supporting">We recommend you cancel the alignment procedure and re-examine your subtitles to find out why they don't match up because saving this could make a mess of your existing file.</p>` : ""}
+            <div class="modal__actions">
+              ${secondaryButton("Cancel", "cancel-project-add-translation", { modalCancel: true, modalInitialFocus: true })}
+              ${primaryButton(stage === "meaning" ? "Save (not recommended)" : "Continue", "continue-project-add-translation-mismatch")}
+            </div>
+          </div>
+        </section>
+      </div>`;
+  }
   return `
     <div class="modal-backdrop">
       <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="project-add-translation-mismatch-modal-title" data-modal-dialog="project-add-translation:mismatch" tabindex="-1">
