@@ -1,0 +1,16 @@
+# Concise glossary research usage notes
+
+Apply the ilustre comparison finding to new studio research and automatic repairs. Preserve existing studies, saved entries, human notes, old code and evidence. This concerns glossary-specific translation research; QA lists have no equivalent candidate/meaning workflow.
+
+1. Share one note policy between candidate generation and focused/complete-entry repairs. Aim for one short sentence (roughly 10–25 English words or comparable brevity in the target language), allowing empty notes when mappings are obvious. Longer notes, especially beyond roughly 40 English words, are justified only to prevent a meaningful source-sense, referent, omission/addition or selection error. No mechanical truncation or word-count rejection; preserve human instructions and necessary exceptions.
+2. Remove the demand to put etymology/provenance and repeated explanations in shared translator notes. Keep shared notes empty unless they add an essential rule not already covered by candidate notes. Return separate report-only explanations and reasons for exceptional length. Preserve those in the existing research evidence/report storage, expose them in collapsed report sections, and exclude them from draft glossary hints and downstream decision inputs.
+3. Apply the same policy to both repair loops. Replace/simplify existing selection rules rather than append passage-specific essays; ordinary stylistic preferences and intelligible figurative language do not justify expanded guidance or false semantic failures. Preserve repair rationale in the report, including across repeated repairs and atomic coordinated entry repair.
+4. Verify with focused candidate-generation, repair-loop, report-preservation and translation-payload tests, including longer necessary notes, human-authored notes, shared target forms and non-English targets. Run frontend tests, unused-export audit and build. No paid API calls or automatic rewrites of saved glossaries.
+
+## Completed
+
+- Added a shared note policy for proposal and both repair prompts, with report-only explanations and justifications for essential longer notes. Removed the instruction to include provenance in the general translator note by default.
+- Step 6 and repair stages show collapsed translation-choice research reports. Candidate/repair explanations are excluded from glossary drafts and translation payloads, while preserved in study records and the existing full export.
+- Repairs replace obsolete shared notes rather than accumulate them. Focused repairs receive bounded other-meaning rules for a shared target, so shortening cannot silently erase conditions for another meaning. Coordinated repair reports commit atomically, and dependent reports clear with existing step invalidation.
+- No text is mechanically truncated. Human notes and existing saved glossary entries are preserved.
+- Validation: 2,518 frontend tests and 25 workflow tests pass; changed-file ESLint and frontend build pass. The workflow tests require sandbox escalation for their temporary localhost listeners; they passed without source changes. The unused-code audit still reports its existing unused-file/export backlog, with no findings for the new note-policy module or its exports. No live AI calls were made. Native code was unchanged.
