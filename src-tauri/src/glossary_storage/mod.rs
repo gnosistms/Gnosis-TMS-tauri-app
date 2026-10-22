@@ -25,6 +25,7 @@ use crate::{
     storage_paths::local_glossary_repo_root,
 };
 
+mod studio;
 mod terms;
 mod tmx;
 
@@ -237,6 +238,8 @@ pub(crate) struct UpdateGlossaryLifecycleInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UpsertGlossaryTermInput {
+    #[serde(default)]
+    research_changes: Vec<studio::ResearchChange>,
     installation_id: i64,
     repo_name: String,
     glossary_id: Option<String>,
@@ -401,7 +404,11 @@ pub(crate) async fn initialize_gtms_glossary_repo(
     input: InitializeGlossaryRepoInput,
 ) -> Result<LocalGlossarySummary, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_glossary_management(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_glossary_management,
+        )?;
         initialize_gtms_glossary_repo_sync(&app, input)
     })
     .await
@@ -414,7 +421,11 @@ pub(crate) async fn import_tmx_to_gtms_glossary_repo(
     input: ImportTmxToGlossaryRepoInput,
 ) -> Result<LocalGlossarySummary, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_glossary_management(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_glossary_management,
+        )?;
         import_tmx_to_gtms_glossary_repo_sync(&app, input)
     })
     .await
@@ -456,7 +467,11 @@ pub(crate) async fn rename_gtms_glossary(
     input: RenameGlossaryInput,
 ) -> Result<LocalGlossarySummary, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_glossary_management(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_glossary_management,
+        )?;
         rename_gtms_glossary_sync(&app, input)
     })
     .await
@@ -469,7 +484,11 @@ pub(crate) async fn soft_delete_gtms_glossary(
     input: UpdateGlossaryLifecycleInput,
 ) -> Result<LocalGlossarySummary, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_glossary_management(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_glossary_management,
+        )?;
         update_gtms_glossary_lifecycle_sync(&app, input, "deleted")
     })
     .await
@@ -482,7 +501,11 @@ pub(crate) async fn restore_gtms_glossary(
     input: UpdateGlossaryLifecycleInput,
 ) -> Result<LocalGlossarySummary, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_glossary_management(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_glossary_management,
+        )?;
         update_gtms_glossary_lifecycle_sync(&app, input, "active")
     })
     .await
@@ -505,7 +528,11 @@ pub(crate) async fn link_gtms_glossary_terms(
     input: LinkGlossaryTermsInput,
 ) -> Result<LinkGlossaryTermsResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_glossary_writes(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_glossary_writes,
+        )?;
         link_gtms_glossary_terms_sync(&app, input)
     })
     .await
@@ -518,7 +545,11 @@ pub(crate) async fn upsert_gtms_glossary_term(
     input: UpsertGlossaryTermInput,
 ) -> Result<UpsertGlossaryTermResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_glossary_writes(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_glossary_writes,
+        )?;
         upsert_gtms_glossary_term_sync(&app, input)
     })
     .await
@@ -531,7 +562,11 @@ pub(crate) async fn rollback_gtms_glossary_term_upsert(
     input: RollbackGlossaryTermUpsertInput,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_glossary_writes(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_glossary_writes,
+        )?;
         rollback_gtms_glossary_term_upsert_sync(&app, input)
     })
     .await
@@ -544,7 +579,11 @@ pub(crate) async fn delete_gtms_glossary_term(
     input: DeleteGlossaryTermInput,
 ) -> Result<DeleteGlossaryTermResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_glossary_writes(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_glossary_writes,
+        )?;
         delete_gtms_glossary_term_sync(&app, input)
     })
     .await
@@ -603,6 +642,9 @@ fn load_gtms_glossary_editor_data_sync(
         input.glossary_id.as_deref(),
         Some(&input.repo_name),
     )?;
+    let repo_lock = repo_sync_lock(&repo_path);
+    let _repo_lock_guard = acquire_repo_sync_lock(&repo_lock);
+    studio::recover(&repo_path)?;
     let glossary_file = read_glossary_file(&repo_path)?;
     let terms = load_glossary_terms(&repo_path.join("terms"))?;
 
@@ -639,6 +681,9 @@ fn load_gtms_glossary_term_sync(
         input.glossary_id.as_deref(),
         Some(&input.repo_name),
     )?;
+    let repo_lock = repo_sync_lock(&repo_path);
+    let _repo_lock_guard = acquire_repo_sync_lock(&repo_lock);
+    studio::recover(&repo_path)?;
     let term_path = repo_path
         .join("terms")
         .join(format!("{}.json", input.term_id));
@@ -948,6 +993,9 @@ fn export_gtms_glossary_to_tmx_sync(
         input.glossary_id.as_deref(),
         Some(&input.repo_name),
     )?;
+    let repo_lock = repo_sync_lock(&repo_path);
+    let _repo_lock_guard = acquire_repo_sync_lock(&repo_lock);
+    studio::recover(&repo_path)?;
     let glossary_file = read_glossary_file(&repo_path)?;
     let terms = load_glossary_terms(&repo_path.join("terms"))?
         .into_iter()
@@ -1032,6 +1080,9 @@ fn upsert_gtms_glossary_term_sync(
     app: &AppHandle,
     input: UpsertGlossaryTermInput,
 ) -> Result<UpsertGlossaryTermResponse, String> {
+    if !input.research_changes.is_empty() {
+        return studio::upsert(app, input);
+    }
     let repo_path = glossary_repo_path(
         app,
         input.installation_id,
@@ -1040,6 +1091,7 @@ fn upsert_gtms_glossary_term_sync(
     )?;
     let repo_lock = repo_sync_lock(&repo_path);
     let _repo_lock_guard = acquire_repo_sync_lock(&repo_lock);
+    studio::recover(&repo_path)?;
     let glossary_file = read_glossary_file(&repo_path)?;
     ensure_gitattributes(&repo_path.join(".gitattributes"))?;
     let previous_head_sha = git_output(&repo_path, &["rev-parse", "HEAD"]).ok();
@@ -1324,6 +1376,7 @@ fn delete_gtms_glossary_term_sync(
     )?;
     let repo_lock = repo_sync_lock(&repo_path);
     let _repo_lock_guard = acquire_repo_sync_lock(&repo_lock);
+    studio::recover(&repo_path)?;
     let glossary_file = read_glossary_file(&repo_path)?;
     let previous_head_sha = git_output(&repo_path, &["rev-parse", "HEAD"]).ok();
     let term_path = repo_path

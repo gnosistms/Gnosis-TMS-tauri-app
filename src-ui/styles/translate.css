@@ -545,6 +545,12 @@
   font-style: italic;
 }
 
+/* A caption uses the shared tooltip itself; hide the surrounding figure's hint. */
+.translate-preview__image-block:has(.translate-preview__image-caption:hover)::before,
+.translate-preview__image-block:has(.translate-preview__image-caption:hover)::after {
+  content: none;
+}
+
 .translate-preview__search-match {
   background: rgba(243, 156, 24, 0.24);
   color: inherit;
@@ -1510,6 +1516,7 @@
 .translation-language-panel__field-static--conflict {
   appearance: none;
   -webkit-appearance: none;
+  color: var(--message-error-text);
   cursor: pointer;
   text-align: left;
   transition:
@@ -1773,8 +1780,11 @@
 }
 
 .translation-language-panel__field-stack--footnote .translation-language-panel__field,
-.translation-language-panel__field-stack--footnote .translation-language-panel__field-highlight {
-  font-style: italic;
+.translation-language-panel__field-stack--footnote .translation-language-panel__field-highlight,
+.translation-language-panel__field-static--footnote,
+.translation-language-panel__footnote-display {
+  font-style: normal;
+  opacity: 0.7;
 }
 
 .translation-language-panel__inline-footnote {
@@ -1828,7 +1838,7 @@
 }
 
 /* Closed footnote: a button styled to look exactly like the footnote textarea
-   (italic, borderless, full width) so toggling between display and edit is seamless. */
+   (borderless, full width) so toggling between display and edit is seamless. */
 .translation-language-panel__footnote-editor-row .translation-language-panel__footnote-display {
   grid-column: 2;
   grid-row: 1;
@@ -1845,7 +1855,7 @@
   color: var(--text);
   font-family: var(--font-serif);
   font-size: var(--translation-editor-font-size, 14px);
-  font-style: italic;
+  font-style: normal;
   font-weight: 400;
   line-height: 1.5;
 }
@@ -2181,7 +2191,8 @@
 }
 
 .history-item__content--footnote {
-  font-style: italic;
+  font-style: normal;
+  opacity: 0.7;
 }
 
 .history-item__content--image {

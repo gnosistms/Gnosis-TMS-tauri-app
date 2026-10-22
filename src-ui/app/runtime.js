@@ -122,15 +122,13 @@ async function attemptTeamAiCredentialRecovery(command, payload, error) {
   }
 }
 
-// These two native commands check access before writes and roll back a later
-// access failure. Unlike API commands they load the saved session on the Rust side.
-const NATIVE_SESSION_RETRY_COMMANDS = new Set([
-  "update_gtms_editor_row_fields",
-  "update_gtms_editor_row_text_style",
-]);
-
 function normalizeAccessFailure(error) {
   const raw = String(error?.message ?? error ?? "");
+  // The native command rejected its entry access check before running the action.
+  // This contract lets new commands share recovery without a JS name allowlist.
+  if (raw.startsWith("AUTH_RETRY_SAFE:AUTH_REQUIRED:")) {
+    return Object.assign(new Error(raw.slice("AUTH_RETRY_SAFE:".length)), { nativeAuthRetrySafe: true });
+  }
   if (!raw.startsWith("ACCESS_VERIFICATION_FAILED:")) return error;
   let payload;
   try { payload = JSON.parse(raw.slice("ACCESS_VERIFICATION_FAILED:".length)); } catch {}
@@ -146,9 +144,9 @@ export const invoke = rawInvoke
   ? async function invoke(command, payload = {}) {
       const generation = authSessionGeneration;
       const nativeTeamId = state.selectedTeamId;
-      const nativeSessionToken = NATIVE_SESSION_RETRY_COMMANDS.has(command)
-        ? state.auth.session?.sessionToken : null;
-      const currentSessionToken = extractBrokerSessionToken(payload) ?? nativeSessionToken;
+      const payloadSessionToken = extractBrokerSessionToken(payload);
+      const nativeSessionToken = payloadSessionToken ? null : state.auth.session?.sessionToken;
+      const currentSessionToken = payloadSessionToken ?? nativeSessionToken;
       try {
         return await rawInvoke(command, payload);
       } catch (error) {
@@ -161,7 +159,7 @@ export const invoke = rawInvoke
             throw retryError;
           }
         }
-        if (!shouldAttemptBrokerSessionRefresh(command, currentSessionToken, error)) {
+        if (!shouldAttemptBrokerSessionRefresh(command, currentSessionToken, error, Boolean(payloadSessionToken))) {
           maybeReportCommandFailure(command, error);
           throw error;
         }
@@ -177,14 +175,13 @@ export const invoke = rawInvoke
           if (refreshFailure?.code === "AUTH_SESSION_CHANGED" || refreshFailure?.code === "AUTH_STORAGE_FAILED") {
             throw refreshFailure;
           }
-          // A refresh that failed because the broker was unreachable is a connectivity
-          // problem, not an auth rejection — rethrow the original error so it is
-          // handled as such instead of bouncing the user to the login page.
+          // Preserve the refresh's connectivity failure so callers retain the
+          // login and show connection recovery instead of expiring the session.
           if (
             refreshFailure
             && classifySyncError(refreshFailure).type === "connection_unavailable"
           ) {
-            throw error;
+            throw refreshFailure;
           }
           throw new Error("AUTH_REQUIRED:Your GitHub session expired. Please log in with GitHub again to continue.");
         }
@@ -453,7 +450,7 @@ export async function initializeWindowPresentation() {
   });
 }
 
-function shouldAttemptBrokerSessionRefresh(command, sessionToken, error) {
+function shouldAttemptBrokerSessionRefresh(command, sessionToken, error, hasPayloadSessionToken) {
   if (!rawInvoke) {
     return false;
   }
@@ -469,6 +466,14 @@ function shouldAttemptBrokerSessionRefresh(command, sessionToken, error) {
   }
 
   if (!sessionToken) {
+    return false;
+  }
+
+  if (!hasPayloadSessionToken && !error?.nativeAuthRetrySafe) {
+    return false;
+  }
+
+  if (String(error?.message ?? error ?? "").includes("Rollback failed:")) {
     return false;
   }
 

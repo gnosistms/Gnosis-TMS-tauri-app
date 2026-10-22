@@ -3,6 +3,7 @@ import {
   renderGlossaryRubyTermListHtml,
 } from "../glossary-ruby.js";
 import { canManageGlossaries } from "../glossary-shared.js";
+import { renderSanitizedInlineMarkupHtml } from "../editor-inline-markup.js";
 
 // Double-click detection runs on pointerdown: the display-field pointerdown
 // handler calls preventDefault, which suppresses the derived mousedown events, so
@@ -394,7 +395,7 @@ function renderStructuredGlossaryTooltipBody(
 
       const paragraph = document.createElement("p");
       paragraph.className = "editor-glossary-info-card__comment editor-glossary-info-card__footnote";
-      paragraph.textContent = text;
+      paragraph.innerHTML = renderSanitizedInlineMarkupHtml(text);
       comments.append(paragraph);
     }
 

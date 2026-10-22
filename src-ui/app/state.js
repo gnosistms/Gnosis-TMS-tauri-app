@@ -886,6 +886,11 @@ export function createEditorExportModalState() {
     pdfFontMissingBytes: 0,
     pdfFontFamilies: [],
     pdfFontMessage: "",
+    pdfFontReview: null,
+    pdfSavedFallbackFonts: [],
+    pdfSavedFontsExpanded: false,
+    pdfForgettingFontId: "",
+    pdfFontInspectionRequestId: 0,
     wordpress: createEditorExportWordPressState(),
     teamCopy: createEditorExportTeamCopyState(),
   });

@@ -47,8 +47,10 @@ export function runDevSession(command, args, options = {}) {
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const cwd = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   console.log(`Starting your working code from ${cwd}`);
+  // This personal launcher runs the working checkout with its real version
+  // label. Release metadata repair requires a separate, deliberate invocation.
   runDevSession('npm', ['run', 'tauri:dev', '--', '--exit-on-panic'], {
     cwd,
-    env: { ...process.env, GNOSIS_SYNC_DEV_VERSION: '1' },
+    env: { ...process.env, GNOSIS_SYNC_DEV_VERSION: '0', GNOSIS_ALLOW_STALE_DEV_VERSION: '1' },
   });
 }

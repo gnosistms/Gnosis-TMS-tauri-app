@@ -267,7 +267,7 @@ test("renderEditorPreviewDocumentHtml keeps row and language metadata on text bl
 
   assert.match(
     html,
-    /<p class="translate-preview__block translate-preview__block--paragraph" data-preview-block="paragraph" data-row-id="row-1" lang="vi">Alpha body<\/p>/,
+    /<p class="translate-preview__block translate-preview__block--paragraph" data-preview-block="paragraph" data-row-id="row-1" lang="vi" data-tooltip="Double-click to edit\.">Alpha body<\/p>/,
   );
 });
 
@@ -296,6 +296,34 @@ test("preview rendering and serialization preserve supported inline markup", () 
   assert.match(rendered.html, /<ruby>漢字<rt><mark class="translate-preview__search-match is-active"/);
   assert.match(serialized, /<strong>Alpha<\/strong>/);
   assert.match(serialized, /<ruby>漢字<rt>よみ<\/rt><\/ruby>/);
+});
+
+test("every preview content block carries an edit hint and its own row and language", () => {
+  const blocks = buildEditorPreviewDocument([
+    {
+      rowId: "body-row",
+      fields: { es: "Body [1]<hr>After separator" },
+      footnotes: { es: [{ marker: 1, text: "First note" }] },
+      images: { es: { kind: "url", url: "https://example.com/image.png" } },
+      imageCaptions: { es: "Image caption" },
+    },
+    { rowId: "heading-row", textStyle: "heading1", fields: { es: "Heading" } },
+    { rowId: "html-row", textStyle: "custom_html", fields: { es: "<div>Custom HTML</div>" } },
+    { rowId: "note-only-row", fields: {}, footnotes: { es: [{ marker: 1, text: "Note without body text" }] } },
+  ], "es");
+  const { html } = renderEditorPreviewDocumentHtml(blocks, { resolveImageSrc: (image) => image.url });
+
+  for (const [kind, rowId] of [
+    ["paragraph", "body-row"], ["separator", "body-row"],
+    ["image", "body-row"], ["image-caption", "body-row"],
+    ["footnote", "body-row"], ["footnote", "note-only-row"],
+    ["heading1", "heading-row"], ["custom-html", "html-row"],
+  ]) {
+    assert.ok(html.includes(`data-preview-block="${kind}" data-row-id="${rowId}" lang="es" data-tooltip="Double-click to edit."`), `${kind}: ${rowId}`);
+  }
+  assert.match(html, /href="#fnref-/);
+  assert.doesNotMatch(serializeEditorPreviewHtml(blocks), /data-preview-block=|Double-click to edit/);
+  assert.doesNotMatch(serializeEditorPreviewWordPress(blocks).content, /data-preview-block=|Double-click to edit/);
 });
 
 test("preview rendering and export escape literal quotes only once", () => {

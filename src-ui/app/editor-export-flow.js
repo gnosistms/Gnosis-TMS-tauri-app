@@ -10,6 +10,7 @@ import {
 } from "./editor-preview.js";
 import { createEditorExportModalState, state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
+import { reportPdfFontCoverageGap } from "./telemetry.js";
 import {
   projectRepoScope,
   waitForRepoWriteQueueIdle,
@@ -131,7 +132,8 @@ function currentExportModal() {
 }
 
 function exportModalIsBusy(modal) {
-  return modal?.status === "exporting" || modal?.status === "cancelling";
+  return modal?.status === "exporting" || modal?.status === "cancelling"
+    || modal?.status === "reviewing-fonts" || Boolean(modal?.pdfForgettingFontId);
 }
 
 function updateEditorExportModal(patch) {
@@ -176,7 +178,8 @@ function currentExportLanguageCode() {
 }
 
 function pdfFontInspectionKey(chapterId, languageCode) {
-  return `${String(chapterId ?? "")}:${String(languageCode ?? "")}`;
+  const modal = currentExportModal();
+  return `${String(chapterId ?? "")}:${String(languageCode ?? "")}:${modal?.omitCustomHtml === true}:${modal?.footnoteLinksAsPlainText === true}`;
 }
 
 function pdfFontInspectionInput() {
@@ -196,9 +199,13 @@ function pdfFontInspectionInput() {
       projectFullName: context.project.fullName ?? "",
       chapterId: context.chapter.id,
       languageCode,
+      omitCustomHtml: modal.omitCustomHtml === true,
+      footnoteLinksAsPlainText: modal.footnoteLinksAsPlainText === true,
     },
   };
 }
+
+let pdfFontInspectionRequestId = 0;
 
 export async function refreshPdfFontInspection(render, operations = {}) {
   const modal = currentExportModal();
@@ -210,6 +217,12 @@ export async function refreshPdfFontInspection(render, operations = {}) {
   if (!request || typeof invokeCommand !== "function") {
     return null;
   }
+  const requestId = ++pdfFontInspectionRequestId;
+  const isCurrent = () => {
+    const current = currentExportModal();
+    return current?.isOpen && current.selectedOptionId === "file:pdf"
+      && current.pdfFontInspectionKey === request.key && current.pdfFontInspectionRequestId === requestId;
+  };
   updateEditorExportModal({
     pdfFontStatus: "loading",
     pdfFontInspectionKey: request.key,
@@ -217,22 +230,25 @@ export async function refreshPdfFontInspection(render, operations = {}) {
     pdfFontMissingBytes: 0,
     pdfFontFamilies: [],
     pdfFontMessage: "",
+    pdfSavedFallbackFonts: [],
+    pdfFontInspectionRequestId: requestId,
     error: "",
   });
   render();
   try {
+    const context = findChapterContext(modal.chapterId);
+    await (operations.waitForRepoQueue ?? waitForRepoWriteQueueIdle)(
+      projectRepoScope({ team: selectedProjectsTeam(), project: context?.project }),
+    );
+    if (!isCurrent()) { return null; }
     const inspection = await invokeCommand("inspect_gtms_chapter_pdf_fonts", {
       input: request.input,
     });
+    if (!isCurrent()) { return inspection; }
     if (!inspection || typeof inspection !== "object") {
       updateEditorExportModal({ pdfFontStatus: "idle" });
       render();
       return null;
-    }
-    const current = currentExportModal();
-    if (!current?.isOpen || current.selectedOptionId !== "file:pdf"
-      || current.pdfFontInspectionKey !== request.key) {
-      return inspection;
     }
     updateEditorExportModal({
       pdfFontStatus: inspection.supported === false ? "unsupported" : "ready",
@@ -240,12 +256,13 @@ export async function refreshPdfFontInspection(render, operations = {}) {
       pdfFontMissingBytes: Number(inspection.missingBytes) || 0,
       pdfFontFamilies: Array.isArray(inspection.fontFamilies) ? inspection.fontFamilies : [],
       pdfFontMessage: String(inspection.message ?? ""),
+      pdfSavedFallbackFonts: Array.isArray(inspection.savedFallbackFonts) ? inspection.savedFallbackFonts : [],
       error: "",
     });
     render();
     return inspection;
   } catch (error) {
-    if (currentExportModal()?.pdfFontInspectionKey === request.key) {
+    if (isCurrent()) {
       updateEditorExportModal({
         pdfFontStatus: "error",
         error: formatErrorForDisplay(error),
@@ -253,6 +270,34 @@ export async function refreshPdfFontInspection(render, operations = {}) {
       render();
     }
     return null;
+  }
+}
+
+export function togglePdfSavedFonts(render) {
+  const modal = currentExportModal();
+  if (!modal?.isOpen || exportModalIsBusy(modal) || !modal.pdfSavedFallbackFonts?.length) { return; }
+  updateEditorExportModal({ pdfSavedFontsExpanded: !modal.pdfSavedFontsExpanded });
+  render();
+}
+
+export async function forgetPdfFontApproval(render, fontId, operations = {}) {
+  const modal = currentExportModal();
+  if (!modal?.isOpen || exportModalIsBusy(modal)
+    || !modal.pdfSavedFallbackFonts?.some((font) => font.id === fontId)) { return; }
+  const key = modal.pdfFontInspectionKey;
+  updateEditorExportModal({ pdfForgettingFontId: fontId, error: "" });
+  render();
+  const isCurrent = () => currentExportModal()?.isOpen
+    && currentExportModal()?.pdfFontInspectionKey === key && currentExportModal()?.pdfForgettingFontId === fontId;
+  try {
+    await (operations.invoke ?? invoke)("forget_gtms_pdf_font_approval", { fontId });
+    if (!isCurrent()) { return; }
+    updateEditorExportModal({ pdfForgettingFontId: "" });
+    await refreshPdfFontInspection(render, operations);
+  } catch (error) {
+    if (!isCurrent()) { return; }
+    updateEditorExportModal({ pdfForgettingFontId: "", error: formatErrorForDisplay(error) });
+    render();
   }
 }
 
@@ -360,7 +405,7 @@ export function closeEditorExportOptions(render, operations = {}) {
     return;
   }
 
-  if (modal.status === "exporting") {
+  if (modal.status === "exporting" || modal.status === "reviewing-fonts") {
     if (!modal.pdfJobId) {
       return;
     }
@@ -450,6 +495,7 @@ export function toggleEditorExportFootnoteLinks(render, checked) {
 
   updateEditorExportModal({ footnoteLinksAsPlainText: checked === true, error: "" });
   render();
+  if (modal.selectedOptionId === "file:pdf") { void refreshPdfFontInspection(render); }
 }
 
 export function toggleEditorExportOmitCustomHtml(render, checked) {
@@ -460,6 +506,7 @@ export function toggleEditorExportOmitCustomHtml(render, checked) {
 
   updateEditorExportModal({ omitCustomHtml: checked === true, error: "" });
   render();
+  if (modal.selectedOptionId === "file:pdf") { void refreshPdfFontInspection(render); }
 }
 
 function sanitizeExportFileName(value) {
@@ -545,6 +592,7 @@ function failEditorExport(render, error) {
     pdfStartPending: false,
     pdfStage: "",
     pdfProgressIndeterminate: false,
+    pdfFontReview: null,
   });
   render();
 }
@@ -626,6 +674,7 @@ async function submitEditorFileExport(render, option, operations) {
     pdfProgressUnit: "",
     pdfProgressIndeterminate: option.format === "pdf",
     pdfOutputFileName: defaultFileName,
+    pdfFontReview: null,
   });
   render();
 
@@ -695,6 +744,19 @@ export function handleChapterPdfExportProgress(payload, render) {
   if (!modal?.isOpen || !modal.pdfJobId || payload?.jobId !== modal.pdfJobId) {
     return;
   }
+  if (payload.status === "font-review") {
+    if (modal.status === "cancelling") {
+      return;
+    }
+    updateEditorExportModal({
+      status: "reviewing-fonts",
+      pdfFontReview: payload.fontReview,
+      pdfStage: "",
+      pdfProgressIndeterminate: false,
+    });
+    render();
+    return;
+  }
   if (payload.status === "complete") {
     const chapterId = modal.chapterId;
     const fileName = modal.pdfOutputFileName || "PDF";
@@ -705,6 +767,7 @@ export function handleChapterPdfExportProgress(payload, render) {
       pdfJobId: "",
       pdfStartPending: false,
       pdfStage: "",
+      pdfFontReview: null,
     });
     saveStoredEditorExportDefault(chapterId, { optionId: "file:pdf" });
     render();
@@ -723,11 +786,13 @@ export function handleChapterPdfExportProgress(payload, render) {
       pdfJobId: "",
       pdfStartPending: false,
       pdfStage: "",
+      pdfFontReview: null,
     });
     render();
     return;
   }
   updateEditorExportModal({
+    pdfFontReview: null,
     pdfStage: String(payload.message ?? "Exporting PDF…"),
     pdfDownloadedBytes: Number(payload.downloadedBytes) || 0,
     pdfTotalBytes: Number(payload.totalBytes) || 0,
@@ -745,6 +810,9 @@ export async function registerChapterPdfExportListeners(render) {
   }
   await listen("chapter-pdf-export-progress", (event) => {
     handleChapterPdfExportProgress(event.payload, render);
+  });
+  await listen("chapter-pdf-font-coverage-gap", (event) => {
+    reportPdfFontCoverageGap(event.payload);
   });
 }
 
@@ -821,6 +889,27 @@ async function submitEditorCopyExport(render, option, operations) {
 
 export async function submitEditorExport(render, operations = {}, options = {}) {
   const modal = currentExportModal();
+  if (modal?.isOpen && modal.status === "reviewing-fonts" && modal.pdfFontReview?.reviewId) {
+    const jobId = modal.pdfJobId;
+    const reviewId = modal.pdfFontReview.reviewId;
+    updateEditorExportModal({ status: "exporting", error: "" });
+    render();
+    try {
+      const approved = await (operations.invoke ?? invoke)("approve_gtms_chapter_pdf_fonts", { jobId, reviewId });
+      if (!approved && currentExportModal()?.pdfJobId === jobId
+        && currentExportModal()?.status === "exporting") {
+        failEditorExport(render, "This PDF font review has expired. Please export again.");
+      }
+    } catch (error) {
+      if (currentExportModal()?.pdfJobId === jobId && currentExportModal()?.status === "exporting") {
+        // Keep the review and job available for retry or cancellation when the
+        // approval command itself fails. Do not start a second export.
+        updateEditorExportModal({ status: "reviewing-fonts", error: formatErrorForDisplay(error) });
+        render();
+      }
+    }
+    return;
+  }
   if (!modal?.isOpen || exportModalIsBusy(modal)) {
     return;
   }

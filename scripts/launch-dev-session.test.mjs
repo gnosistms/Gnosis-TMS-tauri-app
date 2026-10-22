@@ -68,3 +68,44 @@ for (const scenario of ['normal', 'failure', 'SIGINT', 'SIGHUP']) {
     serverPid = undefined;
   });
 }
+
+test('Applications launcher starts an older working checkout without relabeling it', { timeout: 10000, skip: process.platform === 'win32' }, async (t) => {
+  const { execFileSync } = await import('node:child_process');
+  const { chmod, mkdir } = await import('node:fs/promises');
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'gnosis-launcher-version-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await mkdir(path.join(directory, 'src-tauri'));
+  await mkdir(path.join(directory, 'bin'));
+  const versions = {
+    'package.json': '{"version":"0.8.116"}',
+    'src-tauri/Cargo.toml': '[package]\nversion = "0.8.116"\n',
+    'src-tauri/tauri.conf.json': '{"version":"0.8.116"}',
+  };
+  for (const [name, text] of Object.entries(versions)) await writeFile(path.join(directory, name), text);
+  const git = (args) => execFileSync('git', args, { cwd: directory, stdio: 'ignore' });
+  git(['init']); git(['add', '.']);
+  git(['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-m', 'Fixture']);
+  git(['tag', 'v0.8.125']);
+  const guard = new URL('./guard-dev-app-version.mjs', import.meta.url);
+  const npm = path.join(directory, 'bin', 'npm');
+  await writeFile(npm, `#!${process.execPath}\nimport { spawnSync } from 'node:child_process';
+    const result = spawnSync(process.execPath, [${JSON.stringify(guard.pathname)}], {
+      cwd: ${JSON.stringify(directory)}, env: process.env, stdio: 'inherit'
+    });
+    process.exit(result.status ?? 1);\n`);
+  await chmod(npm, 0o755);
+  const child = spawn(process.execPath, [new URL(supervisor).pathname], {
+    env: { ...process.env, PATH: `${path.dirname(npm)}:${process.env.PATH}`,
+      GNOSIS_SYNC_DEV_VERSION: '1', GNOSIS_ALLOW_STALE_DEV_VERSION: '0' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  t.after(() => child.kill('SIGTERM'));
+  let output = '';
+  child.stdout.on('data', (data) => { output += data; });
+  child.stderr.on('data', (data) => { output += data; });
+  const [code] = await once(child, 'exit');
+  assert.equal(code, 0, output);
+  assert.match(output, /Starting this checkout/);
+  assert.doesNotMatch(output, /Automatic development version repair stopped/);
+  for (const [name, text] of Object.entries(versions)) assert.equal(await readFile(path.join(directory, name), 'utf8'), text);
+});

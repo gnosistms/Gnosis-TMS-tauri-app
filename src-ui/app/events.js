@@ -1,4 +1,5 @@
 import { handleInputEvent, handlePasteEvent } from "./input-handlers.js";
+import { updateStudioInput } from "./glossary-research-studio-flow.js";
 import { handleNavigation } from "./navigation.js";
 import { createActionDispatcher } from "./action-dispatcher.js";
 import { checkForAppUpdate } from "./updater-flow.js";
@@ -57,8 +58,16 @@ export function registerAppEvents(render) {
 
   installProjectsRenderHold();
   installImeCompositionHold(render);
-  document.addEventListener("input", (event) => handleInputEvent(event, render));
+  document.addEventListener("input", (event) => {
+    if (event.target instanceof Element && event.target.closest("[data-studio-field], [data-studio-decision]")) {
+      updateStudioInput(event.target); return;
+    }
+    handleInputEvent(event, render);
+  });
   document.addEventListener("change", (event) => {
+    if (event.target instanceof Element && event.target.closest("[data-studio-field], [data-studio-decision], [data-studio-branch], [data-studio-merge], [data-studio-collision]")) {
+      updateStudioInput(event.target); return;
+    }
     // A protected select commit must render its state update immediately,
     // so its change handling runs with the projects render hold bypassed.
     if (isProjectsSelectCommitTarget(event.target)) {

@@ -132,6 +132,8 @@ import { renderEditorInsertLinkModal } from "./screens/editor-insert-link-modal.
 import { renderGlossariesScreen } from "./screens/glossaries.js";
 import { renderGlossaryEditorScreen } from "./screens/glossary-editor.js";
 import { renderGlossaryResearchReportScreen } from "./screens/glossary-research-report.js";
+import { renderGlossaryResearchStudio } from "./screens/glossary-research-studio.js";
+import { captureStudioDisclosures, restoreStudioDisclosures } from "./app/glossary-research-studio-disclosures.js";
 import { renderNavigationLoadingModal } from "./screens/navigation-loading-modal.js";
 import { buildProjectsScreenListState, renderProjectsScreen } from "./screens/projects.js";
 import { renderProjectsListItemsRange } from "./screens/project-list-flat-render.js";
@@ -194,6 +196,7 @@ const screenRenderers = {
   qaListEditor: () => renderQaListEditorScreen(state),
   glossaryEditor: () => renderGlossaryEditorScreen(state),
   glossaryResearchReport: () => renderGlossaryResearchReportScreen(state),
+  glossaryResearchStudio: () => renderGlossaryResearchStudio(state),
   translate: () => renderTranslateScreen(state),
 };
 
@@ -208,6 +211,7 @@ const titles = {
   qaListEditor: "QA List Editor - Gnosis TMS",
   glossaryEditor: "Glossary Editor - Gnosis TMS",
   glossaryResearchReport: "Research Report - Gnosis TMS",
+  glossaryResearchStudio: "Glossary Research Studio - Gnosis TMS",
   translate: "Translate - Gnosis TMS",
 };
 
@@ -808,6 +812,7 @@ function renderWithOptionsImpl(options = {}) {
       ? captureAssistantTranscriptScrollTop(app)
       : null;
   const modalSnapshot = captureModalRenderState(app);
+  const studioDisclosures = captureStudioDisclosures(app);
   app.innerHTML =
     renderScreen()
     + renderAppUpdateModal(state)
@@ -815,6 +820,7 @@ function renderWithOptionsImpl(options = {}) {
     + renderTeamResourceMigrationModal(state)
     + renderTelemetryDisclosureModal(state)
     + renderConnectionFailureModal(state);
+  restoreStudioDisclosures(app, studioDisclosures);
   renderAppUpdateSurface(app, state.appUpdate);
   if (app.firstElementChild instanceof HTMLElement) {
     app.firstElementChild.inert = ["preparing", "restarting"].includes(state.appUpdate.status);

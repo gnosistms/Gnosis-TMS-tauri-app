@@ -44,6 +44,46 @@ test("editor export modal renders nothing while closed", () => {
   assert.equal(renderEditorExportModal({}), "");
 });
 
+test("saved font controls appear only after a relevant PDF inspection", () => {
+  const font = { id: "font-1", family: "Noto Sans EgyptHiero" };
+  for (const overrides of [
+    { selectedOptionId: "file:pdf", pdfFontStatus: "ready", pdfSavedFallbackFonts: [] },
+    { selectedOptionId: "file:pdf", pdfFontStatus: "loading", pdfSavedFallbackFonts: [font] },
+    { selectedOptionId: "file:docx", pdfFontStatus: "ready", pdfSavedFallbackFonts: [font] },
+  ]) {
+    assert.doesNotMatch(renderEditorExportModal(exportState(overrides)), /Saved fallback fonts/);
+  }
+  const base = { selectedOptionId: "file:pdf", pdfFontStatus: "ready", pdfSavedFallbackFonts: [font] };
+  const collapsed = renderEditorExportModal(exportState(base));
+  assert.match(collapsed, /Saved fallback fonts/);
+  assert.doesNotMatch(collapsed, /Forget approval/);
+  const expanded = renderEditorExportModal(exportState({ ...base, pdfSavedFontsExpanded: true }));
+  assert.match(expanded, /Noto Sans EgyptHiero/);
+  assert.match(expanded, /apply to all documents on this computer/);
+  assert.match(expanded, /data-action="forget-pdf-font-approval:font-1"/);
+});
+
+test("font review shows only supplied renderer images with explicit approval and cancel controls", () => {
+  const html = renderEditorExportModal(exportState({
+    status: "reviewing-fonts", selectedOptionId: "file:pdf",
+    pdfFontReview: {
+      reviewId: "review-1", fontFamilies: ["Noto <Egyptian>"],
+      excerpts: [
+        { label: "Footnote 17", imageDataUrl: "data:image/svg+xml;base64,PHN2Zy8+" },
+        { label: "Unsafe", imageDataUrl: 'https://example.com/image.svg" onerror="alert(1)' },
+      ],
+    },
+  }));
+  assert.match(html, /Review fallback fonts/);
+  assert.match(html, /Noto &lt;Egyptian&gt;/);
+  assert.match(html, /Footnote 17/);
+  assert.match(html, /complete PDF will use these fonts without highlights/);
+  assert.match(html, /remembered for future PDF exports on this computer/);
+  assert.match(html, /Publish with these fonts/);
+  assert.match(html, /data-action="close-editor-export-options"[^>]*data-modal-initial-focus/);
+  assert.doesNotMatch(html, /data-modal-default|onerror|example.com|select-editor-export-option/);
+});
+
 test("editor export modal lists categories and expands only opened ones", () => {
   const html = renderEditorExportModal(exportState());
 

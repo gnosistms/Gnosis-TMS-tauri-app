@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { nativeAccessInventory } from "../test/native-command-access.mjs";
 
 let invokeHandler = async () => null;
 
@@ -204,18 +205,21 @@ test("a request carrying an unrelated token cannot retry under the current accou
   assert.equal(calls, 1);
 });
 
-test("a connectivity-failed refresh rethrows the original error, not AUTH_REQUIRED", async () => {
+test("a connectivity-failed refresh propagates the connection error", async () => {
+  const refreshFailure = new Error("Failed to fetch");
+  const session = state.auth.session;
   invokeHandler = async (command) => {
     if (command === "refresh_broker_auth_session") {
-      throw new Error("Failed to fetch");
+      throw refreshFailure;
     }
     throw new Error("GitHub API 401: Bad credentials");
   };
 
   await assert.rejects(
     () => invoke("list_gnosis_resources_for_installation", { installationId: 1, sessionToken: "stale-token" }),
-    /Bad credentials/,
+    (error) => error === refreshFailure,
   );
+  assert.equal(state.auth.session, session);
 });
 
 test("a rejected refresh raises AUTH_REQUIRED", async () => {
@@ -318,7 +322,13 @@ test("a failed command retry stops after one refresh and surfaces the final erro
   assert.equal(calls.filter((entry) => entry.command === "sync_gtms_project_editor_repo").length, 2);
 });
 
-for (const command of ["update_gtms_editor_row_fields", "update_gtms_editor_row_text_style"]) {
+// Discover command coverage from Rust so newly added native actions get tested.
+const nativeAccess = nativeAccessInventory();
+const NATIVE_ACCESS_COMMANDS = nativeAccess.native
+  .filter((fn) => fn.calls.includes("require_command_access")).map((fn) => fn.name);
+const NATIVE_PREFLIGHT_AUTH_ERROR = `${nativeAccess.retryPrefix}AUTH_REQUIRED:Expired`;
+
+for (const command of NATIVE_ACCESS_COMMANDS) {
   test(`${command} refreshes its native stored session once without a payload token`, async () => {
     let writes = 0;
     let refreshes = 0;
@@ -336,7 +346,7 @@ for (const command of ["update_gtms_editor_row_fields", "update_gtms_editor_row_
       }
       assert.equal(name, command);
       assert.deepEqual(args, payload);
-      if (nativeToken === "stale-token") throw new Error("AUTH_REQUIRED:Your GitHub session expired.");
+      if (nativeToken === "stale-token") throw new Error(NATIVE_PREFLIGHT_AUTH_ERROR);
       writes += 1;
       return "saved";
     };
@@ -346,56 +356,65 @@ for (const command of ["update_gtms_editor_row_fields", "update_gtms_editor_row_
   });
 }
 
-for (const change of ["sign-out", "account-switch", "team-switch"]) {
-  test(`native editor recovery cannot replay after ${change}`, async () => {
-    const refresh = deferred();
-    const started = deferred();
-    let attempts = 0;
-    state.selectedTeamId = "team-a";
-    invokeHandler = async (command) => {
-      if (command === "refresh_broker_auth_session") { started.resolve(); return refresh.promise; }
-      if (command === "save_broker_auth_session") return;
-      attempts += 1;
-      throw new Error("AUTH_REQUIRED:Expired");
-    };
-    const request = invoke("update_gtms_editor_row_fields", { input: { installationId: 42 } });
-    const rejected = assert.rejects(request, { code: change === "team-switch" ? "EDITOR_CONTEXT_CHANGED" : "AUTH_SESSION_CHANGED" });
-    await started.promise;
-    if (change === "team-switch") state.selectedTeamId = "team-b";
-    else {
-      resetSessionState();
-      if (change === "account-switch") state.auth.session = { login: "bob", sessionToken: "bob-token" };
-    }
-    refresh.resolve({ login: "owner", sessionToken: "fresh-token" });
-    await rejected;
-    assert.equal(attempts, 1);
-  });
+for (const command of ["update_gtms_editor_row_fields", "remove_gtms_editor_language_image"]) {
+  for (const change of ["sign-out", "account-switch", "team-switch"]) {
+    test(`${command} recovery cannot replay after ${change}`, async () => {
+      const refresh = deferred();
+      const started = deferred();
+      let attempts = 0;
+      state.selectedTeamId = "team-a";
+      invokeHandler = async (command) => {
+        if (command === "refresh_broker_auth_session") { started.resolve(); return refresh.promise; }
+        if (command === "save_broker_auth_session") return;
+        attempts += 1;
+        throw new Error(NATIVE_PREFLIGHT_AUTH_ERROR);
+      };
+      const request = invoke(command, { input: { installationId: 42 } });
+      const rejected = assert.rejects(request, { code: change === "team-switch" ? "EDITOR_CONTEXT_CHANGED" : "AUTH_SESSION_CHANGED" });
+      await started.promise;
+      if (change === "team-switch") state.selectedTeamId = "team-b";
+      else {
+        resetSessionState();
+        if (change === "account-switch") state.auth.session = { login: "bob", sessionToken: "bob-token" };
+      }
+      refresh.resolve({ login: "owner", sessionToken: "fresh-token" });
+      await rejected;
+      assert.equal(attempts, 1);
+    });
+  }
 }
 
-test("native editor retries stop after one failed recovery attempt", async () => {
-  let attempts = 0;
-  let refreshes = 0;
-  invokeHandler = async (command) => {
-    if (command === "refresh_broker_auth_session") { refreshes += 1; return { login: "owner", sessionToken: "fresh-token" }; }
-    if (command === "save_broker_auth_session") return;
-    attempts += 1;
-    throw new Error("AUTH_REQUIRED:Expired");
-  };
-  await assert.rejects(invoke("update_gtms_editor_row_text_style", { input: {} }), /AUTH_REQUIRED/);
-  assert.equal(attempts, 2);
-  assert.equal(refreshes, 1);
-});
+for (const nativeCommand of NATIVE_ACCESS_COMMANDS) {
+  test(`${nativeCommand} retries stop after one failed recovery attempt`, async () => {
+    let attempts = 0;
+    let refreshes = 0;
+    invokeHandler = async (command) => {
+      if (command === "refresh_broker_auth_session") { refreshes += 1; return { login: "owner", sessionToken: "fresh-token" }; }
+      if (command === "save_broker_auth_session") return;
+      attempts += 1;
+      throw new Error(NATIVE_PREFLIGHT_AUTH_ERROR);
+    };
+    await assert.rejects(invoke(nativeCommand, { input: {} }), /AUTH_REQUIRED/);
+    assert.equal(attempts, 2);
+    assert.equal(refreshes, 1);
+  });
+}
 
 test("unverified access and ambiguous write failures are never blindly retried", async () => {
   for (const message of [
     'ACCESS_VERIFICATION_FAILED:{"category":"snapshot_storage","message":"ignored"}',
     "git commit failed: ambiguous result",
     "Your account type cannot edit shared content.",
+    "AUTH_REQUIRED:Expired Rollback failed: Could not restore the image file.",
+    `${NATIVE_PREFLIGHT_AUTH_ERROR} Rollback failed: Could not restore the image file.`,
+    "AUTH_REQUIRED:An authentication failure after the action started.",
   ]) {
-    let attempts = 0;
-    invokeHandler = async () => { attempts += 1; throw message; };
-    await assert.rejects(invoke("update_gtms_editor_row_fields", { input: {} }));
-    assert.equal(attempts, 1);
+    for (const command of NATIVE_ACCESS_COMMANDS) {
+      let attempts = 0;
+      invokeHandler = async () => { attempts += 1; throw message; };
+      await assert.rejects(invoke(command, { input: {} }));
+      assert.equal(attempts, 1, `${command}: ${message}`);
+    }
   }
 });
 
@@ -404,4 +423,51 @@ test("an unrelated tokenless command cannot acquire editor retry privileges", as
   invokeHandler = async () => { attempts += 1; throw new Error("AUTH_REQUIRED:Expired"); };
   await assert.rejects(invoke("delete_gnosis_project_repo", {}), /AUTH_REQUIRED/);
   assert.equal(attempts, 1);
+});
+
+test("a future native command recovers through the preflight contract without a JS allowlist", async () => {
+  let attempts = 0;
+  invokeHandler = async (command) => {
+    if (command === "refresh_broker_auth_session") return { login: "owner", sessionToken: "fresh-token" };
+    if (command === "save_broker_auth_session") return;
+    assert.equal(command, "future_native_write");
+    attempts += 1;
+    if (attempts === 1) throw NATIVE_PREFLIGHT_AUTH_ERROR;
+    return "saved";
+  };
+  assert.equal(await invoke("future_native_write", { input: { installationId: 42 } }), "saved");
+  assert.equal(attempts, 2);
+});
+
+test("concurrent editor and QA actions share one persisted native-session refresh", async () => {
+  const refresh = deferred();
+  const started = deferred();
+  let refreshes = 0;
+  let saves = 0;
+  let nativeToken = "stale-token";
+  const attempts = new Map();
+  invokeHandler = async (command) => {
+    if (command === "refresh_broker_auth_session") {
+      refreshes += 1;
+      started.resolve();
+      return refresh.promise;
+    }
+    if (command === "save_broker_auth_session") {
+      saves += 1;
+      nativeToken = "fresh-token";
+      return;
+    }
+    attempts.set(command, (attempts.get(command) ?? 0) + 1);
+    if (nativeToken === "stale-token") throw NATIVE_PREFLIGHT_AUTH_ERROR;
+    return "saved";
+  };
+  const editor = invoke("merge_gtms_editor_rows", { input: { installationId: 42 } });
+  await started.promise;
+  const qa = invoke("upsert_gtms_qa_list_term", { input: { installationId: 42 } });
+  refresh.resolve({ login: "owner", sessionToken: "fresh-token" });
+  assert.deepEqual(await Promise.all([editor, qa]), ["saved", "saved"]);
+  assert.equal(refreshes, 1);
+  assert.equal(saves, 1);
+  assert.equal(attempts.get("merge_gtms_editor_rows"), 2);
+  assert.equal(attempts.get("upsert_gtms_qa_list_term"), 2);
 });

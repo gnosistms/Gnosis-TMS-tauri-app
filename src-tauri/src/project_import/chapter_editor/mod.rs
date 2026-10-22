@@ -98,8 +98,9 @@ pub(super) use self::images::{
     upload_gtms_editor_language_image_sync,
 };
 pub(crate) use self::pdf_export::{
-    cancel_gtms_chapter_pdf_export, inspect_gtms_chapter_pdf_fonts, start_gtms_chapter_pdf_export,
-    PdfChapterExportInput, PdfFontInspection, PdfFontInspectionInput,
+    approve_gtms_chapter_pdf_fonts, cancel_gtms_chapter_pdf_export, forget_gtms_pdf_font_approval,
+    inspect_gtms_chapter_pdf_fonts, start_gtms_chapter_pdf_export, PdfChapterExportInput,
+    PdfFontInspection, PdfFontInspectionInput,
 };
 pub(crate) use self::project_transfer::{
     acknowledge_project_transfer_status, get_project_transfer_status,

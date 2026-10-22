@@ -25,7 +25,6 @@ import {
   jumpFromPreviewBlockToTranslateMode,
 } from "./translate-flow.js";
 import { syncActiveEditorInlineStyleButtons } from "./editor-inline-markup-flow.js";
-import { showNoticeBadge } from "./status-feedback.js";
 import {
   dismissEditorImageContextMenu,
   handleEditorImageContextMenuInvocationKeydown,
@@ -33,14 +32,9 @@ import {
   openEditorImageContextMenu,
 } from "./editor-image-context-menu.js";
 
-const PREVIEW_EDITABLE_TEXT_BLOCK_SELECTOR = [
-  "[data-editor-preview-document] p.translate-preview__block[data-preview-block][data-row-id]",
-  "[data-editor-preview-document] h1.translate-preview__block[data-preview-block][data-row-id]",
-  "[data-editor-preview-document] h2.translate-preview__block[data-preview-block][data-row-id]",
-  "[data-editor-preview-document] blockquote.translate-preview__block[data-preview-block][data-row-id]",
-].join(", ");
+const PREVIEW_EDITABLE_BLOCK_SELECTOR = "[data-editor-preview-document] [data-preview-block][data-row-id]";
 
-function previewEditableTextBlockFromTarget(target) {
+function previewEditableBlockFromTarget(target) {
   if (!(target instanceof Element)) {
     return null;
   }
@@ -49,7 +43,7 @@ function previewEditableTextBlockFromTarget(target) {
     return null;
   }
 
-  const block = target.closest(PREVIEW_EDITABLE_TEXT_BLOCK_SELECTOR);
+  const block = target.closest(PREVIEW_EDITABLE_BLOCK_SELECTOR);
   return block instanceof HTMLElement ? block : null;
 }
 
@@ -401,12 +395,6 @@ export function registerTranslateEditorDomEvents(app, render) {
       return;
     }
 
-    const previewBlock = previewEditableTextBlockFromTarget(event.target);
-    if (previewBlock && event.detail === 1) {
-      showNoticeBadge("Double click to edit this text", render, 2200);
-      return;
-    }
-
     const cardLanguage = cardWhitespaceLanguageFromPointer(event);
     if (cardLanguage) {
       const rowId = cardLanguage.dataset.rowId ?? "";
@@ -575,7 +563,7 @@ export function registerTranslateEditorDomEvents(app, render) {
   });
 
   app.addEventListener("dblclick", (event) => {
-    const previewBlock = previewEditableTextBlockFromTarget(event.target);
+    const previewBlock = previewEditableBlockFromTarget(event.target);
     if (!previewBlock) {
       return;
     }

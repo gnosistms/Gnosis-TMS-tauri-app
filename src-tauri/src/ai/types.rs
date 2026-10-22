@@ -293,6 +293,12 @@ pub struct AiTranslationBatchRowInput {
     pub row_id: String,
     #[serde(default)]
     pub source_text: String,
+    /// Context belonging to this row, including independently sampled rows.
+    /// It is source evidence only, not another row to translate.
+    #[serde(default)]
+    pub source_context_before: Vec<String>,
+    #[serde(default)]
+    pub source_context_after: Vec<String>,
     #[serde(default)]
     pub source_footnote: String,
     #[serde(default)]

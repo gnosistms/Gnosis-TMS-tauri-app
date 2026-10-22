@@ -1,4 +1,5 @@
 import { invoke } from "./runtime.js";
+import { notifyStudioEditor, researchChangesForDraft } from "./glossary-research-studio-editor-bridge.js";
 import { requireBrokerSession } from "./auth-flow.js";
 import {
   createGlossaryTermEditorState,
@@ -79,6 +80,7 @@ function findRedundantSourceVariantIndices(
     if (!glossaryTerm || glossaryTerm.lifecycleState === "deleted" || glossaryTerm.termId === termId) {
       continue;
     }
+    if (state.glossaryTermEditor?.researchOrigin?.changes?.some((change) => change.termId === glossaryTerm.termId)) continue;
 
     for (const sourceTerm of Array.isArray(glossaryTerm.sourceTerms) ? glossaryTerm.sourceTerms : []) {
       const normalized = normalizeSourceTermForDuplicateDetection(sourceTerm);
@@ -304,6 +306,7 @@ function restoreFailedGlossaryTermSave(render, intent, message) {
     attemptedDraft: remoteConflict ? draftSnapshot : null,
     termId: draftSnapshot?.termId ?? null,
   });
+  if (draftSnapshot?.researchOrigin) state.glossaryTermEditor.researchOrigin = draftSnapshot.researchOrigin;
   if (message.startsWith(SOURCE_TERM_CONFLICT_PREFIX)) {
     try {
       const conflicts = JSON.parse(message.slice(SOURCE_TERM_CONFLICT_PREFIX.length));
@@ -381,6 +384,7 @@ async function runGlossaryTermSaveIntent(render, intent) {
         notesToTranslators: draftSnapshot.notesToTranslators,
         footnote: draftSnapshot.footnote,
         untranslated: draftSnapshot.untranslated,
+        ...(draftSnapshot.researchOrigin?.changes?.length ? { researchChanges: draftSnapshot.researchOrigin.changes } : {}),
       },
     });
     previousHeadSha = upsertPayload?.previousHeadSha ?? null;
@@ -427,12 +431,20 @@ async function runGlossaryTermSaveIntent(render, intent) {
     if (intent.value?.isCreate || !remindOfSiblings(confirmedTerm, render)) {
       showNoticeBadge(intent.value?.isCreate ? "Glossary term added." : "Glossary term saved.", render);
     }
+    if (draftSnapshot.researchOrigin) {
+      showGlossaryEditorStatus(render, "Term saved. Updating research checkpoint…");
+      try {
+        await notifyStudioEditor("saved", draftSnapshot.researchOrigin, confirmedTerm);
+      } catch (error) {
+        showNoticeBadge(`Term saved, but the research record could not be updated: ${error.message}`, render);
+      } finally { clearGlossaryEditorStatus(render); }
+    }
     return confirmedTerm;
   } catch (error) {
     clearGlossaryEditorStatus(render);
     throw error;
   } finally {
-    removeGlossaryEditorQuery(intent.value?.team, intent.value?.glossary);
+    if (!intent.value?.draftSnapshot?.researchOrigin) removeGlossaryEditorQuery(intent.value?.team, intent.value?.glossary);
     // Sync may merge remote terms; a failed push may restore the old local term.
     void refreshEditorGlossaryAfterLocalChange(render, intent.value?.team, intent.value?.repoInput);
   }
@@ -472,6 +484,8 @@ export async function openGlossaryTermEditor(render, termId = null) {
 }
 
 export function cancelGlossaryTermEditor(render) {
+  const researchOrigin = state.glossaryTermEditor?.researchOrigin;
+  const researchDraft = researchOrigin ? structuredClone(state.glossaryTermEditor) : null;
   const key = state.glossaryTermEditor?.failedIntentKey;
   const intent = key ? getGlossaryTermWriteIntent(key) : null;
   if (intent && glossarySaveContextMatches(intent)) {
@@ -485,6 +499,7 @@ export function cancelGlossaryTermEditor(render) {
   }
   if (key) clearFailedGlossaryTermWrite(key);
   resetGlossaryTermEditor();
+  if (researchOrigin) void notifyStudioEditor("cancel", researchOrigin, researchDraft);
   render();
 }
 
@@ -772,6 +787,8 @@ export async function submitGlossaryTermEditor(render, { awaitCompletion = false
     footnote: draft.footnote,
     untranslated: draft.untranslated === true,
     siblingTermIds: [...(draft.siblingTermIds ?? [])],
+    ...(draft.researchOrigin ? { researchOrigin: { ...draft.researchOrigin,
+      changes: researchChangesForDraft(draft.researchOrigin, sourceTerms) } } : {}),
   };
   const repoInput = {
     installationId: team.installationId,

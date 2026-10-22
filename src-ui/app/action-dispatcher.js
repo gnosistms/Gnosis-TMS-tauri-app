@@ -15,6 +15,7 @@ import { createTranslateActions } from "./actions/translate-actions.js";
 import { createUserActions } from "./user-actions.js";
 import { actionSuffix } from "./action-helpers.js";
 import { state } from "./state.js";
+import { studioAction } from "./glossary-research-studio-flow.js";
 
 function updateRequiredAllowsAction(action) {
   return (
@@ -56,6 +57,8 @@ export function createActionDispatcher(render) {
       showOfflineUnsupportedMessage(render);
       return true;
     }
+
+    if (await studioAction(action, render)) return true;
 
     for (const actionMap of exactActionMaps) {
       const handler = actionMap[action];

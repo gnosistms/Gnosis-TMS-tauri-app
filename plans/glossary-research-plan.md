@@ -1,6 +1,8 @@
 # Glossary Research
 
-Status: requirements agreed with Hans on 2026-09-24/25. Not implemented yet.
+Status: superseded on 2026-10-15 by [Glossary Research Studio](glossary-research-studio-implementation.md). This original design, its experiments, and the separate research checkout are retained for reference.
+
+Original status: requirements agreed with Hans on 2026-09-24/25.
 
 ## Objective
 

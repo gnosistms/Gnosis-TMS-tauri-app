@@ -197,6 +197,36 @@
   width: min(760px, 100%);
 }
 
+.modal-card--pdf-font-review {
+  width: min(1000px, 100%);
+}
+
+.pdf-font-review__excerpts {
+  display: grid;
+  gap: 18px;
+  max-height: 55vh;
+  min-height: 100px;
+  overflow: auto;
+}
+
+.pdf-font-review__excerpt {
+  margin: 0;
+}
+
+.pdf-font-review__excerpt figcaption {
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.pdf-font-review__excerpt img {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: white;
+  border: 1px solid var(--surface-border);
+}
+
 .modal-card .modal-card__body--editor-export {
   gap: 0;
   padding: 0;
@@ -312,6 +342,36 @@
   border: 1px solid var(--modal-progress-track-border, rgba(166, 108, 45, 0.22));
   border-radius: var(--radius-ui);
   background: var(--modal-progress-track-bg, rgba(255, 247, 233, 0.48));
+}
+
+.editor-export-modal__saved-fonts,
+.editor-export-modal__saved-font-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.editor-export-modal__saved-fonts > button {
+  justify-self: start;
+}
+
+.editor-export-modal__saved-font-list {
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.editor-export-modal__saved-font-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.editor-export-modal__saved-font-list li > span {
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
 
 .editor-export-modal__pdf-progress-header {
