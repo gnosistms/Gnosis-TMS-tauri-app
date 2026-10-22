@@ -646,15 +646,11 @@ export function glossaryPopoverContextForMark(mark) {
 
   const payload = glossaryTooltipPayload(mark);
   if (payload?.kind === "source") {
-    // Source terms keep their ordinary glossary information card, but the
-    // glossary footnote itself is reserved for the target-language footnote
-    // card introduced by this feature.
+    // Source cards show the complete glossary entry, including footnotes.
+    // Footnote insertion and its hint remain restricted to target terms.
     return {
       kind: "glossary",
-      payload: {
-        ...payload,
-        footnotes: [],
-      },
+      payload,
     };
   }
 
