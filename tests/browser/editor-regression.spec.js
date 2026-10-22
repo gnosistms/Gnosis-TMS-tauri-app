@@ -2986,6 +2986,8 @@ test.describe("editor regressions", () => {
       await marks[index].hover();
       await expect(page.locator(".editor-glossary-tooltip")).toBeVisible();
       await expect(page.locator(".editor-glossary-info-card__title")).toHaveText(expectedTitles[index]);
+      await expect(page.locator(".editor-glossary-info-card__footnote")).toHaveText("Kabbalah glossary footnote");
+      await expect(page.locator(".editor-glossary-info-card__hint--insert")).toHaveCount(index === 0 ? 0 : 1);
     }
 
   });
