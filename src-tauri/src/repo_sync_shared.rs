@@ -10,22 +10,22 @@ use std::{
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 #[cfg(any(windows, target_os = "macos"))]
 use std::env;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", all(test, unix)))]
 use std::os::unix::fs::PermissionsExt;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", all(test, unix)))]
 use flate2::read::GzDecoder;
 use serde::Deserialize;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", all(test, unix)))]
 use sha2::{Digest, Sha256};
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", all(test, unix)))]
 use std::fs::File;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", all(test, unix)))]
 use tar::Archive;
 use tauri::{AppHandle, Manager, Runtime};
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", all(test, unix)))]
 use uuid::Uuid;
 
 use crate::{
@@ -611,7 +611,7 @@ fn discover_windows_github_desktop_git(base_dir: &Path) -> Option<PathBuf> {
     })
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", all(test, unix)))]
 fn prepare_macos_git_runtime(
     resource_dir: Option<&Path>,
     app_config_dir: &Path,
@@ -634,11 +634,13 @@ fn prepare_macos_git_runtime(
         )
     })?;
     let archive_hash = format!("{:x}", Sha256::digest(&archive_bytes));
+    // Other app versions cache executable paths in sibling hash directories for
+    // their process lifetime. Do not prune those runtimes or another process's
+    // staging directory when starting this instance.
     let runtime_root = app_config_dir.join("git").join("macos-runtime");
     let extracted_root = runtime_root.join(&archive_hash);
     let executable = extracted_root.join("libexec").join("git-core").join("git");
     if executable.is_file() {
-        prune_stale_macos_git_runtimes(&runtime_root, &extracted_root);
         return Ok(Some(executable));
     }
 
@@ -720,11 +722,10 @@ fn prepare_macos_git_runtime(
         }
     }
 
-    prune_stale_macos_git_runtimes(&runtime_root, &extracted_root);
     Ok(Some(executable))
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", all(test, unix)))]
 fn extract_macos_git_runtime_archive(archive_path: &Path, target_dir: &Path) -> Result<(), String> {
     let archive_file = File::open(archive_path).map_err(|error| {
         format!(
@@ -741,25 +742,6 @@ fn extract_macos_git_runtime_archive(archive_path: &Path, target_dir: &Path) -> 
             target_dir.display()
         )
     })
-}
-
-#[cfg(target_os = "macos")]
-fn prune_stale_macos_git_runtimes(runtime_root: &Path, active_root: &Path) {
-    let Ok(entries) = fs::read_dir(runtime_root) else {
-        return;
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path == active_root {
-            continue;
-        }
-        let _ = if path.is_dir() {
-            fs::remove_dir_all(path)
-        } else {
-            fs::remove_file(path)
-        };
-    }
 }
 
 struct AppGitEnvironment {
@@ -844,5 +826,130 @@ mod tests {
         assert!(!git_error_indicates_missing_remote_ref(
             "git fetch origin main failed: fatal: Authentication failed"
         ));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod macos_runtime_tests {
+    use super::prepare_macos_git_runtime;
+    use flate2::{write::GzEncoder, Compression};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        process::Command,
+    };
+    use tar::{Builder, Header};
+    use uuid::Uuid;
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new() -> Self {
+            let path =
+                std::env::temp_dir().join(format!("gnosis-git-runtime-test-{}", Uuid::now_v7()));
+            fs::create_dir_all(&path).expect("create test directory");
+            Self(path)
+        }
+
+        fn archive(&self, name: &str) -> PathBuf {
+            let resources = self.0.join(name);
+            let archive_dir = resources.join("git/macos");
+            fs::create_dir_all(&archive_dir).expect("create resource directory");
+            let file =
+                fs::File::create(archive_dir.join("git-runtime.tar.gz")).expect("create archive");
+            let mut archive = Builder::new(GzEncoder::new(file, Compression::default()));
+            let script = format!("#!/bin/sh\nprintf 'git version {name}\\n'\n");
+            let mut header = Header::new_gnu();
+            header.set_size(script.len() as u64);
+            header.set_mode(0o755);
+            header.set_cksum();
+            archive
+                .append_data(&mut header, "libexec/git-core/git", script.as_bytes())
+                .expect("append Git executable");
+            archive
+                .into_inner()
+                .expect("finish tar")
+                .finish()
+                .expect("finish gzip");
+            resources
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn assert_git_runs(executable: &Path, expected: &str) {
+        let output = Command::new(executable)
+            .arg("--version")
+            .output()
+            .expect("run retained Git executable");
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8(output.stdout)
+                .expect("Git version text")
+                .trim(),
+            expected
+        );
+    }
+
+    #[test]
+    fn extracting_another_git_version_keeps_the_running_versions_executable() {
+        let directory = TestDirectory::new();
+        let resources_a = directory.archive("version-a");
+        let resources_b = directory.archive("version-b");
+        let config = directory.0.join("config");
+        let git_a = prepare_macos_git_runtime(Some(&resources_a), &config)
+            .expect("prepare A")
+            .expect("Git A");
+        let git_b = prepare_macos_git_runtime(Some(&resources_b), &config)
+            .expect("prepare B")
+            .expect("Git B");
+        assert_ne!(git_a, git_b);
+        assert_git_runs(&git_a, "git version version-a");
+        assert_git_runs(&git_b, "git version version-b");
+    }
+
+    #[test]
+    fn cached_git_startup_keeps_other_versions_available() {
+        let directory = TestDirectory::new();
+        let resources_a = directory.archive("version-a");
+        let resources_b = directory.archive("version-b");
+        let config = directory.0.join("config");
+        let git_a = prepare_macos_git_runtime(Some(&resources_a), &config)
+            .expect("prepare A")
+            .expect("Git A");
+        // Re-create A after B even on the old implementation, so the cached-start
+        // path is tested with two existing versions independently of extraction.
+        let saved_a = directory.0.join("saved-a");
+        fs::copy(&git_a, &saved_a).expect("save A");
+        let git_b = prepare_macos_git_runtime(Some(&resources_b), &config)
+            .expect("prepare B")
+            .expect("Git B");
+        fs::create_dir_all(git_a.parent().expect("A directory")).expect("restore A directory");
+        fs::copy(saved_a, &git_a).expect("restore A");
+        let cached_a = prepare_macos_git_runtime(Some(&resources_a), &config)
+            .expect("reuse A")
+            .expect("cached A");
+        assert_eq!(cached_a, git_a);
+        assert_git_runs(&git_b, "git version version-b");
+    }
+
+    #[test]
+    fn git_startup_preserves_another_processes_extraction_directory() {
+        let directory = TestDirectory::new();
+        let resources = directory.archive("version-a");
+        let config = directory.0.join("config");
+        let extraction = config.join("git/macos-runtime/.extract-other-process");
+        fs::create_dir_all(&extraction).expect("create concurrent extraction");
+        let marker = extraction.join("in-progress");
+        fs::write(&marker, "another process").expect("write extraction marker");
+        prepare_macos_git_runtime(Some(&resources), &config).expect("prepare Git");
+        assert_eq!(
+            fs::read_to_string(marker).expect("retain concurrent extraction"),
+            "another process"
+        );
     }
 }
