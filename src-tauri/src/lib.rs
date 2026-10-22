@@ -11,6 +11,7 @@ mod glossary_repo_sync;
 mod glossary_research_dle;
 mod glossary_research_language_data;
 mod glossary_research_storage;
+mod glossary_research_studio;
 mod glossary_storage;
 mod insecure_github_app_config;
 mod installation_access;
@@ -604,6 +605,10 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            glossary_research_studio::glossary_studio_storage,
+            glossary_research_studio::start_glossary_studio_tool,
+            glossary_research_studio::glossary_studio_job,
+            glossary_research_studio::dle::glossary_studio_fetch_dle,
             check_internet_connection,
             read_local_dropped_file,
             append_editor_scroll_debug_log,

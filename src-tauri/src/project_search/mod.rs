@@ -8,6 +8,7 @@ mod discovery;
 mod indexer;
 mod query;
 mod refresh;
+mod research;
 pub(crate) mod research_sample;
 mod schema;
 mod scoring;
@@ -31,6 +32,7 @@ use refresh::{
 };
 
 const MAX_RESULT_ROWS: usize = 500;
+pub(crate) use research::population as research_population;
 const MIN_SEARCH_QUERY_LENGTH: usize = 2;
 const PROJECT_SEARCH_CONTENT_VERSION: i64 = 2;
 

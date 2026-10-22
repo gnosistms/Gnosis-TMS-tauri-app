@@ -256,6 +256,8 @@ export function renderGlossaryTermEditorModal(state) {
     disabled: isSubmitting,
     modalCancel: true,
   });
+  const researchBack = editor.researchOrigin
+    ? secondaryButton("Back to research", "studio:editor-back", { disabled: isSubmitting }) : "";
   const sourceLanguageName = state.glossaryEditor?.sourceLanguage?.name ?? "Source";
   const sourceLanguageCode = state.glossaryEditor?.sourceLanguage?.code ?? "";
   const targetLanguageName = state.glossaryEditor?.targetLanguage?.name ?? "Target";
@@ -276,7 +278,7 @@ export function renderGlossaryTermEditorModal(state) {
     ? `<p class="modal__error">${escapeHtml(formatErrorForDisplay(editor.error))}</p>`
     : "";
   const submitButton = loadingPrimaryButton({
-    label: editor.termId ? "Save Term" : "Add Term",
+    label: editor.researchOrigin ? "Save entry" : editor.termId ? "Save Term" : "Add Term",
     loadingLabel: "Saving...",
     action: "submit-glossary-term-editor",
     isLoading: isSubmitting,
@@ -331,6 +333,7 @@ export function renderGlossaryTermEditorModal(state) {
           <div class="modal__actions">
             ${relatedEntriesButton(editor, state.glossaryEditor?.terms ?? [], isSubmitting)}
             ${cancelButton}
+            ${researchBack}
             ${submitButton}
           </div>
         </div>
