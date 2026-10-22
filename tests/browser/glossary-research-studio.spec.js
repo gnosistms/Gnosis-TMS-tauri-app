@@ -335,7 +335,7 @@ test("research export uses the save picker, shared tooltip and selected JSON pat
   await page.getByRole("button", { name: "New research", exact: true }).click();
   await page.getByLabel("Term to research").fill("ilustre");
   await page.evaluate(() => { window.studioExportPath = "/tmp/selected folder/ilustre discussion.json"; });
-  const button = page.getByRole("button", { name: "Export research", exact: true });
+  const button = page.locator('[data-action="studio:export"]');
   await expect(button).toHaveAttribute("data-tooltip", "export a summary of the data uncovered during the research process in a JSON format appropriate for sending it to an AI for further discussion.");
   await button.click();
   await expect.poll(() => page.evaluate(() => window.studioExports?.length ?? 0)).toBe(1);
@@ -349,8 +349,8 @@ test("cancelling export performs no snapshot work and duplicate clicks share one
   await mountStudio(page);
   await page.getByRole("button", { name: "New research", exact: true }).click();
   await page.evaluate(() => { window.studioExportPath = null; window.studioHoldExportDialog = true; window.studioCalls = []; });
-  await page.getByRole("button", { name: "Export research", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Export research", exact: true })).toBeDisabled();
+  await page.locator('[data-action="studio:export"]').click();
+  await expect(page.locator('[data-action="studio:export"]')).toBeDisabled();
   await page.evaluate(async () => {
     const { studioAction } = await import(`/${"app"}/glossary-research-studio-flow.js`);
     const { state } = await import(`/${"app"}/state.js`);
@@ -358,7 +358,7 @@ test("cancelling export performs no snapshot work and duplicate clicks share one
     await studioAction("studio:export", () => { document.querySelector("#app").innerHTML = renderGlossaryResearchStudio(state); });
     window.releaseStudioExportDialog();
   });
-  await expect(page.getByRole("button", { name: "Export research", exact: true })).toBeEnabled();
+  await expect(page.locator('[data-action="studio:export"]')).toBeEnabled();
   expect(await page.evaluate(() => ({ dialogs: window.studioSaveDialogs.length,
     writes: window.studioCalls.filter((c) => c.command === "glossary_studio_storage").length }))).toEqual({ dialogs: 1, writes: 0 });
 });
@@ -374,8 +374,8 @@ test("export errors leave running research, its error and retry pointer intact",
     view.study.lastToolSignature = "research-pointer"; window.studioExportError = "Selected folder is read-only";
     document.querySelector("#app").innerHTML = renderGlossaryResearchStudio(state);
   });
-  await page.getByRole("button", { name: "Export research", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Export research", exact: true })).toBeEnabled();
+  await page.locator('[data-action="studio:export"]').click();
+  await expect(page.locator('[data-action="studio:export"]')).toBeEnabled();
   const result = await page.evaluate(async () => {
     const { state } = await import(`/${"app"}/state.js`); const view = state.glossaryResearchStudio;
     return { busy: view.busy, viewError: view.error, error: view.study.error, pointer: view.study.lastToolSignature,
@@ -1639,7 +1639,7 @@ test("research progress renders preserve independently opened trial details with
     s.pendingDecision = { kind: "progress", rounds: 10, report: "Completed ten repairs" };
     state.glossaryResearchStudio.hideDecision = true;
   });
-  await page.getByRole("button", { name: "Export research", exact: true }).focus();
+  await page.locator('[data-action="studio:export"]').focus();
   // Opening the paused review uses the same full-render callback as live tool progress.
   await page.evaluate(async () => {
     const { studioAction } = await import(`/${"app"}/glossary-research-studio-flow.js`);
@@ -1848,7 +1848,7 @@ test("step timings survive normal saves and reopening and are included in resear
   });
   expect(reopened.run).toEqual(original.savedRun);
   expect(reopened.calls).toBe(original.calls);
-  await page.getByRole("button", { name: "Export research", exact: true }).click();
+  await page.locator('[data-action="studio:export"]').click();
   await expect.poll(() => page.evaluate(() => window.studioExports?.length ?? 0)).toBe(1);
   const exported = await page.evaluate(() => window.studioExports[0].value);
   expect(exported.timing.steps["2a"].runs[0]).toEqual(original.savedRun);
@@ -1974,7 +1974,7 @@ test("comparison reruns AI, preserves earlier results as pieces and exports comp
   expect(after.manifest.comparisonHistory["2a"][0]._studioArtifact).toMatch(/^[a-f0-9]{64}$/);
   expect(after.manifest.timing.steps["2a"].runs).toHaveLength(2);
   expect(Object.keys(after.manifest.cache).every((key) => key.startsWith("sha256:"))).toBe(true);
-  await page.getByRole("button", { name: "Export research", exact: true }).click();
+  await page.locator('[data-action="studio:export"]').click();
   await expect.poll(() => page.evaluate(() => window.studioExports?.length ?? 0)).toBe(1);
   const full = await page.evaluate(() => window.studioExports[0].value);
   expect(full.comparisonHistory["2a"][0].record.value.forms.length).toBeGreaterThan(0);
