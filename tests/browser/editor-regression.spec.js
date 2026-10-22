@@ -1097,6 +1097,7 @@ async function readEditorFieldMetrics(page, rowId, languageCode, contentKind = "
       fontSizePx: Number.parseFloat(styles.fontSize),
       fontWeight: styles.fontWeight,
       fontStyle: styles.fontStyle,
+      opacity: Number(styles.opacity),
       paddingLeftPx: Number.parseFloat(styles.paddingLeft),
     };
   }, { rowId, languageCode, contentKind });
@@ -5377,7 +5378,8 @@ test.describe("editor regressions", () => {
     await expect(reviewStyleNote.locator(".history-diff__delete")).toHaveText("P");
     await expect(reviewStyleNote.locator(".history-diff__insert")).toHaveText("H1");
     await expect(reviewFootnoteContent).toContainText("Grouped footnote");
-    await expect(reviewFootnoteContent).toHaveCSS("font-style", "italic");
+    await expect(reviewFootnoteContent).toHaveCSS("font-style", "normal");
+    await expect(reviewFootnoteContent).toHaveCSS("opacity", "0.7");
 
     await page.getByRole("button", { name: "History" }).click();
     await expect(page.locator(".history-tabs__item--active")).toHaveText("History");
@@ -5388,7 +5390,8 @@ test.describe("editor regressions", () => {
     await expect(historyStyleNote.locator(".history-diff__delete")).toHaveText("P");
     await expect(historyStyleNote.locator(".history-diff__insert")).toHaveText("H1");
     await expect(historyFootnoteContent).toContainText("Grouped footnote");
-    await expect(historyFootnoteContent).toHaveCSS("font-style", "italic");
+    await expect(historyFootnoteContent).toHaveCSS("font-style", "normal");
+    await expect(historyFootnoteContent).toHaveCSS("opacity", "0.7");
   });
 
   test("row text styles update editor typography and return to paragraph styling", async ({ page }) => {
@@ -5550,7 +5553,8 @@ test.describe("editor regressions", () => {
 
     const baselineFootnoteMetrics = await readEditorFieldMetrics(page, "fixture-row-0001", "vi", "footnote");
     expect(baselineFootnoteMetrics).not.toBeNull();
-    expect(baselineFootnoteMetrics.fontStyle).toBe("italic");
+    expect(baselineFootnoteMetrics.fontStyle).toBe("normal");
+    expect(baselineFootnoteMetrics.opacity).toBe(0.7);
 
     await clickLocatorCenter(page, heading1Button);
     await expect.poll(async () => {
@@ -5558,7 +5562,8 @@ test.describe("editor regressions", () => {
     }).toBeGreaterThan(paragraphMetrics.fontSizePx);
 
     const headingFootnoteMetrics = await readEditorFieldMetrics(page, "fixture-row-0001", "vi", "footnote");
-    expect(headingFootnoteMetrics.fontStyle).toBe("italic");
+    expect(headingFootnoteMetrics.fontStyle).toBe("normal");
+    expect(headingFootnoteMetrics.opacity).toBe(0.7);
     expect(headingFootnoteMetrics.fontSizePx).toBeCloseTo(baselineFootnoteMetrics.fontSizePx, 3);
     expect(headingFootnoteMetrics.paddingLeftPx).toBeCloseTo(baselineFootnoteMetrics.paddingLeftPx, 3);
 
@@ -5568,7 +5573,8 @@ test.describe("editor regressions", () => {
     }).toBeGreaterThan(paragraphMetrics.paddingLeftPx);
 
     const quoteFootnoteMetrics = await readEditorFieldMetrics(page, "fixture-row-0001", "vi", "footnote");
-    expect(quoteFootnoteMetrics.fontStyle).toBe("italic");
+    expect(quoteFootnoteMetrics.fontStyle).toBe("normal");
+    expect(quoteFootnoteMetrics.opacity).toBe(0.7);
     expect(quoteFootnoteMetrics.fontSizePx).toBeCloseTo(baselineFootnoteMetrics.fontSizePx, 3);
     expect(quoteFootnoteMetrics.paddingLeftPx).toBeCloseTo(baselineFootnoteMetrics.paddingLeftPx, 3);
   });
@@ -6170,7 +6176,8 @@ test.describe("editor regressions", () => {
     // Rows support multiple footnotes now, so the add button stays available
     // while a footnote editor is open.
     await expect(footnoteButton).toBeVisible();
-    await expect(footnoteField).toHaveCSS("font-style", "italic");
+    await expect(footnoteField).toHaveCSS("font-style", "normal");
+    await expect(footnoteField).toHaveCSS("opacity", "0.7");
 
     await page.keyboard.type("Saved footnote text");
     await expect.poll(async () => {
@@ -6206,13 +6213,15 @@ test.describe("editor regressions", () => {
     await page.locator('[data-action="switch-editor-sidebar-tab:review"]').click();
     const reviewFootnoteContent = page.locator(".history-item__content--footnote").first();
     await expect(reviewFootnoteContent).toContainText("Saved footnote text");
-    await expect(reviewFootnoteContent).toHaveCSS("font-style", "italic");
+    await expect(reviewFootnoteContent).toHaveCSS("font-style", "normal");
+    await expect(reviewFootnoteContent).toHaveCSS("opacity", "0.7");
 
     await page.getByRole("button", { name: "History" }).click();
     await expect(page.locator(".history-tabs__item--active")).toHaveText("History");
     const historyFootnoteContent = page.locator(".history-item__content--footnote").first();
     await expect(historyFootnoteContent).toContainText("Saved footnote text");
-    await expect(historyFootnoteContent).toHaveCSS("font-style", "italic");
+    await expect(historyFootnoteContent).toHaveCSS("font-style", "normal");
+    await expect(historyFootnoteContent).toHaveCSS("opacity", "0.7");
   });
 
   test("glossary-error filtering preserves scroll when a footnote closes into body editing", async ({ page }) => {
