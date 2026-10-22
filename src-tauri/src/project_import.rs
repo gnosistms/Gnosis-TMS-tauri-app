@@ -27,9 +27,11 @@ use self::{
     chapter_editor::{
         acknowledge_project_transfer_status, apply_aligned_translation_to_gtms_chapter_sync,
         apply_gtms_editor_ai_review_result_sync, apply_gtms_editor_ai_review_results_batch_sync,
+        approve_gtms_chapter_pdf_fonts as approve_gtms_chapter_pdf_fonts_task,
         cancel_gtms_chapter_pdf_export as cancel_gtms_chapter_pdf_export_task,
         clear_gtms_editor_imported_conflict_sync, clear_gtms_editor_reviewed_markers_sync,
         duplicate_gtms_editor_language_image_sync, export_gtms_chapter_file_sync,
+        forget_gtms_pdf_font_approval as forget_gtms_pdf_font_approval_task,
         get_project_transfer_status, initialize_gtms_project_repo_sync,
         insert_gtms_editor_row_sync,
         inspect_gtms_chapter_pdf_fonts as inspect_gtms_chapter_pdf_fonts_sync,
@@ -290,6 +292,29 @@ pub(crate) async fn inspect_gtms_chapter_pdf_fonts(
 #[tauri::command]
 pub(crate) async fn cancel_gtms_chapter_pdf_export(job_id: String) -> Result<bool, String> {
     cancel_gtms_chapter_pdf_export_task(&job_id)
+}
+
+#[tauri::command]
+pub(crate) async fn approve_gtms_chapter_pdf_fonts(
+    app: AppHandle,
+    job_id: String,
+    review_id: String,
+) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        approve_gtms_chapter_pdf_fonts_task(&app, &job_id, &review_id)
+    })
+    .await
+    .map_err(|_| "Could not save the PDF font approval.".to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn forget_gtms_pdf_font_approval(
+    app: AppHandle,
+    font_id: String,
+) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || forget_gtms_pdf_font_approval_task(&app, &font_id))
+        .await
+        .map_err(|_| "Could not forget the PDF font approval.".to_string())?
 }
 
 /// Returns immediately after validation; the copy runs in a background task

@@ -1,4 +1,5 @@
 import { reconcileEditorRowConnection } from "../editor-row-connection.js";
+import { forgetPdfFontApproval, togglePdfSavedFonts } from "../editor-export-flow.js";
 import { revealConnectedEditorRow } from "../editor-virtualization.js";
 import { actionSuffix } from "../action-helpers.js";
 import {
@@ -796,6 +797,16 @@ export function createTranslateActions(render) {
 
     if (action === "submit-editor-export") {
       await submitEditorExport(render);
+      return true;
+    }
+
+    if (action === "toggle-pdf-saved-fonts") {
+      togglePdfSavedFonts(render);
+      return true;
+    }
+
+    if (action.startsWith("forget-pdf-font-approval:")) {
+      await forgetPdfFontApproval(render, action.slice("forget-pdf-font-approval:".length));
       return true;
     }
 

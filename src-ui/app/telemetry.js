@@ -10,6 +10,7 @@
 //   command, and never throws out of an error handler.
 
 import { scrubString, scrubEvent, COMMAND_ERROR_MAX_LENGTH } from "./telemetry-scrub.js";
+import { createPdfFontCoverageReport } from "./pdf-font-telemetry.js";
 import {
   isTelemetrySendAllowed,
   isDisclosureShown,
@@ -269,6 +270,14 @@ export function reportBackendNonfatalError(payload = {}) {
       tags: { source: "backend-nonfatal", operation, reason },
     });
   });
+}
+
+/** Font coverage diagnostics contain metadata only; excerpts remain on-device. */
+export function reportPdfFontCoverageGap(payload = {}) {
+  if (!sentry || !gateOpen()) {
+    return;
+  }
+  safe(() => sentry.captureMessage("PDF font coverage gap", createPdfFontCoverageReport(payload)));
 }
 
 /**
