@@ -68,6 +68,26 @@ fn installation_access_snapshot(
 }
 
 const ACCESS_ERROR_PREFIX: &str = "ACCESS_VERIFICATION_FAILED:";
+const COMMAND_AUTH_RETRY_PREFIX: &str = "AUTH_RETRY_SAFE:";
+
+/// Use at the command entry, before any mutations or background job dispatch.
+/// Commit-time access checks deliberately remain unmarked: an auth error after
+/// work started is not sufficient proof that replaying the command is safe.
+pub(crate) fn require_command_access(
+    app: &AppHandle,
+    installation_id: i64,
+    verify: fn(&AppHandle, i64) -> Result<(), String>,
+) -> Result<(), String> {
+    verify(app, installation_id).map_err(command_access_failure)
+}
+
+fn command_access_failure(error: String) -> String {
+    if error.starts_with(BROKER_AUTH_REQUIRED_PREFIX) {
+        format!("{COMMAND_AUTH_RETRY_PREFIX}{error}")
+    } else {
+        error
+    }
+}
 
 fn access_session_key(token: &str) -> String {
     format!("{:x}", Sha256::digest(token.as_bytes()))
@@ -488,6 +508,22 @@ mod tests {
     };
     use crate::broker::BROKER_AUTH_REQUIRED_PREFIX;
     use std::path::Path;
+
+    #[test]
+    fn command_preflight_marks_only_authentication_failures_for_recovery() {
+        assert_eq!(
+            super::command_access_failure("AUTH_REQUIRED:Expired".into()),
+            "AUTH_RETRY_SAFE:AUTH_REQUIRED:Expired"
+        );
+        for failure in [
+            "Your account type cannot edit shared content.",
+            "AUTH_SESSION_CHANGED:Login changed",
+            "ACCESS_VERIFICATION_FAILED:session_storage",
+            "git commit failed",
+        ] {
+            assert_eq!(super::command_access_failure(failure.into()), failure);
+        }
+    }
 
     fn fresh_snapshot(role: &str) -> InstallationAccessSnapshot {
         InstallationAccessSnapshot {

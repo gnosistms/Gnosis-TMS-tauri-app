@@ -78,6 +78,7 @@ const { enableOfflineMode, reconnectOnlineMode } = await import("./offline-conne
 const { renderConnectionFailureModal } = await import("../screens/connection-failure-modal.js");
 const { handleSyncFailure } = await import("./sync-recovery.js");
 const { classifySyncError } = await import("./sync-error.js");
+const { invoke } = await import("./runtime.js");
 const { resetSessionState, state } = await import("./state.js");
 const { saveStoredTeamRecords, setActiveStorageLogin } = await import("./team-storage.js");
 
@@ -359,6 +360,66 @@ test("handleSyncFailure shows the Gnosis TMS server message for broker connectio
   assert.equal(state.connectionFailure.isOpen, true);
   assert.equal(state.connectionFailure.message, "Could not connect to Gnosis TMS server.");
 });
+
+for (const native of [false, true]) {
+  for (const failureMessage of [
+    "Could not reach the GitHub App broker: connection refused",
+    "Could not reach the GitHub App broker: request timed out",
+  ]) {
+    test(`${native ? "native" : "explicit-token"} action keeps its login when session refresh fails: ${failureMessage}`, async () => {
+      const session = { login: "owner", sessionToken: "stale-token" };
+      state.auth = { ...state.auth, status: "success", session };
+      state.screen = "glossaries";
+      const command = native ? "import_tmx_to_gtms_glossary_repo" : "list_gnosis_resources_for_installation";
+      const payload = native ? { input: { installationId: 42 } } : { installationId: 42, sessionToken: session.sessionToken };
+      const refreshFailure = new Error(failureMessage);
+      const calls = [];
+      invokeHandler = async (name) => {
+        calls.push(name);
+        if (name === "check_internet_connection") return true;
+        if (name === "refresh_broker_auth_session") throw refreshFailure;
+        assert.equal(name, command);
+        throw native ? "AUTH_RETRY_SAFE:AUTH_REQUIRED:Expired" : "GitHub API 401: Bad credentials";
+      };
+
+      const error = await invoke(command, payload).catch((error) => error);
+      assert.equal(error, refreshFailure);
+      const classification = classifySyncError(error);
+      assert.equal(classification.type, "connection_unavailable");
+      assert.equal(await handleSyncFailure(classification, { render: () => {} }), true);
+      assert.equal(state.auth.session, session);
+      assert.equal(state.auth.status, "success");
+      assert.equal(state.screen, "glossaries");
+      assert.equal(state.connectionFailure.isOpen, true);
+      assert.equal(state.connectionFailure.message, "Could not connect to Gnosis TMS server.");
+      assert.deepEqual(calls, [command, "refresh_broker_auth_session", "check_internet_connection"]);
+    });
+  }
+
+  test(`${native ? "native" : "explicit-token"} action still requires sign-in when refresh credentials are rejected`, async () => {
+    state.auth = { ...state.auth, status: "success", session: { login: "owner", sessionToken: "stale-token" } };
+    state.screen = "glossaries";
+    const command = native ? "import_tmx_to_gtms_glossary_repo" : "list_gnosis_resources_for_installation";
+    const payload = native ? { input: { installationId: 42 } } : { installationId: 42, sessionToken: "stale-token" };
+    const calls = [];
+    invokeHandler = async (name) => {
+      calls.push(name);
+      if (name === "refresh_broker_auth_session") throw "Unauthorized";
+      assert.equal(name, command);
+      throw native ? "AUTH_RETRY_SAFE:AUTH_REQUIRED:Expired" : "GitHub API 401: Bad credentials";
+    };
+
+    const error = await invoke(command, payload).catch((error) => error);
+    const classification = classifySyncError(error);
+    assert.equal(classification.type, "auth_invalid");
+    assert.equal(await handleSyncFailure(classification, { render: () => {} }), true);
+    assert.equal(state.auth.session, null);
+    assert.equal(state.auth.status, "expired");
+    assert.equal(state.screen, "start");
+    assert.equal(state.connectionFailure.isOpen, false);
+    assert.deepEqual(calls, [command, "refresh_broker_auth_session"]);
+  });
+}
 
 test("handleSyncFailure shows the GitHub message for GitHub connection failures", async () => {
   invokeHandler = async (command) => {

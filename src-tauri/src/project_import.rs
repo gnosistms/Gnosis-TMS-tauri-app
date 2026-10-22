@@ -107,7 +107,11 @@ pub(crate) async fn initialize_gtms_project_repo(
     input: InitializeProjectRepoInput,
 ) -> Result<InitializeProjectRepoResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_project_management(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_project_management,
+        )?;
         initialize_gtms_project_repo_sync(&app, input)
     })
     .await
@@ -120,7 +124,11 @@ pub(crate) async fn import_xlsx_to_gtms(
     input: ImportXlsxInput,
 ) -> Result<ImportXlsxResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_project_management(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_project_management,
+        )?;
         import_xlsx_to_gtms_sync(&app, input)
     })
     .await
@@ -133,7 +141,11 @@ pub(crate) async fn import_txt_to_gtms(
     input: ImportTxtInput,
 ) -> Result<ImportXlsxResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_project_management(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_project_management,
+        )?;
         import_txt_to_gtms_sync(&app, input)
     })
     .await
@@ -146,7 +158,11 @@ pub(crate) async fn import_srt_to_gtms(
     input: ImportSrtInput,
 ) -> Result<ImportXlsxResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_project_management(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_project_management,
+        )?;
         import_srt_to_gtms_sync(&app, input)
     })
     .await
@@ -159,7 +175,11 @@ pub(crate) async fn import_docx_to_gtms(
     input: ImportDocxInput,
 ) -> Result<ImportXlsxResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_project_management(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_project_management,
+        )?;
         import_docx_to_gtms_sync(&app, input)
     })
     .await
@@ -172,7 +192,11 @@ pub(crate) async fn import_html_to_gtms(
     input: ImportHtmlInput,
 ) -> Result<ImportXlsxResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_project_management(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_project_management,
+        )?;
         import_html_to_gtms_sync(&app, input)
     })
     .await
@@ -187,7 +211,11 @@ pub(crate) async fn import_project_files_to_gtms(
 ) -> Result<ImportProjectFilesResponse, String> {
     let canceled_batch_ids = cancel_store.canceled_batch_ids.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_project_management(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_project_management,
+        )?;
         import_project_files_to_gtms_sync(&app, canceled_batch_ids, input)
     })
     .await
@@ -322,7 +350,11 @@ pub(crate) async fn preflight_aligned_translation_to_gtms_chapter(
     input: AlignedTranslationPreflightInput,
 ) -> Result<AlignedTranslationPreflightResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_chapter_writes(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_chapter_writes,
+        )?;
         preflight_aligned_translation_to_gtms_chapter_sync(&app, input)
     })
     .await
@@ -335,7 +367,11 @@ pub(crate) async fn apply_aligned_translation_to_gtms_chapter(
     input: AlignedTranslationApplyInput,
 ) -> Result<AlignedTranslationApplyResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_chapter_writes(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_chapter_writes,
+        )?;
         apply_aligned_translation_to_gtms_chapter_sync(&app, input)
     })
     .await
@@ -378,7 +414,11 @@ pub(crate) async fn update_gtms_chapter_language_selection(
     input: UpdateChapterLanguageSelectionInput,
 ) -> Result<UpdateChapterLanguageSelectionResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_project_management(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_project_management,
+        )?;
         update_gtms_chapter_language_selection_sync(&app, input)
     })
     .await
@@ -392,7 +432,11 @@ pub(crate) async fn update_gtms_chapter_languages(
     session_token: String,
 ) -> Result<UpdateChapterLanguagesResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_project_management(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_project_management,
+        )?;
         update_gtms_chapter_languages_sync(&app, input, &session_token)
     })
     .await
@@ -405,7 +449,11 @@ pub(crate) async fn update_gtms_chapter_glossary_links(
     input: UpdateChapterGlossaryLinksInput,
 ) -> Result<UpdateChapterGlossaryLinksResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_project_management(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_project_management,
+        )?;
         update_gtms_chapter_glossary_links_sync(&app, input)
     })
     .await
@@ -418,7 +466,11 @@ pub(crate) async fn update_gtms_chapter_workflow_status(
     input: UpdateChapterWorkflowStatusInput,
 ) -> Result<UpdateChapterWorkflowStatusResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_chapter_writes(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_chapter_writes,
+        )?;
         update_gtms_chapter_workflow_status_sync(&app, input)
     })
     .await
@@ -431,7 +483,11 @@ pub(crate) async fn update_gtms_editor_row_fields(
     input: UpdateEditorRowFieldsInput,
 ) -> Result<SaveEditorRowWithConcurrencyResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_chapter_writes(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_chapter_writes,
+        )?;
         update_gtms_editor_row_fields_sync(&app, input)
     })
     .await
@@ -454,7 +510,11 @@ pub(crate) async fn clear_gtms_editor_imported_conflict(
     input: ClearImportedEditorConflictInput,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_chapter_writes(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_chapter_writes,
+        )?;
         clear_gtms_editor_imported_conflict_sync(&app, input)
     })
     .await
@@ -467,7 +527,11 @@ pub(crate) async fn update_gtms_editor_row_fields_batch(
     input: UpdateEditorRowFieldsBatchInput,
 ) -> Result<UpdateEditorRowFieldsBatchResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_chapter_writes(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_chapter_writes,
+        )?;
         update_gtms_editor_row_fields_batch_sync(&app, input)
     })
     .await
@@ -480,7 +544,11 @@ pub(crate) async fn merge_gtms_editor_rows(
     input: MergeEditorRowsInput,
 ) -> Result<MergeEditorRowsResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_chapter_writes(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_chapter_writes,
+        )?;
         merge_gtms_editor_rows_sync(&app, input)
     })
     .await
@@ -493,7 +561,11 @@ pub(crate) async fn insert_gtms_editor_row_before(
     input: InsertEditorRowInput,
 ) -> Result<InsertEditorRowResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_chapter_writes(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_chapter_writes,
+        )?;
         insert_gtms_editor_row_sync(&app, input, true)
     })
     .await
@@ -506,7 +578,11 @@ pub(crate) async fn insert_gtms_editor_row_after(
     input: InsertEditorRowInput,
 ) -> Result<InsertEditorRowResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_chapter_writes(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_chapter_writes,
+        )?;
         insert_gtms_editor_row_sync(&app, input, false)
     })
     .await
@@ -519,7 +595,11 @@ pub(crate) async fn update_gtms_editor_row_field_flag(
     input: UpdateEditorRowFieldFlagInput,
 ) -> Result<UpdateEditorRowFieldFlagResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_chapter_writes(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_chapter_writes,
+        )?;
         update_gtms_editor_row_field_flag_sync(&app, input)
     })
     .await
@@ -532,7 +612,11 @@ pub(crate) async fn update_gtms_editor_row_text_style(
     input: UpdateEditorRowTextStyleInput,
 ) -> Result<UpdateEditorRowTextStyleResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_chapter_writes(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_chapter_writes,
+        )?;
         update_gtms_editor_row_text_style_sync(&app, input)
     })
     .await
@@ -547,7 +631,11 @@ pub(crate) async fn save_gtms_editor_language_image_url(
     let worker_app = app.clone();
     let worker_input = input.clone();
     let response = tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_chapter_writes(&worker_app, worker_input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &worker_app,
+            worker_input.installation_id,
+            ensure_installation_allows_chapter_writes,
+        )?;
         save_gtms_editor_language_image_url_sync(&worker_app, worker_input)
     })
     .await
@@ -562,7 +650,11 @@ pub(crate) async fn upload_gtms_editor_language_image(
     input: UploadEditorLanguageImageInput,
 ) -> Result<SaveEditorLanguageImageResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_chapter_writes(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_chapter_writes,
+        )?;
         upload_gtms_editor_language_image_sync(&app, input)
     })
     .await
@@ -575,7 +667,11 @@ pub(crate) async fn remove_gtms_editor_language_image(
     input: RemoveEditorLanguageImageInput,
 ) -> Result<SaveEditorLanguageImageResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_chapter_writes(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_chapter_writes,
+        )?;
         remove_gtms_editor_language_image_sync(&app, input)
     })
     .await
@@ -588,7 +684,11 @@ pub(crate) async fn duplicate_gtms_editor_language_image(
     input: DuplicateEditorLanguageImageInput,
 ) -> Result<SaveEditorLanguageImageResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_chapter_writes(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_chapter_writes,
+        )?;
         duplicate_gtms_editor_language_image_sync(&app, input)
     })
     .await
@@ -601,7 +701,11 @@ pub(crate) async fn clear_gtms_editor_reviewed_markers(
     input: ClearEditorReviewedMarkersInput,
 ) -> Result<ClearEditorReviewedMarkersResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_chapter_writes(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_chapter_writes,
+        )?;
         clear_gtms_editor_reviewed_markers_sync(&app, input)
     })
     .await
@@ -614,7 +718,11 @@ pub(crate) async fn apply_gtms_editor_ai_review_result(
     input: ApplyEditorAiReviewResultInput,
 ) -> Result<ApplyEditorAiReviewResultResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_chapter_writes(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_chapter_writes,
+        )?;
         apply_gtms_editor_ai_review_result_sync(&app, input)
     })
     .await
@@ -627,7 +735,11 @@ pub(crate) async fn apply_gtms_editor_ai_review_results_batch(
     input: ApplyEditorAiReviewResultsBatchInput,
 ) -> Result<ApplyEditorAiReviewResultsBatchResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_chapter_writes(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_chapter_writes,
+        )?;
         apply_gtms_editor_ai_review_results_batch_sync(&app, input)
     })
     .await
@@ -640,7 +752,11 @@ pub(crate) async fn soft_delete_gtms_editor_row(
     input: UpdateEditorRowLifecycleInput,
 ) -> Result<UpdateEditorRowLifecycleResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_chapter_writes(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_chapter_writes,
+        )?;
         update_gtms_editor_row_lifecycle_sync(&app, input, "deleted")
     })
     .await
@@ -653,7 +769,11 @@ pub(crate) async fn restore_gtms_editor_row(
     input: UpdateEditorRowLifecycleInput,
 ) -> Result<UpdateEditorRowLifecycleResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_chapter_writes(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_chapter_writes,
+        )?;
         update_gtms_editor_row_lifecycle_sync(&app, input, "active")
     })
     .await
@@ -666,7 +786,11 @@ pub(crate) async fn permanently_delete_gtms_editor_row(
     input: UpdateEditorRowLifecycleInput,
 ) -> Result<UpdateEditorRowLifecycleResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_chapter_writes(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_chapter_writes,
+        )?;
         permanently_delete_gtms_editor_row_sync(&app, input)
     })
     .await
@@ -701,7 +825,11 @@ pub(crate) async fn restore_gtms_editor_field_from_history(
     input: RestoreEditorFieldHistoryInput,
 ) -> Result<RestoreEditorFieldHistoryResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_chapter_writes(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_chapter_writes,
+        )?;
         restore_gtms_editor_field_from_history_sync(&app, input)
     })
     .await
@@ -724,7 +852,11 @@ pub(crate) async fn save_gtms_editor_row_comment(
     input: SaveEditorRowCommentInput,
 ) -> Result<SaveEditorRowCommentResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_chapter_writes(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_chapter_writes,
+        )?;
         save_gtms_editor_row_comment_sync(&app, input)
     })
     .await
@@ -737,7 +869,11 @@ pub(crate) async fn delete_gtms_editor_row_comment(
     input: DeleteEditorRowCommentInput,
 ) -> Result<DeleteEditorRowCommentResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_chapter_writes(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_chapter_writes,
+        )?;
         delete_gtms_editor_row_comment_sync(&app, input)
     })
     .await
@@ -750,7 +886,11 @@ pub(crate) async fn reverse_gtms_editor_batch_replace_commit(
     input: ReverseEditorBatchReplaceCommitInput,
 ) -> Result<ReverseEditorBatchReplaceCommitResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_chapter_writes(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_chapter_writes,
+        )?;
         reverse_gtms_editor_batch_replace_commit_sync(&app, input)
     })
     .await
@@ -763,7 +903,11 @@ pub(crate) async fn rename_gtms_chapter(
     input: RenameChapterInput,
 ) -> Result<RenameChapterResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_project_management(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_project_management,
+        )?;
         rename_gtms_chapter_sync(&app, input)
     })
     .await
@@ -776,7 +920,11 @@ pub(crate) async fn soft_delete_gtms_chapter(
     input: UpdateChapterLifecycleInput,
 ) -> Result<UpdateChapterLifecycleResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_project_management(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_project_management,
+        )?;
         update_gtms_chapter_lifecycle_sync(&app, input, "deleted")
     })
     .await
@@ -789,7 +937,11 @@ pub(crate) async fn restore_gtms_chapter(
     input: UpdateChapterLifecycleInput,
 ) -> Result<UpdateChapterLifecycleResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_project_management(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_project_management,
+        )?;
         update_gtms_chapter_lifecycle_sync(&app, input, "active")
     })
     .await
@@ -802,7 +954,11 @@ pub(crate) async fn permanently_delete_gtms_chapter(
     input: UpdateChapterLifecycleInput,
 ) -> Result<UpdateChapterLifecycleResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_project_management(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_project_management,
+        )?;
         permanently_delete_gtms_chapter_sync(&app, input)
     })
     .await
@@ -815,7 +971,11 @@ pub(crate) async fn clear_deleted_gtms_chapters(
     input: ClearDeletedChaptersInput,
 ) -> Result<ClearDeletedChaptersResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_project_management(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_project_management,
+        )?;
         clear_deleted_gtms_chapters_sync(&app, input)
     })
     .await
