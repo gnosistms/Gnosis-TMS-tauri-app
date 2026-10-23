@@ -226,10 +226,10 @@ test("markers can be deleted and undone normally; saving a marker-free draft emp
   await mount(page);
   await page.getByRole("button", { name: "Group fragments", exact: true }).click();
   await target(page).click();
-  await input(page).press("Meta+A");
+  await input(page).press("ControlOrMeta+A");
   await input(page).press("Backspace");
   await expect(input(page)).toHaveValue("");
-  await input(page).press("Meta+Z");
+  await input(page).press("ControlOrMeta+Z");
   await expect(input(page)).toHaveValue("target1⟦1⟧target2⟦2⟧target3");
   await input(page).fill("Whole sentence");
   await page.getByRole("button", { name: "Standard", exact: true }).click();
