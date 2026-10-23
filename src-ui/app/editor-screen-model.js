@@ -606,7 +606,7 @@ export function buildEditorScreenViewModel(appState) {
             seenRevisions: commentSeenRevisions,
           }),
           showResearchButton:
-            section.code === sourceCode && Boolean(row?.rowId) && canManageGlossaries(),
+            Boolean(row?.rowId) && canManageGlossaries(),
           isAiTranslating,
           changeView: isAiTranslating ? null : changeView,
           // A footnote or caption someone deleted still gets its box, showing the

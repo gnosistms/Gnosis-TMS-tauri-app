@@ -139,7 +139,7 @@ export function createGlossaryResearchActions(render) {
   return async function handleGlossaryResearchAction(action, event) {
     if (action === "open-research-prep") {
       const button = event?.target?.closest?.("[data-row-id]");
-      if (button) await openResearchPrepFromEditor(render, button.dataset.rowId);
+      if (button) await openResearchPrepFromEditor(render, button.dataset.rowId, button.dataset.languageCode);
       return true;
     }
     if (exact[action]) {

@@ -31,7 +31,7 @@ function returnToEditor(render) {
   render();
 }
 
-export async function openResearchPrepFromEditor(render, rowId) {
+export async function openResearchPrepFromEditor(render, rowId, languageCode) {
   const chapter = state.editorChapter ?? {};
   const row = (chapter.rows ?? []).find((candidate) => (candidate.id ?? candidate.rowId) === rowId);
   const sourceCode = chapterSourceLanguageCode(chapter);
@@ -63,7 +63,7 @@ export async function openResearchPrepFromEditor(render, rowId) {
   await openGlossaryEditor(render, glossary.glossaryId, { navigationSource: "editor", preferredGlossary: glossary });
   state.glossaryResearchPrep = {
     ...base, step: "input", glossaryId: glossary.glossaryId, sourceLanguageCode: sourceCode,
-    languages, selectedLanguageCode: sourceCode, projectId,
+    languages, selectedLanguageCode: languages.some((language) => language.code === languageCode) ? languageCode : sourceCode, projectId,
   };
   render();
 }
