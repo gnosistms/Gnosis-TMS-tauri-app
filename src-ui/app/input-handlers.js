@@ -96,6 +96,7 @@ import {
   updateEditorRowFieldValue,
   updateEditorSearchFilterQuery,
   updateEditorSourceLanguage,
+  updateEditorSrtPauseSettings,
   updateEditorTargetLanguage,
 } from "./translate-flow.js";
 import {
@@ -527,6 +528,21 @@ function handleQaTermRegularExpressionInput(event) {
   }
   updateQaTermDraftField("isRegularExpression", input.checked);
   return true;
+}
+
+function handleEditorSrtPauseInput(event, render) {
+  if (event.type !== "change") return false;
+  const toggle = event.target.closest("[data-editor-srt-pause-toggle]");
+  const threshold = event.target.closest("[data-editor-srt-pause-threshold]");
+  if (toggle instanceof HTMLInputElement) {
+    void updateEditorSrtPauseSettings(render, { enabled: toggle.checked });
+    return true;
+  }
+  if (threshold instanceof HTMLSelectElement) {
+    void updateEditorSrtPauseSettings(render, { thresholdMs: Number(threshold.value) });
+    return true;
+  }
+  return false;
 }
 
 function handleEditorSourceLanguageInput(event, render) {
@@ -1255,6 +1271,7 @@ const inputHandlers = [
   handleQaTermNotesInput,
   handleQaTermCaseSensitiveInput,
   handleQaTermRegularExpressionInput,
+  handleEditorSrtPauseInput,
   handleEditorSourceLanguageInput,
   handleEditorTargetLanguageInput,
   handleEditorPreviewLanguageInput,

@@ -334,6 +334,11 @@ pub struct AiTranslationBatchRequest {
     /// words between neighbouring rows.
     #[serde(default)]
     pub subtitle_cues: bool,
+    /// Explicit editor sentence groups may contain intentionally empty cues.
+    #[serde(default)]
+    pub sentence_group: bool,
+    #[serde(default)]
+    pub sentence_source_text: String,
     #[serde(default)]
     pub installation_id: Option<i64>,
 }
@@ -415,6 +420,13 @@ pub struct AiReviewBatchRequest {
     /// have moved words between neighbouring rows.
     #[serde(default)]
     pub subtitle_cues: bool,
+    /// Explicit editor sentence groups may contain intentionally empty cues.
+    #[serde(default)]
+    pub sentence_group: bool,
+    #[serde(default)]
+    pub sentence_source_text: String,
+    #[serde(default)]
+    pub sentence_target_text: String,
     #[serde(default)]
     pub installation_id: Option<i64>,
 }

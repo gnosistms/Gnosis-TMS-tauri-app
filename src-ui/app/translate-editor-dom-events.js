@@ -799,7 +799,20 @@ export function registerTranslateEditorDomEvents(app, render) {
     });
   }, true);
 
+  for (const type of ["compositionstart", "compositionend"]) {
+    app.addEventListener(type, (event) => {
+      const input = closestEventTarget(event.target, "[data-editor-row-field]");
+      if (input instanceof HTMLTextAreaElement) input.dataset.srtComposing = String(type === "compositionstart");
+    });
+  }
+
+  app.addEventListener("input", (event) => {
+    const input = closestEventTarget(event.target, "[data-editor-srt-recovery]");
+    if (input instanceof HTMLTextAreaElement) updateSrtGroupDraft(input.dataset.rowId, input.dataset.languageCode, input.value);
+  });
+
   document.addEventListener("selectionchange", () => {
     syncActiveEditorInlineStyleButtons(document);
   });
 }
+import { updateSrtGroupDraft } from "./editor-srt-group-edit-flow.js";

@@ -210,7 +210,8 @@ function rowMatchesFilterMode(
     case EDITOR_ROW_FILTER_MODE_PLEASE_CHECK:
       return targetSection?.pleaseCheck === true;
     case EDITOR_ROW_FILTER_MODE_TARGET_EMPTY:
-      return Boolean(targetSection) && extractInlineMarkupVisibleText(targetSection.text ?? "").trim().length === 0;
+      return Boolean(targetSection) && (targetSection.srtParts ?? [targetSection.text ?? ""])
+        .every((text) => extractInlineMarkupVisibleText(text).trim().length === 0);
     case EDITOR_ROW_FILTER_MODE_HAS_IMAGE:
       return Boolean(targetSection?.image);
     case EDITOR_ROW_FILTER_MODE_HAS_FOOTNOTE:
@@ -220,7 +221,7 @@ function rowMatchesFilterMode(
     case EDITOR_ROW_FILTER_MODE_HAS_UNREAD_COMMENTS:
       return editorRowHasUnreadComments(row, seenRevisions);
     case EDITOR_ROW_FILTER_MODE_CHANGED_AFTER_MY_EDIT:
-      return changedAfterMyEditRowIds.has(row.id);
+      return (row.srtGroup?.memberRowIds ?? [row.id]).some((id) => changedAfterMyEditRowIds.has(id));
     case EDITOR_ROW_FILTER_MODE_HAS_CONFLICT:
       return rowHasUnresolvedTextConflict(row, targetLanguageCode);
     case EDITOR_ROW_FILTER_MODE_HAS_GLOSSARY_ERROR:

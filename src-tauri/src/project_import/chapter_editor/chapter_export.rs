@@ -2398,6 +2398,29 @@ mod tests {
     }
 
     #[test]
+    fn partially_translated_srt_round_trips_blank_cues_and_their_timings() {
+        let rows = vec![
+            srt_row("r1", "1", "", Some((0, 1000)), None),
+            srt_row("r2", "2", "", Some((1000, 2000)), None),
+            srt_row("r3", "3", "Sentence", Some((2000, 3000)), None),
+            srt_row("r4", "4", "", Some((3000, 4000)), None),
+        ];
+        let (content, skipped) = render_srt_document(&rows, &language());
+        assert_eq!(skipped, 0);
+        let cues = crate::project_import::chapter_import::parse_translation_srt(
+            content.as_bytes(),
+            "roundtrip.srt",
+        )
+        .unwrap();
+        assert_eq!(
+            cues.iter().map(|cue| cue.text.as_str()).collect::<Vec<_>>(),
+            vec!["", "", "Sentence", ""]
+        );
+        assert_eq!(cues[3].start_ms, 3000);
+        assert_eq!(cues[3].end_ms, 4000);
+    }
+
+    #[test]
     fn render_srt_document_prefers_language_timing_over_base_timing() {
         let rows = vec![srt_row(
             "row-1",

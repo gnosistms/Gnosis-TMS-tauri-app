@@ -1054,7 +1054,7 @@ mod tests {
     fn srt_translation_text_extraction_rejects_invalid_or_empty_subtitles() {
         for (text, expected_error) in [
             ("1\ninvalid timing\nText\n", "Line 2:"),
-            ("1\n00:00:01,000 --> 00:00:02,000\n\n", "must contain text"),
+            ("\n\n", "does not contain any SRT subtitle entries"),
         ] {
             let error = extract_project_translation_text_sync(ExtractProjectTranslationTextInput {
                 file_name: "translation.srt".to_string(),
@@ -1064,6 +1064,18 @@ mod tests {
 
             assert!(error.contains(expected_error), "unexpected error: {error}");
         }
+    }
+
+    #[test]
+    fn srt_translation_text_extraction_counts_blank_cues() {
+        let response = extract_project_translation_text_sync(ExtractProjectTranslationTextInput {
+            file_name: "blank.srt".to_string(),
+            bytes: b"1\n00:00:01,000 --> 00:00:02,000\n\n2\n00:00:02,000 --> 00:00:03,000\n"
+                .to_vec(),
+        })
+        .expect("valid blank cues should retain their subtitle count");
+        assert_eq!(response.plain_text, "\n");
+        assert_eq!(response.unit_count, 2);
     }
 
     #[test]

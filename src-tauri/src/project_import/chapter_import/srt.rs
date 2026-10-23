@@ -80,9 +80,6 @@ pub(crate) fn parse_translation_srt(
             }
             index += 1;
         }
-        if start == index {
-            return Err(error(index, "Each subtitle must contain text."));
-        }
         cues.push(SubtitleCue {
             start_ms,
             end_ms,
@@ -459,7 +456,6 @@ mod tests {
             "not srt",
             "00:00:01,000 --> 00:00:02,000\nNo index\n",
             "1\n00:00:01.000 --> 00:00:02.000\nWrong separator\n",
-            "1\n00:00:01,000 --> 00:00:02,000\n\n",
             "1\n00:00:03,000 --> 00:00:02,000\nBackwards\n",
             "1\n00:00:01,000 --> 00:00:02,000\nFirst\n2\n00:00:03,000 --> 00:00:04,000\nSecond\n",
             "1\n00:61:01,000 --> 00:62:02,000\nBad minutes\n",
@@ -479,6 +475,23 @@ mod tests {
         assert_eq!(cues[0].text, " First line \nSecond line");
         assert_eq!(cues[1].start_ms, 2000);
         assert_eq!(cues[1].end_ms, 2010);
+    }
+
+    #[test]
+    fn translation_srt_preserves_leading_consecutive_trailing_and_all_blank_cues() {
+        let text = "1\n00:00:01,000 --> 00:00:02,000\n\n2\n00:00:02,000 --> 00:00:03,000\n\n3\n00:00:03,000 --> 00:00:04,000\nHello\n\n4\n00:00:04,000 --> 00:00:05,000\n\n";
+        let cues = parse_translation_srt(text.as_bytes(), "translation.srt").unwrap();
+        assert_eq!(
+            cues.iter().map(|cue| cue.text.as_str()).collect::<Vec<_>>(),
+            vec!["", "", "Hello", ""]
+        );
+        assert_eq!(cues[3].start_ms, 4000);
+        assert_eq!(
+            parse_translation_srt(b"1\n00:00:01,000 --> 00:00:02,000\n", "blank.srt").unwrap()[0]
+                .text,
+            ""
+        );
+        assert!(parse_translation_srt(b"\n\n", "empty.srt").is_err());
     }
 
     #[test]

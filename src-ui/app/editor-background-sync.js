@@ -254,6 +254,8 @@ function hasLocalEditorWritesBlockingBackgroundSync(chapterState = state.editorC
     return true;
   }
 
+  if (Object.values(chapterState.srtGroupEdits ?? {}).some((edit) => edit.draft !== edit.savedDraft)) return true;
+
   return false;
 }
 

@@ -9,6 +9,7 @@ import {
 } from "../editor-write-permission.js";
 import { waitForNextPaint } from "../runtime.js";
 import { state } from "../state.js";
+import { dismissSrtMarkerModal } from "../editor-srt-group-edit-flow.js";
 import {
   forceCloseFromEditorCloseWait,
   keepAppOpenFromEditorCloseWait,
@@ -117,6 +118,9 @@ import {
   selectTargetLanguageManagerPickerLanguage,
   selectAllEditorReplaceRows,
   setEditorMode,
+  setEditorSrtView,
+  setActiveEditorField,
+  flushDirtyEditorRows,
   showEditorRowInContext,
   softDeleteEditorRow,
   submitTargetLanguageManager,
@@ -648,7 +652,7 @@ export function createTranslateActions(render) {
       dismissActiveIdleEditorImageUpload(render);
       const rowId = button?.dataset.rowId ?? null;
       const languageCode = button?.dataset.languageCode ?? null;
-      openEditorFootnote(render, rowId, languageCode, { target: event?.target ?? null });
+      await openEditorFootnote(render, rowId, languageCode, { target: event?.target ?? null });
       return true;
     }
 
@@ -659,7 +663,7 @@ export function createTranslateActions(render) {
       }
       dismissActiveIdleEditorImageUpload(render);
       deactivateGlossaryTooltipMark();
-      openEditorFootnote(render, request.rowId, request.languageCode, {
+      await openEditorFootnote(render, request.rowId, request.languageCode, {
         visibleInsertIndex: request.visibleInsertIndex,
         footnoteText: request.footnoteText,
       });
@@ -1027,9 +1031,25 @@ export function createTranslateActions(render) {
       return true;
     }
 
+    const srtView = actionSuffix(action, "set-editor-srt-view:");
+    if (srtView !== null) {
+      await setEditorSrtView(render, srtView);
+      return true;
+    }
+    const historyFragment = actionSuffix(action, "select-editor-srt-history:");
+    if (historyFragment !== null) {
+      if (await flushDirtyEditorRows(render)) await setActiveEditorField(render, historyFragment, state.editorChapter.activeLanguageCode);
+      return true;
+    }
+    if (action === "dismiss-editor-srt-marker-modal") { dismissSrtMarkerModal(render); return true; }
+    if (action === "save-editor-srt-drafts") {
+      if (await flushDirtyEditorRows(render, { confirmSrtMarkerRepair: true })) render?.({ scope: "translate-body" });
+      return true;
+    }
+
     const editorMode = actionSuffix(action, "set-editor-mode:");
     if (editorMode !== null) {
-      setEditorMode(render, editorMode);
+      await setEditorMode(render, editorMode);
       return true;
     }
 

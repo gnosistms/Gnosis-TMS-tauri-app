@@ -7040,9 +7040,7 @@ test("AI review remains visible and diffs successive editor edits", async ({ pag
     };
   }, rowId);
   await page.locator('[data-action="switch-editor-sidebar-tab:review"]').click();
-  const review = page.locator(".history-group").filter({
-    has: page.locator('[data-action="toggle-editor-review-section:ai-review"]'),
-  });
+  const review = page.locator('[data-editor-review-section="ai-review"]');
   await expect(review.locator('[data-action="apply-editor-ai-review"]')).toBeVisible();
   await activateMainEditorField(page, rowId, "vi");
   const input = page.locator(`[data-editor-row-field][data-row-id="${rowId}"][data-language-code="vi"]`);
