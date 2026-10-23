@@ -382,6 +382,33 @@ test("SRT translation uses the timestamp command without AI credentials, model s
   assert.equal(state.projectAddTranslation.isOpen, false);
 });
 
+test("all-blank SRT cues continue through timestamp import while empty text files stay invalid", async () => {
+  for (const extension of ["srt", "txt"]) {
+    resetProjectAddTranslationTestState();
+    state.projectAddTranslation.step = "input";
+    const commands = [];
+    invokeHandler = async (command) => {
+      commands.push(command);
+      if (command === "extract_project_translation_text") return { plainText: "\n", unitCount: 2 };
+      assert.equal(command, "add_srt_translation_to_gtms_chapter");
+      return { updatedRowCount: 2, insertedRowCount: 0 };
+    };
+    await handleDroppedProjectAddTranslationFiles(() => {}, [{
+      name: `blank.${extension}`, dataBase64: Buffer.from("1\n00:00:01,000 --> 00:00:02,000\n\n2\n00:00:02,000 --> 00:00:03,000\n").toString("base64"),
+    }]);
+    if (extension === "srt") {
+      assert.equal(state.projectAddTranslation.step, "selectLanguage");
+      state.projectAddTranslation.targetLanguageCode = "vi";
+      await continueProjectAddTranslationLanguage(() => {});
+      assert.deepEqual(commands, ["extract_project_translation_text", "add_srt_translation_to_gtms_chapter"]);
+      assert.equal(state.projectAddTranslation.isOpen, false);
+    } else {
+      assert.equal(state.projectAddTranslation.step, "input");
+      assert.match(state.projectAddTranslation.error, /readable text/);
+    }
+  }
+});
+
 test("invalid SRT is refused before choosing a language or writing translations", async () => {
   resetProjectAddTranslationTestState();
   state.projectAddTranslation.step = "input";

@@ -250,6 +250,7 @@ function buildRowIndexById(rows) {
   rows.forEach((row, index) => {
     if (typeof row?.id === "string" && row.id) {
       rowIndexById.set(row.id, index);
+      for (const member of row.srtGroup?.memberRowIds ?? []) rowIndexById.set(member, index);
     }
   });
   return rowIndexById;
@@ -388,7 +389,7 @@ export function createEditorVirtualListController({
       ?? estimateEditorRowHeight(row, currentModel.collapsedLanguageCodes, currentModel.editorFontSizePx);
   };
 
-  const getRowKey = (index) => currentModel.contentRows[index]?.id ?? index;
+  const getRowKey = (index) => currentModel.contentRows[index]?.srtGroup?.key ?? currentModel.contentRows[index]?.id ?? index;
 
   const extractRange = (range) => {
     const indexes = defaultRangeExtractor(range);
@@ -404,12 +405,21 @@ export function createEditorVirtualListController({
     return indexes;
   };
 
+  // Controls, banners, and document padding precede the list in this same
+  // scroller. Virtual Core measures item starts in scroll-content coordinates;
+  // the DOM spacers below remain local to the list itself.
+  const readListScrollMargin = () => Math.max(0,
+    topSpacer.getBoundingClientRect().top
+      - scrollContainer.getBoundingClientRect().top - scrollContainer.clientTop
+      + scrollContainer.scrollTop);
+
   const buildVirtualizerOptions = () => ({
     count: Array.isArray(currentModel.contentRows) ? currentModel.contentRows.length : 0,
     getScrollElement: () => scrollContainer,
     estimateSize: estimateRowSize,
     getItemKey: getRowKey,
     gap: EDITOR_ROW_GAP_PX,
+    scrollMargin: readListScrollMargin(),
     overscan: EDITOR_VIRTUALIZER_OVERSCAN_ROWS,
     rangeExtractor: extractRange,
     initialRect: {
@@ -488,14 +498,18 @@ export function createEditorVirtualListController({
   };
 
   const updateVirtualizerModel = () => {
+    const oldGroups = new Map(currentModel.contentRows.map((row) => [row.id, row.srtGroup?.key]));
     currentModel = buildEditorScreenViewModel(appState);
+    for (const row of currentModel.contentRows) {
+      if (oldGroups.get(row.id) !== row.srtGroup?.key) rowHeightCache.delete(row.id);
+    }
     currentRowIndexById = buildRowIndexById(currentModel.contentRows);
     const activeRowId =
       pendingTranslateAnchorRowId()
       || pinnedFocusedRowId(root, scrollContainer)
       || "";
     pinnedRowIndex = activeRowId
-      ? currentModel.contentRows.findIndex((row) => row.id === activeRowId)
+      ? currentRowIndexById.get(activeRowId) ?? -1
       : -1;
     virtualizer.setOptions(buildVirtualizerOptions());
     virtualizer._willUpdate();
@@ -571,6 +585,7 @@ export function createEditorVirtualListController({
     resolveEditorVirtualRangeState(
       virtualizer.getVirtualItems(),
       virtualizer.getTotalSize(),
+      virtualizer.options.scrollMargin,
     );
 
   const applyRangeState = (rangeState) => {
@@ -759,7 +774,7 @@ export function createEditorVirtualListController({
 
   const notifyRowsChanged = (rowIds, options = {}) => {
     updateVirtualizerModel();
-    const normalizedRowIds = normalizeEditorRowIds(rowIds);
+    const normalizedRowIds = normalizeEditorRowIds((Array.isArray(rowIds) ? rowIds : []).map((id) => currentModel.contentRows[currentRowIndexById.get(id)]?.id ?? id));
     if (normalizedRowIds.length === 0) {
       return false;
     }
@@ -903,10 +918,7 @@ export function createEditorVirtualListController({
       // Virtual Core field. Keep that dependency inside this controller.
       virtualizer.getTotalSize();
       const item = virtualizer.measurementsCache[index];
-      const listOffset = topSpacer.getBoundingClientRect().top
-        - scrollContainer.getBoundingClientRect().top - scrollContainer.clientTop
-        + scrollContainer.scrollTop;
-      return item ? { start: item.start + listOffset, end: item.end + listOffset } : null;
+      return item ? { start: item.start, end: item.end } : null;
     },
     renderRevealedRow() {
       renderWindow(false, { reason: EDITOR_VIRTUALIZATION_SCROLL_REASON });

@@ -14,6 +14,7 @@ import {
   normalizeEditorChapterFilterState,
 } from "./editor-filters.js";
 import { loadActiveEditorFieldHistory } from "./editor-history-flow.js";
+import { srtGroupingEnabled, srtGroupForRow } from "./editor-srt-grouping.js";
 import {
   applyOptimisticEditorHistoryEntry,
   createOptimisticEditorHistoryEntryFromRow,
@@ -88,12 +89,24 @@ import {
   publishRepoInvalidation,
 } from "./repo-write-queue.js";
 import { renderEditorRowScoped } from "./editor-row-scoped-render.js";
+import {
+  pendingSrtGroupEdits, validateSrtGroupEdits, setSrtGroupEditError, finishSrtGroupEdits, proposeSrtMarkerRepair,
+} from "./editor-srt-group-edit-flow.js";
 
 const pendingEditorDirtyRowScanFrameByRowId = new Map();
 const pendingEditorRowCommitMetadataByRowId = new Map();
 const PENDING_LOCAL_SAVE_STATUS_REFRESH_MS = 10_000;
 let pendingEditorFootnoteOpenRequest = null;
 let pendingEditorImageCaptionOpenRequest = null;
+let pendingSrtGroupSave = null;
+
+function activeHistoryIncludesAnyRow(rowIds) {
+  const chapter = state.editorChapter;
+  return rowIds.includes(chapter?.activeRowId)
+    || (srtGroupingEnabled(chapter) && srtGroupForRow(chapter, chapter.activeRowId)
+      .some((row) => rowIds.includes(row.rowId)));
+}
+
 
 function normalizePendingEditorCommitMetadata(commitMetadata) {
   if (!commitMetadata || typeof commitMetadata !== "object") {
@@ -471,13 +484,13 @@ function rowHasPendingDurableWrite(row, chapterState) {
 }
 
 export function hasPendingEditorWrites(chapterState = state.editorChapter, options = {}) {
-  return scopedEditorRows(chapterState, options).some((row) =>
+  return pendingSrtGroupEdits(chapterState, options).length > 0 || scopedEditorRows(chapterState, options).some((row) =>
     rowHasPendingDurableWrite(row, chapterState),
   );
 }
 
 export function countPendingEditorWriteRows(chapterState = state.editorChapter) {
-  return scopedEditorRows(chapterState).filter((row) =>
+  return pendingSrtGroupEdits(chapterState).length + scopedEditorRows(chapterState).filter((row) =>
     rowHasPendingDurableWrite(row, chapterState),
   ).length;
 }
@@ -693,8 +706,9 @@ export async function flushDirtyEditorRows(render, operations = {}, options = {}
     return true;
   }
   if (editorWriteLockIsActive(state.editorChapter)) {
-    return true;
+    return pendingSrtGroupEdits(state.editorChapter, options).length === 0;
   }
+  if (!(await persistSrtGroupDrafts(render, operations, options))) return false;
   const waitForDurable = options?.waitForDurable !== false;
 
   const candidateRowIds = resolveDirtyTrackedEditorRowIds(state.editorChapter?.dirtyRowIds, {
@@ -781,7 +795,7 @@ export function openEditorFootnote(render, rowId, languageCode, options = {}) {
       requestedVisibleInsertIndex,
     );
   let insertIndex = requestedInsertIndex ?? currentText.length;
-  let selectionEnd = insertIndex;
+  let selectionEnd = Number.isInteger(options.selectionEnd) ? Math.max(insertIndex, Math.min(currentText.length, options.selectionEnd)) : insertIndex;
 
   if (requestedInsertIndex === null && typeof document !== "undefined") {
     const activeElement = document.activeElement;
@@ -1161,7 +1175,7 @@ export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, ope
       reconcileDirtyTrackedEditorRows([value.rowId]);
       renderStyleChange({ preserveActiveEditorUndo: true });
 
-      if (state.editorChapter.activeRowId === value.rowId) {
+      if (activeHistoryIncludesAnyRow([value.rowId])) {
         loadActiveEditorFieldHistory(render, {
           clearOptimisticOperationId: operation?.operationId,
         });
@@ -1383,7 +1397,7 @@ export async function toggleEditorRowFieldMarker(
       render?.({ scope: "translate-sidebar" });
 
       if (
-        state.editorChapter.activeRowId === value.rowId
+        activeHistoryIncludesAnyRow([value.rowId])
         && state.editorChapter.activeLanguageCode === value.languageCode
       ) {
         loadActiveEditorFieldHistory(render, {
@@ -1619,7 +1633,6 @@ export async function confirmEditorUnreviewAll(render, operations = {}) {
       }
 
       const changedRowIds = Array.isArray(payload?.rowIds) ? payload.rowIds.filter(Boolean) : [];
-      const activeRowId = state.editorChapter.activeRowId;
       const activeLanguageCode = state.editorChapter.activeLanguageCode;
       state.editorChapter = {
         ...applyEditorChapterRowsUnreviewed(
@@ -1633,7 +1646,7 @@ export async function confirmEditorUnreviewAll(render, operations = {}) {
       render?.();
 
       if (
-        changedRowIds.includes(activeRowId)
+        activeHistoryIncludesAnyRow(changedRowIds)
         && activeLanguageCode === value.languageCode
       ) {
         loadActiveEditorFieldHistory(render);
@@ -1795,7 +1808,6 @@ export async function confirmEditorClearTranslations(render, operations = {}) {
       }
 
       const changedRowIds = Array.isArray(payload?.rowIds) ? payload.rowIds.filter(Boolean) : [];
-      const activeRowId = state.editorChapter.activeRowId;
       const activeLanguageCode = state.editorChapter.activeLanguageCode;
       state.editorChapter = {
         ...applyEditorChapterRowsTranslationsCleared(
@@ -1814,7 +1826,7 @@ export async function confirmEditorClearTranslations(render, operations = {}) {
       render?.();
 
       if (
-        changedRowIds.includes(activeRowId)
+        activeHistoryIncludesAnyRow(changedRowIds)
         && value.selectedLanguageCodes.includes(activeLanguageCode)
       ) {
         loadActiveEditorFieldHistory(render);
@@ -1837,7 +1849,56 @@ export async function confirmEditorClearTranslations(render, operations = {}) {
 }
 
 export async function persistEditorRowOnBlur(render, rowId, operations = {}, options = {}) {
+  if (pendingSrtGroupEdits(state.editorChapter, { rowIds: [rowId] }).length) {
+    return persistSrtGroupDrafts(render, operations, { ...options, rowIds: [rowId] });
+  }
   return persistEditorRow(render, rowId, operations, options);
+}
+
+async function persistSrtGroupDrafts(render, operations, options = {}) {
+  if (pendingSrtGroupSave) {
+    if (!(await pendingSrtGroupSave)) return false;
+  }
+  const chapter = state.editorChapter;
+  if (chapter?.srtMarkerModal) return false;
+  // Do not repair a partially composed IME sequence.
+  for (const edit of pendingSrtGroupEdits(chapter, options)) {
+    if (edit.composing) return false;
+    if (typeof document !== "undefined") {
+      const input = document.querySelector(`[data-editor-row-field][data-row-id="${CSS.escape(edit.firstRowId)}"][data-language-code="${CSS.escape(edit.languageCode)}"]`);
+      if (input?.dataset.srtComposing === "true") return false;
+    }
+  }
+  const results = validateSrtGroupEdits(chapter, options);
+  if (!results.length) return true;
+  for (const result of results) {
+    if (result.error || result.corrected) {
+      proposeSrtMarkerRepair(result);
+      render?.();
+      return false;
+    }
+    if (result.edit.needsMarkerReview && !options.confirmSrtMarkerRepair) return false;
+  }
+  const items = [];
+  for (const result of results) {
+    for (const [index, rowId] of result.edit.memberRowIds.entries()) {
+      const row = findEditorRowById(rowId, state.editorChapter);
+      if (!row || row.lifecycleState === "deleted" || row.freshness === "conflict") {
+        setSrtGroupEditError(result.edit.key, "A subtitle changed or has a conflict. Resolve it before saving this group.");
+        return false;
+      }
+      if (row.fields?.[result.edit.languageCode] !== result.parts[index]) {
+        operations.updateEditorChapterRow(rowId, (current) => applyEditorRowFieldValue(current, result.edit.languageCode, result.parts[index]));
+        markEditorRowDirty(rowId);
+      }
+      items.push({ rowId, languageCode: result.edit.languageCode });
+    }
+  }
+  pendingSrtGroupSave = persistEditorRowsBatch(render, items, operations, {
+    waitForDurable: true, srtGroupResults: results, commitMessage: "Edit subtitle sentence group",
+  });
+  try { return await pendingSrtGroupSave; }
+  finally { pendingSrtGroupSave = null; }
 }
 
 // Saves a group of programmatically edited rows (AI Translate All batch
@@ -1917,9 +1978,11 @@ export async function persistEditorRowsBatch(render, items, operations = {}, opt
     for (const [rowId, languageCodes] of languageCodesByRowId) {
       const row = findEditorRowById(rowId, state.editorChapter);
       if (!row || row.saveStatus === "conflict" || row.freshness === "conflict") {
+        if (options.srtGroupResults) throw new Error("Resolve the subtitle conflict before saving the group.");
         continue;
       }
       const input = { rowId, fields: {}, footnotes: {}, imageCaptions: {} };
+      if (options.srtGroupResults) input.baseFields = {};
       // The snapshot keeps state-format values (footnote entries are structured
       // in state but legacy-serialized on the wire) so the persisted-state
       // bookkeeping in onSuccess compares like with like.
@@ -1929,14 +1992,28 @@ export async function persistEditorRowsBatch(render, items, operations = {}, opt
         if (typeof row.fields?.[languageCode] === "string") {
           input.fields[languageCode] = row.fields[languageCode];
           snapshot.fields[languageCode] = row.fields[languageCode];
+          if (options.srtGroupResults) {
+            const session = options.srtGroupResults.find((result) => result.edit.languageCode === languageCode && result.edit.memberRowIds.includes(rowId))?.edit;
+            input.baseFields[languageCode] = session?.baseFields?.[rowId] ?? row.baseFields?.[languageCode] ?? row.persistedFields?.[languageCode] ?? "";
+          }
         }
-        if (typeof legacyFootnotes?.[languageCode] === "string") {
+        if (typeof legacyFootnotes?.[languageCode] === "string" && (!options.srtGroupResults
+          || legacyFootnotes[languageCode] !== serializeFootnoteMapForLegacy(row.persistedFootnotes)?.[languageCode])) {
           input.footnotes[languageCode] = legacyFootnotes[languageCode];
           snapshot.footnotes[languageCode] = row.footnotes[languageCode];
+          if (options.srtGroupResults) {
+            input.baseFootnotes ??= {};
+            input.baseFootnotes[languageCode] = serializeFootnoteMapForLegacy(row.baseFootnotes ?? row.persistedFootnotes)?.[languageCode] ?? "";
+          }
         }
-        if (typeof row.imageCaptions?.[languageCode] === "string") {
+        if (typeof row.imageCaptions?.[languageCode] === "string" && (!options.srtGroupResults
+          || row.imageCaptions[languageCode] !== row.persistedImageCaptions?.[languageCode])) {
           input.imageCaptions[languageCode] = row.imageCaptions[languageCode];
           snapshot.imageCaptions[languageCode] = row.imageCaptions[languageCode];
+          if (options.srtGroupResults) {
+            input.baseImageCaptions ??= {};
+            input.baseImageCaptions[languageCode] = row.baseImageCaptions?.[languageCode] ?? row.persistedImageCaptions?.[languageCode] ?? "";
+          }
         }
       }
       if (
@@ -1986,6 +2063,16 @@ export async function persistEditorRowsBatch(render, items, operations = {}, opt
           aiModel: value.aiModel,
         },
       }, value.permissionContext, render);
+      if (payload?.conflicts?.length) {
+        for (const conflict of payload.conflicts) {
+          updateEditorChapterRow(conflict.rowId, (row) => applyEditorRowConflictDetected(row, conflict, {
+            localFields: row.fields, localFootnotes: row.footnotes, localImageCaptions: row.imageCaptions,
+          }));
+        }
+        lockConflictFilter();
+        render?.({ scope: "translate-body" });
+        throw new Error("A subtitle changed elsewhere. Resolve the conflict before saving this group.");
+      }
       return { payload, savedRows };
     },
     onSuccess: ({ payload, savedRows } = {}, operation) => {
@@ -1995,6 +2082,45 @@ export async function persistEditorRowsBatch(render, items, operations = {}, opt
       }
 
       for (const saved of savedRows) {
+        const authoritativeRow = payload?.rows?.find((row) => row.rowId === saved.rowId);
+        const remoteFields = authoritativeRow?.fields;
+        if (remoteFields) {
+          for (const code of Object.keys(saved.snapshot.fields)) {
+            const requestedText = saved.snapshot.fields[code];
+            saved.snapshot.fields[code] = remoteFields[code] ?? "";
+            updateEditorChapterRow(saved.rowId, (row) => row.fields?.[code] === requestedText
+              ? { ...row, fields: { ...row.fields, [code]: saved.snapshot.fields[code] } } : row);
+          }
+          if (options.srtGroupResults) updateEditorChapterRow(saved.rowId, (row) => {
+            const fields = { ...row.fields };
+            const persistedFields = { ...row.persistedFields };
+            const baseFields = { ...row.baseFields };
+            const pendingCodes = new Set(pendingSrtGroupEdits(state.editorChapter, { rowIds: [saved.rowId] }).map((edit) => edit.languageCode));
+            for (const [code, text] of Object.entries(remoteFields)) {
+              if (code in saved.snapshot.fields || pendingCodes.has(code)
+                || (row.fields?.[code] ?? "") !== (row.persistedFields?.[code] ?? "")) continue;
+              fields[code] = text;
+              persistedFields[code] = text;
+              baseFields[code] = text;
+            }
+            return { ...row, fields, persistedFields, baseFields };
+          });
+        }
+        if (options.srtGroupResults && authoritativeRow) {
+          for (const code of Object.keys(saved.snapshot.footnotes)) {
+            const requestedNote = saved.snapshot.footnotes[code];
+            saved.snapshot.footnotes[code] = cloneRowFootnotes(authoritativeRow.footnotes)?.[code] ?? [];
+            updateEditorChapterRow(saved.rowId, (row) => serializeFootnoteMapForLegacy({ [code]: row.footnotes?.[code] })[code]
+              === serializeFootnoteMapForLegacy({ [code]: requestedNote })[code]
+              ? { ...row, footnotes: { ...row.footnotes, [code]: saved.snapshot.footnotes[code] } } : row);
+          }
+          for (const code of Object.keys(saved.snapshot.imageCaptions)) {
+            const requestedCaption = saved.snapshot.imageCaptions[code];
+            saved.snapshot.imageCaptions[code] = authoritativeRow.imageCaptions?.[code] ?? "";
+            updateEditorChapterRow(saved.rowId, (row) => row.imageCaptions?.[code] === requestedCaption
+              ? { ...row, imageCaptions: { ...row.imageCaptions, [code]: saved.snapshot.imageCaptions[code] } } : row);
+          }
+        }
         updateEditorChapterRow(saved.rowId, (row) => {
           if (!row) {
             return row;
@@ -2002,6 +2128,9 @@ export async function persistEditorRowsBatch(render, items, operations = {}, opt
           const nextRow = {
             ...row,
             persistedFields: { ...cloneRowFields(row.persistedFields), ...saved.snapshot.fields },
+            ...(options.srtGroupResults ? { baseFields: { ...cloneRowFields(row.baseFields), ...saved.snapshot.fields } } : {}),
+            ...(options.srtGroupResults ? { baseFootnotes: { ...cloneRowFootnotes(row.baseFootnotes), ...saved.snapshot.footnotes },
+              baseImageCaptions: { ...cloneRowFields(row.baseImageCaptions), ...saved.snapshot.imageCaptions } } : {}),
             persistedFootnotes: {
               ...cloneRowFootnotes(row.persistedFootnotes),
               ...saved.snapshot.footnotes,
@@ -2031,9 +2160,17 @@ export async function persistEditorRowsBatch(render, items, operations = {}, opt
       };
       const savedRowIds = savedRows.map((saved) => saved.rowId);
       reconcileDirtyTrackedEditorRows(savedRowIds);
+      if (options.srtGroupResults) {
+        finishSrtGroupEdits(value.chapterId, options.srtGroupResults);
+        const focusedCardId = typeof document !== "undefined"
+          ? document.activeElement?.closest?.("[data-editor-row-card]")?.dataset.rowId : null;
+        const renderingIds = savedRowIds.filter((id) => !options.srtGroupResults.some((result) =>
+          result.edit.firstRowId === focusedCardId && result.edit.memberRowIds.includes(id)));
+        renderEditorRowScoped(render, renderingIds, "srt-group-saved");
+      }
       applyEditorSelectionsToProjectState(state.editorChapter);
       render?.({ scope: "translate-sidebar" });
-      if (savedRowIds.includes(state.editorChapter.activeRowId)) {
+      if (activeHistoryIncludesAnyRow(savedRowIds)) {
         loadActiveEditorFieldHistory(render);
       }
     },
@@ -2054,6 +2191,9 @@ export async function persistEditorRowsBatch(render, items, operations = {}, opt
   });
 
   requested.promise.catch(() => {});
+  if (options.waitForDurable) {
+    try { await requested.promise; return true; } catch { return false; }
+  }
   return true;
 }
 
@@ -2406,7 +2546,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
     applyEditorSelectionsToProjectState(state.editorChapter);
     removeOptimisticHistoryForOperation(render, operation);
     render?.({ scope: "translate-sidebar" });
-    if (!optionsForResult.isStale && state.editorChapter.activeRowId === value.rowId) {
+    if (!optionsForResult.isStale && activeHistoryIncludesAnyRow([value.rowId])) {
       loadActiveEditorFieldHistory(render, {
         clearOptimisticOperationId: operation?.operationId,
       });

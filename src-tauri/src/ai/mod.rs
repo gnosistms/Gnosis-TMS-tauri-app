@@ -608,7 +608,12 @@ pub(crate) fn build_translation_batch_prompt(request: &AiTranslationBatchRequest
         "Output rule:\nReturn one entry per row in <rows_to_translate>, in the same order, each with its matching rowId. Do not merge, split, drop, reorder, or add rows. Keep each row's main text, footnote, and image caption translations in their matching fields; do not append footnotes or image captions to translatedText. If a row has no footnote or image caption, return an empty string for that field."
             .to_string(),
     );
-    if request.subtitle_cues {
+    if request.sentence_group {
+        sections.push("Sentence group rule:\nThese original subtitle cues form one sentence group. Translate the complete sentence naturally and distribute its words across the same ordered cue IDs. A cue may have empty translatedText when its words are carried by another cue in this group. Return every requested cue exactly once, including empty cues. Preserve each cue's own footnotes, captions, speaker markers, and sound tags. Do not move words into or out of context rows.".to_string());
+        if !request.sentence_source_text.is_empty() {
+            sections.push(format!("<complete_sentence_source>\n{}\n</complete_sentence_source>\nUse the complete sentence as context. Return assignments only for the requested row IDs.", request.sentence_source_text));
+        }
+    } else if request.subtitle_cues {
         sections.push(subtitle_cue_rule().to_string());
     }
     sections.push(translation_register_rule().to_string());
@@ -713,6 +718,10 @@ fn format_review_batch_row(
     )
 }
 
+fn sentence_group_review_output_rule() -> &'static str {
+    "Sentence group output rule (overrides the empty-suggestion decision rule):\nReturn the complete resulting suggestedText for every requested cue, including unchanged text. An intentionally empty resulting cue has suggestedText set to an empty string. Set reviewed to true for a cue requiring no corrections, false otherwise. Read the entire sentence together, permit words to move between neighboring requested cues, and do not treat fragment boundaries as grammar errors. Do not move words into or out of context-only cues. Footnotes and image captions keep the existing empty-string-for-no-change rule."
+}
+
 pub(crate) fn build_review_batch_prompt(request: &AiReviewBatchRequest) -> String {
     let review_mode = match request.review_mode.as_deref().unwrap_or("").trim() {
         "meaning" => "meaning",
@@ -735,6 +744,16 @@ pub(crate) fn build_review_batch_prompt(request: &AiReviewBatchRequest) -> Strin
             review_footnote_marker_guidance().to_string(),
             "Preserve meaning, terminology, tone, and style unless a change is needed to correct spelling or grammar or to follow a relevant QA note. Keep main text, footnotes, and image captions separate.".to_string(),
         ];
+        if request.sentence_group {
+            sections.push(sentence_group_review_output_rule().to_string());
+            if !request.sentence_target_text.is_empty() {
+                sections.push(format!(
+                    "<complete_target_sentence>\n{}\n</complete_target_sentence>",
+                    request.sentence_target_text
+                ));
+            }
+            sections.push("Sentence group rule:\nRead the target texts of these consecutive subtitle cues as one sentence when checking grammar. A cue can be empty because its words are in a neighboring cue. Keep each original cue ID, and do not flag an individual fragment merely for being an incomplete sentence. Return every cue exactly once. Correct the whole sentence while preserving the cue assignments.".to_string());
+        }
         if has_qa_hints {
             sections.push(review_qa_guidance().to_string());
         }
@@ -772,6 +791,10 @@ pub(crate) fn build_review_batch_prompt(request: &AiReviewBatchRequest) -> Strin
         "Use supporting context when relevant. Do not treat reference translations or edit history as more authoritative than the source-language sections. Keep main text, footnotes, and image captions separate."
             .to_string(),
     ];
+    if request.sentence_group {
+        sections.push(sentence_group_review_output_rule().to_string());
+        sections.push(format!("<complete_sentence_source>\n{}\n</complete_sentence_source>\n<complete_target_sentence>\n{}\n</complete_target_sentence>", request.sentence_source_text, request.sentence_target_text));
+    }
     if request.subtitle_cues {
         sections.push(subtitle_cue_review_rule().to_string());
     }
@@ -4143,6 +4166,8 @@ mod tests {
             context_after: vec![],
             rows,
             subtitle_cues: false,
+            sentence_group: false,
+            sentence_source_text: String::new(),
             installation_id: None,
         }
     }
@@ -4498,6 +4523,9 @@ mod tests {
             context_after: vec![],
             rows,
             subtitle_cues: false,
+            sentence_group: false,
+            sentence_source_text: String::new(),
+            sentence_target_text: String::new(),
             installation_id: None,
         }
     }
@@ -4540,6 +4568,27 @@ mod tests {
         // Grammar mode does not compare against the source.
         assert!(!prompt.contains("<source_text>"));
         assert!(!prompt.contains("<languages>"));
+    }
+
+    #[test]
+    fn sentence_groups_allow_blank_translations_and_grammar_reviews_see_the_sentence() {
+        let mut translation = translation_batch_request(vec![
+            translation_batch_row("r0", "Hello"),
+            translation_batch_row("r1", "world"),
+        ]);
+        translation.subtitle_cues = true;
+        translation.sentence_group = true;
+        let prompt = build_translation_batch_prompt(&translation);
+        assert!(prompt.contains("empty translatedText"));
+        assert!(!prompt.contains("Every row still gets its own non-empty translation"));
+        let mut review = review_batch_request(
+            "grammar",
+            vec![review_batch_row("r0"), review_batch_row("r1")],
+        );
+        review.sentence_group = true;
+        assert!(build_review_batch_prompt(&review)
+            .contains("Read the target texts of these consecutive subtitle cues as one sentence"));
+        assert!(!build_review_batch_prompt(&review).contains("<source_text>"));
     }
 
     #[test]

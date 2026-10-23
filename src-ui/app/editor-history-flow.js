@@ -38,8 +38,20 @@ import {
   invokeQueuedEditorWriteCommand,
 } from "./editor-queued-write.js";
 import { projectRepoScope } from "./repo-write-queue.js";
+import { srtGroupingEnabled, srtGroupForRow } from "./editor-srt-grouping.js";
 
 const optimisticHistoryRestoreBaselines = new Map();
+let historyRequestSequence = 0;
+
+function historyMemberRowIds(chapter) {
+  if (!srtGroupingEnabled(chapter)) return [chapter.activeRowId];
+  const members = srtGroupForRow(chapter, chapter.activeRowId).map((row) => row.rowId);
+  return members.length ? members : [chapter.activeRowId];
+}
+
+function sameHistoryMembers(left, right) {
+  return left?.length === right.length && left.every((id, index) => id === right[index]);
+}
 
 function nextChapterBaseCommitSha(payload, chapterState = state.editorChapter) {
   return typeof payload?.chapterBaseCommitSha === "string" && payload.chapterBaseCommitSha.trim()
@@ -156,22 +168,31 @@ async function fetchEditorFieldHistory(render, requestKey, options = {}) {
 
   const rowId = editorChapter.activeRowId;
   const languageCode = editorChapter.activeLanguageCode;
+  const memberRowIds = historyMemberRowIds(editorChapter);
+  const requestStillCurrent = () => currentEditorHistoryRequestMatches(
+    state.editorChapter, editorChapter.chapterId, rowId, languageCode, requestKey,
+  ) && srtGroupingEnabled(state.editorChapter) === srtGroupingEnabled(editorChapter)
+    && sameHistoryMembers(historyMemberRowIds(state.editorChapter), memberRowIds);
 
   try {
-    const payload = await invoke("load_gtms_editor_field_history", {
-      input: {
-        installationId: team.installationId,
-        projectId: context.project.id,
-        repoName: context.project.name,
-        chapterId: editorChapter.chapterId,
-        rowId,
-        languageCode,
-      },
-    });
-
-    if (!currentEditorHistoryRequestMatches(state.editorChapter, editorChapter.chapterId, rowId, languageCode, requestKey)) {
-      return;
+    // Each field history is owned by the Rust command. Bound parallel git reads
+    // for long groups, while allowing selection changes during the load.
+    const load = (memberId) => invoke("load_gtms_editor_field_history", { input: {
+      installationId: team.installationId, projectId: context.project.id,
+      repoName: context.project.name, chapterId: editorChapter.chapterId,
+      rowId: memberId, languageCode,
+    } });
+    const results = [];
+    if (memberRowIds.length === 1) {
+      results.push({ status: "fulfilled", value: await load(rowId) });
+    } else for (let offset = 0; offset < memberRowIds.length; offset += 4) {
+      if (!requestStillCurrent()) return;
+      results.push(...await Promise.allSettled(memberRowIds.slice(offset, offset + 4).map(load)));
     }
+    if (!requestStillCurrent()) return;
+    const activeResult = results[memberRowIds.indexOf(rowId)];
+    if (activeResult.status === "rejected") throw activeResult.reason;
+    const payload = activeResult.value;
 
     state.editorChapter = applyActiveEditorFieldHistoryLoaded(
       state.editorChapter,
@@ -180,6 +201,16 @@ async function fetchEditorFieldHistory(render, requestKey, options = {}) {
       requestKey,
       payload?.entries,
     );
+    if (memberRowIds.length > 1) {
+      const failure = results.find((result) => result.status === "rejected");
+      const group = { memberRowIds, languageCode,
+        status: failure ? "error" : "ready",
+        error: failure ? String(failure.reason?.message ?? failure.reason) : "",
+        entriesByRowId: Object.fromEntries(results.map((result, index) => [memberRowIds[index],
+          result.status === "fulfilled" ? result.value?.entries ?? [] : undefined])),
+      };
+      state.editorChapter = { ...state.editorChapter, history: { ...state.editorChapter.history, group } };
+    }
     if (options?.clearOptimisticOperationId) {
       state.editorChapter = removeOptimisticEditorHistoryEntry(
         state.editorChapter,
@@ -189,9 +220,7 @@ async function fetchEditorFieldHistory(render, requestKey, options = {}) {
     render?.({ scope: "translate-sidebar" });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (!currentEditorHistoryRequestMatches(state.editorChapter, editorChapter.chapterId, rowId, languageCode, requestKey)) {
-      return;
-    }
+    if (!requestStillCurrent()) return;
 
     state.editorChapter = applyActiveEditorFieldHistoryLoadFailed(
       state.editorChapter,
@@ -200,6 +229,11 @@ async function fetchEditorFieldHistory(render, requestKey, options = {}) {
       requestKey,
       message,
     );
+    if (memberRowIds.length > 1) state.editorChapter = { ...state.editorChapter,
+      history: { ...state.editorChapter.history, group: {
+        ...state.editorChapter.history.group, status: "error", error: message,
+      } },
+    };
     render?.({ scope: "translate-sidebar" });
   }
 }
@@ -210,12 +244,18 @@ export function loadActiveEditorFieldHistory(render, options = {}) {
     return;
   }
 
-  const requestKey = buildEditorHistoryRequestKey(
-    editorChapter.chapterId,
-    editorChapter.activeRowId,
-    editorChapter.activeLanguageCode,
-  );
-  state.editorChapter = applyActiveEditorFieldHistoryLoading(editorChapter);
+  const requestKey = `${buildEditorHistoryRequestKey(
+    editorChapter.chapterId, editorChapter.activeRowId, editorChapter.activeLanguageCode,
+  )}:${++historyRequestSequence}`;
+  const memberRowIds = historyMemberRowIds(editorChapter);
+  const previousGroup = editorChapter.history?.group;
+  const retainGroup = previousGroup?.languageCode === editorChapter.activeLanguageCode
+    && sameHistoryMembers(previousGroup.memberRowIds, memberRowIds);
+  const next = applyActiveEditorFieldHistoryLoading(editorChapter);
+  state.editorChapter = { ...next, history: { ...next.history, requestKey,
+    group: memberRowIds.length > 1 ? { memberRowIds, languageCode: editorChapter.activeLanguageCode,
+      status: "loading", error: "", entriesByRowId: retainGroup ? previousGroup.entriesByRowId : {} } : null,
+  } };
   if (options?.clearOptimisticOperationId) {
     state.editorChapter = removeOptimisticEditorHistoryEntry(
       state.editorChapter,

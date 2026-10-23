@@ -1,4 +1,5 @@
 import { buildEditorCommentsButtonState, normalizeEditorSidebarTab } from "./editor-comments.js";
+import { projectSrtDisplayRows, srtGroupingEnabled } from "./editor-srt-grouping.js";
 import { canManageGlossaries } from "./glossary-shared.js";
 import { buildEditorSectionChangeView } from "./editor-change-view.js";
 import {
@@ -479,7 +480,7 @@ function buildEditorDisplayItems(contentRows, editorChapter, team, editorReplace
       ...row,
       canEdit: canEditRows,
       canInsert: row.lifecycleState === "active" && canEditRows,
-      canMerge: row.lifecycleState === "active" && canEditRows,
+      canMerge: row.lifecycleState === "active" && canEditRows && !srtGroupingEnabled(editorChapter),
       canMergePrevious:
         row.lifecycleState === "active" && canEditRows && hasActiveRowBefore.get(row.rowId) === true,
       canMergeNext:
@@ -542,7 +543,7 @@ export function buildEditorScreenViewModel(appState) {
     ? changedAfterMyEdit?.rowsById ?? null
     : null;
   const editorFilters = buildEditorFilterResult({
-    rows: rawRows,
+    rows: projectSrtDisplayRows(rawRows, editorChapter, languages),
     languages,
     collapsedLanguageCodes,
     filters: editorChapter?.filters,
@@ -567,7 +568,7 @@ export function buildEditorScreenViewModel(appState) {
       : null;
     return {
       ...row,
-      isConnected: row.id === editorChapter?.activeRowId,
+      isConnected: row.id === editorChapter?.activeRowId || row.srtGroup?.memberRowIds.includes(editorChapter?.activeRowId),
       sections: (Array.isArray(row.sections) ? row.sections : []).map((section) => {
         const changeView = buildEditorSectionChangeView({
           baselineRow: changeBaselineRow,
@@ -605,7 +606,7 @@ export function buildEditorScreenViewModel(appState) {
             seenRevisions: commentSeenRevisions,
           }),
           showResearchButton:
-            section.code === sourceCode && Boolean(row?.rowId) && canManageGlossaries(),
+            Boolean(row?.rowId) && canManageGlossaries(),
           isAiTranslating,
           changeView: isAiTranslating ? null : changeView,
           // A footnote or caption someone deleted still gets its box, showing the

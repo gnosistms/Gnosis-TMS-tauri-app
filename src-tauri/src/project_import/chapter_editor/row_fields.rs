@@ -675,6 +675,34 @@ mod tests {
     }
 
     #[test]
+    fn grouped_batch_input_is_backward_compatible_and_preserves_disjoint_fields() {
+        let old: UpdateEditorRowFieldsBatchRowInput = serde_json::from_value(json!({
+            "rowId": "r1", "fields": { "vi": "translation" }
+        }))
+        .unwrap();
+        assert!(old.base_fields.is_none());
+        assert!(old.base_footnotes.is_none());
+        assert!(old.base_image_captions.is_none());
+        assert!(old.field_flags.is_empty());
+        assert!(old.lifecycle_state.is_none());
+        assert!(old.text_style.is_none());
+        let merged = merge_editor_string_maps(
+            &map(&[("vi", "old")]),
+            &map(&[("vi", "new")]),
+            &map(&[("vi", "old"), ("en", "new remote source")]),
+        )
+        .unwrap();
+        assert_eq!(merged["vi"], "new");
+        assert_eq!(merged["en"], "new remote source");
+        assert!(merge_editor_string_maps(
+            &map(&[("vi", "old")]),
+            &map(&[("vi", "new")]),
+            &map(&[("vi", "different remote edit")])
+        )
+        .is_none());
+    }
+
+    #[test]
     fn ai_review_footnote_corrections_preserve_marker_identity() {
         let merged = merge_ai_review_footnote_corrections(
             "[1] One\n\n[2] Two\n\n[3] Three",
@@ -1197,8 +1225,104 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
     let mut prepared_writes = Vec::new();
     let mut removed_uploaded_paths = Vec::new();
 
+    // Validate every member before committing any part of a redistribution.
+    // Legacy batch callers omit base_fields and retain their existing behavior.
+    let mut conflicts = Vec::new();
+    let imported_conflict_ids: BTreeSet<String> =
+        if rows_by_id.values().any(|row| row.base_fields.is_some()) {
+            git_conflicts::list_imported_editor_conflict_refs(&repo_path)?
+                .into_iter()
+                .filter(|entry| entry.chapter_id == input.chapter_id)
+                .map(|entry| entry.row_id)
+                .collect()
+        } else {
+            BTreeSet::new()
+        };
+    for (row_id, batch_row) in &mut rows_by_id {
+        let Some(base) = &batch_row.base_fields else {
+            continue;
+        };
+        let edit = load_editable_row_file(&repo_path, &chapter_path, row_id)?;
+        let remote = row_plain_text_map(&edit.original_file);
+        if edit.original_file.lifecycle.state != "active" {
+            return Err("A subtitle in the group was deleted. Refresh before saving.".into());
+        }
+        let merged = if imported_conflict_ids.contains(row_id) {
+            None
+        } else {
+            merge_editor_string_maps(base, &batch_row.fields, &remote)
+        };
+        let merged_footnotes = match &batch_row.base_footnotes {
+            Some(base) => merge_editor_footnote_maps(
+                base,
+                &batch_row.footnotes,
+                &row_footnote_map(&edit.original_file),
+            ),
+            None => Some(batch_row.footnotes.clone()),
+        };
+        let merged_captions = match &batch_row.base_image_captions {
+            Some(base) => merge_editor_string_maps(
+                base,
+                &batch_row.image_captions,
+                &row_image_caption_map(&edit.original_file),
+            ),
+            None => Some(batch_row.image_captions.clone()),
+        };
+        if let (Some(fields), Some(footnotes), Some(captions)) =
+            (merged, merged_footnotes, merged_captions)
+        {
+            batch_row.fields = fields;
+            batch_row.footnotes = footnotes;
+            batch_row.image_captions = captions;
+        } else {
+            conflicts.push(SaveEditorRowWithConcurrencyResponse {
+                row_id: row_id.clone(),
+                status: "conflict".into(),
+                row: git_conflicts::overlay_imported_editor_conflict_row(
+                    &repo_path,
+                    &input.chapter_id,
+                    Some(editor_row_from_stored_row_file_with_update(
+                        &repo_path,
+                        &chapter_path,
+                        edit.original_file,
+                    )?),
+                )?,
+                word_counts: word_counts.clone(),
+                base_fields: base.clone(),
+                base_footnotes: batch_row.base_footnotes.clone().unwrap_or_default(),
+                base_image_captions: batch_row.base_image_captions.clone().unwrap_or_default(),
+                conflict_remote_version: None,
+                chapter_base_commit_sha: current_repo_head_sha(&repo_path),
+            });
+        }
+    }
+    if !conflicts.is_empty() {
+        return Ok(UpdateEditorRowFieldsBatchResponse {
+            row_ids: Vec::new(),
+            word_counts,
+            commit_sha: None,
+            chapter_base_commit_sha: current_repo_head_sha(&repo_path),
+            rows: Vec::new(),
+            conflicts,
+        });
+    }
+    let mut saved_rows = Vec::new();
     for (row_id, batch_row) in rows_by_id {
         let mut edit = load_editable_row_file(&repo_path, &chapter_path, &row_id)?;
+        for (code, flags) in &batch_row.field_flags {
+            for (flag, enabled) in flags {
+                apply_editor_field_flag_update(&mut edit.value, code, flag, *enabled)?;
+            }
+        }
+        if let Some(style) = &batch_row.text_style {
+            apply_editor_text_style_update(&mut edit.value, style)?;
+        }
+        if let Some(lifecycle) = &batch_row.lifecycle_state {
+            if lifecycle != "deleted" {
+                return Err("Only soft deletion is supported for a subtitle group.".into());
+            }
+            edit.value["lifecycle"]["state"] = Value::String(lifecycle.clone());
+        }
         apply_editor_plain_text_updates(&mut edit.value, &batch_row.fields)?;
         apply_editor_footnote_updates(&mut edit.value, &batch_row.footnotes)?;
         apply_editor_image_caption_updates(&mut edit.value, &batch_row.image_captions)?;
@@ -1223,7 +1347,7 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
             }
             apply_editor_field_image_update(&mut edit.value, language_code, None)?;
         }
-        finish_editable_row_file(
+        let (_, saved_row) = finish_editable_row_file(
             edit,
             false,
             &languages,
@@ -1231,6 +1355,9 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
             &mut prepared_writes,
             &mut changed_row_ids,
         )?;
+        if batch_row.base_fields.is_some() {
+            saved_rows.push(saved_row);
+        }
     }
 
     let commit_message = input.commit_message.trim();
@@ -1288,6 +1415,11 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
         word_counts,
         commit_sha,
         chapter_base_commit_sha: current_repo_head_sha(&repo_path),
+        rows: saved_rows
+            .into_iter()
+            .map(|row| editor_row_from_stored_row_file_with_update(&repo_path, &chapter_path, row))
+            .collect::<Result<Vec<_>, _>>()?,
+        conflicts: Vec::new(),
     })
 }
 

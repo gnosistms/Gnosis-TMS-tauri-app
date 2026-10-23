@@ -18,6 +18,8 @@ import { findChapterContextById, selectedProjectsTeam } from "./project-context.
 import { invoke } from "./runtime.js";
 import { createEditorChapterGlossaryState, state } from "./state.js";
 import { EDITOR_ROW_FILTER_MODE_HAS_GLOSSARY_ERROR } from "./editor-filters.js";
+import { srtLinguisticRow, srtDisplayRowId } from "./editor-srt-grouping.js";
+import { renderSrtStaticText } from "./editor-srt-group-render.js";
 
 const localGlossaryRevisions = new Map();
 
@@ -227,6 +229,8 @@ function applyEditorTextHighlightLayersToRowCard(
     const isAiTranslating = stack.dataset.aiTranslating === "true";
     const languageCode = stack.dataset.languageCode ?? "";
     const contentKind = stack.dataset.contentKind === "footnote" ? "footnote" : "field";
+    // Auxiliary fields retain their own real-row content inside a group card.
+    const ownedRow = row.srtGroup?.members.find((member) => member.rowId === stack.dataset.rowId) ?? row;
     const glossaryHighlight = glossaryHighlightMap instanceof Map
       ? (contentKind === "field" ? (glossaryHighlightMap.get(languageCode) ?? null) : null)
       : null;
@@ -241,7 +245,7 @@ function applyEditorTextHighlightLayersToRowCard(
     const searchHighlightRanges = isAiTranslating
       ? []
       : (Array.isArray(searchHighlight?.ranges) ? searchHighlight.ranges : []);
-    const highlightableText = readEditorHighlightableText(row, languageCode, contentKind);
+    const highlightableText = readEditorHighlightableText(contentKind === "footnote" ? ownedRow : row, languageCode, contentKind);
     const displayText = stack.querySelector("[data-editor-display-text]");
     const suppressGlossaryWhileEditing =
       contentKind === "field" && !(displayText instanceof HTMLElement);
@@ -273,7 +277,11 @@ function applyEditorTextHighlightLayersToRowCard(
       if (!isAiTranslating) {
         setElementInnerHtmlIfChanged(
           displayText,
-          renderSanitizedInlineMarkupWithEditorHighlightState(highlightableText, {
+          row.srtTexts?.[languageCode] && contentKind === "field"
+            ? renderSrtStaticText({ code: languageCode, text: row.srtTexts[languageCode].text,
+              srtParts: row.srtTexts[languageCode].parts, srtMarkers: row.srtTexts[languageCode].markers,
+              searchHighlightRanges: searchHighlightRanges }, glossaryHighlightHtml)
+            : renderSanitizedInlineMarkupWithEditorHighlightState(highlightableText, {
             glossaryHighlightHtml,
             searchRanges: searchHighlightRanges,
             extraRanges: contentKind === "field"
@@ -297,7 +305,7 @@ function syncEditorGlossaryHighlightRowCard(rowCard, chapterState = state.editor
     return;
   }
 
-  const row = findEditorRowById(rowId, chapterState);
+  const row = srtLinguisticRow(findEditorRowById(rowId, chapterState), chapterState);
   if (!row) {
     return;
   }
@@ -342,7 +350,7 @@ function syncMountedEditorGlossaryHighlightRows(
       return;
     }
 
-    const row = findEditorRowById(rowId, chapterState);
+    const row = srtLinguisticRow(findEditorRowById(rowId, chapterState), chapterState);
     if (!row) {
       return;
     }
@@ -363,6 +371,7 @@ export function syncEditorGlossaryHighlightRowDom(
   if (typeof document === "undefined" || !rowId || !chapterState?.chapterId) {
     return;
   }
+  rowId = srtDisplayRowId(chapterState, rowId);
 
   const rowCard = root.querySelector(
     `[data-editor-row-card][data-row-id="${CSS.escape(rowId)}"]`,

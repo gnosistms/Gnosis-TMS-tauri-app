@@ -1,5 +1,6 @@
 import {
   escapeHtml,
+  primaryButton,
   renderCollapseChevron,
   sectionSeparator,
   textAction,
@@ -21,6 +22,7 @@ import {
 } from "./editor-row-text-style.js";
 import { sanitizeCustomHtmlForDisplay } from "./editor-custom-html.js";
 import { formatTimingMs as formatEditorTimingMs } from "./editor-timing.js";
+import { renderSrtStaticText } from "./editor-srt-group-render.js";
 import {
   renderSanitizedInlineMarkupHtml,
   renderSanitizedInlineMarkupWithEditorHighlightState,
@@ -879,6 +881,20 @@ function renderEditorFootnoteField(row, language) {
   `;
 }
 
+
+function renderLanguageAttachments(row, language) {
+  if (language.srtAttachments) {
+    return language.srtAttachments.map(({ row: member, section }, index) => {
+      if (!section) return "";
+      const owned = { ...section, canEdit: language.canEdit };
+      const ownedRow = { ...member, canEdit: row.canEdit };
+      const content = `${owned.hasVisibleFootnote ? renderEditorFootnoteField(ownedRow, owned) : ""}${renderEditorLanguageImage(ownedRow, owned)}`;
+      return content.trim() ? `<div class="translation-srt-attachment" data-srt-fragment-row="${escapeHtml(member.rowId)}"><small>Fragment ${index + 1}</small>${content}</div>` : "";
+    }).join("");
+  }
+  return `${language.hasVisibleFootnote ? renderEditorFootnoteField(row, language) : ""}${renderEditorLanguageImage(row, language)}`;
+}
+
 function renderEditorLanguageField(row, language) {
   const textStyle = normalizeEditorRowTextStyle(row?.textStyle);
   const isCustomHtmlRow = isCustomHtmlRowTextStyle(textStyle);
@@ -893,7 +909,9 @@ function renderEditorLanguageField(row, language) {
         : "";
   // "Changed after my last edit": the static display shows the diff instead (custom
   // HTML diffs as its raw source); glossary and search marks don't fit the merged text.
-  const staticFieldTextHtml = language.changeView?.textDiff
+  const staticFieldTextHtml = language.srtParts
+    ? renderSrtStaticText(language, glossaryHighlightHtml)
+    : language.changeView?.textDiff
     ? renderEditorChangeDiffHtml(language.changeView.textDiff)
     : isCustomHtmlRow
     ? sanitizeCustomHtmlForDisplay(language.text)
@@ -977,8 +995,7 @@ function renderEditorLanguageField(row, language) {
       >
           ${staticFieldMarkup}
         </div>
-        ${language.hasVisibleFootnote ? renderEditorFootnoteField(row, language) : ""}
-        ${renderEditorLanguageImage(row, language)}
+        ${renderLanguageAttachments(row, language)}
         ${renderRowTextStyleButtons(row, language)}
       </div>
     `;
@@ -1032,8 +1049,9 @@ function renderEditorLanguageField(row, language) {
           ${loadingAttributes}
         >${escapeHtml(language.text)}</textarea>
       </div>
-      ${language.hasVisibleFootnote ? renderEditorFootnoteField(row, language) : ""}
-      ${renderEditorLanguageImage(row, language)}
+      ${language.srtError ? `<p class="translation-srt-error" role="alert">${escapeHtml(language.srtError)}</p>` : ""}
+      ${language.srtNeedsMarkerReview ? `<div class="translation-srt-draft-review"><p>Review the corrected text, then save.</p>${primaryButton("Save sentence draft", "save-editor-srt-drafts")}</div>` : ""}
+      ${renderLanguageAttachments(row, language)}
       ${renderRowTextStyleButtons(row, language)}
     </div>
   `;
@@ -1173,7 +1191,7 @@ export function renderTranslationContentRow(
     : '<div class="translation-row__selection" aria-hidden="true"></div>';
 
   return `
-    <div class="translation-row-shell${row.isConnected ? " is-connected" : ""}${row.lifecycleState === "deleted" ? " is-deleted" : ""}" data-editor-row-card data-row-id="${escapeHtml(row.id)}"${rowIndexAttribute}>
+    <div class="translation-row-shell${row.isConnected ? " is-connected" : ""}${row.lifecycleState === "deleted" ? " is-deleted" : ""}" data-editor-row-card data-row-id="${escapeHtml(row.id)}"${row.srtGroup ? ` data-srt-member-ids="${escapeHtml(row.srtGroup.memberRowIds.join(" "))}"` : ""}${rowIndexAttribute}>
       <div class="translation-row__toolbar">
         ${renderEditorRowLastUpdate(row)}
         ${rowActions}

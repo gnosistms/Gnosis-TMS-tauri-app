@@ -32,6 +32,19 @@ function restoreSharedState(snapshot) {
   state.selectedTeamId = snapshot.selectedTeamId;
 }
 
+test("pause splitting defaults off and remains a chapter-session view preference", () => {
+  const defaults = createEditorChapterState();
+  assert.equal(defaults.srtPauseSplitEnabled, false);
+  assert.equal(defaults.srtPauseThresholdMs, 500);
+  const previous = { ...defaults, chapterId: "a", srtViewMode: "group-fragments", srtPauseSplitEnabled: true, srtPauseThresholdMs: 1500 };
+  const refreshed = applyEditorUiState({ chapterId: "a", rows: [], languages: [] }, previous);
+  assert.equal(refreshed.srtPauseSplitEnabled, true);
+  assert.equal(refreshed.srtPauseThresholdMs, 1500);
+  const otherChapter = applyEditorUiState({ chapterId: "b", rows: [], languages: [] }, previous);
+  assert.equal(otherChapter.srtPauseSplitEnabled, false);
+  assert.equal(otherChapter.srtPauseThresholdMs, 500);
+});
+
 test("applyEditorUiState preserves same-chapter editor UI state when the active field still exists", () => {
   const previousHistory = {
     ...createEditorHistoryState(),

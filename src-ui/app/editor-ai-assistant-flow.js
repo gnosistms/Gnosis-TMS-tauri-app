@@ -15,6 +15,9 @@ import {
 import { invoke, waitForNextPaint } from "./runtime.js";
 import { state } from "./state.js";
 import { editorFootnotesPlainText, findEditorRowById } from "./editor-utils.js";
+import { srtLinguisticRow, srtGroupForRow, srtGroupingEnabled } from "./editor-srt-grouping.js";
+import { beginSrtGroupEdit, updateSrtGroupDraft, pendingSrtGroupEdits } from "./editor-srt-group-edit-flow.js";
+import { srtGroupSnapshot } from "./editor-srt-group-ai.js";
 import { formatAiHistoryModelLabel } from "./editor-history.js";
 import {
   buildEditorAssistantThreadKey,
@@ -434,7 +437,7 @@ function currentAssistantContext(chapterState = state.editorChapter, overrides =
     return null;
   }
 
-  const row = findEditorRowById(chapterState.activeRowId, chapterState);
+  const row = srtLinguisticRow(findEditorRowById(chapterState.activeRowId, chapterState), chapterState);
   if (!row) {
     return null;
   }
@@ -1489,8 +1492,36 @@ export async function applyEditorAssistantDraft(render, itemId, operations = {})
   renderAssistantSidebar(render);
 
   try {
+    let groupEdit = null;
+    const expected = item.details?.srtGroupDraft;
+    if (expected && !srtGroupingEnabled(state.editorChapter)) {
+      throw new Error("Switch to Group fragments to apply this sentence draft.");
+    }
+    if (srtGroupingEnabled(state.editorChapter)) {
+      const group = srtGroupForRow(state.editorChapter, context.rowId);
+      if (pendingSrtGroupEdits(state.editorChapter, { rowIds: group.map((row) => row.rowId) }).length) {
+        throw new Error("Save the sentence edits before applying this draft.");
+      }
+      if (expected && (group.map((row) => row.rowId).join(":") !== expected.memberRowIds.join(":")
+        || srtGroupSnapshot(group) !== expected.captured)) {
+        throw new Error("The sentence changed since this draft was created. Generate a new draft before applying.");
+      }
+      groupEdit = beginSrtGroupEdit(context.rowId, context.targetLanguageCode);
+      if (expected) {
+        for (const result of expected.results) {
+          const member = group.find((row) => row.rowId === result.rowId);
+          if (result.translatedFootnote?.trim() && !editorFootnotesPlainText(member.footnotes?.[context.targetLanguageCode]).trim()) {
+            updateEditorRowFieldValue(member.rowId, context.targetLanguageCode, result.translatedFootnote, "footnote");
+          }
+          if (result.translatedImageCaption?.trim() && !String(member.imageCaptions?.[context.targetLanguageCode] ?? "").trim()) {
+            updateEditorRowFieldValue(member.rowId, context.targetLanguageCode, result.translatedImageCaption, "image-caption");
+          }
+        }
+      }
+    }
     if (item.draftTranslationText) {
-      updateEditorRowFieldValue(
+      if (groupEdit) updateSrtGroupDraft(groupEdit.firstRowId, context.targetLanguageCode, item.draftTranslationText, { forceSave: true });
+      else updateEditorRowFieldValue(
         context.rowId,
         context.targetLanguageCode,
         item.draftTranslationText,
@@ -1514,13 +1545,16 @@ export async function applyEditorAssistantDraft(render, itemId, operations = {})
     }
     renderAssistantSidebarAndBody(render);
 
-    await persistEditorRowOnBlur(render, context.rowId, {
+    const saved = await persistEditorRowOnBlur(render, context.rowId, {
       commitMetadata: {
         operation: "ai-assistant-apply",
         aiModel: item.details?.modelId ?? "",
       },
       waitForDurable: false,
     });
+    if (srtGroupingEnabled(state.editorChapter) && saved === false) throw new Error("The sentence draft could not be saved. Your draft is preserved; correct it and retry.");
+    if (srtGroupingEnabled(state.editorChapter) && operations.flushDirtyEditorRows
+      && !(await operations.flushDirtyEditorRows(render))) throw new Error("The sentence attachments could not be saved. Your draft is preserved; retry saving.");
 
     state.editorChapter = applyEditorAssistantItemApplied(
       state.editorChapter,
@@ -1657,6 +1691,7 @@ export function logEditorAssistantTranslationDraft(payload = {}) {
       draftTranslationImageCaption: payload.draftTranslationImageCaption ?? "",
       details: {
         kind: "translate_refinement",
+        ...(payload.srtGroupDraft ? { srtGroupDraft: payload.srtGroupDraft } : {}),
         providerId: payload.providerId ?? "",
         modelId: payload.modelId ?? "",
         sourceLanguageCode: payload.sourceLanguageCode ?? "",

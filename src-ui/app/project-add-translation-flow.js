@@ -381,7 +381,8 @@ async function extractProjectAddTranslationFile(render, file) {
       return;
     }
     const plainText = typeof response?.plainText === "string" ? response.plainText : "";
-    if (!plainText.trim()) {
+    const hasSubtitleCues = /\.srt$/i.test(fileName) && Number(response?.unitCount) > 0;
+    if (!plainText.trim() && !hasSubtitleCues) {
       throw new Error("The selected file does not contain any readable text.");
     }
     state.projectAddTranslation = {

@@ -325,6 +325,12 @@ export function findTranslateAnchorElement(snapshot) {
   if (!isHtmlElement(anchor)) {
     anchor = document.querySelector(`[data-editor-row-card][data-row-id="${CSS.escape(snapshot.rowId)}"]`);
   }
+  if (!isHtmlElement(anchor)) {
+    const group = document.querySelector(`[data-editor-row-card][data-srt-member-ids~="${CSS.escape(snapshot.rowId)}"]`);
+    anchor = snapshot.languageCode && isHtmlElement(group)
+      ? group.querySelector(`[data-editor-language-panel][data-language-code="${CSS.escape(snapshot.languageCode)}"]`) ?? group
+      : group;
+  }
 
   return isHtmlElement(anchor) ? anchor : null;
 }
@@ -379,6 +385,7 @@ export function centerTranslateRowInView(rowId) {
   }
 
   let row = document.querySelector(`[data-editor-row-card][data-row-id="${CSS.escape(rowId)}"]`);
+  if (!isHtmlElement(row)) row = document.querySelector(`[data-editor-row-card][data-srt-member-ids~="${CSS.escape(rowId)}"]`);
   if (!isHtmlElement(row)) {
     row = document.querySelector(`[data-editor-deleted-group][data-row-id="${CSS.escape(rowId)}"]`);
   }

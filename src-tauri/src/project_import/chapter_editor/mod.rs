@@ -337,6 +337,20 @@ pub(crate) struct EditorFieldTimingInput {
 pub(crate) struct UpdateEditorRowFieldsBatchRowInput {
     row_id: String,
     fields: BTreeMap<String, String>,
+    /// Present for manual sentence-group edits; validate/merge all members
+    /// under the repository lock before preparing any writes.
+    #[serde(default)]
+    base_fields: Option<BTreeMap<String, String>>,
+    #[serde(default)]
+    base_footnotes: Option<BTreeMap<String, String>>,
+    #[serde(default)]
+    base_image_captions: Option<BTreeMap<String, String>>,
+    #[serde(default)]
+    field_flags: BTreeMap<String, BTreeMap<String, bool>>,
+    #[serde(default)]
+    lifecycle_state: Option<String>,
+    #[serde(default)]
+    text_style: Option<String>,
     #[serde(default)]
     footnotes: BTreeMap<String, String>,
     #[serde(default)]
@@ -579,6 +593,8 @@ pub(crate) struct UpdateEditorRowFieldsBatchResponse {
     word_counts: BTreeMap<String, usize>,
     commit_sha: Option<String>,
     chapter_base_commit_sha: Option<String>,
+    rows: Vec<EditorRow>,
+    conflicts: Vec<SaveEditorRowWithConcurrencyResponse>,
 }
 
 #[derive(Serialize)]
