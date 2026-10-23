@@ -7248,3 +7248,52 @@ test("formatting shortcuts leave SRT and custom HTML text unchanged", async ({ p
     }
   }
 });
+
+for (const canEdit of [false, true]) {
+  for (const fontSize of [20, 28]) {
+    test(`closed footnotes keep compact spacing (${canEdit ? "editable" : "read-only"}, ${fontSize}px)`, async ({ page }) => {
+      await mountEditorFixture(page, { rowCount: 2 });
+      await page.evaluate(async ({ fontSize, canEdit }) => {
+        const { renderTranslationContentRow } = await import("/app/editor-row-render.js");
+        const host = document.createElement("div");
+        host.dataset.footnoteSpacingFixture = "true";
+        host.style.cssText = `position:fixed;top:20px;left:20px;z-index:100;width:800px;max-width:calc(100% - 40px);background:#fff7e5;--translation-editor-font-size:${fontSize}px;`;
+        host.innerHTML = renderTranslationContentRow({
+          kind: "row", id: "spacing-fixture", rowId: "spacing-fixture",
+          lifecycleState: "active", textStyle: "paragraph", canEdit,
+          sections: [{
+            code: "vi", baseCode: "vi", name: "Vietnamese", canEdit,
+            text: "Body text above the footnotes.",
+            hasVisibleFootnote: true,
+            footnotes: [
+              { marker: 1, text: 'First paragraph.\nSecond paragraph with <a href="https://example.com">a link</a>.' },
+              { marker: 2, text: "Another footnote." },
+            ],
+          }],
+        });
+        document.body.append(host);
+      }, { fontSize, canEdit });
+      const host = page.locator("[data-footnote-spacing-fixture]");
+      const footnote = host.locator(canEdit
+        ? ".translation-language-panel__field-stack--footnote"
+        : ".translation-language-panel__field-static--footnote");
+      const gaps = await footnote.evaluate((node) => {
+        const outer = node.getBoundingClientRect();
+        const children = [...node.children];
+        const first = children[0].getBoundingClientRect();
+        const last = children.at(-1).getBoundingClientRect();
+        return { top: first.top - outer.top, bottom: outer.bottom - last.bottom };
+      });
+      expect(gaps.top).toBeLessThanOrEqual(4);
+      expect(gaps.bottom).toBeLessThanOrEqual(4);
+      const entries = footnote.locator(canEdit
+        ? ".translation-language-panel__footnote-display-text"
+        : ".translation-language-panel__footnote-static");
+      await expect(entries).toHaveCount(2);
+      await expect(footnote.locator("a")).toHaveAttribute("href", "https://example.com");
+      expect(await entries.first().textContent()).toContain("First paragraph.\nSecond paragraph");
+      await expect(entries.first()).toHaveCSS("white-space", "pre-wrap");
+      await host.screenshot({ path: `/tmp/footnote-spacing-${canEdit ? "editable" : "read-only"}-${fontSize}.png` });
+    });
+  }
+}

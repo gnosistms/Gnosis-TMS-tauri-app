@@ -794,16 +794,16 @@ function renderEditorFootnoteField(row, language) {
         .map((entry) => renderStaticEntry(entry.marker, footnoteDisplayHtml(language, entry)))
         .join("") + deletedFootnotesHtml
       : renderSanitizedInlineMarkupHtml(language.footnote);
+    // This wrapper preserves line breaks. Keep template whitespace outside it
+    // so only authored footnote text can create blank lines.
     return `
       <div
         class="translation-language-panel__field-static translation-language-panel__field-static--footnote"
         data-row-text-style="footnote"
-      >
-        <span
-          class="translation-language-panel__field-static-text"
-          lang="${escapeHtml(language.baseCode || language.code)}"
-        >${footnoteHtml}</span>
-      </div>
+      ><span
+        class="translation-language-panel__field-static-text"
+        lang="${escapeHtml(language.baseCode || language.code)}"
+      >${footnoteHtml}</span></div>
     `;
   }
 
