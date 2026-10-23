@@ -303,7 +303,7 @@ function glossaryTooltipPayload(mark) {
 function renderStructuredGlossaryTooltipBody(
   body,
   payload,
-  { showEditHint = false, showInsertHint = false, showFootnoteLabel = false } = {},
+  { showEditHint = false, showInsertHint = false } = {},
 ) {
   body.replaceChildren();
   body.classList.add("editor-glossary-info-card");
@@ -313,13 +313,6 @@ function renderStructuredGlossaryTooltipBody(
     title.className = "editor-glossary-info-card__title";
     title.innerHTML = renderGlossaryRubyHtml(payload.title);
     body.append(title);
-  }
-
-  if (payload.kind === "target" && payload.targetVariantNote) {
-    const note = document.createElement("p");
-    note.className = "editor-glossary-info-card__comment";
-    note.textContent = payload.targetVariantNote;
-    body.append(note);
   }
 
   const displayVariants = [...payload.variants];
@@ -369,6 +362,14 @@ function renderStructuredGlossaryTooltipBody(
   if (translatorNotes.length > 0 || footnotes.length > 0) {
     const comments = document.createElement("div");
     comments.className = "editor-glossary-info-card__comments";
+    const translatorSection = document.createElement("div");
+    translatorSection.className = "editor-glossary-info-card__note-section";
+    if (translatorNotes.length > 0) {
+      const label = document.createElement("p");
+      label.className = "editor-glossary-info-card__label";
+      label.textContent = "Note to Translators:";
+      translatorSection.append(label);
+    }
     for (const note of translatorNotes) {
       const comment = String(note ?? "").trim();
       if (!comment) {
@@ -378,13 +379,19 @@ function renderStructuredGlossaryTooltipBody(
       const paragraph = document.createElement("p");
       paragraph.className = "editor-glossary-info-card__comment";
       paragraph.textContent = comment;
-      comments.append(paragraph);
+      translatorSection.append(paragraph);
     }
-    if (showFootnoteLabel && footnotes.length > 0) {
+    if (translatorSection.childElementCount > 0) {
+      comments.append(translatorSection);
+    }
+
+    const footnoteSection = document.createElement("div");
+    footnoteSection.className = "editor-glossary-info-card__note-section";
+    if (translatorNotes.length > 0 && footnotes.length > 0) {
       const label = document.createElement("p");
       label.className = "editor-glossary-info-card__label";
       label.textContent = "Footnote:";
-      comments.append(label);
+      footnoteSection.append(label);
     }
     for (const footnote of footnotes) {
       const text = String(footnote ?? "").trim();
@@ -395,7 +402,10 @@ function renderStructuredGlossaryTooltipBody(
       const paragraph = document.createElement("p");
       paragraph.className = "editor-glossary-info-card__comment editor-glossary-info-card__footnote";
       paragraph.innerHTML = renderSanitizedInlineMarkupHtml(text);
-      comments.append(paragraph);
+      footnoteSection.append(paragraph);
+    }
+    if (footnoteSection.childElementCount > 0) {
+      comments.append(footnoteSection);
     }
 
     if (comments.childElementCount > 0) {
@@ -482,13 +492,11 @@ function updateGlossaryTooltipPlacement(mark) {
     // Checked at render time (not baked into the cached highlight HTML) so
     // capability changes apply without invalidating the highlight cache.
     const showEditHint = Boolean(glossaryMarkTermId(mark)) && canManageGlossaries();
-    const showFootnoteLabel = popoverContext?.kind === "footnote";
-    const showInsertHint = showFootnoteLabel
+    const showInsertHint = popoverContext?.kind === "footnote"
       && Boolean(glossaryFootnoteInsertionRequestForMark(mark));
     renderStructuredGlossaryTooltipBody(body, tooltipPayload, {
       showEditHint,
       showInsertHint,
-      showFootnoteLabel,
     });
   } else {
     tooltip.classList.remove("editor-glossary-tooltip--structured");
@@ -661,8 +669,8 @@ export function glossaryPopoverContextForMark(mark) {
   }
 
   // Closed target fields always retain their normal glossary information card.
-  // A populated footnote augments that card with the footnote label and insert
-  // hint; it is not what makes the glossary popover itself eligible.
+  // A populated footnote enables its insertion hint; it is not what makes the
+  // glossary popover itself eligible. Labels depend on the notes being shown.
   return payload.footnotes.length > 0
     ? { kind: "footnote", payload }
     : { kind: "glossary", payload };

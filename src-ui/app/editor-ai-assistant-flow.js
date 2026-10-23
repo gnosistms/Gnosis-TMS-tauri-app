@@ -15,6 +15,7 @@ import {
 import { invoke, waitForNextPaint } from "./runtime.js";
 import { state } from "./state.js";
 import { editorFootnotesPlainText, findEditorRowById } from "./editor-utils.js";
+import { editorFootnotesForAiReview } from "./editor-footnotes.js";
 import { srtLinguisticRow, srtGroupForRow, srtGroupingEnabled } from "./editor-srt-grouping.js";
 import { beginSrtGroupEdit, updateSrtGroupDraft, pendingSrtGroupEdits } from "./editor-srt-group-edit-flow.js";
 import { srtGroupSnapshot } from "./editor-srt-group-ai.js";
@@ -477,6 +478,8 @@ function currentAssistantContext(chapterState = state.editorChapter, overrides =
     targetLanguageLabel: normalizeLanguageLabel(targetLanguage, targetLanguageCode),
     sourceText,
     targetText,
+    targetFootnotes: editorFootnotesForAiReview(row.footnotes?.[targetLanguageCode]),
+    targetImageCaption: row.imageCaptions?.[targetLanguageCode] ?? "",
     sourceFootnote: editorFootnotesPlainText(row.footnotes?.[sourceLanguageCode]),
     sourceImageCaption: row.imageCaptions?.[sourceLanguageCode] ?? "",
     alternateLanguageTexts: buildEditorAssistantAlternateLanguageTexts(
@@ -1128,6 +1131,8 @@ function buildAssistantTurnRequestPayload(
       targetLanguageCode: context.targetLanguageCode,
       targetLanguageLabel: context.targetLanguageLabel,
       targetText: context.targetText,
+      targetFootnotes: context.targetFootnotes,
+      targetImageCaption: context.targetImageCaption,
       sourceFootnote: context.sourceFootnote,
       sourceImageCaption: context.sourceImageCaption,
       ...rowTextUpdatesSinceLastAssistantPrompt(thread, context),

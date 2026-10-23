@@ -2916,6 +2916,52 @@ test("runEditorAiAssistant renders a draft when a chat response includes draft t
   assert.equal(state.editorChapter.rows[0].fields.vi, "Nhiem vu cua no la trao phuong phap thuc hanh.");
 });
 
+test("Assistant reviews current target body, numbered footnotes, and caption after edits and clearing", async () => {
+  installTranslateFixture({
+    fields: { es: "Source body", vi: "Target body[2][7]" },
+    footnotes: {
+      es: "Source-only note",
+      vi: [{ marker: 2, text: "First target note" }, { marker: 7, text: "Second target note" }],
+    },
+    imageCaptions: { es: "Source caption", vi: "Target caption" },
+  });
+  const requests = [];
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_ai_provider_secret") return "mock-key";
+    if (command === "run_ai_assistant_turn") {
+      requests.push(cloneValue(payload.request));
+      return { assistantText: "Review complete.", draftTranslationText: null };
+    }
+    return null;
+  };
+  const review = async () => {
+    state.editorChapter.assistant.composerDraft = "Check spelling and grammar.";
+    await runEditorAiAssistant(() => {});
+  };
+  await review();
+  assert.equal(requests[0].row.targetText, "Target body[2][7]");
+  assert.deepEqual(requests[0].row.targetFootnotes, [
+    { marker: 2, text: "First target note" },
+    { marker: 7, text: "Second target note" },
+  ]);
+  assert.equal(requests[0].row.targetImageCaption, "Target caption");
+
+  const row = state.editorChapter.rows[0];
+  row.footnotes.vi = [{ marker: 7, text: "Unsaved revised note" }];
+  row.imageCaptions.vi = "Unsaved revised caption";
+  await review();
+  assert.deepEqual(requests[1].row.targetFootnotes, [{ marker: 7, text: "Unsaved revised note" }]);
+  assert.equal(requests[1].row.targetImageCaption, "Unsaved revised caption");
+  assert.equal(requests[1].row.targetText, "Target body[2][7]");
+
+  state.editorChapter.rows[0].footnotes.vi = [];
+  state.editorChapter.rows[0].imageCaptions.vi = "";
+  await review();
+  assert.deepEqual(requests[2].row.targetFootnotes, []);
+  assert.equal(requests[2].row.targetImageCaption, "");
+  assert.equal(state.editorChapter.rows[0].fields.vi, "Target body[2][7]");
+});
+
 test("applyEditorAssistantDraft does not wait for durable row persistence", async () => {
   installTranslateFixture();
   state.editorChapter = {

@@ -937,12 +937,12 @@ a {
 .editor-glossary-info-card__origin,
 .editor-glossary-info-card__variants,
 .editor-glossary-info-card__variant,
+.editor-glossary-info-card__variant-note,
 .editor-glossary-info-card__comment {
   margin: 0;
 }
 
 .editor-glossary-info-card__label {
-  margin-bottom: 8px;
   color: rgba(74, 45, 19, 0.58);
   font-size: 13px;
   font-weight: 650;
@@ -967,16 +967,17 @@ a {
 }
 
 .editor-glossary-info-card__variant {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  flex-wrap: wrap;
+  display: block;
 }
 
 .editor-glossary-info-card__variant-note {
+  display: block;
+  margin-top: 3px;
+  margin-inline-start: 16px;
   color: rgba(74, 45, 19, 0.68);
-  font-size: 0.92em;
+  font-size: 14.8px;
   font-weight: 500;
+  line-height: 1.35;
 }
 
 .editor-glossary-info-card__origin {
@@ -989,8 +990,13 @@ a {
 
 .editor-glossary-info-card__comments {
   display: grid;
-  gap: 8.4px;
+  gap: 14px;
   margin-top: 15.6px;
+}
+
+.editor-glossary-info-card__note-section {
+  display: grid;
+  gap: 4px;
 }
 
 .editor-glossary-info-card__footnote a {
