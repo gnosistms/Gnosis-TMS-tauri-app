@@ -8,12 +8,13 @@ import {
   renderableEditorGlossaryHighlightHtml,
 } from "./editor-glossary-highlight-cache.js";
 import {
+  buildInlineMarkupSearchHighlightMarkup,
   renderSanitizedInlineMarkupWithEditorHighlightState,
   renderSanitizedInlineMarkupWithGlossaryHighlightHtml,
 } from "./editor-inline-markup.js";
 import { buildStaticInlineFootnoteMarkerRanges } from "./editor-static-footnote-markers.js";
 import { isCustomHtmlRowTextStyle } from "./editor-row-text-style.js";
-import { editorFootnotesPlainText, findEditorRowById } from "./editor-utils.js";
+import { editorLanguageFootnotes, findEditorRowById } from "./editor-utils.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import { invoke } from "./runtime.js";
 import { createEditorChapterGlossaryState, state } from "./state.js";
@@ -194,9 +195,12 @@ function setElementInnerHtmlIfChanged(element, html) {
   element.innerHTML = nextHtml;
 }
 
-function readEditorHighlightableText(row, languageCode, contentKind = "field") {
+function readEditorHighlightableText(row, languageCode, contentKind = "field", footnoteMarker = null) {
   if (contentKind === "footnote") {
-    return editorFootnotesPlainText(row?.footnotes?.[languageCode]);
+    return editorLanguageFootnotes(row, languageCode).find((entry) => entry.marker === footnoteMarker)?.text ?? "";
+  }
+  if (contentKind === "image-caption") {
+    return row?.imageCaptions?.[languageCode] ?? "";
   }
 
   return row?.fields?.[languageCode] ?? "";
@@ -207,6 +211,7 @@ function applyEditorTextHighlightLayersToRowCard(
   row,
   searchHighlightMap = new Map(),
   glossaryHighlightMap = new Map(),
+  chapterState = state.editorChapter,
 ) {
   rowCard.querySelectorAll("[data-editor-glossary-field-stack]").forEach((stack) => {
     if (!(stack instanceof HTMLElement)) {
@@ -228,15 +233,25 @@ function applyEditorTextHighlightLayersToRowCard(
 
     const isAiTranslating = stack.dataset.aiTranslating === "true";
     const languageCode = stack.dataset.languageCode ?? "";
-    const contentKind = stack.dataset.contentKind === "footnote" ? "footnote" : "field";
+    const contentKind = stack.dataset.contentKind === "footnote"
+      ? "footnote"
+      : stack.dataset.contentKind === "image-caption" ? "image-caption" : "field";
     // Auxiliary fields retain their own real-row content inside a group card.
     const ownedRow = row.srtGroup?.members.find((member) => member.rowId === stack.dataset.rowId) ?? row;
     const glossaryHighlight = glossaryHighlightMap instanceof Map
       ? (contentKind === "field" ? (glossaryHighlightMap.get(languageCode) ?? null) : null)
       : null;
-    const searchHighlight = searchHighlightMap instanceof Map
+    const highlightableText = readEditorHighlightableText(
+      contentKind === "field" ? row : ownedRow, languageCode, contentKind,
+      Number.parseInt(stack.dataset.footnoteMarker, 10),
+    );
+    // Match each attachment independently: offsets from a concatenation of all
+    // notes cannot be applied to an individual footnote editor or display.
+    const searchHighlight = contentKind === "field"
       ? (searchHighlightMap.get(buildEditorSearchHighlightKey(languageCode, contentKind)) ?? null)
-      : null;
+      : buildInlineMarkupSearchHighlightMarkup(highlightableText, chapterState?.filters?.searchQuery, languageCode, {
+        caseSensitive: chapterState?.filters?.caseSensitive === true,
+      });
     const glossaryHighlightHtml = isAiTranslating ? "" : renderableEditorGlossaryHighlightHtml(glossaryHighlight);
     const searchHighlightHtml =
       isAiTranslating !== true && typeof searchHighlight?.html === "string"
@@ -245,7 +260,6 @@ function applyEditorTextHighlightLayersToRowCard(
     const searchHighlightRanges = isAiTranslating
       ? []
       : (Array.isArray(searchHighlight?.ranges) ? searchHighlight.ranges : []);
-    const highlightableText = readEditorHighlightableText(contentKind === "footnote" ? ownedRow : row, languageCode, contentKind);
     const displayText = stack.querySelector("[data-editor-display-text]");
     const suppressGlossaryWhileEditing =
       contentKind === "field" && !(displayText instanceof HTMLElement);
@@ -312,7 +326,7 @@ function syncEditorGlossaryHighlightRowCard(rowCard, chapterState = state.editor
 
   const glossaryHighlightMap = buildCachedEditorRowGlossaryHighlights(row, chapterState);
   const searchHighlightMap = buildEditorRowSearchHighlightMap(row, chapterState);
-  applyEditorTextHighlightLayersToRowCard(rowCard, row, searchHighlightMap, glossaryHighlightMap);
+  applyEditorTextHighlightLayersToRowCard(rowCard, row, searchHighlightMap, glossaryHighlightMap, chapterState);
 }
 
 function syncMountedEditorGlossaryHighlightRows(
@@ -359,7 +373,7 @@ function syncMountedEditorGlossaryHighlightRows(
       ? buildCachedEditorRowGlossaryHighlights(row, chapterState)
       : readCachedEditorRowGlossaryHighlights(row, chapterState);
     const searchHighlightMap = buildEditorRowSearchHighlightMap(row, chapterState);
-    applyEditorTextHighlightLayersToRowCard(rowCard, row, searchHighlightMap, glossaryHighlightMap);
+    applyEditorTextHighlightLayersToRowCard(rowCard, row, searchHighlightMap, glossaryHighlightMap, chapterState);
   });
 }
 

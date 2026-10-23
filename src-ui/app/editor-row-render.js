@@ -24,6 +24,7 @@ import { sanitizeCustomHtmlForDisplay } from "./editor-custom-html.js";
 import { formatTimingMs as formatEditorTimingMs } from "./editor-timing.js";
 import { renderSrtStaticText } from "./editor-srt-group-render.js";
 import {
+  buildInlineMarkupSearchHighlightMarkup,
   renderSanitizedInlineMarkupHtml,
   renderSanitizedInlineMarkupWithEditorHighlightState,
   rubyButtonConfig,
@@ -453,10 +454,26 @@ function editorImagePreviewCachedStyle(size) {
   return ` style="--editor-image-preview-width: ${escapeHtml(frameWidth)}px; --editor-image-preview-height: ${escapeHtml(frameHeight)}px; --editor-image-preview-content-width: ${escapeHtml(contentWidth)}px; --editor-image-preview-content-height: ${escapeHtml(contentHeight)}px;"`;
 }
 
+function renderAttachmentTextHtml(text, language) {
+  const highlight = buildInlineMarkupSearchHighlightMarkup(text, language.searchFilters?.searchQuery, language.code, {
+    caseSensitive: language.searchFilters?.caseSensitive === true,
+  });
+  return renderSanitizedInlineMarkupWithEditorHighlightState(text, { searchRanges: highlight.ranges });
+}
+
+function renderSearchHighlightLayer(language) {
+  return `<div
+    class="translation-language-panel__field-highlight translation-language-panel__search-highlight"
+    data-editor-search-highlight
+    lang="${escapeHtml(language.baseCode || language.code)}"
+    aria-hidden="true"
+  ></div>`;
+}
+
 function imageCaptionDisplayHtml(language) {
   return language.changeView?.captionDiff
     ? renderEditorChangeDiffHtml(language.changeView.captionDiff)
-    : renderSanitizedInlineMarkupHtml(language.imageCaption ?? "");
+    : renderAttachmentTextHtml(language.imageCaption ?? "", language);
 }
 
 function renderEditorLanguageImageCaption(row, language) {
@@ -469,10 +486,12 @@ function renderEditorLanguageImageCaption(row, language) {
       <div class="translation-language-panel__image-caption-shell translation-language-panel__image-caption-shell--editing">
         <div
           class="translation-language-panel__field-stack translation-language-panel__field-stack--footnote translation-language-panel__field-stack--image-caption"
+          data-editor-glossary-field-stack
           data-row-id="${escapeHtml(row.id)}"
           data-language-code="${escapeHtml(language.code)}"
           data-content-kind="image-caption"
         >
+          ${renderSearchHighlightLayer(language)}
           <textarea
             class="translation-language-panel__field translation-language-panel__image-caption-input"
             data-editor-row-field
@@ -513,7 +532,13 @@ function renderEditorLanguageImageCaption(row, language) {
   }
 
   return `
-    <div class="translation-language-panel__image-caption-shell translation-language-panel__image-caption-shell--idle translation-language-panel__image-caption-shell--display">
+    <div class="translation-language-panel__image-caption-shell translation-language-panel__image-caption-shell--idle translation-language-panel__image-caption-shell--display"
+      data-editor-glossary-field-stack
+      data-row-id="${escapeHtml(row.id)}"
+      data-language-code="${escapeHtml(language.code)}"
+      data-content-kind="image-caption"
+      ${language.changeView?.captionDiff ? 'data-editor-change-diff="true"' : ""}
+    >
       ${
         language.canEdit === true
           ? `<button
@@ -523,8 +548,8 @@ function renderEditorLanguageImageCaption(row, language) {
               data-editor-image-caption-button
               data-row-id="${escapeHtml(row.id)}"
               data-language-code="${escapeHtml(language.code)}"
-            ><span class="translation-language-panel__image-caption-text" lang="${escapeHtml(language.baseCode || language.code)}">${imageCaptionDisplayHtml(language)}</span></button>`
-          : `<div class="translation-language-panel__image-caption-display"><span class="translation-language-panel__image-caption-text" lang="${escapeHtml(language.baseCode || language.code)}">${imageCaptionDisplayHtml(language)}</span></div>`
+            ><span class="translation-language-panel__image-caption-text" data-editor-display-text lang="${escapeHtml(language.baseCode || language.code)}">${imageCaptionDisplayHtml(language)}</span></button>`
+          : `<div class="translation-language-panel__image-caption-display"><span class="translation-language-panel__image-caption-text" data-editor-display-text lang="${escapeHtml(language.baseCode || language.code)}">${imageCaptionDisplayHtml(language)}</span></div>`
       }
     </div>
   `;
@@ -771,7 +796,7 @@ function footnoteDisplayHtml(language, entry) {
   const change = language?.changeView?.footnotes?.find((candidate) => candidate.marker === entry.marker);
   return change?.diff
     ? renderEditorChangeDiffHtml(change.diff)
-    : renderSanitizedInlineMarkupHtml(entry.text);
+    : renderAttachmentTextHtml(entry.text, language);
 }
 
 // Footnotes someone deleted keep their box, with the deleted text struck through.
@@ -787,7 +812,12 @@ function renderEditorFootnoteField(row, language) {
   const footnotes = normalizeEditorFootnotes(language?.footnotes ?? language?.footnote);
   if (row?.canEdit !== true || language?.canEdit !== true) {
     const renderStaticEntry = (marker, html) =>
-      `<span class="translation-language-panel__footnote-static"><span class="translation-language-panel__footnote-marker">[${escapeHtml(marker)}]</span>${html}</span>`;
+      `<span class="translation-language-panel__footnote-static"
+        data-editor-glossary-field-stack data-row-id="${escapeHtml(row.id)}"
+        data-language-code="${escapeHtml(language.code)}" data-content-kind="footnote"
+        data-footnote-marker="${escapeHtml(marker)}"
+        ${language.changeView?.footnotes?.some((entry) => entry.marker === marker && entry.diff) ? 'data-editor-change-diff="true"' : ""}
+      ><span class="translation-language-panel__footnote-marker">[${escapeHtml(marker)}]</span><span data-editor-display-text>${html}</span></span>`;
     const deletedFootnotesHtml = renderDeletedFootnotes(language, footnotes, renderStaticEntry);
     const footnoteHtml = footnotes.length > 0 || deletedFootnotesHtml
       ? footnotes
@@ -820,6 +850,12 @@ function renderEditorFootnoteField(row, language) {
         return `
       <div class="translation-language-panel__footnote-editor-row">
         ${markerHtml}
+        <div class="translation-language-panel__field-stack translation-language-panel__footnote-input-stack"
+          data-editor-glossary-field-stack
+          data-row-id="${escapeHtml(row.id)}" data-language-code="${escapeHtml(language.code)}"
+          data-content-kind="footnote" data-footnote-marker="${escapeHtml(entry.marker)}"
+        >
+        ${renderSearchHighlightLayer(language)}
         <textarea
           class="translation-language-panel__field translation-language-panel__field--footnote"
           data-editor-row-field
@@ -832,6 +868,7 @@ function renderEditorFootnoteField(row, language) {
           spellcheck="false"
           placeholder="Enter footnote text here."
         >${escapeHtml(entry.text)}</textarea>
+        </div>
       </div>
         `;
       }
@@ -844,6 +881,9 @@ function renderEditorFootnoteField(row, language) {
         class="translation-language-panel__footnote-editor-row"
         data-action="open-editor-footnote-entry"
         data-editor-footnote-display
+        data-editor-glossary-field-stack
+        data-content-kind="footnote"
+        ${language.changeView?.footnotes?.some((change) => change.marker === entry.marker && change.diff) ? 'data-editor-change-diff="true"' : ""}
         data-footnote-marker="${escapeHtml(entry.marker)}"
         data-row-id="${escapeHtml(row.id)}"
         data-language-code="${escapeHtml(language.code)}"
@@ -854,7 +894,7 @@ function renderEditorFootnoteField(row, language) {
           type="button"
           aria-label="Edit footnote ${escapeHtml(entry.marker)}"
           lang="${escapeHtml(language.baseCode || language.code)}"
-        ><span class="translation-language-panel__footnote-display-text">${displayHtml}</span></button>
+        ><span class="translation-language-panel__footnote-display-text" data-editor-display-text>${displayHtml}</span></button>
       </div>
       `;
     })
@@ -871,7 +911,6 @@ function renderEditorFootnoteField(row, language) {
   return `
     <div
       class="translation-language-panel__field-stack translation-language-panel__field-stack--footnote"
-      data-editor-glossary-field-stack
       data-row-id="${escapeHtml(row.id)}"
       data-language-code="${escapeHtml(language.code)}"
       data-content-kind="footnote"
@@ -886,7 +925,7 @@ function renderLanguageAttachments(row, language) {
   if (language.srtAttachments) {
     return language.srtAttachments.map(({ row: member, section }, index) => {
       if (!section) return "";
-      const owned = { ...section, canEdit: language.canEdit };
+      const owned = { ...section, canEdit: language.canEdit, searchFilters: language.searchFilters };
       const ownedRow = { ...member, canEdit: row.canEdit };
       const content = `${owned.hasVisibleFootnote ? renderEditorFootnoteField(ownedRow, owned) : ""}${renderEditorLanguageImage(ownedRow, owned)}`;
       return content.trim() ? `<div class="translation-srt-attachment" data-srt-fragment-row="${escapeHtml(member.rowId)}"><small>Fragment ${index + 1}</small>${content}</div>` : "";
@@ -1239,6 +1278,7 @@ export function renderTranslationContentRow(
                         ? ""
                         : renderEditorLanguageField(row, {
                           ...language,
+                          searchFilters: chapterState?.filters,
                           glossaryHighlightHtml: renderableEditorGlossaryHighlightHtml(
                             glossaryHighlightMap.get(language.code) ?? null,
                           ),

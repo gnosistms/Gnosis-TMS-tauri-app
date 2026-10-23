@@ -7297,3 +7297,84 @@ for (const canEdit of [false, true]) {
     });
   }
 }
+
+for (const canEdit of [false, true]) {
+  test(`search highlights all editor text fields (${canEdit ? "editable" : "read-only"})`, async ({ page }) => {
+    const rowId = "fixture-row-0001";
+    await mountEditorFixture(page, {
+      rowCount: 2, chapterStatus: "ready",
+      fieldsByRowId: { [rowId]: { vi: "Needle body[2][7]" } },
+      imagesByRowId: { [rowId]: { vi: { kind: "url", url: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Crect width='80' height='80' fill='orange'/%3E%3C/svg%3E" } } },
+    }, { mockTauri: true });
+    await page.evaluate(async ({ rowId, canEdit }) => {
+      const { state } = await import("/app/state.js");
+      const row = state.editorChapter.rows.find((row) => row.rowId === rowId);
+      row.footnotes.vi = [
+        { marker: 2, text: 'A longer first note with <em>Needle</em> and <a href="https://example.com">a link</a>.' },
+        { marker: 7, text: "Needle begins the second note." },
+      ];
+      row.imageCaptions.vi = "Picture <u>Needle</u> caption";
+      row.persistedFootnotes = structuredClone(row.footnotes);
+      row.persistedImageCaptions = { ...row.imageCaptions };
+      // Publish new rows as a normal editor update would, invalidating its model cache.
+      state.editorChapter.rows = [...state.editorChapter.rows];
+      if (!canEdit) {
+        state.editorChapter.writePermissionSnapshot = {
+          ...state.editorChapter.writePermissionSnapshot, source: "test", canEditProjectFiles: false,
+        };
+      }
+    }, { rowId, canEdit });
+    const search = page.locator("[data-editor-search-input]");
+    await search.fill("needle");
+    const panel = page.locator(`[data-editor-language-panel][data-row-id="${rowId}"][data-language-code="vi"]`);
+    const marks = panel.locator("mark.translation-language-panel__search-match");
+    await expect(marks).toHaveCount(4);
+    await expect(panel.locator("em mark")).toHaveText("Needle");
+    await expect(panel.locator("u mark")).toHaveText("Needle");
+    await expect(panel.locator('.translation-language-panel__footnote-marker').filter({ hasText: "[7]" })).toBeVisible();
+    await expect(panel.locator('a[href="https://example.com"]')).toHaveText("a link");
+    await panel.screenshot({ path: `/tmp/editor-search-highlighting-${canEdit ? "editable" : "read-only"}.png` });
+
+    // A query found only in an attachment must retain the row and highlight it.
+    for (const query of ["second note", "Picture", "body"]) {
+      await search.fill(query);
+      await expect(panel).toBeVisible();
+      await expect(marks).toHaveCount(1);
+      await expect(marks).toHaveText(query);
+    }
+    await search.fill("needle");
+    await page.locator('[data-action="toggle-editor-search-case-sensitive"]').click();
+    await expect(page.locator("[data-editor-row-card]")).toHaveCount(0);
+    await page.locator('[data-action="toggle-editor-search-case-sensitive"]').click();
+    await expect(marks).toHaveCount(4);
+
+    if (canEdit) {
+      await panel.locator('[data-editor-footnote-display][data-footnote-marker="7"]').click();
+      const footnote = panel.locator('textarea[data-content-kind="footnote"][data-footnote-marker="7"]');
+      await expect(footnote).toBeFocused();
+      const footnoteLayer = footnote.locator("..").locator("[data-editor-search-highlight]");
+      await expect(footnoteLayer.locator("mark")).toHaveText("Needle");
+      await expect(footnoteLayer).toBeVisible();
+      await footnote.fill("Needle changed, needle again.");
+      await expect(footnoteLayer.locator("mark")).toHaveCount(2);
+      await expect(footnote).toBeFocused();
+      await footnote.locator("..").screenshot({ path: "/tmp/editor-search-footnote-editing.png" });
+
+      await panel.locator("[data-editor-image-caption-button]").click();
+      const caption = panel.locator('textarea[data-content-kind="image-caption"]');
+      await expect(caption).toBeFocused();
+      const captionLayer = caption.locator("..").locator("[data-editor-search-highlight]");
+      await expect(captionLayer.locator("mark")).toHaveText("Needle");
+      await expect(captionLayer).toBeVisible();
+      await caption.fill("Needle changed caption, needle again.");
+      await expect(captionLayer.locator("mark")).toHaveCount(2);
+      await expect(caption).toBeFocused();
+      await caption.locator("..").screenshot({ path: "/tmp/editor-search-caption-editing.png" });
+
+      const body = await activateMainEditorField(page, rowId, "vi");
+      await expect(body.locator("..").locator("[data-editor-search-highlight] mark")).toHaveText("Needle");
+    }
+    await search.fill("");
+    await expect(marks).toHaveCount(0);
+  });
+}

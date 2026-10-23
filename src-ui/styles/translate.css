@@ -1882,6 +1882,18 @@
   padding-right: 0;
 }
 
+/* Open footnotes share the body's search overlay, in the text column only. */
+.translation-language-panel__footnote-input-stack {
+  grid-column: 2;
+  grid-row: 1;
+  --translation-field-padding-left: 0;
+  --translation-field-padding-right: 0;
+}
+
+.translation-language-panel__footnote-input-stack > .translation-language-panel__field--footnote {
+  grid-column: 1;
+}
+
 .translation-language-panel__field-stack--highlighted .translation-language-panel__field::selection {
   background: rgba(243, 156, 24, 0.2);
 }
