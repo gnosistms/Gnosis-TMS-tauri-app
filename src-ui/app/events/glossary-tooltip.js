@@ -308,18 +308,18 @@ function renderStructuredGlossaryTooltipBody(
   body.replaceChildren();
   body.classList.add("editor-glossary-info-card");
 
-  if (showFootnoteLabel) {
-    const label = document.createElement("p");
-    label.className = "editor-glossary-info-card__label";
-    label.textContent = "Footnote:";
-    body.append(label);
-  }
-
   if (payload.title) {
     const title = document.createElement("p");
     title.className = "editor-glossary-info-card__title";
     title.innerHTML = renderGlossaryRubyHtml(payload.title);
     body.append(title);
+  }
+
+  if (payload.kind === "target" && payload.targetVariantNote) {
+    const note = document.createElement("p");
+    note.className = "editor-glossary-info-card__comment";
+    note.textContent = payload.targetVariantNote;
+    body.append(note);
   }
 
   const displayVariants = [...payload.variants];
@@ -356,13 +356,6 @@ function renderStructuredGlossaryTooltipBody(
     body.append(variants);
   }
 
-  if (payload.kind === "target" && payload.targetVariantNote) {
-    const note = document.createElement("p");
-    note.className = "editor-glossary-info-card__comment";
-    note.textContent = payload.targetVariantNote;
-    body.append(note);
-  }
-
   const originTerms = Array.isArray(payload.originTerms) ? payload.originTerms : [];
   if (originTerms.length > 0) {
     const origin = document.createElement("p");
@@ -386,6 +379,12 @@ function renderStructuredGlossaryTooltipBody(
       paragraph.className = "editor-glossary-info-card__comment";
       paragraph.textContent = comment;
       comments.append(paragraph);
+    }
+    if (showFootnoteLabel && footnotes.length > 0) {
+      const label = document.createElement("p");
+      label.className = "editor-glossary-info-card__label";
+      label.textContent = "Footnote:";
+      comments.append(label);
     }
     for (const footnote of footnotes) {
       const text = String(footnote ?? "").trim();
