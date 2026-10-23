@@ -7184,3 +7184,67 @@ test("changed-after-my-edit filter shows other people's changes as diffs on the 
   await page.locator("[data-editor-filter-select]").selectOption("show-all");
   await expect(page.locator(".history-diff__insert")).toHaveCount(0);
 });
+
+for (const { platform, modifier } of [
+  { platform: "mac", modifier: "Meta" },
+  { platform: "windows", modifier: "Control" },
+]) {
+  test(`formatting shortcuts match bold italic and underline buttons (${platform})`, async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 4 }, { mockTauri: true, path: `/?platform=${platform}` });
+    const rowId = "fixture-row-0001";
+    const field = await activateMainEditorField(page, rowId, "vi");
+    for (const { key, style, tag } of [
+      { key: "b", style: "bold", tag: "strong" },
+      { key: "i", style: "italic", tag: "em" },
+      { key: "u", style: "underline", tag: "u" },
+    ]) {
+      const button = page.locator(`[data-editor-inline-style-button][data-row-id="${rowId}"][data-language-code="vi"][data-inline-style="${style}"]`);
+      await field.fill("alpha beta gamma");
+      await setEditorSelectionRange(page, rowId, "vi", 6, 10);
+      await field.press(`${modifier}+${key}`);
+      await expect(field).toHaveValue(`alpha <${tag}>beta</${tag}> gamma`);
+      await expect(field).toBeFocused();
+      await expect(button).toHaveAttribute("aria-pressed", "true");
+      await field.press(`${modifier}+${key}`);
+      await expect(field).toHaveValue("alpha beta gamma");
+      await expect(button).toHaveAttribute("aria-pressed", "false");
+
+      await setEditorSelectionRange(page, rowId, "vi", 1, 1);
+      await field.press(`${modifier}+${key}`);
+      await expect(field).toHaveValue(`<${tag}>alpha</${tag}> beta gamma`);
+      await clickLocatorCenter(page, button);
+      await expect(field).toHaveValue("alpha beta gamma");
+    }
+
+    await clickLocatorCenter(page, page.locator(`[data-editor-footnote-button][data-row-id="${rowId}"][data-language-code="vi"]`));
+    const footnote = page.locator(`[data-editor-row-field][data-row-id="${rowId}"][data-language-code="vi"][data-content-kind="footnote"]`);
+    await footnote.fill("foot note");
+    const bodyWithMarker = await field.inputValue();
+    await setEditorSelectionRange(page, rowId, "vi", 6, 6, "footnote");
+    await footnote.press(`${modifier}+i`);
+    await expect(footnote).toHaveValue("foot <em>note</em>");
+    await expect(footnote).toBeFocused();
+    await expect(field).toHaveValue(bodyWithMarker);
+  });
+}
+
+test("formatting shortcuts leave SRT and custom HTML text unchanged", async ({ page }) => {
+  for (const srt of [false, true]) {
+    await mountEditorFixture(page, { rowCount: 4, srt }, { mockTauri: true, path: "/?platform=mac" });
+    const rowId = "fixture-row-0001";
+    const field = await activateMainEditorField(page, rowId, "vi");
+    if (!srt) {
+      await page.locator(`[data-editor-row-text-style-button][data-row-id="${rowId}"][data-language-code="vi"][data-text-style="custom_html"]`).click();
+    }
+    await field.fill("alpha beta gamma");
+    for (const key of ["b", "i", "u"]) {
+      const prevented = await field.evaluate((node, key) => {
+        node.focus();
+        node.setSelectionRange(6, 10);
+        return !node.dispatchEvent(new KeyboardEvent("keydown", { key, metaKey: true, bubbles: true, cancelable: true }));
+      }, key);
+      expect(prevented).toBe(false);
+      await expect(field).toHaveValue("alpha beta gamma");
+    }
+  }
+});

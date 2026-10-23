@@ -1,4 +1,6 @@
 import { isMacPlatform } from "../runtime.js";
+import { state } from "../state.js";
+import { chapterHasSrtSourceFormat } from "../editor-timing.js";
 import { activeGlossaryFootnoteInsertionRequest } from "./glossary-tooltip.js";
 
 const PAGE_SEARCH_INPUT_SELECTOR = [
@@ -47,6 +49,33 @@ function shouldBlurActiveEditorField(event) {
 
   const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
   return key === "enter" && event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey;
+}
+
+const EDITOR_INLINE_STYLE_SHORTCUTS = new Map([
+  ["b", "bold"],
+  ["i", "italic"],
+  ["u", "underline"],
+]);
+
+function inlineStyleForEditorShortcut(event) {
+  if (event.defaultPrevented || event.repeat || event.isComposing || event.altKey || event.shiftKey
+    || chapterHasSrtSourceFormat(state.editorChapter?.sourceFormats)) {
+    return null;
+  }
+
+  const target = event.target;
+  if (!(target instanceof HTMLTextAreaElement)
+    || !target.matches("[data-editor-row-field]")
+    || target.disabled
+    || target.readOnly) {
+    return null;
+  }
+
+  const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
+  const hasModifier = isMacPlatform()
+    ? event.metaKey && !event.ctrlKey
+    : event.ctrlKey && !event.metaKey;
+  return hasModifier ? EDITOR_INLINE_STYLE_SHORTCUTS.get(key) ?? null : null;
 }
 
 function shouldFocusPageSearch(event) {
@@ -116,6 +145,19 @@ export function registerKeyboardShortcutEvents(dispatchAction) {
     // Dialog-local keyboard behavior is delegated to the modal controller.
     // Page-level shortcuts must not move focus or trigger work behind a modal.
     if (document.querySelector("[data-modal-dialog]")) {
+      return;
+    }
+
+    const inlineStyle = inlineStyleForEditorShortcut(event);
+    if (inlineStyle) {
+      const button = event.target.closest("[data-editor-language-cluster]")
+        ?.querySelector(`[data-editor-inline-style-button][data-inline-style="${inlineStyle}"]`);
+      if (button instanceof HTMLButtonElement && !button.disabled) {
+        event.preventDefault();
+        // A programmatic click preserves textarea focus and selection while
+        // following the same action/permission path as the formatting button.
+        button.click();
+      }
       return;
     }
 
