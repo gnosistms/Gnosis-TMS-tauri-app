@@ -308,13 +308,6 @@ function renderStructuredGlossaryTooltipBody(
   body.replaceChildren();
   body.classList.add("editor-glossary-info-card");
 
-  if (showFootnoteLabel) {
-    const label = document.createElement("p");
-    label.className = "editor-glossary-info-card__label";
-    label.textContent = "Footnote:";
-    body.append(label);
-  }
-
   if (payload.title) {
     const title = document.createElement("p");
     title.className = "editor-glossary-info-card__title";
@@ -386,6 +379,12 @@ function renderStructuredGlossaryTooltipBody(
       paragraph.className = "editor-glossary-info-card__comment";
       paragraph.textContent = comment;
       comments.append(paragraph);
+    }
+    if (showFootnoteLabel && footnotes.length > 0) {
+      const label = document.createElement("p");
+      label.className = "editor-glossary-info-card__label";
+      label.textContent = "Footnote:";
+      comments.append(label);
     }
     for (const footnote of footnotes) {
       const text = String(footnote ?? "").trim();
