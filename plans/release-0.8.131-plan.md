@@ -16,3 +16,15 @@ Keep its existing tag and use a new patch version for the corrected release.
 
 Preserve the user's running dev app and unrelated local changes. Publish on
 GitHub without installing the application locally.
+
+## Validation
+
+- 2,980 frontend tests and 25 workflow tests pass after the save-path correction.
+- Nine focused browser cases pass across two runs, including the exact failing
+  earlier-save/newer-focused-draft case, explicit single-save assertions for
+  unchanged and edited quote blur, footnotes, captions, and scroll/focus guards.
+- Full ESLint reports zero errors and the existing 70 warnings. The unused-code
+  audit retains the same three files, five browser imports, and seven exports.
+- All release metadata agrees on 0.8.131; regenerated notices change only the
+  app version. Locked offline Cargo metadata, the dev version guard, and the
+  production frontend build pass.
