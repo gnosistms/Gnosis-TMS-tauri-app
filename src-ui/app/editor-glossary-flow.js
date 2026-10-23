@@ -241,10 +241,13 @@ function applyEditorTextHighlightLayersToRowCard(
     const glossaryHighlight = glossaryHighlightMap instanceof Map
       ? (contentKind === "field" ? (glossaryHighlightMap.get(languageCode) ?? null) : null)
       : null;
-    const highlightableText = readEditorHighlightableText(
-      contentKind === "field" ? row : ownedRow, languageCode, contentKind,
-      Number.parseInt(stack.dataset.footnoteMarker, 10),
-    );
+    const editingField = stack.querySelector("textarea[data-editor-row-field]");
+    const highlightableText = contentKind !== "field" && typeof editingField?.value === "string"
+      ? editingField.value
+      : readEditorHighlightableText(
+        contentKind === "field" ? row : ownedRow, languageCode, contentKind,
+        Number.parseInt(stack.dataset.footnoteMarker, 10),
+      );
     // Match each attachment independently: offsets from a concatenation of all
     // notes cannot be applied to an individual footnote editor or display.
     const searchHighlight = contentKind === "field"

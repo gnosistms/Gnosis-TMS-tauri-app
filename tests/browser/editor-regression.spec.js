@@ -7355,7 +7355,8 @@ for (const canEdit of [false, true]) {
       const footnoteLayer = footnote.locator("..").locator("[data-editor-search-highlight]");
       await expect(footnoteLayer.locator("mark")).toHaveText("Needle");
       await expect(footnoteLayer).toBeVisible();
-      await footnote.fill("Needle changed, needle again.");
+      await footnote.fill("   Needle changed, needle again.");
+      await expect.poll(() => footnoteLayer.textContent()).toBe("   Needle changed, needle again.");
       await expect(footnoteLayer.locator("mark")).toHaveCount(2);
       await expect(footnote).toBeFocused();
       await footnote.locator("..").screenshot({ path: "/tmp/editor-search-footnote-editing.png" });

@@ -12,3 +12,5 @@
 - All 2,992 frontend tests and 25 workflow tests pass. Nine focused browser checks pass across formatting shortcuts, footnote spacing, and search highlighting (seven existing PR cases and two new search cases, run in two batches).
 - Browser coverage includes body, multiple footnotes, captions, attachment-only queries, case sensitivity, clearing queries, and live typing in both attachment editors without losing focus. Screenshots of closed fields and editing overlays were visually inspected.
 - Production build and scoped lint pass (one pre-existing unused argument warning).
+
+- A final typing regression catches leading spaces in an open footnote. Search overlays use the current textarea value so normalization cannot shift the highlights; this fails before the refinement.
