@@ -315,6 +315,13 @@ function renderStructuredGlossaryTooltipBody(
     body.append(title);
   }
 
+  if (payload.kind === "target" && payload.targetVariantNote) {
+    const note = document.createElement("p");
+    note.className = "editor-glossary-info-card__comment";
+    note.textContent = payload.targetVariantNote;
+    body.append(note);
+  }
+
   const displayVariants = [...payload.variants];
   if (payload.kind === "source" && payload.noTranslation) {
     displayVariants.push({
@@ -347,13 +354,6 @@ function renderStructuredGlossaryTooltipBody(
     });
     variants.append(...variantItems);
     body.append(variants);
-  }
-
-  if (payload.kind === "target" && payload.targetVariantNote) {
-    const note = document.createElement("p");
-    note.className = "editor-glossary-info-card__comment";
-    note.textContent = payload.targetVariantNote;
-    body.append(note);
   }
 
   const originTerms = Array.isArray(payload.originTerms) ? payload.originTerms : [];
