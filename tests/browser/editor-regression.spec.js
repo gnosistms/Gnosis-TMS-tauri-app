@@ -3079,7 +3079,9 @@ test.describe("editor regressions", () => {
       await targetMarks.nth(index).hover();
       await expect(page.locator(".editor-glossary-tooltip")).toBeVisible();
       await expect(page.locator(".editor-glossary-info-card__title")).toHaveText(expectedTitles[index]);
-      await expect(page.locator(".editor-glossary-info-card__label")).toHaveCount(index === 0 ? 1 : 0);
+      await expect(page.locator(".editor-glossary-info-card__label")).toHaveText(
+        index === 1 || index === 3 ? ["Note to Translators:"] : [],
+      );
       await expect(page.locator(".editor-glossary-info-card__hint--insert")).toHaveCount(index === 0 ? 1 : 0);
     }
   });
