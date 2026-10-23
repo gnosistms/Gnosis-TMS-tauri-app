@@ -11,7 +11,6 @@ import {
   collapseEditorImageCaption,
   collapseEmptyEditorFootnote,
   collapseEmptyEditorImageEditor,
-  persistEditorRowOnBlur,
   moveEditorPreviewSearch,
   dismissActiveIdleEditorImageUpload,
   flushDirtyEditorRows,
@@ -638,9 +637,8 @@ export function registerTranslateEditorDomEvents(app, render) {
         }
 
         collapseEditorImageCaption(render, rowId, languageCode);
-        void persistEditorRowOnBlur(render, rowId, { quoteLanguageCode: languageCode });
+        scheduleDirtyEditorRowScan(render, rowId, { quoteLanguageCode: languageCode });
       });
-      scheduleDirtyEditorRowScan(render, rowId);
       return;
     }
     requestAnimationFrame(() => {
@@ -657,12 +655,9 @@ export function registerTranslateEditorDomEvents(app, render) {
       collapseEmptyEditorImageEditor(render, rowId, languageCode);
       void submitEditorImageUrl(render, rowId, languageCode);
       if (textarea instanceof HTMLTextAreaElement) {
-        void persistEditorRowOnBlur(render, rowId, { quoteLanguageCode: languageCode });
+        scheduleDirtyEditorRowScan(render, rowId, { quoteLanguageCode: languageCode });
       }
     });
-    if (textarea instanceof HTMLTextAreaElement) {
-      scheduleDirtyEditorRowScan(render, rowId);
-    }
   });
 
   app.addEventListener("keydown", (event) => {

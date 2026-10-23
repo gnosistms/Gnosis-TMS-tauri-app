@@ -680,7 +680,7 @@ function focusedEditorRowId() {
     : "";
 }
 
-export function scheduleDirtyEditorRowScan(render, rowId, operations = {}) {
+export function scheduleDirtyEditorRowScan(render, rowId, operations = {}, options = {}) {
   if (!rowId || typeof window === "undefined") {
     return;
   }
@@ -699,7 +699,11 @@ export function scheduleDirtyEditorRowScan(render, rowId, operations = {}) {
         return;
       }
 
-      void flushDirtyEditorRows(render, operations, { rowIds: [rowId] });
+      if (options.quoteLanguageCode) {
+        void persistEditorRowOnBlur(render, rowId, operations, options);
+      } else {
+        void flushDirtyEditorRows(render, operations, { rowIds: [rowId] });
+      }
     });
   });
 

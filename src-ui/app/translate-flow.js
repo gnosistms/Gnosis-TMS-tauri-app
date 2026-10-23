@@ -499,8 +499,8 @@ function editorChapterLoadOperations() {
   };
 }
 
-export function scheduleDirtyEditorRowScan(render, rowId) {
-  scheduleDirtyEditorRowScanFlow(render, rowId, editorPersistenceOperations());
+export function scheduleDirtyEditorRowScan(render, rowId, options = {}) {
+  scheduleDirtyEditorRowScanFlow(render, rowId, editorPersistenceOperations(), options);
 }
 
 export function noteEditorBackgroundSyncScrollActivity() {
