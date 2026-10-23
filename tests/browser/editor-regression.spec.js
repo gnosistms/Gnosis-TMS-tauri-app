@@ -5673,6 +5673,10 @@ test.describe("editor regressions", () => {
       )).toContainText(expected);
       const reopened = await activateMainEditorField(page, rowId, "vi");
       await expect(reopened).toHaveValue(expected);
+      const saves = (await readMockTauriState(page)).invocations.filter(
+        (entry) => entry.command === "update_gtms_editor_row_fields" && entry.payload.input.rowId === rowId,
+      );
+      expect(saves).toHaveLength(1);
     });
   }
 
