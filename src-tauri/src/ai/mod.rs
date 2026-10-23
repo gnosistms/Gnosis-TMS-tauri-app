@@ -208,6 +208,8 @@ pub(crate) fn build_review_prompt(request: &AiReviewRequest) -> String {
                 },
                 target_language_label: request.target_language.clone(),
                 target_text: latest_translation.to_string(),
+                target_footnotes: request.footnotes.clone(),
+                target_image_caption: request.image_caption.clone(),
                 source_footnote: request
                     .source_footnotes
                     .iter()
@@ -411,6 +413,8 @@ pub(crate) fn build_translation_prompt(request: &AiTranslationRequest) -> String
         target_language_code: request.target_language_code.clone(),
         target_language_label: target_label.to_string(),
         target_text: String::new(),
+        target_footnotes: vec![],
+        target_image_caption: String::new(),
         source_footnote: request.source_footnote.clone(),
         source_image_caption: request.source_image_caption.clone(),
         updated_source_text: None,
@@ -1666,6 +1670,7 @@ fn build_assistant_prompt_parts(
     context.push(
         "You are an AI assistant inside a translation editor.\n\
 Use the supplied source context, target-language history, reference translations, glossary, and conversation history when relevant.\n\
+When asked to review spelling or grammar, review all current target-language sections: the body text, every target_footnotes entry, and target_image_caption. Current target sections override earlier conversation content; an empty section means no text is present. Preserve existing footnote marker identifiers. Explain footnote and image-caption corrections in assistantText, identifying the section and footnote marker. Keep draftTranslationText limited to the body text; never append footnotes or image captions to it.\n\
 Be direct and useful. If the answer depends on ambiguity in the source text, say so."
             .to_string(),
     );
@@ -1718,6 +1723,18 @@ If your answer includes a complete proposed or revised target-language translati
                 .to_string(),
         );
     }
+    turn.push(format!(
+        "<target_footnotes format=\"json\">\n{}\n</target_footnotes>",
+        serde_json::to_string(&row.target_footnotes).unwrap_or_default()
+    ));
+    turn.push(format!(
+        "<target_image_caption>\n{}\n</target_image_caption>",
+        if row.target_image_caption.trim().is_empty() {
+            "(empty)"
+        } else {
+            row.target_image_caption.trim()
+        }
+    ));
     push_tagged_prompt_section(
         &mut turn,
         "target_language_history",
@@ -3666,6 +3683,8 @@ mod tests {
                 target_language_code: "vi".to_string(),
                 target_language_label: "Vietnamese".to_string(),
                 target_text: "Ban dich hien tai".to_string(),
+                target_footnotes: vec![],
+                target_image_caption: String::new(),
                 source_footnote: String::new(),
                 source_image_caption: String::new(),
                 updated_source_text: None,
@@ -3741,6 +3760,58 @@ mod tests {
 
         assert!(prompt.contains("<source_footnote>\nNota fuente\n</source_footnote>"));
         assert!(prompt.contains("<source_image_caption>\nCaption source\n</source_image_caption>"));
+    }
+
+    #[test]
+    fn assistant_review_includes_current_target_notes_and_caption_without_changing_cached_context()
+    {
+        let mut request = assistant_request_for_prompt();
+        request.user_message = "Check spelling and grammar.".to_string();
+        request.row.target_footnotes = vec![
+            AiReviewFootnote {
+                marker: 2,
+                text: "First target note".to_string(),
+            },
+            AiReviewFootnote {
+                marker: 7,
+                text: "Second target note".to_string(),
+            },
+        ];
+        request.row.target_image_caption = "Target caption".to_string();
+        let initial = build_assistant_prompt_parts(&request, false);
+        let prompt = initial.text();
+        assert!(prompt.contains("review all current target-language sections"));
+        assert!(prompt.contains("Keep draftTranslationText limited to the body text"));
+        assert!(prompt.contains(
+            r#"[{"marker":2,"text":"First target note"},{"marker":7,"text":"Second target note"}]"#
+        ));
+        assert!(prompt.contains("<target_image_caption>\nTarget caption\n</target_image_caption>"));
+        assert!(
+            prompt.find("<target_footnotes format=\"json\">").unwrap()
+                > prompt.find("</conversation_history>").unwrap()
+        );
+
+        request.row.target_footnotes[1].text = "Revised note".to_string();
+        request.row.target_image_caption = "Revised caption".to_string();
+        let revised = build_assistant_prompt_parts(&request, false);
+        assert_eq!(initial.context, revised.context);
+        assert_eq!(initial.history, revised.history);
+        assert!(revised.turn.contains("Revised note"));
+        assert!(!revised.turn.contains("Second target note"));
+        assert!(revised.turn.contains("Revised caption"));
+
+        request.row.target_footnotes.clear();
+        request.row.target_image_caption.clear();
+        let cleared = build_assistant_prompt_parts(&request, false);
+        assert_eq!(initial.context, cleared.context);
+        assert!(cleared
+            .turn
+            .contains("<target_footnotes format=\"json\">\n[]\n</target_footnotes>"));
+        assert!(cleared
+            .turn
+            .contains("<target_image_caption>\n(empty)\n</target_image_caption>"));
+        assert!(!cleared.turn.contains("Revised note"));
+        assert!(!cleared.turn.contains("Revised caption"));
     }
 
     #[test]

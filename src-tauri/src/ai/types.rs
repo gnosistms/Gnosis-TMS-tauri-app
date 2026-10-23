@@ -568,6 +568,10 @@ pub struct AiAssistantRowContext {
     #[serde(default)]
     pub target_text: String,
     #[serde(default)]
+    pub target_footnotes: Vec<AiReviewFootnote>,
+    #[serde(default)]
+    pub target_image_caption: String,
+    #[serde(default)]
     pub source_footnote: String,
     #[serde(default)]
     pub source_image_caption: String,
