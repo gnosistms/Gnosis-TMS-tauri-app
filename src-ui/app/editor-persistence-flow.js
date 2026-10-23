@@ -324,7 +324,7 @@ function rebaseRowTextInputForRun(operationValue) {
   return input;
 }
 
-function normalizeEditorRowForPersist(row) {
+function normalizeEditorRowForPersist(row, options = {}) {
   if (!row || typeof row !== "object") {
     return row;
   }
@@ -338,12 +338,17 @@ function normalizeEditorRowForPersist(row) {
     ...Object.keys(footnotes),
     ...Object.keys(imageCaptions),
   ]);
-  // Smart quotes are applied only to the columns this save is about. A save
-  // is per row but the edit is per column: rewriting sibling columns (the
+  // Smart quotes are applied only to changed columns or the explicitly blurred
+  // language. A save is per row but the edit is per column: rewriting siblings (the
   // source, a teammate's language, text imported with straight quotes) on
   // the way past made every "did the text change under me?" comparison in
   // the AI flows fail after any save of the same row.
   const changedLanguageCodes = editorRowChangedLanguageCodes(row);
+  // Leaving a text editor is also an explicit request to normalize that
+  // language, even when its imported/persisted wording was left unchanged.
+  if (options.quoteLanguageCode) {
+    changedLanguageCodes.add(options.quoteLanguageCode);
+  }
   const smarten = (languageCode, text) =>
     changedLanguageCodes.has(languageCode)
       ? smartenInlineMarkupQuotes(text, { language: languageCode })
@@ -2305,7 +2310,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
     return true;
   }
 
-  const normalizedRow = normalizeEditorRowForPersist(row);
+  const normalizedRow = normalizeEditorRowForPersist(row, options);
   if (normalizedRow !== row) {
     row = updateEditorChapterRow(rowId, () => normalizedRow) ?? normalizedRow;
     renderEditorRowScoped(render, rowId, "footnote-normalized");

@@ -5647,6 +5647,35 @@ test.describe("editor regressions", () => {
     }).toBe("heading2");
   });
 
+  for (const editBody of [false, true]) {
+    test(`body blur converts smart quotes with ${editBody ? "edited" : "unchanged"} wording and preserves other languages`, async ({ page }) => {
+      const rowId = "fixture-row-0001";
+      const source = 'Dice: "yo vi".';
+      const target = 'Nói rằng: "Tôi đã nhìn thấy...".';
+      await mountEditorFixture(page, {
+        rowCount: 18,
+        fieldsByRowId: { [rowId]: { es: source, vi: target } },
+      }, { mockTauri: true });
+      const field = await activateMainEditorField(page, rowId, "vi");
+      await expect(field).toBeFocused();
+      if (editBody) await field.fill(`${target} Thêm câu.`);
+      await page.locator("[data-editor-search-input]").click();
+
+      const expected = `Nói rằng: “Tôi đã nhìn thấy...”.${editBody ? " Thêm câu." : ""}`;
+      await expect.poll(async () => (await readMockTauriState(page))
+        ?.histories?.[`fixture-chapter::${rowId}::vi`]?.[0]?.plainText).toBe(expected);
+      expect((await readMockTauriState(page))
+        ?.histories?.[`fixture-chapter::${rowId}::es`]?.[0]?.plainText).toBe(source);
+      expect((await readMockTauriState(page))
+        ?.histories?.[`fixture-chapter::${rowId}::vi`]?.[0]?.reviewed).toBe(false);
+      await expect(page.locator(
+        `[data-editor-display-field][data-row-id="${rowId}"][data-language-code="vi"]`,
+      )).toContainText(expected);
+      const reopened = await activateMainEditorField(page, rowId, "vi");
+      await expect(reopened).toHaveValue(expected);
+    });
+  }
+
   test("inline formatting buttons keep the editor open, target the selected word, and render sanitized markup after blur", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 40 }, { mockTauri: true });
 

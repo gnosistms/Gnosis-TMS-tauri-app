@@ -638,7 +638,7 @@ export function registerTranslateEditorDomEvents(app, render) {
         }
 
         collapseEditorImageCaption(render, rowId, languageCode);
-        void persistEditorRowOnBlur(render, rowId);
+        void persistEditorRowOnBlur(render, rowId, { quoteLanguageCode: languageCode });
       });
       scheduleDirtyEditorRowScan(render, rowId);
       return;
@@ -656,6 +656,9 @@ export function registerTranslateEditorDomEvents(app, render) {
       collapseEmptyEditorFootnote(render, rowId, languageCode);
       collapseEmptyEditorImageEditor(render, rowId, languageCode);
       void submitEditorImageUrl(render, rowId, languageCode);
+      if (textarea instanceof HTMLTextAreaElement) {
+        void persistEditorRowOnBlur(render, rowId, { quoteLanguageCode: languageCode });
+      }
     });
     if (textarea instanceof HTMLTextAreaElement) {
       scheduleDirtyEditorRowScan(render, rowId);
