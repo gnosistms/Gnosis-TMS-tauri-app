@@ -1,26 +1,26 @@
 # Conflict resolution image payload fix
 
-The conflict resolution save sends normalized UI image metadata directly as
-`baseImages`. URL images have a null `path`; uploads have a null `url`. The Rust
-`EditorFieldImageInput` requires strings for both, so deserialization fails before
-the row save can run. Other image saves already convert unused fields to empty strings.
+A normalized URL image carries `path: null`. Passing it directly as a conflict
+resolution `baseImages` value makes the Rust command reject the save before the
+handler runs: `invalid type: null, expected a string`.
 
-1. Reproduce the reported error against the Rust command input type and verify the
-   accepted wire format, including image removal.
-2. Serialize conflict image bases using the same string-only shape as other image
-   saves; retain null for a missing image. Cover real normalized UI images in tests.
-3. Run focused Rust and frontend tests, lint, and the frontend build. Preserve all
-   unrelated working changes.
+1. Review serialization, image removal, concurrent image changes, and URL/upload
+   boundaries against the native command contract.
+2. Serialize image bases with string-only kind/url/path properties, retaining null
+   for missing images. Add frontend and native command-input regression coverage.
+3. Verify the isolated branch against main, open a focused PR, and merge after CI
+   succeeds on its reviewed head.
 
-Implemented: conflict image bases now serialize only `kind`, `url`, and `path`,
-using empty strings for unused properties. Missing images remain null. Tests
-cover actual normalized UI metadata for URL/upload images and image removal;
-the native input test reproduces the exact reported error before serialization
-and accepts the corrected payload.
+The working copy contains other unreleased features; extract only this fix and
+its tests into the PR.
 
-Verification: 62 focused frontend tests, the Rust input contract test, all 3,007
-frontend unit tests, scoped ESLint, scoped rustfmt, and the production build pass.
-The full Rust formatting check reports unrelated changes in AI and command
-registration files; the unused-code audit reports unrelated files/exports. No
-exports or files counted by that audit were added by this fix. All 25 workflow
-tests pass when rerun with local socket access after the sandbox failures.
+Review: no blocking findings. Only the conflict image baseline is serialized;
+chosen image values, missing-image nulls, permission checks, and native three-way
+merge behavior are unchanged. Frontend regression fixtures use normalized UI
+images, reproducing the null-valued property that the old fixtures missed.
+
+Local validation on the isolated branch: all 2,993 frontend and 25 workflow
+tests pass; the production build, JavaScript lint (existing warnings), and Rust
+formatting check pass. The unused-code audit reports existing files/exports; this
+change adds no exports or runtime modules. The native input test and CI validate
+the same string-only payload contract.
