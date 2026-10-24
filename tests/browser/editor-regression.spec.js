@@ -9,6 +9,7 @@ async function installMockTauri(page) {
     const rowFieldsByChapterId = new Map();
     const rowFootnotesByChapterId = new Map();
     const rowImageCaptionsByChapterId = new Map();
+    const rowAttributionsByChapterId = new Map();
     const rowTimingsByChapterId = new Map();
     const rowTextStylesByChapterId = new Map();
     const fieldStatesByChapterId = new Map();
@@ -98,6 +99,7 @@ async function installMockTauri(page) {
         chapterId,
         new Map(rows.map((row) => [row.rowId, clone(row.imageCaptions ?? {})])),
       );
+      rowAttributionsByChapterId.set(chapterId, new Map(rows.map((row) => [row.rowId, clone(row.attributions ?? {})])));
       rowTimingsByChapterId.set(
         chapterId,
         new Map(rows.map((row) => [row.rowId, clone(row.timings ?? {})])),
@@ -183,6 +185,7 @@ async function installMockTauri(page) {
         fields: clone(fields),
         footnotes: clone(footnotes),
         imageCaptions: clone(imageCaptions),
+        attributions: clone(rowAttributionsByChapterId.get(chapterId)?.get(rowId) ?? {}),
         images: clone(fixtureRow.images ?? {}),
         fieldStates: clone(fieldStates),
         timings: clone(rowTimingsByChapterId.get(chapterId)?.get(rowId) ?? {}),
@@ -320,6 +323,7 @@ async function installMockTauri(page) {
         rowFieldsByChapterId.get(input.chapterId).set(input.rowId, nextFields);
         rowFootnotesByChapterId.get(input.chapterId).set(input.rowId, nextFootnotes);
         rowImageCaptionsByChapterId.get(input.chapterId).set(input.rowId, nextImageCaptions);
+        if (input.attributions) rowAttributionsByChapterId.get(input.chapterId).set(input.rowId, clone(input.attributions));
         rowTimingsByChapterId.get(input.chapterId)?.set(input.rowId, nextTimings);
         pushHistoryEntriesWithCommit(input.chapterId, input.rowId, nextFields, nextFootnotes, storedFieldStates, {
           operationType: input.operation ?? "editor-update",
@@ -343,6 +347,13 @@ async function installMockTauri(page) {
         }
 
         const nextTextStyle = String(input.textStyle ?? "paragraph");
+        const attributions = rowAttributionsByChapterId.get(input.chapterId)?.get(input.rowId) ?? {};
+        if (findRowTextStyle(input.chapterId, input.rowId) === "quote" && nextTextStyle !== "quote") {
+          for (const [code, text] of Object.entries(attributions)) {
+            if (text) storedFields[code] = storedFields[code] ? `${storedFields[code].trimEnd()}\n\n${text}` : text;
+            attributions[code] = "";
+          }
+        }
         chapterTextStyles.set(input.rowId, nextTextStyle);
         pushHistoryEntries(
           input.chapterId,
@@ -356,6 +367,8 @@ async function installMockTauri(page) {
         return {
           rowId: input.rowId,
           textStyle: nextTextStyle,
+          fields: clone(storedFields),
+          attributions: clone(attributions),
         };
       }
 
@@ -1097,6 +1110,7 @@ async function readEditorFieldMetrics(page, rowId, languageCode, contentKind = "
       fontSizePx: Number.parseFloat(styles.fontSize),
       fontWeight: styles.fontWeight,
       fontStyle: styles.fontStyle,
+      opacity: Number(styles.opacity),
       paddingLeftPx: Number.parseFloat(styles.paddingLeft),
     };
   }, { rowId, languageCode, contentKind });
@@ -1541,6 +1555,49 @@ async function openPlatformEditorFixture(page, platform) {
 }
 
 test.describe("editor regressions", () => {
+  for (const kind of ["paragraph", "heading1", "image", "image-caption", "footnote", "separator", "custom-html"]) {
+    test(`preview ${kind} double-click returns to its editor row and language`, async ({ page }) => {
+      const rowId = "fixture-row-0020";
+      await mountEditorFixture(page, { rowCount: 40, chapterStatus: "ready" }, { mockTauri: true });
+      await patchFixtureRow(page, rowId, {
+        fields: { es: kind === "custom-html" ? "<div>Custom preview content</div>" : "Preview body [1]<hr>After separator" },
+        textStyle: kind === "heading1" ? "heading1" : kind === "custom-html" ? "custom_html" : "paragraph",
+      });
+      await page.evaluate(async (targetRowId) => {
+        const { state } = await import(new URL("/app/state.js", window.location.href).href);
+        const row = state.editorChapter.rows.find((row) => row.rowId === targetRowId);
+        row.footnotes.es = [{ marker: 1, text: "A preview footnote" }];
+        row.images.es = { kind: "url", url: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Crect width='80' height='80' fill='orange'/%3E%3C/svg%3E" };
+        row.imageCaptions.es = "Preview image caption";
+      }, rowId);
+      await page.locator('[data-action="set-editor-mode:preview"]').click();
+      await page.locator("[data-editor-preview-language-select]").selectOption("es");
+      const block = page.locator(`[data-editor-preview-document] [data-preview-block="${kind}"][data-row-id="${rowId}"]`).first();
+      await expect(block).toHaveAttribute("data-tooltip", "Double-click to edit.");
+      await expect(block).toHaveAttribute("lang", "es");
+      // A preview jump must reveal its source even when translate-mode filters
+      // would otherwise hide that row.
+      await page.evaluate(async () => {
+        const { state } = await import(new URL("/app/state.js", window.location.href).href);
+        state.editorChapter.filters.searchQuery = "no rows match this filter";
+        state.editorChapter.filters.rowFilterMode = "needs-review";
+      });
+      const target = kind === "image" ? block.locator("img") : block;
+      await expect(block).not.toHaveAttribute("title");
+      await target.hover();
+      await expect.poll(() => block.evaluate((element) => getComputedStyle(element, "::before").content)).toBe('"Double-click to edit."');
+      await expect.poll(() => block.evaluate((element) => getComputedStyle(element, "::before").opacity)).toBe("1");
+      if (kind === "image-caption") {
+        const figure = block.locator("..");
+        await expect.poll(() => figure.evaluate((element) => getComputedStyle(element, "::before").content)).toBe("none");
+      }
+      await target.dblclick();
+      await expect(page.locator(".translate-layout--preview")).toHaveCount(0);
+      await expect(page.locator(`[data-editor-language-panel][data-row-id="${rowId}"][data-language-code="es"]`)).toBeInViewport();
+      await expect(page.locator("[data-editor-search-input]")).toHaveValue("");
+    });
+  }
+
   for (const platform of ["macos", "windows"]) {
     test(`card whitespace selects through edges and dividers without editing (${platform})`, async ({ page }) => {
       await mountEditorFixture(page, { rowCount: 6, chapterStatus: "ready" }, {
@@ -1936,6 +1993,50 @@ test.describe("editor regressions", () => {
     await expect(page.locator("[data-editor-assistant-draft]")).toBeVisible();
     // The composer sends via Shift+Return; there is no separate send button.
     await expect(page.locator(".assistant-composer__hint")).toContainText("Shift + Return to send");
+  });
+
+  test("sending assistant messages clears the composer and preserves the next draft", async ({ page }) => {
+    await page.addInitScript(() => {
+      const replies = [];
+      globalThis.__releaseAssistantReply = () => replies.shift()?.();
+      globalThis.__gnosisMockTauriHandlers = {
+        load_ai_provider_secret() {
+          return "mock-key";
+        },
+        async run_ai_assistant_turn() {
+          await new Promise((resolve) => replies.push(resolve));
+          return { assistantText: "Mock assistant reply" };
+        },
+      };
+    });
+    await mountEditorFixture(page, {
+      rowCount: 1,
+      aiActionConfig: {
+        detailedConfiguration: false,
+        unified: { providerId: "openai", modelId: "gpt-5.4" },
+      },
+    }, { mockTauri: true });
+    await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
+    const composer = page.locator("[data-editor-assistant-draft]");
+
+    for (const message of ["Explain the first sentence.", "Explain the second sentence."]) {
+      await composer.fill(message);
+      await composer.press("Shift+Enter");
+      await expect(page.locator(".assistant-item").filter({ hasText: message })).toHaveCount(1);
+      await expect(composer).toHaveValue("");
+      await expect(composer).toBeFocused();
+      await expect.poll(async () => {
+        const mock = await readMockTauriState(page);
+        return mock.invocations.filter((entry) => entry.command === "run_ai_assistant_turn").length;
+      }).toBe(message.includes("first") ? 1 : 2);
+
+      await composer.fill("Next unsent question");
+      await page.evaluate(() => window.__releaseAssistantReply());
+      await expect(page.locator(".assistant-item").filter({ hasText: "Mock assistant reply" })).toHaveCount(
+        message.includes("first") ? 1 : 2,
+      );
+      await expect(composer).toHaveValue("Next unsent question");
+    }
   });
 
   for (const position of ["bottom", "middle"]) {
@@ -2898,6 +2999,8 @@ test.describe("editor regressions", () => {
       await marks[index].hover();
       await expect(page.locator(".editor-glossary-tooltip")).toBeVisible();
       await expect(page.locator(".editor-glossary-info-card__title")).toHaveText(expectedTitles[index]);
+      await expect(page.locator(".editor-glossary-info-card__footnote")).toHaveText("Kabbalah glossary footnote");
+      await expect(page.locator(".editor-glossary-info-card__hint--insert")).toHaveCount(index === 0 ? 0 : 1);
     }
 
   });
@@ -2989,7 +3092,9 @@ test.describe("editor regressions", () => {
       await targetMarks.nth(index).hover();
       await expect(page.locator(".editor-glossary-tooltip")).toBeVisible();
       await expect(page.locator(".editor-glossary-info-card__title")).toHaveText(expectedTitles[index]);
-      await expect(page.locator(".editor-glossary-info-card__label")).toHaveCount(index === 0 ? 1 : 0);
+      await expect(page.locator(".editor-glossary-info-card__label")).toHaveText(
+        index === 1 || index === 3 ? ["Note to Translators:"] : [],
+      );
       await expect(page.locator(".editor-glossary-info-card__hint--insert")).toHaveCount(index === 0 ? 1 : 0);
     }
   });
@@ -5290,7 +5395,8 @@ test.describe("editor regressions", () => {
     await expect(reviewStyleNote.locator(".history-diff__delete")).toHaveText("P");
     await expect(reviewStyleNote.locator(".history-diff__insert")).toHaveText("H1");
     await expect(reviewFootnoteContent).toContainText("Grouped footnote");
-    await expect(reviewFootnoteContent).toHaveCSS("font-style", "italic");
+    await expect(reviewFootnoteContent).toHaveCSS("font-style", "normal");
+    await expect(reviewFootnoteContent).toHaveCSS("opacity", "0.7");
 
     await page.getByRole("button", { name: "History" }).click();
     await expect(page.locator(".history-tabs__item--active")).toHaveText("History");
@@ -5301,7 +5407,8 @@ test.describe("editor regressions", () => {
     await expect(historyStyleNote.locator(".history-diff__delete")).toHaveText("P");
     await expect(historyStyleNote.locator(".history-diff__insert")).toHaveText("H1");
     await expect(historyFootnoteContent).toContainText("Grouped footnote");
-    await expect(historyFootnoteContent).toHaveCSS("font-style", "italic");
+    await expect(historyFootnoteContent).toHaveCSS("font-style", "normal");
+    await expect(historyFootnoteContent).toHaveCSS("opacity", "0.7");
   });
 
   test("row text styles update editor typography and return to paragraph styling", async ({ page }) => {
@@ -5348,6 +5455,7 @@ test.describe("editor regressions", () => {
     }).toBe("italic");
     const quoteMetrics = await readEditorFieldMetrics(page, "fixture-row-0001", "vi");
     expect(quoteMetrics.paddingLeftPx).toBeGreaterThan(paragraphMetrics.paddingLeftPx);
+    expect(quoteMetrics.fontSizePx).toBeCloseTo(paragraphMetrics.fontSizePx, 2);
 
     await clickLocatorCenter(page, indentedButton);
     await expect.poll(async () => {
@@ -5463,7 +5571,8 @@ test.describe("editor regressions", () => {
 
     const baselineFootnoteMetrics = await readEditorFieldMetrics(page, "fixture-row-0001", "vi", "footnote");
     expect(baselineFootnoteMetrics).not.toBeNull();
-    expect(baselineFootnoteMetrics.fontStyle).toBe("italic");
+    expect(baselineFootnoteMetrics.fontStyle).toBe("normal");
+    expect(baselineFootnoteMetrics.opacity).toBe(0.7);
 
     await clickLocatorCenter(page, heading1Button);
     await expect.poll(async () => {
@@ -5471,7 +5580,8 @@ test.describe("editor regressions", () => {
     }).toBeGreaterThan(paragraphMetrics.fontSizePx);
 
     const headingFootnoteMetrics = await readEditorFieldMetrics(page, "fixture-row-0001", "vi", "footnote");
-    expect(headingFootnoteMetrics.fontStyle).toBe("italic");
+    expect(headingFootnoteMetrics.fontStyle).toBe("normal");
+    expect(headingFootnoteMetrics.opacity).toBe(0.7);
     expect(headingFootnoteMetrics.fontSizePx).toBeCloseTo(baselineFootnoteMetrics.fontSizePx, 3);
     expect(headingFootnoteMetrics.paddingLeftPx).toBeCloseTo(baselineFootnoteMetrics.paddingLeftPx, 3);
 
@@ -5481,7 +5591,8 @@ test.describe("editor regressions", () => {
     }).toBeGreaterThan(paragraphMetrics.paddingLeftPx);
 
     const quoteFootnoteMetrics = await readEditorFieldMetrics(page, "fixture-row-0001", "vi", "footnote");
-    expect(quoteFootnoteMetrics.fontStyle).toBe("italic");
+    expect(quoteFootnoteMetrics.fontStyle).toBe("normal");
+    expect(quoteFootnoteMetrics.opacity).toBe(0.7);
     expect(quoteFootnoteMetrics.fontSizePx).toBeCloseTo(baselineFootnoteMetrics.fontSizePx, 3);
     expect(quoteFootnoteMetrics.paddingLeftPx).toBeCloseTo(baselineFootnoteMetrics.paddingLeftPx, 3);
   });
@@ -5549,6 +5660,39 @@ test.describe("editor regressions", () => {
       });
     }).toBe("heading2");
   });
+
+  for (const editBody of [false, true]) {
+    test(`body blur converts smart quotes with ${editBody ? "edited" : "unchanged"} wording and preserves other languages`, async ({ page }) => {
+      const rowId = "fixture-row-0001";
+      const source = 'Dice: "yo vi".';
+      const target = 'Nói rằng: "Tôi đã nhìn thấy...".';
+      await mountEditorFixture(page, {
+        rowCount: 18,
+        fieldsByRowId: { [rowId]: { es: source, vi: target } },
+      }, { mockTauri: true });
+      const field = await activateMainEditorField(page, rowId, "vi");
+      await expect(field).toBeFocused();
+      if (editBody) await field.fill(`${target} Thêm câu.`);
+      await page.locator("[data-editor-search-input]").click();
+
+      const expected = `Nói rằng: “Tôi đã nhìn thấy...”.${editBody ? " Thêm câu." : ""}`;
+      await expect.poll(async () => (await readMockTauriState(page))
+        ?.histories?.[`fixture-chapter::${rowId}::vi`]?.[0]?.plainText).toBe(expected);
+      expect((await readMockTauriState(page))
+        ?.histories?.[`fixture-chapter::${rowId}::es`]?.[0]?.plainText).toBe(source);
+      expect((await readMockTauriState(page))
+        ?.histories?.[`fixture-chapter::${rowId}::vi`]?.[0]?.reviewed).toBe(false);
+      await expect(page.locator(
+        `[data-editor-display-field][data-row-id="${rowId}"][data-language-code="vi"]`,
+      )).toContainText(expected);
+      const reopened = await activateMainEditorField(page, rowId, "vi");
+      await expect(reopened).toHaveValue(expected);
+      const saves = (await readMockTauriState(page)).invocations.filter(
+        (entry) => entry.command === "update_gtms_editor_row_fields" && entry.payload.input.rowId === rowId,
+      );
+      expect(saves).toHaveLength(1);
+    });
+  }
 
   test("inline formatting buttons keep the editor open, target the selected word, and render sanitized markup after blur", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 40 }, { mockTauri: true });
@@ -6083,7 +6227,8 @@ test.describe("editor regressions", () => {
     // Rows support multiple footnotes now, so the add button stays available
     // while a footnote editor is open.
     await expect(footnoteButton).toBeVisible();
-    await expect(footnoteField).toHaveCSS("font-style", "italic");
+    await expect(footnoteField).toHaveCSS("font-style", "normal");
+    await expect(footnoteField).toHaveCSS("opacity", "0.7");
 
     await page.keyboard.type("Saved footnote text");
     await expect.poll(async () => {
@@ -6119,13 +6264,15 @@ test.describe("editor regressions", () => {
     await page.locator('[data-action="switch-editor-sidebar-tab:review"]').click();
     const reviewFootnoteContent = page.locator(".history-item__content--footnote").first();
     await expect(reviewFootnoteContent).toContainText("Saved footnote text");
-    await expect(reviewFootnoteContent).toHaveCSS("font-style", "italic");
+    await expect(reviewFootnoteContent).toHaveCSS("font-style", "normal");
+    await expect(reviewFootnoteContent).toHaveCSS("opacity", "0.7");
 
     await page.getByRole("button", { name: "History" }).click();
     await expect(page.locator(".history-tabs__item--active")).toHaveText("History");
     const historyFootnoteContent = page.locator(".history-item__content--footnote").first();
     await expect(historyFootnoteContent).toContainText("Saved footnote text");
-    await expect(historyFootnoteContent).toHaveCSS("font-style", "italic");
+    await expect(historyFootnoteContent).toHaveCSS("font-style", "normal");
+    await expect(historyFootnoteContent).toHaveCSS("opacity", "0.7");
   });
 
   test("glossary-error filtering preserves scroll when a footnote closes into body editing", async ({ page }) => {
@@ -6215,7 +6362,8 @@ test.describe("editor regressions", () => {
       `[data-editor-footnote-display][data-row-id="${rowId}"][data-language-code="${languageCode}"][data-footnote-marker="1"]`,
     );
     await expect(closedFootnote).toBeVisible();
-    await closedFootnote.locator(".translation-language-panel__footnote-marker").click();
+    // Hold through a frame so blur cannot replace the pressed marker before mouseup.
+    await closedFootnote.locator(".translation-language-panel__footnote-marker").click({ delay: 150 });
     await expect(footnoteField).toBeFocused();
     await expect(footnoteField).toHaveValue("");
   });
@@ -6894,7 +7042,9 @@ test("connected deleted rows disconnect on section close and permanent deletion"
   await setTranslateScrollTop(page, 1000000);
   const notice = page.locator("[data-editor-row-connection]");
   await expect(notice).toBeVisible();
-  await expect(row).toHaveCount(0);
+  // A selected row can remain mounted outside the virtual window. The
+  // connection notice tracks viewport intersection, not DOM eviction.
+  await expect(row).not.toBeInViewport();
   await notice.click();
   await expect(row).toHaveClass(/is-connected/);
   await expect(notice).toBeHidden();
@@ -6927,3 +7077,496 @@ test("connected row remains selected when soft deletion joins an expanded sectio
   await page.locator("[data-editor-deleted-group] .section-separator").click();
   await expect.poll(() => page.evaluate(() => window.__gnosisDebug.readEditorState().activeRowId)).toBeNull();
 });
+
+test("AI review remains visible and diffs successive editor edits", async ({ page }) => {
+  await mountEditorFixture(page, { rowCount: 6, chapterStatus: "ready" }, { mockTauri: true });
+  const rowId = "fixture-row-0001";
+  await activateMainEditorField(page, rowId, "vi");
+  await page.evaluate(async (activeRowId) => {
+    const { state } = await import(new URL("/app/state.js", window.location.href).href);
+    state.editorChapter.aiReview = {
+      status: "ready", rowId: activeRowId, languageCode: "vi",
+      sourceText: state.editorChapter.rows.find((row) => row.rowId === activeRowId).fields.vi,
+      suggestedText: "Reviewed translation",
+      promptText: "Review this translation",
+    };
+  }, rowId);
+  await page.locator('[data-action="switch-editor-sidebar-tab:review"]').click();
+  const review = page.locator('[data-editor-review-section="ai-review"]');
+  await expect(review.locator('[data-action="apply-editor-ai-review"]')).toBeVisible();
+  await activateMainEditorField(page, rowId, "vi");
+  const input = page.locator(`[data-editor-row-field][data-row-id="${rowId}"][data-language-code="vi"]`);
+  for (const addition of [" edited", " edited again"]) {
+    await input.fill(`Reviewed translation${addition}`);
+    await expect(review.locator(".history-diff__delete")).toHaveText(addition);
+    await expect(review.locator(".history-item__content")).toContainText("Reviewed translation");
+    await expect(review.getByText("Compared with the current text in the editor.", { exact: true })).toBeVisible();
+    await expect(review.getByText("The text changed since the last AI review.")).toHaveCount(0);
+    await expect(input).toBeFocused();
+  }
+  await expect(review.locator('[data-action="apply-editor-ai-review"]')).toHaveCount(0);
+  await expect(review.locator('[data-action="review-editor-text-now:meaning"]')).toBeVisible();
+});
+
+test("changed-after-my-edit filter shows other people's changes as diffs on the static fields", async ({ page }) => {
+  const svgImage = (color) =>
+    `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80"><rect width="120" height="80" fill="${color}"/></svg>`)}`;
+  await mountEditorFixture(page, {
+    rowCount: 4,
+    chapterStatus: "ready",
+    languages: [
+      { code: "es", name: "Spanish", role: "source" },
+      { code: "fa", name: "Persian", role: "target" },
+    ],
+    fieldsByRowId: {
+      "fixture-row-0001": { es: "Yo leí el artículo", fa: "من مقاله را خواندم" },
+      "fixture-row-0002": { es: "El <strong>gato</strong> negro", fa: "گربه سیاه" },
+      "fixture-row-0003": { es: "Una imagen", fa: "یک تصویر" },
+    },
+    imagesByRowId: {
+      "fixture-row-0003": { fa: { kind: "url", url: svgImage("#6aa84f") } },
+    },
+  }, { mockTauri: true });
+
+  const oldImage = svgImage("#cc4125");
+  await page.evaluate((previousImageUrl) => {
+    const field = (plainText, extra = {}) => ({ plainText, footnote: "", imageCaption: "", image: null, imageDataUrl: null, ...extra });
+    globalThis.__gnosisMockTauriHandlers = {
+      ...(globalThis.__gnosisMockTauriHandlers ?? {}),
+      async load_gtms_editor_changed_after_my_edit() {
+        return {
+          chapterId: "fixture-chapter",
+          rows: [
+            {
+              rowId: "fixture-row-0001",
+              baselineCommitSha: "base-1",
+              baselineIsMine: true,
+              baselineTextStyle: "paragraph",
+              baselineFields: { es: field("Yo leí el artículo"), fa: field("من کتاب را خواندم") },
+              edits: [],
+            },
+            {
+              rowId: "fixture-row-0002",
+              baselineCommitSha: "base-2",
+              baselineIsMine: true,
+              baselineTextStyle: "heading1",
+              baselineFields: { es: field("El gato blanco"), fa: field("گربه سیاه") },
+              edits: [],
+            },
+            {
+              rowId: "fixture-row-0003",
+              baselineCommitSha: "base-3",
+              baselineIsMine: false,
+              baselineTextStyle: "paragraph",
+              baselineFields: {
+                es: field("Una imagen"),
+                fa: field("یک تصویر", { image: { kind: "url", url: previousImageUrl } }),
+              },
+              edits: [],
+            },
+          ],
+        };
+      },
+    };
+  }, oldImage);
+
+  await page.locator("[data-editor-filter-select]").selectOption("changed-after-my-edit");
+  await expect(page.locator("[data-editor-row-card]")).toHaveCount(3);
+  await expect(page.locator('[data-editor-row-card][data-row-id="fixture-row-0004"]')).toHaveCount(0);
+
+  const persianRow = page.locator('[data-editor-row-card][data-row-id="fixture-row-0001"]');
+  await expect(persianRow.locator(".history-diff__delete")).toHaveText("کتاب");
+  await expect(persianRow.locator(".history-diff__insert")).toHaveText("مقاله");
+
+  const spanishRow = page.locator('[data-editor-row-card][data-row-id="fixture-row-0002"]');
+  await expect(spanishRow.locator("strong .history-diff__format")).toHaveText("gato");
+  await expect(spanishRow.locator(".history-diff__delete")).toHaveText("blanco");
+  await expect(spanishRow.locator(".history-diff__insert")).toHaveText("negro");
+  const styleButtons = spanishRow.locator('[data-language-code="es"] [data-editor-row-text-style-button]');
+  await expect(styleButtons.locator('xpath=self::*[@data-text-style="paragraph"]')).toHaveClass(/change-insert/);
+  await expect(styleButtons.locator('xpath=self::*[@data-text-style="heading1"]')).toHaveClass(/change-delete/);
+  await expect(spanishRow.locator('[data-language-code="es"] [data-editor-row-text-style-button]').first()).toBeVisible();
+
+  const imageRow = page.locator('[data-editor-row-card][data-row-id="fixture-row-0003"]');
+  await expect(imageRow.locator(".translation-language-panel__image-preview--change-insert")).toHaveCount(1);
+  await expect(imageRow.locator(".translation-language-panel__image-preview--change-previous img"))
+    .toHaveAttribute("src", oldImage);
+
+  // Clicking a changed field opens the normal editor on the current text.
+  await persianRow.locator('[data-editor-display-field][data-language-code="fa"]').click();
+  const editor = persianRow.locator('[data-editor-row-field][data-language-code="fa"]');
+  await expect(editor).toBeFocused();
+  await expect(editor).toHaveValue("من مقاله را خواندم");
+
+  await page.locator("[data-editor-filter-select]").selectOption("show-all");
+  await expect(page.locator(".history-diff__insert")).toHaveCount(0);
+});
+
+test("quote attribution saves separately, previews at 90%, and appends when leaving Quote", async ({ page }) => {
+  await mountEditorFixture(page, { rowCount: 8, chapterStatus: "ready" }, { mockTauri: true });
+  const rowId = "fixture-row-0001";
+  const style = (value) => page.locator(`[data-editor-row-text-style-button][data-row-id="${rowId}"][data-language-code="vi"][data-text-style="${value}"]`);
+  await activateMainEditorField(page, rowId, "vi");
+  const body = page.locator(`[data-editor-row-field][data-row-id="${rowId}"][data-language-code="vi"]:not([data-content-kind])`);
+  const original = await body.inputValue();
+  const normalSize = parseFloat(await body.evaluate((field) => getComputedStyle(field).fontSize));
+  await style("quote").click();
+  await expect(body).toHaveCSS("text-align", "left");
+  expect(parseFloat(await body.evaluate((field) => getComputedStyle(field).fontSize))).toBeCloseTo(normalSize, 2);
+  const attribution = page.locator(`[data-editor-row-field][data-content-kind="attribution"][data-row-id="${rowId}"][data-language-code="vi"]`);
+  await expect(attribution).toBeHidden();
+  const prompt = attribution.locator("..").getByText("Click here to enter attribution.", { exact: true });
+  await expect(prompt).toBeVisible();
+  await prompt.click();
+  await expect(attribution).toBeFocused();
+  await expect(attribution).toHaveAttribute("placeholder", "Enter attribution here.");
+  await expect(attribution).toHaveValue("");
+  await attribution.fill("Quote source author");
+  await expect(attribution).toHaveCSS("text-align", "right");
+  expect(parseFloat(await attribution.evaluate((field) => getComputedStyle(field).fontSize))).toBeCloseTo(normalSize * .9, 2);
+  await expect(prompt).toBeHidden();
+  await page.locator("[data-editor-search-input]").focus();
+  await flushDirtyRows(page);
+  await expect.poll(async () => {
+    const mock = await readMockTauriState(page);
+    return mock.invocations.some((entry) => entry.command === "update_gtms_editor_row_fields"
+      && entry.payload.input.attributions?.vi === "Quote source author");
+  }).toBe(true);
+  await expect(attribution).toHaveValue("Quote source author");
+  await page.screenshot({ path: "/tmp/gnosis-quote-editor.png" });
+  await page.locator('[data-action="set-editor-mode:preview"]').click();
+  const citation = page.locator('.translate-preview__attribution').first();
+  await expect(citation).toHaveText("Quote source author");
+  await expect(citation).toHaveCSS("text-align", "right");
+  const sizes = await citation.evaluate((cite) => ({
+    citation: parseFloat(getComputedStyle(cite).fontSize),
+    quote: parseFloat(getComputedStyle(cite.parentElement).fontSize),
+    normal: parseFloat(getComputedStyle(document.querySelector(".translate-preview__block--paragraph")).fontSize),
+  }));
+  expect(sizes.quote).toBeCloseTo(sizes.normal, 2);
+  expect(sizes.citation).toBeCloseTo(sizes.normal * .9, 2);
+  await expect(citation.locator("..")).toHaveCSS("text-align", "left");
+  await page.screenshot({ path: "/tmp/gnosis-quote-preview.png" });
+  await page.locator('[data-action="set-editor-mode:translate"]').click();
+  await activateMainEditorField(page, rowId, "vi");
+  await body.focus();
+  await style("paragraph").click();
+  await expect(attribution).toHaveCount(0);
+  await activateMainEditorField(page, rowId, "vi");
+  await expect(body).toHaveValue(`${original}\n\nQuote source author`);
+  await page.screenshot({ path: "/tmp/gnosis-quote-editor-converted.png" });
+});
+
+test("SRT rows hide style and inline formatting controls", async ({ page }) => {
+  await mountEditorFixture(page, { rowCount: 8, srt: true }, { mockTauri: true });
+  await activateMainEditorField(page, "fixture-row-0001", "vi");
+  await expect(page.locator("[data-editor-row-text-style-button], [data-editor-inline-style-button], [data-editor-separator-button]")).toHaveCount(0);
+  await expect(page.locator('[data-editor-timing-field]').first()).toBeVisible();
+});
+
+test("empty quote attribution opens on click, keeps undo, and collapses again on blur", async ({ page }) => {
+  await mountEditorFixture(page, { rowCount: 8, chapterStatus: "ready" }, { mockTauri: true });
+  const rowId = "fixture-row-0001";
+  await activateMainEditorField(page, rowId, "vi");
+  await page.locator(`[data-editor-row-text-style-button][data-row-id="${rowId}"][data-language-code="vi"][data-text-style="quote"]`).click();
+  await page.locator('[data-action="set-editor-mode:preview"]').click();
+  await expect(page.locator(".translate-preview__attribution")).toHaveCount(0);
+  await page.locator('[data-action="set-editor-mode:translate"]').click();
+  const field = page.locator(`[data-content-kind="attribution"][data-row-id="${rowId}"][data-language-code="vi"]`);
+  const prompt = field.locator("..").getByText("Click here to enter attribution.", { exact: true });
+  await expect(prompt).toBeVisible();
+  await expect(field).toBeHidden();
+  await prompt.click();
+  await expect(field).toBeFocused();
+  await expect(field).toBeVisible();
+  await expect(field).toHaveValue("");
+  await field.press("Shift+Tab");
+  await page.keyboard.press("Tab");
+  await expect(field).toBeFocused();
+  await field.pressSequentially("Author");
+  await expect(field).toHaveValue("Author");
+  expect(await field.evaluate((node) => node.matches(":placeholder-shown"))).toBe(false);
+  await field.press(process.platform === "darwin" ? "Meta+z" : "Control+z");
+  await expect(field).not.toHaveValue("Author");
+  await field.fill("");
+  await expect(field).toBeVisible();
+  await page.locator("[data-editor-search-input]").focus();
+  await expect(field).toBeHidden();
+  await expect(prompt).toBeVisible();
+  await flushDirtyRows(page);
+  const mock = await readMockTauriState(page);
+  for (const entry of mock.invocations.filter((item) => item.command === "update_gtms_editor_row_fields")) {
+    expect(JSON.stringify(entry.payload)).not.toMatch(/Click here to enter attribution|Enter attribution here/);
+  }
+  await page.screenshot({ path: "/tmp/gnosis-quote-empty-prompt.png" });
+});
+
+test("Quote block and Heading filters select styles and update when a style changes", async ({ page }) => {
+  await mountEditorFixture(page, { rowCount: 4 }, { mockTauri: true });
+  const setStyle = async (rowId, textStyle) => {
+    const field = await activateMainEditorField(page, rowId, "vi");
+    await field.focus();
+    await page.locator(`[data-editor-row-text-style-button][data-row-id="${rowId}"][data-language-code="vi"][data-text-style="${textStyle}"]`).click();
+  };
+  await setStyle("fixture-row-0001", "heading1");
+  await setStyle("fixture-row-0002", "quote");
+  await setStyle("fixture-row-0003", "heading2");
+
+  const filter = page.locator("[data-editor-filter-select]");
+  const cards = page.locator("[data-editor-row-card]");
+  await filter.selectOption({ label: "Quote block" });
+  await expect(cards).toHaveCount(1);
+  await expect(cards).toHaveAttribute("data-row-id", "fixture-row-0002");
+  await filter.selectOption({ label: "Heading" });
+  await expect(cards).toHaveCount(2);
+  await expect(cards.nth(0)).toHaveAttribute("data-row-id", "fixture-row-0001");
+  await expect(cards.nth(1)).toHaveAttribute("data-row-id", "fixture-row-0003");
+
+  const search = page.locator("[data-editor-search-input]");
+  await search.fill("0003");
+  await expect(cards).toHaveCount(1);
+  await expect(cards).toHaveAttribute("data-row-id", "fixture-row-0003");
+  await search.fill("");
+  await setStyle("fixture-row-0003", "paragraph");
+  await expect(cards).toHaveCount(1);
+  await expect(cards).toHaveAttribute("data-row-id", "fixture-row-0001");
+  await filter.selectOption({ label: "Show all" });
+  await expect(cards).toHaveCount(4);
+});
+
+for (const { platform, modifier } of [
+  { platform: "mac", modifier: "Meta" },
+  { platform: "windows", modifier: "Control" },
+]) {
+  test(`formatting shortcuts match bold italic and underline buttons (${platform})`, async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 4 }, { mockTauri: true, path: `/?platform=${platform}` });
+    const rowId = "fixture-row-0001";
+    const field = await activateMainEditorField(page, rowId, "vi");
+    for (const { key, style, tag } of [
+      { key: "b", style: "bold", tag: "strong" },
+      { key: "i", style: "italic", tag: "em" },
+      { key: "u", style: "underline", tag: "u" },
+    ]) {
+      const button = page.locator(`[data-editor-inline-style-button][data-row-id="${rowId}"][data-language-code="vi"][data-inline-style="${style}"]`);
+      await field.fill("alpha beta gamma");
+      await setEditorSelectionRange(page, rowId, "vi", 6, 10);
+      await field.press(`${modifier}+${key}`);
+      await expect(field).toHaveValue(`alpha <${tag}>beta</${tag}> gamma`);
+      await expect(field).toBeFocused();
+      await expect(button).toHaveAttribute("aria-pressed", "true");
+      await field.press(`${modifier}+${key}`);
+      await expect(field).toHaveValue("alpha beta gamma");
+      await expect(button).toHaveAttribute("aria-pressed", "false");
+
+      await setEditorSelectionRange(page, rowId, "vi", 1, 1);
+      await field.press(`${modifier}+${key}`);
+      await expect(field).toHaveValue(`<${tag}>alpha</${tag}> beta gamma`);
+      await clickLocatorCenter(page, button);
+      await expect(field).toHaveValue("alpha beta gamma");
+    }
+
+    await clickLocatorCenter(page, page.locator(`[data-editor-footnote-button][data-row-id="${rowId}"][data-language-code="vi"]`));
+    const footnote = page.locator(`[data-editor-row-field][data-row-id="${rowId}"][data-language-code="vi"][data-content-kind="footnote"]`);
+    await footnote.fill("foot note");
+    const bodyWithMarker = await field.inputValue();
+    await setEditorSelectionRange(page, rowId, "vi", 6, 6, "footnote");
+    await footnote.press(`${modifier}+i`);
+    await expect(footnote).toHaveValue("foot <em>note</em>");
+    await expect(footnote).toBeFocused();
+    await expect(field).toHaveValue(bodyWithMarker);
+  });
+}
+
+test("formatting shortcuts leave SRT and custom HTML text unchanged", async ({ page }) => {
+  for (const srt of [false, true]) {
+    await mountEditorFixture(page, { rowCount: 4, srt }, { mockTauri: true, path: "/?platform=mac" });
+    const rowId = "fixture-row-0001";
+    const field = await activateMainEditorField(page, rowId, "vi");
+    if (!srt) {
+      await page.locator(`[data-editor-row-text-style-button][data-row-id="${rowId}"][data-language-code="vi"][data-text-style="custom_html"]`).click();
+    }
+    await field.fill("alpha beta gamma");
+    for (const key of ["b", "i", "u"]) {
+      const prevented = await field.evaluate((node, key) => {
+        node.focus();
+        node.setSelectionRange(6, 10);
+        return !node.dispatchEvent(new KeyboardEvent("keydown", { key, metaKey: true, bubbles: true, cancelable: true }));
+      }, key);
+      expect(prevented).toBe(false);
+      await expect(field).toHaveValue("alpha beta gamma");
+    }
+  }
+});
+
+for (const canEdit of [false, true]) {
+  for (const fontSize of [20, 28]) {
+    test(`closed footnotes keep compact spacing (${canEdit ? "editable" : "read-only"}, ${fontSize}px)`, async ({ page }) => {
+      await mountEditorFixture(page, { rowCount: 2 });
+      await page.evaluate(async ({ fontSize, canEdit }) => {
+        const { renderTranslationContentRow } = await import("/app/editor-row-render.js");
+        const host = document.createElement("div");
+        host.dataset.footnoteSpacingFixture = "true";
+        host.style.cssText = `position:fixed;top:20px;left:20px;z-index:100;width:800px;max-width:calc(100% - 40px);background:#fff7e5;--translation-editor-font-size:${fontSize}px;`;
+        host.innerHTML = renderTranslationContentRow({
+          kind: "row", id: "spacing-fixture", rowId: "spacing-fixture",
+          lifecycleState: "active", textStyle: "paragraph", canEdit,
+          sections: [{
+            code: "vi", baseCode: "vi", name: "Vietnamese", canEdit,
+            text: "Body text above the footnotes.",
+            hasVisibleFootnote: true,
+            footnotes: [
+              { marker: 1, text: 'First paragraph.\nSecond paragraph with <a href="https://example.com">a link</a>.' },
+              { marker: 2, text: "Another footnote." },
+            ],
+          }],
+        });
+        document.body.append(host);
+      }, { fontSize, canEdit });
+      const host = page.locator("[data-footnote-spacing-fixture]");
+      const footnote = host.locator(canEdit
+        ? ".translation-language-panel__field-stack--footnote"
+        : ".translation-language-panel__field-static--footnote");
+      const gaps = await footnote.evaluate((node) => {
+        const outer = node.getBoundingClientRect();
+        const children = [...node.children];
+        const first = children[0].getBoundingClientRect();
+        const last = children.at(-1).getBoundingClientRect();
+        return { top: first.top - outer.top, bottom: outer.bottom - last.bottom };
+      });
+      expect(gaps.top).toBeLessThanOrEqual(4);
+      expect(gaps.bottom).toBeLessThanOrEqual(4);
+      const entries = footnote.locator(canEdit
+        ? ".translation-language-panel__footnote-display-text"
+        : ".translation-language-panel__footnote-static");
+      await expect(entries).toHaveCount(2);
+      await expect(footnote.locator("a")).toHaveAttribute("href", "https://example.com");
+      expect(await entries.first().textContent()).toContain("First paragraph.\nSecond paragraph");
+      await expect(entries.first()).toHaveCSS("white-space", "pre-wrap");
+      await host.screenshot({ path: `/tmp/footnote-spacing-${canEdit ? "editable" : "read-only"}-${fontSize}.png` });
+    });
+  }
+}
+
+for (const canEdit of [false, true]) {
+  test(`search highlights all editor text fields (${canEdit ? "editable" : "read-only"})`, async ({ page }) => {
+    const rowId = "fixture-row-0001";
+    await mountEditorFixture(page, {
+      rowCount: 2, chapterStatus: "ready",
+      fieldsByRowId: { [rowId]: { vi: "Needle body[2][7]" } },
+      imagesByRowId: { [rowId]: { vi: { kind: "url", url: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Crect width='80' height='80' fill='orange'/%3E%3C/svg%3E" } } },
+    }, { mockTauri: true });
+    await page.evaluate(async ({ rowId, canEdit }) => {
+      const { state } = await import("/app/state.js");
+      const row = state.editorChapter.rows.find((row) => row.rowId === rowId);
+      row.footnotes.vi = [
+        { marker: 2, text: 'A longer first note with <em>Needle</em> and <a href="https://example.com">a link</a>.' },
+        { marker: 7, text: "Needle begins the second note." },
+      ];
+      row.imageCaptions.vi = "Picture <u>Needle</u> caption";
+      row.persistedFootnotes = structuredClone(row.footnotes);
+      row.persistedImageCaptions = { ...row.imageCaptions };
+      // Publish new rows as a normal editor update would, invalidating its model cache.
+      state.editorChapter.rows = [...state.editorChapter.rows];
+      if (!canEdit) {
+        state.editorChapter.writePermissionSnapshot = {
+          ...state.editorChapter.writePermissionSnapshot, source: "test", canEditProjectFiles: false,
+        };
+      }
+    }, { rowId, canEdit });
+    const search = page.locator("[data-editor-search-input]");
+    await search.fill("needle");
+    const panel = page.locator(`[data-editor-language-panel][data-row-id="${rowId}"][data-language-code="vi"]`);
+    const marks = panel.locator("mark.translation-language-panel__search-match");
+    await expect(marks).toHaveCount(4);
+    await expect(panel.locator("em mark")).toHaveText("Needle");
+    await expect(panel.locator("u mark")).toHaveText("Needle");
+    await expect(panel.locator('.translation-language-panel__footnote-marker').filter({ hasText: "[7]" })).toBeVisible();
+    await expect(panel.locator('a[href="https://example.com"]')).toHaveText("a link");
+    await panel.screenshot({ path: `/tmp/editor-search-highlighting-${canEdit ? "editable" : "read-only"}.png` });
+
+    // A query found only in an attachment must retain the row and highlight it.
+    for (const query of ["second note", "Picture", "body"]) {
+      await search.fill(query);
+      await expect(panel).toBeVisible();
+      await expect(marks).toHaveCount(1);
+      await expect(marks).toHaveText(query);
+    }
+    await search.fill("needle");
+    await page.locator('[data-action="toggle-editor-search-case-sensitive"]').click();
+    await expect(page.locator("[data-editor-row-card]")).toHaveCount(0);
+    await page.locator('[data-action="toggle-editor-search-case-sensitive"]').click();
+    await expect(marks).toHaveCount(4);
+
+    if (canEdit) {
+      await panel.locator('[data-editor-footnote-display][data-footnote-marker="7"]').click();
+      const footnote = panel.locator('textarea[data-content-kind="footnote"][data-footnote-marker="7"]');
+      await expect(footnote).toBeFocused();
+      const footnoteLayer = footnote.locator("..").locator("[data-editor-search-highlight]");
+      await expect(footnoteLayer.locator("mark")).toHaveText("Needle");
+      await expect(footnoteLayer).toBeVisible();
+      await footnote.fill("   Needle changed, needle again.");
+      await expect.poll(() => footnoteLayer.textContent()).toBe("   Needle changed, needle again.");
+      await expect(footnoteLayer.locator("mark")).toHaveCount(2);
+      await expect(footnote).toBeFocused();
+      await footnote.locator("..").screenshot({ path: "/tmp/editor-search-footnote-editing.png" });
+
+      await panel.locator("[data-editor-image-caption-button]").click();
+      const caption = panel.locator('textarea[data-content-kind="image-caption"]');
+      await expect(caption).toBeFocused();
+      const captionLayer = caption.locator("..").locator("[data-editor-search-highlight]");
+      await expect(captionLayer.locator("mark")).toHaveText("Needle");
+      await expect(captionLayer).toBeVisible();
+      await caption.fill("Needle changed caption, needle again.");
+      await expect(captionLayer.locator("mark")).toHaveCount(2);
+      await expect(caption).toBeFocused();
+      await caption.locator("..").screenshot({ path: "/tmp/editor-search-caption-editing.png" });
+
+      const body = await activateMainEditorField(page, rowId, "vi");
+      await expect(body.locator("..").locator("[data-editor-search-highlight] mark")).toHaveText("Needle");
+    }
+    await search.fill("");
+    await expect(marks).toHaveCount(0);
+  });
+}
+
+for (const tab of ["review", "translate", "history", "comments"]) {
+  test(`row selection preserves the ${tab === "translate" ? "assistant" : tab} sidebar tab`, async ({ page }) => {
+    await mountEditorFixture(page, {
+      rowCount: 4, chapterStatus: "ready",
+      fieldsByRowId: {
+        "fixture-row-0002": { vi: "" },
+        "fixture-row-0003": { vi: "  \n  " },
+      },
+    }, { mockTauri: true });
+    await activateMainEditorField(page, "fixture-row-0001", "vi");
+    const tabButton = page.locator(`[data-action="switch-editor-sidebar-tab:${tab}"]`);
+    await tabButton.click();
+    await expect(tabButton).toHaveAttribute("aria-pressed", "true");
+    for (const [rowId, languageCode] of [
+      ["fixture-row-0002", "vi"], // empty
+      ["fixture-row-0003", "vi"], // whitespace only
+      ["fixture-row-0004", "vi"], // filled
+      ["fixture-row-0002", "es"], // change language
+      ["fixture-row-0001", "es"],
+    ]) {
+      await activateMainEditorField(page, rowId, languageCode);
+      await expect(tabButton).toHaveAttribute("aria-pressed", "true");
+      await expect(page.locator("[data-editor-language-panel].is-active")).toHaveAttribute("data-row-id", rowId);
+      await expect(page.locator("[data-editor-language-panel].is-active")).toHaveAttribute("data-language-code", languageCode);
+    }
+    const search = page.locator("[data-editor-search-input]");
+    await search.fill("no matching row for tab preservation 123456789");
+    await expect(page.locator("[data-editor-row-card]")).toHaveCount(0);
+    await expect(tabButton).toHaveAttribute("aria-pressed", "true");
+    await search.fill("");
+    await activateMainEditorField(page, "fixture-row-0002", "vi");
+    await expect(tabButton).toHaveAttribute("aria-pressed", "true");
+    if (tab === "comments") {
+      await expect.poll(() => page.evaluate(async () => (await import("/app/state.js")).state.editorChapter.comments.rowId)).toBe("fixture-row-0002");
+    }
+    // Direct tab navigation remains available after ordinary row selection.
+    const otherTab = page.locator(`[data-action="switch-editor-sidebar-tab:${tab === "history" ? "review" : "history"}"]`);
+    await otherTab.click();
+    await expect(otherTab).toHaveAttribute("aria-pressed", "true");
+  });
+}

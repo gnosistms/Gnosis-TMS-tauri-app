@@ -4,6 +4,8 @@ const writeIntents = createWriteIntentCoordinator({
   defaultScope: "glossary-term-writes:default",
   label: "Glossary term",
 });
+let locallySavedIntents = new WeakSet();
+const localSaveListeners = new Set();
 
 export function glossaryTermSaveIntentKey(glossaryId, termIdOrClientId) {
   return `glossary-term:save:${glossaryId ?? "unknown"}:${termIdOrClientId ?? "unknown"}`;
@@ -15,6 +17,14 @@ export function glossaryTermWriteScope(team, repoName) {
 
 export function requestGlossaryTermWriteIntent(intent, operations = {}) {
   return writeIntents.request(intent, operations);
+}
+
+// Local persistence makes the terms readable before the write intent finishes
+// pushing. Track the running intent object, not its key: a newer draft for the
+// same term has a different intent and must wait for its own local save.
+export function markGlossaryTermWriteLocallySaved(intent) {
+  locallySavedIntents.add(intent);
+  for (const listener of localSaveListeners) listener();
 }
 
 export function getGlossaryTermWriteIntent(key) {
@@ -36,21 +46,26 @@ export function glossaryTermWriteIsActive(team, repoName) {
 // whatever data it has rather than freezing.
 const GLOSSARY_TERM_WRITE_SETTLE_TIMEOUT_MS = 10000;
 
-export function waitForGlossaryTermWritesToSettle(team, repoName) {
+export function waitForGlossaryTermWritesToSettle(team, repoName, options = {}) {
   const scope = glossaryTermWriteScope(team, repoName);
-  if (!writeIntents.scopeIsActive(scope)) return Promise.resolve();
+  const isWaiting = () => options.localOnly === true
+    ? writeIntents.anyActive((intent) => intent.scope === scope
+      && !locallySavedIntents.has(intent))
+    : writeIntents.scopeIsActive(scope);
+  if (!isWaiting()) return Promise.resolve();
   return new Promise((resolve) => {
     let settled = false;
     const finish = () => {
       if (settled) return;
       settled = true;
       unsubscribe();
+      localSaveListeners.delete(check);
       globalThis.clearTimeout(timeoutId);
       resolve();
     };
-    const unsubscribe = writeIntents.subscribe(() => {
-      if (!writeIntents.scopeIsActive(scope)) finish();
-    });
+    const check = () => { if (!isWaiting()) finish(); };
+    const unsubscribe = writeIntents.subscribe(check);
+    localSaveListeners.add(check);
     const timeoutId = globalThis.setTimeout(finish, GLOSSARY_TERM_WRITE_SETTLE_TIMEOUT_MS);
   });
 }
@@ -68,5 +83,6 @@ export function clearFailedGlossaryTermWrite(key) {
 }
 
 export function resetGlossaryTermWriteCoordinator() {
+  locallySavedIntents = new WeakSet();
   writeIntents.reset();
 }

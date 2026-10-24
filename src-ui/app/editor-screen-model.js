@@ -1,4 +1,11 @@
 import { buildEditorCommentsButtonState, normalizeEditorSidebarTab } from "./editor-comments.js";
+import { projectSrtDisplayRows, srtGroupingEnabled } from "./editor-srt-grouping.js";
+import { canManageGlossaries } from "./glossary-shared.js";
+import { buildEditorSectionChangeView } from "./editor-change-view.js";
+import {
+  changedAfterMyEditFilterIsActive,
+  changedAfterMyEditStateForChapter,
+} from "./editor-changed-after-my-edit-flow.js";
 import {
   conflictedLanguageCodesForRow,
   rowHasUnresolvedEditorConflict,
@@ -235,6 +242,7 @@ function buildLiveTranslationRows(editorChapter, languages) {
           openFootnoteMarker: Number.isInteger(openFootnoteMarkerValue) ? openFootnoteMarkerValue : null,
           searchFootnote: persistedFootnoteText(row, language.code, footnote),
           imageCaption,
+          attribution: String(row.attributions?.[language.code] ?? ""),
           searchImageCaption: persistedLanguageText(
             row,
             "persistedImageCaptions",
@@ -473,7 +481,7 @@ function buildEditorDisplayItems(contentRows, editorChapter, team, editorReplace
       ...row,
       canEdit: canEditRows,
       canInsert: row.lifecycleState === "active" && canEditRows,
-      canMerge: row.lifecycleState === "active" && canEditRows,
+      canMerge: row.lifecycleState === "active" && canEditRows && !srtGroupingEnabled(editorChapter),
       canMergePrevious:
         row.lifecycleState === "active" && canEditRows && hasActiveRowBefore.get(row.rowId) === true,
       canMergeNext:
@@ -531,14 +539,19 @@ export function buildEditorScreenViewModel(appState) {
     editorChapter?.commentSeenRevisions && typeof editorChapter.commentSeenRevisions === "object"
       ? editorChapter.commentSeenRevisions
       : {};
+  const changedAfterMyEdit = changedAfterMyEditStateForChapter(editorChapter);
+  const changedAfterMyEditBaselines = changedAfterMyEditFilterIsActive(editorChapter)
+    ? changedAfterMyEdit?.rowsById ?? null
+    : null;
   const editorFilters = buildEditorFilterResult({
-    rows: rawRows,
+    rows: projectSrtDisplayRows(rawRows, editorChapter, languages),
     languages,
     collapsedLanguageCodes,
     filters: editorChapter?.filters,
     targetLanguageCode: targetCode,
     commentSeenRevisions,
     rowHasGlossaryError: (row) => editorRowHasGlossaryError(row, editorChapter),
+    changedAfterMyEditRowIds: changedAfterMyEdit?.rowIds ?? new Set(),
   });
   const editorReplace = buildEditorReplaceViewModel(editorChapter, editorFilters);
   const contentRows = buildEditorDisplayItems(
@@ -551,10 +564,18 @@ export function buildEditorScreenViewModel(appState) {
       return row;
     }
 
+    const changeBaselineRow = changedAfterMyEditBaselines && row.hasConflict !== true
+      ? changedAfterMyEditBaselines.get(row.rowId) ?? null
+      : null;
     return {
       ...row,
-      isConnected: row.id === editorChapter?.activeRowId,
+      isConnected: row.id === editorChapter?.activeRowId || row.srtGroup?.memberRowIds.includes(editorChapter?.activeRowId),
       sections: (Array.isArray(row.sections) ? row.sections : []).map((section) => {
+        const changeView = buildEditorSectionChangeView({
+          baselineRow: changeBaselineRow,
+          section,
+          textStyle: row.textStyle,
+        });
         const aiTranslateLoadingText = activeAiTranslateLoadingTexts.get(
           createEditorAiTranslateLoadingKey(row.rowId, section.code),
         );
@@ -585,7 +606,16 @@ export function buildEditorScreenViewModel(appState) {
             targetLanguageCode: targetCode,
             seenRevisions: commentSeenRevisions,
           }),
+          showResearchButton:
+            Boolean(row?.rowId) && canManageGlossaries(),
           isAiTranslating,
+          changeView: isAiTranslating ? null : changeView,
+          // A footnote or caption someone deleted still gets its box, showing the
+          // deleted text.
+          hasVisibleFootnote: section.hasVisibleFootnote === true || Boolean(changeView?.footnotes),
+          hasVisibleImageCaption:
+            section.hasVisibleImageCaption === true
+            || (Boolean(section.image) && Boolean(changeView?.captionDiff)),
           isSelectedCommentsRow:
             normalizeEditorSidebarTab(editorChapter?.sidebarTab) === "comments"
             && editorChapter?.activeRowId === row.rowId

@@ -122,12 +122,35 @@ async function attemptTeamAiCredentialRecovery(command, payload, error) {
   }
 }
 
+function normalizeAccessFailure(error) {
+  const raw = String(error?.message ?? error ?? "");
+  // The native command rejected its entry access check before running the action.
+  // This contract lets new commands share recovery without a JS name allowlist.
+  if (raw.startsWith("AUTH_RETRY_SAFE:AUTH_REQUIRED:")) {
+    return Object.assign(new Error(raw.slice("AUTH_RETRY_SAFE:".length)), { nativeAuthRetrySafe: true });
+  }
+  if (!raw.startsWith("ACCESS_VERIFICATION_FAILED:")) return error;
+  let payload;
+  try { payload = JSON.parse(raw.slice("ACCESS_VERIFICATION_FAILED:".length)); } catch {}
+  const message = payload?.message === "Could not verify active access for this team. Refresh team access and try again."
+    ? payload.message
+    : "Could not verify write access for this team. Refresh team access and try again.";
+  const category = /^(?:session_storage|snapshot_storage|membership_unverified|unexpected|broker_(?:config|client|transport|response_read|response_parse|http_[1-5]\d{2}))$/.test(payload?.category ?? "")
+    ? payload.category : "unexpected";
+  return Object.assign(new Error(message), { accessFailureCategory: category });
+}
+
 export const invoke = rawInvoke
   ? async function invoke(command, payload = {}) {
       const generation = authSessionGeneration;
+      const nativeTeamId = state.selectedTeamId;
+      const payloadSessionToken = extractBrokerSessionToken(payload);
+      const nativeSessionToken = payloadSessionToken ? null : state.auth.session?.sessionToken;
+      const currentSessionToken = payloadSessionToken ?? nativeSessionToken;
       try {
         return await rawInvoke(command, payload);
       } catch (error) {
+        error = normalizeAccessFailure(error);
         if (await attemptTeamAiCredentialRecovery(command, payload, error)) {
           try {
             return await rawInvoke(command, payload);
@@ -136,12 +159,11 @@ export const invoke = rawInvoke
             throw retryError;
           }
         }
-        if (!shouldAttemptBrokerSessionRefresh(command, payload, error)) {
+        if (!shouldAttemptBrokerSessionRefresh(command, currentSessionToken, error, Boolean(payloadSessionToken))) {
           maybeReportCommandFailure(command, error);
           throw error;
         }
 
-        const currentSessionToken = extractBrokerSessionToken(payload);
         let refreshedSession = null;
         let refreshFailure = null;
         try {
@@ -153,25 +175,30 @@ export const invoke = rawInvoke
           if (refreshFailure?.code === "AUTH_SESSION_CHANGED" || refreshFailure?.code === "AUTH_STORAGE_FAILED") {
             throw refreshFailure;
           }
-          // A refresh that failed because the broker was unreachable is a connectivity
-          // problem, not an auth rejection — rethrow the original error so it is
-          // handled as such instead of bouncing the user to the login page.
+          // Preserve the refresh's connectivity failure so callers retain the
+          // login and show connection recovery instead of expiring the session.
           if (
             refreshFailure
             && classifySyncError(refreshFailure).type === "connection_unavailable"
           ) {
-            throw error;
+            throw refreshFailure;
           }
           throw new Error("AUTH_REQUIRED:Your GitHub session expired. Please log in with GitHub again to continue.");
         }
 
         assertCurrentBrokerSession(refreshedSession.sessionToken, generation);
+        if (nativeSessionToken && state.selectedTeamId !== nativeTeamId) {
+          throw Object.assign(new Error("The selected team changed. Retry saving in the original team."), {
+            code: "EDITOR_CONTEXT_CHANGED",
+          });
+        }
         try {
           return await rawInvoke(
             command,
             updatePayloadSessionToken(payload, refreshedSession.sessionToken),
           );
         } catch (retryError) {
+          retryError = normalizeAccessFailure(retryError);
           // A refreshed broker session may still yield a rejected installation token
           // or a genuinely non-auth command failure. Preserve that final failure in
           // telemetry instead of letting the retry bypass the normal report boundary.
@@ -209,13 +236,30 @@ const LOCAL_TEAM_METADATA_LIST_COMMANDS = new Set([
  * are routine, not defects, and drown real signal (plans/sentry-triage-plan.md, W2).
  */
 export function resolveCommandFailureReport(command, error) {
+  error = normalizeAccessFailure(error);
+  if (error?.accessFailureCategory) {
+    const category = error.accessFailureCategory;
+    // Keep expected connectivity/auth/permission handling consistent with other
+    // commands. Storage, malformed responses and unverified membership still report.
+    if (category === "broker_transport" || category === "broker_http_403") return null;
+    return {
+      error: error.message,
+      options: {
+        ...(/^broker_http_5\d{2}$/.test(category) ? { level: "warning" } : {}),
+        tags: { access_failure: category },
+      },
+    };
+  }
   const rawMessage = String(error?.message ?? error ?? "").trim();
   const normalizedMessage = rawMessage.toLowerCase();
-  if (normalizedMessage.startsWith("auth_required:")) {
+  if (normalizedMessage.startsWith("auth_required:") || normalizedMessage.startsWith("auth_session_changed:")) {
     return null;
   }
   // Forced-update control flow; updater-flow.js owns the user-facing handling.
   if (rawMessage.startsWith("APP_UPDATE_REQUIRED:")) {
+    return null;
+  }
+  if (rawMessage.startsWith("ALIGNMENT_CANCELED:")) {
     return null;
   }
   // Offline / broker unreachable / DNS / connection reset.
@@ -234,6 +278,22 @@ export function resolveCommandFailureReport(command, error) {
     || aiProviderErrorCategory === "team_access_unverified"
   ) {
     return null;
+  }
+  // AI provider safety-filter declines are content policy, not app defects.
+  // Keep them countable (false-positive rates matter) under one fingerprint per
+  // command, tagged by category, without error-level noise.
+  const aiSafetyRefusal = rawMessage.match(
+    /^(\w+)'s safety filter declined this request(?: \(category: ([^)]+)\))?/,
+  );
+  if (aiSafetyRefusal) {
+    return {
+      error: `${aiSafetyRefusal[1]} safety filter declined a request`,
+      options: {
+        level: "warning",
+        fingerprint: ["command-failure", String(command ?? "unknown"), "ai-safety-refusal"],
+        tags: { ai_refusal_category: aiSafetyRefusal[2] ?? "unspecified" },
+      },
+    };
   }
   // GitHub 5xx: transient upstream outage. Worth counting, not an app defect —
   // report as warning under one stable fingerprint per command, and drop the
@@ -342,10 +402,24 @@ export function convertLocalFileSrc(filePath) {
   return normalizedPath;
 }
 
-export function waitForNextPaint() {
+/**
+ * Resolves once the current state has been painted, so a loading view shows
+ * before heavy work starts. A hidden or covered window is not repainted
+ * (WebKit pauses animation frames), so it also resolves after a short delay:
+ * otherwise work behind this wait would stall until the window is shown.
+ */
+export function waitForNextPaint(fallbackMs = 100) {
   return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      globalThis.clearTimeout(timer);
+      resolve();
+    };
+    const timer = globalThis.setTimeout(finish, fallbackMs);
     window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => resolve());
+      window.requestAnimationFrame(finish);
     });
   });
 }
@@ -379,7 +453,7 @@ export async function initializeWindowPresentation() {
   });
 }
 
-function shouldAttemptBrokerSessionRefresh(command, payload, error) {
+function shouldAttemptBrokerSessionRefresh(command, sessionToken, error, hasPayloadSessionToken) {
   if (!rawInvoke) {
     return false;
   }
@@ -394,7 +468,15 @@ function shouldAttemptBrokerSessionRefresh(command, payload, error) {
     return false;
   }
 
-  if (!extractBrokerSessionToken(payload)) {
+  if (!sessionToken) {
+    return false;
+  }
+
+  if (!hasPayloadSessionToken && !error?.nativeAuthRetrySafe) {
+    return false;
+  }
+
+  if (String(error?.message ?? error ?? "").includes("Rollback failed:")) {
     return false;
   }
 

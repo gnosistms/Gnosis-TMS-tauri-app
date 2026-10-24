@@ -143,7 +143,7 @@ export function renderHistoryContent(entry, previousEntry) {
   return renderHistoryDiffText(previousEntry?.plainText, entry?.plainText);
 }
 
-export function renderHistoryEntryContent(entry, previousEntry, languageCode) {
+export function renderHistoryEntryContent(entry, previousEntry, languageCode, options = {}) {
   const currentImageText = editorFieldImageMetadataText(entry?.image);
   const previousImageText = editorFieldImageMetadataText(previousEntry?.image);
   const hasVisibleImage =
@@ -155,6 +155,7 @@ export function renderHistoryEntryContent(entry, previousEntry, languageCode) {
       previousText: previousEntry?.plainText,
       className: "history-item__content",
       alwaysRender: true,
+      mainText: true,
     },
     {
       currentText: entry?.footnote,
@@ -179,12 +180,20 @@ export function renderHistoryEntryContent(entry, previousEntry, languageCode) {
       alwaysRender: false,
       requiresVisibleImage: true,
     },
+    {
+      currentText: entry?.attribution,
+      previousText: previousEntry?.attribution,
+      className: "history-item__content history-item__content--footnote",
+      alwaysRender: false,
+    },
   ];
 
   return `
     <div class="history-item__content-stack">
       ${historyBlocks
         .filter((block) =>
+          (options.includeMainText !== false || !block.mainText)
+          &&
           (
             block.alwaysRender
             || historyTextHasVisibleContent(block.currentText)

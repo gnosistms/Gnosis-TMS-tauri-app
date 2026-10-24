@@ -832,6 +832,17 @@ export function createRepoResourceRepoFlow(descriptor) {
     return repoResourcesMatch(resource, record);
   }
 
+  // A deleted record only stands for a local copy with the same id. A repo
+  // name can be reused by a newer resource after a delete, and that one is live.
+  function tombstoneMatchesLocal(resource, record) {
+    const resourceId = String(resource?.id ?? resource?.[resourceIdField] ?? "").trim();
+    const recordId = String(record?.id ?? record?.[resourceIdField] ?? "").trim();
+    if (resourceId && recordId && resourceId !== recordId) {
+      return false;
+    }
+    return matchesMetadataRecord(resource, record);
+  }
+
   async function purgeLocalRepo(team, id, repoName) {
     if (!Number.isFinite(team?.installationId) || !String(repoName ?? "").trim()) {
       return;
@@ -862,6 +873,11 @@ export function createRepoResourceRepoFlow(descriptor) {
 
     let changed = false;
     for (const record of tombstoneRecords) {
+      // Deleted long ago and already gone from this computer: nothing to remove.
+      // (Looking for it costs a scan of every local repo, on every load.)
+      if (!normalizedResources.some((resource) => tombstoneMatchesLocal(resource, record))) {
+        continue;
+      }
       if (typeof record?.repoName === "string" && record.repoName.trim()) {
         try {
           await purgeLocalRepo(team, record.id, record.repoName);
@@ -869,7 +885,7 @@ export function createRepoResourceRepoFlow(descriptor) {
       }
 
       for (const resource of normalizedResources) {
-        if (!matchesMetadataRecord(resource, record)) {
+        if (!tombstoneMatchesLocal(resource, record)) {
           continue;
         }
         removeFromState(resource.id, resource.repoName);
@@ -909,6 +925,9 @@ export function createRepoResourceRepoFlow(descriptor) {
       typeof options.onRecoveryDetected === "function"
         ? options.onRecoveryDetected
         : null;
+    // Names the step in progress, so a slow load shows what it is waiting on.
+    const step = typeof options.onStep === "function" ? options.onStep : () => {};
+    const [oneNoun, nouns] = options.stepNouns ?? [messages.pluralLabelLower, messages.pluralLabelLower];
     const emptyResult = {
       [collectionField]: [],
       remoteRepos: [],
@@ -921,6 +940,7 @@ export function createRepoResourceRepoFlow(descriptor) {
       return emptyResult;
     }
 
+    step(`reading the ${nouns} on this computer`);
     let localSummaries = await listLocalForTeam(team);
 
     if (offlineMode || !teamSupportsRepos(team)) {
@@ -939,6 +959,11 @@ export function createRepoResourceRepoFlow(descriptor) {
       };
     }
 
+    // The repo list (from GitHub) and the team's records (a git pull) don't
+    // depend on each other, so both network requests run at the same time.
+    step(`asking GitHub which ${nouns} the team has and reading the team's records`);
+    const metadataPromise = listMetadataRecords(team);
+    void metadataPromise.catch(() => null);
     const remoteRepos = await listRemoteReposForTeam(team);
     let metadataRecords = [];
     let repairIssues = [];
@@ -946,13 +971,17 @@ export function createRepoResourceRepoFlow(descriptor) {
     let repairLoaded = false;
     let brokerWarning = "";
     try {
-      metadataRecords = await listMetadataRecords(team);
+      metadataRecords = await metadataPromise;
       metadataLoaded = true;
-      repairIssues = (await inspectAndMigrateLocalRepoBindings(team))?.issues ?? [];
+      step(`checking the local copies of the ${nouns}`);
+      repairIssues = (await inspectAndMigrateLocalRepoBindings(team, { kinds: [kind] }))?.issues ?? [];
       repairLoaded = true;
-      if (repairIssues.length > 0) {
+      // Repair and rescan only when there is something this step can repair:
+      // other issues (a repo not downloaded yet) would otherwise cost a second
+      // full scan on every load.
+      if (repairIssues.some((issue) => issue?.canAutoRepair === true && issue?.issueType === "missingOrigin")) {
         await repairAutoRepairableRepoBindings(team, repairIssues);
-        repairIssues = (await inspectAndMigrateLocalRepoBindings(team).catch(() => null))?.issues ?? repairIssues;
+        repairIssues = (await inspectAndMigrateLocalRepoBindings(team, { kinds: [kind] }).catch(() => null))?.issues ?? repairIssues;
       }
       localSummaries = await purgeTombstonedForTeam(team, localSummaries, metadataRecords);
       metadataRecords = await backfillMetadataRecords(team, localSummaries, remoteRepos, metadataRecords);
@@ -975,6 +1004,7 @@ export function createRepoResourceRepoFlow(descriptor) {
 
     let syncTargets = [];
     if (metadataLoaded) {
+      step("comparing the team's records with GitHub");
       const metadataRepaired = await repairMetadataFromRemoteRename(team, metadataRecords, remoteRepos);
       if (metadataRepaired) {
         metadataRecords = await listMetadataRecords(team).catch(() => metadataRecords);
@@ -992,9 +1022,13 @@ export function createRepoResourceRepoFlow(descriptor) {
       syncTargets = await filterKnownDeletedSyncTargets(team, remoteRepos, localSummaries);
     }
 
+    if (syncTargets.length > 0) {
+      step(`downloading changes for ${syncTargets.length} ${syncTargets.length === 1 ? oneNoun : nouns}`);
+    }
     const syncSnapshots = syncTargets.length > 0
       ? await syncReposForTeam(team, syncTargets)
       : [];
+    step(`reading the updated ${nouns}`);
     localSummaries = await listLocalForTeam(team);
     const syncIssue = getSyncIssueMessage(syncSnapshots);
     if (metadataLoaded) {

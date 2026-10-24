@@ -293,6 +293,12 @@ pub struct AiTranslationBatchRowInput {
     pub row_id: String,
     #[serde(default)]
     pub source_text: String,
+    /// Context belonging to this row, including independently sampled rows.
+    /// It is source evidence only, not another row to translate.
+    #[serde(default)]
+    pub source_context_before: Vec<String>,
+    #[serde(default)]
+    pub source_context_after: Vec<String>,
     #[serde(default)]
     pub source_footnote: String,
     #[serde(default)]
@@ -324,6 +330,15 @@ pub struct AiTranslationBatchRequest {
     pub context_after: Vec<AiAssistantRowWindowEntry>,
     #[serde(default)]
     pub rows: Vec<AiTranslationBatchRowInput>,
+    /// The rows are adjacent cues of a subtitle chapter, so the model may move
+    /// words between neighbouring rows.
+    #[serde(default)]
+    pub subtitle_cues: bool,
+    /// Explicit editor sentence groups may contain intentionally empty cues.
+    #[serde(default)]
+    pub sentence_group: bool,
+    #[serde(default)]
+    pub sentence_source_text: String,
     #[serde(default)]
     pub installation_id: Option<i64>,
 }
@@ -401,6 +416,17 @@ pub struct AiReviewBatchRequest {
     pub context_after: Vec<AiAssistantRowWindowEntry>,
     #[serde(default)]
     pub rows: Vec<AiReviewBatchRowInput>,
+    /// The rows are adjacent cues of a subtitle chapter, whose translations may
+    /// have moved words between neighbouring rows.
+    #[serde(default)]
+    pub subtitle_cues: bool,
+    /// Explicit editor sentence groups may contain intentionally empty cues.
+    #[serde(default)]
+    pub sentence_group: bool,
+    #[serde(default)]
+    pub sentence_source_text: String,
+    #[serde(default)]
+    pub sentence_target_text: String,
     #[serde(default)]
     pub installation_id: Option<i64>,
 }
@@ -541,6 +567,10 @@ pub struct AiAssistantRowContext {
     pub target_language_label: String,
     #[serde(default)]
     pub target_text: String,
+    #[serde(default)]
+    pub target_footnotes: Vec<AiReviewFootnote>,
+    #[serde(default)]
+    pub target_image_caption: String,
     #[serde(default)]
     pub source_footnote: String,
     #[serde(default)]

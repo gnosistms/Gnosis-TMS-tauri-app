@@ -92,6 +92,13 @@ impl ClaudeModelCapabilities {
         effort: true,
         structured_outputs: true,
     };
+    // Used when the capability lookup fails: a plain request every Claude model
+    // accepts. Built-in JSON formats still work through the prompt's JSON
+    // instructions and the tolerant parsers.
+    const BASIC: Self = Self {
+        effort: false,
+        structured_outputs: false,
+    };
 
     fn from_capabilities(capabilities: Option<&Value>) -> Self {
         let Some(capabilities) = capabilities else {
@@ -112,6 +119,9 @@ impl ClaudeModelCapabilities {
 
 static MODEL_CAPABILITIES: OnceLock<Mutex<HashMap<String, ClaudeModelCapabilities>>> =
     OnceLock::new();
+// Serializes cache-miss lookups so concurrent batch calls fetch a model's
+// capabilities once instead of each issuing the same request.
+static CAPABILITY_LOOKUP: Mutex<()> = Mutex::new(());
 
 fn capability_cache() -> &'static Mutex<HashMap<String, ClaudeModelCapabilities>> {
     MODEL_CAPABILITIES.get_or_init(|| Mutex::new(HashMap::new()))
@@ -138,6 +148,12 @@ fn model_capabilities(
     if let Some(capabilities) = cached_capabilities(model_id) {
         return capabilities;
     }
+    let _lookup_guard = CAPABILITY_LOOKUP
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(capabilities) = cached_capabilities(model_id) {
+        return capabilities;
+    }
 
     let lookup = client
         .get(format!("{CLAUDE_MODELS_API_URL}/{model_id}"))
@@ -155,9 +171,11 @@ fn model_capabilities(
             remember_capabilities(model_id, capabilities);
             capabilities
         }
-        // A failed lookup is not cached; the prompt request itself reports any
-        // real connectivity or key problem.
-        None => ClaudeModelCapabilities::CURRENT,
+        // A failed lookup is not cached, so the next request retries it. Until
+        // then, send only what every model accepts rather than risk a 400 on an
+        // older model; the prompt request itself reports any real connectivity
+        // or key problem.
+        None => ClaudeModelCapabilities::BASIC,
     }
 }
 
@@ -187,7 +205,24 @@ struct ClaudeOutputConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     effort: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    format: Option<Value>,
+    format: Option<ClaudeOutputFormat>,
+}
+
+#[derive(Debug, Serialize)]
+struct ClaudeOutputFormat {
+    #[serde(rename = "type")]
+    format_type: &'static str,
+    // Claude writes structured output fields in schema order, so the schema is
+    // sent in the order it was written, not serde_json's sorted order.
+    #[serde(serialize_with = "serialize_schema_in_authored_order")]
+    schema: Value,
+}
+
+fn serialize_schema_in_authored_order<S: serde::Serializer>(
+    schema: &Value,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    schemas::InAuthoredOrder(schema).serialize(serializer)
 }
 
 #[derive(Debug, Serialize)]
@@ -325,7 +360,7 @@ pub(crate) fn list_models(api_key: &str) -> Result<Vec<AiProviderModel>, String>
 
 /// Removes schema keywords Claude's structured outputs reject. Keys of a
 /// `properties` map are field names, not keywords, so they are never stripped.
-fn claude_compatible_schema(schema: &Value) -> Value {
+pub(crate) fn claude_compatible_schema(schema: &Value) -> Value {
     match schema {
         Value::Object(object) => {
             let mut cleaned = Map::new();
@@ -365,10 +400,10 @@ fn build_prompt_request<'a>(
     effort_override: Option<&'static str>,
 ) -> Result<ClaudeMessagesRequest<'a>, String> {
     let format = match schemas::output_schema(&request.output_format) {
-        Some(output) if capabilities.structured_outputs => Some(json!({
-            "type": "json_schema",
-            "schema": claude_compatible_schema(&output.schema),
-        })),
+        Some(output) if capabilities.structured_outputs => Some(ClaudeOutputFormat {
+            format_type: "json_schema",
+            schema: claude_compatible_schema(&output.schema),
+        }),
         // Built-in JSON formats fall back to the prompt's JSON instructions and
         // the tolerant parsers; a caller-supplied schema has no such fallback.
         Some(_)
@@ -407,6 +442,15 @@ pub(crate) fn run_prompt(
     request: &AiPromptRequest,
     api_key: &str,
 ) -> Result<AiPromptResponse, String> {
+    run_prompt_with_usage(request, api_key).map(|(response, _)| response)
+}
+
+/// Runs a prompt and also returns Claude's usage report (input, output, cache
+/// read and cache write token counts).
+pub(crate) fn run_prompt_with_usage(
+    request: &AiPromptRequest,
+    api_key: &str,
+) -> Result<(AiPromptResponse, Option<Value>), String> {
     let (text, usage) = execute_prompt(request, api_key, None)?;
     let usage_count = |pointer: &str| {
         usage
@@ -422,7 +466,7 @@ pub(crate) fn run_prompt(
         usage_count("/cache_creation_input_tokens"),
     );
 
-    Ok(AiPromptResponse { text })
+    Ok((AiPromptResponse { text }, usage))
 }
 
 /// Runs a prompt at a forced effort level and returns the provider's usage
@@ -466,15 +510,19 @@ fn execute_prompt(
         http_request = http_request.header("anthropic-beta", CLAUDE_FALLBACK_BETA);
     }
     let started = std::time::Instant::now();
-    let response = http_request
-        .json(&body)
-        .send()
-        .map_err(|error| prompt_transport_error(error, started.elapsed()))?;
+    let response = http_request.json(&body).send().map_err(|error| {
+        super::prompt_send_error(
+            "Claude",
+            error,
+            started.elapsed(),
+            normalize_transport_error,
+        )
+    })?;
 
     let status = response.status();
     let body = response
         .text()
-        .map_err(|error| format!("Could not read the Claude response: {error}"))?;
+        .map_err(|error| super::prompt_read_error("Claude", &error))?;
 
     if !status.is_success() {
         return Err(normalize_http_error(status, &body));
@@ -665,11 +713,6 @@ pub(crate) fn probe_model(model_id: &str, api_key: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn prompt_transport_error(error: reqwest::Error, elapsed: std::time::Duration) -> String {
-    super::silent_drop_message("Claude", error.is_timeout(), error.is_connect(), elapsed)
-        .unwrap_or_else(|| normalize_transport_error(error))
-}
-
 fn normalize_transport_error(error: reqwest::Error) -> String {
     if error.is_timeout() {
         return "The Claude request timed out. Try again.".to_string();
@@ -743,6 +786,58 @@ mod tests {
         let request = prompt_request(model_id, output_format);
         serde_json::to_value(build_prompt_request(&request, model_id, capabilities, None).unwrap())
             .unwrap()
+    }
+
+    #[test]
+    fn structured_output_schemas_keep_their_written_field_order() {
+        let body = |output_format: AiPromptOutputFormat| {
+            let request = prompt_request("claude-opus-5-5", output_format);
+            serde_json::to_string(
+                &build_prompt_request(
+                    &request,
+                    "claude-opus-5-5",
+                    ClaudeModelCapabilities::CURRENT,
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap()
+        };
+        let in_order = |text: &str, names: &[&str]| {
+            let positions = names
+                .iter()
+                .map(|name| text.find(&format!("\"{name}\":{{")).unwrap())
+                .collect::<Vec<_>>();
+            positions.windows(2).all(|pair| pair[0] < pair[1])
+        };
+
+        let review = body(AiPromptOutputFormat::ReviewBatchJson);
+        assert!(in_order(
+            &review,
+            &["rowId", "suggestedText", "suggestedFootnotes", "reviewed"]
+        ));
+        let translation = body(AiPromptOutputFormat::TranslationBatchJson);
+        assert!(in_order(
+            &translation,
+            &["rowId", "translatedText", "translatedFootnote"]
+        ));
+
+        let section_matches = body(AiPromptOutputFormat::JsonSchema {
+            name: "section_overlap_matches".to_string(),
+            schema: json!({
+                "type": "object",
+                "required": ["sourceSectionId", "isMatch", "overlapPercent"],
+                "properties": {
+                    "sourceSectionId": { "type": "integer" },
+                    "isMatch": { "type": "boolean" },
+                    "overlapPercent": { "type": "number" }
+                }
+            }),
+        });
+        assert!(in_order(
+            &section_matches,
+            &["sourceSectionId", "isMatch", "overlapPercent"]
+        ));
     }
 
     #[test]

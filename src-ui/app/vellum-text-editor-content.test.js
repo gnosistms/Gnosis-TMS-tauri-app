@@ -529,3 +529,15 @@ test("buildVellumTextEditorContentDecodedXml uses prepared local Vellum image re
   assert.match(xml, /<string>canUpsize<\/string>/);
   assert.match(xml, /<string>Diogenes\.webp\n3840 × 2920 px<\/string>/);
 });
+
+test("Vellum quote attribution uses its native attachment linked to the quote format", () => {
+  const blocks = [{ kind: "text", textStyle: "quote", text: "Body", attribution: "Author" }];
+  for (const build of [buildVellumTextEditorContentDecodedXml, buildVellumOgElementPrivateDecodedXml]) {
+    const xml = build(blocks);
+    assert.match(xml, /<string>blockquoteAttribution<\/string>/);
+    assert.match(xml, /<string>OGAttributionAttachmentCell<\/string>/);
+    assert.match(xml, /<string>Author<\/string>/);
+    assert.match(xml, /<key>OGParagraphFormat|<string>OGParagraphFormat/);
+    assert.doesNotMatch(xml, /font-size:90%/);
+  }
+});

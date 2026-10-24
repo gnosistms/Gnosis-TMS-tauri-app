@@ -20,9 +20,22 @@ test("add translation input modal defaults to upload with supported formats", ()
   assert.match(html, /select-project-add-translation-input-mode:pasteLink/);
   assert.match(html, /select-project-add-translation-input-mode:pasteText/);
   assert.match(html, /data-project-add-translation-dropzone/);
-  assert.match(html, /\.txt, \.docx, or \.rtf/);
-  assert.match(html, /existing chapter keeps its formatting/);
+  assert.match(html, /\.txt, \.docx, \.rtf, or \.srt/);
+  assert.match(html, /existing chapter keeps its formatting and timing/);
   assert.match(html, /data-action="select-project-add-translation-file"[^>]*>Select file<\/button>/);
+});
+
+test("subtitle chapters show only SRT upload even with a stale paste mode", () => {
+  for (const inputMode of ["upload", "pasteLink", "pasteText"]) {
+    const html = renderProjectAddTranslationModal({
+      projectAddTranslation: { isOpen: true, step: "input", requiresSrtFile: true, inputMode },
+    });
+    assert.match(html, /Add subtitle translation/);
+    assert.match(html, /Drop one SRT file/);
+    assert.match(html, /valid \.srt file is required/);
+    assert.match(html, /data-action="select-project-add-translation-file"[^>]*>Select file<\/button>/);
+    assert.doesNotMatch(html, /select-project-add-translation-input-mode|submit-project-add-translation-(paste|link)|data-project-add-translation-(textarea|link-input)|\.txt|\.docx|\.rtf/);
+  }
 });
 
 test("add translation paste mode renders requested copy", () => {
@@ -177,6 +190,70 @@ test("add translation progress modal shows full staged progress", () => {
   assert.match(html, /aria-label="Aligning paragraphs"[\s\S]*aria-valuenow="50"/);
   assert.match(html, /aria-label="Applying translation"[\s\S]*aria-valuenow="0"/);
   assert.match(html, /Working 2 \/ 4/);
+  assert.match(html, /<div class="modal__actions">\s*<button[^>]*data-action="cancel-project-add-translation"[^>]*data-modal-cancel[^>]*>Cancel<\/button>/);
+});
+
+test("alignment cancellation is pending until confirmed and disabled during local save", () => {
+  for (const modal of [
+    { step: "aligning", status: "canceling", progress: { stageId: "row_alignment" } },
+    { step: "applying", status: "running", progress: { stageId: "apply" } },
+  ]) {
+    const html = renderProjectAddTranslationModal({ projectAddTranslation: { isOpen: true, ...modal } });
+    assert.match(html, /data-action="cancel-project-add-translation"[^>]*disabled/);
+    if (modal.status === "canceling") assert.match(html, />Canceling\.\.\.<\/button>/);
+  }
+});
+
+test("subtitle progress displays timestamp matching and insertion with Cancel and no AI stages", () => {
+  const html = renderProjectAddTranslationModal({ projectAddTranslation: {
+    isOpen: true, step: "aligning", status: "running", flow: "subtitle",
+    progress: { stageId: "match_timestamps", status: "running", completed: 0, total: 279 },
+  } });
+  assert.match(html, /Matching exact start times and inserting unmatched subtitles in time order/);
+  assert.match(html, /Checking SRT format/);
+  assert.match(html, /Matching start times/);
+  assert.match(html, /data-action="cancel-project-add-translation"/);
+  assert.doesNotMatch(html, /Summarizing|Finding section|Aligning paragraphs|Splitting combined|few minutes/);
+});
+
+test("subtitle mismatch warning reports incoming percentage and new rows with Cancel focused", () => {
+  const html = renderProjectAddTranslationModal({ projectAddTranslation: {
+    isOpen: true, step: "mismatchWarning", flow: "subtitle",
+    subtitleMismatch: { unmatchedCount: 222, totalCount: 279, unmatchedPercent: 222 / 279 * 100, confirmation: "plan-1" },
+  } });
+  assert.match(html, /79\.57%/);
+  assert.match(html, /there is no subtitle in the original file that starts at the same time/);
+  assert.match(html, /lose the timing data in the new file/);
+  assert.match(html, /Do you want to try it anyway/);
+  assert.match(html, /data-action="cancel-project-add-translation"[^>]*data-modal-cancel[^>]*data-modal-initial-focus/);
+  assert.match(html, /data-action="continue-project-add-translation-mismatch"[^>]*>Continue/);
+  assert.doesNotMatch(html, /data-modal-default|TEXT MISMATCH|pasted text/);
+});
+
+test("loose subtitle matching warning uses its own percentage and Continue action", () => {
+  const html = renderProjectAddTranslationModal({ projectAddTranslation: {
+    isOpen: true, step: "mismatchWarning", subtitleMismatch: { stage: "overlap", unmatchedPercent: 10.5, confirmation: "overlap-plan" },
+  } });
+  assert.match(html, /Even with this looser matching criteria, 10\.5% of your new subtitles still didn&#39;t match up with the original file/);
+  assert.match(html, /This will be a messy match\. Do you still want to continue/);
+  assert.match(html, />Continue<\/button>/);
+  assert.doesNotMatch(html, /Save \(not recommended\)/);
+});
+
+test("meaning warning shows every rejected original/new pair safely and requires explicit risky save", () => {
+  const examples = Array.from({ length: 7 }, (_, i) => ({ sourceLine: i + 10, targetLine: i + 20, sourceText: `Old <script>${i}</script>`, targetText: `New ${i}` }));
+  const html = renderProjectAddTranslationModal({ projectAddTranslation: {
+    isOpen: true, step: "mismatchWarning", subtitleMismatch: { stage: "meaning", unmatchedPercent: 35, examples, confirmation: "meaning-plan" },
+  } });
+  for (const pair of examples) {
+    assert.match(html, new RegExp(`Original subtitle ${pair.sourceLine}:`));
+    assert.match(html, new RegExp(`New subtitle ${pair.targetLine}:`));
+  }
+  assert.match(html, /&lt;script&gt;/);
+  assert.doesNotMatch(html, /<script>|data-modal-default/);
+  assert.match(html, /We recommend you cancel the alignment procedure and re-examine your subtitles/);
+  assert.match(html, />Save \(not recommended\)<\/button>/);
+  assert.match(html, /data-action="cancel-project-add-translation"[^>]*data-modal-initial-focus/);
 });
 
 test("add translation progress modal shows single-block staged progress", () => {

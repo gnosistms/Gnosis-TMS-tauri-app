@@ -8,6 +8,10 @@ mod constants;
 mod git_commit;
 mod github;
 mod glossary_repo_sync;
+mod glossary_research_dle;
+mod glossary_research_language_data;
+mod glossary_research_storage;
+mod glossary_research_studio;
 mod glossary_storage;
 mod insecure_github_app_config;
 mod installation_access;
@@ -101,32 +105,35 @@ use crate::{
     },
     glossary_storage::{
         delete_gtms_glossary_term, export_gtms_glossary_to_tmx, import_tmx_to_gtms_glossary_repo,
-        initialize_gtms_glossary_repo, inspect_tmx_glossary_import, list_local_gtms_glossaries,
-        load_gtms_glossary_editor_data, load_gtms_glossary_term, prepare_local_gtms_glossary_repo,
-        purge_local_gtms_glossary_repo, rename_gtms_glossary, restore_gtms_glossary,
-        rollback_gtms_glossary_term_upsert, soft_delete_gtms_glossary, upsert_gtms_glossary_term,
+        initialize_gtms_glossary_repo, inspect_tmx_glossary_import, link_gtms_glossary_terms,
+        list_local_gtms_glossaries, load_gtms_glossary_editor_data, load_gtms_glossary_term,
+        prepare_local_gtms_glossary_repo, purge_local_gtms_glossary_repo, rename_gtms_glossary,
+        restore_gtms_glossary, rollback_gtms_glossary_term_upsert, soft_delete_gtms_glossary,
+        upsert_gtms_glossary_term,
     },
     project_import::{
-        acknowledge_gtms_project_transfer_status, apply_aligned_translation_to_gtms_chapter,
-        apply_gtms_editor_ai_review_result, apply_gtms_editor_ai_review_results_batch,
-        cancel_gtms_chapter_pdf_export, cancel_project_import_batch, clear_deleted_gtms_chapters,
-        clear_gtms_editor_imported_conflict, clear_gtms_editor_reviewed_markers,
-        copy_gtms_chapter_to_team, delete_gtms_editor_row_comment,
-        duplicate_gtms_editor_language_image, export_gtms_chapter_file,
-        extract_project_translation_text, get_gtms_project_transfer_status, import_docx_to_gtms,
-        import_html_to_gtms, import_project_files_to_gtms, import_srt_to_gtms, import_txt_to_gtms,
-        import_xlsx_to_gtms, initialize_gtms_project_repo, insert_gtms_editor_row_after,
-        insert_gtms_editor_row_before, inspect_gtms_chapter_pdf_fonts,
-        list_gtms_project_transfer_statuses, list_local_gtms_project_files,
-        load_gtms_chapter_editor_data, load_gtms_editor_field_history, load_gtms_editor_row,
-        load_gtms_editor_row_comments, merge_gtms_editor_rows, permanently_delete_gtms_chapter,
-        permanently_delete_gtms_editor_row, preflight_aligned_translation_to_gtms_chapter,
-        purge_local_gtms_project_repo, remove_gtms_editor_language_image, rename_gtms_chapter,
-        resolve_project_import_link, restore_gtms_chapter, restore_gtms_editor_field_from_history,
-        restore_gtms_editor_row, reverse_gtms_editor_batch_replace_commit,
-        save_gtms_editor_language_image_url, save_gtms_editor_row_comment,
-        save_project_import_sample, soft_delete_gtms_chapter, soft_delete_gtms_editor_row,
-        start_gtms_chapter_pdf_export, transfer_gtms_project_to_team,
+        acknowledge_gtms_project_transfer_status, add_srt_translation_to_gtms_chapter,
+        apply_aligned_translation_to_gtms_chapter, apply_gtms_editor_ai_review_result,
+        apply_gtms_editor_ai_review_results_batch, approve_gtms_chapter_pdf_fonts,
+        cancel_aligned_translation, cancel_gtms_chapter_pdf_export, cancel_project_import_batch,
+        clear_deleted_gtms_chapters, clear_gtms_editor_imported_conflict,
+        clear_gtms_editor_reviewed_markers, copy_gtms_chapter_to_team,
+        delete_gtms_editor_row_comment, duplicate_gtms_editor_language_image,
+        export_gtms_chapter_file, extract_project_translation_text, forget_gtms_pdf_font_approval,
+        get_gtms_project_transfer_status, import_docx_to_gtms, import_html_to_gtms,
+        import_project_files_to_gtms, import_srt_to_gtms, import_txt_to_gtms, import_xlsx_to_gtms,
+        initialize_gtms_project_repo, insert_gtms_editor_row_after, insert_gtms_editor_row_before,
+        inspect_gtms_chapter_pdf_fonts, list_gtms_project_transfer_statuses,
+        list_local_gtms_project_files, load_gtms_chapter_editor_data,
+        load_gtms_editor_changed_after_my_edit, load_gtms_editor_field_history,
+        load_gtms_editor_row, load_gtms_editor_row_comments, merge_gtms_editor_rows,
+        permanently_delete_gtms_chapter, permanently_delete_gtms_editor_row,
+        preflight_aligned_translation_to_gtms_chapter, purge_local_gtms_project_repo,
+        remove_gtms_editor_language_image, rename_gtms_chapter, resolve_project_import_link,
+        restore_gtms_chapter, restore_gtms_editor_field_from_history, restore_gtms_editor_row,
+        reverse_gtms_editor_batch_replace_commit, save_gtms_editor_language_image_url,
+        save_gtms_editor_row_comment, save_project_import_sample, soft_delete_gtms_chapter,
+        soft_delete_gtms_editor_row, start_gtms_chapter_pdf_export, transfer_gtms_project_to_team,
         update_gtms_chapter_glossary_links, update_gtms_chapter_language_selection,
         update_gtms_chapter_languages, update_gtms_chapter_workflow_status,
         update_gtms_editor_row_field_flag, update_gtms_editor_row_fields,
@@ -287,6 +294,21 @@ async fn run_ai_translation(
     tauri::async_runtime::spawn_blocking(move || run_ai_translation_task(&app, request))
         .await
         .map_err(|error| format!("The AI translation worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn run_glossary_research_request(
+    app: tauri::AppHandle,
+    request: ai::research::ResearchModelRequest,
+) -> Result<ai::research::ResearchOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || ai::research::run_research_request(&app, request))
+        .await
+        .map_err(|error| format!("The glossary research worker failed: {error}"))?
+}
+
+#[tauri::command]
+fn cancel_glossary_research_request(request_id: String) {
+    ai::research::cancel_research_request(&request_id);
 }
 
 #[tauri::command]
@@ -583,6 +605,10 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            glossary_research_studio::glossary_studio_storage,
+            glossary_research_studio::start_glossary_studio_tool,
+            glossary_research_studio::glossary_studio_job,
+            glossary_research_studio::dle::glossary_studio_fetch_dle,
             check_internet_connection,
             read_local_dropped_file,
             append_editor_scroll_debug_log,
@@ -625,6 +651,19 @@ pub fn run() {
             prepare_editor_ai_translated_glossary_batch,
             run_ai_translation,
             run_ai_translation_batch,
+            run_glossary_research_request,
+            project_search::research_sample::glossary_research_project_passages,
+            project_search::research_sample::glossary_research_list_projects,
+            glossary_research_dle::glossary_research_fetch_dle,
+            glossary_research_language_data::glossary_research_language_data,
+            glossary_research_language_data::glossary_research_zipf,
+            glossary_research_language_data::glossary_research_general_sentences,
+            glossary_research_language_data::glossary_research_corpus_zipf,
+            glossary_research_storage::save_glossary_research_stage,
+            glossary_research_storage::load_glossary_research_run,
+            glossary_research_storage::list_glossary_research_runs,
+            glossary_research_storage::delete_glossary_research_run,
+            cancel_glossary_research_request,
             run_ai_review_batch,
             run_ai_assistant_turn,
             probe_ai_provider_model,
@@ -678,6 +717,8 @@ pub fn run() {
             inspect_gtms_chapter_pdf_fonts,
             start_gtms_chapter_pdf_export,
             cancel_gtms_chapter_pdf_export,
+            approve_gtms_chapter_pdf_fonts,
+            forget_gtms_pdf_font_approval,
             copy_gtms_chapter_to_team,
             transfer_gtms_project_to_team,
             get_gtms_project_transfer_status,
@@ -685,6 +726,8 @@ pub fn run() {
             acknowledge_gtms_project_transfer_status,
             preflight_aligned_translation_to_gtms_chapter,
             apply_aligned_translation_to_gtms_chapter,
+            cancel_aligned_translation,
+            add_srt_translation_to_gtms_chapter,
             list_local_gtms_project_files,
             purge_local_gtms_project_repo,
             load_gtms_chapter_editor_data,
@@ -694,6 +737,7 @@ pub fn run() {
             insert_gtms_editor_row_after,
             merge_gtms_editor_rows,
             load_gtms_editor_field_history,
+            load_gtms_editor_changed_after_my_edit,
             load_gtms_editor_row_comments,
             refresh_project_search_index,
             search_projects,
@@ -742,6 +786,7 @@ pub fn run() {
             load_gtms_glossary_editor_data,
             load_gtms_glossary_term,
             upsert_gtms_glossary_term,
+            link_gtms_glossary_terms,
             rollback_gtms_glossary_term_upsert,
             delete_gtms_glossary_term,
             rollback_created_gnosis_glossary_repo,

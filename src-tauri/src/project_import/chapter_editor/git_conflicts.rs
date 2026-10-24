@@ -673,6 +673,8 @@ fn resolve_three_way_row_conflict(
     let mut local_plain_text = BTreeMap::new();
     let mut remote_footnotes = BTreeMap::new();
     let mut local_footnotes = BTreeMap::new();
+    let mut remote_attributions = BTreeMap::new();
+    let mut local_attributions = BTreeMap::new();
     let mut remote_image_captions = BTreeMap::new();
     let mut local_image_captions = BTreeMap::new();
     let mut remote_images = BTreeMap::new();
@@ -745,6 +747,23 @@ fn resolve_three_way_row_conflict(
             conflict_slices.push("image-caption");
         }
 
+        let base_attribution = base_field
+            .map(|value| value.attribution.clone())
+            .unwrap_or_default();
+        let local_attribution = local_field
+            .map(|value| value.attribution.clone())
+            .unwrap_or_default();
+        let remote_attribution = remote_field
+            .map(|value| value.attribution.clone())
+            .unwrap_or_default();
+        let (next_remote_attribution, next_local_attribution, attribution_conflict) =
+            merge_string_slice(&base_attribution, &local_attribution, &remote_attribution);
+        remote_attributions.insert(language_code.clone(), next_remote_attribution);
+        local_attributions.insert(language_code.clone(), next_local_attribution);
+        if attribution_conflict {
+            conflict_slices.push("attribution");
+        }
+
         let base_image = base_field.and_then(|value| value.image.clone());
         let local_image = local_field.and_then(|value| value.image.clone());
         let remote_image = remote_field.and_then(|value| value.image.clone());
@@ -810,6 +829,8 @@ fn resolve_three_way_row_conflict(
     apply_footnote_updates(&mut local_value, &local_footnotes)?;
     apply_image_caption_updates(&mut remote_value, &remote_image_captions)?;
     apply_image_caption_updates(&mut local_value, &local_image_captions)?;
+    super::row_fields::apply_editor_attribution_updates(&mut remote_value, &remote_attributions)?;
+    super::row_fields::apply_editor_attribution_updates(&mut local_value, &local_attributions)?;
     apply_image_updates(&mut remote_value, &remote_images)?;
     apply_image_updates(&mut local_value, &local_images)?;
     apply_field_state_updates(&mut remote_value, &remote_flags)?;

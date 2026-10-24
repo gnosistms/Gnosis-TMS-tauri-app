@@ -639,6 +639,7 @@ async fn resolve_install_update(
 pub(crate) async fn check_for_app_update(
     app: AppHandle,
     pending_update: State<'_, PendingUpdate>,
+    requested_version: Option<String>,
 ) -> Result<UpdateMetadata, String> {
     let current_version = app.package_info().version.to_string();
 
@@ -646,9 +647,10 @@ pub(crate) async fn check_for_app_update(
         return Ok(build_no_update_metadata(current_version, None));
     }
 
+    let requested_version = normalize_requested_version(requested_version);
     let resolved = tokio::time::timeout(
         UPDATE_CHECK_TOTAL_TIMEOUT,
-        resolve_latest_compatible_update(&app),
+        resolve_install_update(&app, requested_version.as_deref()),
     )
     .await
     .map_err(|_elapsed| UPDATE_CHECK_TIMED_OUT_ERROR.to_string())??;

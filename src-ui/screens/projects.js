@@ -9,6 +9,7 @@ import {
   primaryButton,
   renderStateCard,
   secondaryButton,
+  tooltipAttributes,
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { buildProjectSearchSnippetMarkup } from "../app/project-search-highlighting.js";
@@ -70,13 +71,13 @@ function projectSearchExcerptSourceLabel(source) {
   return "Text";
 }
 
-function renderProjectSearchRow(row, searchQuery) {
+function renderProjectSearchRow(row, search) {
   return `
     <article class="project-search-tree__row" data-project-search-row>
       ${(Array.isArray(row?.excerpts) ? row.excerpts : []).map((excerpt) => {
         const languageCode = typeof excerpt?.languageCode === "string" ? excerpt.languageCode.trim() : "";
         const languageName = excerpt?.languageName ?? languageCode;
-        const snippetMarkup = buildProjectSearchSnippetMarkup(excerpt?.snippet ?? "", searchQuery, languageCode);
+        const snippetMarkup = buildProjectSearchSnippetMarkup(excerpt?.snippet ?? "", search.query ?? "", languageCode, { caseSensitive: search.caseSensitive === true });
         return `
           <div class="project-search-tree__excerpt">
             <p class="project-search-tree__excerpt-meta">${escapeHtml(languageName)} · ${escapeHtml(projectSearchExcerptSourceLabel(excerpt?.snippetSource))}</p>
@@ -113,7 +114,7 @@ function renderProjectSearchChapter(chapter, search, projectIndex, chapterIndex)
           aria-label="${escapeHtml(`Open ${chapter.title} and search for ${search.query ?? ""}`)}"
         >Open</button>
       </div>
-      <div class="project-search-tree__rows" id="${panelId}"${expanded ? "" : " hidden"}>${expanded ? chapter.rows.map((row) => renderProjectSearchRow(row, search.query ?? "")).join("") : ""}</div>
+      <div class="project-search-tree__rows" id="${panelId}"${expanded ? "" : " hidden"}>${expanded ? chapter.rows.map((row) => renderProjectSearchRow(row, search)).join("") : ""}</div>
     </section>
   `;
 }
@@ -447,9 +448,23 @@ export function renderProjectsScreen(state) {
   `;
 
   const searchQuery = state.projectsSearch?.query ?? "";
+  const caseSensitive = state.projectsSearch?.caseSensitive === true;
   const searchField = createSearchField({
     placeholder: "Search",
     value: searchQuery,
+    endAdornment: `
+      <button
+        type="button"
+        class="search-field__action${caseSensitive ? " search-field__action--active" : ""}"
+        data-action="toggle-project-search-case-sensitive"
+        data-project-search-case-toggle
+        aria-label="${caseSensitive ? "Disable case-sensitive search" : "Enable case-sensitive search"}"
+        aria-pressed="${caseSensitive ? "true" : "false"}"
+        ${tooltipAttributes(caseSensitive ? "Disable case-sensitive search" : "Enable case-sensitive search")}
+      >
+        aA
+      </button>
+    `,
     inputAttributes: {
       "data-project-search-input": true,
       "aria-label": "Search all project files",

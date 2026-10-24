@@ -120,6 +120,26 @@ function renderPdfExportProgress(modal, isExporting) {
   `;
 }
 
+function savedPdfFontSettings(modal, isExporting) {
+  const fonts = Array.isArray(modal.pdfSavedFallbackFonts) ? modal.pdfSavedFallbackFonts : [];
+  if (isExporting || modal.pdfFontStatus !== "ready" || fonts.length === 0) { return ""; }
+  const expanded = modal.pdfSavedFontsExpanded === true;
+  return `
+    <div class="editor-export-modal__saved-fonts">
+      <button type="button" class="text-action" data-action="toggle-pdf-saved-fonts" aria-expanded="${expanded}" ${modal.pdfForgettingFontId ? "disabled" : ""}>Saved fallback fonts</button>
+      ${expanded ? `
+        <p class="modal__supporting">These approvals apply to all documents on this computer. Forget an approval to review that font again on a future export.</p>
+        <ul class="editor-export-modal__saved-font-list">
+          ${fonts.map((font) => `<li>
+            <span>${escapeHtml(font.family)}</span>
+            ${secondaryButton(modal.pdfForgettingFontId === font.id ? "Forgetting…" : "Forget approval", `forget-pdf-font-approval:${font.id}`, { compact: true, disabled: Boolean(modal.pdfForgettingFontId) })}
+          </li>`).join("")}
+        </ul>
+      ` : ""}
+    </div>
+  `;
+}
+
 function renderWordPressPostResult(post, selectedPostId) {
   const classes = [
     "editor-export-modal__wordpress-post",
@@ -568,13 +588,14 @@ function exportDetail(option, isExporting, modal, appState) {
         ${option.format === "pdf" ? pdfPaperSizeSection(modal, isExporting) : ""}
         ${footnoteLinkFallbackSection(option, modal)}
         ${omitCustomHtmlSection(option, modal)}
+        ${option.format === "pdf" ? savedPdfFontSettings(modal, isExporting) : ""}
         ${pdfProgress}
       `,
       submitButton: pdfReady ? loadingPrimaryButton({
         label: "Save",
-        loadingLabel: "Saving...",
+        loadingLabel: modal.pdfForgettingFontId ? "Updating fonts…" : "Saving...",
         action: "submit-editor-export",
-        isLoading: isExporting,
+        isLoading: isExporting || Boolean(modal.pdfForgettingFontId),
         modalDefault: true,
       }) : "",
     };
@@ -596,10 +617,52 @@ function exportDetail(option, isExporting, modal, appState) {
   };
 }
 
+function renderPdfFontReview(modal) {
+  const review = modal.pdfFontReview;
+  const isPublishing = modal.status === "exporting";
+  const isCancelling = modal.status === "cancelling";
+  const families = Array.isArray(review.fontFamilies) ? review.fontFamilies.join(", ") : "installed fonts";
+  const excerpts = (Array.isArray(review.excerpts) ? review.excerpts : [])
+    .filter((excerpt) => /^data:image\/svg\+xml;base64,[A-Za-z0-9+/=]+$/.test(excerpt.imageDataUrl ?? ""));
+  return `
+    <div class="modal-backdrop">
+      <section class="card modal-card modal-card--pdf-font-review" role="dialog" aria-modal="true" aria-labelledby="pdf-font-review-title" aria-describedby="pdf-font-review-description" data-modal-dialog="editor-export" tabindex="-1">
+        <div class="card__body modal-card__body">
+          <h2 class="modal__title" id="pdf-font-review-title">Review fallback fonts</h2>
+          <p class="modal__supporting" id="pdf-font-review-description">Some characters need an installed font: <strong>${escapeHtml(families)}</strong>. Review the highlighted characters below.</p>
+          <p class="modal__supporting">Only affected passages are shown. The complete PDF will use these fonts without highlights.</p>
+          <p class="modal__supporting">Your font choices will be remembered for future PDF exports on this computer.</p>
+          <div class="pdf-font-review__excerpts" aria-label="Affected passages">
+            ${excerpts.map((excerpt) => `
+              <figure class="pdf-font-review__excerpt">
+                <figcaption>${escapeHtml(excerpt.label)}</figcaption>
+                <img src="${escapeHtml(excerpt.imageDataUrl)}" alt="${escapeHtml(excerpt.label)} with fallback characters highlighted" />
+              </figure>
+            `).join("")}
+          </div>
+          ${modal.error ? `<p class="modal__error" role="alert">${escapeHtml(formatErrorForDisplay(modal.error))}</p>` : ""}
+          <div class="modal__actions">
+            ${secondaryButton(isCancelling ? "Cancelling…" : "Cancel", "close-editor-export-options", {
+              disabled: isCancelling, modalCancel: true, modalInitialFocus: true,
+            })}
+            ${excerpts.length > 0 ? loadingPrimaryButton({
+              label: "Publish with these fonts", loadingLabel: "Publishing…", action: "submit-editor-export",
+              isLoading: isPublishing || isCancelling,
+            }) : ""}
+          </div>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
 export function renderEditorExportModal(state) {
   const modal = state.editorChapter?.exportModal;
   if (!modal?.isOpen) {
     return "";
+  }
+  if (modal.pdfFontReview) {
+    return renderPdfFontReview(modal);
   }
 
   const isExporting = modal.status === "exporting" || modal.status === "cancelling";

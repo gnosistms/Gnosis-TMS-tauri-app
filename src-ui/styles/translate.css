@@ -199,7 +199,7 @@
   font-weight: 600;
 }
 
-.replace-toggle input {
+.editor-checkbox {
   appearance: none;
   -webkit-appearance: none;
   width: 18px;
@@ -213,7 +213,7 @@
   cursor: pointer;
 }
 
-.replace-toggle input::after {
+.editor-checkbox::after {
   content: "";
   position: absolute;
   left: 5px;
@@ -225,17 +225,17 @@
   transform: rotate(45deg);
 }
 
-.replace-toggle input:checked {
+.editor-checkbox:checked {
   border-color: var(--muted);
   background: var(--panel-surface);
 }
 
-.replace-toggle input:checked::after {
+.editor-checkbox:checked::after {
   border-color: var(--muted);
 }
 
-.replace-toggle input:focus,
-.replace-toggle input:focus-visible {
+.editor-checkbox:focus,
+.editor-checkbox:focus-visible {
   outline: none;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.65),
@@ -505,6 +505,7 @@
 .translate-preview__block--quote {
   padding-left: 32px;
   font-style: italic;
+  text-align: left;
 }
 
 .translate-preview__block--indented {
@@ -543,6 +544,12 @@
 .translate-preview__image-caption {
   text-align: center;
   font-style: italic;
+}
+
+/* A caption uses the shared tooltip itself; hide the surrounding figure's hint. */
+.translate-preview__image-block:has(.translate-preview__image-caption:hover)::before,
+.translate-preview__image-block:has(.translate-preview__image-caption:hover)::after {
+  content: none;
 }
 
 .translate-preview__search-match {
@@ -1510,6 +1517,7 @@
 .translation-language-panel__field-static--conflict {
   appearance: none;
   -webkit-appearance: none;
+  color: var(--message-error-text);
   cursor: pointer;
   text-align: left;
   transition:
@@ -1773,8 +1781,11 @@
 }
 
 .translation-language-panel__field-stack--footnote .translation-language-panel__field,
-.translation-language-panel__field-stack--footnote .translation-language-panel__field-highlight {
-  font-style: italic;
+.translation-language-panel__field-stack--footnote .translation-language-panel__field-highlight,
+.translation-language-panel__field-static--footnote,
+.translation-language-panel__footnote-display {
+  font-style: normal;
+  opacity: 0.7;
 }
 
 .translation-language-panel__inline-footnote {
@@ -1828,7 +1839,7 @@
 }
 
 /* Closed footnote: a button styled to look exactly like the footnote textarea
-   (italic, borderless, full width) so toggling between display and edit is seamless. */
+   (borderless, full width) so toggling between display and edit is seamless. */
 .translation-language-panel__footnote-editor-row .translation-language-panel__footnote-display {
   grid-column: 2;
   grid-row: 1;
@@ -1845,7 +1856,7 @@
   color: var(--text);
   font-family: var(--font-serif);
   font-size: var(--translation-editor-font-size, 14px);
-  font-style: italic;
+  font-style: normal;
   font-weight: 400;
   line-height: 1.5;
 }
@@ -1870,6 +1881,18 @@
 .translation-language-panel__field-stack--footnote .translation-language-panel__footnote-editor-row .translation-language-panel__field--footnote {
   padding-left: 0;
   padding-right: 0;
+}
+
+/* Open footnotes share the body's search overlay, in the text column only. */
+.translation-language-panel__footnote-input-stack {
+  grid-column: 2;
+  grid-row: 1;
+  --translation-field-padding-left: 0;
+  --translation-field-padding-right: 0;
+}
+
+.translation-language-panel__footnote-input-stack > .translation-language-panel__field--footnote {
+  grid-column: 1;
 }
 
 .translation-language-panel__field-stack--highlighted .translation-language-panel__field::selection {
@@ -1911,6 +1934,7 @@
 .translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style="quote"] .translation-language-panel__field-highlight,
 .translation-language-panel__field-static[data-row-text-style="quote"] {
   font-style: italic;
+  text-align: left;
 }
 
 .translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style="centered"] .translation-language-panel__field,
@@ -2181,7 +2205,8 @@
 }
 
 .history-item__content--footnote {
-  font-style: italic;
+  font-style: normal;
+  opacity: 0.7;
 }
 
 .history-item__content--image {
@@ -2294,6 +2319,71 @@
   text-decoration: line-through;
   text-decoration-color: rgba(var(--please-check-accent-rgb), 0.78);
   text-decoration-thickness: 0.11em;
+}
+
+/* "Changed after my last edit" filter: formatting-only changes. A background, not an
+   underline — inserted text is already underlined, and underline is itself a format. */
+.history-diff__format {
+  background: rgba(var(--reviewed-accent-rgb), 0.16);
+  border-radius: 2px;
+}
+
+.translation-language-panel__image-preview--change-insert,
+.translation-language-panel__image-preview--change-insert:hover,
+.translation-language-panel__image-preview--change-insert:focus-visible {
+  border-color: rgba(var(--reviewed-accent-rgb), 0.96);
+  box-shadow: 0 0 0 1px rgba(var(--reviewed-accent-rgb), 0.96);
+}
+
+.translation-language-panel__image-row--change-previous {
+  margin-bottom: 8px;
+}
+
+.translation-language-panel__image-preview--change-previous {
+  cursor: default;
+}
+
+.translation-language-panel__image-change-x {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.translation-language-panel__image-change-x path {
+  fill: none;
+  stroke: rgba(var(--please-check-accent-rgb), 0.92);
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Keeps the X visible on images that are themselves red or dark. */
+.translation-language-panel__image-change-x .translation-language-panel__image-change-x-halo {
+  stroke: rgba(255, 255, 255, 0.9);
+  stroke-width: 6;
+}
+
+.translation-language-panel__footnote-editor-row--deleted {
+  cursor: default;
+}
+
+/* Text style changed: the style buttons stay visible without focus, and only the
+   style buttons — the rest of the toolbar is for editing. */
+.translation-language-panel__editor--style-changed .translation-row-text-style-actions {
+  display: flex;
+}
+
+.translation-language-panel__editor--style-changed:not(:focus-within) .translation-row-text-style-actions > :not([role="radiogroup"]) {
+  display: none;
+}
+
+.translation-row-text-style-button--change-insert .translation-row-text-style-button__label {
+  color: rgba(var(--reviewed-accent-rgb), 0.96);
+}
+
+.translation-row-text-style-button--change-delete .translation-row-text-style-button__label {
+  color: rgba(var(--please-check-accent-rgb), 0.92);
 }
 
 .history-item__footer {
@@ -2777,4 +2867,110 @@
   font-weight: 600;
   color: var(--link);
   white-space: nowrap;
+}
+/* This control belongs to the scrolling document, outside the virtual list. */
+/* Subtitle groups remain ordinary scrolling editor content. */
+.translation-srt-view-options {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  margin-bottom: 20px;
+}
+.translation-srt-view-control {
+  width: fit-content;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+.translation-srt-pause-control,
+.translation-srt-pause-control__label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.translation-srt-pause-control {
+  flex-wrap: wrap;
+  font-size: 14px;
+}
+.translation-srt-pause-control__label {
+  cursor: pointer;
+}
+.translation-srt-pause-control__threshold {
+  width: auto;
+  min-width: 64px;
+}
+.translation-srt-history-selector {
+  width: fit-content;
+  max-width: 100%;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.translation-srt-history-selector .segmented-control__button {
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+.translation-srt-marker {
+  color: var(--muted);
+  font-size: .85em;
+}
+.translation-srt-error {
+  color: var(--message-error-text, #b42318);
+  margin: 8px 0;
+}
+.translation-srt-attachment {
+  border-top: 1px solid var(--surface-border);
+  margin-top: 10px;
+  padding-top: 6px;
+}
+
+/* A quote's source is a separate language field, tied to the same row save. */
+.translation-language-panel__attribution {
+  position: relative;
+  display: block;
+  margin-top: .5em;
+}
+.translation-language-panel__attribution-label {
+  display: block;
+  margin-bottom: .25em;
+  color: var(--muted);
+  font-size: .75rem;
+}
+.translation-language-panel__field--attribution {
+  font-size: calc(var(--translation-editor-font-size, 14px) * 0.9);
+  text-align: right;
+  min-height: 2.5em;
+}
+.translate-preview__attribution {
+  display: block;
+  font-size: calc(var(--translation-editor-font-size, 14px) * 0.9);
+  text-align: right;
+  font-style: normal;
+  margin-top: .5em;
+}
+
+.translation-language-panel__attribution-prompt {
+  display: none;
+  color: var(--muted);
+  font-size: calc(var(--translation-editor-font-size, 14px) * 0.9);
+  text-align: right;
+  cursor: text;
+}
+/* Keep the empty field focusable by its label and by Tab. Focus reveals the
+   native textarea without replacing it, preserving selection and undo history. */
+.translation-language-panel__attribution:has(> textarea:placeholder-shown):not(:focus-within) > .translation-language-panel__attribution-label {
+  display: none;
+}
+.translation-language-panel__attribution:has(> textarea:placeholder-shown):not(:focus-within) > .translation-language-panel__attribution-prompt {
+  display: block;
+}
+.translation-language-panel__attribution:has(> textarea:placeholder-shown):not(:focus-within) > textarea {
+  position: absolute;
+  width: 0;
+  min-width: 0;
+  height: 0 !important;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
 }

@@ -257,6 +257,7 @@ export async function confirmMergeEditorRows(render, direction, operations = {})
         fields: merged.fields,
         footnotes: merged.footnotes,
         imageCaptions: merged.imageCaptions,
+        attributions: merged.attributions,
         images: merged.images,
       },
       {

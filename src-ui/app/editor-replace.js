@@ -1,6 +1,8 @@
 import { findEditorSearchMatches } from "./editor-filters.js";
 import { cloneRowFields, cloneRowFootnotes } from "./editor-utils.js";
 import { createEditorReplaceState, createEditorReplaceUndoModalState } from "./state.js";
+import { srtGroupingEnabled, srtGroupsForChapter, combineSrtRows } from "./editor-srt-grouping.js";
+import { replaceSrtFragmentTexts } from "./editor-srt-group-replace.js";
 
 function normalizeString(value) {
   return typeof value === "string" ? value : String(value ?? "");
@@ -58,8 +60,30 @@ export function buildEditorBatchReplaceUpdates({
   searchQuery,
   replaceText,
   caseSensitive = false,
+  groups = null,
 }) {
   const selectedIds = selectedRowIds instanceof Set ? selectedRowIds : new Set();
+  if (groups) {
+    const selectedGroups = groups.filter((members) => selectedIds.has(members[0].rowId));
+    const memberIds = new Set(selectedGroups.flat().map((row) => row.rowId));
+    const plan = buildEditorBatchReplaceUpdates({ rows, selectedRowIds: memberIds, visibleLanguageCodes, searchQuery, replaceText, caseSensitive });
+    const updates = new Map(plan.updatedRows.map((row) => [row.rowId, row]));
+    for (const members of selectedGroups) {
+      for (const code of visibleLanguageCodes) {
+        const original = members.map((row) => row.fields?.[code] ?? "");
+        const parts = replaceSrtFragmentTexts(original, code, searchQuery, replaceText, caseSensitive);
+        for (const [index, row] of members.entries()) {
+          if (parts[index] === original[index]) continue;
+          const update = updates.get(row.rowId) ?? { rowId: row.rowId, fields: cloneRowFields(row.fields), footnotes: cloneRowFootnotes(row.footnotes), imageCaptions: cloneRowFields(row.imageCaptions) };
+          update.fields[code] = parts[index];
+          update.baseFields = cloneRowFields(row.persistedFields ?? row.fields);
+          updates.set(row.rowId, update);
+        }
+      }
+    }
+    const updatedRows = rows.filter((row) => updates.has(row.rowId)).map((row) => updates.get(row.rowId));
+    return { matchingSelectedRowIds: selectedGroups.map((members) => members[0].rowId), updatedRows, updatedRowIds: updatedRows.map((row) => row.rowId) };
+  }
   const visibleCodes = visibleLanguageCodes instanceof Set ? visibleLanguageCodes : new Set();
   const updatedRows = [];
   const matchingSelectedRowIds = [];
@@ -141,6 +165,10 @@ export function buildEditorBatchReplaceUpdates({
 }
 
 export function currentMatchingEditorReplaceRowIds(chapterState, rowMatchesSearch) {
+  if (srtGroupingEnabled(chapterState)) return srtGroupsForChapter(chapterState)
+    .filter((members) => members[0].lifecycleState !== "deleted")
+    .map((members) => members.length > 1 ? combineSrtRows(members, chapterState.languages, chapterState) : members[0])
+    .filter((row) => rowMatchesSearch(row, chapterState)).map((row) => row.rowId);
   return (Array.isArray(chapterState?.rows) ? chapterState.rows : [])
     .filter((row) => row?.lifecycleState !== "deleted")
     .filter((row) => rowMatchesSearch(row, chapterState))

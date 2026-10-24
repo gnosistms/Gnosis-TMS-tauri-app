@@ -2916,6 +2916,52 @@ test("runEditorAiAssistant renders a draft when a chat response includes draft t
   assert.equal(state.editorChapter.rows[0].fields.vi, "Nhiem vu cua no la trao phuong phap thuc hanh.");
 });
 
+test("Assistant reviews current target body, numbered footnotes, and caption after edits and clearing", async () => {
+  installTranslateFixture({
+    fields: { es: "Source body", vi: "Target body[2][7]" },
+    footnotes: {
+      es: "Source-only note",
+      vi: [{ marker: 2, text: "First target note" }, { marker: 7, text: "Second target note" }],
+    },
+    imageCaptions: { es: "Source caption", vi: "Target caption" },
+  });
+  const requests = [];
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_ai_provider_secret") return "mock-key";
+    if (command === "run_ai_assistant_turn") {
+      requests.push(cloneValue(payload.request));
+      return { assistantText: "Review complete.", draftTranslationText: null };
+    }
+    return null;
+  };
+  const review = async () => {
+    state.editorChapter.assistant.composerDraft = "Check spelling and grammar.";
+    await runEditorAiAssistant(() => {});
+  };
+  await review();
+  assert.equal(requests[0].row.targetText, "Target body[2][7]");
+  assert.deepEqual(requests[0].row.targetFootnotes, [
+    { marker: 2, text: "First target note" },
+    { marker: 7, text: "Second target note" },
+  ]);
+  assert.equal(requests[0].row.targetImageCaption, "Target caption");
+
+  const row = state.editorChapter.rows[0];
+  row.footnotes.vi = [{ marker: 7, text: "Unsaved revised note" }];
+  row.imageCaptions.vi = "Unsaved revised caption";
+  await review();
+  assert.deepEqual(requests[1].row.targetFootnotes, [{ marker: 7, text: "Unsaved revised note" }]);
+  assert.equal(requests[1].row.targetImageCaption, "Unsaved revised caption");
+  assert.equal(requests[1].row.targetText, "Target body[2][7]");
+
+  state.editorChapter.rows[0].footnotes.vi = [];
+  state.editorChapter.rows[0].imageCaptions.vi = "";
+  await review();
+  assert.deepEqual(requests[2].row.targetFootnotes, []);
+  assert.equal(requests[2].row.targetImageCaption, "");
+  assert.equal(state.editorChapter.rows[0].fields.vi, "Target body[2][7]");
+});
+
 test("applyEditorAssistantDraft does not wait for durable row persistence", async () => {
   installTranslateFixture();
   state.editorChapter = {
@@ -6427,6 +6473,10 @@ test("AI action preferences round-trip through persistent storage", () => {
         providerId: "deepseek",
         modelId: "deepseek-chat",
       },
+      research: {
+        providerId: "claude",
+        modelId: "claude-opus-5-5",
+      },
     },
   }, "tester");
 
@@ -6454,6 +6504,10 @@ test("AI action preferences round-trip through persistent storage", () => {
         discuss: {
           providerId: "deepseek",
           modelId: "deepseek-chat",
+        },
+        research: {
+          providerId: "claude",
+          modelId: "claude-opus-5-5",
         },
       },
     },
@@ -6589,6 +6643,53 @@ test("OpenAI no-credit model probes show billing guidance instead of model advic
   assert.equal(
     state.aiSettings.modelErrorModal.message,
     "Add credits at https://platform.openai.com/settings/organization/billing/ and try again.",
+  );
+});
+
+test("Claude no-credit model probes show billing guidance instead of model advice", async () => {
+  resetSessionState();
+  state.screen = "aiKey";
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      savedProviderIds: ["claude"],
+      unified: {
+        providerId: "claude",
+        modelId: "claude-opus-5-5",
+      },
+      modelOptionsByProvider: {
+        ...state.aiSettings.actionConfig.modelOptionsByProvider,
+        claude: {
+          status: "ready",
+          error: "",
+          options: [{ id: "claude-opus-5-5", label: "claude-opus-5-5" }],
+          hasLoaded: true,
+        },
+      },
+    },
+  };
+
+  invokeHandler = async (command) => {
+    if (command === "probe_ai_provider_model") {
+      throw new Error(
+        "Claude returned an error: Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+      );
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await updateAiActionModel(() => {}, "unified", "claude-opus-5-5");
+
+  assert.equal(state.aiSettings.modelErrorModal.eyebrow, "CLAUDE BILLING");
+  assert.equal(
+    state.aiSettings.modelErrorModal.title,
+    "Your Claude account has run out of credits.",
+  );
+  assert.equal(state.aiSettings.modelErrorModal.banner, "");
+  assert.equal(
+    state.aiSettings.modelErrorModal.message,
+    "Add credits at https://platform.claude.com/settings/billing and try again.",
   );
 });
 

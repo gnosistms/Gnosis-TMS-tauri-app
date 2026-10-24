@@ -1,6 +1,12 @@
 import { editorRowHasUnreadComments } from "./editor-comments.js";
 import { rowHasUnresolvedEditorConflict } from "./editor-conflicts.js";
 import { extractInlineMarkupVisibleText } from "./editor-inline-markup.js";
+import {
+  EDITOR_ROW_TEXT_STYLE_HEADING1,
+  EDITOR_ROW_TEXT_STYLE_HEADING2,
+  EDITOR_ROW_TEXT_STYLE_QUOTE,
+  normalizeEditorRowTextStyle,
+} from "./editor-row-text-style.js";
 
 export const EDITOR_ROW_FILTER_MODE_SHOW_ALL = "show-all";
 export const EDITOR_ROW_FILTER_MODE_DELETED = "deleted";
@@ -8,10 +14,13 @@ export const EDITOR_ROW_FILTER_MODE_REVIEWED = "reviewed";
 export const EDITOR_ROW_FILTER_MODE_NOT_REVIEWED = "not-reviewed";
 export const EDITOR_ROW_FILTER_MODE_PLEASE_CHECK = "please-check";
 export const EDITOR_ROW_FILTER_MODE_TARGET_EMPTY = "target-empty";
+export const EDITOR_ROW_FILTER_MODE_QUOTE_BLOCK = "quote-block";
+export const EDITOR_ROW_FILTER_MODE_HEADING = "heading";
 export const EDITOR_ROW_FILTER_MODE_HAS_IMAGE = "has-image";
 export const EDITOR_ROW_FILTER_MODE_HAS_FOOTNOTE = "has-footnote";
 export const EDITOR_ROW_FILTER_MODE_HAS_COMMENTS = "has-comments";
 export const EDITOR_ROW_FILTER_MODE_HAS_UNREAD_COMMENTS = "has-unread-comments";
+export const EDITOR_ROW_FILTER_MODE_CHANGED_AFTER_MY_EDIT = "changed-after-my-edit";
 export const EDITOR_ROW_FILTER_MODE_HAS_CONFLICT = "has-conflict";
 export const EDITOR_ROW_FILTER_MODE_HAS_GLOSSARY_ERROR = "has-glossary-error";
 export const EDITOR_ROW_FILTER_MODE_HAS_TIMING_ERROR = "has-timing-error";
@@ -23,10 +32,13 @@ export const EDITOR_ROW_FILTER_OPTIONS = [
   { value: EDITOR_ROW_FILTER_MODE_NOT_REVIEWED, label: "Not reviewed" },
   { value: EDITOR_ROW_FILTER_MODE_PLEASE_CHECK, label: "Please check" },
   { value: EDITOR_ROW_FILTER_MODE_TARGET_EMPTY, label: "Target empty" },
+  { value: EDITOR_ROW_FILTER_MODE_QUOTE_BLOCK, label: "Quote block" },
+  { value: EDITOR_ROW_FILTER_MODE_HEADING, label: "Heading" },
   { value: EDITOR_ROW_FILTER_MODE_HAS_IMAGE, label: "Has image" },
   { value: EDITOR_ROW_FILTER_MODE_HAS_FOOTNOTE, label: "Has footnote" },
   { value: EDITOR_ROW_FILTER_MODE_HAS_COMMENTS, label: "Has comments" },
   { value: EDITOR_ROW_FILTER_MODE_HAS_UNREAD_COMMENTS, label: "Has unread comments" },
+  { value: EDITOR_ROW_FILTER_MODE_CHANGED_AFTER_MY_EDIT, label: "Changed after my last edit" },
   { value: EDITOR_ROW_FILTER_MODE_HAS_CONFLICT, label: "Has conflict" },
   { value: EDITOR_ROW_FILTER_MODE_HAS_GLOSSARY_ERROR, label: "Has glossary error" },
   // Subtitle chapters only — hidden from the dropdown elsewhere.
@@ -185,7 +197,14 @@ function rowHasUnresolvedTextConflict(row, targetLanguageCode) {
   );
 }
 
-function rowMatchesFilterMode(row, rowFilterMode, targetLanguageCode, seenRevisions, rowHasGlossaryError) {
+function rowMatchesFilterMode(
+  row,
+  rowFilterMode,
+  targetLanguageCode,
+  seenRevisions,
+  rowHasGlossaryError,
+  changedAfterMyEditRowIds,
+) {
   if (rowFilterMode === EDITOR_ROW_FILTER_MODE_SHOW_ALL) {
     return true;
   }
@@ -201,7 +220,14 @@ function rowMatchesFilterMode(row, rowFilterMode, targetLanguageCode, seenRevisi
     case EDITOR_ROW_FILTER_MODE_PLEASE_CHECK:
       return targetSection?.pleaseCheck === true;
     case EDITOR_ROW_FILTER_MODE_TARGET_EMPTY:
-      return Boolean(targetSection) && extractInlineMarkupVisibleText(targetSection.text ?? "").trim().length === 0;
+      return Boolean(targetSection) && (targetSection.srtParts ?? [targetSection.text ?? ""])
+        .every((text) => extractInlineMarkupVisibleText(text).trim().length === 0);
+    case EDITOR_ROW_FILTER_MODE_QUOTE_BLOCK:
+      return normalizeEditorRowTextStyle(row.textStyle) === EDITOR_ROW_TEXT_STYLE_QUOTE;
+    case EDITOR_ROW_FILTER_MODE_HEADING: {
+      const style = normalizeEditorRowTextStyle(row.textStyle);
+      return style === EDITOR_ROW_TEXT_STYLE_HEADING1 || style === EDITOR_ROW_TEXT_STYLE_HEADING2;
+    }
     case EDITOR_ROW_FILTER_MODE_HAS_IMAGE:
       return Boolean(targetSection?.image);
     case EDITOR_ROW_FILTER_MODE_HAS_FOOTNOTE:
@@ -210,6 +236,8 @@ function rowMatchesFilterMode(row, rowFilterMode, targetLanguageCode, seenRevisi
       return Number.parseInt(String(row?.commentCount ?? ""), 10) > 0;
     case EDITOR_ROW_FILTER_MODE_HAS_UNREAD_COMMENTS:
       return editorRowHasUnreadComments(row, seenRevisions);
+    case EDITOR_ROW_FILTER_MODE_CHANGED_AFTER_MY_EDIT:
+      return (row.srtGroup?.memberRowIds ?? [row.id]).some((id) => changedAfterMyEditRowIds.has(id));
     case EDITOR_ROW_FILTER_MODE_HAS_CONFLICT:
       return rowHasUnresolvedTextConflict(row, targetLanguageCode);
     case EDITOR_ROW_FILTER_MODE_HAS_GLOSSARY_ERROR:
@@ -300,6 +328,8 @@ export function buildEditorFilterResult({
   targetLanguageCode = "",
   commentSeenRevisions = {},
   rowHasGlossaryError = () => false,
+  // Snapshot taken when the "Changed after my last edit" filter was turned on.
+  changedAfterMyEditRowIds = new Set(),
 }) {
   const normalizedFilters = normalizeEditorChapterFilterState(filters);
   const visibleLanguageCodes = buildVisibleLanguageCodeSet(languages, collapsedLanguageCodes);
@@ -347,7 +377,14 @@ export function buildEditorFilterResult({
       continue;
     }
 
-    if (!rowMatchesFilterMode(row, effectiveFilters.rowFilterMode, targetLanguageCode, commentSeenRevisions, rowHasGlossaryError)) {
+    if (!rowMatchesFilterMode(
+      row,
+      effectiveFilters.rowFilterMode,
+      targetLanguageCode,
+      commentSeenRevisions,
+      rowHasGlossaryError,
+      changedAfterMyEditRowIds,
+    )) {
       continue;
     }
 

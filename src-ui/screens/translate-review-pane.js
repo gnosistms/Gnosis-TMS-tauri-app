@@ -1,15 +1,13 @@
 import { resolveVisibleEditorAiReview } from "../app/editor-ai-review-state.js";
-import { serializeEditorFootnotesForLegacy } from "../app/editor-footnotes.js";
-import {
-  historyLastUpdateHeadingLabel,
-  isOptimisticEditorHistoryEntry,
-} from "../app/editor-history.js";
-import { editorFieldImageEqual } from "../app/editor-images.js";
-import { normalizeEditorRowTextStyle } from "../app/editor-row-text-style.js";
+import { buildEditorLastUpdate } from "../app/editor-review-last-update.js";
+import { buildSrtGroupLastUpdate } from "../app/editor-srt-review-history.js";
+import { renderSrtGroupLastUpdate } from "./translate-srt-review-last-update.js";
+import { serializeEditorFootnotesForLegacy, mergeEditorFootnoteCorrections } from "../app/editor-footnotes.js";
+import { srtGroupSnapshot } from "../app/editor-srt-group-ai.js";
+import { pendingSrtGroupEdits } from "../app/editor-srt-group-edit-flow.js";
 import {
   escapeHtml,
   loadingSpinnerKeyAttribute,
-  renderCollapseChevron,
   renderInlineStateBox,
   secondaryButton,
   tooltipAttributes,
@@ -19,8 +17,6 @@ import {
   renderHistoryEntryContent,
   renderHistoryNote,
 } from "./translate-history-shared.js";
-
-const PENDING_LOCAL_SAVE_ERROR_AFTER_MS = 10_000;
 
 function renderAiReviewPromptDetails(aiReview) {
   const promptText = typeof aiReview?.promptText === "string" ? aiReview.promptText.trim() : "";
@@ -66,86 +62,64 @@ function renderAiReviewModeButton({ label, action, reviewMode, tooltip, isLoadin
   `;
 }
 
-function renderAiReviewSuggestionSections(aiReview, currentEntry, activeLanguage) {
+function renderAiReviewSuggestionSections(aiReview, currentEntry, activeLanguage, includeReviewedSnapshot = false) {
+  // A clean review has no suggestion. Its input is the reviewed snapshot to
+  // compare with later edits; omitted suggestion fields retain that input too.
+  const reviewedText = (suggestion, source) => suggestion?.trim()
+    ? suggestion
+    : includeReviewedSnapshot ? source ?? "" : "";
+  const text = reviewedText(aiReview.suggestedText, aiReview.sourceText);
+  const footnote = reviewedText(aiReview.suggestedFootnote, aiReview.sourceFootnote);
+  const imageCaption = reviewedText(aiReview.suggestedImageCaption, aiReview.sourceImageCaption);
   const sections = [];
-  if (aiReview.suggestedText?.trim()) {
+  if (text.trim() || (includeReviewedSnapshot && currentEntry?.plainText?.trim())) {
     sections.push(`
-      <p class="history-item__content" lang="${escapeHtml(activeLanguage.code)}">${renderHistoryContent({ plainText: aiReview.suggestedText }, currentEntry)}</p>
+      <p class="history-item__content" lang="${escapeHtml(activeLanguage.code)}">${renderHistoryContent({ plainText: text }, currentEntry)}</p>
     `);
   }
-  if (aiReview.suggestedFootnote?.trim()) {
+  if (footnote.trim() || (includeReviewedSnapshot && currentEntry?.footnote?.trim())) {
     sections.push(`
       <p class="history-item__meta">Footnote</p>
-      <p class="history-item__content history-item__content--footnote" lang="${escapeHtml(activeLanguage.code)}">${renderHistoryContent({ plainText: aiReview.suggestedFootnote }, { plainText: currentEntry?.footnote ?? "" })}</p>
+      <p class="history-item__content history-item__content--footnote" lang="${escapeHtml(activeLanguage.code)}">${renderHistoryContent({ plainText: footnote }, { plainText: currentEntry?.footnote ?? "" })}</p>
     `);
   }
-  if (aiReview.suggestedImageCaption?.trim()) {
+  if (imageCaption.trim() || (includeReviewedSnapshot && currentEntry?.imageCaption?.trim())) {
     sections.push(`
       <p class="history-item__meta">Image caption</p>
-      <p class="history-item__content" lang="${escapeHtml(activeLanguage.code)}">${renderHistoryContent({ plainText: aiReview.suggestedImageCaption }, { plainText: currentEntry?.imageCaption ?? "" })}</p>
+      <p class="history-item__content" lang="${escapeHtml(activeLanguage.code)}">${renderHistoryContent({ plainText: imageCaption }, { plainText: currentEntry?.imageCaption ?? "" })}</p>
     `);
   }
   return sections.join("");
 }
 
-function editorReviewEntriesHaveSameContent(leftEntry, rightEntry) {
-  if (!leftEntry || !rightEntry) {
-    return false;
-  }
-
-  return (
-    String(leftEntry.plainText ?? "") === String(rightEntry.plainText ?? "")
-    && String(leftEntry.footnote ?? "") === String(rightEntry.footnote ?? "")
-    && String(leftEntry.imageCaption ?? "") === String(rightEntry.imageCaption ?? "")
-    && editorFieldImageEqual(leftEntry.image, rightEntry.image)
-    && normalizeEditorRowTextStyle(leftEntry.textStyle) === normalizeEditorRowTextStyle(rightEntry.textStyle)
-  );
-}
-
-function findLastCommittedReviewContentUpdate(entries) {
-  const committedEntries = entries.filter((entry) => !isOptimisticEditorHistoryEntry(entry));
-  if (committedEntries.length === 0) {
-    return { entry: null, baselineEntry: null };
-  }
-
-  // Marker toggles and comment writes can create newer row revisions without
-  // changing anything rendered in Last update. Walk to the oldest revision in
-  // the newest equal-content run: that is the commit which introduced the
-  // current text/image/style state. The next entry is its meaningful baseline.
-  let contentUpdateIndex = 0;
-  while (
-    contentUpdateIndex + 1 < committedEntries.length
-    && editorReviewEntriesHaveSameContent(
-      committedEntries[contentUpdateIndex],
-      committedEntries[contentUpdateIndex + 1],
-    )
-  ) {
-    contentUpdateIndex += 1;
-  }
-
-  return {
-    entry: committedEntries[contentUpdateIndex],
-    baselineEntry: committedEntries[contentUpdateIndex + 1] ?? null,
-  };
-}
-
-function pendingLocalSaveAgeMs(entry) {
-  const committedAtMs = Date.parse(entry?.committedAt ?? "");
-  if (!Number.isFinite(committedAtMs)) {
-    return 0;
-  }
-  return Math.max(0, Date.now() - committedAtMs);
+function renderSrtReviewSuggestions(review, group, language) {
+  const code = language.code;
+  const markers = group.sections.find((section) => section.code === code)?.srtMarkers ?? [];
+  const text = review.results.map((result, index) => {
+    const member = group.srtGroup.members[index];
+    const marker = index ? `<span class="translation-srt-marker">${escapeHtml(markers[index - 1] ?? `⟦${index}⟧`)}</span>` : "";
+    return marker + renderHistoryContent({ plainText: result.suggestedText }, { plainText: member.fields?.[code] ?? "" });
+  }).join("");
+  const attachments = review.results.map((result, index) => {
+    const member = group.srtGroup.members[index];
+    const note = mergeEditorFootnoteCorrections(member.footnotes?.[code], result.suggestedFootnotes ?? []);
+    const sections = [];
+    if (result.suggestedFootnotes?.length && note.ok) sections.push(`<p class="history-item__meta">Footnotes</p>
+      <p class="history-item__content">${renderHistoryContent({ plainText: serializeEditorFootnotesForLegacy(note.footnotes) }, { plainText: serializeEditorFootnotesForLegacy(member.footnotes?.[code]) })}</p>`);
+    if (result.suggestedImageCaption) sections.push(`<p class="history-item__meta">Image caption</p>
+      <p class="history-item__content">${renderHistoryContent({ plainText: result.suggestedImageCaption }, { plainText: member.imageCaptions?.[code] ?? "" })}</p>`);
+    return sections.length ? `<p class="history-item__meta">Fragment ${index + 1}</p>${sections.join("")}` : "";
+  }).join("");
+  return `<p class="history-item__content" data-srt-review-suggestion lang="${escapeHtml(code)}">${text}</p>${attachments}`;
 }
 
 export function renderReviewPane(editorChapter, rows, languages, offlineMode = false) {
-  const expandedSectionKeys =
-    editorChapter?.reviewExpandedSectionKeys instanceof Set
-      ? editorChapter.reviewExpandedSectionKeys
-      : new Set(["last-update", "ai-review"]);
-  const activeRow = rows.find((row) => row.id === editorChapter?.activeRowId) ?? null;
+  const activeRow = rows.find((row) => row.id === editorChapter?.activeRowId || row.srtGroup?.memberRowIds.includes(editorChapter?.activeRowId)) ?? null;
   const activeLanguage =
     languages.find((language) => language.code === editorChapter?.activeLanguageCode) ?? null;
   const activeSection = activeRow?.sections?.find((section) => section.code === activeLanguage?.code) ?? null;
+  const historyRow = activeRow?.srtGroup?.members.find((row) => row.rowId === editorChapter.activeRowId) ?? activeRow;
+  const historySection = historyRow?.sections?.find((section) => section.code === activeLanguage?.code) ?? activeSection;
   // History entries and AI review state carry footnotes in the persisted
   // labeled serialization; the section's plain text would falsely diff as a
   // change whenever marker labels are present.
@@ -160,72 +134,28 @@ export function renderReviewPane(editorChapter, rows, languages, offlineMode = f
           error: "",
           entries: [],
   };
-  const historyEntries = Array.isArray(history.entries) ? history.entries : [];
-  const newestPendingLocalSaveEntry =
-    historyEntries.find((entry) => isOptimisticEditorHistoryEntry(entry)) ?? null;
-  const newestCommittedEntry =
-    historyEntries.find((entry) => !isOptimisticEditorHistoryEntry(entry)) ?? null;
-  const committedContentUpdate = findLastCommittedReviewContentUpdate(historyEntries);
-  const lastCommittedEntry = committedContentUpdate.entry;
-  const previousEntry = committedContentUpdate.baselineEntry;
-  const pendingLocalSaveEntry =
-    newestPendingLocalSaveEntry
-    && (
-      !newestCommittedEntry
-      || !editorReviewEntriesHaveSameContent(newestPendingLocalSaveEntry, newestCommittedEntry)
-    )
-      ? newestPendingLocalSaveEntry
-      : null;
   const currentEntry = {
-    plainText: activeSection?.text ?? "",
-    footnote: activeSectionFootnote,
-    imageCaption: activeSection?.imageCaption ?? "",
-    image: activeSection?.image ?? null,
-    reviewed: activeSection?.reviewed === true,
-    pleaseCheck: activeSection?.pleaseCheck === true,
-    textStyle: activeRow?.textStyle ?? "paragraph",
+    plainText: historySection?.text ?? "",
+    footnote: serializeEditorFootnotesForLegacy(historySection?.footnotes ?? historySection?.footnote ?? ""),
+    imageCaption: historySection?.imageCaption ?? "",
+    image: historySection?.image ?? null,
+    reviewed: historySection?.reviewed === true,
+    pleaseCheck: historySection?.pleaseCheck === true,
+    textStyle: historyRow?.textStyle ?? "paragraph",
   };
-  const currentEntryMatchesPendingSave =
-    pendingLocalSaveEntry
-    && editorReviewEntriesHaveSameContent(pendingLocalSaveEntry, currentEntry);
-  const currentEntryMatchesLastCommit =
-    lastCommittedEntry
-    && editorReviewEntriesHaveSameContent(lastCommittedEntry, currentEntry);
-  const showsPendingLocalSave = Boolean(currentEntryMatchesPendingSave);
-  const pendingLocalSaveIsOverdue =
-    showsPendingLocalSave
-    && pendingLocalSaveAgeMs(pendingLocalSaveEntry) >= PENDING_LOCAL_SAVE_ERROR_AFTER_MS;
-  const showsCurrentEntry = !showsPendingLocalSave && !currentEntryMatchesLastCommit;
-  const lastUpdateEntry = showsPendingLocalSave
-    ? pendingLocalSaveEntry
-    : showsCurrentEntry
-      ? currentEntry
-      : lastCommittedEntry;
-  const lastUpdateBaselineEntry = showsPendingLocalSave
-    ? lastCommittedEntry
-    : showsCurrentEntry
-    ? lastCommittedEntry
-    : previousEntry;
-  const lastUpdateHeadingLabel = showsPendingLocalSave
-    ? pendingLocalSaveIsOverdue
-      ? "Local save stalled"
-      : "Saving locally..."
-    : showsCurrentEntry
-    ? "Current text"
-    : historyLastUpdateHeadingLabel(lastUpdateEntry);
-  const isLastUpdateExpanded = expandedSectionKeys.has("last-update");
-  const isAiReviewExpanded = expandedSectionKeys.has("ai-review");
-  const lastUpdateSummaryTooltip = tooltipAttributes(
-    isLastUpdateExpanded ? "Collapse this review section" : "Expand this review section",
-    { align: "start" },
-  );
+  const groupLastUpdate = activeRow?.srtGroup
+    ? buildSrtGroupLastUpdate(editorChapter, activeRow, activeSection) : null;
+  const { lastUpdateEntry, lastUpdateBaselineEntry, lastUpdateHeadingLabel,
+    showsPendingLocalSave, pendingLocalSaveIsOverdue, showsCurrentEntry } =
+    groupLastUpdate ?? buildEditorLastUpdate(history, currentEntry);
+  const lastUpdateHistory = groupLastUpdate?.history ?? history;
   const summaryMeta = showsPendingLocalSave
     ? pendingLocalSaveIsOverdue
       ? "Error"
       : ""
-    : history.status === "loading"
+    : lastUpdateHistory.status === "loading"
     ? "Loading..."
-    : history.status === "error"
+    : lastUpdateHistory.status === "error"
       ? "Error"
       : lastUpdateBaselineEntry
         ? "Diff"
@@ -233,7 +163,7 @@ export function renderReviewPane(editorChapter, rows, languages, offlineMode = f
   const summaryMetaHtml = showsPendingLocalSave && !pendingLocalSaveIsOverdue
     ? '<span class="history-group__spinner button__spinner" aria-hidden="true"></span>'
     : escapeHtml(summaryMeta);
-  const aiReview = resolveVisibleEditorAiReview(
+  let aiReview = resolveVisibleEditorAiReview(
     editorChapter,
     activeRow?.id ?? null,
     activeLanguage?.code ?? null,
@@ -241,10 +171,20 @@ export function renderReviewPane(editorChapter, rows, languages, offlineMode = f
     activeSectionFootnote,
     activeSection?.imageCaption ?? "",
   );
-  const aiReviewSummaryTooltip = tooltipAttributes(
-    isAiReviewExpanded ? "Collapse this review section" : "Expand this review section",
-    { align: "start" },
-  );
+  const groupReview = activeRow?.srtGroup && editorChapter.srtGroupReview?.first === activeRow.id
+    && editorChapter.srtGroupReview.targetCode === activeLanguage?.code ? editorChapter.srtGroupReview : null;
+  if (groupReview && aiReview.status === "ready") {
+    const stale = editorChapter.selectedSourceLanguageCode !== groupReview.sourceCode
+      || srtGroupSnapshot(activeRow.srtGroup.members) !== groupReview.captured
+      || pendingSrtGroupEdits(editorChapter, { rowIds: groupReview.memberRowIds }).length > 0;
+    const corrections = groupReview.results.some((result, index) => !result.reviewed
+      || result.suggestedText !== (activeRow.srtGroup.members[index]?.fields?.[activeLanguage.code] ?? "")
+      || result.suggestedFootnotes?.length || result.suggestedImageCaption);
+    aiReview = { ...aiReview, isStale: stale, showSuggestion: !stale && corrections,
+      showLooksGoodMessage: !stale && !corrections,
+      fullReviewPassed: !stale && !corrections && aiReview.reviewMode === "meaning",
+      showGrammarReviewButton: stale || !corrections, showFullReviewButton: stale || !corrections };
+  }
   const aiReviewMeta = offlineMode === true
     ? "Offline"
     : aiReview.status === "loading"
@@ -260,12 +200,11 @@ export function renderReviewPane(editorChapter, rows, languages, offlineMode = f
         : aiReview.status === "error"
           ? "Error"
           : "Review now";
-  const aiReviewMessage = aiReview.isStale
-    ? renderInlineStateBox({
-      tone: "warning",
-      message: "The text changed since the last AI review.",
-    })
-    : aiReview.status === "error"
+  // Keep old results available for comparison without making them applicable
+  // or treating a previously clean review as approval of the user's new edits.
+  const showStaleReview = aiReview.isStale
+    && (aiReview.status === "ready" || aiReview.status === "applying");
+  const aiReviewMessage = aiReview.status === "error"
       ? renderInlineStateBox({
         tone: "error",
         message: aiReview.error,
@@ -341,92 +280,72 @@ export function renderReviewPane(editorChapter, rows, languages, offlineMode = f
 
   return `
     <div class="history-stack">
-      <section class="history-group">
-        <button
-          class="history-group__toggle"
-          type="button"
-          data-action="toggle-editor-review-section:last-update"
-          aria-expanded="${isLastUpdateExpanded ? "true" : "false"}"
-        >
-          <span class="history-group__summary collapse-affordance"${lastUpdateSummaryTooltip}>
-            ${renderCollapseChevron(isLastUpdateExpanded, "history-group__chevron")}
+      <section class="history-group" data-editor-review-section="last-update">
+        <div class="history-group__toggle history-group__toggle--static">
+          <span class="history-group__summary">
             <span class="history-group__author">${escapeHtml(lastUpdateHeadingLabel)}</span>
           </span>
           <span class="history-group__meta">${summaryMetaHtml}</span>
-        </button>
-        ${
-          isLastUpdateExpanded
-            ? `
-              <div class="history-group__entries">
-                <article class="history-item">
-                  ${pendingLocalSaveMessage}
-                  ${renderHistoryEntryContent(lastUpdateEntry, lastUpdateBaselineEntry, activeLanguage.code)}
-                  ${renderHistoryNote(lastUpdateEntry, lastUpdateBaselineEntry, {
-                    includeMarkers: false,
-                    includeStatusNote: !showsPendingLocalSave,
-                  })}
-                  ${
-                    history.status === "loading"
-                      ? '<p class="history-item__meta">Loading previous version...</p>'
-                      : history.status === "error"
-                        ? `<p class="history-item__note">${escapeHtml(history.error || "Could not load the previous version.")}</p>`
-                        : lastUpdateBaselineEntry
-                          ? `<p class="history-item__meta">${showsCurrentEntry ? "Compared with the latest saved version" : "Compared with the previous commit"}</p>`
-                          : '<p class="history-item__meta">No previous version</p>'
-                  }
-                </article>
-              </div>
-            `
-            : ""
-        }
+        </div>
+        <div class="history-group__entries">
+          <article class="history-item">
+            ${pendingLocalSaveMessage}
+            ${groupLastUpdate ? renderSrtGroupLastUpdate(groupLastUpdate, activeLanguage.code) : `
+            ${renderHistoryEntryContent(lastUpdateEntry, lastUpdateBaselineEntry, activeLanguage.code)}
+            ${renderHistoryNote(lastUpdateEntry, lastUpdateBaselineEntry, {
+              includeMarkers: false,
+              includeStatusNote: !showsPendingLocalSave,
+            })}
+            ${
+              history.status === "loading"
+                ? '<p class="history-item__meta">Loading previous version...</p>'
+                : lastUpdateHistory.status === "error"
+                  ? `<p class="history-item__note">${escapeHtml(history.error || "Could not load the previous version.")}</p>`
+                  : lastUpdateBaselineEntry
+                    ? `<p class="history-item__meta">${showsCurrentEntry ? "Compared with the latest saved version" : "Compared with the previous commit"}</p>`
+                    : '<p class="history-item__meta">No previous version</p>'
+            }
+            `}
+
+          </article>
+        </div>
       </section>
-      <section class="history-group">
-        <button
-          class="history-group__toggle"
-          type="button"
-          data-action="toggle-editor-review-section:ai-review"
-          aria-expanded="${isAiReviewExpanded ? "true" : "false"}"
-        >
-          <span class="history-group__summary collapse-affordance"${aiReviewSummaryTooltip}>
-            ${renderCollapseChevron(isAiReviewExpanded, "history-group__chevron")}
+      <section class="history-group" data-editor-review-section="ai-review">
+        <div class="history-group__toggle history-group__toggle--static">
+          <span class="history-group__summary">
             <span class="history-group__author">AI Review</span>
           </span>
           <span class="history-group__meta">${escapeHtml(aiReviewMeta)}</span>
-        </button>
-        ${
-          isAiReviewExpanded
-            ? `
-              <div class="history-group__entries">
-                <article class="history-item">
-                  ${
-                    aiReview.showSuggestion
-                      ? `
-                        ${renderAiReviewSuggestionSections(aiReview, currentEntry, activeLanguage)}
-                        <div class="history-item__footer">
-                          <div class="history-item__actions">
-                            ${applyButton}
-                          </div>
-                          <p class="history-item__meta">Compared with the current text</p>
-                        </div>
-                        ${renderAiReviewPromptDetails(aiReview)}
-                      `
-                      : aiReview.showLooksGoodMessage
-                        ? `
-                          <p class="history-item__content" lang="${escapeHtml(activeLanguage.code)}">${escapeHtml(aiReview.fullReviewPassed ? "Your translation looks good!" : "Spelling and grammar look good!")}</p>
-                          ${renderAiReviewPromptDetails(aiReview)}
-                          ${reviewModeButtonsFooter}
-                        `
-                      : `
-                        ${aiReviewMessage}
-                        ${renderAiReviewPromptDetails(aiReview)}
-                        ${reviewModeButtonsFooter}
-                      `
-                  }
-                </article>
-              </div>
-            `
-            : ""
-        }
+        </div>
+        <div class="history-group__entries">
+          <article class="history-item">
+            ${
+              aiReview.showSuggestion || showStaleReview
+                ? `
+                  ${groupReview ? renderSrtReviewSuggestions(groupReview, activeRow, activeLanguage) : renderAiReviewSuggestionSections(aiReview, currentEntry, activeLanguage, showStaleReview)}
+                  ${aiReview.showSuggestion ? `<div class="history-item__footer">
+                    <div class="history-item__actions">
+                      ${applyButton}
+                    </div>
+                  </div>` : ""}
+                  <p class="history-item__meta">Compared with the current text in the editor.</p>
+                  ${renderAiReviewPromptDetails(aiReview)}
+                  ${showStaleReview ? reviewModeButtonsFooter : ""}
+                `
+                : aiReview.showLooksGoodMessage
+                  ? `
+                    <p class="history-item__content" lang="${escapeHtml(activeLanguage.code)}">${escapeHtml(aiReview.fullReviewPassed ? "Your translation looks good!" : "Spelling and grammar look good!")}</p>
+                    ${renderAiReviewPromptDetails(aiReview)}
+                    ${reviewModeButtonsFooter}
+                  `
+                : `
+                  ${aiReviewMessage}
+                  ${renderAiReviewPromptDetails(aiReview)}
+                  ${reviewModeButtonsFooter}
+                `
+            }
+          </article>
+        </div>
       </section>
     </div>
   `;

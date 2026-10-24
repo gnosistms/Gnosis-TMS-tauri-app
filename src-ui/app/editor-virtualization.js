@@ -120,7 +120,7 @@ export function initializeEditorVirtualization(root, appState) {
     && bottomSpacer instanceof HTMLElement;
   const rowHeightCache = shouldVirtualize
     ? getRowHeightCache(
-      initialModel.editorChapter?.chapterId ?? initialModel.chapter?.id ?? "",
+      `${initialModel.editorChapter?.chapterId ?? initialModel.chapter?.id ?? ""}:${initialModel.editorChapter?.srtViewMode ?? "standard"}:${initialModel.editorChapter?.srtPauseSplitEnabled === true}:${initialModel.editorChapter?.srtPauseThresholdMs ?? 500}`,
       initialModel.collapsedLanguageCodes,
       initialModel.editorFontSizePx,
     )

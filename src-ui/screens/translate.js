@@ -4,7 +4,13 @@ import {
   escapeHtml,
   navButton,
   pageShell,
+  renderSelectPillControl,
+  tooltipAttributes,
 } from "../lib/ui.js";
+import {
+  changedAfterMyEditFilterIsActive,
+  changedAfterMyEditStateForChapter,
+} from "../app/editor-changed-after-my-edit-flow.js";
 import {
   buildEditorPreviewDocument,
   EDITOR_MODE_PREVIEW,
@@ -14,6 +20,7 @@ import {
 } from "../app/editor-preview.js";
 import { buildEditorScreenViewModel } from "../app/editor-screen-model.js";
 import { chapterHasSrtSourceFormat } from "../app/editor-timing.js";
+import { SRT_PAUSE_THRESHOLDS_MS, srtGroupForRow } from "../app/editor-srt-grouping.js";
 import { renderTranslationContentRows } from "../app/editor-row-render.js";
 import { convertLocalFileSrc } from "../app/runtime.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
@@ -37,6 +44,7 @@ import { renderEditorWordPressExportSuccessModal } from "./editor-wordpress-expo
 import { renderEditorReplaceUndoModal } from "./editor-replace-undo-modal.js";
 import { renderAiReviewMissingKeyModal } from "./ai-review-missing-key-modal.js";
 import { renderEditorCloseWaitModal } from "./editor-close-wait-modal.js";
+import { renderEditorSrtMarkerModal } from "./editor-srt-marker-modal.js";
 import { renderTargetLanguageManagerModal } from "./target-language-manager-modal.js";
 import { renderTranslateSidebar as renderTranslateEditorSidebar } from "./translate-sidebar.js";
 import { resolveSelectedChapterGlossary } from "../app/project-context.js";
@@ -72,6 +80,18 @@ function renderTranslateStateCard(message) {
       </div>
     </article>
   `;
+}
+
+function renderSrtDraftRecovery(chapter) {
+  return Object.values(chapter?.srtGroupEdits ?? {}).filter((edit) => edit.draft !== edit.savedDraft
+    && srtGroupForRow(chapter, edit.firstRowId).map((row) => row.rowId).join(":") !== edit.memberRowIds.join(":"))
+    .map((edit) => `<article class="card card--translation"><div class="card__body">
+      <p>A subtitle in this sentence changed or was deleted. Your sentence draft is preserved below. Resolve the affected subtitle before saving the draft.</p>
+      <textarea data-editor-srt-recovery data-row-id="${escapeHtml(edit.firstRowId)}" data-language-code="${escapeHtml(edit.languageCode)}"
+        aria-label="Preserved sentence draft" rows="4">${escapeHtml(edit.draft)}</textarea>
+      ${edit.error ? `<p class="translation-srt-error" role="alert">${escapeHtml(edit.error)}</p>` : ""}
+      <button type="button" data-action="save-editor-srt-drafts">Save sentence draft</button>
+    </div></article>`).join("");
 }
 
 function resolvePreviewImageSrc(image) {
@@ -114,8 +134,15 @@ function buildTranslateScreenFrame(state) {
   } else if (!chapter && !editorChapter?.chapterId) {
     translateBody = renderTranslateStateCard("Could not determine which file to open.");
   } else if (contentRows.length === 0) {
+    const changedAfterMyEdit = changedAfterMyEditFilterIsActive(editorChapter)
+      ? changedAfterMyEditStateForChapter(editorChapter)
+      : null;
     translateBody = renderTranslateStateCard(
-      editorFilters?.hasActiveFilters
+      changedAfterMyEdit?.status === "loading"
+        ? "Finding rows changed after your last edit..."
+        : changedAfterMyEdit?.status === "error"
+        ? changedAfterMyEdit.error || "The rows changed after your last edit could not be loaded."
+        : editorFilters?.hasActiveFilters
         ? "No rows match the current filters."
         : "This file does not contain any translatable rows.",
     );
@@ -212,9 +239,34 @@ function renderTranslateEditorBodyFromFrame(frame) {
     <section class="translate-layout" style="--translation-editor-font-size: ${escapeHtml(String(editorFontSizePx))}px;">
       <div class="translate-main-scroll">
         <div class="translate-main${editorReplace?.isEnabled ? " translate-main--replace-mode" : ""}">
+          ${chapterHasSrtSourceFormat(editorChapter?.sourceFormats) ? `
+            <div class="translation-srt-view-options">
+              <div class="translation-srt-view-control segmented-control" role="group" aria-label="Subtitle view">
+                ${[["standard", "Standard"], ["group-fragments", "Group fragments"]].map(([value, label]) => `
+                  <button type="button" data-action="set-editor-srt-view:${value}"
+                    ${value === "group-fragments" ? tooltipAttributes("Display with sentence fragments grouped into complete sentences for easier reading and editing.", { side: "bottom", align: "start" }) : ""}
+                    aria-pressed="${(editorChapter.srtViewMode ?? "standard") === value}"
+                    class="translation-srt-view-control__option segmented-control__button${(editorChapter.srtViewMode ?? "standard") === value ? " is-active" : ""}">${label}</button>`).join("")}
+              </div>
+              ${editorChapter.srtViewMode === "group-fragments" ? `
+                <div class="translation-srt-pause-control"${tooltipAttributes("Sometimes sentences run on long with no punctuation. In that case, you may want to split groups at pauses.", { side: "bottom", align: "start" })}>
+                  <label class="translation-srt-pause-control__label">
+                    <input type="checkbox" class="editor-checkbox" data-editor-srt-pause-toggle${editorChapter.srtPauseSplitEnabled ? " checked" : ""}>
+                    <span>Split groups at pauses longer than</span>
+                  </label>
+                  ${renderSelectPillControl({
+                    className: "select-pill--toolbar translation-srt-pause-control__threshold",
+                    value: String((editorChapter.srtPauseThresholdMs ?? 500) / 1000),
+                    selectAttributes: { "data-editor-srt-pause-threshold": true, "aria-label": "Pause length in seconds" },
+                    options: SRT_PAUSE_THRESHOLDS_MS.map((ms) => ({ value: String(ms), label: String(ms / 1000), selected: (editorChapter.srtPauseThresholdMs ?? 500) === ms })),
+                  })}
+                  <span>seconds.</span>
+              </div>` : ""}
+            </div>` : ""}
           ${renderEditorConflictBanner(editorFilters)}
           ${renderEditorFilterBanner(editorFilters)}
           ${renderEditorSyncBanner(editorChapter)}
+          ${renderSrtDraftRecovery(editorChapter)}
           ${translateBody}
         </div>
       </div>
@@ -362,5 +414,6 @@ export function renderTranslateScreen(state) {
     + renderEditorWordPressExportSuccessModal(state)
     + renderEditorReplaceUndoModal(state)
     + renderAiReviewMissingKeyModal(state)
-    + renderEditorCloseWaitModal(state);
+    + renderEditorCloseWaitModal(state)
+    + renderEditorSrtMarkerModal(state);
 }

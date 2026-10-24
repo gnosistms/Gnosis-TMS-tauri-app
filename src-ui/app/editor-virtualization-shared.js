@@ -22,8 +22,9 @@ export function nextScheduledEditorRenderReason(currentReason, nextReason) {
   return normalizedCurrent;
 }
 
-export function resolveEditorVirtualRangeState(virtualItems, totalSize = 0) {
+export function resolveEditorVirtualRangeState(virtualItems, totalSize = 0, scrollMargin = 0) {
   const items = Array.isArray(virtualItems) ? virtualItems : [];
+  const listOffset = Number.isFinite(scrollMargin) ? Math.max(0, scrollMargin) : 0;
   if (items.length === 0) {
     return {
       startIndex: 0,
@@ -40,11 +41,11 @@ export function resolveEditorVirtualRangeState(virtualItems, totalSize = 0) {
   const endIndex = Number.isInteger(lastItem?.index) ? lastItem.index + 1 : startIndex;
   const topSpacerHeight =
     Number.isFinite(firstItem?.start) && firstItem.start > 0
-      ? firstItem.start
+      ? Math.max(0, firstItem.start - listOffset)
       : 0;
   const lastItemEnd =
     Number.isFinite(lastItem?.end) && lastItem.end > 0
-      ? lastItem.end
+      ? Math.max(0, lastItem.end - listOffset)
       : topSpacerHeight;
   const bottomSpacerHeight = Math.max(0, (Number.isFinite(totalSize) ? totalSize : 0) - lastItemEnd);
 

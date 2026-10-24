@@ -1,3 +1,4 @@
+import { addSiblingFromTermEditor, removeSiblingFromTermEditor } from "../glossary-term-siblings.js";
 import { state } from "../state.js";
 import { showNoticeBadge } from "../status-feedback.js";
 import { getGlossaryWritePolicy } from "../resource-write-policy.js";
@@ -227,6 +228,20 @@ export function createGlossaryActions(render) {
 
     if (exactActions[action]) {
       await exactActions[action](event);
+      return true;
+    }
+
+    if (action === "toggle-glossary-term-related") {
+      if (state.glossaryTermEditor) state.glossaryTermEditor.relatedOpen = !state.glossaryTermEditor.relatedOpen;
+      render();
+      return true;
+    }
+    if (action === "link-glossary-term-sibling") {
+      await addSiblingFromTermEditor(render);
+      return true;
+    }
+    if (action.startsWith("unlink-glossary-term-sibling:")) {
+      await removeSiblingFromTermEditor(render, action.slice("unlink-glossary-term-sibling:".length));
       return true;
     }
 

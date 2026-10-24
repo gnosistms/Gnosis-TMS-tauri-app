@@ -51,6 +51,7 @@ const {
   closeEditorExportOptions,
   editorExportCategories,
   findEditorExportOption,
+  forgetPdfFontApproval,
   handleChapterPdfExportProgress,
   openEditorExportOptions,
   refreshPdfFontInspection,
@@ -655,6 +656,58 @@ test("PDF font inspection records the exact missing download before export", asy
   assert.deepEqual(state.editorChapter.exportModal.pdfFontFamilies, ["Noto Serif", "Noto Serif JP"]);
 });
 
+test("PDF inspection opens immediately and waits for local saves in the background", async () => {
+  installEditorExportFixture();
+  openExportModal("file:pdf");
+  let release;
+  const queue = new Promise((resolve) => { release = resolve; });
+  let invoked = false;
+  const inspection = refreshPdfFontInspection(() => {}, {
+    waitForRepoQueue: () => queue,
+    invoke: async (_command, payload) => {
+      invoked = true;
+      assert.equal(payload.input.omitCustomHtml, true);
+      assert.equal(payload.input.footnoteLinksAsPlainText, true);
+      return { supported: true, savedFallbackFonts: [{ id: "font-1", family: "Noto Sans EgyptHiero" }] };
+    },
+  });
+  assert.equal(state.editorChapter.exportModal.isOpen, true);
+  assert.equal(state.editorChapter.exportModal.pdfFontStatus, "loading");
+  assert.equal(invoked, false);
+  release();
+  await inspection;
+  assert.equal(state.editorChapter.exportModal.pdfSavedFallbackFonts.length, 1);
+});
+
+test("an older inspection cannot restore saved fonts after a newer check", async () => {
+  installEditorExportFixture();
+  openExportModal("file:pdf");
+  let finishOlder;
+  const olderResponse = new Promise((resolve) => { finishOlder = resolve; });
+  const older = refreshPdfFontInspection(() => {}, { waitForRepoQueue: async () => {}, invoke: () => olderResponse });
+  await Promise.resolve();
+  await refreshPdfFontInspection(() => {}, { waitForRepoQueue: async () => {}, invoke: async () => ({ supported: true, savedFallbackFonts: [] }) });
+  finishOlder({ supported: true, savedFallbackFonts: [{ id: "old", family: "Old approval" }] });
+  await older;
+  assert.deepEqual(state.editorChapter.exportModal.pdfSavedFallbackFonts, []);
+});
+
+test("forgetting a font removes its app-wide approval and refreshes the contextual control", async () => {
+  installEditorExportFixture();
+  openExportModal("file:pdf");
+  const calls = [];
+  const operations = { waitForRepoQueue: async () => {}, invoke: async (command, payload) => {
+    calls.push([command, payload]);
+    return command === "inspect_gtms_chapter_pdf_fonts" ? { supported: true, savedFallbackFonts: [] } : true;
+  } };
+  state.editorChapter.exportModal.pdfSavedFallbackFonts = [{ id: "font-1", family: "Noto Sans EgyptHiero" }];
+  await forgetPdfFontApproval(() => {}, "font-1", operations);
+  assert.deepEqual(calls[0], ["forget_gtms_pdf_font_approval", { fontId: "font-1" }]);
+  assert.equal(calls[1][0], "inspect_gtms_chapter_pdf_fonts");
+  assert.deepEqual(state.editorChapter.exportModal.pdfSavedFallbackFonts, []);
+  assert.equal(state.editorChapter.exportModal.pdfForgettingFontId, "");
+});
+
 test("Cancel remains available for a running PDF job and requests backend cancellation", async () => {
   installEditorExportFixture();
   openExportModal("file:pdf");
@@ -732,6 +785,67 @@ test("PDF export progress ignores events from another job", () => {
 
   assert.equal(state.editorChapter.exportModal.status, "exporting");
   assert.equal(state.editorChapter.exportModal.error, "");
+});
+
+function openFontReview() {
+  installEditorExportFixture();
+  openExportModal("file:pdf");
+  state.editorChapter.exportModal.status = "exporting";
+  state.editorChapter.exportModal.pdfJobId = "current-job";
+  handleChapterPdfExportProgress({
+    jobId: "current-job", status: "font-review",
+    fontReview: { reviewId: "review-1", fontFamilies: ["Noto Sans Egyptian Hieroglyphs"], excerpts: [
+      { label: "Paragraph 4", imageDataUrl: "data:image/svg+xml;base64,PHN2Zy8+" },
+    ] },
+  }, () => {});
+}
+
+test("font review locks export settings and approves the existing job without another save dialog", async () => {
+  openFontReview();
+  assert.equal(state.editorChapter.exportModal.status, "reviewing-fonts");
+  selectEditorExportOption(() => {}, "file:docx");
+  assert.equal(state.editorChapter.exportModal.selectedOptionId, "file:pdf");
+  const calls = [];
+  await submitEditorExport(() => {}, {
+    saveDialog: () => assert.fail("Approval must reuse the selected destination"),
+    invoke: async (command, input) => { calls.push([command, input]); return true; },
+  });
+  assert.deepEqual(calls, [["approve_gtms_chapter_pdf_fonts", { jobId: "current-job", reviewId: "review-1" }]]);
+  assert.equal(state.editorChapter.exportModal.status, "exporting");
+});
+
+test("cancelling a font review cancels its job and ignores a late review event", async () => {
+  openFontReview();
+  const calls = [];
+  closeEditorExportOptions(() => {}, { invoke: async (...args) => { calls.push(args); return true; } });
+  assert.equal(state.editorChapter.exportModal.status, "cancelling");
+  handleChapterPdfExportProgress({ jobId: "current-job", status: "font-review", fontReview: { reviewId: "late" } }, () => {});
+  assert.equal(state.editorChapter.exportModal.status, "cancelling");
+  assert.deepEqual(calls, [["cancel_gtms_chapter_pdf_export", { jobId: "current-job" }]]);
+  handleChapterPdfExportProgress({ jobId: "current-job", status: "cancelled" }, () => {});
+  assert.equal(state.editorChapter.exportModal.isOpen, false);
+  assert.equal(state.editorChapter.exportModal.pdfFontReview, null);
+});
+
+test("a failed approval retains the review for retry, and an expired review cannot publish", async () => {
+  openFontReview();
+  await submitEditorExport(() => {}, { invoke: async () => { throw new Error("Try again"); } });
+  assert.equal(state.editorChapter.exportModal.status, "reviewing-fonts");
+  assert.equal(state.editorChapter.exportModal.pdfFontReview.reviewId, "review-1");
+  await submitEditorExport(() => {}, { invoke: async () => false });
+  assert.match(state.editorChapter.exportModal.error, /expired/);
+  assert.equal(state.editorChapter.exportModal.pdfJobId, "");
+  assert.equal(state.editorChapter.exportModal.pdfFontReview, null);
+});
+
+test("an approval failure after cancellation cannot reopen the font review", async () => {
+  openFontReview();
+  let rejectApproval;
+  const approval = submitEditorExport(() => {}, { invoke: () => new Promise((_, reject) => { rejectApproval = reject; }) });
+  closeEditorExportOptions(() => {}, { invoke: async () => true });
+  rejectApproval(new Error("Late failure"));
+  await approval;
+  assert.equal(state.editorChapter.exportModal.status, "cancelling");
 });
 
 test("PDF export progress records determinate image preparation progress", () => {

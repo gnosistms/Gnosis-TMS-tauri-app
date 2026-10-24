@@ -288,7 +288,7 @@ test("renderTranslationContentRow makes an empty closed footnote marker reopenab
     /<div[\s\S]*?data-action="open-editor-footnote-entry"[\s\S]*?data-editor-footnote-display[\s\S]*?data-footnote-marker="3"[\s\S]*?<span class="translation-language-panel__footnote-marker"[^>]*>\[3\]<\/span>/,
   );
   assert.match(html, /aria-label="Edit footnote 3"/);
-  assert.match(html, /translation-language-panel__footnote-display-text">&nbsp;<\/span>/);
+  assert.match(html, /translation-language-panel__footnote-display-text" data-editor-display-text>&nbsp;<\/span>/);
 });
 
 test("renderTranslationContentRow renders valid static footnote markers as non-link superscripts", () => {
@@ -492,3 +492,65 @@ test("renderTranslationContentRow gives custom HTML rows a monospace editing fie
   assert.match(html, /translation-language-panel__field--custom-html/);
   assert.match(html, /data-row-text-style="custom_html"/);
 });
+
+test("Quote rows expose an escaped per-language attribution textarea", () => {
+  const html = renderTranslationContentRow({ ...rowWithSection({ canEdit: true, attribution: 'Author & <source>' }), textStyle: "quote", canEdit: true });
+  assert.match(html, /<textarea[^>]*data-editor-row-field[^>]*data-content-kind="attribution"[^>]*data-language-code="vi"[^>]*>Author &amp; &lt;source&gt;<\/textarea>/);
+  assert.match(html, /Attribution<\/span>/);
+  assert.doesNotMatch(renderTranslationContentRow({ ...rowWithSection({ canEdit: true }), canEdit: true }), /data-content-kind="attribution"/);
+});
+
+test("SRT rows hide all row and inline formatting controls and quote attribution", () => {
+  const html = renderTranslationContentRow({ ...rowWithSection({ canEdit: true, showTiming: true, attribution: "Author" }), textStyle: "quote", canEdit: true });
+  assert.doesNotMatch(html, /data-editor-row-text-style-button|data-editor-inline-style-button|data-editor-separator-button|data-editor-footnote-button|data-editor-image-button|data-content-kind="attribution"/);
+  assert.match(html, /data-row-text-style="paragraph"/);
+});
+
+test("empty Quote attribution has a click prompt and a native placeholder for editing", () => {
+  const html = renderTranslationContentRow({ ...rowWithSection({ canEdit: true }), textStyle: "quote", canEdit: true });
+  assert.match(html, /Click here to enter attribution\.<\/span>/);
+  assert.match(html, /aria-label="Quote attribution" placeholder="Enter attribution here\."/);
+  assert.match(html, /data-content-kind="attribution"[^>]*><\/textarea>/);
+});
+
+test("empty Quote attribution is absent for read-only and AI-translating fields", () => {
+  for (const section of [{ attribution: "" }, { attribution: " \n " }, { canEdit: true, isAiTranslating: true }]) {
+    const html = renderTranslationContentRow({ ...rowWithSection(section), textStyle: "quote", canEdit: true });
+    assert.doesNotMatch(html, /data-content-kind="attribution"|Click here to enter attribution/);
+  }
+});
+
+for (const canEdit of [false, true]) {
+  test(`search highlights body, individual footnotes, and captions (${canEdit ? "editable" : "read-only"})`, () => {
+    const text = "Needle body[2][7]";
+    const footnotes = [
+      { marker: 2, text: 'First <em>Needle</em> with <a href="https://example.com/Needle">a link</a>.' },
+      { marker: 7, text: "Needle at the start of a different note." },
+    ];
+    const imageCaption = "Picture <u>Needle</u> caption";
+    const row = {
+      ...rowWithSection({
+        canEdit, text, footnotes, hasVisibleFootnote: true,
+        hasVisibleImage: true, hasVisibleImageCaption: true, imageCaption,
+        image: { kind: "url", url: "https://example.com/image.png" },
+      }),
+      canEdit,
+      fields: { vi: text }, footnotes: { vi: footnotes }, imageCaptions: { vi: imageCaption },
+    };
+    const chapter = { languages: [{ code: "vi" }], filters: { searchQuery: "needle" } };
+    const html = renderTranslationContentRow(row, new Set(), null, null, chapter);
+    assert.equal((html.match(/<mark class="translation-language-panel__search-match">Needle<\/mark>/g) ?? []).length, 4);
+    assert.match(html, /<em><mark class="translation-language-panel__search-match">Needle<\/mark><\/em>/);
+    assert.match(html, /<u><mark class="translation-language-panel__search-match">Needle<\/mark><\/u>/);
+    assert.match(html, /href="https:\/\/example.com\/Needle"/);
+
+    const caseSensitive = renderTranslationContentRow(row, new Set(), null, null, {
+      ...chapter, filters: { searchQuery: "needle", caseSensitive: true },
+    });
+    assert.doesNotMatch(caseSensitive, /<mark class="translation-language-panel__search-match">/);
+    const cleared = renderTranslationContentRow(row, new Set(), null, null, {
+      ...chapter, filters: { searchQuery: "" },
+    });
+    assert.doesNotMatch(cleared, /<mark class="translation-language-panel__search-match">/);
+  });
+}

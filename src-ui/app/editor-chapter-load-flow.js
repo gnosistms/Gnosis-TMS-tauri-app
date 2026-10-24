@@ -7,6 +7,7 @@ import {
   editorGlossaryStateMatchesLink,
   loadEditorGlossaryState,
   normalizeEditorGlossaryLink,
+  refreshEditorGlossaryAfterLocalChange,
 } from "./editor-glossary-flow.js";
 import {
   EDITOR_ROW_FILTER_MODE_HAS_CONFLICT,
@@ -372,7 +373,6 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
           repoName: linkedGlossary.repoName,
         }
         : createEditorChapterGlossaryState();
-  const glossaryStatePromise = loadEditorGlossaryState(team, context.chapter);
   const storedAssistantChapterData = loadStoredEditorAssistantChapterData(
     team,
     context.project.id,
@@ -449,7 +449,9 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
         chapterId: context.chapter.id,
       },
     });
-    const glossaryState = await glossaryStatePromise;
+    // Read after the chapter payload so a local save/rollback during that load
+    // cannot leave us applying an earlier, already-resolved glossary snapshot.
+    const glossaryState = await loadEditorGlossaryState(team, context.chapter);
     const validRowIds = new Set(
       (Array.isArray(payload?.rows) ? payload.rows : [])
         .map((row) => row?.rowId)
@@ -573,6 +575,9 @@ export async function openTranslateChapter(render, chapterId, operations = {}) {
       chapterId,
     };
     render?.();
+    // Saves and rollbacks can finish while the glossary screen is open. Resume
+    // the live rows immediately and refresh only their linked glossary.
+    void refreshEditorGlossaryAfterLocalChange(render, team, context.chapter.linkedGlossary);
     return true;
   }
   await loadSelectedChapterEditorData(render, {}, operations);

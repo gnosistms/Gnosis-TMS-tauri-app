@@ -34,6 +34,7 @@ import {
 import { queryClient } from "./query-client.js";
 import { resolveGlossaryTermWriteRepo, restorePendingGlossaryTermDraft, rollbackGlossaryTermSave } from "./glossary-term-draft.js";
 import { removeVisibleGlossaryTerm } from "./glossary-term-sync.js";
+import { refreshEditorGlossaryAfterLocalChange } from "./editor-glossary-flow.js";
 
 function resolveGlossaryForEditor(glossaryId = state.selectedGlossaryId, preferredGlossary = null) {
   const selected = selectedGlossary();
@@ -132,6 +133,12 @@ export function canApplyGlossaryEditorSnapshot(expectedContext) {
   }
   if (glossaryEditorHasOpenDraft()) {
     return { canApply: false, reason: "open-draft" };
+  }
+  // With no term list on screen yet there is nothing a write or sync could
+  // overwrite, and refusing here left the editor loading forever: show what
+  // is on disk; the sync that is running refreshes it when it finishes.
+  if (state.glossaryEditor?.status !== "ready") {
+    return { canApply: true, reason: "ready" };
   }
   if (glossaryEditorHasActiveTermWrite()) {
     return { canApply: false, reason: "active-write" };
@@ -428,6 +435,7 @@ export async function deleteGlossaryTerm(render, termId) {
         },
       });
       previousHeadSha = response?.previousHeadSha ?? null;
+      void refreshEditorGlossaryAfterLocalChange(render, team, repoInput);
       const syncIssue = getGlossarySyncIssueMessage(
         await syncSingleGlossaryForTeam(team, glossary),
       );
@@ -450,5 +458,10 @@ export async function deleteGlossaryTerm(render, termId) {
     }
   } catch (error) {
     showNoticeBadge(error?.message ?? String(error), render);
+  } finally {
+    void refreshEditorGlossaryAfterLocalChange(render, team, {
+      glossaryId: glossary.id,
+      repoName,
+    });
   }
 }

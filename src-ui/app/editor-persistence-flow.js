@@ -14,6 +14,7 @@ import {
   normalizeEditorChapterFilterState,
 } from "./editor-filters.js";
 import { loadActiveEditorFieldHistory } from "./editor-history-flow.js";
+import { srtGroupingEnabled, srtGroupForRow } from "./editor-srt-grouping.js";
 import {
   applyOptimisticEditorHistoryEntry,
   createOptimisticEditorHistoryEntryFromRow,
@@ -67,7 +68,7 @@ import {
 } from "./editor-footnotes.js";
 import { smartenInlineMarkupQuotes } from "./editor-inline-markup/smart-quotes.js";
 import { mapInlineMarkupVisiblePositionToRawInsertionOffset } from "./editor-inline-markup.js";
-import { cloneRowTimings } from "./editor-timing.js";
+import { chapterHasSrtSourceFormat, cloneRowTimings } from "./editor-timing.js";
 import {
   assertQueuedEditorRowsReady,
   invokeQueuedEditorWriteCommand,
@@ -88,12 +89,24 @@ import {
   publishRepoInvalidation,
 } from "./repo-write-queue.js";
 import { renderEditorRowScoped } from "./editor-row-scoped-render.js";
+import {
+  pendingSrtGroupEdits, validateSrtGroupEdits, setSrtGroupEditError, finishSrtGroupEdits, proposeSrtMarkerRepair,
+} from "./editor-srt-group-edit-flow.js";
 
 const pendingEditorDirtyRowScanFrameByRowId = new Map();
 const pendingEditorRowCommitMetadataByRowId = new Map();
 const PENDING_LOCAL_SAVE_STATUS_REFRESH_MS = 10_000;
 let pendingEditorFootnoteOpenRequest = null;
 let pendingEditorImageCaptionOpenRequest = null;
+let pendingSrtGroupSave = null;
+
+function activeHistoryIncludesAnyRow(rowIds) {
+  const chapter = state.editorChapter;
+  return rowIds.includes(chapter?.activeRowId)
+    || (srtGroupingEnabled(chapter) && srtGroupForRow(chapter, chapter.activeRowId)
+      .some((row) => rowIds.includes(row.rowId)));
+}
+
 
 function normalizePendingEditorCommitMetadata(commitMetadata) {
   if (!commitMetadata || typeof commitMetadata !== "object") {
@@ -307,11 +320,12 @@ function rebaseRowTextInputForRun(operationValue) {
   input.baseFields = cloneRowFields(currentRow.persistedFields ?? currentRow.baseFields);
   input.baseFootnotes = serializeFootnoteMapForLegacy(currentRow.persistedFootnotes ?? currentRow.baseFootnotes);
   input.baseImageCaptions = cloneRowFields(currentRow.persistedImageCaptions ?? currentRow.baseImageCaptions);
+  input.baseAttributions = cloneRowFields(currentRow.persistedAttributions ?? currentRow.baseAttributions);
   input.baseTimings = cloneRowTimings(currentRow.persistedTimings ?? currentRow.baseTimings);
   return input;
 }
 
-function normalizeEditorRowForPersist(row) {
+function normalizeEditorRowForPersist(row, options = {}) {
   if (!row || typeof row !== "object") {
     return row;
   }
@@ -325,12 +339,17 @@ function normalizeEditorRowForPersist(row) {
     ...Object.keys(footnotes),
     ...Object.keys(imageCaptions),
   ]);
-  // Smart quotes are applied only to the columns this save is about. A save
-  // is per row but the edit is per column: rewriting sibling columns (the
+  // Smart quotes are applied only to changed columns or the explicitly blurred
+  // language. A save is per row but the edit is per column: rewriting siblings (the
   // source, a teammate's language, text imported with straight quotes) on
   // the way past made every "did the text change under me?" comparison in
   // the AI flows fail after any save of the same row.
   const changedLanguageCodes = editorRowChangedLanguageCodes(row);
+  // Leaving a text editor is also an explicit request to normalize that
+  // language, even when its imported/persisted wording was left unchanged.
+  if (options.quoteLanguageCode) {
+    changedLanguageCodes.add(options.quoteLanguageCode);
+  }
   const smarten = (languageCode, text) =>
     changedLanguageCodes.has(languageCode)
       ? smartenInlineMarkupQuotes(text, { language: languageCode })
@@ -471,13 +490,13 @@ function rowHasPendingDurableWrite(row, chapterState) {
 }
 
 export function hasPendingEditorWrites(chapterState = state.editorChapter, options = {}) {
-  return scopedEditorRows(chapterState, options).some((row) =>
+  return pendingSrtGroupEdits(chapterState, options).length > 0 || scopedEditorRows(chapterState, options).some((row) =>
     rowHasPendingDurableWrite(row, chapterState),
   );
 }
 
 export function countPendingEditorWriteRows(chapterState = state.editorChapter) {
-  return scopedEditorRows(chapterState).filter((row) =>
+  return pendingSrtGroupEdits(chapterState).length + scopedEditorRows(chapterState).filter((row) =>
     rowHasPendingDurableWrite(row, chapterState),
   ).length;
 }
@@ -558,6 +577,7 @@ function clearTranslationsRowsForBatch(chapterState, languageCodes) {
     const fields = {};
     const footnotes = {};
     const imageCaptions = {};
+    const attributions = {};
     const removeImages = [];
     for (const languageCode of selectedCodes) {
       if (String(row?.fields?.[languageCode] ?? "") !== "") {
@@ -569,6 +589,9 @@ function clearTranslationsRowsForBatch(chapterState, languageCodes) {
       if (String(row?.imageCaptions?.[languageCode] ?? "") !== "") {
         imageCaptions[languageCode] = "";
       }
+      if (String(row?.attributions?.[languageCode] ?? "") !== "") {
+        attributions[languageCode] = "";
+      }
       if (row?.images?.[languageCode]) {
         removeImages.push(languageCode);
       }
@@ -577,12 +600,14 @@ function clearTranslationsRowsForBatch(chapterState, languageCodes) {
     return Object.keys(fields).length > 0
       || Object.keys(footnotes).length > 0
       || Object.keys(imageCaptions).length > 0
+      || Object.keys(attributions).length > 0
       || removeImages.length > 0
       ? [{
         rowId,
         fields,
         footnotes,
         imageCaptions,
+        ...(Object.keys(attributions).length ? { attributions } : {}),
         removeImages,
       }]
       : [];
@@ -610,8 +635,11 @@ function applyEditorChapterRowsTranslationsCleared(chapterState, languageCodes, 
       const persistedFootnotes = cloneRowFootnotes(row.persistedFootnotes);
       const baseFootnotes = cloneRowFootnotes(row.baseFootnotes);
       const imageCaptions = cloneRowFields(row.imageCaptions);
+      const attributions = cloneRowFields(row.attributions);
       const persistedImageCaptions = cloneRowFields(row.persistedImageCaptions);
+      const persistedAttributions = cloneRowFields(row.persistedAttributions);
       const baseImageCaptions = cloneRowFields(row.baseImageCaptions);
+      const baseAttributions = cloneRowFields(row.baseAttributions);
       const images = cloneRowImages(row.images);
       const persistedImages = cloneRowImages(row.persistedImages);
       const baseImages = cloneRowImages(row.baseImages);
@@ -623,8 +651,11 @@ function applyEditorChapterRowsTranslationsCleared(chapterState, languageCodes, 
         persistedFootnotes[languageCode] = [];
         baseFootnotes[languageCode] = [];
         imageCaptions[languageCode] = "";
+        attributions[languageCode] = "";
         persistedImageCaptions[languageCode] = "";
+        persistedAttributions[languageCode] = "";
         baseImageCaptions[languageCode] = "";
+        baseAttributions[languageCode] = "";
         delete images[languageCode];
         delete persistedImages[languageCode];
         delete baseImages[languageCode];
@@ -639,8 +670,11 @@ function applyEditorChapterRowsTranslationsCleared(chapterState, languageCodes, 
         persistedFootnotes,
         baseFootnotes,
         imageCaptions,
+        attributions,
         persistedImageCaptions,
+        persistedAttributions,
         baseImageCaptions,
+        baseAttributions,
         images,
         persistedImages,
         baseImages,
@@ -662,7 +696,7 @@ function focusedEditorRowId() {
     : "";
 }
 
-export function scheduleDirtyEditorRowScan(render, rowId, operations = {}) {
+export function scheduleDirtyEditorRowScan(render, rowId, operations = {}, options = {}) {
   if (!rowId || typeof window === "undefined") {
     return;
   }
@@ -681,7 +715,11 @@ export function scheduleDirtyEditorRowScan(render, rowId, operations = {}) {
         return;
       }
 
-      void flushDirtyEditorRows(render, operations, { rowIds: [rowId] });
+      if (options.quoteLanguageCode) {
+        void persistEditorRowOnBlur(render, rowId, operations, options);
+      } else {
+        void flushDirtyEditorRows(render, operations, { rowIds: [rowId] });
+      }
     });
   });
 
@@ -693,8 +731,9 @@ export async function flushDirtyEditorRows(render, operations = {}, options = {}
     return true;
   }
   if (editorWriteLockIsActive(state.editorChapter)) {
-    return true;
+    return pendingSrtGroupEdits(state.editorChapter, options).length === 0;
   }
+  if (!(await persistSrtGroupDrafts(render, operations, options))) return false;
   const waitForDurable = options?.waitForDurable !== false;
 
   const candidateRowIds = resolveDirtyTrackedEditorRowIds(state.editorChapter?.dirtyRowIds, {
@@ -781,7 +820,7 @@ export function openEditorFootnote(render, rowId, languageCode, options = {}) {
       requestedVisibleInsertIndex,
     );
   let insertIndex = requestedInsertIndex ?? currentText.length;
-  let selectionEnd = insertIndex;
+  let selectionEnd = Number.isInteger(options.selectionEnd) ? Math.max(insertIndex, Math.min(currentText.length, options.selectionEnd)) : insertIndex;
 
   if (requestedInsertIndex === null && typeof document !== "undefined") {
     const activeElement = document.activeElement;
@@ -1015,6 +1054,7 @@ export function collapseEditorImageCaption(render, rowId, languageCode) {
 }
 
 export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, operations = {}) {
+  if (chapterHasSrtSourceFormat(state.editorChapter?.sourceFormats)) return;
   const { updateEditorChapterRow } = operations;
   if (!rowId || typeof updateEditorChapterRow !== "function") {
     return;
@@ -1087,7 +1127,10 @@ export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, ope
   };
 
   const renderStyleChange = (options = {}) => {
-    if (options.preserveActiveEditorUndo !== true || !activeEditorRowFieldIsFocused()) {
+    // Leaving Quote changes the body itself. Refresh its textarea even when it
+    // is focused, so the next keystroke cannot replace the appended attribution.
+    const convertsAttribution = previousTextStyle === "quote" && normalizedTextStyle !== "quote";
+    if (convertsAttribution || options.preserveActiveEditorUndo !== true || !activeEditorRowFieldIsFocused()) {
       renderEditorRowScoped(render, rowId, "text-style-change");
     }
     if (state.editorChapter?.activeRowId === rowId) {
@@ -1157,11 +1200,12 @@ export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, ope
       state.editorChapter = {
         ...state.editorChapter,
         chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
+        wordCounts: payload?.wordCounts ?? state.editorChapter.wordCounts,
       };
       reconcileDirtyTrackedEditorRows([value.rowId]);
       renderStyleChange({ preserveActiveEditorUndo: true });
 
-      if (state.editorChapter.activeRowId === value.rowId) {
+      if (activeHistoryIncludesAnyRow([value.rowId])) {
         loadActiveEditorFieldHistory(render, {
           clearOptimisticOperationId: operation?.operationId,
         });
@@ -1179,6 +1223,7 @@ export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, ope
       state.editorChapter = {
         ...state.editorChapter,
         chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
+        wordCounts: payload?.wordCounts ?? state.editorChapter.wordCounts,
       };
       reconcileDirtyTrackedEditorRows([value.rowId]);
       renderStyleChange({ preserveActiveEditorUndo: true });
@@ -1383,7 +1428,7 @@ export async function toggleEditorRowFieldMarker(
       render?.({ scope: "translate-sidebar" });
 
       if (
-        state.editorChapter.activeRowId === value.rowId
+        activeHistoryIncludesAnyRow([value.rowId])
         && state.editorChapter.activeLanguageCode === value.languageCode
       ) {
         loadActiveEditorFieldHistory(render, {
@@ -1619,7 +1664,6 @@ export async function confirmEditorUnreviewAll(render, operations = {}) {
       }
 
       const changedRowIds = Array.isArray(payload?.rowIds) ? payload.rowIds.filter(Boolean) : [];
-      const activeRowId = state.editorChapter.activeRowId;
       const activeLanguageCode = state.editorChapter.activeLanguageCode;
       state.editorChapter = {
         ...applyEditorChapterRowsUnreviewed(
@@ -1633,7 +1677,7 @@ export async function confirmEditorUnreviewAll(render, operations = {}) {
       render?.();
 
       if (
-        changedRowIds.includes(activeRowId)
+        activeHistoryIncludesAnyRow(changedRowIds)
         && activeLanguageCode === value.languageCode
       ) {
         loadActiveEditorFieldHistory(render);
@@ -1795,7 +1839,6 @@ export async function confirmEditorClearTranslations(render, operations = {}) {
       }
 
       const changedRowIds = Array.isArray(payload?.rowIds) ? payload.rowIds.filter(Boolean) : [];
-      const activeRowId = state.editorChapter.activeRowId;
       const activeLanguageCode = state.editorChapter.activeLanguageCode;
       state.editorChapter = {
         ...applyEditorChapterRowsTranslationsCleared(
@@ -1814,7 +1857,7 @@ export async function confirmEditorClearTranslations(render, operations = {}) {
       render?.();
 
       if (
-        changedRowIds.includes(activeRowId)
+        activeHistoryIncludesAnyRow(changedRowIds)
         && value.selectedLanguageCodes.includes(activeLanguageCode)
       ) {
         loadActiveEditorFieldHistory(render);
@@ -1837,7 +1880,56 @@ export async function confirmEditorClearTranslations(render, operations = {}) {
 }
 
 export async function persistEditorRowOnBlur(render, rowId, operations = {}, options = {}) {
+  if (pendingSrtGroupEdits(state.editorChapter, { rowIds: [rowId] }).length) {
+    return persistSrtGroupDrafts(render, operations, { ...options, rowIds: [rowId] });
+  }
   return persistEditorRow(render, rowId, operations, options);
+}
+
+async function persistSrtGroupDrafts(render, operations, options = {}) {
+  if (pendingSrtGroupSave) {
+    if (!(await pendingSrtGroupSave)) return false;
+  }
+  const chapter = state.editorChapter;
+  if (chapter?.srtMarkerModal) return false;
+  // Do not repair a partially composed IME sequence.
+  for (const edit of pendingSrtGroupEdits(chapter, options)) {
+    if (edit.composing) return false;
+    if (typeof document !== "undefined") {
+      const input = document.querySelector(`[data-editor-row-field][data-row-id="${CSS.escape(edit.firstRowId)}"][data-language-code="${CSS.escape(edit.languageCode)}"]`);
+      if (input?.dataset.srtComposing === "true") return false;
+    }
+  }
+  const results = validateSrtGroupEdits(chapter, options);
+  if (!results.length) return true;
+  for (const result of results) {
+    if (result.error || result.corrected) {
+      proposeSrtMarkerRepair(result);
+      render?.();
+      return false;
+    }
+    if (result.edit.needsMarkerReview && !options.confirmSrtMarkerRepair) return false;
+  }
+  const items = [];
+  for (const result of results) {
+    for (const [index, rowId] of result.edit.memberRowIds.entries()) {
+      const row = findEditorRowById(rowId, state.editorChapter);
+      if (!row || row.lifecycleState === "deleted" || row.freshness === "conflict") {
+        setSrtGroupEditError(result.edit.key, "A subtitle changed or has a conflict. Resolve it before saving this group.");
+        return false;
+      }
+      if (row.fields?.[result.edit.languageCode] !== result.parts[index]) {
+        operations.updateEditorChapterRow(rowId, (current) => applyEditorRowFieldValue(current, result.edit.languageCode, result.parts[index]));
+        markEditorRowDirty(rowId);
+      }
+      items.push({ rowId, languageCode: result.edit.languageCode });
+    }
+  }
+  pendingSrtGroupSave = persistEditorRowsBatch(render, items, operations, {
+    waitForDurable: true, srtGroupResults: results, commitMessage: "Edit subtitle sentence group",
+  });
+  try { return await pendingSrtGroupSave; }
+  finally { pendingSrtGroupSave = null; }
 }
 
 // Saves a group of programmatically edited rows (AI Translate All batch
@@ -1917,32 +2009,55 @@ export async function persistEditorRowsBatch(render, items, operations = {}, opt
     for (const [rowId, languageCodes] of languageCodesByRowId) {
       const row = findEditorRowById(rowId, state.editorChapter);
       if (!row || row.saveStatus === "conflict" || row.freshness === "conflict") {
+        if (options.srtGroupResults) throw new Error("Resolve the subtitle conflict before saving the group.");
         continue;
       }
-      const input = { rowId, fields: {}, footnotes: {}, imageCaptions: {} };
+      const input = { rowId, fields: {}, footnotes: {}, imageCaptions: {}, attributions: {}, baseAttributions: {} };
+      if (options.srtGroupResults) input.baseFields = {};
       // The snapshot keeps state-format values (footnote entries are structured
       // in state but legacy-serialized on the wire) so the persisted-state
       // bookkeeping in onSuccess compares like with like.
-      const snapshot = { fields: {}, footnotes: {}, imageCaptions: {} };
+      const snapshot = { fields: {}, footnotes: {}, imageCaptions: {}, attributions: {} };
       const legacyFootnotes = serializeFootnoteMapForLegacy(row.footnotes);
       for (const languageCode of languageCodes) {
         if (typeof row.fields?.[languageCode] === "string") {
           input.fields[languageCode] = row.fields[languageCode];
           snapshot.fields[languageCode] = row.fields[languageCode];
+          if (options.srtGroupResults) {
+            const session = options.srtGroupResults.find((result) => result.edit.languageCode === languageCode && result.edit.memberRowIds.includes(rowId))?.edit;
+            input.baseFields[languageCode] = session?.baseFields?.[rowId] ?? row.baseFields?.[languageCode] ?? row.persistedFields?.[languageCode] ?? "";
+          }
         }
-        if (typeof legacyFootnotes?.[languageCode] === "string") {
+        if (typeof legacyFootnotes?.[languageCode] === "string" && (!options.srtGroupResults
+          || legacyFootnotes[languageCode] !== serializeFootnoteMapForLegacy(row.persistedFootnotes)?.[languageCode])) {
           input.footnotes[languageCode] = legacyFootnotes[languageCode];
           snapshot.footnotes[languageCode] = row.footnotes[languageCode];
+          if (options.srtGroupResults) {
+            input.baseFootnotes ??= {};
+            input.baseFootnotes[languageCode] = serializeFootnoteMapForLegacy(row.baseFootnotes ?? row.persistedFootnotes)?.[languageCode] ?? "";
+          }
         }
-        if (typeof row.imageCaptions?.[languageCode] === "string") {
+        if (typeof row.imageCaptions?.[languageCode] === "string" && (!options.srtGroupResults
+          || row.imageCaptions[languageCode] !== row.persistedImageCaptions?.[languageCode])) {
           input.imageCaptions[languageCode] = row.imageCaptions[languageCode];
           snapshot.imageCaptions[languageCode] = row.imageCaptions[languageCode];
+          if (options.srtGroupResults) {
+            input.baseImageCaptions ??= {};
+            input.baseImageCaptions[languageCode] = row.baseImageCaptions?.[languageCode] ?? row.persistedImageCaptions?.[languageCode] ?? "";
+          }
+        }
+        if (typeof row.attributions?.[languageCode] === "string" && (!options.srtGroupResults
+          || row.attributions[languageCode] !== row.persistedAttributions?.[languageCode])) {
+          input.attributions[languageCode] = row.attributions[languageCode];
+          snapshot.attributions[languageCode] = row.attributions[languageCode];
+          input.baseAttributions[languageCode] = row.baseAttributions?.[languageCode] ?? row.persistedAttributions?.[languageCode] ?? "";
         }
       }
       if (
         Object.keys(input.fields).length === 0
         && Object.keys(input.footnotes).length === 0
         && Object.keys(input.imageCaptions).length === 0
+        && Object.keys(input.attributions).length === 0
       ) {
         continue;
       }
@@ -1953,6 +2068,7 @@ export async function persistEditorRowsBatch(render, items, operations = {}, opt
           fields: cloneRowFields(snapshot.fields),
           footnotes: cloneRowFootnotes(snapshot.footnotes),
           imageCaptions: cloneRowFields(snapshot.imageCaptions),
+          attributions: cloneRowFields(snapshot.attributions),
         },
       });
     }
@@ -1986,6 +2102,17 @@ export async function persistEditorRowsBatch(render, items, operations = {}, opt
           aiModel: value.aiModel,
         },
       }, value.permissionContext, render);
+      if (payload?.conflicts?.length) {
+        for (const conflict of payload.conflicts) {
+          updateEditorChapterRow(conflict.rowId, (row) => applyEditorRowConflictDetected(row, conflict, {
+            localFields: row.fields, localFootnotes: row.footnotes, localImageCaptions: row.imageCaptions,
+            localAttributions: row.attributions,
+          }));
+        }
+        lockConflictFilter();
+        render?.({ scope: "translate-body" });
+        throw new Error("A subtitle changed elsewhere. Resolve the conflict before saving this group.");
+      }
       return { payload, savedRows };
     },
     onSuccess: ({ payload, savedRows } = {}, operation) => {
@@ -1995,6 +2122,45 @@ export async function persistEditorRowsBatch(render, items, operations = {}, opt
       }
 
       for (const saved of savedRows) {
+        const authoritativeRow = payload?.rows?.find((row) => row.rowId === saved.rowId);
+        const remoteFields = authoritativeRow?.fields;
+        if (remoteFields) {
+          for (const code of Object.keys(saved.snapshot.fields)) {
+            const requestedText = saved.snapshot.fields[code];
+            saved.snapshot.fields[code] = remoteFields[code] ?? "";
+            updateEditorChapterRow(saved.rowId, (row) => row.fields?.[code] === requestedText
+              ? { ...row, fields: { ...row.fields, [code]: saved.snapshot.fields[code] } } : row);
+          }
+          if (options.srtGroupResults) updateEditorChapterRow(saved.rowId, (row) => {
+            const fields = { ...row.fields };
+            const persistedFields = { ...row.persistedFields };
+            const baseFields = { ...row.baseFields };
+            const pendingCodes = new Set(pendingSrtGroupEdits(state.editorChapter, { rowIds: [saved.rowId] }).map((edit) => edit.languageCode));
+            for (const [code, text] of Object.entries(remoteFields)) {
+              if (code in saved.snapshot.fields || pendingCodes.has(code)
+                || (row.fields?.[code] ?? "") !== (row.persistedFields?.[code] ?? "")) continue;
+              fields[code] = text;
+              persistedFields[code] = text;
+              baseFields[code] = text;
+            }
+            return { ...row, fields, persistedFields, baseFields };
+          });
+        }
+        if (options.srtGroupResults && authoritativeRow) {
+          for (const code of Object.keys(saved.snapshot.footnotes)) {
+            const requestedNote = saved.snapshot.footnotes[code];
+            saved.snapshot.footnotes[code] = cloneRowFootnotes(authoritativeRow.footnotes)?.[code] ?? [];
+            updateEditorChapterRow(saved.rowId, (row) => serializeFootnoteMapForLegacy({ [code]: row.footnotes?.[code] })[code]
+              === serializeFootnoteMapForLegacy({ [code]: requestedNote })[code]
+              ? { ...row, footnotes: { ...row.footnotes, [code]: saved.snapshot.footnotes[code] } } : row);
+          }
+          for (const code of Object.keys(saved.snapshot.imageCaptions)) {
+            const requestedCaption = saved.snapshot.imageCaptions[code];
+            saved.snapshot.imageCaptions[code] = authoritativeRow.imageCaptions?.[code] ?? "";
+            updateEditorChapterRow(saved.rowId, (row) => row.imageCaptions?.[code] === requestedCaption
+              ? { ...row, imageCaptions: { ...row.imageCaptions, [code]: saved.snapshot.imageCaptions[code] } } : row);
+          }
+        }
         updateEditorChapterRow(saved.rowId, (row) => {
           if (!row) {
             return row;
@@ -2002,6 +2168,9 @@ export async function persistEditorRowsBatch(render, items, operations = {}, opt
           const nextRow = {
             ...row,
             persistedFields: { ...cloneRowFields(row.persistedFields), ...saved.snapshot.fields },
+            ...(options.srtGroupResults ? { baseFields: { ...cloneRowFields(row.baseFields), ...saved.snapshot.fields } } : {}),
+            ...(options.srtGroupResults ? { baseFootnotes: { ...cloneRowFootnotes(row.baseFootnotes), ...saved.snapshot.footnotes },
+              baseImageCaptions: { ...cloneRowFields(row.baseImageCaptions), ...saved.snapshot.imageCaptions } } : {}),
             persistedFootnotes: {
               ...cloneRowFootnotes(row.persistedFootnotes),
               ...saved.snapshot.footnotes,
@@ -2010,6 +2179,8 @@ export async function persistEditorRowsBatch(render, items, operations = {}, opt
               ...cloneRowFields(row.persistedImageCaptions),
               ...saved.snapshot.imageCaptions,
             },
+            baseAttributions: { ...cloneRowFields(row.baseAttributions), ...saved.snapshot.attributions },
+            persistedAttributions: { ...cloneRowFields(row.persistedAttributions), ...saved.snapshot.attributions },
           };
           // A row edited again while the batch save was in flight keeps its
           // dirty status and re-persists through the normal per-row path.
@@ -2031,9 +2202,17 @@ export async function persistEditorRowsBatch(render, items, operations = {}, opt
       };
       const savedRowIds = savedRows.map((saved) => saved.rowId);
       reconcileDirtyTrackedEditorRows(savedRowIds);
+      if (options.srtGroupResults) {
+        finishSrtGroupEdits(value.chapterId, options.srtGroupResults);
+        const focusedCardId = typeof document !== "undefined"
+          ? document.activeElement?.closest?.("[data-editor-row-card]")?.dataset.rowId : null;
+        const renderingIds = savedRowIds.filter((id) => !options.srtGroupResults.some((result) =>
+          result.edit.firstRowId === focusedCardId && result.edit.memberRowIds.includes(id)));
+        renderEditorRowScoped(render, renderingIds, "srt-group-saved");
+      }
       applyEditorSelectionsToProjectState(state.editorChapter);
       render?.({ scope: "translate-sidebar" });
-      if (savedRowIds.includes(state.editorChapter.activeRowId)) {
+      if (activeHistoryIncludesAnyRow(savedRowIds)) {
         loadActiveEditorFieldHistory(render);
       }
     },
@@ -2054,6 +2233,9 @@ export async function persistEditorRowsBatch(render, items, operations = {}, opt
   });
 
   requested.promise.catch(() => {});
+  if (options.waitForDurable) {
+    try { await requested.promise; return true; } catch { return false; }
+  }
   return true;
 }
 
@@ -2136,6 +2318,7 @@ export async function resolveEditorRowConflict(render, rowId, resolution, operat
     baseFieldsOverride: row.conflictState?.remoteRow?.fields ?? null,
     baseFootnotesOverride: row.conflictState?.remoteRow?.footnotes ?? null,
     baseImageCaptionsOverride: row.conflictState?.remoteRow?.imageCaptions ?? null,
+    baseAttributionsOverride: row.conflictState?.remoteRow?.attributions ?? null,
   });
 }
 
@@ -2165,7 +2348,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
     return true;
   }
 
-  const normalizedRow = normalizeEditorRowForPersist(row);
+  const normalizedRow = normalizeEditorRowForPersist(row, options);
   if (normalizedRow !== row) {
     row = updateEditorChapterRow(rowId, () => normalizedRow) ?? normalizedRow;
     renderEditorRowScoped(render, rowId, "footnote-normalized");
@@ -2208,6 +2391,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
   const fieldsToPersist = cloneRowFields(row.fields);
   const footnotesToPersist = serializeFootnoteMapForLegacy(row.footnotes);
   const imageCaptionsToPersist = cloneRowFields(row.imageCaptions);
+  const attributionsToPersist = cloneRowFields(row.attributions);
   const baseFields =
     options?.baseFieldsOverride && typeof options.baseFieldsOverride === "object"
       ? cloneRowFields(options.baseFieldsOverride)
@@ -2220,6 +2404,10 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
     options?.baseImageCaptionsOverride && typeof options.baseImageCaptionsOverride === "object"
       ? cloneRowFields(options.baseImageCaptionsOverride)
       : cloneRowFields(row.baseImageCaptions);
+  const baseAttributions =
+    options?.baseAttributionsOverride && typeof options.baseAttributionsOverride === "object"
+      ? cloneRowFields(options.baseAttributionsOverride)
+      : cloneRowFields(row.baseAttributions);
   const timingsToPersist = cloneRowTimings(row.timings);
   const input = {
     installationId: team.installationId,
@@ -2230,10 +2418,12 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
     fields: fieldsToPersist,
     footnotes: footnotesToPersist,
     imageCaptions: imageCaptionsToPersist,
+    attributions: attributionsToPersist,
     timings: timingsToPersist,
     baseFields,
     baseFootnotes,
     baseImageCaptions,
+    baseAttributions,
     baseTimings: cloneRowTimings(row.baseTimings),
     ...(commitMetadata?.operation ? { operation: commitMetadata.operation } : {}),
     ...(commitMetadata?.aiModel ? { aiModel: commitMetadata.aiModel } : {}),
@@ -2242,6 +2432,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
     options?.baseFieldsOverride
     || options?.baseFootnotesOverride
     || options?.baseImageCaptionsOverride
+    || options?.baseAttributionsOverride
   );
   const operationValue = {
     input,
@@ -2250,6 +2441,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
     fields: fieldsToPersist,
     footnotes: footnotesToPersist,
     imageCaptions: imageCaptionsToPersist,
+    attributions: attributionsToPersist,
     timings: timingsToPersist,
     images: cloneQueueContextValue(row.images ?? {}),
     permissionContext: {
@@ -2289,6 +2481,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
               localFields: candidateRow?.fields ?? value.fields,
               localFootnotes: candidateRow?.footnotes ?? value.footnotes,
               localImageCaptions: candidateRow?.imageCaptions ?? value.imageCaptions,
+              localAttributions: candidateRow?.attributions ?? value.attributions,
             }),
           );
           lockConflictFilter();
@@ -2302,11 +2495,13 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
         baseFields: payload?.baseFields ?? value.input?.baseFields ?? {},
         baseFootnotes: payload?.baseFootnotes ?? value.input?.baseFootnotes ?? {},
         baseImageCaptions: payload?.baseImageCaptions ?? value.input?.baseImageCaptions ?? {},
+        baseAttributions: payload?.baseAttributions ?? value.input?.baseAttributions ?? {},
         baseImages: currentRowForMerge?.persistedImages ?? currentRowForMerge?.baseImages ?? {},
         baseFieldStates: currentRowForMerge?.persistedFieldStates ?? {},
         localFields: currentRowForMerge?.fields ?? value.fields,
         localFootnotes: currentRowForMerge?.footnotes ?? value.footnotes,
         localImageCaptions: currentRowForMerge?.imageCaptions ?? value.imageCaptions,
+        localAttributions: currentRowForMerge?.attributions ?? value.attributions,
         localImages: currentRowForMerge?.images ?? value.images ?? {},
         localFieldStates: currentRowForMerge?.fieldStates ?? {},
         remoteRow: payload?.row,
@@ -2342,6 +2537,10 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
         payload?.row?.fields,
         payload?.row?.footnotes,
         payload?.row?.imageCaptions,
+        {},
+        {},
+        value.attributions,
+        payload?.row?.attributions,
       )) {
         updateEditorChapterRow(
           value.rowId,
@@ -2349,6 +2548,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
             fields: value.fields,
             footnotes: value.footnotes,
             imageCaptions: value.imageCaptions,
+            attributions: value.attributions,
             images: value.images,
             timings: value.timings,
           }),
@@ -2367,6 +2567,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
           localFields: currentRow?.fields ?? value.fields,
           localFootnotes: currentRow?.footnotes ?? value.footnotes,
           localImageCaptions: currentRow?.imageCaptions ?? value.imageCaptions,
+          localAttributions: currentRow?.attributions ?? value.attributions,
         }),
       );
       lockConflictFilter();
@@ -2389,6 +2590,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
         fields: value.fields,
         footnotes: value.footnotes,
         imageCaptions: value.imageCaptions,
+        attributions: value.attributions,
         images: value.images,
         timings: value.timings,
       }),
@@ -2406,7 +2608,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
     applyEditorSelectionsToProjectState(state.editorChapter);
     removeOptimisticHistoryForOperation(render, operation);
     render?.({ scope: "translate-sidebar" });
-    if (!optionsForResult.isStale && state.editorChapter.activeRowId === value.rowId) {
+    if (!optionsForResult.isStale && activeHistoryIncludesAnyRow([value.rowId])) {
       loadActiveEditorFieldHistory(render, {
         clearOptimisticOperationId: operation?.operationId,
       });

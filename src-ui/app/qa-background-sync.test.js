@@ -180,6 +180,7 @@ const {
   createQaListEditorState,
   createQaTermEditorState,
   resetSessionState,
+  createAppUpdateState,
   state,
 } = await import("./state.js");
 const {
@@ -1163,30 +1164,37 @@ test("saving a QA term sanitizes ruby markup and escapes unsupported inline form
   assert.equal(state.qaListEditor.terms[0]?.text, capturedUpsertInput?.text);
 });
 
-test("QA list background sync opens a required update prompt when the repo was saved by a newer app", async () => {
-  installQaListEditorFixture();
+for (const available of [true, false]) {
+  test(`QA list background sync keeps sync paused and gates the update prompt on platform availability (${available})`, async () => {
+    installQaListEditorFixture();
 
-  invokeHandler = async (command) => {
-    if (command === "sync_gtms_qa_list_editor_repo") {
-      throw new Error(
-        "APP_UPDATE_REQUIRED:{\"requiredVersion\":\"0.1.36\",\"currentVersion\":\"0.1.35\",\"message\":\"Update before syncing this QA list.\"}",
-      );
-    }
-    return null;
-  };
+    state.appUpdate = createAppUpdateState();
+    invokeHandler = async (command) => {
+      if (command === "check_for_app_update") {
+        return { available, version: available ? "0.1.36" : null, currentVersion: "0.1.35" };
+      }
+      if (command === "sync_gtms_qa_list_editor_repo") {
+        throw new Error(
+          "APP_UPDATE_REQUIRED:{\"requiredVersion\":\"0.1.36\",\"currentVersion\":\"0.1.35\",\"message\":\"Update before syncing this QA list.\"}",
+        );
+      }
+      return null;
+    };
 
-  startQaListBackgroundSyncSession(() => {});
-  await flushAsyncWork();
+    startQaListBackgroundSyncSession(() => {});
+    await flushAsyncWork();
 
-  const synced = await maybeStartQaListBackgroundSync(() => {}, { force: true });
+    const synced = await maybeStartQaListBackgroundSync(() => {}, { force: true });
 
-  assert.equal(synced, false);
-  assert.equal(state.appUpdate.required, true);
-  assert.equal(state.appUpdate.promptVisible, true);
-  assert.equal(state.appUpdate.version, "0.1.36");
-  assert.equal(state.appUpdate.currentVersion, "0.1.35");
-  assert.equal(state.appUpdate.message, "Update before syncing this QA list.");
-});
+    assert.equal(synced, false);
+    await new Promise(setImmediate);
+    assert.equal(state.appUpdate.required, available);
+    assert.equal(state.appUpdate.promptVisible, available);
+    assert.equal(state.appUpdate.version, "0.1.36");
+    assert.equal(state.appUpdate.currentVersion, "0.1.35");
+    assert.equal(state.appUpdate.requirement.message, "Update before syncing this QA list.");
+  });
+}
 
 test("editor QA shortcut must preserve the list during a write", async () => {
   installQaListEditorFixture();

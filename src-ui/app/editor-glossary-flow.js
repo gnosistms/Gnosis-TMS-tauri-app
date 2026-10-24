@@ -8,15 +8,25 @@ import {
   renderableEditorGlossaryHighlightHtml,
 } from "./editor-glossary-highlight-cache.js";
 import {
+  buildInlineMarkupSearchHighlightMarkup,
   renderSanitizedInlineMarkupWithEditorHighlightState,
   renderSanitizedInlineMarkupWithGlossaryHighlightHtml,
 } from "./editor-inline-markup.js";
 import { buildStaticInlineFootnoteMarkerRanges } from "./editor-static-footnote-markers.js";
 import { isCustomHtmlRowTextStyle } from "./editor-row-text-style.js";
-import { editorFootnotesPlainText, findEditorRowById } from "./editor-utils.js";
+import { editorLanguageFootnotes, findEditorRowById } from "./editor-utils.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import { invoke } from "./runtime.js";
 import { createEditorChapterGlossaryState, state } from "./state.js";
+import { EDITOR_ROW_FILTER_MODE_HAS_GLOSSARY_ERROR } from "./editor-filters.js";
+import { srtLinguisticRow, srtDisplayRowId } from "./editor-srt-grouping.js";
+import { renderSrtStaticText } from "./editor-srt-group-render.js";
+
+const localGlossaryRevisions = new Map();
+
+function localGlossaryKey(team, link) {
+  return `${team.installationId}:${link.repoName}:${link.glossaryId}`;
+}
 
 export function normalizeEditorGlossaryLink(link) {
   if (!link || typeof link !== "object") {
@@ -82,28 +92,65 @@ export async function loadEditorGlossaryState(team, chapter) {
     return createEditorChapterGlossaryState();
   }
 
-  try {
-    await waitForGlossaryTermWritesToSettle(team, linkedGlossary.repoName);
-    const payload = await invoke("load_gtms_glossary_editor_data", {
-      input: {
-        installationId: team.installationId,
+  const key = localGlossaryKey(team, linkedGlossary);
+  for (;;) {
+    await waitForGlossaryTermWritesToSettle(team, linkedGlossary.repoName, { localOnly: true });
+    const revision = localGlossaryRevisions.get(key);
+    try {
+      const payload = await invoke("load_gtms_glossary_editor_data", {
+        input: {
+          installationId: team.installationId,
+          glossaryId: linkedGlossary.glossaryId,
+          repoName: linkedGlossary.repoName,
+        },
+      });
+      // A rollback or a later save may have overtaken this disk read.
+      if (revision === localGlossaryRevisions.get(key)) {
+        return buildEditorGlossaryStateFromPayload(payload, linkedGlossary);
+      }
+    } catch (error) {
+      // A failed read can also belong to an obsolete snapshot (for example,
+      // while rollback replaces term files). Retry the current revision.
+      if (revision !== localGlossaryRevisions.get(key)) continue;
+      return {
+        ...createEditorChapterGlossaryState(),
+        status: "error",
+        error: error?.message ?? String(error),
         glossaryId: linkedGlossary.glossaryId,
         repoName: linkedGlossary.repoName,
-      },
-    });
-    return buildEditorGlossaryStateFromPayload(payload, linkedGlossary);
-  } catch (error) {
-    return {
-      ...createEditorChapterGlossaryState(),
-      status: "error",
-      error: error?.message ?? String(error),
-      glossaryId: linkedGlossary.glossaryId,
-      repoName: linkedGlossary.repoName,
-    };
+      };
+    }
   }
 }
 
-// A chapter's linked glossary loads asynchronously in the background when the
+export async function refreshEditorGlossaryAfterLocalChange(render, team, link) {
+  const linkedGlossary = normalizeEditorGlossaryLink(link);
+  if (!linkedGlossary || !Number.isFinite(team?.installationId)) return;
+  const key = localGlossaryKey(team, linkedGlossary);
+  const revision = (localGlossaryRevisions.get(key) ?? 0) + 1;
+  localGlossaryRevisions.set(key, revision);
+  const chapterId = state.editorChapter?.chapterId;
+  const matchesContext = () => state.screen === "translate"
+    && selectedProjectsTeam()?.id === team.id
+    && selectedProjectsTeam()?.installationId === team.installationId
+    && state.editorChapter?.chapterId === chapterId
+    && state.editorChapter?.status === "ready"
+    && editorGlossaryStateMatchesLink(state.editorChapter.glossary, linkedGlossary)
+    && editorGlossaryStateMatchesLink(linkedGlossary, findChapterContextById(chapterId)?.chapter?.linkedGlossary);
+  if (!matchesContext()) return;
+  const glossary = await loadEditorGlossaryState(team, { linkedGlossary });
+  if (!matchesContext() || localGlossaryRevisions.get(key) !== revision) return;
+  state.editorChapter = { ...state.editorChapter, glossary };
+  // Matcher identity invalidates highlight caches; derived entries already check
+  // the glossary content revision. Patch mounted highlights without remounting inputs.
+  if (typeof document !== "undefined") syncMountedEditorGlossaryHighlightRows();
+  if (state.editorChapter.filters?.rowFilterMode === EDITOR_ROW_FILTER_MODE_HAS_GLOSSARY_ERROR) {
+    render?.({ scope: "translate-body" });
+  }
+  render?.({ scope: "translate-sidebar" });
+}
+
+// A chapter's linked glossary loads asynchronously from local storage when the
 // chapter opens (`editor-chapter-load-flow.js`); until that resolves (or if it
 // previously failed), `chapterState.glossary` is a placeholder with no matcher
 // model. AI features that can be invoked immediately after a chapter opens
@@ -125,7 +172,10 @@ export async function ensureEditorGlossaryReady(chapterState, chapterId) {
   }
 
   const freshGlossaryState = await loadEditorGlossaryState(team, chapterContext.chapter);
-  if (state.editorChapter?.chapterId === chapterId) {
+  if (state.editorChapter?.chapterId === chapterId
+    && selectedProjectsTeam()?.id === team.id
+    && selectedProjectsTeam()?.installationId === team.installationId
+    && editorGlossaryStateMatchesLink(freshGlossaryState, findChapterContextById(chapterId)?.chapter?.linkedGlossary)) {
     state.editorChapter = { ...state.editorChapter, glossary: freshGlossaryState };
   }
   return freshGlossaryState;
@@ -145,9 +195,12 @@ function setElementInnerHtmlIfChanged(element, html) {
   element.innerHTML = nextHtml;
 }
 
-function readEditorHighlightableText(row, languageCode, contentKind = "field") {
+function readEditorHighlightableText(row, languageCode, contentKind = "field", footnoteMarker = null) {
   if (contentKind === "footnote") {
-    return editorFootnotesPlainText(row?.footnotes?.[languageCode]);
+    return editorLanguageFootnotes(row, languageCode).find((entry) => entry.marker === footnoteMarker)?.text ?? "";
+  }
+  if (contentKind === "image-caption") {
+    return row?.imageCaptions?.[languageCode] ?? "";
   }
 
   return row?.fields?.[languageCode] ?? "";
@@ -158,6 +211,7 @@ function applyEditorTextHighlightLayersToRowCard(
   row,
   searchHighlightMap = new Map(),
   glossaryHighlightMap = new Map(),
+  chapterState = state.editorChapter,
 ) {
   rowCard.querySelectorAll("[data-editor-glossary-field-stack]").forEach((stack) => {
     if (!(stack instanceof HTMLElement)) {
@@ -171,15 +225,36 @@ function applyEditorTextHighlightLayersToRowCard(
       return;
     }
 
+    // A field showing a "Changed after my last edit" diff renders merged text that the
+    // highlight layers don't describe; rewriting it would drop the diff.
+    if (stack.dataset.editorChangeDiff === "true") {
+      return;
+    }
+
     const isAiTranslating = stack.dataset.aiTranslating === "true";
     const languageCode = stack.dataset.languageCode ?? "";
-    const contentKind = stack.dataset.contentKind === "footnote" ? "footnote" : "field";
+    const contentKind = stack.dataset.contentKind === "footnote"
+      ? "footnote"
+      : stack.dataset.contentKind === "image-caption" ? "image-caption" : "field";
+    // Auxiliary fields retain their own real-row content inside a group card.
+    const ownedRow = row.srtGroup?.members.find((member) => member.rowId === stack.dataset.rowId) ?? row;
     const glossaryHighlight = glossaryHighlightMap instanceof Map
       ? (contentKind === "field" ? (glossaryHighlightMap.get(languageCode) ?? null) : null)
       : null;
-    const searchHighlight = searchHighlightMap instanceof Map
+    const editingField = stack.querySelector("textarea[data-editor-row-field]");
+    const highlightableText = contentKind !== "field" && typeof editingField?.value === "string"
+      ? editingField.value
+      : readEditorHighlightableText(
+        contentKind === "field" ? row : ownedRow, languageCode, contentKind,
+        Number.parseInt(stack.dataset.footnoteMarker, 10),
+      );
+    // Match each attachment independently: offsets from a concatenation of all
+    // notes cannot be applied to an individual footnote editor or display.
+    const searchHighlight = contentKind === "field"
       ? (searchHighlightMap.get(buildEditorSearchHighlightKey(languageCode, contentKind)) ?? null)
-      : null;
+      : buildInlineMarkupSearchHighlightMarkup(highlightableText, chapterState?.filters?.searchQuery, languageCode, {
+        caseSensitive: chapterState?.filters?.caseSensitive === true,
+      });
     const glossaryHighlightHtml = isAiTranslating ? "" : renderableEditorGlossaryHighlightHtml(glossaryHighlight);
     const searchHighlightHtml =
       isAiTranslating !== true && typeof searchHighlight?.html === "string"
@@ -188,7 +263,6 @@ function applyEditorTextHighlightLayersToRowCard(
     const searchHighlightRanges = isAiTranslating
       ? []
       : (Array.isArray(searchHighlight?.ranges) ? searchHighlight.ranges : []);
-    const highlightableText = readEditorHighlightableText(row, languageCode, contentKind);
     const displayText = stack.querySelector("[data-editor-display-text]");
     const suppressGlossaryWhileEditing =
       contentKind === "field" && !(displayText instanceof HTMLElement);
@@ -220,7 +294,11 @@ function applyEditorTextHighlightLayersToRowCard(
       if (!isAiTranslating) {
         setElementInnerHtmlIfChanged(
           displayText,
-          renderSanitizedInlineMarkupWithEditorHighlightState(highlightableText, {
+          row.srtTexts?.[languageCode] && contentKind === "field"
+            ? renderSrtStaticText({ code: languageCode, text: row.srtTexts[languageCode].text,
+              srtParts: row.srtTexts[languageCode].parts, srtMarkers: row.srtTexts[languageCode].markers,
+              searchHighlightRanges: searchHighlightRanges }, glossaryHighlightHtml)
+            : renderSanitizedInlineMarkupWithEditorHighlightState(highlightableText, {
             glossaryHighlightHtml,
             searchRanges: searchHighlightRanges,
             extraRanges: contentKind === "field"
@@ -244,14 +322,14 @@ function syncEditorGlossaryHighlightRowCard(rowCard, chapterState = state.editor
     return;
   }
 
-  const row = findEditorRowById(rowId, chapterState);
+  const row = srtLinguisticRow(findEditorRowById(rowId, chapterState), chapterState);
   if (!row) {
     return;
   }
 
   const glossaryHighlightMap = buildCachedEditorRowGlossaryHighlights(row, chapterState);
   const searchHighlightMap = buildEditorRowSearchHighlightMap(row, chapterState);
-  applyEditorTextHighlightLayersToRowCard(rowCard, row, searchHighlightMap, glossaryHighlightMap);
+  applyEditorTextHighlightLayersToRowCard(rowCard, row, searchHighlightMap, glossaryHighlightMap, chapterState);
 }
 
 function syncMountedEditorGlossaryHighlightRows(
@@ -289,7 +367,7 @@ function syncMountedEditorGlossaryHighlightRows(
       return;
     }
 
-    const row = findEditorRowById(rowId, chapterState);
+    const row = srtLinguisticRow(findEditorRowById(rowId, chapterState), chapterState);
     if (!row) {
       return;
     }
@@ -298,7 +376,7 @@ function syncMountedEditorGlossaryHighlightRows(
       ? buildCachedEditorRowGlossaryHighlights(row, chapterState)
       : readCachedEditorRowGlossaryHighlights(row, chapterState);
     const searchHighlightMap = buildEditorRowSearchHighlightMap(row, chapterState);
-    applyEditorTextHighlightLayersToRowCard(rowCard, row, searchHighlightMap, glossaryHighlightMap);
+    applyEditorTextHighlightLayersToRowCard(rowCard, row, searchHighlightMap, glossaryHighlightMap, chapterState);
   });
 }
 
@@ -310,6 +388,7 @@ export function syncEditorGlossaryHighlightRowDom(
   if (typeof document === "undefined" || !rowId || !chapterState?.chapterId) {
     return;
   }
+  rowId = srtDisplayRowId(chapterState, rowId);
 
   const rowCard = root.querySelector(
     `[data-editor-row-card][data-row-id="${CSS.escape(rowId)}"]`,

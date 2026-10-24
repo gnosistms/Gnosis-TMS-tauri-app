@@ -49,6 +49,29 @@ test("buildEditorAiReviewBatchRequest grammar mode omits source, history, glossa
   assert.deepEqual(request.contextAfter, []);
 });
 
+test("buildEditorAiReviewBatchRequest flags adjacent subtitle cues for meaning review only", () => {
+  const state = chapterState();
+  state.sourceFormats = ["srt"];
+  state.rows.forEach((cue, index) => {
+    cue.srtTiming = { startMs: index * 1000, endMs: index * 1000 + 900 };
+  });
+  const build = (rows, reviewMode) => buildEditorAiReviewBatchRequest({
+    chapterState: state,
+    rows,
+    sourceLanguageCode: "es",
+    targetLanguageCode: "vi",
+    providerId: "openai",
+    modelId: "gpt-5.5",
+    reviewMode,
+  });
+
+  assert.equal(build([state.rows[1], state.rows[2]], "meaning").subtitleCues, true);
+  assert.equal(build([state.rows[1], state.rows[3]], "meaning").subtitleCues, undefined);
+  assert.equal(build([state.rows[1], state.rows[2]], "grammar").subtitleCues, undefined);
+  delete state.sourceFormats;
+  assert.equal(build([state.rows[1], state.rows[2]], "meaning").subtitleCues, undefined);
+});
+
 test("buildEditorAiReviewBatchRequest includes per-row QA hints in both modes", () => {
   const state = chapterState();
   const qaHintsByRowId = new Map([

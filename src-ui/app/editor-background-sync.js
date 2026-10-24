@@ -5,6 +5,7 @@ import {
   normalizeEditorChapterFilterState,
 } from "./editor-filters.js";
 import { loadActiveEditorFieldHistory } from "./editor-history-flow.js";
+import { refreshChangedAfterMyEditRowsAfterSync } from "./editor-changed-after-my-edit-flow.js";
 import {
   hasPendingEditorWrites as hasPendingEditorWritesFlow,
 } from "./editor-persistence-flow.js";
@@ -253,6 +254,8 @@ function hasLocalEditorWritesBlockingBackgroundSync(chapterState = state.editorC
     return true;
   }
 
+  if (Object.values(chapterState.srtGroupEdits ?? {}).some((edit) => edit.draft !== edit.savedDraft)) return true;
+
   return false;
 }
 
@@ -429,11 +432,13 @@ async function resolveBackgroundSyncDirtyRows(render, rowIds = []) {
           baseFields: currentRow.baseFields,
           baseFootnotes: currentRow.baseFootnotes,
           baseImageCaptions: currentRow.baseImageCaptions,
+          baseAttributions: currentRow.baseAttributions,
           conflictRemoteVersion: payload?.rowVersion ?? null,
         }, {
           localFields: currentRow.fields,
           localFootnotes: currentRow.footnotes,
           localImageCaptions: currentRow.imageCaptions,
+          localAttributions: currentRow.attributions,
           remoteVersion: payload?.rowVersion ?? null,
         }),
       );
@@ -543,7 +548,15 @@ async function reloadSyncedChapter(render, reason, result, sessionId) {
   });
 }
 
+// Other people's commits arriving by sync can qualify more rows for the "Changed after
+// my last edit" filter; the refresh only adds rows to the snapshot on screen.
 async function runEditorBackgroundSync(render, options = {}) {
+  const result = await runEditorBackgroundSyncOnce(render, options);
+  refreshChangedAfterMyEditRowsAfterSync(render, result?.payload);
+  return result;
+}
+
+async function runEditorBackgroundSyncOnce(render, options = {}) {
   const sessionId = editorBackgroundSyncSession.sessionId;
   if (!sessionMatchesCurrentEditor(sessionId)) {
     return createBackgroundSyncResult();

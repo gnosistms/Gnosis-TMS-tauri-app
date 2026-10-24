@@ -552,6 +552,10 @@ pub(super) fn create_inserted_editor_row(
         fields,
         footnotes,
         image_captions,
+        attributions: languages
+            .iter()
+            .map(|language| (language.code.clone(), String::new()))
+            .collect(),
         images: BTreeMap::new(),
         field_states,
         timings: BTreeMap::new(),

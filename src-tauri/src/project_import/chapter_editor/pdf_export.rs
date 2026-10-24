@@ -16,6 +16,10 @@ use tauri_plugin_shell::{process::CommandEvent, ShellExt};
 use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
+mod font_fallback;
+mod font_preferences;
+mod font_review;
+
 use super::chapter_export::{
     apply_print_custom_html_policy, build_export_document, download_public_image_bytes_detailed,
     inline_segments, inline_visible_text, ExportBlock, ExportChapterFileInput, ExportDocument,
@@ -134,6 +138,10 @@ pub(crate) struct PdfFontInspectionInput {
     project_full_name: Option<String>,
     chapter_id: String,
     language_code: String,
+    #[serde(default)]
+    omit_custom_html: Option<bool>,
+    #[serde(default)]
+    footnote_links_as_plain_text: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -145,6 +153,7 @@ pub(crate) struct PdfFontInspection {
     missing_bytes: u64,
     installed: bool,
     font_families: Vec<String>,
+    saved_fallback_fonts: Vec<font_preferences::SavedFontChoice>,
 }
 
 #[derive(Clone, Serialize)]
@@ -160,6 +169,8 @@ struct PdfExportProgressPayload {
     progress_total: u64,
     progress_unit: String,
     progress_indeterminate: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    font_review: Option<font_review::FontReview>,
 }
 
 #[derive(Clone, Copy)]
@@ -223,6 +234,53 @@ fn pdf_jobs() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
     JOBS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+struct PendingFontReview {
+    review_id: String,
+    approved: Arc<AtomicBool>,
+    choices: Vec<font_fallback::FontChoice>,
+}
+
+fn pdf_font_reviews() -> &'static Mutex<HashMap<String, PendingFontReview>> {
+    static REVIEWS: OnceLock<Mutex<HashMap<String, PendingFontReview>>> = OnceLock::new();
+    REVIEWS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub(crate) fn approve_gtms_chapter_pdf_fonts(
+    app: &AppHandle,
+    job_id: &str,
+    review_id: &str,
+) -> Result<bool, String> {
+    approve_pending_font_review(job_id, review_id, |choices| {
+        font_preferences::save(app, choices)
+    })
+}
+
+pub(crate) fn forget_gtms_pdf_font_approval(
+    app: &AppHandle,
+    font_id: &str,
+) -> Result<bool, String> {
+    font_preferences::forget(app, font_id)
+}
+
+fn approve_pending_font_review(
+    job_id: &str,
+    review_id: &str,
+    save: impl FnOnce(&[font_fallback::FontChoice]) -> Result<(), String>,
+) -> Result<bool, String> {
+    let reviews = pdf_font_reviews()
+        .lock()
+        .map_err(|_| "The PDF font review is unavailable.".to_string())?;
+    let Some(review) = reviews
+        .get(job_id)
+        .filter(|review| review.review_id == review_id)
+    else {
+        return Ok(false);
+    };
+    save(&review.choices)?;
+    review.approved.store(true, Ordering::Release);
+    Ok(true)
+}
+
 struct PdfJobRegistration {
     job_id: String,
     cancelled: Arc<AtomicBool>,
@@ -236,6 +294,9 @@ impl Drop for PdfJobRegistration {
                 .is_some_and(|current| Arc::ptr_eq(current, &self.cancelled))
             {
                 jobs.remove(&self.job_id);
+                if let Ok(mut reviews) = pdf_font_reviews().lock() {
+                    reviews.remove(&self.job_id);
+                }
             }
         }
     }
@@ -405,6 +466,8 @@ pub(crate) fn inspect_gtms_chapter_pdf_fonts(
     if input.language_code.trim().is_empty() {
         return Err("Choose the export language first.".to_string());
     }
+    let omit_custom_html = input.omit_custom_html.unwrap_or(true);
+    let show_link_urls = input.footnote_links_as_plain_text;
     let document = load_export_document(
         app,
         &ExportChapterFileInput {
@@ -418,10 +481,11 @@ pub(crate) fn inspect_gtms_chapter_pdf_fonts(
             format: "pdf".to_string(),
             output_path: String::new(),
             paper_size: "us-letter".to_string(),
-            footnote_links_as_plain_text: false,
-            omit_custom_html: true,
+            footnote_links_as_plain_text: show_link_urls,
+            omit_custom_html,
         },
     )?;
+    let document = apply_print_custom_html_policy(&document, omit_custom_html);
     if let Some(script) = unsupported_pdf_language(&document.language_code) {
         return Ok(PdfFontInspection {
             supported: false,
@@ -432,6 +496,7 @@ pub(crate) fn inspect_gtms_chapter_pdf_fonts(
             missing_bytes: 0,
             installed: false,
             font_families: Vec::new(),
+            saved_fallback_fonts: Vec::new(),
         });
     }
 
@@ -443,6 +508,14 @@ pub(crate) fn inspect_gtms_chapter_pdf_fonts(
         .filter(|asset| !valid_cached_font(&font_dir.join(asset.file_name), **asset))
         .map(|asset| asset.size)
         .sum();
+    let approved = font_preferences::load(app)?;
+    let saved_fallback_fonts = relevant_saved_fonts(
+        &document,
+        &font_dir,
+        show_link_urls,
+        missing_bytes == 0,
+        &approved,
+    )?;
     let font_families = assets
         .iter()
         .map(|asset| asset.family.to_string())
@@ -456,6 +529,7 @@ pub(crate) fn inspect_gtms_chapter_pdf_fonts(
         missing_bytes,
         installed: missing_bytes == 0,
         font_families,
+        saved_fallback_fonts,
     })
 }
 
@@ -472,6 +546,29 @@ pub(crate) fn cancel_gtms_chapter_pdf_export(job_id: &str) -> Result<bool, Strin
     };
     cancelled.store(true, Ordering::Release);
     Ok(true)
+}
+
+fn relevant_saved_fonts(
+    document: &ExportDocument,
+    font_dir: &Path,
+    show_link_urls: bool,
+    fonts_installed: bool,
+    approved: &[font_fallback::FontChoice],
+) -> Result<Vec<font_preferences::SavedFontChoice>, String> {
+    if !fonts_installed || approved.is_empty() {
+        return Ok(Vec::new());
+    }
+    let missing = font_fallback::missing_characters(
+        document,
+        font_dir,
+        show_link_urls,
+        &AtomicBool::new(false),
+    )?;
+    Ok(if missing.is_empty() {
+        Vec::new()
+    } else {
+        font_preferences::summaries(approved)
+    })
 }
 
 fn unsupported_pdf_language(language_code: &str) -> Option<&'static str> {
@@ -525,10 +622,15 @@ pub(crate) fn start_gtms_chapter_pdf_export(
         input.job_id.trim().to_string()
     };
     let cancelled = Arc::new(AtomicBool::new(false));
-    pdf_jobs()
-        .lock()
-        .map_err(|_| "The PDF export state is unavailable.".to_string())?
-        .insert(job_id.clone(), cancelled.clone());
+    {
+        let mut jobs = pdf_jobs()
+            .lock()
+            .map_err(|_| "The PDF export state is unavailable.".to_string())?;
+        if jobs.contains_key(&job_id) {
+            return Err("This PDF export is already running.".to_string());
+        }
+        jobs.insert(job_id.clone(), cancelled.clone());
+    }
     let task_app = app.clone();
     let task_job_id = job_id.clone();
     tauri::async_runtime::spawn(async move {
@@ -607,7 +709,8 @@ async fn run_pdf_export(
     let font_app = app.clone();
     let font_job_id = job_id.to_string();
     let font_cancelled = cancelled.clone();
-    let font_assets = required_fonts_for_document(&document);
+    let prepared_document = apply_print_custom_html_policy(&document, omit_custom_html);
+    let font_assets = required_fonts_for_document(&prepared_document);
     let font_dir = tauri::async_runtime::spawn_blocking(move || {
         ensure_fonts(&font_app, &font_job_id, font_assets, &font_cancelled)
     })
@@ -615,12 +718,11 @@ async fn run_pdf_export(
     .map_err(|error| format!("The PDF font worker failed: {error}"))??;
 
     check_cancelled(&cancelled)?;
-    let prepared_document = apply_print_custom_html_policy(&document, omit_custom_html);
     let prep_font_dir = font_dir.clone();
     let prep_cancelled = cancelled.clone();
     let prep_app = app.clone();
     let prep_job_id = job_id.to_string();
-    let workspace = tauri::async_runtime::spawn_blocking(move || {
+    let prepared = tauri::async_runtime::spawn_blocking(move || {
         let options = PdfWorkspacePreparationOptions {
             footnote_links_as_plain_text,
             paper_size,
@@ -637,7 +739,37 @@ async fn run_pdf_export(
     })
     .await
     .map_err(|error| format!("The PDF image worker failed: {error}"))??;
+    let workspace = prepared.workspace;
+    let fallback_fonts = prepared.fallback_fonts;
     let _workspace_cleanup = WorkspaceCleanup(workspace.clone());
+
+    if let Some(review) = prepared.review {
+        emit_progress(
+            app,
+            job_id,
+            "running",
+            "font-review-preparing",
+            "Preparing highlighted font samples…",
+            PdfProgressValue::indeterminate(),
+        );
+        compile_typst(
+            app,
+            &workspace,
+            &font_dir,
+            &fallback_fonts,
+            "font-review.typ",
+            "font-review-{p}.svg",
+            &cancelled,
+        )
+        .await?;
+        let review_workspace = workspace.clone();
+        let review = tauri::async_runtime::spawn_blocking(move || {
+            font_review::read_review(&review_workspace, review)
+        })
+        .await
+        .map_err(|_| "The PDF font review worker failed.".to_string())??;
+        await_font_review(app, job_id, review, prepared.approval_choices, &cancelled).await?;
+    }
 
     emit_progress(
         app,
@@ -648,8 +780,68 @@ async fn run_pdf_export(
         PdfProgressValue::indeterminate(),
     );
 
-    let source_path = workspace.join("chapter.typ");
     let rendered_path = workspace.join("chapter.pdf");
+    compile_typst(
+        app,
+        &workspace,
+        &font_dir,
+        &fallback_fonts,
+        "chapter.typ",
+        "chapter.pdf",
+        &cancelled,
+    )
+    .await?;
+
+    emit_progress(
+        app,
+        job_id,
+        "running",
+        "saving",
+        "Saving the finished PDF…",
+        PdfProgressValue::determinate(0, 1, "steps"),
+    );
+    check_cancelled(&cancelled)?;
+    install_rendered_pdf(&rendered_path, &output_path)?;
+    Ok(())
+}
+
+async fn compile_typst(
+    app: &AppHandle,
+    workspace: &Path,
+    font_dir: &Path,
+    fallback_fonts: &[PathBuf],
+    source_name: &str,
+    rendered_name: &str,
+    cancelled: &AtomicBool,
+) -> Result<(), String> {
+    check_cancelled(cancelled)?;
+    let source_path = workspace.join(source_name);
+    let rendered_path = workspace.join(rendered_name);
+    let mut arguments: Vec<std::ffi::OsString> = vec![
+        "compile".into(),
+        "--root".into(),
+        workspace.as_os_str().to_owned(),
+        "--font-path".into(),
+        font_dir.as_os_str().to_owned(),
+        "--ignore-system-fonts".into(),
+        "--package-path".into(),
+        workspace.join("packages").into_os_string(),
+    ];
+    let mut font_directories = BTreeSet::new();
+    for path in fallback_fonts {
+        if !path.is_file() {
+            return Err(
+                "A selected fallback font is no longer installed. Please export again.".to_string(),
+            );
+        }
+        if let Some(directory) = path.parent() {
+            font_directories.insert(directory.to_path_buf());
+        }
+    }
+    for directory in font_directories {
+        arguments.extend(["--font-path".into(), directory.into_os_string()]);
+    }
+    arguments.extend([source_path.into_os_string(), rendered_path.into_os_string()]);
     let command =
         if cfg!(debug_assertions) {
             std::env::var_os("GNOSIS_TYPST_BIN")
@@ -663,18 +855,7 @@ async fn run_pdf_export(
                 .map_err(|error| format!("The bundled Typst compiler is unavailable: {error}"))?
         };
     let (mut receiver, child) = command
-        .args([
-            "compile".into(),
-            "--root".into(),
-            workspace.as_os_str().to_owned(),
-            "--font-path".into(),
-            font_dir.as_os_str().to_owned(),
-            "--ignore-system-fonts".into(),
-            "--package-path".into(),
-            workspace.join("packages").into_os_string(),
-            source_path.as_os_str().to_owned(),
-            rendered_path.as_os_str().to_owned(),
-        ])
+        .args(arguments)
         .spawn()
         .map_err(|error| format!("Could not start the bundled Typst compiler: {error}"))?;
     let mut child = Some(child);
@@ -710,17 +891,61 @@ async fn run_pdf_export(
         let details = String::from_utf8_lossy(&stderr);
         return Err(format_typst_error(&details));
     }
+    // Typst can exit successfully with an unknown family and render missing-glyph
+    // boxes. Never let a font-name mismatch turn approval into silent data loss.
+    if String::from_utf8_lossy(&stderr).contains("unknown font family:") {
+        return Err("A selected font could not be loaded by the PDF renderer. Try another installed font, or export as DOCX or HTML.".to_string());
+    }
 
-    emit_progress(
-        app,
-        job_id,
-        "running",
-        "saving",
-        "Saving the finished PDF…",
-        PdfProgressValue::determinate(0, 1, "steps"),
-    );
-    check_cancelled(&cancelled)?;
-    install_rendered_pdf(&rendered_path, &output_path)?;
+    Ok(())
+}
+
+async fn await_font_review(
+    app: &AppHandle,
+    job_id: &str,
+    review: font_review::FontReview,
+    choices: Vec<font_fallback::FontChoice>,
+    cancelled: &AtomicBool,
+) -> Result<(), String> {
+    let approved = Arc::new(AtomicBool::new(false));
+    pdf_font_reviews()
+        .lock()
+        .map_err(|_| "The PDF font review is unavailable.".to_string())?
+        .insert(
+            job_id.to_string(),
+            PendingFontReview {
+                review_id: review.review_id.clone(),
+                approved: approved.clone(),
+                choices,
+            },
+        );
+    app.emit(
+        PDF_EXPORT_EVENT,
+        PdfExportProgressPayload {
+            job_id: job_id.to_string(),
+            status: "font-review".into(),
+            stage: "font-review".into(),
+            message: "Review the fallback fonts before publishing.".into(),
+            downloaded_bytes: 0,
+            total_bytes: 0,
+            progress_current: 0,
+            progress_total: 0,
+            progress_unit: String::new(),
+            progress_indeterminate: false,
+            font_review: Some(review),
+        },
+    )
+    .map_err(|_| "Could not display the PDF font review.".to_string())?;
+    loop {
+        check_cancelled(cancelled)?;
+        if approved.load(Ordering::Acquire) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    if let Ok(mut reviews) = pdf_font_reviews().lock() {
+        reviews.remove(job_id);
+    }
     Ok(())
 }
 
@@ -781,7 +1006,9 @@ fn document_characters(document: &ExportDocument) -> BTreeSet<char> {
     characters.extend(document.title.chars());
     for block in &document.blocks {
         match block {
-            ExportBlock::Text { text, .. } | ExportBlock::Footnote { text, .. } => {
+            ExportBlock::Text { text, .. }
+            | ExportBlock::Attribution { text }
+            | ExportBlock::Footnote { text, .. } => {
                 for segment in inline_segments(text) {
                     characters.extend(segment.text.chars());
                 }
@@ -1148,19 +1375,27 @@ fn prepare_typst_workspace(
                         .unwrap_or_default(),
                     options.footnote_links_as_plain_text,
                 );
-                match normalize_editor_text_style_value(Some(text_style)).as_str() {
-                    "heading1" => source.push_str(&format!("= {inline}\n\n")),
-                    "heading2" => source.push_str(&format!("== {inline}\n\n")),
-                    "quote" | "blockquote" => source.push_str(&format!(
-                        "#quote(block: true)[#text(style: \"italic\")[{inline}]]\n\n"
-                    )),
-                    "centered" => source.push_str(&format!("#align(center)[{inline}]\n\n")),
-                    "indented" => source.push_str(&format!("#pad(left: 2em)[{inline}]\n\n")),
-                    _ if Some(block_index) == dropcap_index => {
-                        source.push_str(&format!("#gnosis-dropcap[{inline}]\n\n"))
-                    }
-                    _ => source.push_str(&format!("{inline}\n\n")),
+                let text_block = render_typst_text_block(
+                    text_style,
+                    &inline,
+                    Some(block_index) == dropcap_index,
+                );
+                if matches!(
+                    document.blocks.get(block_index + 1),
+                    Some(ExportBlock::Attribution { .. })
+                ) {
+                    source.push_str(&format!(
+                        "#block(sticky: true, breakable: true)[{text_block}]\n"
+                    ));
+                } else {
+                    source.push_str(&text_block);
                 }
+            }
+            ExportBlock::Attribution { text } => {
+                source.push_str(&format!(
+                    "#align(right)[#text(size: 0.9em)[{}]]\n\n",
+                    render_inline_typst(text, false)
+                ));
             }
             ExportBlock::Separator => {
                 source.push_str("#line(length: 100%, stroke: 0.5pt)\n#v(0.8em)\n")
@@ -1286,6 +1521,13 @@ fn dropcap_block_index(
     None
 }
 
+struct PreparedPdfWorkspace {
+    workspace: PathBuf,
+    review: Option<font_review::PreparedFontReview>,
+    fallback_fonts: Vec<PathBuf>,
+    approval_choices: Vec<font_fallback::FontChoice>,
+}
+
 fn prepare_pdf_workspace(
     app: &AppHandle,
     job_id: &str,
@@ -1293,17 +1535,88 @@ fn prepare_pdf_workspace(
     font_dir: &Path,
     options: &PdfWorkspacePreparationOptions<'_>,
     cancelled: &AtomicBool,
-) -> Result<PathBuf, String> {
-    validate_document_glyphs(document, font_dir)?;
+) -> Result<PreparedPdfWorkspace, String> {
     check_cancelled(cancelled)?;
     let workspace = pdf_workspace()?;
-    if let Err(error) =
-        prepare_typst_workspace(Some(app), job_id, &workspace, document, options, cancelled)
-    {
+    let result = (|| {
+        let approved = font_preferences::load(app)?;
+        let plan = font_fallback::resolve(
+            document,
+            font_dir,
+            options.footnote_links_as_plain_text,
+            &approved,
+            cancelled,
+        )?;
+        if !plan.missing.is_empty() {
+            report_font_coverage_gap(app, &plan, document);
+        }
+        plan.validate()?;
+        prepare_typst_workspace(Some(app), job_id, &workspace, document, options, cancelled)?;
+        let unapproved = plan.unapproved(&approved);
+        if !plan.fonts.is_empty() {
+            let chapter_path = workspace.join("chapter.typ");
+            let source = fs::read_to_string(&chapter_path)
+                .map_err(|_| "Could not prepare the PDF font choices.".to_string())?;
+            fs::write(&chapter_path, format!("{}{source}", plan.rules(false)))
+                .map_err(|_| "Could not prepare the PDF font choices.".to_string())?;
+        }
+        let review = if unapproved.fonts.is_empty() {
+            None
+        } else {
+            Some(font_review::prepare(
+                &workspace,
+                document,
+                options,
+                &plan,
+                &unapproved,
+            )?)
+        };
+        let fallback_fonts = plan.fonts.iter().map(|font| font.path.clone()).collect();
+        Ok(PreparedPdfWorkspace {
+            workspace: workspace.clone(),
+            review,
+            fallback_fonts,
+            approval_choices: unapproved.fonts.iter().map(|font| font.choice()).collect(),
+        })
+    })();
+    if result.is_err() {
         let _ = fs::remove_dir_all(&workspace);
-        return Err(error);
     }
-    Ok(workspace)
+    result
+}
+
+fn report_font_coverage_gap(
+    app: &AppHandle,
+    plan: &font_fallback::FontFallbackPlan,
+    document: &ExportDocument,
+) {
+    static REPORTED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    // Only the in-process dedup key includes codepoints; no text, raw characters,
+    // codepoint sequence, font paths, or excerpts cross the telemetry boundary.
+    let signature = format!(
+        "{:x}",
+        Sha256::digest(plan.missing.iter().collect::<String>().as_bytes())
+    );
+    if let Ok(mut reported) = REPORTED.get_or_init(|| Mutex::new(HashSet::new())).lock() {
+        if reported.len() >= 256 || !reported.insert(signature) {
+            return;
+        }
+        let _ = app.emit("chapter-pdf-font-coverage-gap", plan.diagnostic(document));
+    }
+}
+
+fn render_typst_text_block(style: &str, inline: &str, dropcap: bool) -> String {
+    match normalize_editor_text_style_value(Some(style)).as_str() {
+        "heading1" => format!("= {inline}\n\n"),
+        "heading2" => format!("== {inline}\n\n"),
+        "quote" | "blockquote" => {
+            format!("#quote(block: true)[#text(style: \"italic\")[{inline}]]\n\n")
+        }
+        "centered" => format!("#align(center)[{inline}]\n\n"),
+        "indented" => format!("#pad(left: 2em)[{inline}]\n\n"),
+        _ if dropcap => format!("#gnosis-dropcap[{inline}]\n\n"),
+        _ => format!("{inline}\n\n"),
+    }
 }
 
 fn prepare_typst_images(
@@ -1782,6 +2095,32 @@ fn latin_body(language_code: &str) -> bool {
         || code.starts_with("fa"))
 }
 
+fn heading_font_families(document: &ExportDocument) -> Vec<&'static str> {
+    if latin_body(&document.language_code) {
+        vec!["Alegreya", "EB Garamond", "Cormorant Garamond Gnosis"]
+    } else {
+        let code = document
+            .language_code
+            .to_ascii_lowercase()
+            .replace('_', "-");
+        let family = if code.starts_with("ja") {
+            "Shippori Mincho"
+        } else if code.starts_with("ko") {
+            "Noto Serif KR"
+        } else if code.starts_with("zh-hant")
+            || code.starts_with("zh-tw")
+            || code.starts_with("zh-hk")
+        {
+            "Noto Serif TC"
+        } else if code.starts_with("zh") {
+            "Noto Serif SC"
+        } else {
+            "Noto Naskh Arabic"
+        };
+        vec![family, "EB Garamond"]
+    }
+}
+
 fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
     let code = document
         .language_code
@@ -1827,11 +2166,7 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
     // Kindred style: Alegreya leads titles and body headings on Latin-script
     // exports, with the body's own fallbacks behind it. Other scripts keep
     // their body families for headings.
-    let heading_families = if latin {
-        vec!["Alegreya", "EB Garamond", "Cormorant Garamond Gnosis"]
-    } else {
-        families.clone()
-    };
+    let heading_families = heading_font_families(document);
     let heading_family_list = heading_families
         .iter()
         .map(|family| typst_string(family))
@@ -2103,40 +2438,6 @@ fn render_styled_typst_text(text: &str, style: &InlineStyleState, show_link_urls
     rendered
 }
 
-fn validate_document_glyphs(document: &ExportDocument, font_dir: &Path) -> Result<(), String> {
-    let font_data = required_fonts_for_document(document)
-        .into_iter()
-        .map(|asset| {
-            fs::read(font_dir.join(asset.file_name))
-                .map_err(|_| "A required PDF font is missing. Try the export again.".to_string())
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let missing = document_characters(document)
-        .into_iter()
-        .filter(|ch| !ch.is_control() && !ch.is_whitespace())
-        .filter(|ch| {
-            !font_data.iter().any(|data| {
-                ttf_parser::Face::parse(data, 0)
-                    .ok()
-                    .and_then(|face| face.glyph_index(*ch))
-                    .is_some()
-            })
-        })
-        .take(8)
-        .collect::<Vec<_>>();
-    if missing.is_empty() {
-        return Ok(());
-    }
-    let labels = missing
-        .iter()
-        .map(|ch| format!("{ch} (U+{:04X})", *ch as u32))
-        .collect::<Vec<_>>()
-        .join(", ");
-    Err(format!(
-        "The selected PDF fonts do not contain every character in this chapter: {labels}. Use DOCX or HTML for this document for now."
-    ))
-}
-
 fn typst_string(value: &str) -> String {
     let escaped = value
         .replace('\\', "\\\\")
@@ -2343,6 +2644,7 @@ fn emit_progress(
             progress_total: progress.total,
             progress_unit: progress.unit.to_string(),
             progress_indeterminate: progress.indeterminate,
+            font_review: None,
         },
     );
 }
@@ -2350,6 +2652,132 @@ fn emit_progress(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_font_control_only_appears_for_exported_coverage_gaps() {
+        let workspace = pdf_workspace().unwrap();
+        let _cleanup = WorkspaceCleanup(workspace.clone());
+        let mut document = ExportDocument {
+            title: "Title".into(),
+            language_code: "vi".into(),
+            blocks: vec![ExportBlock::Text {
+                text_style: "paragraph".into(),
+                text: "Plain text".into(),
+            }],
+        };
+        let bytes = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("resources/fonts/CormorantGaramondGnosis-Roman.ttf"),
+        )
+        .unwrap();
+        for asset in required_fonts_for_document(&document) {
+            fs::write(workspace.join(asset.file_name), &bytes).unwrap();
+        }
+        let approved: Vec<font_fallback::FontChoice> = serde_json::from_value(serde_json::json!([{
+            "family": "Noto Sans EgyptHiero", "style": "normal", "weight": 400, "stretchPercent": 100.0
+        }])).unwrap();
+        assert!(
+            relevant_saved_fonts(&document, &workspace, false, true, &approved)
+                .unwrap()
+                .is_empty()
+        );
+        document.blocks.push(ExportBlock::Text {
+            text_style: "custom_html".into(),
+            text: "<p>\u{13153}</p>".into(),
+        });
+        assert_eq!(
+            relevant_saved_fonts(&document, &workspace, false, true, &approved)
+                .unwrap()
+                .len(),
+            1
+        );
+        let omitted = apply_print_custom_html_policy(&document, true);
+        assert!(
+            relevant_saved_fonts(&omitted, &workspace, false, true, &approved)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            relevant_saved_fonts(&document, &workspace, false, false, &approved)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            relevant_saved_fonts(&document, &workspace, false, true, &[])
+                .unwrap()
+                .is_empty()
+        );
+        let mut document = omitted;
+        document.blocks.push(ExportBlock::Footnote {
+            number: 1,
+            marker: 1,
+            anchor_block: Some(0),
+            text: "<a href=\"https://example.test/\u{13153}\">Reference</a>".into(),
+        });
+        assert!(
+            relevant_saved_fonts(&document, &workspace, false, true, &approved)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            relevant_saved_fonts(&document, &workspace, true, true, &approved)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn font_approval_requires_the_current_review_and_job_cleanup_removes_it() {
+        let job_id = Uuid::now_v7().to_string();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        pdf_jobs()
+            .lock()
+            .unwrap()
+            .insert(job_id.clone(), cancelled.clone());
+        let approved = Arc::new(AtomicBool::new(false));
+        pdf_font_reviews().lock().unwrap().insert(
+            job_id.clone(),
+            PendingFontReview {
+                review_id: "current-review".into(),
+                approved: approved.clone(),
+                choices: Vec::new(),
+            },
+        );
+        assert!(
+            !approve_pending_font_review(&job_id, "stale-review", |_| panic!(
+                "Stale approvals must not be saved"
+            ))
+            .unwrap()
+        );
+        assert!(!approved.load(Ordering::Acquire));
+        assert!(
+            approve_pending_font_review(
+                &job_id,
+                "current-review",
+                |_| Err("Could not save".into())
+            )
+            .is_err()
+        );
+        assert!(
+            !approved.load(Ordering::Acquire),
+            "Saving must succeed before publication resumes"
+        );
+        assert!(approve_pending_font_review(&job_id, "current-review", |_| Ok(())).unwrap());
+        assert!(approved.load(Ordering::Acquire));
+        let registration = PdfJobRegistration {
+            job_id: job_id.clone(),
+            cancelled,
+        };
+        drop(registration);
+        assert!(
+            !approve_pending_font_review(&job_id, "current-review", |_| panic!(
+                "Closed reviews must not save a preference"
+            ))
+            .unwrap()
+        );
+        assert!(!pdf_jobs().lock().unwrap().contains_key(&job_id));
+    }
 
     fn test_image_cache_scope(chapter_id: &str) -> PdfImageCacheScope {
         PdfImageCacheScope {
@@ -2791,6 +3219,14 @@ mod tests {
     }
 
     #[test]
+    fn quote_body_retains_normal_size_and_alignment() {
+        let quote = render_typst_text_block("quote", "Quotation", false);
+        assert!(quote.contains("#quote(block: true)[#text(style: \"italic\")[Quotation]]"));
+        assert!(!quote.contains("size:"));
+        assert!(!quote.contains("#align"));
+    }
+
+    #[test]
     fn typst_strings_escape_code_boundaries() {
         assert_eq!(typst_string("a\\b\"c\nd"), "\"a\\\\b\\\"c\\nd\"");
     }
@@ -3148,6 +3584,11 @@ mod tests {
                     // are pulled in by the content scan, not the declared language.
                     text: "Ông 伏羲, danh xưng אֱלֹהִים, và ॐ भूर्भुवः स्वः.".to_string(),
                 },
+                ExportBlock::Text {
+                    text_style: "quote".to_string(),
+                    text: "A quoted passage".to_string(),
+                },
+                ExportBlock::Attribution { text: "Quote Author".to_string() },
                 ExportBlock::Text {
                     text_style: "centered".to_string(),
                     text: "Centered text".to_string(),

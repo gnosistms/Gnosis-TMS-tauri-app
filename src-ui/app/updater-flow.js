@@ -1,7 +1,7 @@
 import { invoke, listen } from "./runtime.js";
 import { clearNoticeBadgeIfText, showNoticeBadge } from "./status-feedback.js";
 import { state } from "./state.js";
-import { confirmsKnownUpdateInstalled, storeKnownAppUpdate } from "./app-update-storage.js";
+import { confirmsKnownUpdateInstalled, isAppVersionAtLeast, storeKnownAppUpdate } from "./app-update-storage.js";
 
 const APP_UPDATE_REQUIRED_PREFIX = "APP_UPDATE_REQUIRED:";
 const APP_UPDATE_DOWNLOAD_PROGRESS_EVENT = "app-update-download-progress";
@@ -47,6 +47,8 @@ function supersedeUpdateCheck() {
 
 function requestedUpdateVersion() {
   const version = String(state.appUpdate.version ?? "").trim();
+  const minimum = state.appUpdate.requirement?.requiredVersion;
+  if (minimum && !isAppVersionAtLeast(version, minimum)) return minimum;
   return version || null;
 }
 
@@ -157,26 +159,26 @@ export function requireAppUpdate(requirement, render) {
   if (!normalized) {
     return false;
   }
+  if (isAppVersionAtLeast(normalized.currentVersion, normalized.requiredVersion)) return false;
+  const existing = state.appUpdate.requirement;
+  if (existing && isAppVersionAtLeast(existing.requiredVersion, normalized.requiredVersion)) {
+    return true;
+  }
 
   supersedeUpdateCheck();
-
-  try {
-    document.activeElement?.blur?.();
-  } catch {}
+  const busy = updateBusy() || state.appUpdate.status === "downloaded";
 
   state.appUpdate = {
     ...state.appUpdate,
-    status:
-      updateBusy() || state.appUpdate.status === "downloaded"
-        ? state.appUpdate.status
-        : "available",
+    status: busy ? state.appUpdate.status : "idle",
     error: "",
     message: normalized.message,
-    available: true,
-    required: true,
-    version: normalized.requiredVersion,
+    available: busy && state.appUpdate.available,
+    required: false,
+    requirement: normalized,
+    version: busy ? state.appUpdate.version : normalized.requiredVersion,
     currentVersion: normalized.currentVersion,
-    promptVisible: true,
+    promptVisible: busy && state.appUpdate.promptVisible,
     dismissedVersion: null,
     downloadPercent: null,
     downloadedBytes: 0,
@@ -184,6 +186,7 @@ export function requireAppUpdate(requirement, render) {
   };
   storeKnownAppUpdate(state.appUpdate);
   render?.();
+  if (!busy) void checkForAppUpdate(render, { silent: true });
   return true;
 }
 
@@ -231,47 +234,61 @@ export async function checkForAppUpdate(render, options = {}) {
   const silent = options.silent === true;
   const checkId = ++latestUpdateCheckId;
   const dismissedVersion = state.appUpdate.dismissedVersion ?? null;
+  const requirement = state.appUpdate.requirement;
+  if (requirement) {
+    state.appUpdate.required = false;
+    state.appUpdate.available = false;
+    state.appUpdate.promptVisible = false;
+  }
   state.appUpdate.status = "checking";
+  if (requirement) render?.();
   if (!silent) {
     state.appUpdate.error = "";
     showNoticeBadge(CHECKING_FOR_UPDATES_MESSAGE, render, null);
-    render();
+    render?.();
   }
 
   try {
-    const update = await invoke("check_for_app_update");
+    const update = await invoke("check_for_app_update", {
+      requestedVersion: requirement?.requiredVersion ?? null,
+    });
     if (checkId !== latestUpdateCheckId) {
       return;
     }
-    const requiredUpdateActive = state.appUpdate.required === true
-      && !confirmsKnownUpdateInstalled(update, state.appUpdate);
+    const pendingRequirement = requirement
+      && !isAppVersionAtLeast(update.currentVersion, requirement.requiredVersion)
+      ? requirement : null;
+    const available = update.available === true && (!pendingRequirement
+      || isAppVersionAtLeast(update.version, pendingRequirement.requiredVersion));
+    const requiredUpdateActive = Boolean(pendingRequirement && available);
     const promptVisible = shouldShowUpdatePrompt(update, options, dismissedVersion);
     const version = update.version ?? null;
     const message =
       typeof update.message === "string" && update.message.trim()
         ? update.message.trim()
         : "";
-    if (update.available !== true && state.appUpdate.available
+    if (!requirement && update.available !== true && state.appUpdate.available
         && !confirmsKnownUpdateInstalled(update, state.appUpdate)) {
       state.appUpdate.status = "available";
       if (!requiredUpdateActive) state.appUpdate.message = message;
-      render();
+      render?.();
       if (!silent) showNoticeBadge(message || "The known update has not been installed yet.", render, 3200);
       return;
     }
+    if (requiredUpdateActive) {
+      try { document.activeElement?.blur?.(); } catch {}
+    }
     state.appUpdate = {
-      status: update.available ? "available" : "idle",
+      status: available ? "available" : "idle",
       error: "",
-      message: requiredUpdateActive === true ? state.appUpdate.message : message,
-      available: requiredUpdateActive === true ? true : update.available === true,
+      message: requiredUpdateActive ? pendingRequirement.message : message,
+      available,
       required: requiredUpdateActive,
-      version: requiredUpdateActive === true ? state.appUpdate.version : version,
-      currentVersion:
-        requiredUpdateActive === true
-          ? state.appUpdate.currentVersion ?? update.currentVersion ?? null
-          : update.currentVersion ?? null,
+      requirement: pendingRequirement,
+      version: available ? version : pendingRequirement?.requiredVersion ?? null,
+      currentVersion: update.currentVersion ?? state.appUpdate.currentVersion ?? null,
       body: update.body ?? null,
-      promptVisible: requiredUpdateActive === true ? true : promptVisible,
+      promptVisible: available && (requiredUpdateActive || promptVisible),
       dismissedVersion:
         requiredUpdateActive === true
           ? null
@@ -283,12 +300,14 @@ export async function checkForAppUpdate(render, options = {}) {
       totalBytes: null,
     };
     storeKnownAppUpdate(state.appUpdate);
-    render();
+    render?.();
 
     if (requiredUpdateActive === true) {
       showNoticeBadge(state.appUpdate.message || updateMessage(state.appUpdate.version), render, null);
-    } else if (update.available === true) {
+    } else if (available) {
       showNoticeBadge(updateMessage(update.version), render, null);
+    } else if (pendingRequirement) {
+      showNoticeBadge(message || `Sync needs Gnosis TMS ${pendingRequirement.requiredVersion}. A compatible update is not available yet. You can keep working locally.`, render, 5000);
     } else if (!silent) {
       showNoticeBadge(message || upToDateMessage(update.currentVersion), render, 2200);
     }
@@ -298,10 +317,16 @@ export async function checkForAppUpdate(render, options = {}) {
     }
     state.appUpdate.status = "error";
     state.appUpdate.error = error?.message ?? String(error);
+    if (requirement) {
+      state.appUpdate.required = false;
+      state.appUpdate.available = false;
+      state.appUpdate.promptVisible = false;
+      storeKnownAppUpdate(state.appUpdate);
+    }
     if (state.appUpdate.required !== true) {
       state.appUpdate.message = "";
     }
-    render();
+    render?.();
     if (!silent) {
       showNoticeBadge(state.appUpdate.error || "Could not check for updates.", render, 3200);
     }
@@ -310,6 +335,10 @@ export async function checkForAppUpdate(render, options = {}) {
 
 export async function installAppUpdate(render) {
   if (!updatesSupported() || updateBusy()) {
+    return;
+  }
+  if (!state.appUpdate.available) {
+    await checkForAppUpdate(render);
     return;
   }
 
@@ -331,6 +360,8 @@ export async function installAppUpdate(render) {
       state.appUpdate.status = state.appUpdate.error.startsWith("APP_UPDATE_DOWNLOAD_REQUIRED:")
         ? "installError" : "downloaded";
       state.appUpdate.error = state.appUpdate.error.replace(/^APP_UPDATE_DOWNLOAD_REQUIRED:/, "");
+      state.appUpdate.required = false;
+      storeKnownAppUpdate(state.appUpdate);
       render();
     }
     return;
@@ -356,9 +387,11 @@ export async function installAppUpdate(render) {
     render();
   } catch (error) {
     state.appUpdate.status = "installError";
+    state.appUpdate.required = false;
     state.appUpdate.error = error?.message ?? String(error);
     state.appUpdate.promptVisible = true;
     state.appUpdate.downloadPercent = null;
+    storeKnownAppUpdate(state.appUpdate);
     render();
   }
 }

@@ -48,11 +48,18 @@ test("recognizes provider-key rejection failures from team AI commands", () => {
   );
 });
 
-test("skips the expected session-expired path", () => {
-  assert.equal(
-    resolveCommandFailureReport("any_command", new Error("AUTH_REQUIRED:Your GitHub session expired.")),
-    null,
-  );
+test("skips expected session-expired and native login-changed paths", () => {
+  for (const message of [
+    "AUTH_REQUIRED:Your GitHub session expired.",
+    "AUTH_SESSION_CHANGED:The saved GitHub login has changed.",
+  ]) {
+    assert.equal(resolveCommandFailureReport("any_command", new Error(message)), null);
+  }
+});
+
+test("intentional alignment cancellation is expected control flow", () => {
+  assert.equal(resolveCommandFailureReport("preflight_aligned_translation_to_gtms_chapter", "ALIGNMENT_CANCELED: Alignment canceled."), null);
+  assert.equal(resolveCommandFailureReport("apply_aligned_translation_to_gtms_chapter", "ALIGNMENT_CANCELED: Alignment canceled."), null);
 });
 
 test("expected glossary/QA validation stays visible to callers without becoming telemetry", () => {
@@ -255,4 +262,50 @@ test("reports AI requests the provider dropped after a minute", () => {
     const report = resolveCommandFailureReport("run_ai_translation_batch", error);
     assert.equal(report?.error, error, provider);
   }
+});
+
+test("access diagnostics preserve the issue message and expose only bounded categories", () => {
+  const message = "Could not verify write access for this team. Refresh team access and try again.";
+  for (const category of ["snapshot_storage", "session_storage", "membership_unverified", "broker_response_parse"]) {
+    const result = resolveCommandFailureReport("update_gtms_editor_row_fields", `ACCESS_VERIFICATION_FAILED:${JSON.stringify({ message, category })}`);
+    assert.equal(result.error, message);
+    assert.deepEqual(result.options, { tags: { access_failure: category } });
+  }
+  const result = resolveCommandFailureReport("update_gtms_editor_row_text_style", 'ACCESS_VERIFICATION_FAILED:{"category":"secret response content","message":"private path"}');
+  assert.equal(result.error, message);
+  assert.equal(result.options.tags.access_failure, "unexpected");
+  assert.equal(resolveCommandFailureReport("cmd", "ACCESS_VERIFICATION_FAILED:malformed").error, message);
+});
+
+test("classified access transport and permission failures follow operational telemetry policy", () => {
+  for (const category of ["broker_transport", "broker_http_403"]) {
+    assert.equal(resolveCommandFailureReport("update_gtms_editor_row_fields", `ACCESS_VERIFICATION_FAILED:${JSON.stringify({ category })}`), null);
+  }
+  const result = resolveCommandFailureReport("update_gtms_editor_row_fields", 'ACCESS_VERIFICATION_FAILED:{"category":"broker_http_503"}');
+  assert.equal(result.options.level, "warning");
+  assert.equal(result.options.tags.access_failure, "broker_http_503");
+});
+
+test("reports AI safety-filter declines as tagged warnings", () => {
+  const withCategory = resolveCommandFailureReport(
+    "run_ai_translation_batch",
+    new Error(
+      "Claude's safety filter declined this request (category: bio). "
+        + "Try again, or choose a different AI model for this text.",
+    ),
+  );
+  assert.deepEqual(withCategory, {
+    error: "Claude safety filter declined a request",
+    options: {
+      level: "warning",
+      fingerprint: ["command-failure", "run_ai_translation_batch", "ai-safety-refusal"],
+      tags: { ai_refusal_category: "bio" },
+    },
+  });
+
+  const withoutCategory = resolveCommandFailureReport(
+    "run_ai_review",
+    "Claude's safety filter declined this request. Try again, or choose a different AI model for this text.",
+  );
+  assert.equal(withoutCategory.options.tags.ai_refusal_category, "unspecified");
 });
