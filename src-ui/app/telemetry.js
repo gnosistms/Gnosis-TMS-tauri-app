@@ -20,6 +20,12 @@ import {
 
 const CRASH_BUFFER_LIMIT = 20;
 
+// Hint passed with every breadcrumb addTelemetryBreadcrumb records. Sentry runs ALL
+// breadcrumbs — manual ones included — through `beforeBreadcrumb`, handing it the hint
+// as given. Hints are never serialized, so this marker never leaves the device, and no
+// SDK-generated breadcrumb can carry this module-private object.
+const APP_BREADCRUMB_HINT = Object.freeze({ source: "gnosis-tms" });
+
 let sentry = null; // the imported @sentry/browser namespace
 let initialized = false;
 let handlersInstalled = false;
@@ -122,6 +128,15 @@ export function installTelemetryCrashHandlers() {
   });
 }
 
+/**
+ * Sentry `beforeBreadcrumb` hook: keep the app's own breadcrumbs (recorded by
+ * addTelemetryBreadcrumb) and drop everything else, so an automatic breadcrumb is
+ * refused even if some integration starts producing them.
+ */
+export function keepOnlyAppBreadcrumbs(breadcrumb, hint) {
+  return hint === APP_BREADCRUMB_HINT ? breadcrumb : null;
+}
+
 function resolveDsn() {
   // Injected by Vite `define`; absent under `node --test` (typeof guard avoids a throw).
   return typeof __GNOSIS_SENTRY_DSN__ !== "undefined" ? String(__GNOSIS_SENTRY_DSN__).trim() : "";
@@ -174,7 +189,9 @@ export async function initTelemetry() {
     // no httpContext (URLs/headers), no auto global handlers (we capture crashes ourselves).
     defaultIntegrations: false,
     integrations: [],
-    beforeBreadcrumb: () => null, // belt-and-suspenders: never record an auto breadcrumb
+    // Belt-and-suspenders: never record an auto breadcrumb. This must still let the app's
+    // own breadcrumbs through — a filter returning null for everything drops them too.
+    beforeBreadcrumb: keepOnlyAppBreadcrumbs,
     beforeSend: scrubEvent,
   }));
 
@@ -215,6 +232,9 @@ export function refreshTelemetryState() {
 
   if (explicitlyOptedOut) {
     crashBuffer.length = 0; // discard — an explicit opt-out always wins
+    // Breadcrumbs live on Sentry's global isolation scope and would survive close(), so
+    // a later opt-in in this session would attach them to its events. Drop them too.
+    safe(() => sentry.getIsolationScope?.().clearBreadcrumbs());
     safe(() => sentry.close?.());
     sentry = null;
     initialized = false;
@@ -281,6 +301,24 @@ export function reportPdfFontCoverageGap(payload = {}) {
 }
 
 /**
+ * Build the breadcrumb addTelemetryBreadcrumb records, plus the hint that lets it pass
+ * keepOnlyAppBreadcrumbs. Pass both to `sentry.addBreadcrumb(breadcrumb, hint)`.
+ */
+export function buildAppBreadcrumb(payload = {}) {
+  const operation = String(payload?.operation ?? "unknown");
+  const reason = String(payload?.reason ?? "unknown");
+  return {
+    breadcrumb: {
+      category: operation,
+      message: scrubString(`${operation}: ${reason}`, COMMAND_ERROR_MAX_LENGTH),
+      level: "warning",
+      data: { reason },
+    },
+    hint: APP_BREADCRUMB_HINT,
+  };
+}
+
+/**
  * Preserve an operational degradation as context on a later actionable event without
  * creating a standalone unresolved issue. Payloads remain stable operation/reason
  * strings so breadcrumbs cannot carry document content or backend error text.
@@ -290,13 +328,7 @@ export function addTelemetryBreadcrumb(payload = {}) {
     return;
   }
   safe(() => {
-    const operation = String(payload?.operation ?? "unknown");
-    const reason = String(payload?.reason ?? "unknown");
-    sentry.addBreadcrumb({
-      category: operation,
-      message: scrubString(`${operation}: ${reason}`, COMMAND_ERROR_MAX_LENGTH),
-      level: "warning",
-      data: { reason },
-    });
+    const { breadcrumb, hint } = buildAppBreadcrumb(payload);
+    sentry.addBreadcrumb(breadcrumb, hint);
   });
 }
