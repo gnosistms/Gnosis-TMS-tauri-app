@@ -551,6 +551,26 @@ mod tests {
     }
 
     #[test]
+    fn blank_cues_keep_exact_overlap_and_insertion_assignments() {
+        let rows = vec![row(0, 0, 1000), row(1, 1000, 2000)];
+        let result = build_subtitle_plan(
+            &rows,
+            "es",
+            &[cue(0, 1000, ""), cue(1100, 1900, ""), cue(3000, 4000, "")],
+            "test".into(),
+            "vi".into(),
+            "vi".into(),
+            true,
+        )
+        .unwrap();
+        assert_eq!(result.application.row_texts.matched_rows["r0"], "");
+        assert_eq!(result.application.row_texts.matched_rows["r1"], "");
+        assert_eq!(result.application.row_texts.unmatched_targets.len(), 1);
+        assert_eq!(result.application.inserted_timings[&3].start_ms, 3000);
+        assert!(meaning::sample_pairs(&result.overlap_pairs).is_empty());
+    }
+
+    #[test]
     fn three_rejected_pairs_are_allowed_but_four_require_the_final_warning() {
         for count in [0, 3, 4, 20] {
             let rejected = (0..count)

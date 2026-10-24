@@ -112,6 +112,7 @@ export function renderHistoryPane(editorChapter, rows, languages) {
         ...activeSection,
         footnote: activeSection?.footnote ?? "",
         imageCaption: activeSection?.imageCaption ?? "",
+        attribution: activeSection?.attribution ?? "",
         image: activeSection?.image ?? null,
         textStyle: activeRow?.textStyle ?? "paragraph",
       }

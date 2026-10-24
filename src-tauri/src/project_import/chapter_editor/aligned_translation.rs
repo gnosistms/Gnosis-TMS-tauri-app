@@ -3972,6 +3972,7 @@ mod tests {
                         StoredFieldValue {
                             plain_text: (*plain_text).to_string(),
                             footnote: String::new(),
+                            attribution: String::new(),
                             image_caption: String::new(),
                             image: None,
                             editor_flags: StoredFieldEditorFlags::default(),

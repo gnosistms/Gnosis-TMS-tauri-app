@@ -135,8 +135,8 @@ use self::shared::{
     ensure_editor_field_object_defaults, load_editor_rows, load_project_chapter_summaries,
     load_word_counts, normalize_editor_footnote_value, normalize_editor_image_caption_value,
     normalize_editor_text_style_value, refresh_cached_chapter_source_word_count,
-    row_fields_object_mut, row_footnote_map, row_image_caption_map, row_object_mut,
-    row_plain_text_map, row_text_style, sanitize_chapter_languages,
+    row_attribution_map, row_fields_object_mut, row_footnote_map, row_image_caption_map,
+    row_object_mut, row_plain_text_map, row_text_style, sanitize_chapter_languages,
     write_row_files_and_commit_with_removals, write_row_files_and_commit_with_removals_locked,
 };
 pub(crate) use self::team_copy::{start_team_chapter_copy, TeamChapterCopyInput};
@@ -301,6 +301,8 @@ pub(crate) struct UpdateEditorRowFieldsInput {
     footnotes: BTreeMap<String, String>,
     #[serde(default)]
     image_captions: BTreeMap<String, String>,
+    #[serde(default)]
+    attributions: BTreeMap<String, String>,
     // Image conflicts are only resolved through this command when an image URL
     // conflict is being finalized; otherwise these stay empty and images are
     // left untouched. Each value is `null` to clear the image.
@@ -315,6 +317,8 @@ pub(crate) struct UpdateEditorRowFieldsInput {
     base_footnotes: BTreeMap<String, String>,
     #[serde(default)]
     base_image_captions: BTreeMap<String, String>,
+    #[serde(default)]
+    base_attributions: BTreeMap<String, String>,
     #[serde(default)]
     base_images: BTreeMap<String, Option<EditorFieldImageInput>>,
     #[serde(default)]
@@ -346,6 +350,8 @@ pub(crate) struct UpdateEditorRowFieldsBatchRowInput {
     #[serde(default)]
     base_image_captions: Option<BTreeMap<String, String>>,
     #[serde(default)]
+    base_attributions: Option<BTreeMap<String, String>>,
+    #[serde(default)]
     field_flags: BTreeMap<String, BTreeMap<String, bool>>,
     #[serde(default)]
     lifecycle_state: Option<String>,
@@ -355,6 +361,8 @@ pub(crate) struct UpdateEditorRowFieldsBatchRowInput {
     footnotes: BTreeMap<String, String>,
     #[serde(default)]
     image_captions: BTreeMap<String, String>,
+    #[serde(default)]
+    attributions: BTreeMap<String, String>,
     #[serde(default)]
     timings: BTreeMap<String, EditorFieldTimingInput>,
     /// Language codes whose stored image (and any uploaded image file) should be removed.
@@ -648,6 +656,9 @@ pub(crate) struct ApplyEditorAiReviewResultsBatchResponse {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UpdateEditorRowTextStyleResponse {
+    word_counts: BTreeMap<String, usize>,
+    fields: BTreeMap<String, String>,
+    attributions: BTreeMap<String, String>,
     row_id: String,
     text_style: String,
     last_update: Option<EditorRowVersionMetadata>,
@@ -742,6 +753,8 @@ pub(crate) struct EditorFieldHistoryEntry {
     plain_text: String,
     footnote: String,
     image_caption: String,
+    #[serde(default)]
+    attribution: String,
     image: Option<EditorFieldImage>,
     text_style: String,
     reviewed: bool,
@@ -763,11 +776,15 @@ pub(crate) struct RestoreEditorFieldHistoryInput {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RestoreEditorFieldHistoryResponse {
+    fields: BTreeMap<String, String>,
+    attributions: BTreeMap<String, String>,
     row_id: String,
     language_code: String,
     plain_text: String,
     footnote: String,
     image_caption: String,
+    #[serde(default)]
+    attribution: String,
     image: Option<EditorFieldImage>,
     text_style: String,
     reviewed: bool,
@@ -840,6 +857,8 @@ struct EditorRow {
     fields: BTreeMap<String, String>,
     footnotes: BTreeMap<String, String>,
     image_captions: BTreeMap<String, String>,
+    #[serde(default)]
+    attributions: BTreeMap<String, String>,
     images: BTreeMap<String, EditorFieldImage>,
     field_states: BTreeMap<String, EditorFieldState>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -949,6 +968,8 @@ pub(crate) struct SaveEditorRowWithConcurrencyResponse {
     base_fields: BTreeMap<String, String>,
     base_footnotes: BTreeMap<String, String>,
     base_image_captions: BTreeMap<String, String>,
+    #[serde(default)]
+    base_attributions: BTreeMap<String, String>,
     conflict_remote_version: Option<EditorRowVersionMetadata>,
     chapter_base_commit_sha: Option<String>,
 }
@@ -1138,6 +1159,8 @@ struct StoredFieldValue {
     footnote: String,
     #[serde(default)]
     image_caption: String,
+    #[serde(default)]
+    attribution: String,
     #[serde(default)]
     image: Option<StoredFieldImage>,
     #[serde(default)]

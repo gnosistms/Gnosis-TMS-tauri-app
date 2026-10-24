@@ -26,6 +26,7 @@ import {
   saveEditorConflictResolution as saveEditorConflictResolutionFlow,
   updateEditorConflictResolutionFinalFootnote as updateEditorConflictResolutionFinalFootnoteFlow,
   updateEditorConflictResolutionFinalImageCaption as updateEditorConflictResolutionFinalImageCaptionFlow,
+  updateEditorConflictResolutionFinalAttribution as updateEditorConflictResolutionFinalAttributionFlow,
   updateEditorConflictResolutionFinalImageUrl as updateEditorConflictResolutionFinalImageUrlFlow,
   updateEditorConflictResolutionFinalText as updateEditorConflictResolutionFinalTextFlow,
 } from "./editor-conflict-resolution-flow.js";
@@ -674,6 +675,10 @@ export function updateEditorConflictResolutionFinalText(nextValue) {
 
 export function updateEditorConflictResolutionFinalFootnote(nextValue) {
   updateEditorConflictResolutionFinalFootnoteFlow(nextValue);
+}
+
+export function updateEditorConflictResolutionFinalAttribution(nextValue) {
+  updateEditorConflictResolutionFinalAttributionFlow(nextValue);
 }
 
 export function updateEditorConflictResolutionFinalImageCaption(nextValue) {

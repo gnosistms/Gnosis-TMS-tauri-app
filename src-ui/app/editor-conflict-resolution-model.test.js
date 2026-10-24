@@ -172,12 +172,14 @@ test("buildEditorConflictResolutionVersionSelection returns the chosen side's te
     finalText: "Hola",
     finalFootnote: "Remote note",
     finalImageCaption: "",
+    finalAttribution: "",
     finalImageUrl: "",
   });
   assert.deepEqual(buildEditorConflictResolutionVersionSelection(modal, "local"), {
     finalText: "Hola",
     finalFootnote: "Local note",
     finalImageCaption: "",
+    finalAttribution: "",
     finalImageUrl: "",
   });
 });

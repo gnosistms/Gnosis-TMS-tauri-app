@@ -233,7 +233,7 @@ function textStyleChangeClass(language, textStyle) {
 }
 
 function renderRowTextStyleButtons(row, language) {
-  if (row?.canEdit !== true || language?.canEdit !== true) {
+  if (row?.canEdit !== true || language?.canEdit !== true || language?.showTiming === true) {
     return "";
   }
   const selectedTextStyle = normalizeEditorRowTextStyle(row?.textStyle);
@@ -934,8 +934,25 @@ function renderLanguageAttachments(row, language) {
   return `${language.hasVisibleFootnote ? renderEditorFootnoteField(row, language) : ""}${renderEditorLanguageImage(row, language)}`;
 }
 
+function renderQuoteAttribution(row, language) {
+  if (normalizeEditorRowTextStyle(row?.textStyle) !== "quote" || language.showTiming === true) return "";
+  const disabled = row.canEdit !== true || language.canEdit !== true || language.isAiTranslating === true;
+  const attribution = String(language.attribution ?? "");
+  if (disabled && !attribution.trim()) return "";
+  return `<label class="translation-language-panel__attribution">
+    <span class="translation-language-panel__attribution-label">Attribution</span>
+    <span class="translation-language-panel__attribution-prompt" aria-hidden="true">Click here to enter attribution.</span>
+    <textarea class="translation-language-panel__field translation-language-panel__field--attribution"
+      data-editor-row-field data-content-kind="attribution"
+      data-row-id="${escapeHtml(row.id)}" data-language-code="${escapeHtml(language.code)}"
+      lang="${escapeHtml(language.baseCode || language.code)}" rows="1"
+      aria-label="Quote attribution" placeholder="Enter attribution here." ${disabled ? "disabled" : ""}
+    >${escapeHtml(attribution.trim() ? attribution : "")}</textarea>
+  </label>`;
+}
+
 function renderEditorLanguageField(row, language) {
-  const textStyle = normalizeEditorRowTextStyle(row?.textStyle);
+  const textStyle = language.showTiming === true ? "paragraph" : normalizeEditorRowTextStyle(row?.textStyle);
   const isCustomHtmlRow = isCustomHtmlRowTextStyle(textStyle);
   // Custom-HTML rows bypass inline-markup rendering and glossary/search highlight
   // overlays — the static display shows the user's HTML (sanitized so it cannot run
@@ -1034,6 +1051,7 @@ function renderEditorLanguageField(row, language) {
       >
           ${staticFieldMarkup}
         </div>
+        ${renderQuoteAttribution(row, language)}
         ${renderLanguageAttachments(row, language)}
         ${renderRowTextStyleButtons(row, language)}
       </div>
@@ -1090,7 +1108,8 @@ function renderEditorLanguageField(row, language) {
       </div>
       ${language.srtError ? `<p class="translation-srt-error" role="alert">${escapeHtml(language.srtError)}</p>` : ""}
       ${language.srtNeedsMarkerReview ? `<div class="translation-srt-draft-review"><p>Review the corrected text, then save.</p>${primaryButton("Save sentence draft", "save-editor-srt-drafts")}</div>` : ""}
-      ${renderLanguageAttachments(row, language)}
+      ${renderQuoteAttribution(row, language)}
+        ${renderLanguageAttachments(row, language)}
       ${renderRowTextStyleButtons(row, language)}
     </div>
   `;

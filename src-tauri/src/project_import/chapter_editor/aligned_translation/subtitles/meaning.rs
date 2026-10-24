@@ -1,6 +1,12 @@
 use super::*;
 
 pub(super) fn sample_pairs(pairs: &[MeaningPair]) -> Vec<MeaningPair> {
+    let nonempty = pairs
+        .iter()
+        .filter(|pair| !pair.target_text.trim().is_empty())
+        .cloned()
+        .collect::<Vec<_>>();
+    let pairs = nonempty.as_slice();
     let count = pairs.len().min(20);
     (0..count)
         .map(|index| {
@@ -168,6 +174,16 @@ mod tests {
                 target_text: format!("Translation {i}"),
             })
             .collect()
+    }
+    #[test]
+    fn intentionally_blank_targets_are_not_sent_for_meaning_comparison() {
+        let mut input = pairs(3);
+        input[0].target_text.clear();
+        input[2].target_text = "  ".into();
+        let sample = sample_pairs(&input);
+        assert_eq!(sample.len(), 1);
+        assert_eq!(sample[0].target_line, input[1].target_line);
+        assert_eq!(sample[0].line_number, 1);
     }
     #[test]
     fn samples_twenty_distinct_pairs_across_the_whole_file_or_all_available_pairs() {

@@ -3,6 +3,7 @@ import {
   describeInlineMarkupSelection,
   toggleInlineMarkupSelection,
 } from "./editor-inline-markup.js";
+import { chapterHasSrtSourceFormat } from "./editor-timing.js";
 import { state } from "./state.js";
 import { toggleSrtGroupInlineStyle } from "./editor-srt-group-formatting.js";
 import { showNoticeBadge } from "./status-feedback.js";
@@ -78,6 +79,7 @@ export function syncActiveEditorInlineStyleButtons(doc = document) {
 }
 
 export function toggleEditorInlineStyle(render, button, operations = {}) {
+  if (chapterHasSrtSourceFormat(state.editorChapter?.sourceFormats)) return;
   const textarea = resolveTargetTextarea(button);
   if (!(textarea instanceof HTMLTextAreaElement) || textarea.disabled || textarea.readOnly) {
     return;

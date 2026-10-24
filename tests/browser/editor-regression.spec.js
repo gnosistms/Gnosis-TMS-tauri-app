@@ -9,6 +9,7 @@ async function installMockTauri(page) {
     const rowFieldsByChapterId = new Map();
     const rowFootnotesByChapterId = new Map();
     const rowImageCaptionsByChapterId = new Map();
+    const rowAttributionsByChapterId = new Map();
     const rowTimingsByChapterId = new Map();
     const rowTextStylesByChapterId = new Map();
     const fieldStatesByChapterId = new Map();
@@ -98,6 +99,7 @@ async function installMockTauri(page) {
         chapterId,
         new Map(rows.map((row) => [row.rowId, clone(row.imageCaptions ?? {})])),
       );
+      rowAttributionsByChapterId.set(chapterId, new Map(rows.map((row) => [row.rowId, clone(row.attributions ?? {})])));
       rowTimingsByChapterId.set(
         chapterId,
         new Map(rows.map((row) => [row.rowId, clone(row.timings ?? {})])),
@@ -183,6 +185,7 @@ async function installMockTauri(page) {
         fields: clone(fields),
         footnotes: clone(footnotes),
         imageCaptions: clone(imageCaptions),
+        attributions: clone(rowAttributionsByChapterId.get(chapterId)?.get(rowId) ?? {}),
         images: clone(fixtureRow.images ?? {}),
         fieldStates: clone(fieldStates),
         timings: clone(rowTimingsByChapterId.get(chapterId)?.get(rowId) ?? {}),
@@ -320,6 +323,7 @@ async function installMockTauri(page) {
         rowFieldsByChapterId.get(input.chapterId).set(input.rowId, nextFields);
         rowFootnotesByChapterId.get(input.chapterId).set(input.rowId, nextFootnotes);
         rowImageCaptionsByChapterId.get(input.chapterId).set(input.rowId, nextImageCaptions);
+        if (input.attributions) rowAttributionsByChapterId.get(input.chapterId).set(input.rowId, clone(input.attributions));
         rowTimingsByChapterId.get(input.chapterId)?.set(input.rowId, nextTimings);
         pushHistoryEntriesWithCommit(input.chapterId, input.rowId, nextFields, nextFootnotes, storedFieldStates, {
           operationType: input.operation ?? "editor-update",
@@ -343,6 +347,13 @@ async function installMockTauri(page) {
         }
 
         const nextTextStyle = String(input.textStyle ?? "paragraph");
+        const attributions = rowAttributionsByChapterId.get(input.chapterId)?.get(input.rowId) ?? {};
+        if (findRowTextStyle(input.chapterId, input.rowId) === "quote" && nextTextStyle !== "quote") {
+          for (const [code, text] of Object.entries(attributions)) {
+            if (text) storedFields[code] = storedFields[code] ? `${storedFields[code].trimEnd()}\n\n${text}` : text;
+            attributions[code] = "";
+          }
+        }
         chapterTextStyles.set(input.rowId, nextTextStyle);
         pushHistoryEntries(
           input.chapterId,
@@ -356,6 +367,8 @@ async function installMockTauri(page) {
         return {
           rowId: input.rowId,
           textStyle: nextTextStyle,
+          fields: clone(storedFields),
+          attributions: clone(attributions),
         };
       }
 
@@ -5442,6 +5455,7 @@ test.describe("editor regressions", () => {
     }).toBe("italic");
     const quoteMetrics = await readEditorFieldMetrics(page, "fixture-row-0001", "vi");
     expect(quoteMetrics.paddingLeftPx).toBeGreaterThan(paragraphMetrics.paddingLeftPx);
+    expect(quoteMetrics.fontSizePx).toBeCloseTo(paragraphMetrics.fontSizePx, 2);
 
     await clickLocatorCenter(page, indentedButton);
     await expect.poll(async () => {
@@ -7186,6 +7200,138 @@ test("changed-after-my-edit filter shows other people's changes as diffs on the 
 
   await page.locator("[data-editor-filter-select]").selectOption("show-all");
   await expect(page.locator(".history-diff__insert")).toHaveCount(0);
+});
+
+test("quote attribution saves separately, previews at 90%, and appends when leaving Quote", async ({ page }) => {
+  await mountEditorFixture(page, { rowCount: 8, chapterStatus: "ready" }, { mockTauri: true });
+  const rowId = "fixture-row-0001";
+  const style = (value) => page.locator(`[data-editor-row-text-style-button][data-row-id="${rowId}"][data-language-code="vi"][data-text-style="${value}"]`);
+  await activateMainEditorField(page, rowId, "vi");
+  const body = page.locator(`[data-editor-row-field][data-row-id="${rowId}"][data-language-code="vi"]:not([data-content-kind])`);
+  const original = await body.inputValue();
+  const normalSize = parseFloat(await body.evaluate((field) => getComputedStyle(field).fontSize));
+  await style("quote").click();
+  await expect(body).toHaveCSS("text-align", "left");
+  expect(parseFloat(await body.evaluate((field) => getComputedStyle(field).fontSize))).toBeCloseTo(normalSize, 2);
+  const attribution = page.locator(`[data-editor-row-field][data-content-kind="attribution"][data-row-id="${rowId}"][data-language-code="vi"]`);
+  await expect(attribution).toBeHidden();
+  const prompt = attribution.locator("..").getByText("Click here to enter attribution.", { exact: true });
+  await expect(prompt).toBeVisible();
+  await prompt.click();
+  await expect(attribution).toBeFocused();
+  await expect(attribution).toHaveAttribute("placeholder", "Enter attribution here.");
+  await expect(attribution).toHaveValue("");
+  await attribution.fill("Quote source author");
+  await expect(attribution).toHaveCSS("text-align", "right");
+  expect(parseFloat(await attribution.evaluate((field) => getComputedStyle(field).fontSize))).toBeCloseTo(normalSize * .9, 2);
+  await expect(prompt).toBeHidden();
+  await page.locator("[data-editor-search-input]").focus();
+  await flushDirtyRows(page);
+  await expect.poll(async () => {
+    const mock = await readMockTauriState(page);
+    return mock.invocations.some((entry) => entry.command === "update_gtms_editor_row_fields"
+      && entry.payload.input.attributions?.vi === "Quote source author");
+  }).toBe(true);
+  await expect(attribution).toHaveValue("Quote source author");
+  await page.screenshot({ path: "/tmp/gnosis-quote-editor.png" });
+  await page.locator('[data-action="set-editor-mode:preview"]').click();
+  const citation = page.locator('.translate-preview__attribution').first();
+  await expect(citation).toHaveText("Quote source author");
+  await expect(citation).toHaveCSS("text-align", "right");
+  const sizes = await citation.evaluate((cite) => ({
+    citation: parseFloat(getComputedStyle(cite).fontSize),
+    quote: parseFloat(getComputedStyle(cite.parentElement).fontSize),
+    normal: parseFloat(getComputedStyle(document.querySelector(".translate-preview__block--paragraph")).fontSize),
+  }));
+  expect(sizes.quote).toBeCloseTo(sizes.normal, 2);
+  expect(sizes.citation).toBeCloseTo(sizes.normal * .9, 2);
+  await expect(citation.locator("..")).toHaveCSS("text-align", "left");
+  await page.screenshot({ path: "/tmp/gnosis-quote-preview.png" });
+  await page.locator('[data-action="set-editor-mode:translate"]').click();
+  await activateMainEditorField(page, rowId, "vi");
+  await body.focus();
+  await style("paragraph").click();
+  await expect(attribution).toHaveCount(0);
+  await activateMainEditorField(page, rowId, "vi");
+  await expect(body).toHaveValue(`${original}\n\nQuote source author`);
+  await page.screenshot({ path: "/tmp/gnosis-quote-editor-converted.png" });
+});
+
+test("SRT rows hide style and inline formatting controls", async ({ page }) => {
+  await mountEditorFixture(page, { rowCount: 8, srt: true }, { mockTauri: true });
+  await activateMainEditorField(page, "fixture-row-0001", "vi");
+  await expect(page.locator("[data-editor-row-text-style-button], [data-editor-inline-style-button], [data-editor-separator-button]")).toHaveCount(0);
+  await expect(page.locator('[data-editor-timing-field]').first()).toBeVisible();
+});
+
+test("empty quote attribution opens on click, keeps undo, and collapses again on blur", async ({ page }) => {
+  await mountEditorFixture(page, { rowCount: 8, chapterStatus: "ready" }, { mockTauri: true });
+  const rowId = "fixture-row-0001";
+  await activateMainEditorField(page, rowId, "vi");
+  await page.locator(`[data-editor-row-text-style-button][data-row-id="${rowId}"][data-language-code="vi"][data-text-style="quote"]`).click();
+  await page.locator('[data-action="set-editor-mode:preview"]').click();
+  await expect(page.locator(".translate-preview__attribution")).toHaveCount(0);
+  await page.locator('[data-action="set-editor-mode:translate"]').click();
+  const field = page.locator(`[data-content-kind="attribution"][data-row-id="${rowId}"][data-language-code="vi"]`);
+  const prompt = field.locator("..").getByText("Click here to enter attribution.", { exact: true });
+  await expect(prompt).toBeVisible();
+  await expect(field).toBeHidden();
+  await prompt.click();
+  await expect(field).toBeFocused();
+  await expect(field).toBeVisible();
+  await expect(field).toHaveValue("");
+  await field.press("Shift+Tab");
+  await page.keyboard.press("Tab");
+  await expect(field).toBeFocused();
+  await field.pressSequentially("Author");
+  await expect(field).toHaveValue("Author");
+  expect(await field.evaluate((node) => node.matches(":placeholder-shown"))).toBe(false);
+  await field.press(process.platform === "darwin" ? "Meta+z" : "Control+z");
+  await expect(field).not.toHaveValue("Author");
+  await field.fill("");
+  await expect(field).toBeVisible();
+  await page.locator("[data-editor-search-input]").focus();
+  await expect(field).toBeHidden();
+  await expect(prompt).toBeVisible();
+  await flushDirtyRows(page);
+  const mock = await readMockTauriState(page);
+  for (const entry of mock.invocations.filter((item) => item.command === "update_gtms_editor_row_fields")) {
+    expect(JSON.stringify(entry.payload)).not.toMatch(/Click here to enter attribution|Enter attribution here/);
+  }
+  await page.screenshot({ path: "/tmp/gnosis-quote-empty-prompt.png" });
+});
+
+test("Quote block and Heading filters select styles and update when a style changes", async ({ page }) => {
+  await mountEditorFixture(page, { rowCount: 4 }, { mockTauri: true });
+  const setStyle = async (rowId, textStyle) => {
+    const field = await activateMainEditorField(page, rowId, "vi");
+    await field.focus();
+    await page.locator(`[data-editor-row-text-style-button][data-row-id="${rowId}"][data-language-code="vi"][data-text-style="${textStyle}"]`).click();
+  };
+  await setStyle("fixture-row-0001", "heading1");
+  await setStyle("fixture-row-0002", "quote");
+  await setStyle("fixture-row-0003", "heading2");
+
+  const filter = page.locator("[data-editor-filter-select]");
+  const cards = page.locator("[data-editor-row-card]");
+  await filter.selectOption({ label: "Quote block" });
+  await expect(cards).toHaveCount(1);
+  await expect(cards).toHaveAttribute("data-row-id", "fixture-row-0002");
+  await filter.selectOption({ label: "Heading" });
+  await expect(cards).toHaveCount(2);
+  await expect(cards.nth(0)).toHaveAttribute("data-row-id", "fixture-row-0001");
+  await expect(cards.nth(1)).toHaveAttribute("data-row-id", "fixture-row-0003");
+
+  const search = page.locator("[data-editor-search-input]");
+  await search.fill("0003");
+  await expect(cards).toHaveCount(1);
+  await expect(cards).toHaveAttribute("data-row-id", "fixture-row-0003");
+  await search.fill("");
+  await setStyle("fixture-row-0003", "paragraph");
+  await expect(cards).toHaveCount(1);
+  await expect(cards).toHaveAttribute("data-row-id", "fixture-row-0001");
+  await filter.selectOption({ label: "Show all" });
+  await expect(cards).toHaveCount(4);
 });
 
 for (const { platform, modifier } of [

@@ -932,3 +932,39 @@ test("serializeEditorPreviewWordPress does not promote H1s that are not first or
   assert.equal(imageFirstResult.title, null);
   assert.match(imageFirstResult.content, /Not a title/);
 });
+
+test("quote attribution stays attached in preview, WordPress, HTML and plain text", () => {
+  const blocks = buildEditorPreviewDocument([{ rowId: "q", textStyle: "quote", fields: { en: "Body" }, attributions: { en: 'Author & <b>Source</b>' } }], "en");
+  const preview = renderEditorPreviewDocumentHtml(blocks, { searchState: { query: "Source" } });
+  assert.match(preview.html, /<blockquote[\s\S]*<cite class="translate-preview__attribution"[\s\S]*Author &amp; <strong>[\s\S]*Source[\s\S]*<\/cite><\/blockquote>/);
+  assert.equal(countEditorPreviewSearchMatches(blocks, "Source"), 1);
+  const wp = serializeEditorPreviewWordPress(blocks).content;
+  assert.match(wp, /<cite>Author &amp; <strong>Source<\/strong><\/cite><\/blockquote>/);
+  assert.doesNotMatch(wp, /font-size|text-align/);
+  assert.match(serializeEditorPreviewHtml(blocks), /<cite style="display:block;font-size:90%;text-align:right;font-style:normal">/);
+  assert.match(serializeEditorPreviewHtml(blocks), /<blockquote class="wp-block-quote">/);
+  assert.equal(serializeEditorPreviewPlainText(blocks), "Body\n\nAuthor & Source");
+});
+
+test("an attribution-only quote and quotes with separators retain their source once", () => {
+  for (const text of ["", "First<hr>Second", "First<hr>"]) {
+    const blocks = buildEditorPreviewDocument([{ textStyle: "quote", fields: { en: text }, attributions: { en: "Author" } }], "en");
+    assert.equal((serializeEditorPreviewWordPress(blocks).content.match(/<cite>Author<\/cite>/g) ?? []).length, 1);
+    assert.equal((renderEditorPreviewDocumentHtml(blocks).html.match(/>Author<\/cite>/g) ?? []).length, 1);
+    assert.match(serializeEditorPreviewPlainText(blocks), /Author$/);
+  }
+});
+
+test("blank quote attribution is absent from preview and all clipboard formats", () => {
+  for (const attribution of ["", " \n\t"]) {
+    const blocks = buildEditorPreviewDocument([{ textStyle: "quote", fields: { en: "Body" }, attributions: { en: attribution } }], "en");
+    assert.equal(blocks[0].attribution, undefined);
+    // Also tolerate callers supplying their own blocks without normalization.
+    for (const input of [blocks, [{ ...blocks[0], attribution }]]) {
+      assert.doesNotMatch(renderEditorPreviewDocumentHtml(input).html, /<cite/);
+      assert.doesNotMatch(serializeEditorPreviewHtml(input), /<cite/);
+      assert.doesNotMatch(serializeEditorPreviewWordPress(input).content, /<cite/);
+    }
+    assert.equal(serializeEditorPreviewPlainText(blocks), "Body");
+  }
+});

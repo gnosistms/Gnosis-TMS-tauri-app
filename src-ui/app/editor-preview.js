@@ -117,20 +117,22 @@ export function buildEditorPreviewDocument(rows, languageCode) {
     const image = normalizeEditorFieldImage(row?.images?.[languageCode]);
     const caption = previewImageCaptionValue(row, languageCode);
     const textStyle = normalizeEditorRowTextStyle(row?.textStyle);
+    const attribution = textStyle === "quote" ? previewTextValue(row?.attributions?.[languageCode]) : "";
     const blocks = [];
 
-    if (text.trim()) {
+    if (text.trim() || attribution.trim()) {
       blocks.push({
         kind: "text",
         rowId: row.rowId ?? "",
         languageCode,
         textStyle,
         text,
+        ...(attribution.trim() ? { attribution } : {}),
         footnotes,
       });
     }
 
-    if (!text.trim() && footnotes.length > 0) {
+    if (!text.trim() && !attribution.trim() && footnotes.length > 0) {
       blocks.push({
         kind: "text",
         rowId: row.rowId ?? "",
@@ -192,7 +194,7 @@ function countPreviewSearchMatchesForBlock(block, searchQuery) {
 
   const footnoteMatches = normalizeEditorFootnotes(block.footnotes)
     .reduce((total, entry) => total + countMatchesInText(entry.text, searchQuery), 0);
-  return countMatchesInText(block.text, searchQuery) + footnoteMatches;
+  return countMatchesInText(block.text, searchQuery) + countMatchesInText(block.attribution, searchQuery) + footnoteMatches;
 }
 
 export function countEditorPreviewSearchMatches(blocks, searchQuery) {
@@ -617,10 +619,10 @@ export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
               appendRemaining: index === appendPartIndex,
             },
           );
-          if (!textHtml.trim()) {
-            return "";
-          }
-          return `<${tagName} class="translate-preview__block translate-preview__block--${variant}" data-preview-block="${escapeHtml(variant)}" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}" data-tooltip="Double-click to edit.">${textHtml}</${tagName}>`;
+          const attributionHtml = block.attribution?.trim() && index === parts.length - 1
+            ? `<cite class="translate-preview__attribution" data-preview-block="attribution" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}" data-tooltip="Double-click to edit.">${renderPreviewHighlightedText(block.attribution, searchState, matchCounter, block.languageCode)}</cite>` : "";
+          if (!textHtml.trim() && !attributionHtml) return "";
+          return `<${tagName} class="translate-preview__block translate-preview__block--${variant}" data-preview-block="${escapeHtml(variant)}" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}" data-tooltip="Double-click to edit.">${textHtml}${attributionHtml}</${tagName}>`;
         })
         .filter(Boolean)
         .join("");
@@ -704,7 +706,7 @@ function serializePreviewTextBlockHtml(block, footnoteState, options = {}) {
     const innerParagraph = wrapSerializedWordPressBlock("paragraph", `<p>${textHtml}</p>`);
     return {
       blockName: "quote",
-      html: `<blockquote class="wp-block-quote">${innerParagraph}</blockquote>`,
+      html: `<blockquote class="wp-block-quote">${innerParagraph}${block.attribution?.trim() ? `<cite${options.localFormatting ? ' style="display:block;font-size:90%;text-align:right;font-style:normal"' : ""}>${serializePreviewText(block.attribution)}</cite>` : ""}</blockquote>`,
     };
   }
   if (normalizedStyle === EDITOR_ROW_TEXT_STYLE_INDENTED) {
@@ -747,7 +749,7 @@ function serializePreviewTextBlockParts(block, footnoteState, options = {}) {
       if (part.kind === "separator") {
         return WORDPRESS_SEPARATOR_BLOCK;
       }
-      if (!previewTextHasVisibleContent(part.block?.text) && index !== appendPartIndex) {
+      if (!previewTextHasVisibleContent(part.block?.text) && index !== appendPartIndex && !block.attribution) {
         return "";
       }
       const textHtml = renderTextWithWordPressFootnoteRefs(part.block, footnoteState, {
@@ -756,11 +758,10 @@ function serializePreviewTextBlockParts(block, footnoteState, options = {}) {
         usedMarkers,
         appendRemaining: index === appendPartIndex,
       });
-      if (!textHtml.trim()) {
-        return "";
-      }
-      return serializePreviewTextBlock(part.block, footnoteState, {
+      if (!textHtml.trim() && !block.attribution) return "";
+      return serializePreviewTextBlock({ ...part.block, attribution: index === parts.length - 1 ? block.attribution : "" }, footnoteState, {
         preRenderedTextHtml: textHtml,
+        localFormatting: options.localFormatting,
       });
     })
     .filter(Boolean)
@@ -792,7 +793,7 @@ function serializeEditorPreviewBlocks(blocks, options = {}) {
 }
 
 export function serializeEditorPreviewHtml(blocks) {
-  const { bodyHtml, footnoteState } = serializeEditorPreviewBlocks(blocks, { htmlFootnotes: true });
+  const { bodyHtml, footnoteState } = serializeEditorPreviewBlocks(blocks, { htmlFootnotes: true, localFormatting: true });
   const footnotesHtml = serializeHtmlFootnotes(footnoteState);
   return ["<meta charset='utf-8'>", bodyHtml, footnotesHtml].filter(Boolean).join("\n\n");
 }
@@ -980,7 +981,7 @@ export function serializeEditorPreviewPlainText(blocks, options = {}) {
           appendRemaining: index === appendPartIndex,
           showFootnoteLinkUrls,
         }).trim();
-      });
+      }).concat(block.attribution ? [extractInlineMarkupVisibleText(block.attribution)] : []);
     })
     .filter(Boolean);
 

@@ -331,8 +331,36 @@ ${dictXml([
   };
 }
 
+// Native Vellum quote attributions are attachments in the final quote paragraph,
+// not ordinary aligned paragraphs. This mirrors a Vellum 4.1.5 DOCX import archive.
+function addAttributionAttributes(builder, text, quoteFormatId, presentation = []) {
+  const cellClassId = builder.addClass([
+    "OGAttributionAttachmentCell", "OGTextAttachmentCell", "OGAttachmentCell",
+    "NSTextAttachmentCell", "NSCell", "NSObject",
+  ]);
+  const cellId = builder.addKeyedObject(cellClassId, [
+    ["NSCellFlags", "<integer>0</integer>"],
+    ["NSCellFlags2", "<integer>0</integer>"],
+  ]);
+  const attachmentId = builder.addKeyedObject(builder.addClass(["NSTextAttachment", "NSObject"]), [
+    ["NSCell", uidXml(cellId)], ["NSFileWrapper", uidXml(0)],
+  ]);
+  const formatClassId = builder.addClass(["OGMutableAttachmentFormat", "OGAttachmentFormat", "NSObject"]);
+  const formatId = builder.addKeyedObject(formatClassId, [
+    ["kind", uidXml(builder.addString("blockquoteAttribution"))],
+    ["state", uidXml(builder.addNsDictionary([
+      ["text", buildFootnoteTextAttributedStringId(builder, footnoteLinkSegments(text, false))],
+    ]))],
+  ]);
+  return builder.addNsDictionary([
+    ["OGParagraphFormat", quoteFormatId], ["OGAttachmentFormat", formatId],
+    ["NSAttachment", attachmentId], ...presentation,
+  ]);
+}
+
 function addAttributeObjects(builder, attachmentAttributes = {}) {
   const footnoteAttributes = attachmentAttributes.footnoteAttributes ?? new Map();
+  const attributionAttributes = attachmentAttributes.attributionAttributes ?? new Map();
   const imageAttributes = attachmentAttributes.imageAttributes ?? new Map();
   const subheadAttributes = attachmentAttributes.subheadAttributes ?? new Map();
   const trueId = builder.addBoolean(true);
@@ -626,6 +654,12 @@ function addAttributeObjects(builder, attachmentAttributes = {}) {
       if (String(attributeKey ?? "").startsWith("link:")) {
         return linkAttributeId(attributeKey.slice("link:".length));
       }
+      if (attributionAttributes.has(attributeKey)) {
+        if (!baseAttributes.has(attributeKey)) {
+          baseAttributes.set(attributeKey, addAttributionAttributes(builder, attributionAttributes.get(attributeKey), quoteFormatId));
+        }
+        return baseAttributes.get(attributeKey);
+      }
       if (String(attributeKey ?? "").startsWith("footnote:")) {
         return footnoteAttributeId(attributeKey);
       }
@@ -642,6 +676,7 @@ function addAttributeObjects(builder, attachmentAttributes = {}) {
 
 function addWholeChapterAttributeObjects(builder, attachmentAttributes = {}) {
   const footnoteAttributes = attachmentAttributes.footnoteAttributes ?? new Map();
+  const attributionAttributes = attachmentAttributes.attributionAttributes ?? new Map();
   const imageAttributes = attachmentAttributes.imageAttributes ?? new Map();
   const subheadAttributes = attachmentAttributes.subheadAttributes ?? new Map();
   const trueId = builder.addBoolean(true);
@@ -846,6 +881,12 @@ function addWholeChapterAttributeObjects(builder, attachmentAttributes = {}) {
     attributeIdForKey(attributeKey) {
       if (String(attributeKey ?? "").startsWith("link:")) {
         return linkAttributeId(attributeKey.slice("link:".length));
+      }
+      if (attributionAttributes.has(attributeKey)) {
+        if (!baseAttributes.has(attributeKey)) {
+          baseAttributes.set(attributeKey, addAttributionAttributes(builder, attributionAttributes.get(attributeKey), quoteFormatId));
+        }
+        return baseAttributes.get(attributeKey);
       }
       if (String(attributeKey ?? "").startsWith("footnote:")) {
         return footnoteAttributeId(attributeKey);
@@ -1466,6 +1507,13 @@ function appendBlockRuns(block, target, options = {}) {
   const footnoteContext = createFootnoteContext(block, target, options.showFootnoteLinkUrls === true);
   appendInlineNodeRuns(parsed.nodes, target, fallbackKey, {}, footnoteContext);
   appendRemainingFootnoteRuns(target, footnoteContext);
+  if (normalizeEditorRowTextStyle(block?.textStyle) === EDITOR_ROW_TEXT_STYLE_QUOTE && normalizeText(block.attribution)) {
+    const key = `attribution:${target.attributionAttributes.size + 1}`;
+    target.attributionAttributes.set(key, block.attribution);
+    appendTextRun(target, VELLUM_PARAGRAPH_SEPARATOR, "quote");
+    appendTextRun(target, VELLUM_ATTACHMENT_CHARACTER, key);
+    appendTextRun(target, VELLUM_PARAGRAPH_SEPARATOR, "default");
+  }
 }
 
 function buildVellumTextRuns(blocks, options = {}) {
@@ -1473,6 +1521,7 @@ function buildVellumTextRuns(blocks, options = {}) {
     text: "",
     runs: [],
     footnoteAttributes: new Map(),
+    attributionAttributes: new Map(),
     imageAttributes: new Map(),
     subheadAttributes: new Map(),
   };
@@ -1546,6 +1595,7 @@ export function buildVellumTextEditorContentDecodedXml(blocks, options = {}) {
     text,
     runs,
     footnoteAttributes,
+    attributionAttributes,
     imageAttributes,
     subheadAttributes,
   } = buildVellumTextRuns(blocks, {
@@ -1558,6 +1608,7 @@ export function buildVellumTextEditorContentDecodedXml(blocks, options = {}) {
   const builder = createArchiveBuilder();
   const attributes = addAttributeObjects(builder, {
     footnoteAttributes,
+    attributionAttributes,
     imageAttributes,
     subheadAttributes,
   });
@@ -1587,6 +1638,7 @@ export function buildVellumOgElementPrivateDecodedXml(blocks, options = {}) {
     text,
     runs,
     footnoteAttributes,
+    attributionAttributes,
     imageAttributes,
     subheadAttributes,
   } = body;
@@ -1594,6 +1646,7 @@ export function buildVellumOgElementPrivateDecodedXml(blocks, options = {}) {
   const builder = createArchiveBuilder();
   const attributes = addWholeChapterAttributeObjects(builder, {
     footnoteAttributes,
+    attributionAttributes,
     imageAttributes,
     subheadAttributes,
   });

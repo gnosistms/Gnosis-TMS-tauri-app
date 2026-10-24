@@ -1,6 +1,12 @@
 import { editorRowHasUnreadComments } from "./editor-comments.js";
 import { rowHasUnresolvedEditorConflict } from "./editor-conflicts.js";
 import { extractInlineMarkupVisibleText } from "./editor-inline-markup.js";
+import {
+  EDITOR_ROW_TEXT_STYLE_HEADING1,
+  EDITOR_ROW_TEXT_STYLE_HEADING2,
+  EDITOR_ROW_TEXT_STYLE_QUOTE,
+  normalizeEditorRowTextStyle,
+} from "./editor-row-text-style.js";
 
 export const EDITOR_ROW_FILTER_MODE_SHOW_ALL = "show-all";
 export const EDITOR_ROW_FILTER_MODE_DELETED = "deleted";
@@ -8,6 +14,8 @@ export const EDITOR_ROW_FILTER_MODE_REVIEWED = "reviewed";
 export const EDITOR_ROW_FILTER_MODE_NOT_REVIEWED = "not-reviewed";
 export const EDITOR_ROW_FILTER_MODE_PLEASE_CHECK = "please-check";
 export const EDITOR_ROW_FILTER_MODE_TARGET_EMPTY = "target-empty";
+export const EDITOR_ROW_FILTER_MODE_QUOTE_BLOCK = "quote-block";
+export const EDITOR_ROW_FILTER_MODE_HEADING = "heading";
 export const EDITOR_ROW_FILTER_MODE_HAS_IMAGE = "has-image";
 export const EDITOR_ROW_FILTER_MODE_HAS_FOOTNOTE = "has-footnote";
 export const EDITOR_ROW_FILTER_MODE_HAS_COMMENTS = "has-comments";
@@ -24,6 +32,8 @@ export const EDITOR_ROW_FILTER_OPTIONS = [
   { value: EDITOR_ROW_FILTER_MODE_NOT_REVIEWED, label: "Not reviewed" },
   { value: EDITOR_ROW_FILTER_MODE_PLEASE_CHECK, label: "Please check" },
   { value: EDITOR_ROW_FILTER_MODE_TARGET_EMPTY, label: "Target empty" },
+  { value: EDITOR_ROW_FILTER_MODE_QUOTE_BLOCK, label: "Quote block" },
+  { value: EDITOR_ROW_FILTER_MODE_HEADING, label: "Heading" },
   { value: EDITOR_ROW_FILTER_MODE_HAS_IMAGE, label: "Has image" },
   { value: EDITOR_ROW_FILTER_MODE_HAS_FOOTNOTE, label: "Has footnote" },
   { value: EDITOR_ROW_FILTER_MODE_HAS_COMMENTS, label: "Has comments" },
@@ -212,6 +222,12 @@ function rowMatchesFilterMode(
     case EDITOR_ROW_FILTER_MODE_TARGET_EMPTY:
       return Boolean(targetSection) && (targetSection.srtParts ?? [targetSection.text ?? ""])
         .every((text) => extractInlineMarkupVisibleText(text).trim().length === 0);
+    case EDITOR_ROW_FILTER_MODE_QUOTE_BLOCK:
+      return normalizeEditorRowTextStyle(row.textStyle) === EDITOR_ROW_TEXT_STYLE_QUOTE;
+    case EDITOR_ROW_FILTER_MODE_HEADING: {
+      const style = normalizeEditorRowTextStyle(row.textStyle);
+      return style === EDITOR_ROW_TEXT_STYLE_HEADING1 || style === EDITOR_ROW_TEXT_STYLE_HEADING2;
+    }
     case EDITOR_ROW_FILTER_MODE_HAS_IMAGE:
       return Boolean(targetSection?.image);
     case EDITOR_ROW_FILTER_MODE_HAS_FOOTNOTE:

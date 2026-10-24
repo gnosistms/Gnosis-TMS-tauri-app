@@ -1006,7 +1006,9 @@ fn document_characters(document: &ExportDocument) -> BTreeSet<char> {
     characters.extend(document.title.chars());
     for block in &document.blocks {
         match block {
-            ExportBlock::Text { text, .. } | ExportBlock::Footnote { text, .. } => {
+            ExportBlock::Text { text, .. }
+            | ExportBlock::Attribution { text }
+            | ExportBlock::Footnote { text, .. } => {
                 for segment in inline_segments(text) {
                     characters.extend(segment.text.chars());
                 }
@@ -1373,10 +1375,26 @@ fn prepare_typst_workspace(
                         .unwrap_or_default(),
                     options.footnote_links_as_plain_text,
                 );
-                source.push_str(&render_typst_text_block(
+                let text_block = render_typst_text_block(
                     text_style,
                     &inline,
                     Some(block_index) == dropcap_index,
+                );
+                if matches!(
+                    document.blocks.get(block_index + 1),
+                    Some(ExportBlock::Attribution { .. })
+                ) {
+                    source.push_str(&format!(
+                        "#block(sticky: true, breakable: true)[{text_block}]\n"
+                    ));
+                } else {
+                    source.push_str(&text_block);
+                }
+            }
+            ExportBlock::Attribution { text } => {
+                source.push_str(&format!(
+                    "#align(right)[#text(size: 0.9em)[{}]]\n\n",
+                    render_inline_typst(text, false)
                 ));
             }
             ExportBlock::Separator => {
@@ -3201,6 +3219,14 @@ mod tests {
     }
 
     #[test]
+    fn quote_body_retains_normal_size_and_alignment() {
+        let quote = render_typst_text_block("quote", "Quotation", false);
+        assert!(quote.contains("#quote(block: true)[#text(style: \"italic\")[Quotation]]"));
+        assert!(!quote.contains("size:"));
+        assert!(!quote.contains("#align"));
+    }
+
+    #[test]
     fn typst_strings_escape_code_boundaries() {
         assert_eq!(typst_string("a\\b\"c\nd"), "\"a\\\\b\\\"c\\nd\"");
     }
@@ -3558,6 +3584,11 @@ mod tests {
                     // are pulled in by the content scan, not the declared language.
                     text: "Ông 伏羲, danh xưng אֱלֹהִים, và ॐ भूर्भुवः स्वः.".to_string(),
                 },
+                ExportBlock::Text {
+                    text_style: "quote".to_string(),
+                    text: "A quoted passage".to_string(),
+                },
+                ExportBlock::Attribution { text: "Quote Author".to_string() },
                 ExportBlock::Text {
                     text_style: "centered".to_string(),
                     text: "Centered text".to_string(),

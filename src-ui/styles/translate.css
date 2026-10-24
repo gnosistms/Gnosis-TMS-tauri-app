@@ -505,6 +505,7 @@
 .translate-preview__block--quote {
   padding-left: 32px;
   font-style: italic;
+  text-align: left;
 }
 
 .translate-preview__block--indented {
@@ -1933,6 +1934,7 @@
 .translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style="quote"] .translation-language-panel__field-highlight,
 .translation-language-panel__field-static[data-row-text-style="quote"] {
   font-style: italic;
+  text-align: left;
 }
 
 .translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style="centered"] .translation-language-panel__field,
@@ -2920,4 +2922,55 @@
   border-top: 1px solid var(--surface-border);
   margin-top: 10px;
   padding-top: 6px;
+}
+
+/* A quote's source is a separate language field, tied to the same row save. */
+.translation-language-panel__attribution {
+  position: relative;
+  display: block;
+  margin-top: .5em;
+}
+.translation-language-panel__attribution-label {
+  display: block;
+  margin-bottom: .25em;
+  color: var(--muted);
+  font-size: .75rem;
+}
+.translation-language-panel__field--attribution {
+  font-size: calc(var(--translation-editor-font-size, 14px) * 0.9);
+  text-align: right;
+  min-height: 2.5em;
+}
+.translate-preview__attribution {
+  display: block;
+  font-size: calc(var(--translation-editor-font-size, 14px) * 0.9);
+  text-align: right;
+  font-style: normal;
+  margin-top: .5em;
+}
+
+.translation-language-panel__attribution-prompt {
+  display: none;
+  color: var(--muted);
+  font-size: calc(var(--translation-editor-font-size, 14px) * 0.9);
+  text-align: right;
+  cursor: text;
+}
+/* Keep the empty field focusable by its label and by Tab. Focus reveals the
+   native textarea without replacing it, preserving selection and undo history. */
+.translation-language-panel__attribution:has(> textarea:placeholder-shown):not(:focus-within) > .translation-language-panel__attribution-label {
+  display: none;
+}
+.translation-language-panel__attribution:has(> textarea:placeholder-shown):not(:focus-within) > .translation-language-panel__attribution-prompt {
+  display: block;
+}
+.translation-language-panel__attribution:has(> textarea:placeholder-shown):not(:focus-within) > textarea {
+  position: absolute;
+  width: 0;
+  min-width: 0;
+  height: 0 !important;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
 }

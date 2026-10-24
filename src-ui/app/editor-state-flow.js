@@ -504,6 +504,7 @@ export function normalizeEditorRow(row) {
   const fields = cloneRowFields(row?.fields);
   const footnotes = cloneRowFootnotes(row?.footnotes);
   const imageCaptions = cloneRowFields(row?.imageCaptions);
+  const attributions = cloneRowFields(row?.attributions);
   const images = cloneRowImages(row?.images);
   const fieldStates = cloneRowFieldStates(row?.fieldStates);
   const timings = cloneRowTimings(row?.timings);
@@ -529,17 +530,20 @@ export function normalizeEditorRow(row) {
     fields,
     footnotes,
     imageCaptions,
+    attributions,
     images,
     timings,
     srtTiming: srtTimingClone.srt ?? null,
     baseFields: cloneRowFields(fields),
     baseFootnotes: cloneRowFootnotes(footnotes),
     baseImageCaptions: cloneRowFields(imageCaptions),
+    baseAttributions: cloneRowFields(attributions),
     baseImages: cloneRowImages(images),
     baseTimings: cloneRowTimings(timings),
     persistedFields: cloneRowFields(fields),
     persistedFootnotes: cloneRowFootnotes(footnotes),
     persistedImageCaptions: cloneRowFields(imageCaptions),
+    persistedAttributions: cloneRowFields(attributions),
     persistedImages: cloneRowImages(images),
     persistedTimings: cloneRowTimings(timings),
     fieldStates,
@@ -551,6 +555,7 @@ export function normalizeEditorRow(row) {
         baseFields: cloneRowFields(importedConflict.baseRow?.fields),
         baseFootnotes: cloneRowFootnotes(importedConflict.baseRow?.footnotes),
         baseImageCaptions: cloneRowFields(importedConflict.baseRow?.imageCaptions),
+        baseAttributions: cloneRowFields(importedConflict.baseRow?.attributions),
         remoteRow: importedConflict.remoteRow,
         remoteVersion: null,
       }
@@ -740,6 +745,10 @@ export function markEditorRowsPersisted(rowUpdates, wordCounts = null, chapterBa
           row && typeof row === "object" && "imageCaptions" in row
             ? cloneRowFields(row.imageCaptions)
             : null,
+        attributions:
+          row && typeof row === "object" && "attributions" in row
+            ? cloneRowFields(row.attributions)
+            : null,
         images:
           row && typeof row === "object" && "images" in row
             ? cloneRowImages(row.images)
@@ -766,16 +775,19 @@ export function markEditorRowsPersisted(rowUpdates, wordCounts = null, chapterBa
       const fields = update?.fields ?? cloneRowFields(row.fields);
       const footnotes = update?.footnotes ?? cloneRowFootnotes(row.footnotes);
       const imageCaptions = update?.imageCaptions ?? cloneRowFields(row.imageCaptions);
+      const attributions = update?.attributions ?? cloneRowFields(row.attributions);
       const images = update?.images ?? cloneRowImages(row.images);
       return {
         ...row,
         fields,
         footnotes,
         imageCaptions,
+        attributions,
         images,
         persistedFields: cloneRowFields(fields),
         persistedFootnotes: cloneRowFootnotes(footnotes),
         persistedImageCaptions: cloneRowFields(imageCaptions),
+        persistedAttributions: cloneRowFields(attributions),
         persistedImages: cloneRowImages(images),
         saveStatus: "idle",
         saveError: "",

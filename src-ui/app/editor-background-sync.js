@@ -432,11 +432,13 @@ async function resolveBackgroundSyncDirtyRows(render, rowIds = []) {
           baseFields: currentRow.baseFields,
           baseFootnotes: currentRow.baseFootnotes,
           baseImageCaptions: currentRow.baseImageCaptions,
+          baseAttributions: currentRow.baseAttributions,
           conflictRemoteVersion: payload?.rowVersion ?? null,
         }, {
           localFields: currentRow.fields,
           localFootnotes: currentRow.footnotes,
           localImageCaptions: currentRow.imageCaptions,
+          localAttributions: currentRow.attributions,
           remoteVersion: payload?.rowVersion ?? null,
         }),
       );

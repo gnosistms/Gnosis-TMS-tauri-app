@@ -180,6 +180,12 @@ export function renderHistoryEntryContent(entry, previousEntry, languageCode, op
       alwaysRender: false,
       requiresVisibleImage: true,
     },
+    {
+      currentText: entry?.attribution,
+      previousText: previousEntry?.attribution,
+      className: "history-item__content history-item__content--footnote",
+      alwaysRender: false,
+    },
   ];
 
   return `

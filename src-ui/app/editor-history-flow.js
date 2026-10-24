@@ -143,6 +143,7 @@ function rollbackOptimisticHistoryRestore(value, message, operations) {
       persistedFields: baseline.persistedFields,
       persistedFootnotes: baseline.persistedFootnotes,
       persistedImageCaptions: baseline.persistedImageCaptions,
+      persistedAttributions: baseline.persistedAttributions,
       persistedImages: baseline.persistedImages,
       persistedFieldStates: baseline.persistedFieldStates,
       persistedTextStyle: baseline.persistedTextStyle,

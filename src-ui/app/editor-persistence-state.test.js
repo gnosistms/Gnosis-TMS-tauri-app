@@ -415,3 +415,42 @@ test("applyEditorConflictResolutionSavedLocally keeps the GitHub version until s
   assert.deepEqual(updatedRow.conflictState.remoteRow.fields, { es: "remote old" });
   assert.equal(updatedRow.conflictState.remoteVersion.authorName, "The Octocat");
 });
+
+test("quote attribution edits persist independently and preserve newer typing during a save", () => {
+  const original = row({ attributions: { es: "Author" }, persistedAttributions: { es: "Author" } });
+  const edited = applyEditorRowFieldValue(original, "es", "New author", "attribution");
+  assert.equal(edited.fields.es, "uno");
+  assert.equal(edited.attributions.es, "New author");
+  assert.equal(edited.saveStatus, "dirty");
+  const newer = applyEditorRowFieldValue(edited, "es", "Newest author", "attribution");
+  const saved = applyEditorRowPersistSucceeded(newer, persistedPayload({ fields: { es: "uno" }, attributions: { es: "New author" } }), {
+    fields: original.fields, footnotes: original.footnotes, imageCaptions: original.imageCaptions,
+    attributions: edited.attributions,
+  });
+  assert.equal(saved.attributions.es, "Newest author");
+  assert.equal(saved.persistedAttributions.es, "New author");
+  assert.equal(saved.saveStatus, "dirty");
+});
+
+test("leaving Quote appends attribution for every language and clears it exactly once", () => {
+  const original = row({ textStyle: "quote", persistedTextStyle: "quote", fields: { es: "Body", vi: "" }, attributions: { es: "Author", vi: "Tác giả" } });
+  const payload = { textStyle: "paragraph", fields: { es: "Body\n\nAuthor", vi: "Tác giả" }, attributions: { es: "", vi: "" } };
+  const saved = applyEditorRowTextStyleSaved(applyEditorRowTextStyleSaving(original, "paragraph"), payload);
+  assert.deepEqual(saved.fields, payload.fields);
+  assert.deepEqual(saved.attributions, payload.attributions);
+  assert.deepEqual(saved.persistedFields, payload.fields);
+  assert.deepEqual(applyEditorRowTextStyleSaved(saved, payload).fields, saved.fields);
+  const failed = applyEditorRowTextStyleSaveFailed(applyEditorRowTextStyleSaving(original, "paragraph"), "quote", "failed");
+  assert.deepEqual(failed.fields, original.fields);
+  assert.deepEqual(failed.attributions, original.attributions);
+});
+
+test("style conversion adopts untouched remote body changes without overwriting newer local typing", () => {
+  const original = row({ textStyle: "quote", persistedTextStyle: "quote", fields: { es: "Old" }, persistedFields: { es: "Old" }, attributions: { es: "Author" }, persistedAttributions: { es: "Author" } });
+  const payload = { textStyle: "paragraph", fields: { es: "Remote body\n\nAuthor" }, attributions: { es: "" } };
+  assert.equal(applyEditorRowTextStyleSaved(original, payload).fields.es, payload.fields.es);
+  const typedWhileSaving = { ...original, fields: { es: "Newer local body" } };
+  const saved = applyEditorRowTextStyleSaved(typedWhileSaving, payload);
+  assert.equal(saved.fields.es, "Newer local body\n\nAuthor");
+  assert.equal(saved.persistedFields.es, payload.fields.es);
+});

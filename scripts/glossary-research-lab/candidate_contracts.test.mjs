@@ -1,0 +1,19 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {candidateDeliveryFailures,assertCandidateDelivery} from './candidate_contracts.mjs';
+import {serializeEntry,consumerHints,sortByUsage} from './htn_core.mjs';
+const input={index:1,languages:['en']},inventory={senses:[{id:'body'}],forms:[{form:'mundos',include:true,relationship:'same_lemma'}]},provenance={verified:[]};
+const evidence=[{itemId:'p',text:'Los mundos son cuerpos planetarios.'}];
+const obligations=[{id:'physical-body',language:'en',senseIds:['body'],targets:['planet','planets'],scope:'Physical planetary bodies, with source number.',evidence:[{evidenceId:'p',quote:'cuerpos planetarios'}]}];
+function packet(targets=['world']){
+ const proposal={languages:[{language:'en',sourceForms:['mundos'],generalNote:'Select from context.',variants:targets.map((target,i)=>({id:'v'+i,target,senseIds:['body'],scope:target==='world'?'Broader uses.':'Physical planets; follow source number.',readerNote:'',kind:'translation'}))}],candidateDispositions:targets.map(target=>({target,language:'en',senseIds:['body'],disposition:'kept',reason:'Source-supported.'}))};
+ const savedByLanguage={en:serializeEntry(input,inventory,provenance,proposal,'en')};
+ return {proposal,savedByLanguage,obligations,evidence};
+}
+test('world covering a broad sense does not discharge missing planet and planets',()=>{assert.equal(candidateDeliveryFailures(packet()).filter(e=>e.kind==='missing_contextual_candidate').length,2);assert.throws(()=>assertCandidateDelivery(packet()),/Unresolved candidate delivery/);});
+test('prose acknowledging contextual validity cannot replace an actual target',()=>{const p=packet();p.proposal.candidateDispositions.push({target:'planet',language:'en',senseIds:['body'],disposition:'rejected',reason:'Contextually valid, but world is broader.'});assert.throws(()=>assertCandidateDelivery(p),/missing_contextual_candidate/);});
+test('both grammatical targets survive real matching and zero-count frequency sorting',()=>{const p=packet(['world','planet','planets']);assert.equal(assertCandidateDelivery(p),true);p.savedByLanguage.en=sortByUsage(p.savedByLanguage.en,[20,0,0]).saved;assert.equal(assertCandidateDelivery(p),true);assert.deepEqual(consumerHints(p.savedByLanguage.en,'Estos mundos.')[0].targetVariants.map(v=>v.text),['world','planet','planets']);});
+test('deleting planets after compilation is detected even when planet remains',()=>{const p=packet(['world','planet','planets']);p.savedByLanguage.en.terms[0].targetTerms.pop();p.savedByLanguage.en.terms[0].targetVariantNotes.pop();assert.throws(()=>assertCandidateDelivery(p),/lost_in_serialization/);});
+test('unsupported audit quotes cannot become delivery obligations',()=>{const p=packet(['world','planet','planets']);p.obligations=structuredClone(obligations);p.obligations[0].evidence[0].quote='Invented source claim.';assert.throws(()=>assertCandidateDelivery(p),/invalid_obligation_evidence/);});
+test('an available target still cannot retain a contradictory rejected disposition',()=>{const p=packet(['world','planet','planets']);p.proposal.candidateDispositions.find(d=>d.target==='planet').disposition='rejected';assert.throws(()=>assertCandidateDelivery(p),/contradictory_rejection/);});
+test('a supplied source neighbor is evidence, while unrelated text remains invalid',()=>{const p=packet(['world','planet','planets']);p.evidence=[{itemId:'p',text:'A following paragraph.',contextBefore:['Los mundos son cuerpos planetarios.']}];assert.equal(assertCandidateDelivery(p),true);p.evidence[0].contextBefore=['A different context.'];assert.throws(()=>assertCandidateDelivery(p),/invalid_obligation_evidence/);});
+test('a kept target cannot disappear even without a separate audit obligation',()=>{const p=packet(['world','planet','planets']);p.obligations=[];p.proposal.languages[0].variants.pop();assert.throws(()=>assertCandidateDelivery(p),/kept_candidate_missing/);});

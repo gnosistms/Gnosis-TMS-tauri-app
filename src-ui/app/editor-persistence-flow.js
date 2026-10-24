@@ -68,7 +68,7 @@ import {
 } from "./editor-footnotes.js";
 import { smartenInlineMarkupQuotes } from "./editor-inline-markup/smart-quotes.js";
 import { mapInlineMarkupVisiblePositionToRawInsertionOffset } from "./editor-inline-markup.js";
-import { cloneRowTimings } from "./editor-timing.js";
+import { chapterHasSrtSourceFormat, cloneRowTimings } from "./editor-timing.js";
 import {
   assertQueuedEditorRowsReady,
   invokeQueuedEditorWriteCommand,
@@ -320,6 +320,7 @@ function rebaseRowTextInputForRun(operationValue) {
   input.baseFields = cloneRowFields(currentRow.persistedFields ?? currentRow.baseFields);
   input.baseFootnotes = serializeFootnoteMapForLegacy(currentRow.persistedFootnotes ?? currentRow.baseFootnotes);
   input.baseImageCaptions = cloneRowFields(currentRow.persistedImageCaptions ?? currentRow.baseImageCaptions);
+  input.baseAttributions = cloneRowFields(currentRow.persistedAttributions ?? currentRow.baseAttributions);
   input.baseTimings = cloneRowTimings(currentRow.persistedTimings ?? currentRow.baseTimings);
   return input;
 }
@@ -576,6 +577,7 @@ function clearTranslationsRowsForBatch(chapterState, languageCodes) {
     const fields = {};
     const footnotes = {};
     const imageCaptions = {};
+    const attributions = {};
     const removeImages = [];
     for (const languageCode of selectedCodes) {
       if (String(row?.fields?.[languageCode] ?? "") !== "") {
@@ -587,6 +589,9 @@ function clearTranslationsRowsForBatch(chapterState, languageCodes) {
       if (String(row?.imageCaptions?.[languageCode] ?? "") !== "") {
         imageCaptions[languageCode] = "";
       }
+      if (String(row?.attributions?.[languageCode] ?? "") !== "") {
+        attributions[languageCode] = "";
+      }
       if (row?.images?.[languageCode]) {
         removeImages.push(languageCode);
       }
@@ -595,12 +600,14 @@ function clearTranslationsRowsForBatch(chapterState, languageCodes) {
     return Object.keys(fields).length > 0
       || Object.keys(footnotes).length > 0
       || Object.keys(imageCaptions).length > 0
+      || Object.keys(attributions).length > 0
       || removeImages.length > 0
       ? [{
         rowId,
         fields,
         footnotes,
         imageCaptions,
+        ...(Object.keys(attributions).length ? { attributions } : {}),
         removeImages,
       }]
       : [];
@@ -628,8 +635,11 @@ function applyEditorChapterRowsTranslationsCleared(chapterState, languageCodes, 
       const persistedFootnotes = cloneRowFootnotes(row.persistedFootnotes);
       const baseFootnotes = cloneRowFootnotes(row.baseFootnotes);
       const imageCaptions = cloneRowFields(row.imageCaptions);
+      const attributions = cloneRowFields(row.attributions);
       const persistedImageCaptions = cloneRowFields(row.persistedImageCaptions);
+      const persistedAttributions = cloneRowFields(row.persistedAttributions);
       const baseImageCaptions = cloneRowFields(row.baseImageCaptions);
+      const baseAttributions = cloneRowFields(row.baseAttributions);
       const images = cloneRowImages(row.images);
       const persistedImages = cloneRowImages(row.persistedImages);
       const baseImages = cloneRowImages(row.baseImages);
@@ -641,8 +651,11 @@ function applyEditorChapterRowsTranslationsCleared(chapterState, languageCodes, 
         persistedFootnotes[languageCode] = [];
         baseFootnotes[languageCode] = [];
         imageCaptions[languageCode] = "";
+        attributions[languageCode] = "";
         persistedImageCaptions[languageCode] = "";
+        persistedAttributions[languageCode] = "";
         baseImageCaptions[languageCode] = "";
+        baseAttributions[languageCode] = "";
         delete images[languageCode];
         delete persistedImages[languageCode];
         delete baseImages[languageCode];
@@ -657,8 +670,11 @@ function applyEditorChapterRowsTranslationsCleared(chapterState, languageCodes, 
         persistedFootnotes,
         baseFootnotes,
         imageCaptions,
+        attributions,
         persistedImageCaptions,
+        persistedAttributions,
         baseImageCaptions,
+        baseAttributions,
         images,
         persistedImages,
         baseImages,
@@ -1038,6 +1054,7 @@ export function collapseEditorImageCaption(render, rowId, languageCode) {
 }
 
 export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, operations = {}) {
+  if (chapterHasSrtSourceFormat(state.editorChapter?.sourceFormats)) return;
   const { updateEditorChapterRow } = operations;
   if (!rowId || typeof updateEditorChapterRow !== "function") {
     return;
@@ -1110,7 +1127,10 @@ export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, ope
   };
 
   const renderStyleChange = (options = {}) => {
-    if (options.preserveActiveEditorUndo !== true || !activeEditorRowFieldIsFocused()) {
+    // Leaving Quote changes the body itself. Refresh its textarea even when it
+    // is focused, so the next keystroke cannot replace the appended attribution.
+    const convertsAttribution = previousTextStyle === "quote" && normalizedTextStyle !== "quote";
+    if (convertsAttribution || options.preserveActiveEditorUndo !== true || !activeEditorRowFieldIsFocused()) {
       renderEditorRowScoped(render, rowId, "text-style-change");
     }
     if (state.editorChapter?.activeRowId === rowId) {
@@ -1180,6 +1200,7 @@ export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, ope
       state.editorChapter = {
         ...state.editorChapter,
         chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
+        wordCounts: payload?.wordCounts ?? state.editorChapter.wordCounts,
       };
       reconcileDirtyTrackedEditorRows([value.rowId]);
       renderStyleChange({ preserveActiveEditorUndo: true });
@@ -1202,6 +1223,7 @@ export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, ope
       state.editorChapter = {
         ...state.editorChapter,
         chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
+        wordCounts: payload?.wordCounts ?? state.editorChapter.wordCounts,
       };
       reconcileDirtyTrackedEditorRows([value.rowId]);
       renderStyleChange({ preserveActiveEditorUndo: true });
@@ -1990,12 +2012,12 @@ export async function persistEditorRowsBatch(render, items, operations = {}, opt
         if (options.srtGroupResults) throw new Error("Resolve the subtitle conflict before saving the group.");
         continue;
       }
-      const input = { rowId, fields: {}, footnotes: {}, imageCaptions: {} };
+      const input = { rowId, fields: {}, footnotes: {}, imageCaptions: {}, attributions: {}, baseAttributions: {} };
       if (options.srtGroupResults) input.baseFields = {};
       // The snapshot keeps state-format values (footnote entries are structured
       // in state but legacy-serialized on the wire) so the persisted-state
       // bookkeeping in onSuccess compares like with like.
-      const snapshot = { fields: {}, footnotes: {}, imageCaptions: {} };
+      const snapshot = { fields: {}, footnotes: {}, imageCaptions: {}, attributions: {} };
       const legacyFootnotes = serializeFootnoteMapForLegacy(row.footnotes);
       for (const languageCode of languageCodes) {
         if (typeof row.fields?.[languageCode] === "string") {
@@ -2024,11 +2046,18 @@ export async function persistEditorRowsBatch(render, items, operations = {}, opt
             input.baseImageCaptions[languageCode] = row.baseImageCaptions?.[languageCode] ?? row.persistedImageCaptions?.[languageCode] ?? "";
           }
         }
+        if (typeof row.attributions?.[languageCode] === "string" && (!options.srtGroupResults
+          || row.attributions[languageCode] !== row.persistedAttributions?.[languageCode])) {
+          input.attributions[languageCode] = row.attributions[languageCode];
+          snapshot.attributions[languageCode] = row.attributions[languageCode];
+          input.baseAttributions[languageCode] = row.baseAttributions?.[languageCode] ?? row.persistedAttributions?.[languageCode] ?? "";
+        }
       }
       if (
         Object.keys(input.fields).length === 0
         && Object.keys(input.footnotes).length === 0
         && Object.keys(input.imageCaptions).length === 0
+        && Object.keys(input.attributions).length === 0
       ) {
         continue;
       }
@@ -2039,6 +2068,7 @@ export async function persistEditorRowsBatch(render, items, operations = {}, opt
           fields: cloneRowFields(snapshot.fields),
           footnotes: cloneRowFootnotes(snapshot.footnotes),
           imageCaptions: cloneRowFields(snapshot.imageCaptions),
+          attributions: cloneRowFields(snapshot.attributions),
         },
       });
     }
@@ -2076,6 +2106,7 @@ export async function persistEditorRowsBatch(render, items, operations = {}, opt
         for (const conflict of payload.conflicts) {
           updateEditorChapterRow(conflict.rowId, (row) => applyEditorRowConflictDetected(row, conflict, {
             localFields: row.fields, localFootnotes: row.footnotes, localImageCaptions: row.imageCaptions,
+            localAttributions: row.attributions,
           }));
         }
         lockConflictFilter();
@@ -2148,6 +2179,8 @@ export async function persistEditorRowsBatch(render, items, operations = {}, opt
               ...cloneRowFields(row.persistedImageCaptions),
               ...saved.snapshot.imageCaptions,
             },
+            baseAttributions: { ...cloneRowFields(row.baseAttributions), ...saved.snapshot.attributions },
+            persistedAttributions: { ...cloneRowFields(row.persistedAttributions), ...saved.snapshot.attributions },
           };
           // A row edited again while the batch save was in flight keeps its
           // dirty status and re-persists through the normal per-row path.
@@ -2285,6 +2318,7 @@ export async function resolveEditorRowConflict(render, rowId, resolution, operat
     baseFieldsOverride: row.conflictState?.remoteRow?.fields ?? null,
     baseFootnotesOverride: row.conflictState?.remoteRow?.footnotes ?? null,
     baseImageCaptionsOverride: row.conflictState?.remoteRow?.imageCaptions ?? null,
+    baseAttributionsOverride: row.conflictState?.remoteRow?.attributions ?? null,
   });
 }
 
@@ -2357,6 +2391,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
   const fieldsToPersist = cloneRowFields(row.fields);
   const footnotesToPersist = serializeFootnoteMapForLegacy(row.footnotes);
   const imageCaptionsToPersist = cloneRowFields(row.imageCaptions);
+  const attributionsToPersist = cloneRowFields(row.attributions);
   const baseFields =
     options?.baseFieldsOverride && typeof options.baseFieldsOverride === "object"
       ? cloneRowFields(options.baseFieldsOverride)
@@ -2369,6 +2404,10 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
     options?.baseImageCaptionsOverride && typeof options.baseImageCaptionsOverride === "object"
       ? cloneRowFields(options.baseImageCaptionsOverride)
       : cloneRowFields(row.baseImageCaptions);
+  const baseAttributions =
+    options?.baseAttributionsOverride && typeof options.baseAttributionsOverride === "object"
+      ? cloneRowFields(options.baseAttributionsOverride)
+      : cloneRowFields(row.baseAttributions);
   const timingsToPersist = cloneRowTimings(row.timings);
   const input = {
     installationId: team.installationId,
@@ -2379,10 +2418,12 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
     fields: fieldsToPersist,
     footnotes: footnotesToPersist,
     imageCaptions: imageCaptionsToPersist,
+    attributions: attributionsToPersist,
     timings: timingsToPersist,
     baseFields,
     baseFootnotes,
     baseImageCaptions,
+    baseAttributions,
     baseTimings: cloneRowTimings(row.baseTimings),
     ...(commitMetadata?.operation ? { operation: commitMetadata.operation } : {}),
     ...(commitMetadata?.aiModel ? { aiModel: commitMetadata.aiModel } : {}),
@@ -2391,6 +2432,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
     options?.baseFieldsOverride
     || options?.baseFootnotesOverride
     || options?.baseImageCaptionsOverride
+    || options?.baseAttributionsOverride
   );
   const operationValue = {
     input,
@@ -2399,6 +2441,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
     fields: fieldsToPersist,
     footnotes: footnotesToPersist,
     imageCaptions: imageCaptionsToPersist,
+    attributions: attributionsToPersist,
     timings: timingsToPersist,
     images: cloneQueueContextValue(row.images ?? {}),
     permissionContext: {
@@ -2438,6 +2481,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
               localFields: candidateRow?.fields ?? value.fields,
               localFootnotes: candidateRow?.footnotes ?? value.footnotes,
               localImageCaptions: candidateRow?.imageCaptions ?? value.imageCaptions,
+              localAttributions: candidateRow?.attributions ?? value.attributions,
             }),
           );
           lockConflictFilter();
@@ -2451,11 +2495,13 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
         baseFields: payload?.baseFields ?? value.input?.baseFields ?? {},
         baseFootnotes: payload?.baseFootnotes ?? value.input?.baseFootnotes ?? {},
         baseImageCaptions: payload?.baseImageCaptions ?? value.input?.baseImageCaptions ?? {},
+        baseAttributions: payload?.baseAttributions ?? value.input?.baseAttributions ?? {},
         baseImages: currentRowForMerge?.persistedImages ?? currentRowForMerge?.baseImages ?? {},
         baseFieldStates: currentRowForMerge?.persistedFieldStates ?? {},
         localFields: currentRowForMerge?.fields ?? value.fields,
         localFootnotes: currentRowForMerge?.footnotes ?? value.footnotes,
         localImageCaptions: currentRowForMerge?.imageCaptions ?? value.imageCaptions,
+        localAttributions: currentRowForMerge?.attributions ?? value.attributions,
         localImages: currentRowForMerge?.images ?? value.images ?? {},
         localFieldStates: currentRowForMerge?.fieldStates ?? {},
         remoteRow: payload?.row,
@@ -2491,6 +2537,10 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
         payload?.row?.fields,
         payload?.row?.footnotes,
         payload?.row?.imageCaptions,
+        {},
+        {},
+        value.attributions,
+        payload?.row?.attributions,
       )) {
         updateEditorChapterRow(
           value.rowId,
@@ -2498,6 +2548,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
             fields: value.fields,
             footnotes: value.footnotes,
             imageCaptions: value.imageCaptions,
+            attributions: value.attributions,
             images: value.images,
             timings: value.timings,
           }),
@@ -2516,6 +2567,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
           localFields: currentRow?.fields ?? value.fields,
           localFootnotes: currentRow?.footnotes ?? value.footnotes,
           localImageCaptions: currentRow?.imageCaptions ?? value.imageCaptions,
+          localAttributions: currentRow?.attributions ?? value.attributions,
         }),
       );
       lockConflictFilter();
@@ -2538,6 +2590,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
         fields: value.fields,
         footnotes: value.footnotes,
         imageCaptions: value.imageCaptions,
+        attributions: value.attributions,
         images: value.images,
         timings: value.timings,
       }),

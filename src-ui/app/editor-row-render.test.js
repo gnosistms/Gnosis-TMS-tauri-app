@@ -493,6 +493,33 @@ test("renderTranslationContentRow gives custom HTML rows a monospace editing fie
   assert.match(html, /data-row-text-style="custom_html"/);
 });
 
+test("Quote rows expose an escaped per-language attribution textarea", () => {
+  const html = renderTranslationContentRow({ ...rowWithSection({ canEdit: true, attribution: 'Author & <source>' }), textStyle: "quote", canEdit: true });
+  assert.match(html, /<textarea[^>]*data-editor-row-field[^>]*data-content-kind="attribution"[^>]*data-language-code="vi"[^>]*>Author &amp; &lt;source&gt;<\/textarea>/);
+  assert.match(html, /Attribution<\/span>/);
+  assert.doesNotMatch(renderTranslationContentRow({ ...rowWithSection({ canEdit: true }), canEdit: true }), /data-content-kind="attribution"/);
+});
+
+test("SRT rows hide all row and inline formatting controls and quote attribution", () => {
+  const html = renderTranslationContentRow({ ...rowWithSection({ canEdit: true, showTiming: true, attribution: "Author" }), textStyle: "quote", canEdit: true });
+  assert.doesNotMatch(html, /data-editor-row-text-style-button|data-editor-inline-style-button|data-editor-separator-button|data-editor-footnote-button|data-editor-image-button|data-content-kind="attribution"/);
+  assert.match(html, /data-row-text-style="paragraph"/);
+});
+
+test("empty Quote attribution has a click prompt and a native placeholder for editing", () => {
+  const html = renderTranslationContentRow({ ...rowWithSection({ canEdit: true }), textStyle: "quote", canEdit: true });
+  assert.match(html, /Click here to enter attribution\.<\/span>/);
+  assert.match(html, /aria-label="Quote attribution" placeholder="Enter attribution here\."/);
+  assert.match(html, /data-content-kind="attribution"[^>]*><\/textarea>/);
+});
+
+test("empty Quote attribution is absent for read-only and AI-translating fields", () => {
+  for (const section of [{ attribution: "" }, { attribution: " \n " }, { canEdit: true, isAiTranslating: true }]) {
+    const html = renderTranslationContentRow({ ...rowWithSection(section), textStyle: "quote", canEdit: true });
+    assert.doesNotMatch(html, /data-content-kind="attribution"|Click here to enter attribution/);
+  }
+});
+
 for (const canEdit of [false, true]) {
   test(`search highlights body, individual footnotes, and captions (${canEdit ? "editable" : "read-only"})`, () => {
     const text = "Needle body[2][7]";

@@ -76,6 +76,7 @@ import {
   syncEditorGlossaryHighlightRowDom,
   updateEditorConflictResolutionFinalFootnote,
   updateEditorConflictResolutionFinalImageCaption,
+  updateEditorConflictResolutionFinalAttribution,
   updateEditorConflictResolutionFinalImageUrl,
   updateEditorImageUrlDraft,
   updateEditorPreviewSearchQuery,
@@ -877,6 +878,13 @@ function handleEditorConflictResolutionInput(event) {
   if (imageCaptionInput) {
     updateEditorConflictResolutionFinalImageCaption(imageCaptionInput.value);
     syncEditorConflictResolutionTextareaHeight(imageCaptionInput);
+    return true;
+  }
+
+  const attributionInput = event.target.closest("[data-editor-conflict-final-attribution-input]");
+  if (attributionInput) {
+    updateEditorConflictResolutionFinalAttribution(attributionInput.value);
+    syncEditorConflictResolutionTextareaHeight(attributionInput);
     return true;
   }
 

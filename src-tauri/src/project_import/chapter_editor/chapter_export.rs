@@ -118,6 +118,9 @@ pub(super) enum ExportImage {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum ExportBlock {
+    Attribution {
+        text: String,
+    },
     Text {
         text_style: String,
         text: String,
@@ -354,11 +357,29 @@ pub(super) fn build_export_document(
                 // Custom HTML is opaque — never split it on "<hr>" markers, which
                 // may be intentional content rather than separators.
                 blocks.push(ExportBlock::Text {
-                    text_style: style,
+                    text_style: style.clone(),
                     text: text.to_string(),
                 });
             } else {
-                push_text_blocks_with_separators(&mut blocks, style, text);
+                push_text_blocks_with_separators(&mut blocks, style.clone(), text);
+            }
+        }
+
+        if style == "quote" {
+            if let Some(attribution) = field
+                .map(|value| value.attribution.trim())
+                .filter(|text| !text.is_empty())
+            {
+                // A quote with only an attribution still needs an owning block.
+                if blocks.len() == row_block_start {
+                    blocks.push(ExportBlock::Text {
+                        text_style: "quote".into(),
+                        text: String::new(),
+                    });
+                }
+                blocks.push(ExportBlock::Attribution {
+                    text: attribution.to_string(),
+                });
             }
         }
 
@@ -914,6 +935,19 @@ fn render_html_document(document: &ExportDocument) -> Result<String, String> {
                     }
                 }
             }
+            ExportBlock::Attribution { text } => {
+                let attribution = sanitize_inline_html(text).replace('\n', "<br>");
+                if body.ends_with("</blockquote>\n") {
+                    body.truncate(body.len() - "</blockquote>\n".len());
+                } else {
+                    // A trailing separator leaves no open quote for the citation.
+                    body.push_str("<blockquote>");
+                }
+                let _ = writeln!(
+                    body,
+                    "<cite class=\"quote-attribution\">{attribution}</cite></blockquote>"
+                );
+            }
             ExportBlock::Separator => {
                 let _ = writeln!(body, "<hr>");
             }
@@ -947,7 +981,7 @@ fn render_html_document(document: &ExportDocument) -> Result<String, String> {
     }
 
     Ok(format!(
-        "<!doctype html>\n<html lang=\"{}\">\n<head>\n<meta charset=\"utf-8\">\n<title>{}</title>\n<style>body{{max-width:760px;margin:40px auto;padding:0 24px;font-family:serif;line-height:1.6;color:#2f2117;}}h1{{font-size:2rem;}}h2{{font-size:1.4rem;}}blockquote{{margin:1em 2em;font-style:italic;}}.indented{{padding-left:2em;}}.centered{{text-align:center;}}.footnote{{font-size:.95em;}}figure{{margin:1.5em auto;text-align:center;}}img{{display:block;margin:0 auto;max-width:100%;height:auto;}}figcaption{{margin-top:.6em;text-align:center;}}</style>\n</head>\n<body>\n{}\n</body>\n</html>\n",
+        "<!doctype html>\n<html lang=\"{}\">\n<head>\n<meta charset=\"utf-8\">\n<title>{}</title>\n<style>body{{max-width:760px;margin:40px auto;padding:0 24px;font-family:serif;line-height:1.6;color:#2f2117;}}h1{{font-size:2rem;}}h2{{font-size:1.4rem;}}blockquote{{margin:1em 2em;font-style:italic;}}.quote-attribution{{display:block;font-size:90%;text-align:right;font-style:normal;}}.indented{{padding-left:2em;}}.centered{{text-align:center;}}.footnote{{font-size:.95em;}}figure{{margin:1.5em auto;text-align:center;}}img{{display:block;margin:0 auto;max-width:100%;height:auto;}}figcaption{{margin-top:.6em;text-align:center;}}</style>\n</head>\n<body>\n{}\n</body>\n</html>\n",
         escape_html(&document.language_code),
         escape_html(&document.title),
         body
@@ -1087,6 +1121,9 @@ fn render_txt_document(document: &ExportDocument) -> String {
                 };
                 parts.push(rendered);
             }
+            ExportBlock::Attribution { text } => {
+                parts.push(txt_inline_text(text));
+            }
             ExportBlock::Separator => {
                 parts.push("---".to_string());
             }
@@ -1148,6 +1185,15 @@ fn render_md_document(document: &ExportDocument) -> String {
                 };
                 fragments.push(rendered);
                 last_text_fragment = Some(fragments.len() - 1);
+            }
+            ExportBlock::Attribution { text } => {
+                fragments.push(
+                    md_inline_text(text)
+                        .lines()
+                        .map(|line| format!("> {line}"))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                );
             }
             ExportBlock::Separator => {
                 fragments.push("---".to_string());
@@ -1368,6 +1414,12 @@ fn render_docx_document(
         match block {
             ExportBlock::Text { text_style, text } => {
                 body.push_str(&docx_text_paragraph_xml(Some(text_style), text, false));
+            }
+            ExportBlock::Attribution { text } => {
+                let runs = docx_runs_xml(text, false);
+                body.push_str(&format!(
+                    r#"<w:p><w:pPr><w:pStyle w:val="VellumAttribution"/></w:pPr>{runs}</w:p>"#
+                ));
             }
             ExportBlock::Separator => {
                 body.push_str(&docx_separator_paragraph_xml());
@@ -1975,6 +2027,10 @@ fn render_rtf_document(document: &ExportDocument, footnote_links_as_plain_text: 
             ExportBlock::Text { text_style, text } => {
                 body.push_str(&rtf_text_paragraph(Some(text_style), text, false));
             }
+            ExportBlock::Attribution { text } => {
+                let paragraph = rtf_text_paragraph(None, text, false);
+                body.push_str(&paragraph.replacen("\\fs24", "\\fs22\\qr", 1));
+            }
             ExportBlock::Separator => {
                 body.push_str(&rtf_separator_paragraph());
             }
@@ -2204,6 +2260,14 @@ fn xlsx_cell_value(field: Option<&StoredFieldValue>) -> String {
         return String::new();
     };
     let text = xlsx_separator_text_fallback(field.plain_text.trim());
+    let attribution = field.attribution.trim();
+    let text = if attribution.is_empty() {
+        text
+    } else if text.is_empty() {
+        attribution.to_string()
+    } else {
+        format!("{text}\n\n{attribution}")
+    };
     let footnote = normalize_editor_footnote_value(&field.footnote);
     let footnote = footnote.trim();
     if footnote.is_empty() {
@@ -2284,7 +2348,7 @@ fn package_rels_xml() -> &'static str {
 }
 
 fn styles_xml() -> &'static str {
-    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:pPr><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:sz w:val="26"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:pPr><w:ind w:left="720" w:right="720"/></w:pPr><w:rPr><w:i/></w:rPr></w:style></w:styles>"#
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:pPr><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:sz w:val="26"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:pPr><w:ind w:left="720" w:right="720"/></w:pPr><w:rPr><w:i/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="VellumAttribution"><w:name w:val="Vellum Attribution"/><w:pPr><w:jc w:val="right"/></w:pPr><w:rPr><w:sz w:val="20"/></w:rPr></w:style></w:styles>"#
 }
 
 #[cfg(test)]
@@ -2292,6 +2356,109 @@ mod tests {
     use super::*;
     use std::io::Read;
     use zip::ZipArchive;
+
+    #[test]
+    fn quote_attribution_survives_document_exports() {
+        let document = document(vec![
+            ExportBlock::Text {
+                text_style: "quote".into(),
+                text: "Body".into(),
+            },
+            ExportBlock::Attribution {
+                text: "Author & <b>Work</b>".into(),
+            },
+        ]);
+        let html = render_html_document(&document).unwrap();
+        assert!(html.contains("<cite class=\"quote-attribution\">Author &amp; <strong>Work</strong></cite></blockquote>"));
+        assert!(html.contains("blockquote{margin:1em 2em;font-style:italic;}"));
+        assert!(html.contains(".quote-attribution{display:block;font-size:90%;text-align:right;"));
+        assert!(render_txt_document(&document).contains("Author & Work"));
+        assert!(render_md_document(&document).contains("> Author & **Work**"));
+        let rtf = render_rtf_document(&document, false);
+        assert!(rtf.contains("\\li720\\ri720\\i Body"));
+        assert!(rtf.contains("\\fs22\\qr"));
+        assert!(rtf.contains("Author &"));
+        let bytes = render_docx_document(&document, false).unwrap();
+        let mut zip = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut xml = String::new();
+        zip.by_name("word/document.xml")
+            .unwrap()
+            .read_to_string(&mut xml)
+            .unwrap();
+        assert!(xml.contains("<w:pStyle w:val=\"VellumAttribution\"/>"));
+        assert!(styles_xml().contains("w:val=\"Vellum Attribution\""));
+        assert!(styles_xml().contains(r#"<w:name w:val="Quote"/><w:pPr><w:ind w:left="720" w:right="720"/></w:pPr><w:rPr><w:i/>"#));
+    }
+
+    #[test]
+    fn html_quote_attribution_survives_trailing_separators() {
+        let chapter = StoredChapterFile {
+            chapter_id: "chapter-1".into(),
+            title: "Chapter".into(),
+            lifecycle: active_lifecycle_state(),
+            source_files: Vec::new(),
+            languages: vec![export_language("en", "target", None)],
+            settings: None,
+            source_word_count: None,
+        };
+        for text in ["Body<hr>", "<hr>", "Body<hr><hr>"] {
+            let mut quote = row("q", "a", text, "quote");
+            quote.fields.get_mut("en").unwrap().attribution = "Author & <b>Work</b>".into();
+            let document =
+                build_export_document(Path::new("/repo"), &chapter, &[quote], "en", None, "")
+                    .unwrap();
+            let html = render_html_document(&document).unwrap();
+            assert!(html.contains("<hr>\n<blockquote><cite class=\"quote-attribution\">Author &amp; <strong>Work</strong></cite></blockquote>"), "Quote body: {text}");
+            assert_eq!(html.matches("<cite ").count(), 1, "Quote body: {text}");
+        }
+    }
+
+    #[test]
+    fn blank_quote_attribution_does_not_create_an_export_block() {
+        let chapter = StoredChapterFile {
+            chapter_id: "chapter-1".into(),
+            title: "Chapter".into(),
+            lifecycle: active_lifecycle_state(),
+            source_files: Vec::new(),
+            languages: vec![export_language("en", "target", None)],
+            settings: None,
+            source_word_count: None,
+        };
+        for attribution in ["", " \n\t"] {
+            let mut quote = row("q", "a", "Body", "quote");
+            quote.fields.get_mut("en").unwrap().attribution = attribution.into();
+            let document =
+                build_export_document(Path::new("/repo"), &chapter, &[quote], "en", None, "")
+                    .unwrap();
+            assert_eq!(
+                document.blocks,
+                vec![ExportBlock::Text {
+                    text_style: "quote".into(),
+                    text: "Body".into()
+                }]
+            );
+            assert!(!render_html_document(&document).unwrap().contains("<cite"));
+            let mut zip =
+                ZipArchive::new(Cursor::new(render_docx_document(&document, false).unwrap()))
+                    .unwrap();
+            let mut xml = String::new();
+            zip.by_name("word/document.xml")
+                .unwrap()
+                .read_to_string(&mut xml)
+                .unwrap();
+            assert!(!xml.contains("VellumAttribution"));
+        }
+    }
+
+    #[test]
+    fn quote_attribution_is_preserved_in_spreadsheet_cells() {
+        let field = StoredFieldValue {
+            plain_text: "Body".into(),
+            attribution: "Author".into(),
+            ..Default::default()
+        };
+        assert_eq!(xlsx_cell_value(Some(&field)), "Body\n\nAuthor");
+    }
 
     #[test]
     fn webp_dimensions_reads_all_three_container_layouts() {
@@ -2336,6 +2503,7 @@ mod tests {
             StoredFieldValue {
                 plain_text: text.to_string(),
                 footnote: String::new(),
+                attribution: String::new(),
                 image_caption: String::new(),
                 image: None,
                 editor_flags: StoredFieldEditorFlags::default(),
@@ -3322,6 +3490,7 @@ mod tests {
         StoredFieldValue {
             plain_text: text.to_string(),
             footnote: footnote.to_string(),
+            attribution: String::new(),
             image_caption: String::new(),
             image: None,
             editor_flags: StoredFieldEditorFlags::default(),

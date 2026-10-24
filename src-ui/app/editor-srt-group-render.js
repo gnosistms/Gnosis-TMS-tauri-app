@@ -23,3 +23,4 @@ export function renderSrtStaticText(language, glossaryHighlightHtml) {
     `<span class="translation-srt-marker" title="Subtitle boundary">${escapeHtml(marker)}</span>`);
   return html;
 }
+

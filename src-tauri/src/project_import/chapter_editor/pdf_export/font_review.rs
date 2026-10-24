@@ -104,6 +104,17 @@ pub(super) fn prepare(
                     )));
                 }
             }
+            ExportBlock::Attribution { text } => {
+                if review_plan.affected(text, false) {
+                    excerpts.push((
+                        "Quote attribution".into(),
+                        format!(
+                            "#align(right)[#text(size: 0.9em)[{}]]\n\n",
+                            render_inline_typst(text, false)
+                        ),
+                    ));
+                }
+            }
             ExportBlock::Separator => {}
         }
     }

@@ -1,7 +1,7 @@
 use super::row_fields::{
-    apply_editor_footnote_updates, apply_editor_image_caption_updates,
-    apply_editor_plain_text_updates, parse_editor_footnote_entries,
-    serialize_editor_footnote_entries, ParsedFootnoteEntry,
+    apply_editor_attribution_updates, apply_editor_footnote_updates,
+    apply_editor_image_caption_updates, apply_editor_plain_text_updates,
+    parse_editor_footnote_entries, serialize_editor_footnote_entries, ParsedFootnoteEntry,
 };
 use super::*;
 
@@ -14,6 +14,7 @@ struct MergedEditorRowContent {
     fields: BTreeMap<String, String>,
     footnotes: BTreeMap<String, String>,
     image_captions: BTreeMap<String, String>,
+    attributions: BTreeMap<String, String>,
     images: BTreeMap<String, Option<StoredFieldImage>>,
     moved_from_next: Vec<String>,
 }
@@ -91,6 +92,7 @@ pub(crate) fn merge_gtms_editor_rows_sync(
         })?;
     apply_editor_plain_text_updates(&mut previous_value, &merged.fields)?;
     apply_editor_footnote_updates(&mut previous_value, &merged.footnotes)?;
+    apply_editor_attribution_updates(&mut previous_value, &merged.attributions)?;
     apply_editor_image_caption_updates(&mut previous_value, &merged.image_captions)?;
     for (language_code, image) in &merged.images {
         apply_editor_field_image_update(&mut previous_value, language_code, image.clone())?;
@@ -215,6 +217,7 @@ fn merge_editor_row_content(
         fields: BTreeMap::new(),
         footnotes: BTreeMap::new(),
         image_captions: BTreeMap::new(),
+        attributions: BTreeMap::new(),
         images: BTreeMap::new(),
         moved_from_next: Vec::new(),
     };
@@ -234,9 +237,27 @@ fn merge_editor_row_content(
             text: entry.text,
         }));
 
-        merged.fields.insert(
+        let is_quote = row_text_style(previous) == "quote";
+        let previous_text = if is_quote {
+            previous_field.plain_text.clone()
+        } else {
+            join_paragraphs(&previous_field.plain_text, &previous_field.attribution)
+        };
+        let next_text = if is_quote {
+            shifted_next_text
+        } else {
+            join_paragraphs(&shifted_next_text, &next_field.attribution)
+        };
+        merged
+            .fields
+            .insert(code.clone(), join_paragraphs(&previous_text, &next_text));
+        merged.attributions.insert(
             code.clone(),
-            join_paragraphs(&previous_field.plain_text, &shifted_next_text),
+            if is_quote {
+                join_paragraphs(&previous_field.attribution, &next_field.attribution)
+            } else {
+                String::new()
+            },
         );
         merged
             .footnotes

@@ -99,9 +99,9 @@ fn rendered_texts(document: &ExportDocument, show_link_urls: bool) -> Vec<String
         .to_uppercase()];
     for block in &document.blocks {
         match block {
-            ExportBlock::Text { text, .. } | ExportBlock::Image { caption: text, .. } => {
-                texts.extend(rendered_runs(text, false))
-            }
+            ExportBlock::Text { text, .. }
+            | ExportBlock::Attribution { text }
+            | ExportBlock::Image { caption: text, .. } => texts.extend(rendered_runs(text, false)),
             ExportBlock::Footnote { text, .. } => texts.extend(rendered_runs(text, show_link_urls)),
             ExportBlock::Separator => {}
         }

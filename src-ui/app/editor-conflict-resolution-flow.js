@@ -150,6 +150,10 @@ export function updateEditorConflictResolutionFinalImageCaption(nextValue) {
   updateEditorConflictResolutionModalValue("finalImageCaption", nextValue);
 }
 
+export function updateEditorConflictResolutionFinalAttribution(nextValue) {
+  updateEditorConflictResolutionModalValue("finalAttribution", nextValue);
+}
+
 export function updateEditorConflictResolutionFinalImageUrl(nextValue) {
   updateEditorConflictResolutionModalValue("finalImageUrl", nextValue);
 }
@@ -174,7 +178,7 @@ export function copyEditorConflictResolutionVersion(render, side) {
     return;
   }
 
-  const { finalText, finalFootnote, finalImageCaption, finalImageUrl } =
+  const { finalText, finalFootnote, finalImageCaption, finalAttribution, finalImageUrl } =
     buildEditorConflictResolutionVersionSelection(modal, side);
 
   state.editorChapter = {
@@ -184,6 +188,7 @@ export function copyEditorConflictResolutionVersion(render, side) {
       finalText,
       finalFootnote,
       finalImageCaption,
+      finalAttribution,
       finalImageUrl,
     },
   };
@@ -209,12 +214,15 @@ export async function saveEditorConflictResolution(render, operations = {}) {
     remoteFields,
     remoteFootnotes,
     remoteImageCaptions,
+    remoteAttributions,
     nextLocalFields,
     nextLocalFootnotes,
     nextLocalImageCaptions,
+    nextLocalAttributions,
     fieldsToPersist,
     footnotesToPersist,
     imageCaptionsToPersist,
+    attributionsToPersist,
     imagesToPersist,
     baseImages,
   } = buildEditorConflictResolutionSaveState(row, languageCode, modal);
@@ -237,9 +245,11 @@ export async function saveEditorConflictResolution(render, operations = {}) {
         fields: fieldsToPersist,
         footnotes: footnotesToPersist,
         imageCaptions: imageCaptionsToPersist,
+        attributions: attributionsToPersist,
         baseFields: remoteFields,
         baseFootnotes: remoteFootnotes,
         baseImageCaptions: remoteImageCaptions,
+        baseAttributions: remoteAttributions,
         ...(imagesToPersist ? { images: imagesToPersist, baseImages } : {}),
       },
     }, { render, actionKind: "sharedWrite", rowId });
@@ -272,6 +282,10 @@ export async function saveEditorConflictResolution(render, operations = {}) {
       payload.row.fields,
       payload.row.footnotes,
       payload.row.imageCaptions,
+      {},
+      {},
+      attributionsToPersist,
+      payload.row.attributions,
     )) {
       savedLocalRowPayload = payload.row;
     } else {
@@ -283,6 +297,7 @@ export async function saveEditorConflictResolution(render, operations = {}) {
               localFields: nextLocalFields,
               localFootnotes: nextLocalFootnotes,
               localImageCaptions: nextLocalImageCaptions,
+              localAttributions: nextLocalAttributions,
             }),
           )
           : null;
@@ -324,6 +339,7 @@ export async function saveEditorConflictResolution(render, operations = {}) {
           nextLocalFootnotes,
           nextLocalImageCaptions,
           {
+            nextLocalAttributions,
             remoteVersion: currentRow?.conflictState?.remoteVersion ?? modal.remoteVersion ?? null,
           },
         ),
@@ -400,6 +416,10 @@ export async function saveEditorConflictResolution(render, operations = {}) {
       latestRowPayload.row.fields,
       latestRowPayload.row.footnotes,
       latestRowPayload.row.imageCaptions,
+      {},
+      {},
+      currentRow.attributions,
+      latestRowPayload.row.attributions,
     )) {
       finalRow =
         typeof operations.updateEditorChapterRow === "function"
@@ -410,11 +430,13 @@ export async function saveEditorConflictResolution(render, operations = {}) {
               baseFields: cloneRowFields(latestRowPayload.row.fields),
               baseFootnotes: cloneRowFields(latestRowPayload.row.footnotes),
               baseImageCaptions: cloneRowFields(latestRowPayload.row.imageCaptions),
+              baseAttributions: cloneRowFields(latestRowPayload.row.attributions),
               remoteVersion: latestRowPayload.rowVersion ?? null,
             }, {
               localFields: cloneRowFields(currentRow.fields),
               localFootnotes: cloneRowFields(currentRow.footnotes),
               localImageCaptions: cloneRowFields(currentRow.imageCaptions),
+              localAttributions: cloneRowFields(currentRow.attributions),
             }),
           )
           : currentRow;
@@ -437,6 +459,7 @@ export async function saveEditorConflictResolution(render, operations = {}) {
         nextLocalFootnotes,
         nextLocalImageCaptions,
         {
+          nextLocalAttributions,
           remoteVersion: currentRow?.conflictState?.remoteVersion ?? modal.remoteVersion ?? null,
         },
       ),

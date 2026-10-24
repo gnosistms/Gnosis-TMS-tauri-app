@@ -242,6 +242,7 @@ function buildLiveTranslationRows(editorChapter, languages) {
           openFootnoteMarker: Number.isInteger(openFootnoteMarkerValue) ? openFootnoteMarkerValue : null,
           searchFootnote: persistedFootnoteText(row, language.code, footnote),
           imageCaption,
+          attribution: String(row.attributions?.[language.code] ?? ""),
           searchImageCaption: persistedLanguageText(
             row,
             "persistedImageCaptions",
