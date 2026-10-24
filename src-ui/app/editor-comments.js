@@ -8,15 +8,6 @@ export function normalizeEditorSidebarTab(tab) {
   return EDITOR_SIDEBAR_TABS.has(tab) ? tab : "review";
 }
 
-export function resolveEditorSidebarTabForField(currentTab, row, languageCode) {
-  const normalizedCurrentTab = normalizeEditorSidebarTab(currentTab);
-  const text =
-    typeof row?.fields?.[languageCode] === "string"
-      ? row.fields[languageCode]
-      : String(row?.fields?.[languageCode] ?? "");
-  return text.trim().length === 0 ? "assistant" : normalizedCurrentTab;
-}
-
 export function normalizeEditorCommentSeenRevisions(seenRevisions) {
   return Object.fromEntries(
     Object.entries(seenRevisions && typeof seenRevisions === "object" ? seenRevisions : {})

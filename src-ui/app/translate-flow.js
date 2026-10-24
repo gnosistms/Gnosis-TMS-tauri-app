@@ -37,7 +37,7 @@ import {
   switchEditorSidebarTab as switchEditorSidebarTabFlow,
   updateEditorCommentDraft as updateEditorCommentDraftFlow,
 } from "./editor-comments-flow.js";
-import { resolveEditorSidebarTabForField } from "./editor-comments.js";
+import { normalizeEditorSidebarTab } from "./editor-comments.js";
 import { beginSrtGroupEdit, updateSrtGroupDraft, rebaseSrtGroupEditsAfterResolution } from "./editor-srt-group-edit-flow.js";
 import { SRT_PAUSE_THRESHOLDS_MS, srtGroupingEnabled, srtGroupForRow, srtDisplayRowId } from "./editor-srt-grouping.js";
 import { applySrtGroupAction } from "./editor-srt-group-actions.js";
@@ -177,7 +177,6 @@ import { applyStructuralEditorChange } from "./editor-structural-change-flow.js"
 import { syncEditorRowTextareaHeight } from "./autosize.js";
 import { saveStoredEditorFontSizePx } from "./editor-preferences.js";
 import { ensureEditorRowReadyForActivation } from "./editor-row-sync-flow.js";
-import { findEditorRowById } from "./editor-utils.js";
 import {
   noteEditorBackgroundSyncScrollActivity as noteEditorBackgroundSyncScrollActivityFlow,
   syncEditorBackgroundNow as syncEditorBackgroundNowFlow,
@@ -396,12 +395,7 @@ export async function setActiveEditorField(render, rowId, languageCode, options 
   }
 
   const previousSidebarTab = state.editorChapter.sidebarTab;
-  const row = findEditorRowById(rowId, state.editorChapter);
-  const nextSidebarTab = resolveEditorSidebarTabForField(
-    previousSidebarTab,
-    row,
-    languageCode,
-  );
+  const nextSidebarTab = normalizeEditorSidebarTab(previousSidebarTab);
   const shouldOpenEditor = options.openEditor === true || textareaOpensMainField(options.input);
   if (shouldOpenEditor) beginSrtGroupEdit(rowId, languageCode);
   const pendingSelectionOffset =

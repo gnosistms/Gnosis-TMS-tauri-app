@@ -6348,7 +6348,8 @@ test.describe("editor regressions", () => {
       `[data-editor-footnote-display][data-row-id="${rowId}"][data-language-code="${languageCode}"][data-footnote-marker="1"]`,
     );
     await expect(closedFootnote).toBeVisible();
-    await closedFootnote.locator(".translation-language-panel__footnote-marker").click();
+    // Hold through a frame so blur cannot replace the pressed marker before mouseup.
+    await closedFootnote.locator(".translation-language-panel__footnote-marker").click({ delay: 150 });
     await expect(footnoteField).toBeFocused();
     await expect(footnoteField).toHaveValue("");
   });
@@ -7027,7 +7028,9 @@ test("connected deleted rows disconnect on section close and permanent deletion"
   await setTranslateScrollTop(page, 1000000);
   const notice = page.locator("[data-editor-row-connection]");
   await expect(notice).toBeVisible();
-  await expect(row).toHaveCount(0);
+  // A selected row can remain mounted outside the virtual window. The
+  // connection notice tracks viewport intersection, not DOM eviction.
+  await expect(row).not.toBeInViewport();
   await notice.click();
   await expect(row).toHaveClass(/is-connected/);
   await expect(notice).toBeHidden();
@@ -7184,3 +7187,240 @@ test("changed-after-my-edit filter shows other people's changes as diffs on the 
   await page.locator("[data-editor-filter-select]").selectOption("show-all");
   await expect(page.locator(".history-diff__insert")).toHaveCount(0);
 });
+
+for (const { platform, modifier } of [
+  { platform: "mac", modifier: "Meta" },
+  { platform: "windows", modifier: "Control" },
+]) {
+  test(`formatting shortcuts match bold italic and underline buttons (${platform})`, async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 4 }, { mockTauri: true, path: `/?platform=${platform}` });
+    const rowId = "fixture-row-0001";
+    const field = await activateMainEditorField(page, rowId, "vi");
+    for (const { key, style, tag } of [
+      { key: "b", style: "bold", tag: "strong" },
+      { key: "i", style: "italic", tag: "em" },
+      { key: "u", style: "underline", tag: "u" },
+    ]) {
+      const button = page.locator(`[data-editor-inline-style-button][data-row-id="${rowId}"][data-language-code="vi"][data-inline-style="${style}"]`);
+      await field.fill("alpha beta gamma");
+      await setEditorSelectionRange(page, rowId, "vi", 6, 10);
+      await field.press(`${modifier}+${key}`);
+      await expect(field).toHaveValue(`alpha <${tag}>beta</${tag}> gamma`);
+      await expect(field).toBeFocused();
+      await expect(button).toHaveAttribute("aria-pressed", "true");
+      await field.press(`${modifier}+${key}`);
+      await expect(field).toHaveValue("alpha beta gamma");
+      await expect(button).toHaveAttribute("aria-pressed", "false");
+
+      await setEditorSelectionRange(page, rowId, "vi", 1, 1);
+      await field.press(`${modifier}+${key}`);
+      await expect(field).toHaveValue(`<${tag}>alpha</${tag}> beta gamma`);
+      await clickLocatorCenter(page, button);
+      await expect(field).toHaveValue("alpha beta gamma");
+    }
+
+    await clickLocatorCenter(page, page.locator(`[data-editor-footnote-button][data-row-id="${rowId}"][data-language-code="vi"]`));
+    const footnote = page.locator(`[data-editor-row-field][data-row-id="${rowId}"][data-language-code="vi"][data-content-kind="footnote"]`);
+    await footnote.fill("foot note");
+    const bodyWithMarker = await field.inputValue();
+    await setEditorSelectionRange(page, rowId, "vi", 6, 6, "footnote");
+    await footnote.press(`${modifier}+i`);
+    await expect(footnote).toHaveValue("foot <em>note</em>");
+    await expect(footnote).toBeFocused();
+    await expect(field).toHaveValue(bodyWithMarker);
+  });
+}
+
+test("formatting shortcuts leave SRT and custom HTML text unchanged", async ({ page }) => {
+  for (const srt of [false, true]) {
+    await mountEditorFixture(page, { rowCount: 4, srt }, { mockTauri: true, path: "/?platform=mac" });
+    const rowId = "fixture-row-0001";
+    const field = await activateMainEditorField(page, rowId, "vi");
+    if (!srt) {
+      await page.locator(`[data-editor-row-text-style-button][data-row-id="${rowId}"][data-language-code="vi"][data-text-style="custom_html"]`).click();
+    }
+    await field.fill("alpha beta gamma");
+    for (const key of ["b", "i", "u"]) {
+      const prevented = await field.evaluate((node, key) => {
+        node.focus();
+        node.setSelectionRange(6, 10);
+        return !node.dispatchEvent(new KeyboardEvent("keydown", { key, metaKey: true, bubbles: true, cancelable: true }));
+      }, key);
+      expect(prevented).toBe(false);
+      await expect(field).toHaveValue("alpha beta gamma");
+    }
+  }
+});
+
+for (const canEdit of [false, true]) {
+  for (const fontSize of [20, 28]) {
+    test(`closed footnotes keep compact spacing (${canEdit ? "editable" : "read-only"}, ${fontSize}px)`, async ({ page }) => {
+      await mountEditorFixture(page, { rowCount: 2 });
+      await page.evaluate(async ({ fontSize, canEdit }) => {
+        const { renderTranslationContentRow } = await import("/app/editor-row-render.js");
+        const host = document.createElement("div");
+        host.dataset.footnoteSpacingFixture = "true";
+        host.style.cssText = `position:fixed;top:20px;left:20px;z-index:100;width:800px;max-width:calc(100% - 40px);background:#fff7e5;--translation-editor-font-size:${fontSize}px;`;
+        host.innerHTML = renderTranslationContentRow({
+          kind: "row", id: "spacing-fixture", rowId: "spacing-fixture",
+          lifecycleState: "active", textStyle: "paragraph", canEdit,
+          sections: [{
+            code: "vi", baseCode: "vi", name: "Vietnamese", canEdit,
+            text: "Body text above the footnotes.",
+            hasVisibleFootnote: true,
+            footnotes: [
+              { marker: 1, text: 'First paragraph.\nSecond paragraph with <a href="https://example.com">a link</a>.' },
+              { marker: 2, text: "Another footnote." },
+            ],
+          }],
+        });
+        document.body.append(host);
+      }, { fontSize, canEdit });
+      const host = page.locator("[data-footnote-spacing-fixture]");
+      const footnote = host.locator(canEdit
+        ? ".translation-language-panel__field-stack--footnote"
+        : ".translation-language-panel__field-static--footnote");
+      const gaps = await footnote.evaluate((node) => {
+        const outer = node.getBoundingClientRect();
+        const children = [...node.children];
+        const first = children[0].getBoundingClientRect();
+        const last = children.at(-1).getBoundingClientRect();
+        return { top: first.top - outer.top, bottom: outer.bottom - last.bottom };
+      });
+      expect(gaps.top).toBeLessThanOrEqual(4);
+      expect(gaps.bottom).toBeLessThanOrEqual(4);
+      const entries = footnote.locator(canEdit
+        ? ".translation-language-panel__footnote-display-text"
+        : ".translation-language-panel__footnote-static");
+      await expect(entries).toHaveCount(2);
+      await expect(footnote.locator("a")).toHaveAttribute("href", "https://example.com");
+      expect(await entries.first().textContent()).toContain("First paragraph.\nSecond paragraph");
+      await expect(entries.first()).toHaveCSS("white-space", "pre-wrap");
+      await host.screenshot({ path: `/tmp/footnote-spacing-${canEdit ? "editable" : "read-only"}-${fontSize}.png` });
+    });
+  }
+}
+
+for (const canEdit of [false, true]) {
+  test(`search highlights all editor text fields (${canEdit ? "editable" : "read-only"})`, async ({ page }) => {
+    const rowId = "fixture-row-0001";
+    await mountEditorFixture(page, {
+      rowCount: 2, chapterStatus: "ready",
+      fieldsByRowId: { [rowId]: { vi: "Needle body[2][7]" } },
+      imagesByRowId: { [rowId]: { vi: { kind: "url", url: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Crect width='80' height='80' fill='orange'/%3E%3C/svg%3E" } } },
+    }, { mockTauri: true });
+    await page.evaluate(async ({ rowId, canEdit }) => {
+      const { state } = await import("/app/state.js");
+      const row = state.editorChapter.rows.find((row) => row.rowId === rowId);
+      row.footnotes.vi = [
+        { marker: 2, text: 'A longer first note with <em>Needle</em> and <a href="https://example.com">a link</a>.' },
+        { marker: 7, text: "Needle begins the second note." },
+      ];
+      row.imageCaptions.vi = "Picture <u>Needle</u> caption";
+      row.persistedFootnotes = structuredClone(row.footnotes);
+      row.persistedImageCaptions = { ...row.imageCaptions };
+      // Publish new rows as a normal editor update would, invalidating its model cache.
+      state.editorChapter.rows = [...state.editorChapter.rows];
+      if (!canEdit) {
+        state.editorChapter.writePermissionSnapshot = {
+          ...state.editorChapter.writePermissionSnapshot, source: "test", canEditProjectFiles: false,
+        };
+      }
+    }, { rowId, canEdit });
+    const search = page.locator("[data-editor-search-input]");
+    await search.fill("needle");
+    const panel = page.locator(`[data-editor-language-panel][data-row-id="${rowId}"][data-language-code="vi"]`);
+    const marks = panel.locator("mark.translation-language-panel__search-match");
+    await expect(marks).toHaveCount(4);
+    await expect(panel.locator("em mark")).toHaveText("Needle");
+    await expect(panel.locator("u mark")).toHaveText("Needle");
+    await expect(panel.locator('.translation-language-panel__footnote-marker').filter({ hasText: "[7]" })).toBeVisible();
+    await expect(panel.locator('a[href="https://example.com"]')).toHaveText("a link");
+    await panel.screenshot({ path: `/tmp/editor-search-highlighting-${canEdit ? "editable" : "read-only"}.png` });
+
+    // A query found only in an attachment must retain the row and highlight it.
+    for (const query of ["second note", "Picture", "body"]) {
+      await search.fill(query);
+      await expect(panel).toBeVisible();
+      await expect(marks).toHaveCount(1);
+      await expect(marks).toHaveText(query);
+    }
+    await search.fill("needle");
+    await page.locator('[data-action="toggle-editor-search-case-sensitive"]').click();
+    await expect(page.locator("[data-editor-row-card]")).toHaveCount(0);
+    await page.locator('[data-action="toggle-editor-search-case-sensitive"]').click();
+    await expect(marks).toHaveCount(4);
+
+    if (canEdit) {
+      await panel.locator('[data-editor-footnote-display][data-footnote-marker="7"]').click();
+      const footnote = panel.locator('textarea[data-content-kind="footnote"][data-footnote-marker="7"]');
+      await expect(footnote).toBeFocused();
+      const footnoteLayer = footnote.locator("..").locator("[data-editor-search-highlight]");
+      await expect(footnoteLayer.locator("mark")).toHaveText("Needle");
+      await expect(footnoteLayer).toBeVisible();
+      await footnote.fill("   Needle changed, needle again.");
+      await expect.poll(() => footnoteLayer.textContent()).toBe("   Needle changed, needle again.");
+      await expect(footnoteLayer.locator("mark")).toHaveCount(2);
+      await expect(footnote).toBeFocused();
+      await footnote.locator("..").screenshot({ path: "/tmp/editor-search-footnote-editing.png" });
+
+      await panel.locator("[data-editor-image-caption-button]").click();
+      const caption = panel.locator('textarea[data-content-kind="image-caption"]');
+      await expect(caption).toBeFocused();
+      const captionLayer = caption.locator("..").locator("[data-editor-search-highlight]");
+      await expect(captionLayer.locator("mark")).toHaveText("Needle");
+      await expect(captionLayer).toBeVisible();
+      await caption.fill("Needle changed caption, needle again.");
+      await expect(captionLayer.locator("mark")).toHaveCount(2);
+      await expect(caption).toBeFocused();
+      await caption.locator("..").screenshot({ path: "/tmp/editor-search-caption-editing.png" });
+
+      const body = await activateMainEditorField(page, rowId, "vi");
+      await expect(body.locator("..").locator("[data-editor-search-highlight] mark")).toHaveText("Needle");
+    }
+    await search.fill("");
+    await expect(marks).toHaveCount(0);
+  });
+}
+
+for (const tab of ["review", "translate", "history", "comments"]) {
+  test(`row selection preserves the ${tab === "translate" ? "assistant" : tab} sidebar tab`, async ({ page }) => {
+    await mountEditorFixture(page, {
+      rowCount: 4, chapterStatus: "ready",
+      fieldsByRowId: {
+        "fixture-row-0002": { vi: "" },
+        "fixture-row-0003": { vi: "  \n  " },
+      },
+    }, { mockTauri: true });
+    await activateMainEditorField(page, "fixture-row-0001", "vi");
+    const tabButton = page.locator(`[data-action="switch-editor-sidebar-tab:${tab}"]`);
+    await tabButton.click();
+    await expect(tabButton).toHaveAttribute("aria-pressed", "true");
+    for (const [rowId, languageCode] of [
+      ["fixture-row-0002", "vi"], // empty
+      ["fixture-row-0003", "vi"], // whitespace only
+      ["fixture-row-0004", "vi"], // filled
+      ["fixture-row-0002", "es"], // change language
+      ["fixture-row-0001", "es"],
+    ]) {
+      await activateMainEditorField(page, rowId, languageCode);
+      await expect(tabButton).toHaveAttribute("aria-pressed", "true");
+      await expect(page.locator("[data-editor-language-panel].is-active")).toHaveAttribute("data-row-id", rowId);
+      await expect(page.locator("[data-editor-language-panel].is-active")).toHaveAttribute("data-language-code", languageCode);
+    }
+    const search = page.locator("[data-editor-search-input]");
+    await search.fill("no matching row for tab preservation 123456789");
+    await expect(page.locator("[data-editor-row-card]")).toHaveCount(0);
+    await expect(tabButton).toHaveAttribute("aria-pressed", "true");
+    await search.fill("");
+    await activateMainEditorField(page, "fixture-row-0002", "vi");
+    await expect(tabButton).toHaveAttribute("aria-pressed", "true");
+    if (tab === "comments") {
+      await expect.poll(() => page.evaluate(async () => (await import("/app/state.js")).state.editorChapter.comments.rowId)).toBe("fixture-row-0002");
+    }
+    // Direct tab navigation remains available after ordinary row selection.
+    const otherTab = page.locator(`[data-action="switch-editor-sidebar-tab:${tab === "history" ? "review" : "history"}"]`);
+    await otherTab.click();
+    await expect(otherTab).toHaveAttribute("aria-pressed", "true");
+  });
+}
