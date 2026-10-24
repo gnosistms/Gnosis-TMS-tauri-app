@@ -16,6 +16,10 @@ Keep matching rows in their existing lexicographic chapter order.
 
 ## Verification
 
+Final PR validation on latest `main`: all 2,322 frontend tests and all 23
+workflow tests passed. The earlier launcher failures were restricted to the
+sandboxed run. Focused ESLint passed with existing unused-import warnings.
+
 - Implemented natural, case-insensitive title sorting for projects and chapters,
   with IDs breaking name ties. Matching rows retain chapter order.
 - `npm test`: all 2,272 frontend tests passed; the workflow suite passed 19 tests

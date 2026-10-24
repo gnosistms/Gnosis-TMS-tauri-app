@@ -47,15 +47,10 @@ export function runDevSession(command, args, options = {}) {
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const cwd = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   console.log(`Starting your working code from ${cwd}`);
-  // Verify release compatibility before opening the app, rather than letting
-  // an outdated native version fail later when the user saves a resource.
-  // Metadata repair only runs when the checkout contains the release changes.
+  // This personal launcher runs the working checkout with its real version
+  // label. Release metadata repair requires a separate, deliberate invocation.
   runDevSession('npm', ['run', 'tauri:dev', '--', '--exit-on-panic'], {
     cwd,
-    env: {
-      ...process.env,
-      GNOSIS_SYNC_DEV_VERSION: process.env.GNOSIS_SYNC_DEV_VERSION ?? '1',
-      GNOSIS_ALLOW_STALE_DEV_VERSION: process.env.GNOSIS_ALLOW_STALE_DEV_VERSION ?? '0',
-    },
+    env: { ...process.env, GNOSIS_SYNC_DEV_VERSION: '0', GNOSIS_ALLOW_STALE_DEV_VERSION: '1' },
   });
 }

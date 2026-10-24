@@ -28,3 +28,12 @@
 - Explicitly guard SRT chapters in the shortcut module; current main still has
   SRT formatting buttons, so button absence alone cannot protect the isolated PR.
 - Revalidate against main, create a focused PR, and merge after required checks.
+
+### Isolated branch validation
+- Based on main at `300a68a8858af175b3aa9cdab8b84fb7da720d0e`.
+- All 2,990 frontend tests and 25 workflow tests pass.
+- Three focused Chrome browser checks pass against the isolated branch, including
+  SRT rejection while main's pre-existing formatting buttons are still present.
+- Full JavaScript lint and production build pass. The unused-code audit reports
+  existing findings (three scripts, five browser-path imports, seven exports);
+  none involve the shortcut changes, which introduce no exported symbols.

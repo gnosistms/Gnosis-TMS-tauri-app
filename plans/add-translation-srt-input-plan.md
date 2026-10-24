@@ -1,5 +1,9 @@
 # Add translations SRT input
 
+Historical initial plan, superseded by `subtitle-overlap-and-meaning-check.md`
+and `subtitle-upload-only.md`. The shipped path validates SRT strictly and uses
+timestamps rather than document alignment.
+
 ## Plan
 
 1. Extend the non-mutating translation text extractor to reuse the existing SRT

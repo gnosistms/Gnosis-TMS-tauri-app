@@ -23,3 +23,8 @@ normalization currently runs only for languages with changed text content.
   unchanged source text, unchanged review flags, and footnote focus/scroll cases.
 - Scoped ESLint reported no errors and six pre-existing warnings. The tests ran
   against mocked Tauri data on port 1467 without launching a native application.
+- Repeated validation on the isolated PR branch from current main: 2,980 frontend
+  tests, 25 workflow tests, and all six browser regressions passed. Full ESLint
+  reported no errors (70 existing warnings). The unused-code audit retained the
+  existing three files, five browser imports, and seven exports reported before
+  this change.

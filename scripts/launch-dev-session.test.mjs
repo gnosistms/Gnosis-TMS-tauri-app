@@ -69,7 +69,7 @@ for (const scenario of ['normal', 'failure', 'SIGINT', 'SIGHUP']) {
   });
 }
 
-test('Applications launcher checks stale versions before opening the app and keeps intentional overrides explicit', { timeout: 10000, skip: process.platform === 'win32' }, async (t) => {
+test('Applications launcher starts an older working checkout without relabeling it', { timeout: 10000, skip: process.platform === 'win32' }, async (t) => {
   const { execFileSync } = await import('node:child_process');
   const { chmod, mkdir } = await import('node:fs/promises');
   const directory = await mkdtemp(path.join(os.tmpdir(), 'gnosis-launcher-version-'));
@@ -94,27 +94,18 @@ test('Applications launcher checks stale versions before opening the app and kee
     });
     process.exit(result.status ?? 1);\n`);
   await chmod(npm, 0o755);
-  const run = async (overrides = {}) => {
-    const env = { ...process.env, PATH: `${path.dirname(npm)}:${process.env.PATH}` };
-    delete env.GNOSIS_SYNC_DEV_VERSION;
-    delete env.GNOSIS_ALLOW_STALE_DEV_VERSION;
-    const child = spawn(process.execPath, [new URL(supervisor).pathname], {
-      env: { ...env, ...overrides },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    t.after(() => child.kill('SIGTERM'));
-    let output = '';
-    child.stdout.on('data', (data) => { output += data; });
-    child.stderr.on('data', (data) => { output += data; });
-    const [code] = await once(child, 'exit');
-    return { code, output };
-  };
-  const guarded = await run();
-  assert.equal(guarded.code, 1, guarded.output);
-  assert.match(guarded.output, /Automatic development version repair stopped/);
-  assert.doesNotMatch(guarded.output, /Starting this checkout because local development versions are allowed/);
-  const intentional = await run({ GNOSIS_SYNC_DEV_VERSION: '0', GNOSIS_ALLOW_STALE_DEV_VERSION: '1' });
-  assert.equal(intentional.code, 0, intentional.output);
-  assert.match(intentional.output, /Starting this checkout because local development versions are allowed/);
+  const child = spawn(process.execPath, [new URL(supervisor).pathname], {
+    env: { ...process.env, PATH: `${path.dirname(npm)}:${process.env.PATH}`,
+      GNOSIS_SYNC_DEV_VERSION: '1', GNOSIS_ALLOW_STALE_DEV_VERSION: '0' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  t.after(() => child.kill('SIGTERM'));
+  let output = '';
+  child.stdout.on('data', (data) => { output += data; });
+  child.stderr.on('data', (data) => { output += data; });
+  const [code] = await once(child, 'exit');
+  assert.equal(code, 0, output);
+  assert.match(output, /Starting this checkout/);
+  assert.doesNotMatch(output, /Automatic development version repair stopped/);
   for (const [name, text] of Object.entries(versions)) assert.equal(await readFile(path.join(directory, name), 'utf8'), text);
 });

@@ -16,6 +16,10 @@ Changing teams or signing out still clears the search.
 
 ## Verification
 
+Final PR validation on latest `main`: all 2,322 frontend tests and all 23
+workflow tests passed. The earlier launcher failures were restricted to the
+sandboxed run. Focused ESLint passed with existing unused-import warnings.
+
 - Reproduced the query/settings/results reset with the existing loading-prime
   test before changing the implementation.
 - Loading now keeps the same team's search and ownership, including when the

@@ -27,3 +27,11 @@ is pending, persisted transcript rendering, and transcript scroll while typing.
 All 190 related unit tests passed, as did ESLint for the changed handler and
 diff whitespace checks. Browser validation used macOS Chrome with mocked AI
 responses; native Windows WebView verification remains outstanding.
+
+## PR validation
+
+Validated the focused change on the latest main in an isolated worktree: all
+2,322 unit tests and 23 workflow tests passed, along with the four focused
+browser checks. JavaScript lint has no errors; unused-code audit findings
+exactly match main. Native Windows WebView verification remains outstanding;
+the PR browser workflow covers Chromium on Windows and Linux.

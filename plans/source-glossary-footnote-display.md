@@ -19,11 +19,9 @@ glossary footnote insertion feature to update.
 
 ## Verification
 
-- All 2,658 frontend tests passed.
+- The full frontend and workflow test suites passed on the isolated PR branch.
 - All three focused browser regressions passed using installed Chrome, including
   rendered source footnote visibility and absence of its insertion hint.
-- The workflow suite passed 21 tests and failed four unrelated launcher lifecycle
-  tests because the grandchild server did not start.
 - The unused-export audit reported existing unused files/exports and unresolved
   imports outside this change; this change adds no imports or exports.
 - `git diff --check` passed.

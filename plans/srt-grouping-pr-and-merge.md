@@ -11,12 +11,11 @@
 3. Push, create and attach the PR, wait for required GitHub checks and address
    failures. Merge the validated head into main and verify the merge result.
 
-Status: complete. PR #364 merged into main at
-`d2edb3a6e12fdd85948b42a0b836f0eb1e2c617f`.
-https://github.com/gnosistms/Gnosis-TMS-tauri-app/pull/364
+Status: isolated on codex/srt-sentence-groups from origin/main at 787cb8c3.
 
-The isolated branch passed 2,978 frontend tests, 25 workflow tests, 890 native
-tests (11 ignored), all 44 targeted subtitle browser tests, production build,
-formatting, and strict Clippy. GitHub Quality Check and Browser Tests passed on
-Linux and Windows. Original source snapshots were preserved; unrelated local
-changes were excluded. The temporary managed worktree was submitted for archive.
+- Scoped snapshot: 83 feature files; original working files verified unchanged.
+- Local checks pass: 2,978 frontend tests, 25 workflow tests, all 44 subtitle
+  browser cases, production build, Rust formatting, strict all-target Clippy,
+  and whitespace checks. Unused audit reports three existing scripts, five
+  existing unresolved imports, and seven existing exports; no new feature finding.
+- Native backend tests and GitHub CI/merge are in progress.

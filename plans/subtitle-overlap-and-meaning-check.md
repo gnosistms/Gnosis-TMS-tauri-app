@@ -47,3 +47,10 @@ Neither timestamps nor persistent row IDs are sent to the AI.
 - No user subtitle files or chapter data were saved during evaluation. Existing
   application credentials/model settings and the reused test-key file were not
   changed.
+
+## PR validation on current main
+
+Isolated the subtitle changes from unrelated local edits in a dedicated worktree.
+All 2,937 frontend tests, 25 workflow tests, and 416 Rust project-import tests
+passed (6 opt-in Rust tests ignored). Rust formatting and JavaScript lint passed;
+ESLint reports only existing warnings. The native picker remains mock-tested.

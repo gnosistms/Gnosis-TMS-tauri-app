@@ -1,5 +1,9 @@
 # Subtitle timing alignment evaluation
 
+Historical evaluation and exact-start-only implementation. The current behavior
+and latest results are in `subtitle-overlap-and-meaning-check.md`; its staged
+overlap and sampled meaning checks supersede the specification below.
+
 ## Scope
 
 Test the proposed timing-first approach with an isolated, offline prototype. Do
