@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { normalizeEditorFieldImage } from "./editor-images.js";
 
 import {
   buildEditorConflictResolutionModalState,
@@ -109,8 +110,40 @@ test("buildEditorConflictResolutionSaveState persists the resolved image URL and
     es: { kind: "url", url: "https://example.com/local.png" },
   });
   assert.deepEqual(saveState.baseImages, {
-    es: { kind: "url", url: "https://example.com/remote.png" },
+    es: { kind: "url", url: "https://example.com/remote.png", path: "" },
   });
+});
+
+test("image conflicts serialize normalized UI images for the Rust save command", () => {
+  for (const image of [
+    { kind: "url", url: "https://example.com/remote.png" },
+    { kind: "upload", path: "images/photo.png" },
+  ]) {
+    const row = buildImageConflictRow();
+    row.conflictState.remoteRow.images.es = normalizeEditorFieldImage(image);
+    const modal = buildEditorConflictResolutionModalState(row, "es");
+    modal.finalImageUrl = "https://example.com/resolved.png";
+    const saveState = buildEditorConflictResolutionSaveState(row, "es", modal);
+
+    // These are String properties in EditorFieldImageInput, including the unused one.
+    assert.deepEqual(saveState.baseImages, {
+      es: { kind: image.kind, url: image.url ?? "", path: image.path ?? "" },
+    });
+    assert.deepEqual(saveState.imagesToPersist, {
+      es: { kind: "url", url: "https://example.com/resolved.png" },
+    });
+    assert.deepEqual(row.conflictState.remoteRow.images.es, normalizeEditorFieldImage(image));
+  }
+});
+
+test("image conflict bases retain null when the remote image is absent", () => {
+  const row = buildImageConflictRow();
+  row.conflictState.remoteRow.images = {};
+  const modal = buildEditorConflictResolutionModalState(row, "es");
+  modal.finalImageUrl = "";
+  const saveState = buildEditorConflictResolutionSaveState(row, "es", modal);
+  assert.deepEqual(saveState.baseImages, { es: null });
+  assert.deepEqual(saveState.imagesToPersist, { es: null });
 });
 
 test("buildEditorConflictResolutionSaveState omits images when no image conflict", () => {
