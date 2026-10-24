@@ -7027,7 +7027,9 @@ test("connected deleted rows disconnect on section close and permanent deletion"
   await setTranslateScrollTop(page, 1000000);
   const notice = page.locator("[data-editor-row-connection]");
   await expect(notice).toBeVisible();
-  await expect(row).toHaveCount(0);
+  // A selected row can remain mounted outside the virtual window. The
+  // connection notice tracks viewport intersection, not DOM eviction.
+  await expect(row).not.toBeInViewport();
   await notice.click();
   await expect(row).toHaveClass(/is-connected/);
   await expect(notice).toBeHidden();
