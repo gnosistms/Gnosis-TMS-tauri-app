@@ -1,2 +1,4 @@
 # Historical research latency measurements: input/output/reasoning token counts.
 3454adeb7c83527bd213f7cd92eb9fd84e5c9df7:plans/glossary-research-studio-latency.md:generic-api-key:129
+# The same token-count measurement in the consolidated local-work commit.
+3932f408d04b323987efc94fa554a0a547832168:plans/glossary-research-studio-latency.md:generic-api-key:129
