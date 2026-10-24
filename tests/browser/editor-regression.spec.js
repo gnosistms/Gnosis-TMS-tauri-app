@@ -7379,3 +7379,45 @@ for (const canEdit of [false, true]) {
     await expect(marks).toHaveCount(0);
   });
 }
+
+for (const tab of ["review", "translate", "history", "comments"]) {
+  test(`row selection preserves the ${tab === "translate" ? "assistant" : tab} sidebar tab`, async ({ page }) => {
+    await mountEditorFixture(page, {
+      rowCount: 4, chapterStatus: "ready",
+      fieldsByRowId: {
+        "fixture-row-0002": { vi: "" },
+        "fixture-row-0003": { vi: "  \n  " },
+      },
+    }, { mockTauri: true });
+    await activateMainEditorField(page, "fixture-row-0001", "vi");
+    const tabButton = page.locator(`[data-action="switch-editor-sidebar-tab:${tab}"]`);
+    await tabButton.click();
+    await expect(tabButton).toHaveAttribute("aria-pressed", "true");
+    for (const [rowId, languageCode] of [
+      ["fixture-row-0002", "vi"], // empty
+      ["fixture-row-0003", "vi"], // whitespace only
+      ["fixture-row-0004", "vi"], // filled
+      ["fixture-row-0002", "es"], // change language
+      ["fixture-row-0001", "es"],
+    ]) {
+      await activateMainEditorField(page, rowId, languageCode);
+      await expect(tabButton).toHaveAttribute("aria-pressed", "true");
+      await expect(page.locator("[data-editor-language-panel].is-active")).toHaveAttribute("data-row-id", rowId);
+      await expect(page.locator("[data-editor-language-panel].is-active")).toHaveAttribute("data-language-code", languageCode);
+    }
+    const search = page.locator("[data-editor-search-input]");
+    await search.fill("no matching row for tab preservation 123456789");
+    await expect(page.locator("[data-editor-row-card]")).toHaveCount(0);
+    await expect(tabButton).toHaveAttribute("aria-pressed", "true");
+    await search.fill("");
+    await activateMainEditorField(page, "fixture-row-0002", "vi");
+    await expect(tabButton).toHaveAttribute("aria-pressed", "true");
+    if (tab === "comments") {
+      await expect.poll(() => page.evaluate(async () => (await import("/app/state.js")).state.editorChapter.comments.rowId)).toBe("fixture-row-0002");
+    }
+    // Direct tab navigation remains available after ordinary row selection.
+    const otherTab = page.locator(`[data-action="switch-editor-sidebar-tab:${tab === "history" ? "review" : "history"}"]`);
+    await otherTab.click();
+    await expect(otherTab).toHaveAttribute("aria-pressed", "true");
+  });
+}

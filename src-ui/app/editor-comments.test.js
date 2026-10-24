@@ -7,7 +7,6 @@ import {
   editorRowHasUnreadComments,
   normalizeEditorCommentSeenRevisions,
   normalizeEditorSidebarTab,
-  resolveEditorSidebarTabForField,
 } from "./editor-comments.js";
 import {
   applyEditorCommentSaveSucceeded,
@@ -152,31 +151,4 @@ test("normalizeEditorSidebarTab keeps known tabs, maps translate to assistant, a
   assert.equal(normalizeEditorSidebarTab("review"), "review");
   assert.equal(normalizeEditorSidebarTab("duplicates"), "review");
   assert.equal(normalizeEditorSidebarTab("something-else"), "review");
-});
-
-test("resolveEditorSidebarTabForField sends empty fields to assistant and keeps the current tab for filled fields", () => {
-  assert.equal(
-    resolveEditorSidebarTabForField("review", {
-      fields: {
-        vi: "   ",
-      },
-    }, "vi"),
-    "assistant",
-  );
-  assert.equal(
-    resolveEditorSidebarTabForField("translate", {
-      fields: {
-        vi: "Xin chao",
-      },
-    }, "vi"),
-    "assistant",
-  );
-  assert.equal(
-    resolveEditorSidebarTabForField("comments", {
-      fields: {
-        vi: "Xin chao",
-      },
-    }, "vi"),
-    "comments",
-  );
 });
