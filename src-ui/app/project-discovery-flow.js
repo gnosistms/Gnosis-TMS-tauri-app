@@ -432,6 +432,7 @@ async function abortProjectDiscoveryIfStale(
     return false;
   }
 
+  options.onDiscoveryStale?.();
   if (beganProjectsPageSync) {
     await completeProjectLoadPageSync({ render, options, clearNotice: false });
   } else {
