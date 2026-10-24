@@ -21,3 +21,10 @@
 - Production build, scoped lint (no errors), and whitespace checks pass.
 - Include this as a separate correction commit in PR #371, then wait for the
   updated PR's required checks before merging.
+
+## Empty-footnote marker click follow-up
+1. Reproduce the Windows reopening failure with a marker click held across an animation frame.
+2. Protect the closed-footnote mousedown from blurring and remounting the active row before its click handler can open the note, consistent with other editor controls.
+3. Verify the held-click regression and repeat reopening, formatting, and focus tests before adding this correction to the PR.
+- Holding the marker press for 150ms reproduces the Windows failure before the fix. With closed-footnote mousedown protected, all 10 repetitions pass.
+- All 16 focused editor browser cases pass together, including the new features and existing footnote formatting/persistence interactions. All 2,991 frontend and 25 workflow tests, production build, scoped lint (existing warning only), and whitespace checks pass.

@@ -6348,7 +6348,8 @@ test.describe("editor regressions", () => {
       `[data-editor-footnote-display][data-row-id="${rowId}"][data-language-code="${languageCode}"][data-footnote-marker="1"]`,
     );
     await expect(closedFootnote).toBeVisible();
-    await closedFootnote.locator(".translation-language-panel__footnote-marker").click();
+    // Hold through a frame so blur cannot replace the pressed marker before mouseup.
+    await closedFootnote.locator(".translation-language-panel__footnote-marker").click({ delay: 150 });
     await expect(footnoteField).toBeFocused();
     await expect(footnoteField).toHaveValue("");
   });
