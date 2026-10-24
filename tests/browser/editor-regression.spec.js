@@ -7398,6 +7398,49 @@ test("formatting shortcuts leave SRT and custom HTML text unchanged", async ({ p
   }
 });
 
+test("footnotes edit one at a time without a surrounding focus surface", async ({ page }) => {
+  const rowId = "fixture-row-0001";
+  await mountEditorFixture(page, { rowCount: 2, chapterStatus: "ready" }, { mockTauri: true });
+  await page.evaluate(async (rowId) => {
+    const { state } = await import("/app/state.js");
+    const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
+    row.footnotes.vi = [
+      { marker: 1, text: "First independent footnote." },
+      { marker: 2, text: "Second independent footnote." },
+    ];
+    row.persistedFootnotes = structuredClone(row.footnotes);
+    state.editorChapter.rows = [...state.editorChapter.rows];
+  }, rowId);
+  await patchFixtureRow(page, rowId, { fields: { vi: "Body text with footnotes[1][2]." } });
+  const panel = page.locator(`[data-editor-language-panel][data-row-id="${rowId}"][data-language-code="vi"]`);
+  const notes = panel.locator(".translation-language-panel__field-stack--footnote");
+  const fields = notes.locator('textarea[data-content-kind="footnote"]');
+  await expect(fields).toHaveCount(0);
+  const secondButton = panel.getByRole("button", { name: "Edit footnote 2", exact: true });
+  await secondButton.focus();
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Shift+Tab");
+  await expect(secondButton).toBeFocused();
+  await expect(secondButton).toHaveCSS("outline-style", "solid");
+  await expect(notes).toHaveCSS("box-shadow", "none");
+  await panel.getByRole("button", { name: "Edit footnote 1", exact: true }).click();
+  await expect(fields).toHaveCount(1);
+  const firstField = notes.locator('textarea[data-footnote-marker="1"]');
+  await expect(firstField).toBeFocused();
+  await expect(notes).toHaveCSS("box-shadow", "none");
+  await expect(notes).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
+  await expect(notes).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(firstField.locator("..")).toHaveCSS("border-top-color", "rgba(236, 134, 9, 0.52)");
+  await firstField.fill("Edited first independent footnote.");
+  await panel.getByRole("button", { name: "Edit footnote 2", exact: true }).click();
+  await expect(fields).toHaveCount(1);
+  await expect(notes.locator('textarea[data-footnote-marker="2"]')).toBeFocused();
+  await expect(panel.getByRole("button", { name: "Edit footnote 1", exact: true })).toHaveText("Edited first independent footnote.");
+  await expect(notes).toHaveCSS("box-shadow", "none");
+  await expect(notes).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await panel.screenshot({ path: "/tmp/gnosis-individual-footnote-editing.png" });
+});
+
 for (const canEdit of [false, true]) {
   for (const fontSize of [20, 28]) {
     test(`closed footnotes keep compact spacing (${canEdit ? "editable" : "read-only"}, ${fontSize}px)`, async ({ page }) => {
