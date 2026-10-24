@@ -93,7 +93,14 @@ export function buildEditorConflictResolutionSaveState(row, languageCode, modal)
     // Images are only threaded through the save when an image conflict is being
     // resolved, so unrelated rows never carry image writes into the merge command.
     imagesToPersist: resolvesImageConflict ? { [languageCode]: resolvedImage } : null,
-    baseImages: resolvesImageConflict ? { [languageCode]: remoteImage } : null,
+    baseImages: resolvesImageConflict ? {
+      [languageCode]: remoteImage ? {
+        kind: remoteImage.kind,
+        // UI images use null for unused properties; the command requires strings.
+        url: remoteImage.url ?? "",
+        path: remoteImage.path ?? "",
+      } : null,
+    } : null,
   };
 }
 

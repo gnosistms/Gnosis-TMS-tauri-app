@@ -1498,6 +1498,40 @@ mod tests {
     };
 
     #[test]
+    fn conflict_image_save_input_requires_string_image_properties() {
+        let mut payload = json!({
+            "installationId": 7,
+            "repoName": "project",
+            "chapterId": "chapter-1",
+            "rowId": "row-1",
+            "fields": { "en": "Resolved text" },
+            "images": { "en": null },
+            "baseImages": {
+                "en": { "kind": "url", "url": "https://example.com/image.png", "path": null }
+            }
+        });
+        let error = serde_json::from_value::<super::UpdateEditorRowFieldsInput>(payload.clone())
+            .err()
+            .expect("UI image metadata must be serialized before invoking the command");
+        assert!(error
+            .to_string()
+            .contains("invalid type: null, expected a string"));
+
+        for image in [
+            json!({ "kind": "url", "url": "https://example.com/image.png", "path": "" }),
+            json!({ "kind": "upload", "url": "", "path": "images/photo.png" }),
+            serde_json::Value::Null,
+        ] {
+            payload["baseImages"]["en"] = image;
+            let input =
+                serde_json::from_value::<super::UpdateEditorRowFieldsInput>(payload.clone())
+                    .expect("serialized image bases and image removals must be accepted");
+            assert!(input.images["en"].is_none());
+            assert_eq!(input.fields["en"], "Resolved text");
+        }
+    }
+
+    #[test]
     fn apply_editor_plain_text_updates_changes_requested_field_and_clears_preview_cache() {
         let mut row_value = json!({
           "fields": {
