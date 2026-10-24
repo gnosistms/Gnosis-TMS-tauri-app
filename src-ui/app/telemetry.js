@@ -281,6 +281,26 @@ export function reportPdfFontCoverageGap(payload = {}) {
 }
 
 /**
+ * Report a slow or stuck startup (startup-watch.js). Routine telemetry: only sent when
+ * the gate is already open. The report carries timings, command names and state labels
+ * only; all of its events group under one issue.
+ */
+export function reportSlowStartup(report = {}) {
+  if (!sentry || !gateOpen()) {
+    return;
+  }
+  safe(() => {
+    const message = scrubString(String(report?.message ?? "Slow startup"), COMMAND_ERROR_MAX_LENGTH);
+    sentry.captureMessage(message, {
+      level: "warning",
+      fingerprint: ["startup-slow"],
+      tags: { source: "startup-slow", ...(report?.tags ?? {}) },
+      extra: report?.extra ?? {},
+    });
+  });
+}
+
+/**
  * Preserve an operational degradation as context on a later actionable event without
  * creating a standalone unresolved issue. Payloads remain stable operation/reason
  * strings so breadcrumbs cannot carry document content or backend error text.
