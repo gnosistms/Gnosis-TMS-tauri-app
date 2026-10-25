@@ -887,7 +887,8 @@
   height: 20px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.6;
+  /* Match the neighboring markers' 1.8px strokes with this 24-unit viewBox. */
+  stroke-width: 2.2;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
