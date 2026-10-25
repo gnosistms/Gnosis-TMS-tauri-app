@@ -66,8 +66,10 @@ test("text highlighted in the source language goes straight to the source box", 
   assert.match(html, /Source term \(Spanish\)/);
   assert.match(html, /value="Ser interior"/);
   assert.match(html, /data-editor-glossary-entry-field="targetTerm"\s+data-modal-initial-focus/, "the empty translation box gets focus");
-  for (const label of ["Cancel", "Save to glossary", "Research meanings"]) assert.match(html, new RegExp(`>${label}<`));
-  assert.match(html, /data-tooltip="Use AI to investigate the meaning of the source term and suggest target language translations"/);
+  const labels = [...html.matchAll(/<button[^>]*>([^<]+)<\/button>/g)].map((match) => match[1]);
+  assert.deepEqual(labels, ["Cancel", "Research meanings", "Save to glossary"], "Save to glossary is on the right");
+  assert.match(html, /data-action="research-editor-glossary-entry"[^>]*data-tooltip="Use AI to investigate the meaning of the source term and suggest target language translations"/);
+  assert.match(html, /data-action="save-editor-glossary-entry"[^>]*data-tooltip="Open the glossary editor and enter this term\. You&#39;ll have a chance to review before saving\."/);
 }));
 
 test("target-language text fills the translation; without a Research model the source is left to type", () => withChapter(async () => {

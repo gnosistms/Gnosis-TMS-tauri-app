@@ -93,9 +93,12 @@ export function actionNavButton(label, action, isGhost = false, options = {}) {
 }
 
 export function primaryButton(label, action, options = {}) {
+  const tooltip = options.tooltip
+    ? tooltipAttributes(options.tooltip, options.tooltipOptions)
+    : "";
   return `<button class="button button--primary${options.disabled ? " is-disabled" : ""}" data-action="${escapeHtml(
     action,
-  )}"${modalControlAttributes(options)}${disabledActionAttributes(options)}>${escapeHtml(label)}</button>`;
+  )}"${modalControlAttributes(options)}${tooltip}${disabledActionAttributes(options)}>${escapeHtml(label)}</button>`;
 }
 
 export function errorButton(label, action, options = {}) {

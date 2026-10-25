@@ -3,6 +3,7 @@ import { escapeHtml, loadingSpinner, primaryButton, secondaryButton } from "../l
 const esc = escapeHtml;
 const TITLE = "Make a glossary entry";
 const RESEARCH_TOOLTIP = "Use AI to investigate the meaning of the source term and suggest target language translations";
+const SAVE_TOOLTIP = "Open the glossary editor and enter this term. You'll have a chance to review before saving.";
 
 function frame(body, actions) {
   return `
@@ -77,6 +78,7 @@ export function renderEditorGlossaryEntryModal(state) {
     ${entry.notice ? `<p class="modal__supporting">${esc(entry.notice)}</p>` : ""}
     ${entry.error ? `<p class="muted">${esc(entry.error)}</p>` : ""}`,
   `${cancelButton()}
-   ${primaryButton("Save to glossary", "save-editor-glossary-entry", { modalDefault: true, modalInitialFocus: !needsSource && !focusTarget, disabled: needsSource })}
-   ${secondaryButton("Research meanings", "research-editor-glossary-entry", { disabled: needsSource, tooltip: RESEARCH_TOOLTIP, tooltipOptions: { align: "end" } })}`);
+   ${secondaryButton("Research meanings", "research-editor-glossary-entry", { disabled: needsSource, tooltip: RESEARCH_TOOLTIP, tooltipOptions: { align: "end" } })}
+   ${primaryButton("Save to glossary", "save-editor-glossary-entry", { modalDefault: true, modalInitialFocus: !needsSource && !focusTarget, disabled: needsSource,
+     tooltip: SAVE_TOOLTIP, tooltipOptions: { align: "end" } })}`);
 }

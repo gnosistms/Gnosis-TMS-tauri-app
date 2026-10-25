@@ -53,9 +53,7 @@ async function mountEditor(page) {
       ],
       fieldsByRowId: { "fixture-row-0001": fields },
     });
-    const { state } = await import(`/${"app"}/state.js`);
-    state.aiSettings.actionConfig = { ...state.aiSettings.actionConfig, detailedConfiguration: false,
-      unified: { providerId: "claude", modelId: "claude-opus-5-5" } };
+    // The default AI settings name a Research model, so the AI is asked.
   }, FIELDS);
   const disclosureSave = page.locator(".modal-backdrop").getByRole("button", { name: "Save" });
   if (await disclosureSave.count()) await disclosureSave.click();
@@ -135,8 +133,11 @@ test("target-language text: the AI finds the source text, then Save to glossary 
   const request = await page.evaluate(() => window.entryCalls.find((call) => call.command === "run_glossary_research_request").args.request);
   expect(request.content).toContain("Highlighted in Vietnamese: Đấng Nội Tại");
   expect(request.content).toContain(`[Spanish (source)]\n${"El Ser interior es la parte más elevada del hombre."}`);
-  expect(request.providerId).toBe("claude");
+  expect(request.schemaName).toBe("selection_source");
 
+  await expect(dialog(page).getByRole("button")).toHaveText(["Cancel", "Research meanings", "Save to glossary"]);
+  await expect(dialog(page).getByRole("button", { name: "Save to glossary" })).toHaveAttribute("data-tooltip",
+    "Open the glossary editor and enter this term. You'll have a chance to review before saving.");
   await dialog(page).getByRole("button", { name: "Save to glossary" }).click();
   const termEditor = page.locator("#glossary-term-editor-modal-title");
   await expect(termEditor).toHaveText("New Term");
