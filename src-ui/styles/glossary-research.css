@@ -862,25 +862,7 @@
 
 
 
-/* editor flow */
-
-.research-row-text {
-  max-height: 180px;
-  overflow-y: auto;
-  padding: 8px 10px;
-  border: 1px solid var(--surface-border);
-  border-radius: var(--radius-control);
-  user-select: text;
-  white-space: pre-wrap;
-}
-
-.research-row-text--empty {
-  border-style: dashed;
-}
-
-.research-definitions {
-  padding-left: 20px;
-}
+/* editor flow: glossary entry from highlighted text */
 
 .translation-marker-button--research svg {
   width: 20px;
@@ -890,6 +872,35 @@
   stroke-width: 1.6;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+/* Waiting for highlighted text; the tooltip still explains how to use it.
+   Only the icon is dimmed: opacity on the button would fade its tooltip too. */
+.translation-marker-button--research.is-disabled,
+.translation-marker-button--research.is-disabled:hover {
+  color: var(--muted);
+  cursor: default;
+}
+
+.translation-marker-button--research.is-disabled svg {
+  opacity: 0.45;
+}
+
+.glossary-entry-modal__finding {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+}
+
+.glossary-entry-modal__finding .button__spinner {
+  flex: none;
+  border-color: rgba(164, 112, 41, 0.24);
+  border-top-color: rgba(130, 82, 27, 0.88);
+}
+
+.glossary-entry-modal__quote {
+  font-weight: 600;
 }
 
 

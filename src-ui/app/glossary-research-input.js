@@ -9,7 +9,7 @@ import {
   updateResearchVariant,
 } from "./glossary-research-flow.js";
 import { updateResearchEntryField } from "./glossary-research-report-flow.js";
-import { updateResearchPrepTerm } from "./glossary-research-prep-flow.js";
+import { updateEditorGlossaryEntryField } from "./editor-glossary-entry-flow.js";
 import { noteResearchModalsTyped } from "./research-modal-host.js";
 import { state } from "./state.js";
 
@@ -65,9 +65,9 @@ function handleResearchInput(event, render) {
     updateResearchEntryField(entryId, fieldName, entry.value, index == null ? null : Number.parseInt(index, 10));
     return true;
   }
-  const prep = target.closest("[data-research-prep-term]");
-  if (prep) {
-    updateResearchPrepTerm(render, prep.value);
+  const entryField = target.closest("[data-editor-glossary-entry-field]");
+  if (entryField) {
+    updateEditorGlossaryEntryField(entryField.dataset.editorGlossaryEntryField, entryField.value);
     return true;
   }
   return false;

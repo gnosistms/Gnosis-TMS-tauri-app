@@ -6,6 +6,7 @@ import { checkForAppUpdate } from "./updater-flow.js";
 import { listen } from "./runtime.js";
 import { syncGlossaryTermInlineStyleButtons } from "./glossary-term-inline-markup-flow.js";
 import { syncQaTermInlineStyleButtons } from "./qa-term-inline-markup-flow.js";
+import { syncEditorGlossaryEntryButtons } from "./editor-glossary-entry-selection.js";
 import { registerKeyboardShortcutEvents } from "./events/keyboard-shortcuts.js";
 import { registerListboxControlEvents } from "./events/listbox-control.js";
 import { registerModalDialogEvents } from "./events/modal-dialog.js";
@@ -106,6 +107,13 @@ export function registerAppEvents(render) {
       return;
     }
 
+    // The glossary entry button works on the highlighted text; pressing it
+    // must not move focus off the text box or clear the highlight.
+    if (event.target instanceof Element && event.target.closest("[data-editor-glossary-entry-button]")) {
+      event.preventDefault();
+      return;
+    }
+
     focusEditorFieldFromGlossaryMark(event);
   });
 
@@ -120,12 +128,14 @@ export function registerAppEvents(render) {
     window.requestAnimationFrame(() => {
       syncGlossaryTermInlineStyleButtons();
       syncQaTermInlineStyleButtons();
+      syncEditorGlossaryEntryButtons();
     });
   });
 
   document.addEventListener("selectionchange", () => {
     syncGlossaryTermInlineStyleButtons();
     syncQaTermInlineStyleButtons();
+    syncEditorGlossaryEntryButtons();
   });
 
 

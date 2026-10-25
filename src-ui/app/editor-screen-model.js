@@ -15,7 +15,12 @@ import { normalizeEditorDerivedGlossariesByRowId } from "./editor-derived-glossa
 import { editorRowHasGlossaryError } from "./editor-glossary-highlight-cache.js";
 import { coerceEditorFontSizePx } from "./state.js";
 import { canPermanentlyDeleteProjectFiles } from "./resource-capabilities.js";
-import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
+import {
+  findChapterContextById,
+  resolveSelectedChapterGlossary,
+  selectedProjectsTeam,
+} from "./project-context.js";
+import { editorGlossaryEntryLanguages, glossaryEntryLanguageRole } from "./editor-glossary-entry-selection.js";
 import {
   editorSessionCanWrite,
   getProjectLifecycleWritePolicy,
@@ -554,6 +559,11 @@ export function buildEditorScreenViewModel(appState) {
     changedAfterMyEditRowIds: changedAfterMyEdit?.rowIds ?? new Set(),
   });
   const editorReplace = buildEditorReplaceViewModel(editorChapter, editorFilters);
+  const glossaryEntryLanguages = editorGlossaryEntryLanguages(
+    editorChapter,
+    resolveSelectedChapterGlossary(),
+    languages.find((language) => language.role === "source")?.code ?? "",
+  );
   const contentRows = buildEditorDisplayItems(
     editorFilters.filteredRows,
     editorChapter,
@@ -608,6 +618,7 @@ export function buildEditorScreenViewModel(appState) {
           }),
           showResearchButton:
             Boolean(row?.rowId) && canManageGlossaries(),
+          glossaryEntryRole: glossaryEntryLanguageRole(section, glossaryEntryLanguages),
           isAiTranslating,
           changeView: isAiTranslating ? null : changeView,
           // A footnote or caption someone deleted still gets its box, showing the

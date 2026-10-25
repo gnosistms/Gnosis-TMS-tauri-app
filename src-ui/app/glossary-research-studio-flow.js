@@ -206,12 +206,23 @@ export async function openStudio(render) {
   await guarded(async () => { view.history = await loadStudioHistory(currentScope()); });
 }
 
-export async function newStudy() {
+/** Research from the chapter editor: a new study with the term filled in. */
+export async function openStudioForTerm(render, term, { projectId = null } = {}) {
+  await openStudio(render);
+  if (state.screen !== "glossaryResearchStudio" || studioView().study) return;
+  await guarded(() => newStudy({ term, projectId }));
+}
+
+export async function newStudy({ term = "", projectId = null } = {}) {
   await readingTools?.cancel(); readingTools = null; studioView().readingBusy = null;
   const generation = ++operationGeneration;
   studioView().openingStudyId = null;
   const scope = currentScope();
-  const s = newStudioStudy({ ...scope, corpus: scope.sourceLanguage.code.startsWith("es") ? "samael" : "projects" });
+  const corpus = scope.sourceLanguage.code.startsWith("es") ? "samael" : "projects";
+  // Project texts: start from the chapter's own project when there is one.
+  const projectIds = corpus === "projects" && projectId
+    && state.projects.some((project) => project.id === projectId && project.lifecycleState !== "deleted") ? [projectId] : [];
+  const s = newStudioStudy({ ...scope, corpus, term: String(term ?? "").trim(), projectIds });
   s.model = resolveAiActionProviderAndModel("research");
   s.translationRuntimeVersion = await translatorRuntimeVersion();
   if (generation !== operationGeneration) return;

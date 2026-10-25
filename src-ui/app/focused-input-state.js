@@ -99,8 +99,8 @@ function focusSnapshotSelector(activeElement) {
   if (activeElement.matches("[data-research-entry]")) {
     return `[data-research-entry="${activeElement.dataset.researchEntry}"]`;
   }
-  if (activeElement.matches("[data-research-prep-term]")) {
-    return "[data-research-prep-term]";
+  if (activeElement.matches("[data-editor-glossary-entry-field]")) {
+    return `[data-editor-glossary-entry-field="${activeElement.dataset.editorGlossaryEntryField}"]`;
   }
 
   return SUPPORTED_FOCUSED_INPUT_SELECTORS.find((candidate) => activeElement.matches(candidate)) ?? null;

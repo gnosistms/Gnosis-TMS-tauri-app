@@ -450,7 +450,9 @@ async function runGlossaryTermSaveIntent(render, intent) {
   }
 }
 
-export async function openGlossaryTermEditor(render, termId = null) {
+// options.prefill ({ sourceTerms, targetTerms }) starts a new term with text
+// already entered, e.g. from text highlighted in the chapter editor.
+export async function openGlossaryTermEditor(render, termId = null, options = {}) {
   const team = selectedTeam();
   const glossary = selectedGlossary();
   const editor = state.glossaryEditor;
@@ -479,7 +481,12 @@ export async function openGlossaryTermEditor(render, termId = null) {
     return;
   }
 
-  state.glossaryTermEditor = createGlossaryTermEditorModalState(term);
+  const prefill = !termId && options.prefill
+    ? { sourceTerms: options.prefill.sourceTerms ?? [], targetTerms: options.prefill.targetTerms ?? [] }
+    : null;
+  state.glossaryTermEditor = createGlossaryTermEditorModalState(term ?? prefill);
+  // A prefilled source term may already be in the glossary; mark it at once.
+  if (prefill) refreshGlossaryTermDuplicateFeedback();
   render();
 }
 

@@ -45,19 +45,26 @@ export function createGlossaryResearchState() {
   };
 }
 
-export function createGlossaryResearchPrepState() {
+/** The editor window that makes a glossary entry from highlighted text. */
+export function createEditorGlossaryEntryState() {
   return {
     isOpen: false,
-    // input | finding | not-found | confirm | blocked
-    step: "input",
+    // finding | entry | not-found | blocked
+    step: "entry",
     chapterId: null,
     rowId: null,
-    glossaryId: null,
-    sourceLanguageCode: "",
-    languages: [],
-    selectedLanguageCode: "",
-    term: "",
-    identified: null,
+    projectId: null,
+    glossary: null, // { glossaryId, repoName, … } as the glossary page opens it
+    // source | target | other: the language the text was highlighted in
+    selectionRole: "",
+    selectionLanguage: null, // { code, name }
+    selectedText: "",
+    sourceLanguage: null,
+    targetLanguage: null,
+    sourceTerm: "",
+    targetTerm: "",
+    requestId: "", // the AI request that finds the source text, while it runs
+    notice: "",
     blockedMessage: "",
     error: "",
   };
