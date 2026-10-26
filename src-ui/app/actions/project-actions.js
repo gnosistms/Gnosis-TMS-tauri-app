@@ -74,7 +74,7 @@ import {
   submitProjectAddTranslationLink,
   submitProjectAddTranslationPaste,
 } from "../project-add-translation-flow.js";
-import { openChapterExportOptions } from "../editor-export-flow.js";
+import { openChapterExportOptions, openProjectExportOptions } from "../editor-export-flow.js";
 import {
   cancelProjectTransfer,
   openProjectTransfer,
@@ -326,6 +326,10 @@ export function createProjectActions(render) {
     {
       prefix: "add-project-files:",
       handler: async (projectId) => addFilesToProject(render, projectId),
+    },
+    {
+      prefix: "export-project:",
+      handler: (projectId) => openProjectExportOptions(render, projectId),
     },
     {
       prefix: "export-file:",

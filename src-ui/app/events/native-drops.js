@@ -1,3 +1,4 @@
+import { importBookImage } from "../project-book-flow.js";
 import { onCurrentWebviewDragDrop } from "../runtime.js";
 import {
   handleDroppedProjectImportFiles,
@@ -353,6 +354,12 @@ export function registerNativeDropEvents(render) {
       : [];
     const importPaths = droppedPaths.filter((value) => typeof value === "string" && value.trim());
     if (importPaths.length === 0) {
+      return;
+    }
+
+    const bookImageZone = document.querySelector("[data-book-image-dropzone]");
+    if (bookImageZone) {
+      void importBookImage(render, importPaths[0]);
       return;
     }
 

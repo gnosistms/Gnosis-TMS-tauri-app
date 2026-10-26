@@ -870,6 +870,10 @@ export function createEditorExportModalState() {
     // the chapter is not open in the editor (the editor follows the preview
     // toolbar language).
     chapterId: "",
+    projectId: "",
+    chapterIds: [],
+    projectTitle: "",
+    languages: [],
     languageCode: "",
     // Print-oriented option for formats where a hyperlink cannot be clicked: append
     // each footnote link's URL as plain text after the link. On by default — a bare

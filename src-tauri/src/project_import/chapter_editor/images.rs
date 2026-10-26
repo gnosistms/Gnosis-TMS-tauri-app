@@ -1644,7 +1644,7 @@ fn detected_uploaded_image_extension(bytes: &[u8]) -> Option<&'static str> {
     None
 }
 
-fn validated_uploaded_image_extension(
+pub(super) fn validated_uploaded_image_extension(
     filename: &str,
     bytes: &[u8],
 ) -> Result<&'static str, String> {

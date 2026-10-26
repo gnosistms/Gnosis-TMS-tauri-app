@@ -919,3 +919,50 @@ test("export error events reopen the form with the error message", () => {
   assert.match(state.editorChapter.exportModal.error, /invalid token/);
   assert.equal(currentWordPressExportState().jobId, "");
 });
+
+test("project WordPress export combines saved chapter snapshots without changing the open editor", async () => {
+  installWordPressFixture();
+  const first = state.projects[0].chapters[0];
+  state.projects[0].chapters = [
+    { ...first, id: "chapter-2", name: "Chapter 2" },
+    { ...first, id: "chapter-1", name: "Chapter 1" },
+  ];
+  const { openProjectExportOptions } = await import("./editor-export-flow.js");
+  openProjectExportOptions(() => {}, "project-1");
+  setWordPress({ connectionStatus: "connected", connection: { siteId: "site-1" }, title: "Book", mode: "create" });
+  const calls = [];
+  await submitWordPressExport(() => {}, {
+    waitForRepoQueue: async () => {},
+    flushDirtyEditorRows: async () => assert.fail("Project export must not reload the unrelated editor"),
+    invoke: async (command, args) => {
+      calls.push({ command, ...args });
+      if (command === "load_gtms_chapter_editor_data") return {
+        fileTitle: args.input.chapterId,
+        languages: [{ code: "vi" }],
+        rows: [{ rowId: args.input.chapterId, fields: { vi: `Saved ${args.input.chapterId}` } }],
+      };
+    },
+  });
+  assert.deepEqual(calls.map((call) => call.command), ["load_gtms_chapter_editor_data", "load_gtms_chapter_editor_data", "export_chapter_to_wordpress"]);
+  assert.match(calls[2].input.content, /Saved chapter-1[\s\S]*Saved chapter-2/);
+  assert.equal(calls[2].input.title, "Book");
+  assert.equal(state.editorChapter.chapterId, "chapter-1");
+  assert.equal(state.editorChapter.rows[0].fields.vi, "Text one[1]");
+});
+
+test("project WordPress completion remembers its own destination and shows success without an open editor", async () => {
+  installWordPressFixture();
+  setActiveStorageLogin("project-wordpress-tester");
+  const { openProjectExportOptions } = await import("./editor-export-flow.js");
+  openProjectExportOptions(() => {}, "project-1");
+  state.editorChapter.chapterId = "";
+  setWordPress({ jobId: "project-job", connection: { siteId: "site-1", kind: "wordpressCom", siteUrl: "https://example.wordpress.com" } });
+  handleWordPressExportProgressEvent({
+    jobId: "project-job", status: "success", postId: 32, postTitle: "Book", postStatus: "draft",
+    postEditLink: "https://example.wordpress.com/wp-admin/post.php?post=32",
+  }, () => {});
+  assert.equal(state.editorChapter.wordpressExportSuccessModal.isOpen, true);
+  assert.equal(state.editorChapter.wordpressExportSuccessModal.isDraft, true);
+  assert.equal(loadStoredEditorExportDefault("project:project-1").wordpress.destinations[0].postId, 32);
+  assert.equal(loadStoredEditorExportDefault("chapter-1"), null);
+});

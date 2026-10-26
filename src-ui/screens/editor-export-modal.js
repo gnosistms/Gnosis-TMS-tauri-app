@@ -1,8 +1,10 @@
+import { renderProjectBookComposer, bookNavButton } from "./project-book-composer.js";
 import {
   escapeHtml,
   loadingPrimaryButton,
   renderCollapseChevron,
   secondaryButton,
+  tooltipAttributes,
 } from "../lib/ui.js";
 import { renderExportSelect, supportingText } from "./export-fields.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
@@ -237,7 +239,7 @@ function renderWordPressSitePicker(wordpress) {
           <strong>${escapeHtml(site.displayName || site.siteUrl)}</strong>
           ${site.displayName ? `<span>${escapeHtml(site.siteUrl)}</span>` : ""}
         </button>
-        <button type="button" class="editor-export-modal__wordpress-forget" data-action="forget-wordpress-site:${escapeHtml(site.siteId)}" title="Forget this site" aria-label="Forget this site">&times;</button>
+        <button type="button" class="editor-export-modal__wordpress-forget" data-action="forget-wordpress-site:${escapeHtml(site.siteId)}" ${tooltipAttributes("Forget this site")} aria-label="Forget this site">&times;</button>
       </li>`).join("")}
     </ul>` : ""}
     <button class="button button--primary" data-action="show-add-wordpress-site">Add a new site</button>
@@ -343,14 +345,14 @@ function wordpressDetail(wordpress, isExporting) {
   };
 }
 
-// Copy-and-paste and WordPress exports serialize the editor's in-memory rows;
-// file and team-copy exports read the repo, so they work from the projects
-// page too.
+// Single-chapter clipboard/WordPress exports need the editor; project exports
+// read their own snapshots without opening a chapter.
 function exportChapterOpenInEditor(modal, appState) {
-  return Boolean(modal?.chapterId) && appState?.editorChapter?.chapterId === modal.chapterId;
+  return !modal?.projectId && Boolean(modal?.chapterId) && appState?.editorChapter?.chapterId === modal.chapterId;
 }
 
 function exportChapterLanguages(modal, appState) {
+  if (modal?.projectId) { return modal.languages ?? []; }
   const projects = [
     ...(Array.isArray(appState?.projects) ? appState.projects : []),
     ...(Array.isArray(appState?.deletedProjects) ? appState.deletedProjects : []),
@@ -368,7 +370,7 @@ function exportChapterLanguages(modal, appState) {
 function fileExportLanguageSection(option, modal, appState) {
   // The editor follows the preview toolbar language; XLSX exports every
   // language column at once.
-  if (exportChapterOpenInEditor(modal, appState) || option.format === "xlsx") {
+  if (modal.book || exportChapterOpenInEditor(modal, appState) || option.format === "xlsx") {
     return "";
   }
 
@@ -427,7 +429,7 @@ function teamCopyProjectSection(teamCopy) {
   });
 }
 
-function teamCopyDetail(teamCopy, isExporting, appState) {
+function teamCopyDetail(teamCopy, isExporting, appState, modal) {
   const targets = eligibleTeamCopyTargets(appState);
   if (targets.length === 0) {
     return {
@@ -451,7 +453,7 @@ function teamCopyDetail(teamCopy, isExporting, appState) {
 
   return {
     bodyMarkup: `
-      ${supportingText("Copy this chapter, including every language and its images, into a project on any team where you can add files — including this one.")}
+      ${supportingText(modal?.projectId ? "Copy all project chapters in order, including every language and its images, into the selected project." : "Copy this chapter, including every language and its images, into a project on any team where you can add files — including this one.")}
       ${renderExportSelect({
         id: "editor-export-team",
         label: "Team",
@@ -464,7 +466,7 @@ function teamCopyDetail(teamCopy, isExporting, appState) {
         value: resolvedTeamCopy.targetTeamId,
       })}
       ${teamCopyProjectSection(resolvedTeamCopy)}
-      ${selectedProject
+      ${selectedProject && !modal?.projectId
         ? `
           <label class="field editor-export-modal__field">
             <span class="field__label">File name</span>
@@ -479,7 +481,7 @@ function teamCopyDetail(teamCopy, isExporting, appState) {
         : ""}
       ${selectedProject && selectedTeam
         ? supportingText(
-          `The copy will appear as a new file in ${selectedProject.title || selectedProject.name} (${selectedTeam.name || selectedTeam.githubOrg || selectedTeam.id}).`,
+          `${modal?.projectId ? "The copies will appear as new files" : "The copy will appear as a new file"} in ${selectedProject.title || selectedProject.name} (${selectedTeam.name || selectedTeam.githubOrg || selectedTeam.id}).`,
         )
         : ""}
       ${isExporting && resolvedTeamCopy.copyStage
@@ -487,7 +489,7 @@ function teamCopyDetail(teamCopy, isExporting, appState) {
         : ""}
     `,
     submitButton: loadingPrimaryButton({
-      label: "Copy chapter",
+      label: modal?.projectId ? "Copy chapters" : "Copy chapter",
       loadingLabel: "Copying...",
       action: "submit-editor-export",
       isLoading: isExporting,
@@ -511,7 +513,7 @@ function footnoteLinkFallbackSection(option, modal) {
   }
   const checked = modal?.footnoteLinksAsPlainText === true;
   return `
-    <label class="field__checkbox editor-export-modal__footnote-links" title="${escapeHtml(FOOTNOTE_LINKS_TOOLTIP)}">
+    <label class="field__checkbox editor-export-modal__footnote-links" ${tooltipAttributes(FOOTNOTE_LINKS_TOOLTIP)}>
       <input
         type="checkbox"
         data-editor-export-footnote-links-toggle
@@ -535,7 +537,7 @@ function omitCustomHtmlSection(option, modal) {
   }
   const checked = modal?.omitCustomHtml === true;
   return `
-    <label class="field__checkbox editor-export-modal__omit-custom-html" title="${escapeHtml(OMIT_CUSTOM_HTML_TOOLTIP)}">
+    <label class="field__checkbox editor-export-modal__omit-custom-html" ${tooltipAttributes(OMIT_CUSTOM_HTML_TOOLTIP)}>
       <input
         type="checkbox"
         data-editor-export-omit-custom-html-toggle
@@ -558,7 +560,7 @@ function exportDetail(option, isExporting, modal, appState) {
   // in the editor; from the projects page they point the user there instead.
   const editorOnly = option.kind === "copy"
     || (option.kind === "link" && option.format === "wordpress");
-  if (editorOnly && !exportChapterOpenInEditor(modal, appState)) {
+  if (editorOnly && !modal.projectId && !exportChapterOpenInEditor(modal, appState)) {
     return {
       bodyMarkup: supportingText("Open the file in the editor to use this export option."),
       submitButton: "",
@@ -566,23 +568,27 @@ function exportDetail(option, isExporting, modal, appState) {
   }
 
   if (option.kind === "link" && option.format === "wordpress") {
-    return wordpressDetail(modal.wordpress, isExporting);
+    const detail = wordpressDetail(modal.wordpress, isExporting);
+    if (modal.projectId) detail.bodyMarkup = fileExportLanguageSection(option, modal, appState) + detail.bodyMarkup;
+    return detail;
   }
 
   if (option.kind === "link" && option.format === "team") {
-    return teamCopyDetail(modal.teamCopy, isExporting, appState);
+    return teamCopyDetail(modal.teamCopy, isExporting, appState, modal);
   }
 
   if (option.kind === "file") {
     const pdfProgress = option.format === "pdf" ? renderPdfExportProgress(modal, isExporting) : "";
     const pdfDisclosure = option.format === "pdf" ? pdfFontDisclosure(modal) : "";
     const pdfReady = option.format !== "pdf" || modal.pdfFontStatus === "ready" || isExporting;
+    const pdfChecking = option.format === "pdf" && !isExporting
+      && ["idle", "loading"].includes(modal.pdfFontStatus);
     const article = ["html", "xlsx", "rtf", "srt"].includes(option.format) ? "an" : "a";
     return {
       bodyMarkup: `
         ${supportingText(option.format === "md"
-          ? "Save this chapter as a Markdown (.md) file."
-          : `Save this chapter as ${article} ${option.label} file.`)}
+          ? `Save ${modal.book ? "your arranged book" : modal.projectId ? "all chapters in sequence" : "this chapter"} as a Markdown (.md) file.`
+          : `Save ${modal.book ? "your arranged book" : modal.projectId ? "all chapters in sequence" : "this chapter"} as ${article} ${option.label} file.`)}
         ${pdfDisclosure}
         ${fileExportLanguageSection(option, modal, appState)}
         ${option.format === "pdf" ? pdfPaperSizeSection(modal, isExporting) : ""}
@@ -591,11 +597,11 @@ function exportDetail(option, isExporting, modal, appState) {
         ${option.format === "pdf" ? savedPdfFontSettings(modal, isExporting) : ""}
         ${pdfProgress}
       `,
-      submitButton: pdfReady ? loadingPrimaryButton({
+      submitButton: pdfReady || pdfChecking ? loadingPrimaryButton({
         label: "Save",
-        loadingLabel: modal.pdfForgettingFontId ? "Updating fonts…" : "Saving...",
+        loadingLabel: pdfChecking ? "Save" : modal.pdfForgettingFontId ? "Updating fonts…" : "Saving...",
         action: "submit-editor-export",
-        isLoading: isExporting || Boolean(modal.pdfForgettingFontId),
+        isLoading: pdfChecking || isExporting || Boolean(modal.pdfForgettingFontId),
         modalDefault: true,
       }) : "",
     };
@@ -603,6 +609,7 @@ function exportDetail(option, isExporting, modal, appState) {
 
   return {
     bodyMarkup: `
+      ${modal.projectId ? fileExportLanguageSection(option, modal, appState) : ""}
       ${supportingText(`Click Copy to export ${option.label.toLowerCase()} data to the clipboard for pasting into other apps.`)}
       ${footnoteLinkFallbackSection(option, modal)}
       ${omitCustomHtmlSection(option, modal)}
@@ -665,9 +672,11 @@ export function renderEditorExportModal(state) {
     return renderPdfFontReview(modal);
   }
 
+  if (modal.projectId && modal.book && modal.page === 1) return renderProjectBookComposer(modal);
+
   const isExporting = modal.status === "exporting" || modal.status === "cancelling";
   const isCancelling = modal.status === "cancelling";
-  const option = findEditorExportOption(modal.selectedOptionId);
+  const option = findEditorExportOption(modal.selectedOptionId, modal);
   const canCancelPdf = isExporting && Boolean(modal.pdfJobId);
   const detail = exportDetail(option, isExporting, modal, state);
   const errorMarkup = modal.error
@@ -678,14 +687,17 @@ export function renderEditorExportModal(state) {
       <section class="card modal-card modal-card--editor-export" role="dialog" aria-modal="true" aria-labelledby="editor-export-modal-title" data-modal-dialog="editor-export" tabindex="-1">
         <div class="card__body modal-card__body modal-card__body--editor-export">
           <header class="editor-export-modal__header">
-            <h2 class="modal__title" id="editor-export-modal-title">Export chapter</h2>
+            ${modal.projectId && modal.book ? bookNavButton("previous", isExporting) : ""}
+            <h2 class="modal__title" id="editor-export-modal-title">${modal.projectId ? "Export project" : "Export chapter"}</h2>
           </header>
           <div class="editor-export-modal">
             <nav class="editor-export-modal__nav" aria-label="Export options">
-              ${editorExportCategories().map((category) => renderExportCategory(category, modal)).join("")}
+              ${editorExportCategories(modal).map((category) => renderExportCategory(category, modal)).join("")}
             </nav>
             <div class="editor-export-modal__detail">
               <p class="editor-export-modal__detail-heading">${escapeHtml(option?.label ?? "")}</p>
+              ${modal.book ? supportingText(`${modal.book.items.filter((item) => !item.excluded && item.available !== false).length} items in your saved book order.`) : modal.projectId ? supportingText(`${modal.chapterIds.length} files in project order.`) : ""}
+              ${modal.projectId && !modal.languages.length && option?.format !== "team" ? `<p class="modal__error" role="alert">These files have no language in common. Add the same language to every file before exporting a combined document.</p>` : ""}
               ${detail.bodyMarkup}
               ${errorMarkup}
               <div class="modal__actions">
@@ -693,7 +705,7 @@ export function renderEditorExportModal(state) {
                   disabled: isCancelling || (isExporting && !canCancelPdf),
                   modalCancel: true,
                 })}
-                ${detail.submitButton}
+                ${modal.projectId && !modal.languages.length && option?.format !== "team" ? "" : detail.submitButton}
               </div>
             </div>
           </div>

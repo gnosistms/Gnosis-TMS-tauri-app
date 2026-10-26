@@ -1,3 +1,4 @@
+use super::book_export::BookItemInput;
 use super::*;
 use crate::util::atomic_replace;
 use reqwest::blocking::Client as BlockingClient;
@@ -21,9 +22,10 @@ mod font_preferences;
 mod font_review;
 
 use super::chapter_export::{
-    apply_print_custom_html_policy, build_export_document, download_public_image_bytes_detailed,
-    inline_segments, inline_visible_text, ExportBlock, ExportChapterFileInput, ExportDocument,
-    ExportImage, InlineStyleState,
+    apply_print_custom_html_policy, build_scoped_export_document,
+    download_public_image_bytes_detailed, export_text_style, inline_segments, inline_visible_text,
+    load_export_chapters, ExportBlock, ExportChapterFileInput, ExportDocument, ExportImage,
+    InlineStyleState,
 };
 
 const PDF_EXPORT_EVENT: &str = "chapter-pdf-export-progress";
@@ -137,6 +139,12 @@ pub(crate) struct PdfFontInspectionInput {
     #[serde(default)]
     project_full_name: Option<String>,
     chapter_id: String,
+    #[serde(default)]
+    chapter_ids: Vec<String>,
+    #[serde(default)]
+    project_title: String,
+    #[serde(default)]
+    book_items: Vec<BookItemInput>,
     language_code: String,
     #[serde(default)]
     omit_custom_html: Option<bool>,
@@ -477,6 +485,9 @@ pub(crate) fn inspect_gtms_chapter_pdf_fonts(
             project_id: input.project_id,
             project_full_name: input.project_full_name,
             chapter_id: input.chapter_id,
+            chapter_ids: input.chapter_ids,
+            project_title: input.project_title,
+            book_items: input.book_items,
             language_code: input.language_code,
             format: "pdf".to_string(),
             output_path: String::new(),
@@ -961,26 +972,15 @@ fn load_export_document(
     )?;
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
-    let chapter_path =
-        find_chapter_path_by_id(app, &repo_path.join("chapters"), &input.chapter_id)?;
-    let chapter_file: StoredChapterFile =
-        read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
-    let languages = sanitize_chapter_languages(&chapter_file.languages);
-    if !languages
-        .iter()
-        .any(|language| language.code == input.language_code)
-    {
-        return Err("The selected export language is not available in this file.".to_string());
-    }
-    let rows = load_editor_rows(&chapter_path.join("rows"))?;
+    let chapters = load_export_chapters(app, &repo_path, input)?;
     let head_sha = current_repo_head_sha(&repo_path);
     let full_name =
         resolve_project_full_name_for_pdf(&repo_path, input.project_full_name.as_deref());
-    build_export_document(
+    build_scoped_export_document(
+        app,
         &repo_path,
-        &chapter_file,
-        &rows,
-        &input.language_code,
+        &chapters,
+        input,
         full_name.as_deref(),
         head_sha.as_deref().unwrap_or_default(),
     )
@@ -1323,6 +1323,37 @@ fn prepare_typst_workspace(
         options.image_cache_scope,
         cancelled,
     )?;
+    fs::write(workspace.join("flourish.svg"), CHAPTER_FLOURISH_SVG)
+        .map_err(|error| format!("Could not prepare the title ornament for the PDF: {error}"))?;
+    write_droplet_package(workspace)?;
+    let mut source = typst_preamble(document, options.paper_size);
+    if document.book_parts.is_empty() {
+        source.push_str(&render_typst_chapter(
+            document,
+            &image_paths,
+            options,
+            cancelled,
+        )?);
+    } else {
+        source.push_str(&render_typst_book(
+            document,
+            &image_paths,
+            options,
+            cancelled,
+        )?);
+    }
+    fs::write(workspace.join("chapter.typ"), source)
+        .map_err(|error| format!("Could not write the temporary Typst document: {error}"))
+}
+
+// This is the chapter style: book chapters and standalone exports use this
+// exact renderer, including title promotion, ornaments, floats, and drop caps.
+fn render_typst_chapter(
+    document: &ExportDocument,
+    image_paths: &HashMap<String, PreparedTypstImage>,
+    options: &PdfWorkspacePreparationOptions<'_>,
+    cancelled: &AtomicBool,
+) -> Result<String, String> {
     let mut anchored_footnotes: HashMap<usize, Vec<(usize, String)>> = HashMap::new();
     let mut anchored_numbers = HashSet::new();
     for block in &document.blocks {
@@ -1343,15 +1374,12 @@ fn prepare_typst_workspace(
     let leading_title = leading_heading_title(document);
     let title = leading_title.as_deref().unwrap_or(document.title.as_str());
     // The ornament under the chapter title; referenced by the gnosis-title rule.
-    fs::write(workspace.join("flourish.svg"), CHAPTER_FLOURISH_SVG)
-        .map_err(|error| format!("Could not prepare the title ornament for the PDF: {error}"))?;
-    write_droplet_package(workspace)?;
-    let mut source = typst_preamble(document, options.paper_size);
+    let mut source = String::new();
     // No spacer after the title: it is a top float now, and its `clearance`
     // provides the gap to whatever the page starts with.
     source.push_str(&format!("#gnosis-title({})\n", typst_string(title)));
     let (emission_order, trailing_start) =
-        typst_block_emission_order(&document.blocks, &image_paths);
+        typst_block_emission_order(&document.blocks, image_paths);
     let dropcap_index = if latin_body(&document.language_code) {
         dropcap_block_index(&document.blocks, &emission_order, leading_title.is_some())
     } else {
@@ -1448,8 +1476,197 @@ fn prepare_typst_workspace(
             }
         }
     }
-    fs::write(workspace.join("chapter.typ"), source)
-        .map_err(|error| format!("Could not write the temporary Typst document: {error}"))
+    Ok(source)
+}
+
+// Typst resolves these metadata locations against the final paginated document.
+// A contents section can be anywhere; no guessed page counts or extra render jobs.
+const BOOK_LAYOUT_RULES: &str = r#"
+#set page(numbering: none, footer: context {
+  let p = here().page()
+  let starts = query(<gnosis-print-start>)
+  let ends = query(<gnosis-print-end>)
+  for range in starts.zip(ends) {
+    if range.first().location().page() <= p and p <= range.last().location().page() {
+      align(center, counter(page).display(range.first().value))
+    }
+  }
+})
+#let gnosis-contents(t) = {
+  show link: set text(fill: black)
+  align(center, text(font: gnosis-book-heading-font, size: 20pt, t))
+  v(1.8em)
+  context {
+    for entry in query(<gnosis-book-entry>) {
+      block(width: 100%, above: 0.65em, below: 0.65em)[
+        #link(entry.location())[#grid(columns: (1fr, auto), column-gutter: 1em,
+          entry.value.title,
+          numbering(entry.value.numbering, ..counter(page).at(entry.location())),
+        )]
+      ]
+    }
+  }
+}
+"#;
+
+fn render_typst_book(
+    document: &ExportDocument,
+    image_paths: &HashMap<String, PreparedTypstImage>,
+    options: &PdfWorkspacePreparationOptions<'_>,
+    cancelled: &AtomicBool,
+) -> Result<String, String> {
+    let mut source = BOOK_LAYOUT_RULES.to_string();
+    let mut body_started = false;
+    let heading_fonts = heading_font_families(document)
+        .into_iter()
+        .map(typst_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    source.insert_str(
+        0,
+        &format!("#let gnosis-book-heading-font = ({heading_fonts})\n"),
+    );
+    for (index, part) in document.book_parts.iter().enumerate() {
+        check_cancelled(cancelled)?;
+        let item = &part.item;
+        if !item.image_asset_id.is_empty()
+            && section_prepared_image(&part.document, image_paths).is_none()
+        {
+            return Err(
+                "Could not prepare a book image. Select the image again before exporting.".into(),
+            );
+        }
+        if index > 0 {
+            let side = if item.kind == "copyright" {
+                "even"
+            } else {
+                "odd"
+            };
+            source.push_str(&format!("#pagebreak(to: \"{side}\")\n"));
+        } else if item.kind == "copyright" {
+            // A leading copyright page still occupies the verso of a spread.
+            source.push_str("#pagebreak(to: \"even\")\n");
+        }
+        if item.kind == "chapter" && !body_started {
+            source.push_str("#counter(page).update(1)\n");
+            body_started = true;
+        }
+        let numbering = if body_started { "1" } else { "i" };
+        if !matches!(item.kind.as_str(), "title" | "copyright" | "contents") {
+            let title = if item.kind == "chapter" {
+                leading_heading_title(&part.document).unwrap_or_else(|| part.document.title.clone())
+            } else {
+                item.title.clone()
+            };
+            source.push_str(&format!(
+                "#metadata((title: {}, numbering: \"{numbering}\")) <gnosis-book-entry>\n",
+                typst_string(&title)
+            ));
+        }
+        let numbered = matches!(item.kind.as_str(), "chapter" | "contents");
+        if numbered {
+            source.push_str(&format!(
+                "#metadata(\"{numbering}\") <gnosis-print-start>\n"
+            ));
+        }
+        if item.kind == "chapter" {
+            source.push_str(&render_typst_chapter(
+                &part.document,
+                image_paths,
+                options,
+                cancelled,
+            )?);
+        } else if item.kind == "contents" {
+            source.push_str(&format!(
+                "#gnosis-contents({})\n",
+                typst_string(&item.title)
+            ));
+        } else if item.kind == "title" {
+            source.push_str(&format!("#align(center)[\n#v(0.2fr)\n#text(font: ({heading_fonts}), size: 30pt, weight: \"medium\")[{}]\n", render_inline_typst(&item.title, false)));
+            if !item.subtitle.trim().is_empty() {
+                source.push_str(&format!(
+                    "#v(1em)\n#text(font: ({heading_fonts}), size: 18pt)[{}]\n",
+                    render_inline_typst(&item.subtitle, false)
+                ));
+            }
+            source.push_str("#v(2.5em)\n");
+            if !item.author.trim().is_empty() {
+                source.push_str(&format!(
+                    "#text(size: 15pt)[{}]\n",
+                    render_inline_typst(&item.author, false)
+                ));
+            }
+            if !item.translator.trim().is_empty() {
+                source.push_str(&format!(
+                    "#v(1em)\n#text(size: 12pt)[{}]\n",
+                    render_inline_typst(&item.translator, false)
+                ));
+            }
+            source.push_str("#v(1fr)\n");
+            if let Some(path) = section_prepared_image(&part.document, image_paths) {
+                source.push_str(&format!(
+                    "#image({}, width: 1.3in, height: 0.7in, fit: \"contain\")\n",
+                    typst_string(path)
+                ));
+            }
+            source.push_str("]\n");
+        } else if item.kind == "image" {
+            source.push_str("#v(1fr)\n#align(center)[\n");
+            if let Some(path) = section_prepared_image(&part.document, image_paths) {
+                source.push_str(&format!(
+                    "#gnosis-image({}, caption: [{}])\n",
+                    typst_string(path),
+                    render_typst_image_caption(&item.caption)
+                ));
+            }
+            if !item.caption.trim().is_empty() {
+                source.push_str(&format!(
+                    "#v(0.65em)\n{}\n",
+                    render_typst_image_caption(&item.caption)
+                ));
+            }
+            source.push_str("]\n#v(1fr)\n");
+        } else {
+            if item.kind == "copyright" {
+                source.push_str("#v(1fr)\n");
+            }
+            if item.kind == "dedication" {
+                source.push_str("#v(0.22fr)\n#align(center)[\n");
+            }
+            for (index, text) in item.text.split("<hr>").enumerate() {
+                if index > 0 {
+                    source.push_str("#v(1em)\n#align(center, image(\"flourish.svg\", width: 0.66in))\n#v(1em)\n");
+                }
+                source.push_str(&render_inline_typst(
+                    text,
+                    options.footnote_links_as_plain_text,
+                ));
+                source.push_str("\n\n");
+            }
+            if item.kind == "dedication" {
+                source.push_str("]\n#v(1fr)\n");
+            }
+        }
+        if numbered {
+            source.push_str("\n#metadata(none) <gnosis-print-end>\n");
+        }
+    }
+    Ok(source)
+}
+
+fn section_prepared_image<'a>(
+    document: &ExportDocument,
+    images: &'a HashMap<String, PreparedTypstImage>,
+) -> Option<&'a str> {
+    document.blocks.iter().find_map(|block| {
+        let ExportBlock::Image { image, .. } = block else {
+            return None;
+        };
+        match images.get(&export_image_key(image)) {
+            Some(PreparedTypstImage::File { path, .. }) => Some(path.as_str()),
+            _ => None,
+        }
+    })
 }
 
 /// Emission order for blocks. Everything up to the trailing image run keeps
@@ -1510,7 +1727,7 @@ fn dropcap_block_index(
                 // reader would.
                 let Some(first) = first else { continue };
                 let plain = !matches!(
-                    normalize_editor_text_style_value(Some(text_style)).as_str(),
+                    export_text_style(Some(text_style)).as_str(),
                     "heading1" | "heading2" | "quote" | "blockquote" | "centered" | "indented"
                 );
                 return (plain && first.is_alphabetic()).then_some(index);
@@ -1606,7 +1823,10 @@ fn report_font_coverage_gap(
 }
 
 fn render_typst_text_block(style: &str, inline: &str, dropcap: bool) -> String {
-    match normalize_editor_text_style_value(Some(style)).as_str() {
+    if style == "chapter_heading" {
+        return format!("#pagebreak(weak: true)\n= {inline}\n\n");
+    }
+    match export_text_style(Some(style)).as_str() {
         "heading1" => format!("= {inline}\n\n"),
         "heading2" => format!("== {inline}\n\n"),
         "quote" | "blockquote" => {
@@ -2658,6 +2878,7 @@ mod tests {
         let workspace = pdf_workspace().unwrap();
         let _cleanup = WorkspaceCleanup(workspace.clone());
         let mut document = ExportDocument {
+            book_parts: Vec::new(),
             title: "Title".into(),
             language_code: "vi".into(),
             blocks: vec![ExportBlock::Text {
@@ -2928,6 +3149,7 @@ mod tests {
     #[test]
     fn quoted_scripts_pull_in_their_own_fonts() {
         let plain = ExportDocument {
+            book_parts: Vec::new(),
             title: "Tâm vũ trụ".to_string(),
             language_code: "vi".to_string(),
             blocks: vec![ExportBlock::Text {
@@ -2944,6 +3166,7 @@ mod tests {
         assert!(!fonts.iter().any(|font| font.family.starts_with("Noto")));
 
         let quoting = ExportDocument {
+            book_parts: Vec::new(),
             title: "Ông 伏羲".to_string(),
             language_code: "vi".to_string(),
             blocks: vec![ExportBlock::Text {
@@ -2981,6 +3204,7 @@ mod tests {
     #[test]
     fn a_leading_h1_becomes_the_chapter_title() {
         let document = ExportDocument {
+            book_parts: Vec::new(),
             title: "File Title".to_string(),
             language_code: "en".to_string(),
             blocks: vec![
@@ -2998,6 +3222,7 @@ mod tests {
     #[test]
     fn a_non_heading_first_line_leaves_the_file_title_in_place() {
         let document = ExportDocument {
+            book_parts: Vec::new(),
             title: "File Title".to_string(),
             language_code: "en".to_string(),
             blocks: vec![text_block("paragraph", "Just a paragraph.")],
@@ -3008,6 +3233,7 @@ mod tests {
     #[test]
     fn a_leading_h1_that_anchors_a_footnote_is_not_promoted() {
         let document = ExportDocument {
+            book_parts: Vec::new(),
             title: "File Title".to_string(),
             language_code: "en".to_string(),
             blocks: vec![
@@ -3025,8 +3251,222 @@ mod tests {
     }
 
     #[test]
+    fn composed_book_uses_shared_chapters_and_final_contents_locations() {
+        use super::super::book_export::{BookItemInput, BookPart};
+        let workspace = pdf_workspace().unwrap();
+        let _cleanup = WorkspaceCleanup(workspace.clone());
+        let text = |value: &str| ExportBlock::Text {
+            text_style: "paragraph".into(),
+            text: value.into(),
+        };
+        let part = |kind: &str, title: &str, body: Vec<ExportBlock>| BookPart {
+            item: BookItemInput {
+                id: format!("{kind}-{title}"),
+                kind: kind.into(),
+                title: title.into(),
+                text: if kind == "copyright" {
+                    "© Example\n<i>All rights reserved.</i><hr>Second edition".into()
+                } else if kind == "dedication" {
+                    "For our readers.".into()
+                } else {
+                    String::new()
+                },
+                subtitle: if kind == "title" {
+                    "A subtitle".into()
+                } else {
+                    String::new()
+                },
+                author: if kind == "title" {
+                    "An Author".into()
+                } else {
+                    String::new()
+                },
+                ..Default::default()
+            },
+            document: ExportDocument {
+                title: title.into(),
+                language_code: "en".into(),
+                blocks: body,
+                book_parts: Vec::new(),
+            },
+        };
+        let mut parts = vec![
+            part("title", "A Book", vec![text("A Book")]),
+            part("copyright", "Copyright", vec![text("© Example")]),
+            part("dedication", "Dedication", vec![text("For our readers.")]),
+            part(
+                "chapter",
+                "Chapter One",
+                vec![
+                    text("An opening paragraph in the chapter style."),
+                    text(&"A paragraph to fill the book and verify pagination. ".repeat(700)),
+                ],
+            ),
+            part(
+                "chapter",
+                "Chapter Two",
+                vec![text(
+                    "Another opening paragraph, with a drop cap of its own.",
+                )],
+            ),
+            // Contents deliberately follows the chapters.
+            part("contents", "Mục lục", vec![text("Mục lục")]),
+        ];
+        let illustration = workspace.join("illustration.svg");
+        fs::write(&illustration, br##"<svg xmlns="http://www.w3.org/2000/svg" width="300" height="500"><rect width="300" height="500" fill="#b79858"/><circle cx="150" cy="240" r="90" fill="#fff4da"/></svg>"##).unwrap();
+        let image = ExportImage::Upload {
+            repo_relative_path: "illustration.svg".into(),
+            raw_url: None,
+            absolute_path: illustration,
+        };
+        parts[0].item.image_asset_id = "logo.svg".into();
+        parts[0].document.blocks.push(ExportBlock::Image {
+            image: image.clone(),
+            caption: String::new(),
+        });
+        let mut plate = part(
+            "image",
+            "An illustration",
+            vec![ExportBlock::Image {
+                image,
+                caption: "A full-page illustration".into(),
+            }],
+        );
+        plate.item.image_asset_id = "illustration.svg".into();
+        plate.item.caption = "A full-page illustration".into();
+        parts.insert(parts.len() - 1, plate);
+        let document = ExportDocument {
+            title: "A Book".into(),
+            language_code: "en".into(),
+            blocks: parts
+                .iter()
+                .flat_map(|part| part.document.blocks.clone())
+                .collect(),
+            book_parts: parts,
+        };
+        let cache_scope = test_image_cache_scope("book-smoke");
+        let options = PdfWorkspacePreparationOptions {
+            footnote_links_as_plain_text: true,
+            paper_size: "a5",
+            image_cache_scope: &cache_scope,
+        };
+        prepare_typst_workspace(
+            None,
+            "",
+            &workspace,
+            &document,
+            &options,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let source_path = workspace.join("chapter.typ");
+        let mut source = fs::read_to_string(&source_path).unwrap();
+        assert_eq!(source.matches("#gnosis-dropcap[").count(), 2);
+        assert_eq!(source.matches("#gnosis-title(\"Chapter").count(), 2);
+        assert!(source.contains("#pagebreak(to: \"even\")"));
+        assert!(source
+            .contains("numbering(entry.value.numbering, ..counter(page).at(entry.location()))"));
+        assert!(
+            source.find("#gnosis-title(\"Chapter Two\")").unwrap()
+                < source.find("#gnosis-contents(\"Mục lục\")").unwrap()
+        );
+        assert!(source.contains("size: 30pt"));
+        assert!(source.contains("#let gnosis-book-heading-font = (\"Alegreya\""));
+        let (Some(binary), Some(font_dir)) = (
+            std::env::var_os("GNOSIS_TYPST_BIN"),
+            std::env::var_os("GNOSIS_TYPST_SMOKE_FONT_DIR"),
+        ) else {
+            return;
+        };
+        source.push_str("\n#context [#metadata(query(<gnosis-book-entry>).map(entry => (title: entry.value.title, physical: entry.location().page(), page: counter(page).at(entry.location()).first(), numbering: entry.value.numbering))) <gnosis-page-audit>]\n");
+        fs::write(&source_path, source).unwrap();
+        let pdf_path = workspace.join("book.pdf");
+        let output = std::process::Command::new(&binary)
+            .arg("compile")
+            .arg("--root")
+            .arg(&workspace)
+            .arg("--font-path")
+            .arg(&font_dir)
+            .arg("--ignore-system-fonts")
+            .arg("--package-path")
+            .arg(workspace.join("packages"))
+            .arg(&source_path)
+            .arg(&pdf_path)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let query = std::process::Command::new(&binary)
+            .arg("query")
+            .arg("--root")
+            .arg(&workspace)
+            .arg("--font-path")
+            .arg(&font_dir)
+            .arg("--ignore-system-fonts")
+            .arg("--package-path")
+            .arg(workspace.join("packages"))
+            .arg("--field")
+            .arg("value")
+            .arg(&source_path)
+            .arg("<gnosis-page-audit>")
+            .output()
+            .unwrap();
+        assert!(
+            query.status.success(),
+            "{}",
+            String::from_utf8_lossy(&query.stderr)
+        );
+        let pages: serde_json::Value = serde_json::from_slice(&query.stdout).unwrap();
+        let pages = pages[0]
+            .as_array()
+            .unwrap_or_else(|| panic!("Unexpected page audit: {pages}"));
+        let one = pages
+            .iter()
+            .find(|entry| entry["title"] == "Chapter One")
+            .unwrap();
+        let two = pages
+            .iter()
+            .find(|entry| entry["title"] == "Chapter Two")
+            .unwrap();
+        assert_eq!(one["page"], 1);
+        assert!(two["page"].as_u64().unwrap() > 1);
+        assert!(!one["physical"].as_u64().unwrap().is_multiple_of(2));
+        assert!(!two["physical"].as_u64().unwrap().is_multiple_of(2));
+        assert!(!pages.iter().any(|entry| entry["title"] == "Copyright"
+            || entry["title"] == "A Book"
+            || entry["title"] == "Mục lục"));
+        if let Some(destination) = std::env::var_os("GNOSIS_BOOK_SMOKE_OUTPUT") {
+            fs::copy(pdf_path, destination).unwrap();
+        }
+    }
+
+    #[test]
+    fn project_book_export_starts_chapters_on_new_pages_without_promoting_the_first_title() {
+        let document = ExportDocument {
+            book_parts: Vec::new(),
+            title: "Book".into(),
+            language_code: "en".into(),
+            blocks: vec![ExportBlock::Text {
+                text_style: "chapter_heading".into(),
+                text: "Chapter One".into(),
+            }],
+        };
+        assert_eq!(leading_heading_title(&document), None);
+        assert_eq!(dropcap_block_index(&document.blocks, &[0], false), None);
+        assert_eq!(
+            render_typst_text_block("chapter_heading", "Chapter One", false),
+            "#pagebreak(weak: true)\n= Chapter One\n\n"
+        );
+        assert!(document_characters(&document).contains(&'B'));
+    }
+
+    #[test]
     fn images_are_capped_by_their_measured_caption_height() {
         let document = ExportDocument {
+            book_parts: Vec::new(),
             title: "Images".to_string(),
             language_code: "vi".to_string(),
             blocks: Vec::new(),
@@ -3049,6 +3489,7 @@ mod tests {
     #[test]
     fn typst_footnotes_use_a_fixed_hanging_gutter() {
         let document = ExportDocument {
+            book_parts: Vec::new(),
             title: "Footnotes".to_string(),
             language_code: "vi".to_string(),
             blocks: Vec::new(),
@@ -3070,11 +3511,13 @@ mod tests {
     #[test]
     fn typst_font_selection_uses_crimson_pro_for_latin_body_and_headings() {
         let vietnamese = ExportDocument {
+            book_parts: Vec::new(),
             title: "Vietnamese".to_string(),
             language_code: "vi".to_string(),
             blocks: Vec::new(),
         };
         let japanese = ExportDocument {
+            book_parts: Vec::new(),
             title: "Japanese".to_string(),
             language_code: "ja".to_string(),
             blocks: Vec::new(),
@@ -3291,6 +3734,7 @@ mod tests {
         assert!(normalize_pdf_paper_size("custom); #panic(").is_err());
 
         let document = ExportDocument {
+            book_parts: Vec::new(),
             title: "Paper test".to_string(),
             language_code: "en".to_string(),
             blocks: Vec::new(),
@@ -3558,6 +4002,7 @@ mod tests {
         )
         .expect("write smoke image");
         let document = ExportDocument {
+            book_parts: Vec::new(),
             title: "Kiểm tra PDF tiếng Việt".to_string(),
             language_code: "vi".to_string(),
             blocks: vec![

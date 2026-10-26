@@ -470,6 +470,27 @@
   font-size: 1.2rem;
 }
 
+/* Keep the shared tooltip inside its site row, clear of the list's scroll clip. */
+.editor-export-modal__wordpress-forget[data-tooltip]::before,
+.editor-export-modal__wordpress-forget[data-tooltip]:hover::before,
+.editor-export-modal__wordpress-forget[data-tooltip]:focus-visible::before {
+  top: 50%;
+  bottom: auto;
+  left: auto;
+  right: calc(100% + 10px);
+  transform: translateY(-50%);
+}
+
+.editor-export-modal__wordpress-forget[data-tooltip]::after,
+.editor-export-modal__wordpress-forget[data-tooltip]:hover::after,
+.editor-export-modal__wordpress-forget[data-tooltip]:focus-visible::after {
+  top: 50%;
+  bottom: auto;
+  left: auto;
+  right: calc(100% + 4px);
+  transform: translateY(-50%) rotate(-90deg);
+}
+
 .editor-export-modal__wordpress-actions {
   display: flex;
   flex-wrap: wrap;

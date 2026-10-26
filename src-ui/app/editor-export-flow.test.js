@@ -962,3 +962,110 @@ test("submitEditorExport ignores options that are not available yet", async () =
   assert.equal(invokeCalls.length, 0);
   assert.equal(createEditorExportModalState().selectedOptionId, "file:html");
 });
+
+function installProjectExportFixture() {
+  installEditorExportFixture();
+  const first = state.projects[0].chapters[0];
+  state.projects[0].chapters = [
+    { ...first, id: "chapter-10", name: "Chapter 10" },
+    { ...first, id: "deleted", name: "Chapter 1", status: "deleted" },
+    { ...first, id: "chapter-2", name: "Chapter 2" },
+  ];
+  // An unrelated open editor must never supply the export language or content.
+  state.editorChapter.selectedTargetLanguageCode = "es";
+}
+
+test("project export sends every active chapter in displayed order and uses the project title", async () => {
+  installProjectExportFixture();
+  const { openProjectExportOptions } = await import("./editor-export-flow.js");
+  openProjectExportOptions(() => {}, "project-1");
+  const calls = [];
+  await submitEditorExport(() => {}, {
+    saveDialog: async (options) => {
+      assert.equal(options.defaultPath, "Project-vi.html");
+      return "/tmp/book.html";
+    },
+    waitForRepoQueue: async () => {},
+    invoke: async (command, args) => { calls.push({ command, ...args }); },
+  });
+  assert.equal(calls[0].command, "export_gtms_chapter_file");
+  assert.deepEqual(calls[0].input.chapterIds, ["chapter-2", "chapter-10"]);
+  assert.equal(calls[0].input.projectTitle, "Project");
+  assert.equal(calls[0].input.languageCode, "vi");
+});
+
+test("project clipboard export reads all chapters and preserves content order and footnotes", async () => {
+  installProjectExportFixture();
+  const { openProjectExportOptions } = await import("./editor-export-flow.js");
+  openProjectExportOptions(() => {}, "project-1");
+  selectEditorExportOption(() => {}, "copy:html");
+  const chaptersRead = [];
+  let clipboard;
+  await submitEditorExport(() => {}, {
+    waitForRepoQueue: async () => {},
+    invoke: async (command, { input }) => {
+      assert.equal(command, "load_gtms_chapter_editor_data");
+      assert.equal(state.editorChapter.exportModal.status, "exporting");
+      chaptersRead.push(input.chapterId);
+      return {
+        fileTitle: input.chapterId,
+        languages: [{ code: "vi" }],
+        rows: [{ rowId: `${input.chapterId}-row`, fields: { vi: `Content ${input.chapterId}[1]` }, footnotes: { vi: `Note ${input.chapterId}` } }],
+      };
+    },
+    writeClipboard: async (formats) => { clipboard = formats; },
+  });
+  assert.deepEqual(chaptersRead, ["chapter-2", "chapter-10"]);
+  assert.match(clipboard["text/html"], /chapter-2[\s\S]*Content chapter-2[\s\S]*chapter-10[\s\S]*Content chapter-10/);
+  assert.match(clipboard["text/html"], /Note chapter-2/);
+  assert.match(clipboard["text/html"], /Note chapter-10/);
+  assert.doesNotMatch(clipboard["text/plain"], /Text one/);
+});
+
+test("project PDF inspection and export share the complete chapter scope", async () => {
+  installProjectExportFixture();
+  const { openProjectExportOptions } = await import("./editor-export-flow.js");
+  openProjectExportOptions(() => {}, "project-1");
+  state.editorChapter.exportModal.selectedOptionId = "file:pdf";
+  const calls = [];
+  const invoke = async (command, { input }) => {
+    calls.push({ command, input });
+    return { supported: true, fontFamilies: [], missingBytes: 0, requiredBytes: 0 };
+  };
+  await refreshPdfFontInspection(() => {}, { invoke, waitForRepoQueue: async () => {} });
+  await submitEditorExport(() => {}, { invoke, waitForRepoQueue: async () => {}, saveDialog: async () => "/tmp/book.pdf" });
+  assert.deepEqual(calls.map((call) => call.command), ["inspect_gtms_chapter_pdf_fonts", "start_gtms_chapter_pdf_export"]);
+  for (const call of calls) {
+    assert.deepEqual(call.input.chapterIds, ["chapter-2", "chapter-10"]);
+    assert.equal(call.input.projectTitle, "Project");
+  }
+});
+
+test("project export offers all languages and gates SRT on included chapters", async () => {
+  installProjectExportFixture();
+  const { openProjectExportOptions, selectEditorExportLanguage } = await import("./editor-export-flow.js");
+  state.projects[0].chapters[0].languages = [{ code: "vi", role: "target" }];
+  state.projects[0].chapters[0].sourceFormats = ["srt"];
+  openProjectExportOptions(() => {}, "project-1");
+  assert.deepEqual(state.editorChapter.exportModal.languages.map((language) => language.code), ["es", "vi"]);
+  selectEditorExportLanguage(() => {}, "es");
+  assert.equal(state.editorChapter.exportModal.languageCode, "es");
+  assert.deepEqual(state.editorChapter.exportModal.chapterIds, ["chapter-2"]);
+  assert.equal(findEditorExportOption("file:srt"), null);
+  state.projects[0].chapters[2].sourceFormats = ["srt"];
+  assert.ok(findEditorExportOption("file:srt"));
+});
+
+test("project copy fails without publishing partial content when one chapter lacks the language", async () => {
+  installProjectExportFixture();
+  const { openProjectExportOptions } = await import("./editor-export-flow.js");
+  openProjectExportOptions(() => {}, "project-1");
+  selectEditorExportOption(() => {}, "copy:text");
+  await submitEditorExport(() => {}, {
+    waitForRepoQueue: async () => {},
+    invoke: async (_command, { input }) => ({ languages: input.chapterId === "chapter-2" ? [{ code: "vi" }] : [], rows: [] }),
+    writeClipboard: async () => assert.fail("Do not copy an incomplete book"),
+  });
+  assert.equal(state.editorChapter.exportModal.isOpen, true);
+  assert.match(state.editorChapter.exportModal.error, /no longer has the selected language/);
+});

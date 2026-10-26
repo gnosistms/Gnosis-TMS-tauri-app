@@ -823,6 +823,7 @@ mod tests {
             "A<a href=\"https://example.test\">\u{0301}</a>",
         ] {
             let document = ExportDocument {
+                book_parts: Vec::new(),
                 title: "Title".into(),
                 language_code: "vi".into(),
                 blocks: vec![ExportBlock::Text {
@@ -986,6 +987,7 @@ mod tests {
         let workspace = pdf_workspace().unwrap();
         let _cleanup = WorkspaceCleanup(workspace.clone());
         let document = ExportDocument {
+            book_parts: Vec::new(),
             title: "Title".into(),
             language_code: "vi".into(),
             blocks: vec![

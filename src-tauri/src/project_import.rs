@@ -34,8 +34,8 @@ use self::{
         clear_gtms_editor_imported_conflict_sync, clear_gtms_editor_reviewed_markers_sync,
         duplicate_gtms_editor_language_image_sync, export_gtms_chapter_file_sync,
         forget_gtms_pdf_font_approval as forget_gtms_pdf_font_approval_task,
-        get_project_transfer_status, initialize_gtms_project_repo_sync,
-        insert_gtms_editor_row_sync,
+        get_project_transfer_status, import_project_book_image_sync,
+        initialize_gtms_project_repo_sync, insert_gtms_editor_row_sync,
         inspect_gtms_chapter_pdf_fonts as inspect_gtms_chapter_pdf_fonts_sync,
         list_local_gtms_project_files_sync, list_project_transfer_statuses,
         load_gtms_chapter_editor_data_sync, load_gtms_editor_changed_after_my_edit_sync,
@@ -57,15 +57,16 @@ use self::{
         ApplyEditorAiReviewResultsBatchInput, ApplyEditorAiReviewResultsBatchResponse,
         ClearEditorReviewedMarkersInput, ClearEditorReviewedMarkersResponse,
         ClearImportedEditorConflictInput, DuplicateEditorLanguageImageInput,
-        ExportChapterFileInput, ExportChapterFileResponse, InitializeProjectRepoInput,
-        InitializeProjectRepoResponse, InsertEditorRowInput, InsertEditorRowResponse,
-        ListLocalProjectFilesInput, LoadChapterEditorInput, LoadChapterEditorResponse,
-        LoadEditorChangedAfterMyEditInput, LoadEditorChangedAfterMyEditResponse,
-        LoadEditorFieldHistoryInput, LoadEditorFieldHistoryResponse, LoadEditorRowInput,
-        LoadEditorRowResponse, LocalProjectFilesResponse, MergeEditorRowsInput,
-        MergeEditorRowsResponse, PdfChapterExportInput, PdfFontInspection, PdfFontInspectionInput,
-        ProjectTransferInput, ProjectTransferStatus, ProjectTransferStatusInput,
-        PurgeLocalProjectRepoInput, RemoveEditorLanguageImageInput, RestoreEditorFieldHistoryInput,
+        ExportChapterFileInput, ExportChapterFileResponse, ImportBookImageInput, ImportedBookImage,
+        InitializeProjectRepoInput, InitializeProjectRepoResponse, InsertEditorRowInput,
+        InsertEditorRowResponse, ListLocalProjectFilesInput, LoadChapterEditorInput,
+        LoadChapterEditorResponse, LoadEditorChangedAfterMyEditInput,
+        LoadEditorChangedAfterMyEditResponse, LoadEditorFieldHistoryInput,
+        LoadEditorFieldHistoryResponse, LoadEditorRowInput, LoadEditorRowResponse,
+        LocalProjectFilesResponse, MergeEditorRowsInput, MergeEditorRowsResponse,
+        PdfChapterExportInput, PdfFontInspection, PdfFontInspectionInput, ProjectTransferInput,
+        ProjectTransferStatus, ProjectTransferStatusInput, PurgeLocalProjectRepoInput,
+        RemoveEditorLanguageImageInput, RestoreEditorFieldHistoryInput,
         RestoreEditorFieldHistoryResponse, ReverseEditorBatchReplaceCommitInput,
         ReverseEditorBatchReplaceCommitResponse, SaveEditorLanguageImageResponse,
         SaveEditorLanguageImageUrlInput, SaveEditorRowWithConcurrencyResponse,
@@ -259,6 +260,16 @@ pub(crate) async fn extract_project_translation_text(
     tauri::async_runtime::spawn_blocking(move || extract_project_translation_text_sync(input))
         .await
         .map_err(|error| format!("The translation text extraction worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn import_project_book_image(
+    app: AppHandle,
+    input: ImportBookImageInput,
+) -> Result<ImportedBookImage, String> {
+    tauri::async_runtime::spawn_blocking(move || import_project_book_image_sync(&app, input))
+        .await
+        .map_err(|error| format!("The book image worker failed: {error}"))?
 }
 
 #[tauri::command]

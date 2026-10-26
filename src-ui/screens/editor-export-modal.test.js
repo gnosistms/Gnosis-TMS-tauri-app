@@ -383,7 +383,7 @@ test("editor export modal shows the WordPress site picker while disconnected", (
   assert.match(html, /Choose a connected WordPress site/);
   assert.match(html, /data-action="show-add-wordpress-site"/);
   assert.match(html, /data-action="select-wordpress-site:wpcom:2"/);
-  assert.match(html, /title="Forget this site" aria-label="Forget this site"/);
+  assert.match(html, /data-tooltip="Forget this site" aria-label="Forget this site"/);
   assert.doesNotMatch(html, /data-action="submit-editor-export"/);
 });
 
@@ -588,4 +588,26 @@ test("clipboard and WordPress panes require the chapter open in the editor", () 
     assert.match(html, /Open the file in the editor to use this export option\./);
     assert.doesNotMatch(html, /data-action="submit-editor-export"/);
   }
+});
+
+test("project export labels its scope and offers language selection for clipboard and WordPress", () => {
+  for (const selectedOptionId of ["file:html", "copy:text", "link:wordpress"]) {
+    const html = renderEditorExportModal(exportState({
+      selectedOptionId, projectId: "project-1", projectTitle: "Book",
+      chapterIds: ["chapter-1", "chapter-2"],
+      languages: [{ code: "en", name: "English" }], languageCode: "en",
+    }));
+    assert.match(html, /Export project/);
+    assert.match(html, /2 files in project order/);
+    assert.match(html, /data-editor-export-language-select/);
+    assert.doesNotMatch(html, /Open the file in the editor/);
+  }
+});
+
+test("project export explains missing common languages and prevents incomplete exports", () => {
+  const html = renderEditorExportModal(exportState({
+    projectId: "project-1", chapterIds: ["chapter-1", "chapter-2"], languages: [],
+  }));
+  assert.match(html, /no language in common/);
+  assert.doesNotMatch(html, /data-action="submit-editor-export"/);
 });
