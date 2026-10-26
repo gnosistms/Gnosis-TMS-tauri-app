@@ -103,7 +103,7 @@ export function ensureTeamCopyPaneReady(render, operations = {}) {
 
   if (!teamCopy.copyTitle) {
     const chapter = findChapterContext(currentExportModal()?.chapterId)?.chapter;
-    const copyTitle = String(chapter?.name ?? "").trim();
+    const copyTitle = String(currentExportModal()?.projectTitle || chapter?.name || "").trim();
     if (copyTitle) {
       updateTeamCopyState({ copyTitle });
     }
@@ -259,6 +259,7 @@ export async function submitTeamChapterCopy(render, operations = {}) {
           projectId: context.project.id ?? null,
           repoName: context.project.name,
           chapterId: context.chapter.id,
+          ...(modal.projectId ? { chapterIds: modal.chapterIds } : {}),
           projectTitle: context.project.title ?? "",
         },
         target: {

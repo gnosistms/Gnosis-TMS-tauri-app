@@ -1,3 +1,4 @@
+import { handleProjectBookAction } from "../project-book-flow.js";
 import { reconcileEditorRowConnection } from "../editor-row-connection.js";
 import { forgetPdfFontApproval, togglePdfSavedFonts } from "../editor-export-flow.js";
 import { revealConnectedEditorRow } from "../editor-virtualization.js";
@@ -788,6 +789,8 @@ export function createTranslateActions(render) {
       closeEditorImageInvalidFileModal(render);
       return true;
     }
+
+    if (await handleProjectBookAction(action, render)) return true;
 
     if (action === "open-editor-export-options") {
       openEditorExportOptions(render);

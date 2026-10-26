@@ -272,7 +272,11 @@ fn prepare_vellum_image_resources_impl(
     use uuid::Uuid;
 
     let token = Uuid::now_v7().simple().to_string();
-    let base_dir = std::env::temp_dir().join("co.180g.Vellum");
+    // Never clear Vellum's own workspace: it also contains the active book's
+    // previews and other resources. Keep our preserved-image layout in our area.
+    let base_dir = std::env::temp_dir()
+        .join("gnosis-tms-vellum")
+        .join("co.180g.Vellum");
     clear_vellum_temp_dir(&base_dir)?;
     let preserved_dir = base_dir.join(format!("preserved-images.{}", &token[..6]));
     let process_dir = base_dir.join(format!("vellum-process-attachment.{}", &token[6..12]));
@@ -934,6 +938,7 @@ mod tests {
         let bytes = tiny_png_bytes(2, 3, 6);
         std::fs::write(&source_path, &bytes).expect("write source image");
         let stale_dir = std::env::temp_dir()
+            .join("gnosis-tms-vellum")
             .join("co.180g.Vellum")
             .join("preserved-images.stale");
         std::fs::create_dir_all(&stale_dir).expect("create stale Vellum temp dir");
@@ -979,6 +984,8 @@ mod tests {
         );
         assert_eq!(prepared.len(), expected_bytes.len());
         let image = &prepared[0];
+        assert!(std::path::Path::new(&image.last_absolute_path)
+            .starts_with(std::env::temp_dir().join("gnosis-tms-vellum")));
         assert_eq!(image.index, 1);
         assert_eq!(image.file_name, "Source Image.png");
         assert_eq!(image.image_key, "source_image");
@@ -1050,6 +1057,40 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
+    #[ignore = "prepares local images for a manual Vellum compatibility check"]
+    fn smoke_prepares_vellum_image_resources() {
+        let input_path = std::env::var("VELLUM_IMAGE_SMOKE_INPUT")
+            .expect("set VELLUM_IMAGE_SMOKE_INPUT to an image request JSON file");
+        let output_path = std::env::var("VELLUM_IMAGE_SMOKE_OUTPUT")
+            .expect("set VELLUM_IMAGE_SMOKE_OUTPUT to a temporary output file");
+        let input =
+            serde_json::from_slice(&std::fs::read(input_path).expect("read image requests"))
+                .expect("parse image requests");
+        let resources = prepare_vellum_image_resources_impl(input).expect("prepare local images");
+        std::fs::write(
+            output_path,
+            serde_json::to_vec_pretty(&resources).expect("encode images"),
+        )
+        .expect("write prepared image fixture");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "reads the global macOS pasteboard for a manual Vellum compatibility check"]
+    fn smoke_captures_vellum_elements_from_general_pasteboard() {
+        use objc2_app_kit::NSPasteboard;
+        use objc2_foundation::NSString;
+
+        let path = std::env::var("VELLUM_CLIPBOARD_CAPTURE_PATH")
+            .expect("set VELLUM_CLIPBOARD_CAPTURE_PATH to a temporary output file");
+        let data = NSPasteboard::generalPasteboard()
+            .dataForType(&NSString::from_str(VELLUM_OG_ELEMENT_PRIVATE_TYPE))
+            .expect("copy book elements in Vellum before running this check");
+        std::fs::write(path, data.to_vec()).expect("write Vellum compatibility fixture");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
     #[ignore = "writes to the global macOS pasteboard"]
     fn smoke_writes_vellum_payload_to_general_pasteboard() {
         use objc2_app_kit::NSPasteboard;
@@ -1058,15 +1099,20 @@ mod tests {
         let fixture_path = std::env::var("VELLUM_CLIPBOARD_SMOKE_XML")
             .expect("set VELLUM_CLIPBOARD_SMOKE_XML to a decoded Vellum plist XML file");
         let xml = std::fs::read_to_string(&fixture_path).expect("read Vellum smoke fixture");
+        let element_xml = std::env::var("VELLUM_CLIPBOARD_SMOKE_ELEMENTS_XML")
+            .ok()
+            .map(|path| std::fs::read_to_string(path).expect("read Vellum book elements fixture"));
         let input = VellumClipboardInput {
             decoded_property_list_xml: Some(xml),
             binary_property_list_base64: None,
-            og_element_private_decoded_property_list_xml: None,
+            og_element_private_decoded_property_list_xml: element_xml,
             og_element_private_binary_property_list_base64: None,
             plain_text: Some("Gnosis TMS Vellum clipboard smoke test".to_string()),
             html: None,
         };
         let expected_payload = vellum_payload_bytes(&input).expect("expected binary payload");
+        let expected_elements =
+            vellum_og_element_private_payload_bytes(&input).expect("expected binary book elements");
 
         copy_vellum_text_editor_content_to_clipboard(input).expect("write Vellum pasteboard");
 
@@ -1079,6 +1125,13 @@ mod tests {
 
         assert!(actual_payload.starts_with(b"bplist00"));
         assert_eq!(actual_payload, expected_payload);
+        if let Some(expected_elements) = expected_elements {
+            let elements_type = NSString::from_str(VELLUM_OG_ELEMENT_PRIVATE_TYPE);
+            let elements = pasteboard
+                .dataForType(&elements_type)
+                .expect("read Vellum book elements back from pasteboard");
+            assert_eq!(elements.to_vec(), expected_elements);
+        }
         eprintln!(
             "wrote {} bytes as {}",
             actual_payload.len(),

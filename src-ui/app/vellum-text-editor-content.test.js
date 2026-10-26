@@ -541,3 +541,39 @@ test("Vellum quote attribution uses its native attachment linked to the quote fo
     assert.doesNotMatch(xml, /font-size:90%/);
   }
 });
+
+test("a composed book archives separate ordered Vellum elements and their front-matter types", () => {
+  const block = (text, textStyle = "paragraph") => ({ kind: "text", rowId: text, languageCode: "en", textStyle, text, footnotes: [] });
+  const xml = buildVellumOgElementPrivateDecodedXml([], { elements: [
+    { id: "title", title: "A Book", kind: "title", blocks: [block("A Book", "heading1"), block("An Author")] },
+    { id: "copyright", title: "Copyright", kind: "copyright", blocks: [block("© Example")] },
+    { id: "one", title: "Chapter One", kind: "chapter", blocks: [block("Opening one")] },
+    { id: "two", title: "Chapter Two", kind: "chapter", blocks: [block("Opening two")] },
+    { id: "contents", title: "Contents", kind: "contents", blocks: [] },
+  ] });
+  for (const value of ["none", "copyright", "chapter", "OGTableOfContents", "An Author", "Opening one", "Opening two"]) assert.ok(xml.includes(value), value);
+  assert.equal((xml.match(/<key>typeName<\/key>/g) || []).length, 4);
+  assert.ok(xml.indexOf("Chapter One") < xml.indexOf("Chapter Two"));
+});
+
+
+test("book contents use Vellum's native generator and title pages retain their heading in the body", () => {
+  const xml = buildVellumOgElementPrivateDecodedXml([], { elements: [
+    { id: "title", title: "Exported Book", kind: "title", blocks: [
+      { kind: "text", textStyle: "heading1", text: "Exported Book" },
+      { kind: "text", textStyle: "centered", text: "Exported Author" },
+    ] },
+    { id: "contents", title: "Mục lục", kind: "contents", blocks: [
+      { kind: "text", text: "Stale contents must not be pasted as text" },
+    ] },
+  ] });
+  assert.match(xml, /<string>OGTableOfContents<\/string>/);
+  assert.match(xml, /<key>includeInPrint<\/key><true\/>/);
+  assert.match(xml, /<string>Mục lục<\/string>/);
+  assert.doesNotMatch(xml, /Stale contents/);
+  assert.doesNotMatch(xml, /<string>titlepage<\/string>|<string>tableOfContents<\/string>/);
+  // A body subhead attachment carries the title; the element's hidden title alone
+  // would disappear from Vellum's output.
+  assert.match(xml, /<string>OGSubheadAttachmentCell<\/string>/);
+  assert.match(xml, /Exported Author/);
+});

@@ -1260,3 +1260,18 @@ test("project search renders the editor-style case toggle with its current state
     assert.equal(html.includes('search-field__action--active'), caseSensitive);
   }
 });
+
+test("project export appears before Add files and remains available during background refresh", () => {
+  const html = renderProjectsScreen(projectsState({ projectsPage: { isRefreshing: true, writeState: "idle" } }));
+  assert.ok(html.indexOf('data-action="export-project:project-1"') < html.indexOf('data-action="add-project-files:project-1"'));
+  assert.match(html, /data-action="export-project:project-1">\s*Export/);
+  assert.doesNotMatch(actionButtonHtml(html, "export-project:project-1"), /disabled/);
+});
+
+test("project WordPress export displays the shared success dialog", () => {
+  const html = renderProjectsScreen(projectsState({ editorChapter: {
+    wordpressExportSuccessModal: { isOpen: true, isDraft: true, url: "https://example.com/wp-admin/post.php?post=32" },
+  } }));
+  assert.match(html, /Content successfully exported to WordPress/);
+  assert.match(html, /unpublished draft/);
+});

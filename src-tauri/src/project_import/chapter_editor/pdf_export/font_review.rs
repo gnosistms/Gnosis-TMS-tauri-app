@@ -237,6 +237,7 @@ mod tests {
     #[test]
     fn review_keeps_global_note_numbers_without_unrelated_note_bodies() {
         let document = ExportDocument {
+            book_parts: Vec::new(),
             title: "Title".into(),
             language_code: "vi".into(),
             blocks: vec![
@@ -259,6 +260,7 @@ mod tests {
 
     fn review_document() -> ExportDocument {
         let mut document = ExportDocument {
+            book_parts: Vec::new(),
             title: "A title \u{13153}".into(),
             language_code: "vi".into(),
             blocks: vec![
@@ -365,6 +367,7 @@ mod tests {
         let _cleanup = WorkspaceCleanup(workspace.clone());
         fs::write(workspace.join("image.svg"), "<svg xmlns='http://www.w3.org/2000/svg' width='30' height='30'><rect width='30' height='30' fill='gray'/></svg>").unwrap();
         let document = ExportDocument {
+            book_parts: Vec::new(),
             title: "Quoted scripts".into(),
             language_code: "vi".into(),
             blocks: vec![

@@ -1,3 +1,4 @@
+import { registerProjectBookEvents } from "./events/project-book.js";
 import { handleInputEvent, handlePasteEvent } from "./input-handlers.js";
 import { updateStudioInput } from "./glossary-research-studio-flow.js";
 import { handleNavigation } from "./navigation.js";
@@ -48,6 +49,7 @@ export function registerAppEvents(render) {
   const dispatchAction = createActionDispatcher(render);
 
   registerNativeDropEvents(render);
+  registerProjectBookEvents(render);
   registerKeyboardShortcutEvents(dispatchAction);
   registerListboxControlEvents();
   registerRovingChoiceEvents();

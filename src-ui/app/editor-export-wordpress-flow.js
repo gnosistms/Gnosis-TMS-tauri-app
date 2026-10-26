@@ -1,3 +1,5 @@
+import { saveBookSettings } from "./project-book-settings.js";
+import { exportDefaultKey, loadProjectExportBlocks } from "./project-export-context.js";
 import { formatErrorForDisplay } from "./error-display.js";
 import { invoke, listen, openExternalUrl } from "./runtime.js";
 import { findChapterContext, selectedProjectsTeam } from "./project-context.js";
@@ -47,6 +49,7 @@ function updateExportModal(patch) {
       ...patch,
     },
   };
+  saveBookSettings(currentExportModal());
 }
 
 function updateWordPressState(patch) {
@@ -111,7 +114,7 @@ export function ensureWordPressPaneReady(render, operations = {}) {
   }
 
   if (wordpress.selectedPostId == null) {
-    const stored = loadStoredEditorExportDefault(currentExportModal()?.chapterId);
+    const stored = loadStoredEditorExportDefault(exportDefaultKey());
     const destination = lastStoredWordPressDestination(stored?.wordpress);
     if (destination) seedWordPressOverwriteDefault(destination);
   }
@@ -122,7 +125,7 @@ export function ensureWordPressPaneReady(render, operations = {}) {
     const languageCode = selectedEditorPreviewLanguageCode(state.editorChapter);
     const blocks = buildEditorPreviewDocument(state.editorChapter?.rows, languageCode);
     const headingTitle = extractWordPressLeadingHeadingTitle(blocks);
-    const title = headingTitle || String(state.editorChapter?.fileTitle ?? "");
+    const title = currentExportModal()?.projectTitle || headingTitle || String(state.editorChapter?.fileTitle ?? "");
     if (title) {
       updateWordPressState({ title });
     }
@@ -152,7 +155,7 @@ export async function loadWordPressConnection(render, operations = {}) {
     if (selected) {
       updateWordPressState({ connectionStatus: "connected", connection: selected, connections: sortedConnections });
     } else if (!current?.connection?.siteId) {
-      const stored = loadStoredEditorExportDefault(currentExportModal()?.chapterId);
+      const stored = loadStoredEditorExportDefault(exportDefaultKey());
       const legacyDestination = stored?.wordpress?.legacyDestination;
       if (legacyDestination?.postId && sortedConnections.length === 1) {
         const connection = sortedConnections[0];
@@ -162,7 +165,7 @@ export async function loadWordPressConnection(render, operations = {}) {
           siteKind: connection.kind,
           siteUrl: connection.siteUrl,
         };
-        saveStoredEditorExportDefault(currentExportModal()?.chapterId, {
+        saveStoredEditorExportDefault(exportDefaultKey(), {
           ...stored,
           wordpress: {
             lastSiteId: connection.siteId,
@@ -236,7 +239,7 @@ export function selectWordPressSite(render, siteId) {
   const wordpress = currentWordPressExportState();
   const connection = wordpress?.connections?.find((item) => item.siteId === siteId);
   if (!connection) return;
-  const stored = loadStoredEditorExportDefault(currentExportModal()?.chapterId);
+  const stored = loadStoredEditorExportDefault(exportDefaultKey());
   const destination = findStoredWordPressDestination(stored?.wordpress, siteId);
   updateWordPressState({
     connectionStatus: "connected", connection, reauthRequired: false,
@@ -510,8 +513,8 @@ export async function submitWordPressExport(render, operations = {}, options = {
   }
 
   const team = selectedProjectsTeam();
-  const context = findChapterContext(state.editorChapter?.chapterId);
-  const languageCode = String(selectedEditorPreviewLanguageCode(state.editorChapter) ?? "").trim();
+  const context = findChapterContext(modal.chapterId);
+  const languageCode = String(modal.projectId ? modal.languageCode : selectedEditorPreviewLanguageCode(state.editorChapter) ?? "").trim();
   if (!Number.isFinite(team?.installationId) || !context?.project || !languageCode) {
     failWordPressAction(render, "Could not find the open file.");
     return;
@@ -521,8 +524,10 @@ export async function submitWordPressExport(render, operations = {}, options = {
   updateWordPressState({ exportStage: "Preparing the latest saved chapter..." });
   render();
 
+  let projectBlocks = null;
   try {
-    await prepareWordPressExportSnapshot(render, team, context, operations);
+    if (modal.projectId) projectBlocks = await loadProjectExportBlocks(modal, operations);
+    else await prepareWordPressExportSnapshot(render, team, context, operations);
   } catch (error) {
     failWordPressAction(render, error);
     return;
@@ -530,9 +535,9 @@ export async function submitWordPressExport(render, operations = {}, options = {
 
   const refreshedWordPress = currentWordPressExportState();
   const refreshedTeam = selectedProjectsTeam();
-  const refreshedContext = findChapterContext(state.editorChapter?.chapterId);
+  const refreshedContext = findChapterContext(modal.projectId ? modal.chapterId : state.editorChapter?.chapterId);
   const refreshedLanguageCode = String(
-    selectedEditorPreviewLanguageCode(state.editorChapter) ?? "",
+    modal.projectId ? modal.languageCode : selectedEditorPreviewLanguageCode(state.editorChapter) ?? "",
   ).trim();
   if (
     !refreshedWordPress
@@ -549,7 +554,8 @@ export async function submitWordPressExport(render, operations = {}, options = {
     return;
   }
 
-  const blocks = buildEditorPreviewDocument(state.editorChapter?.rows, refreshedLanguageCode);
+  const blocks = projectBlocks ?? buildEditorPreviewDocument(state.editorChapter?.rows, refreshedLanguageCode);
+  if (projectBlocks) blocks.unshift({ kind: "text", textStyle: "heading1", text: modal.projectTitle, rowId: `project-title:${modal.projectId}`, languageCode: refreshedLanguageCode, footnotes: [] });
   const { content, footnotes, title: headingTitle } = serializeEditorPreviewWordPress(blocks);
   if (!content.trim()) {
     failWordPressAction(render, "There is nothing to export.");
@@ -636,7 +642,7 @@ export function handleWordPressExportProgressEvent(payload, render) {
     updateExportModal({ isOpen: false, status: "idle", error: "" });
     const postId = Number.parseInt(String(payload.postId ?? ""), 10);
     if (Number.isFinite(postId) && postId > 0) {
-      upsertStoredWordPressDestination(state.editorChapter?.chapterId, {
+      upsertStoredWordPressDestination(exportDefaultKey(), {
         siteId: wordpress.connection?.siteId ?? "",
         siteKind: wordpress.connection?.kind ?? "",
         siteUrl: wordpress.connection?.siteUrl ?? "",
@@ -651,7 +657,7 @@ export function handleWordPressExportProgressEvent(payload, render) {
     const postLink = String(payload.postLink ?? "").trim();
     const editLink = String(payload.postEditLink ?? "").trim();
     const successUrl = isPublished ? (postLink || editLink) : (editLink || postLink);
-    if (successUrl && state.editorChapter?.chapterId) {
+    if (successUrl && (currentExportModal()?.projectId || state.editorChapter?.chapterId)) {
       state.editorChapter = {
         ...state.editorChapter,
         wordpressExportSuccessModal: {
