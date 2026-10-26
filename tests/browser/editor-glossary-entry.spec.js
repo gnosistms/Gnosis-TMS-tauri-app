@@ -108,6 +108,36 @@ test("source-language text fills the source box; Cancel returns to the editor", 
   await expect(dialog(page).locator('[data-editor-glossary-entry-field="sourceTerm"]')).toHaveValue("Ser interior");
   await expect(dialog(page).locator('[data-editor-glossary-entry-field="targetTerm"]')).toHaveValue("");
   await expect(dialog(page).locator('[data-editor-glossary-entry-field="targetTerm"]')).toBeFocused();
+  const save = dialog(page).getByRole("button", { name: "Save to glossary" });
+  const research = dialog(page).getByRole("button", { name: "Research meanings" });
+  const source = dialog(page).locator('[data-editor-glossary-entry-field="sourceTerm"]');
+  const target = dialog(page).locator('[data-editor-glossary-entry-field="targetTerm"]');
+  const hint = dialog(page).locator("[data-editor-glossary-entry-save-hint]");
+  const missingTranslation = "Enter a Vietnamese translation to save a glossary entry.";
+  await expect(save).toBeDisabled();
+  await expect(hint).toHaveAttribute("data-tooltip", missingTranslation);
+  await hint.hover();
+  await expect.poll(() => hint.evaluate((element) => getComputedStyle(element, "::before").content)).toBe(JSON.stringify(missingTranslation));
+  await expect(research).toBeEnabled();
+  await target.fill("   ");
+  await expect(save).toBeDisabled();
+  await expect(hint).toHaveAttribute("data-tooltip", missingTranslation);
+  await target.press("Enter");
+  await expect(dialog(page)).toBeVisible();
+  await target.fill("Đấng Nội Tại");
+  await expect(save).toBeEnabled();
+  await expect(hint).not.toHaveAttribute("data-tooltip");
+  await expect(target).toBeFocused();
+  await source.fill("");
+  await expect(save).toBeDisabled();
+  await expect(research).toBeDisabled();
+  await source.fill("Ser interior");
+  await expect(save).toBeEnabled();
+  await expect(research).toBeEnabled();
+  await target.fill("");
+  await expect(save).toBeDisabled();
+  await expect(hint).toHaveAttribute("data-tooltip", missingTranslation);
+  await expect(research).toBeEnabled();
   expect(await page.evaluate(() => window.entryCalls.some((call) => call.command === "run_glossary_research_request"))).toBe(false);
   await dialog(page).getByRole("button", { name: "Cancel" }).click();
   await expect(dialog(page)).toHaveCount(0);
@@ -135,7 +165,9 @@ test("target-language text: the AI finds the source text, then Save to glossary 
   expect(request.content).toContain(`[Spanish (source)]\n${"El Ser interior es la parte más elevada del hombre."}`);
   expect(request.schemaName).toBe("selection_source");
 
-  await expect(dialog(page).getByRole("button")).toHaveText(["Cancel", "Research meanings", "Save to glossary"]);
+  await expect(dialog(page).getByRole("button")).toHaveText(["Cancel", "Save to glossary", "Research meanings"]);
+  await expect(dialog(page).getByRole("button", { name: "Save to glossary" })).toHaveClass(/button--primary/);
+  await expect(dialog(page).getByRole("button", { name: "Research meanings" })).toHaveClass(/button--primary/);
   await expect(dialog(page).getByRole("button", { name: "Save to glossary" })).toHaveAttribute("data-tooltip",
     "Open the glossary editor and enter this term. You'll have a chance to review before saving.");
   await dialog(page).getByRole("button", { name: "Save to glossary" }).click();

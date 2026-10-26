@@ -250,19 +250,25 @@ export function closeEditorGlossaryEntry(render) {
   render();
 }
 
-/** Typing keeps focus: update the buttons that need a source term in place. */
+/** Typing keeps focus: update each action's required fields in place. */
 export function updateEditorGlossaryEntryField(field, value) {
   const current = entry();
   if (!current?.isOpen || !["sourceTerm", "targetTerm"].includes(field)) return;
   current[field] = String(value ?? "");
-  if (field !== "sourceTerm" || typeof document === "undefined") return;
-  const empty = !current.sourceTerm.trim();
+  if (typeof document === "undefined") return;
   const buttons = document.querySelectorAll(
     '[data-action="save-editor-glossary-entry"], [data-action="research-editor-glossary-entry"]',
   );
   for (const button of buttons) {
+    const empty = !current.sourceTerm.trim()
+      || (button.getAttribute("data-action") === "save-editor-glossary-entry" && !current.targetTerm.trim());
     button.classList.toggle("is-disabled", empty);
     button.toggleAttribute("disabled", empty);
+    const hint = button.closest("[data-editor-glossary-entry-save-hint]");
+    if (hint) {
+      if (current.targetTerm.trim()) hint.removeAttribute("data-tooltip");
+      else hint.setAttribute("data-tooltip", hint.dataset.editorGlossaryEntrySaveHint);
+    }
     if (empty) {
       button.setAttribute("aria-disabled", "true");
       button.setAttribute("data-offline-blocked", "true");
@@ -294,7 +300,7 @@ function readyEntry() {
 
 export async function saveEditorGlossaryEntry(render) {
   const current = readyEntry();
-  if (!current) return;
+  if (!current?.targetTerm.trim()) return;
   const prefill = { sourceTerms: [current.sourceTerm.trim()], targetTerms: [current.targetTerm.trim()] };
   if (await openChapterGlossary(render, current)) await openGlossaryTermEditor(render, null, { prefill });
 }

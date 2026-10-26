@@ -1,4 +1,4 @@
-import { escapeHtml, loadingSpinner, primaryButton, secondaryButton } from "../lib/ui.js";
+import { escapeHtml, loadingSpinner, primaryButton, secondaryButton, tooltipAttributes } from "../lib/ui.js";
 
 const esc = escapeHtml;
 const TITLE = "Make a glossary entry";
@@ -68,7 +68,9 @@ export function renderEditorGlossaryEntryModal(state) {
   }
 
   const needsSource = !entry.sourceTerm.trim();
-  const focusTarget = !needsSource && !entry.targetTerm.trim();
+  const needsTarget = !entry.targetTerm.trim();
+  const focusTarget = !needsSource && needsTarget;
+  const saveHint = `Enter a ${targetName} translation to save a glossary entry.`;
   return frame(`
     ${entry.selectionRole === "other" ? highlightedLine(entry) : ""}
     ${termField({ label: `Source term (${sourceName})`, field: "sourceTerm", value: entry.sourceTerm, language: entry.sourceLanguage,
@@ -78,7 +80,9 @@ export function renderEditorGlossaryEntryModal(state) {
     ${entry.notice ? `<p class="modal__supporting">${esc(entry.notice)}</p>` : ""}
     ${entry.error ? `<p class="muted">${esc(entry.error)}</p>` : ""}`,
   `${cancelButton()}
-   ${secondaryButton("Research meanings", "research-editor-glossary-entry", { disabled: needsSource, tooltip: RESEARCH_TOOLTIP, tooltipOptions: { align: "end" } })}
-   ${primaryButton("Save to glossary", "save-editor-glossary-entry", { modalDefault: true, modalInitialFocus: !needsSource && !focusTarget, disabled: needsSource,
-     tooltip: SAVE_TOOLTIP, tooltipOptions: { align: "end" } })}`);
+   <span data-editor-glossary-entry-save-hint="${esc(saveHint)}" data-tooltip-align="end"${needsTarget ? tooltipAttributes(saveHint) : ""}>
+     ${primaryButton("Save to glossary", "save-editor-glossary-entry", { modalDefault: true, modalInitialFocus: !needsSource && !focusTarget, disabled: needsSource || needsTarget,
+       tooltip: SAVE_TOOLTIP, tooltipOptions: { align: "end" } })}
+   </span>
+   ${primaryButton("Research meanings", "research-editor-glossary-entry", { disabled: needsSource, tooltip: RESEARCH_TOOLTIP, tooltipOptions: { align: "end" } })}`);
 }
