@@ -194,12 +194,13 @@ async function dictionary(s, tools, term, language = s.scope.sourceLanguage.code
     primary = await tools.run("dle", { path: term }, `Looking up ${term} in DLE`);
     if (primary.status === "found") return primary;
   }
-  const native = await tools.run("dictionary", { term, language }, `Looking up ${term} in ${language} Wiktionary`);
+  const native = await tools.run("dictionary", { term, language }, `Looking up ${term} in Wiktionary`);
   const lowercase = term.toLocaleLowerCase(language);
   const caseVariants = lowercase === term ? [] : [await tools.run("dictionary", { term: lowercase, language }, `Checking the lowercase dictionary entry for ${lowercase}`)];
   if ([native, ...caseVariants].some((entry) => entry.status === "found")) return { primary, native, caseVariants };
-  const englishEdition = language === "en" ? null : await tools.run("dictionary", { term, language: "en" }, `Checking the English Wiktionary edition for ${term}`);
-  const englishCaseVariants = language === "en" || lowercase === term ? [] : [await tools.run("dictionary", { term: lowercase, language: "en" }, `Checking the lowercase English dictionary entry for ${lowercase}`)];
+  const englishChecked = language === "en" || native.edition === "en";
+  const englishEdition = englishChecked ? null : await tools.run("dictionary", { term, language: "en" }, `Checking the English Wiktionary edition for ${term}`);
+  const englishCaseVariants = englishChecked || lowercase === term ? [] : [await tools.run("dictionary", { term: lowercase, language: "en" }, `Checking the lowercase English dictionary entry for ${lowercase}`)];
   const fallback = [englishEdition, ...englishCaseVariants].some((entry) => entry?.status === "found") ? null : await tools.run("web", {
     query: `${term} ${language} dictionary definition etymology`,
   }, `Finding a dictionary source for ${term}`);
@@ -323,6 +324,7 @@ export async function runResearchStage(s, tools, entries) {
         : { selected: fallback };
       const known = uniqueSourceTexts([term, ...s.scope.forms], language);
       s.formDiscovery = { phase: "discovering", version: 3 };
+      s.origin = null;
       s.forms = known.map((text) => ({ text, ...selection(text, true),
         discoveryStatus: "Entered by you · Waiting for corpus check" }));
       await tools.checkpoint?.("Looking for additional forms and spellings");
@@ -331,38 +333,88 @@ export async function runResearchStage(s, tools, entries) {
       const proposed = uniqueSourceTexts([...known, ...array(proposal.forms, "Forms")], language);
       for (const text of proposed) if (!s.forms.some((f) => key(f.text) === key(text))) s.forms.push({ text, ...selection(text, true),
         discoveryStatus: "Suggested by AI · Waiting for corpus check" });
+      s.origin = { proposal, evidence: null };
       s.formDiscovery.phase = "checking";
       await tools.checkpoint?.(`Found ${proposed.length} forms to check in the corpus`);
       branch(tools, "discover").finishActivity?.(`${proposed.length} forms proposed: ${proposed.join(", ")}.`);
       const formWork = branch(tools, "forms");
       formWork.planActivity?.(proposed.map((text) => ({ id: key(text), label: text })));
+      const originWork = branch(tools, "origin");
       let origin = null;
       if (proposal.originLanguage) {
-        tools.planActivity?.([{ id: "origin", label: "Verify original spelling" }]);
-        origin = await branch(tools, "origin").run("web", { query: `${term} ${proposal.originTerm ?? ""} original spelling ${proposal.originLanguage} transliteration ${s.scope.sourceLanguage.name} ${s.scope.targetLanguage.name}` }, "Checking original spelling");
-      }
-      const evidence = [];
+        originWork.planActivity?.([
+          { id: "proposal", label: "Identify the possible origin and spelling" },
+          { id: "search", label: "Search cited dictionary and book sources" },
+          { id: "findings", label: "Record original-spelling findings" },
+        ]);
+        branch(originWork, "proposal").finishActivity?.(`Possible origin language: ${proposal.originLanguage}. Proposed original spelling: ${proposal.originTerm || "not established yet"}.`);
+      } else originWork.finishActivity?.("No borrowed origin identified; no original-spelling search needed.");
+      let evidence = [];
       const discovered = new Map(proposed.map((text) => [key(text), text]));
       const attested = new Map();
+      let projectTexts; let projectWork;
+      // Share failure state across both research branches and their form pools.
+      // Drain in-flight work before returning, so retries cannot race old jobs.
+      let failed = false; let failure;
+      function assertActive() {
+        tools.assertCurrent?.();
+        if (failed) throw failure;
+      }
+      async function parallel(items, action) {
+        let next = 0;
+        const results = new Array(items.length);
+        await Promise.allSettled(Array.from({ length: Math.min(2, items.length) }, async () => {
+          try {
+            while (!failed && next < items.length) {
+              assertActive();
+              const index = next++;
+              results[index] = await action(items[index], index);
+            }
+          } catch (error) { if (!failed) { failed = true; failure = error; } }
+        }));
+        if (failed) {
+          // A sibling may have started more recently than the failed request.
+          if (failure?.studioToolSignature) s.lastToolSignature = failure.studioToolSignature;
+          throw failure;
+        }
+        return results;
+      }
       async function attest(form, work = branch(formWork, key(form))) {
+        assertActive();
         if (attested.has(key(form))) return attested.get(key(form));
         let examples; let paragraphCount;
-        if (s.scope.corpus === "samael") {
-          // Search resolves glossary aliases even in exact mode. Sampling accepts
-          // literal forms and supplies counts over the complete corpus population.
-          const data = await work.run("corpus", { path: "/api/sample", params: {
-            ...params([form]), n: "3", context: "0" } }, `Checking exact matches for ${form}`);
-          paragraphCount = data.population_distinct;
-          examples = deduplicatePassages(array(data.items, "Exact form witnesses").map((p) => ({ ...p,
-            reference: p.representative, references: p.copies })), [form], language);
-          if (!Number.isInteger(paragraphCount) || paragraphCount < 0
-            || (paragraphCount > 0 && !examples.length) || (paragraphCount === 0 && examples.length)) {
-            throw new Error(`The exact corpus check for ${form} was incomplete. Retry the search.`);
+        try {
+          if (s.scope.corpus === "samael") {
+            // Search resolves glossary aliases even in exact mode. Sampling accepts
+            // literal forms and supplies counts over the complete corpus population.
+            const data = await work.run("corpus", { path: "/api/sample", params: {
+              ...params([form]), n: "3", context: "0" } }, `Checking exact matches for ${form}`);
+            paragraphCount = data.population_distinct;
+            examples = deduplicatePassages(array(data.items, "Exact form witnesses").map((p) => ({ ...p,
+              reference: p.representative, references: p.copies })), [form], language);
+            if (!Number.isInteger(paragraphCount) || paragraphCount < 0
+              || (paragraphCount > 0 && !examples.length) || (paragraphCount === 0 && examples.length)) {
+              throw new Error(`The exact corpus check for ${form} was incomplete. Retry the search.`);
+            }
+          } else {
+            // Every form uses the same project snapshot. Share its in-flight read:
+            // the native registry coalesces equal requests into one consumable job.
+            if (!projectTexts) {
+              projectWork = work;
+              projectTexts = work.run("projects", { projectIds: s.scope.projectIds, language: s.scope.sourceLanguage.code }, "Reading selected project texts");
+            }
+            const population = corpusParagraphs(s, await projectTexts, [form]);
+            paragraphCount = population.length; examples = population.slice(0, 3);
           }
-        } else {
-          const population = await acquirePopulation(s, work, [form]);
-          paragraphCount = population.length; examples = population.slice(0, 3);
+        } catch (error) {
+          // Validation can fail after a successful tool call, while a sibling has
+          // changed the study-wide last request. Retry this form's own receipt.
+          if (error && typeof error === "object" && !error.studioToolSignature) {
+            error.studioToolSignature = (s.scope.corpus === "samael" ? work : projectWork)?.lastToolSignature;
+          }
+          throw error;
         }
+        assertActive();
         const result = { form, paragraphCount, examples };
         attested.set(key(form), result);
         const row = s.forms.find((f) => key(f.text) === key(form));
@@ -371,21 +423,43 @@ export async function runResearchStage(s, tools, entries) {
         work.finishActivity?.(`${paragraphCount.toLocaleString()} exact matching paragraphs.`);
         return result;
       }
-      for (const form of proposed) {
-        const row = s.forms.find((f) => key(f.text) === key(form));
-        row.discoveryStatus = "Searching corpus evidence…";
-        await tools.checkpoint?.(`Checking ${form} (${evidence.length + 1} of ${proposed.length})`);
-        let recall = null;
-        if (s.scope.corpus === "samael") {
-          recall = await branch(formWork, key(form)).run("corpus", { path: "/api/search/forms", params: { q: form, kind: "samael" } }, `Discovering alternative spellings of ${form}`);
-          for (const candidate of recall.candidates ?? []) if (typeof candidate.form === "string" && !discovered.has(key(candidate.form))) {
-            discovered.set(key(candidate.form), candidate.form);
+      let originComplete = !proposal.originLanguage;
+      await parallel([
+        async () => {
+          evidence = await parallel(proposed, async (form, index) => {
+            const row = s.forms.find((f) => key(f.text) === key(form));
+            row.discoveryStatus = "Searching corpus evidence…";
+            await tools.checkpoint?.(`Checking ${form} (${index + 1} of ${proposed.length})`);
+            assertActive();
+            let recall = null;
+            if (s.scope.corpus === "samael") {
+              recall = await branch(formWork, key(form)).run("corpus", { path: "/api/search/forms", params: { q: form, kind: "samael" } }, `Discovering alternative spellings of ${form}`);
+              assertActive();
+              await tools.checkpoint?.(`Reading corpus examples for ${form}`);
+            }
+            const checked = { ...await attest(form), recall };
+            await tools.checkpoint?.(`Corpus evidence received for ${form}`);
+            return checked;
+          });
+          // Use proposal order, not completion order, for evidence and AI input.
+          for (const { recall } of evidence) for (const candidate of recall?.candidates ?? []) {
+            if (typeof candidate.form === "string" && !discovered.has(key(candidate.form))) discovered.set(key(candidate.form), candidate.form);
           }
-          await tools.checkpoint?.(`Reading corpus examples for ${form}`);
-        }
-        evidence.push({ ...await attest(form), recall });
-        await tools.checkpoint?.(`Corpus evidence received for ${form}`);
-      }
+          s.formDiscovery.corpusResults = evidence.map(({ form, paragraphCount }) => ({ text: form, paragraphCount }));
+          formWork.finishActivity?.(`${proposed.length} proposed forms checked.`);
+          if (!originComplete) s.formDiscovery.phase = "checking-origin";
+          await tools.checkpoint?.(originComplete ? "Corpus checks complete" : "Corpus checks complete · Checking original spelling in cited sources");
+        },
+        async () => {
+          if (!proposal.originLanguage) return;
+          origin = await branch(originWork, "search").run("web", { query: `${term} ${proposal.originTerm ?? ""} original spelling ${proposal.originLanguage} transliteration ${s.scope.sourceLanguage.name} ${s.scope.targetLanguage.name}` }, "Checking original spelling");
+          s.origin.evidence = origin;
+          originComplete = true;
+          branch(originWork, "findings").finishActivity?.("Original-spelling evidence and citations received.");
+          originWork.finishActivity?.("Original-spelling findings recorded.");
+          await tools.checkpoint?.("Original-spelling findings received");
+        },
+      ], (work) => work());
       s.formDiscovery.phase = "verifying";
       await tools.checkpoint?.(`Verifying which forms are the same word · Checking ${discovered.size} possible forms`);
       const verified = await branch(tools, "identity").ask("Verify all proposed/discovered forms in one response. Decide lexical identity only: include inflections and spelling alternatives of the same word, exclude derivatives and unrelated homographs. Use exact witnesses and origin evidence. Review the supplied candidateForms only; return every proposed form and any accepted corpus alternatives. Do not add words merely quoted in witnesses. Return each source form once, ignoring capitalization differences. Corpus presence is determined separately from exact paragraph counts; never infer absence from a few examples. Explain lexical identity without making corpus-presence claims.",
@@ -395,17 +469,25 @@ export async function runResearchStage(s, tools, entries) {
         || decisions.some((f) => f.sameWord !== false && !discovered.has(key(f.text)))) throw new Error("Form verification omitted a proposed form or returned an unknown form.");
       const accepted = decisions.filter((f) => discovered.has(key(f.text))
         && (f.sameWord !== false || known.some((text) => key(text) === key(f.text))));
-      branch(tools, "identity").finishActivity?.(`${accepted.length} forms accepted as the same word.`);
+      for (const decision of decisions) {
+        const row = s.forms.find((f) => key(f.text) === key(decision.text));
+        if (row) Object.assign(row, { sameWord: decision.sameWord, reason: decision.reason });
+      }
+      branch(tools, "identity").finishActivity?.(`${accepted.length} ${accepted.length === 1 ? "form" : "forms"} accepted as the same word${accepted.length ? `: ${accepted.map((form) => discovered.get(key(form.text))).join(", ")}` : ""}.`);
       const acceptedWork = branch(tools, "accepted");
       acceptedWork.planActivity?.(accepted.map((f) => ({ id: key(f.text), label: f.text })));
+      await tools.checkpoint?.("Lexical identity findings received · Checking accepted alternatives");
+      // Keep review rows deterministic while their exact counts arrive in parallel.
       for (const decision of accepted) {
         if (!s.forms.some((row) => key(row.text) === key(decision.text))) s.forms.push({
           text: discovered.get(key(decision.text)), ...selection(decision.text, true), reason: decision.reason,
           discoveryStatus: "Same word verified · Checking exact corpus matches" });
+      }
+      await parallel(accepted, async (decision) => {
         const match = await attest(decision.text, branch(acceptedWork, key(decision.text)));
         branch(acceptedWork, key(decision.text)).finishActivity?.(`${match.paragraphCount} matching paragraphs. ${decision.reason ?? ""}`);
         await tools.checkpoint?.(`Exact corpus check completed for ${decision.text}`);
-      }
+      });
       s.forms = accepted.map((f) => {
         const match = attested.get(key(f.text));
         return { text: s.forms.find((row) => key(row.text) === key(f.text)).text, reason: f.reason,
@@ -413,7 +495,6 @@ export async function runResearchStage(s, tools, entries) {
           found: match.paragraphCount > 0, ...selection(f.text, match.paragraphCount > 0) };
       });
       s.origin = { proposal, evidence: origin };
-      formWork.finishActivity?.(`${proposed.length} proposed forms checked.`);
       acceptedWork.finishActivity?.(`${accepted.length} verified forms ready for review.`);
       s.formDiscovery.phase = "complete";
       await tools.checkpoint?.("Forms and spellings are ready for your review");

@@ -184,18 +184,35 @@ fn corpus(payload: &Value, cancel: &AtomicBool) -> Result<Value, String> {
 }
 
 fn dictionary(payload: &Value) -> Result<Value, String> {
+    dictionary_with(payload, get)
+}
+
+fn dictionary_with(
+    payload: &Value,
+    retrieve: impl FnOnce(reqwest::Url) -> Result<String, String>,
+) -> Result<Value, String> {
     let language = payload["language"]
         .as_str()
         .unwrap_or("en")
-        .split('-')
+        .split(['-', '_'])
         .next()
         .unwrap_or("en")
         .to_lowercase();
-    if !language.chars().all(|c| c.is_ascii_lowercase() || c == '-') || language.len() > 20 {
+    if language.is_empty()
+        || !language.chars().all(|c| c.is_ascii_lowercase())
+        || language.len() > 20
+    {
         return Err("Invalid dictionary language.".into());
     }
+    // A term's language is not necessarily a Wiktionary edition. Ancient Greek
+    // entries live in multilingual editions; grc.wiktionary.org does not exist.
+    // https://meta.wikimedia.org/wiki/List_of_Wiktionaries
+    let edition = match language.as_str() {
+        "grc" => "en",
+        other => other,
+    };
     let term = payload["term"].as_str().ok_or("Missing dictionary term.")?;
-    let mut url = reqwest::Url::parse(&format!("https://{language}.wiktionary.org/w/api.php"))
+    let mut url = reqwest::Url::parse(&format!("https://{edition}.wiktionary.org/w/api.php"))
         .map_err(|e| e.to_string())?;
     url.query_pairs_mut().extend_pairs([
         ("action", "parse"),
@@ -205,7 +222,7 @@ fn dictionary(payload: &Value) -> Result<Value, String> {
         ("redirects", "1"),
         ("page", term),
     ]);
-    match get(url.clone()) {
+    match retrieve(url.clone()) {
         Ok(text) => {
             let value = parse_json(&text)?;
             let code = value["error"]["code"].as_str();
@@ -219,7 +236,7 @@ fn dictionary(payload: &Value) -> Result<Value, String> {
                 "unreachable"
             };
             let mut article =
-                reqwest::Url::parse(&format!("https://{language}.wiktionary.org/wiki/"))
+                reqwest::Url::parse(&format!("https://{edition}.wiktionary.org/wiki/"))
                     .map_err(|e| e.to_string())?;
             article
                 .path_segments_mut()
@@ -227,11 +244,13 @@ fn dictionary(payload: &Value) -> Result<Value, String> {
                 .pop_if_empty()
                 .push(term);
             Ok(
-                json!({"status":status,"url":article.as_str(),"entry":{"title":term,"extract":extract},
+                json!({"status":status,"language":language,"edition":edition,"url":article.as_str(),"entry":{"title":term,"extract":extract},
                 "message":value["error"]["info"],"attribution":"Wiktionary contributors, CC BY-SA"}),
             )
         }
-        Err(error) => Ok(json!({"status":"unreachable","url":url.as_str(),"message":error})),
+        Err(error) => Ok(
+            json!({"status":"unreachable","language":language,"edition":edition,"url":url.as_str(),"message":error}),
+        ),
     }
 }
 
@@ -437,6 +456,68 @@ mod tests {
         assert!(message.contains("Retry this step"));
         assert!(!message.contains("private-query"));
         server.join().unwrap();
+    }
+
+    #[test]
+    fn dictionary_routes_ancient_greek_to_an_existing_multilingual_edition() {
+        let term = "ἱεροφάντης";
+        let result = dictionary_with(&json!({"language":"grc", "term":term}), |url| {
+            assert_eq!(url.host_str(), Some("en.wiktionary.org"));
+            assert_eq!(url.path(), "/w/api.php");
+            assert!(url
+                .query_pairs()
+                .any(|(key, value)| key == "page" && value == term));
+            Ok(json!({"parse":{"text":"<h2>Ancient Greek</h2><p>A hierophant.</p>"}}).to_string())
+        })
+        .unwrap();
+        assert_eq!(result["status"], "found");
+        assert_eq!(result["language"], "grc");
+        assert_eq!(result["edition"], "en");
+        assert!(result["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("https://en.wiktionary.org/wiki/"));
+        assert!(result["entry"]["extract"]
+            .as_str()
+            .unwrap()
+            .contains("Ancient Greek"));
+    }
+
+    #[test]
+    fn dictionary_retains_native_editions_and_distinguishes_absence_from_failure() {
+        let missing = dictionary_with(&json!({"language":"FR_ca", "term":"absent"}), |url| {
+            assert_eq!(url.host_str(), Some("fr.wiktionary.org"));
+            Ok(json!({"error":{"code":"missingtitle", "info":"No entry"}}).to_string())
+        })
+        .unwrap();
+        assert_eq!(missing["status"], "not_found");
+        assert_eq!(missing["edition"], "fr");
+        let unavailable = dictionary_with(
+            &json!({"language":"grc", "term":"ἱεροφάντης"}),
+            |_| Err("Connection timed out".into()),
+        )
+        .unwrap();
+        assert_eq!(unavailable["status"], "unreachable");
+        assert_eq!(unavailable["edition"], "en");
+        assert_eq!(unavailable["message"], "Connection timed out");
+        assert!(
+            dictionary_with(&json!({"language":"", "term":"term"}), |_| panic!(
+                "Invalid language must not make a request"
+            ))
+            .is_err()
+        );
+    }
+
+    #[test]
+    #[ignore = "Requires live Wiktionary access"]
+    fn dictionary_live_ancient_greek_lookup() {
+        let result = dictionary(&json!({"language":"grc", "term":"ἱεροφάντης"})).unwrap();
+        assert_eq!(result["status"], "found", "{result}");
+        assert_eq!(result["edition"], "en");
+        assert!(result["entry"]["extract"]
+            .as_str()
+            .unwrap()
+            .contains("Ancient Greek"));
     }
 
     #[test]

@@ -69,11 +69,7 @@ async function mountStudio(page) {
       }
       if (command === "start_glossary_studio_tool") {
         const { kind, payload } = args.input; let value;
-        if (window.studioAssertDurableComparison && payload._researchComparison) {
-          const checkpoint = saved[args.input.studyId];
-          if (checkpoint?.comparisonAttempt?.id !== payload._researchComparison || checkpoint.steps[args.input.step]?.status !== "running") throw new Error("Comparison identity must be saved before model dispatch");
-          window.studioDurabilityChecked = true;
-        }
+
         if (kind === "corpus" && payload.path === "/api/sample/source-books") value = structuredClone(window.studioReferenceFixture);
         else if (kind === "corpus" && payload.path === "/api/sample/original-terms") value = {};
         else if (kind === "corpus" && payload.path === "/api/sample" && window.studioReferenceFixture) value = { items: [{ item_id: "source-p", text: "walk", occurrences: [{ start: 0, end: 4 }], representative: { doc_id: "source-a", title: "Source book" } }] };
@@ -86,11 +82,14 @@ async function mountStudio(page) {
           const plural = payload.params.forms.toLowerCase() === "mundos";
           value = { population_distinct: plural ? 2026 : 5600, items: [{ text: plural ? "Los mundos internos." : "Todo el mundo." }] };
         }
+        else if (kind === "projects" && args.input.step === "3" && window.studioSampleError) throw new Error("Project snapshot unavailable");
         else if (kind === "projects") value = { items: [
           { id: "p1", text: "I walk in the morning.", reference: { projectTitle: "Book" } },
           { id: "p2", text: "Yesterday I walked home.", reference: { projectTitle: "Book" } },
           { id: "p3", text: "She is walking home.", reference: { projectTitle: "Book" } },
         ] };
+        else if (kind === "web") value = { query: payload.query, summary: "Original spelling documented in a cited dictionary source.",
+          citations: [{ title: "Original-spelling source", url: "https://example.org/original-spelling" }] };
         else if (kind === "translate") value = { rows: payload.rows.map((r) => ({ rowId: r.rowId, translatedText: "Tôi đi bộ về nhà." })) };
         else if (kind === "ai") {
           const prompt = payload.prompt; const evidence = JSON.parse(prompt.split("Evidence:\n")[1]);
@@ -98,9 +97,9 @@ async function mountStudio(page) {
             if (window.studioRecommendationError) throw new Error("Recommendation provider unavailable");
             value = window.studioRecommendationAnswer ?? { recommendation: "Run", reason: "More research could help." };
           }
-          else if (prompt.includes("List genuine source-language")) value = { forms: window.studioSpanish ? ["Mundo", "mundo", "Mundos", "mundos"] : ["walk", "walked", "walking"], originLanguage: null };
+          else if (prompt.includes("List genuine source-language")) value = { forms: window.studioSpanish ? ["Mundo", "mundo", "Mundos", "mundos"] : ["walk", "walked", "walking"], originLanguage: null, ...window.studioOriginProposal };
           else if (prompt.includes("Verify all proposed")) value = { forms: window.studioSpanish
-            ? [{ text: "mundo", sameWord: true, found: true, reason: "The noun means world, including a realm or plane of existence. Capitalization does not establish a separate word. ".repeat(4) },
+            ? [{ text: "mundo", sameWord: true, found: true, reason: "The noun means world, including a realm or plane of existence. Capitalization does not establish a separate word (/doc/book-34?line=21924). ".repeat(4) },
               { text: "supramundo", sameWord: false }, { text: "Mundo", sameWord: true, found: true }, { text: "mundos", sameWord: true, found: false, reason: "The regular plural of mundo, meaning worlds. It belongs to the same lexical word. ".repeat(4) }]
             : ["walk", "walked", "walking"].map((text) => ({ text, sameWord: true, found: true, reason: "Used in the selected project" })) };
           else if (prompt.includes("Identify possible borrowed-source AUTHORS")) value = { meanings: [{ definition: "Move on foot", author: "Author A" }], summary: "Source comparison complete; no unique origin established." };
@@ -118,8 +117,8 @@ async function mountStudio(page) {
           else if (prompt.includes("Repair selection by")) value = { order: evidence.candidates.map((c) => c.id), notes: [{ candidateId: "c1", note: "Coordinated conditions for both usages" }] };
           else throw new Error(`Unexpected test question: ${prompt.slice(0, 200)}`);
         } else throw new Error(`Unexpected tool ${kind}`);
-        const stage = kind === "corpus" && payload.path === "/api/sample/context" ? "context"
-          : kind === "translate" ? "preliminary" : kind === "projects" ? "corpus"
+        const stage = kind === "web" ? "origin" : kind === "corpus" && payload.path === "/api/sample/context" ? "context"
+          : kind === "translate" ? "preliminary" : kind === "projects" ? args.input.step === "3" ? "sample" : "corpus"
           : payload.prompt?.includes("List genuine source-language") ? "proposal"
             : payload.prompt?.includes("Recommend whether the human should Skip or Run") ? "recommendation"
               : payload.prompt?.includes("Verify all proposed") ? "verification" : payload.prompt?.includes("Repair selection by") ? "entry-repair" : null;
@@ -134,7 +133,7 @@ async function mountStudio(page) {
         });
         const job = jobs.get(args.jobId);
         if (!job) throw new Error("Research was interrupted. Resume the saved study.");
-        if (job.stage && window.studioHold === job.stage && !window.studioReleased.includes(job.stage)) return { complete: false };
+        if (job.stage && (window.studioHold === job.stage || window.studioHoldStages?.includes(job.stage)) && !window.studioReleased.includes(job.stage)) return { complete: false };
         jobs.delete(args.jobId);
         return { complete: true, value: job.value };
       }
@@ -191,10 +190,92 @@ async function mountStudio(page) {
   });
 }
 
-async function startFormsResearch(page) {
-  await expect(page.locator(".studio-recommendation")).toContainText("AI recommendation: Run");
+async function startFormsResearch(page, { resuming = false } = {}) {
+  if (resuming) await expect(page.locator(".studio-recommendation")).toHaveCount(0);
+  else await expect(page.locator(".studio-recommendation")).toContainText("AI recommendation: Run it.");
+  await expect(page.getByRole("button", { name: "Save and continue", exact: true })).toHaveCount(0);
+  const footer = page.locator('.studio-footer[data-studio-step="2a"]');
+  await expect(footer.getByRole("button", { name: "Back", exact: true })).toHaveCount(0);
+  // Read all positions in one DOM snapshot; progress can replace the footer.
+  await expect.poll(() => footer.evaluate((element) => {
+    const skip = element.querySelector('[data-action="studio:skip"]')?.getBoundingClientRect();
+    const run = element.querySelector('[data-action="studio:run"]')?.getBoundingClientRect();
+    const panel = element.getBoundingClientRect();
+    const gap = Number.parseFloat(getComputedStyle(element).columnGap);
+    return Boolean(skip && run && Math.abs(skip.y + skip.height / 2 - run.y - run.height / 2) < 1
+      && Math.abs(run.x - (skip.x + skip.width) - gap) < .5 && panel.right - run.right <= 29);
+  })).toBe(true);
   await page.locator('[data-action="studio:run"]').click();
+  await expect(page.locator(".studio-recommendation")).toHaveCount(0);
 }
+
+async function returnToStudioHistory(page) {
+  await page.getByRole("button", { name: "Glossary", exact: true }).click();
+  await page.getByRole("button", { name: "Research", exact: true }).click();
+  await expect(page.getByRole("button", { name: "New research", exact: true })).toBeVisible();
+}
+
+async function showExportStep(page) {
+  await page.evaluate(async () => {
+    const { state } = await import(`/${"app"}/state.js`);
+    const { renderGlossaryResearchStudio } = await import(`/${"screens"}/glossary-research-studio.js`);
+    state.glossaryResearchStudio.study.step = "4.2";
+    document.querySelector("#app").innerHTML = renderGlossaryResearchStudio(state);
+  });
+}
+
+test("research content preserves its position during progress renders and keeps actions in view", async ({ page }) => {
+  await mountStudio(page);
+  await seedRevisitStudy(page);
+  await page.evaluate(async () => {
+    const { state } = await import(`/${"app"}/state.js`);
+    const { renderGlossaryResearchStudio } = await import(`/${"screens"}/glossary-research-studio.js`);
+    const s = state.glossaryResearchStudio.study;
+    s.step = "3";
+    s.passages = Array.from({ length: 40 }, (_, i) => ({ id: `p${i}`, text: `Sample paragraph ${i}`, references: [] }));
+    document.querySelector('#app').innerHTML = renderGlossaryResearchStudio(state);
+  });
+  for (const width of [1280, 700]) {
+    await page.setViewportSize({ width, height: 700 });
+    const positions = await page.evaluate(async () => {
+      const { state } = await import(`/${"app"}/state.js`);
+      const { renderGlossaryResearchStudio } = await import(`/${"screens"}/glossary-research-studio.js`);
+      const { captureStudioDisclosures, restoreStudioDisclosures } = await import(`/${"app"}/glossary-research-studio-disclosures.js`);
+      const root = document.querySelector('#app');
+      const content = root.querySelector('.studio-content');
+      const outline = root.querySelector('.studio-outline');
+      content.scrollTop = 400;
+      outline.scrollTop = 200;
+      outline.scrollLeft = 200;
+      const before = { content: content.scrollTop, outline: outline.scrollTop, outlineLeft: outline.scrollLeft };
+      const snapshot = captureStudioDisclosures(root);
+      root.innerHTML = renderGlossaryResearchStudio(state);
+      restoreStudioDisclosures(root, snapshot);
+      return { before, after: { content: root.querySelector('.studio-content').scrollTop, outline: root.querySelector('.studio-outline').scrollTop, outlineLeft: root.querySelector('.studio-outline').scrollLeft } };
+    });
+    expect(positions.before.content).toBeGreaterThan(0);
+    expect(positions.after).toEqual(positions.before);
+    const footer = await page.locator('.studio-footer').boundingBox();
+    expect(footer.y + footer.height).toBeLessThanOrEqual(700);
+    await expect(page.getByRole('button', { name: 'Save and continue', exact: true })).toBeInViewport();
+  }
+  const navigation = await page.evaluate(async () => {
+    const { state } = await import(`/${"app"}/state.js`);
+    const { renderGlossaryResearchStudio } = await import(`/${"screens"}/glossary-research-studio.js`);
+    const { captureStudioDisclosures, restoreStudioDisclosures } = await import(`/${"app"}/glossary-research-studio-disclosures.js`);
+    const root = document.querySelector('#app');
+    const snapshot = captureStudioDisclosures(root);
+    state.glossaryResearchStudio.study.step = "12";
+    root.innerHTML = renderGlossaryResearchStudio(state);
+    restoreStudioDisclosures(root, snapshot);
+    const current = root.querySelector('.studio-step-link[aria-current="step"]').getBoundingClientRect();
+    const outline = root.querySelector('.studio-outline').getBoundingClientRect();
+    return { scroll: root.querySelector('.studio-content').scrollTop, left: current.left - outline.left, right: current.right - outline.right };
+  });
+  expect(navigation.scroll).toBe(0);
+  expect(navigation.left).toBeGreaterThanOrEqual(0);
+  expect(navigation.right).toBeLessThanOrEqual(1);
+});
 
 async function seedRevisitStudy(page) {
   await page.evaluate(async () => {
@@ -258,7 +339,7 @@ test("a revisited edit waits for confirmation, Cancel restores it, and Continue 
   await page.locator('[data-studio-field="candidates.0.note"]').fill("Concise guidance");
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByRole("heading", { name: "Redo this step?", exact: true })).toBeVisible();
-  await expect(dialog).toContainText("Redoing this step will clear the data from all the later steps that depend on data from this step.");
+  await expect(dialog).toContainText("Changing the data in this form means you will need to redo this step and any later steps that depend on it. Do you want to continue editing?");
   expect(await page.evaluate(async () => {
     const s = (await import(`/${"app"}/state.js`)).state.glossaryResearchStudio.study;
     return { note: s.candidates[0].note, passed: s.tests["9:0"].passed, stepsUnchanged: JSON.stringify(s.steps) === window.revisitBaseline };
@@ -335,6 +416,8 @@ test("research export uses the save picker, shared tooltip and selected JSON pat
   await page.getByRole("button", { name: "New research", exact: true }).click();
   await page.getByLabel("Term to research").fill("ilustre");
   await page.evaluate(() => { window.studioExportPath = "/tmp/selected folder/ilustre discussion.json"; });
+  await expect(page.locator('[data-action="studio:export"]')).toHaveCount(0);
+  await showExportStep(page);
   const button = page.locator('[data-action="studio:export"]');
   await expect(button).toHaveAttribute("data-tooltip", "export a summary of the data uncovered during the research process in a JSON format appropriate for sending it to an AI for further discussion.");
   await button.click();
@@ -349,6 +432,7 @@ test("cancelling export performs no snapshot work and duplicate clicks share one
   await mountStudio(page);
   await page.getByRole("button", { name: "New research", exact: true }).click();
   await page.evaluate(() => { window.studioExportPath = null; window.studioHoldExportDialog = true; window.studioCalls = []; });
+  await showExportStep(page);
   await page.locator('[data-action="studio:export"]').click();
   await expect(page.locator('[data-action="studio:export"]')).toBeDisabled();
   await page.evaluate(async () => {
@@ -374,6 +458,7 @@ test("export errors leave running research, its error and retry pointer intact",
     view.study.lastToolSignature = "research-pointer"; window.studioExportError = "Selected folder is read-only";
     document.querySelector("#app").innerHTML = renderGlossaryResearchStudio(state);
   });
+  await showExportStep(page);
   await page.locator('[data-action="studio:export"]').click();
   await expect(page.locator('[data-action="studio:export"]')).toBeEnabled();
   const result = await page.evaluate(async () => {
@@ -411,9 +496,20 @@ test("Skip recommendation waits for the human, who can run the step anyway", asy
   await page.getByRole("button", { name: "New research", exact: true }).click();
   await page.getByLabel("Term to research").fill("walk");
   await page.getByRole("listbox", { name: "Projects", exact: true }).selectOption("p1");
-  await page.getByRole("button", { name: "Save and continue", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "AI recommendation: Skip", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Begin research", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "AI recommendation: Skip it.", exact: true })).toBeVisible();
   await expect(page.locator(".studio-recommendation")).toBeInViewport();
+  const formsBox = await page.getByRole("list", { name: "Entered forms", exact: true }).boundingBox();
+  const guidanceBox = await page.getByText("Choose Run this step to search for more, or Skip this step to use only these.", { exact: true }).boundingBox();
+  const adviceBox = await page.locator(".studio-recommendation").boundingBox();
+  expect(formsBox.y + formsBox.height).toBeLessThan(guidanceBox.y);
+  expect(guidanceBox.y + guidanceBox.height).toBeLessThan(adviceBox.y);
+  const explanation = page.getByText("The supplied forms already cover this entry.", { exact: true });
+  await expect(explanation).toBeHidden();
+  await page.getByText("Show reasoning", { exact: true }).click();
+  await expect(explanation).toBeVisible();
+  await page.getByText("Show reasoning", { exact: true }).press("Enter");
+  await expect(explanation).toBeHidden();
   const before = await page.evaluate(async () => {
     const s = (await import(`/${"app"}/state.js`)).state.glossaryResearchStudio.study;
     return { step: s.step, record: s.steps["2a"], calls: window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool").map((c) => c.args.input.step) };
@@ -432,10 +528,10 @@ test("uncertainty recommends Run, while a human Skip preserves only the entered 
   await page.getByLabel("Term to research").fill("walk");
   await page.getByLabel("Additional forms or spellings (one per line)").fill("walked");
   await page.getByRole("listbox", { name: "Projects", exact: true }).selectOption("p1");
-  await page.getByRole("button", { name: "Save and continue", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "AI recommendation: Run", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Begin research", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "AI recommendation: Run it.", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Skip this step", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "2b · Existing entries", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "4.1 · Dictionary", exact: true })).toBeVisible();
   const result = await page.evaluate(async () => {
     const s = (await import(`/${"app"}/state.js`)).state.glossaryResearchStudio.study;
     return { status: s.steps["2a"].status, forms: s.forms.map((f) => f.text),
@@ -444,27 +540,152 @@ test("uncertainty recommends Run, while a human Skip preserves only the entered 
   expect(result).toEqual({ status: "skipped", forms: ["walk", "walked"], searches: 0 });
 });
 
-test("unchanged recommendations survive Back and Forward, changed inputs refresh them, and provider failure leaves Run available", async ({ page }) => {
+test("automatic sampling stops on errors and proceeds only after a successful retry", async ({ page }) => {
+  await mountStudio(page);
+  await page.evaluate(() => { window.studioSampleError = true; });
+  await page.getByRole("button", { name: "New research", exact: true }).click();
+  await page.getByLabel("Term to research").fill("walk");
+  await page.getByRole("listbox", { name: "Projects", exact: true }).selectOption("p1");
+  await page.getByRole("button", { name: "Begin research", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "AI recommendation: Run it.", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Skip this step", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("Project snapshot unavailable");
+  await expect(page.getByRole("heading", { name: "3 · Research sample", exact: true })).toBeVisible();
+  const status = await page.evaluate(async () => (await import(`/${"app"}/state.js`)).state.glossaryResearchStudio.study.steps["2b"].status);
+  expect(status).toBe("complete");
+  await page.evaluate(() => { window.studioSampleError = false; });
+  await page.getByRole("button", { name: "Retry this step", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "4.1 · Dictionary", exact: true })).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
+test("automatic sampling respects Pause and resumes without skipping its evidence", async ({ page }) => {
+  await mountStudio(page);
+  await page.evaluate(() => { window.studioHold = "sample"; });
+  await page.getByRole("button", { name: "New research", exact: true }).click();
+  await page.getByLabel("Term to research").fill("walk");
+  await page.getByRole("listbox", { name: "Projects", exact: true }).selectOption("p1");
+  await page.getByRole("button", { name: "Begin research", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "AI recommendation: Run it.", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Skip this step", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "3 · Research sample", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Pause research", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Pause research", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "3 · Research sample", exact: true })).toBeVisible();
+  await page.evaluate(() => { window.studioHold = null; });
+  await page.locator('[data-action="studio:run"]').click();
+  await expect(page.getByRole("heading", { name: "4.1 · Dictionary", exact: true })).toBeVisible();
+  const saved = await page.evaluate(async () => {
+    const s = (await import(`/${"app"}/state.js`)).state.glossaryResearchStudio.study;
+    return { status: s.steps["3"].status, paragraphs: s.passages.length };
+  });
+  expect(saved).toEqual({ status: "complete", paragraphs: 1 });
+});
+
+test("reopening an empty completed result advances without repeating research and sidebar inspection stays put", async ({ page }) => {
+  await mountStudio(page);
+  await page.evaluate(async () => {
+    const { state } = await import(`/${"app"}/state.js`);
+    const { newStudioStudy } = await import(`/${"app"}/glossary-research-studio-workflow.js`);
+    const { saveStudioStudy } = await import(`/${"app"}/glossary-research-studio-query.js`);
+    const s = newStudioStudy({ installationId: 7, teamId: "team", glossaryId: "g1", repoName: "glossary", term: "walk",
+      corpus: "projects", projectIds: ["p1"], sourceLanguage: { code: "en", name: "English" }, targetLanguage: { code: "vi", name: "Vietnamese" } }, "empty-result");
+    s.step = "4.3"; s.model = { providerId: "openai", modelId: "test" }; s.translationRuntimeVersion = "0.8.125";
+    s.steps["4.3"] = { status: "awaiting-review", value: { parts: [], meanings: [], summary: "No separate word components." } };
+    await saveStudioStudy(s);
+  });
+  await page.getByRole("button", { name: "Glossary", exact: true }).click();
+  await page.getByRole("button", { name: "Research", exact: true }).click();
+  await page.getByRole("button", { name: "Open study", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "4.4.2 · Internet sources", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => window.studioCalls.filter((call) => call.command === "start_glossary_studio_tool"
+    && call.args.input.step === "4.3").length)).toBe(0);
+  await expect.poll(() => page.evaluate(async () => Boolean((await import(`/${"app"}/state.js`)).state.glossaryResearchStudio.saving))).toBe(false);
+  await page.locator('[data-action="studio:visit:4.3"]').click();
+  await expect(page.getByRole("heading", { name: "4.3 · Word parts", exact: true })).toBeVisible();
+  await expect(page.getByText("No separate word components.", { exact: true })).toBeVisible();
+});
+
+test("leaving automatic sampling cancels continuation and preserves the unfinished checkpoint", async ({ page }) => {
+  await mountStudio(page);
+  await page.evaluate(() => { window.studioHold = "sample"; });
+  await page.getByRole("button", { name: "New research", exact: true }).click();
+  await page.getByLabel("Term to research").fill("walk");
+  await page.getByRole("listbox", { name: "Projects", exact: true }).selectOption("p1");
+  await page.getByRole("button", { name: "Begin research", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "AI recommendation: Run it.", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Skip this step", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "3 · Research sample", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Glossary", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Research", exact: true })).toBeVisible();
+  await page.evaluate(() => { window.studioHold = null; });
+  const result = await page.evaluate(async () => {
+    const { state } = await import(`/${"app"}/state.js`); const s = state.glossaryResearchStudio.study;
+    return { screen: state.screen, step: s.step, sampleStatus: s.steps["3"]?.status ?? null,
+      dictionaryCalls: window.studioCalls.filter((call) => call.command === "start_glossary_studio_tool" && call.args.input.step === "recommendation:4.1").length };
+  });
+  expect(result).toEqual({ screen: "glossaryEditor", step: "3", sampleStatus: null, dictionaryCalls: 0 });
+});
+
+test("unchanged recommendations survive outline navigation, changed inputs refresh them, and provider failure leaves Run available", async ({ page }) => {
   await mountStudio(page);
   await page.getByRole("button", { name: "New research", exact: true }).click();
   await page.getByLabel("Term to research").fill("walk");
   await page.getByRole("listbox", { name: "Projects", exact: true }).selectOption("p1");
-  const next = () => page.getByRole("button", { name: "Save and continue", exact: true }).click();
-  const advice = () => expect(page.getByRole("heading", { name: "AI recommendation: Run", exact: true })).toBeVisible();
+  const next = () => page.locator('[data-action="studio:next"]').click();
+  const advice = () => expect(page.getByRole("heading", { name: "AI recommendation: Run it.", exact: true })).toBeVisible();
   const count = () => page.evaluate(() => window.studioCalls.filter((c) => c.args.input?.step === "recommendation:2a").length);
   await next(); await advice(); expect(await count()).toBe(1);
-  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(page.getByText("More research could help.", { exact: true })).toBeHidden();
+  await page.getByText("Show reasoning", { exact: true }).click();
+  await expect(page.getByText("More research could help.", { exact: true })).toBeVisible();
+  await page.locator('[data-action="studio:visit:1"]').click();
   await next(); await advice(); expect(await count()).toBe(1);
-  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Refresh recommendation", exact: true })).toHaveCount(0);
+  await page.locator('[data-action="studio:visit:1"]').click();
+  await page.locator('[data-action="studio:visit:2a"]').click();
+  await advice(); expect(await count()).toBe(1);
+  await returnToStudioHistory(page);
+  await page.getByRole("button", { name: "Open study", exact: true }).click();
+  await advice(); expect(await count()).toBe(1);
+  await page.locator('[data-action="studio:visit:1"]').click();
   await page.getByLabel("Term to research").fill("walking");
   await page.getByRole("dialog").getByRole("button", { name: "Continue", exact: true }).click();
   await next(); await advice(); expect(await count()).toBe(2);
   await page.evaluate(() => { window.studioRecommendationError = true; });
-  await page.getByRole("button", { name: "Refresh recommendation", exact: true }).click();
+  await page.locator('[data-action="studio:visit:1"]').click();
+  await page.getByLabel("Additional forms or spellings (one per line)").fill("walked");
+  await page.getByRole("dialog").getByRole("button", { name: "Continue", exact: true }).click();
+  await next(); await advice();
   await expect(page.locator(".studio-recommendation")).toContainText("could not be completed");
+  await expect(page.locator(".studio-recommendation-reason > p")).toBeHidden();
+  await page.getByText("Show reasoning", { exact: true }).click();
+  await expect(page.locator(".studio-recommendation-reason > p")).toBeVisible();
   await expect(page.getByRole("button", { name: "Run this step", exact: true })).toBeEnabled();
   await expect(page.getByRole("button", { name: "Skip this step", exact: true })).toBeEnabled();
   expect(await count()).toBe(3);
+});
+
+test("step 1 edits after completed forms automatically produce new advice without clearing timing history", async ({ page }) => {
+  await mountStudio(page);
+  await page.getByRole("button", { name: "New research", exact: true }).click();
+  await page.getByLabel("Term to research").fill("walk");
+  await page.getByRole("listbox", { name: "Projects", exact: true }).selectOption("p1");
+  await page.getByRole("button", { name: "Begin research", exact: true }).click();
+  await startFormsResearch(page);
+  await expect(page.getByLabel("Source form", { exact: true }).first()).toBeEnabled();
+  await page.locator('[data-action="studio:visit:1"]').click();
+  await page.getByLabel("Term to research").fill("walking");
+  await page.getByRole("dialog").getByRole("button", { name: "Continue", exact: true }).click();
+  await page.getByRole("button", { name: "Begin research", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "AI recommendation: Run it.", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Refresh recommendation", exact: true })).toHaveCount(0);
+  const result = await page.evaluate(async () => {
+    const s = (await import(`/${"app"}/state.js`)).state.glossaryResearchStudio.study;
+    return { adviceCalls: window.studioCalls.filter((c) => c.args.input?.step === "recommendation:2a").length,
+      researchRuns: s.timing.steps["2a"].runs.length, discovery: s.formDiscovery };
+  });
+  expect(result).toEqual({ adviceCalls: 2, researchRuns: 1, discovery: null });
 });
 
 test("pausing a recommendation cancels its job without starting research or applying a late decision", async ({ page }) => {
@@ -473,7 +694,7 @@ test("pausing a recommendation cancels its job without starting research or appl
   await page.getByRole("button", { name: "New research", exact: true }).click();
   await page.getByLabel("Term to research").fill("walk");
   await page.getByRole("listbox", { name: "Projects", exact: true }).selectOption("p1");
-  await page.getByRole("button", { name: "Save and continue", exact: true }).click();
+  await page.getByRole("button", { name: "Begin research", exact: true }).click();
   await expect(page.locator(".studio-recommendation")).toContainText("Considering whether");
   await page.getByRole("button", { name: "Pause research", exact: true }).click();
   await expect(page.getByRole("button", { name: "Run this step", exact: true })).toBeEnabled();
@@ -499,7 +720,7 @@ test("source summary is shown as 4.4.3, waits for a choice and warns before disc
   });
   await page.getByRole("button", { name: "Skip this step", exact: true }).click();
   await expect(page.getByRole("heading", { name: "4.4.3 · Source summary", exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "AI recommendation: Run", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "AI recommendation: Run it.", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Run this step", exact: true })).toBeEnabled();
   await page.getByRole("button", { name: "Skip this step", exact: true }).click();
   await expect(page.getByRole("dialog")).toContainText("source research");
@@ -601,28 +822,26 @@ test("wider-context identity errors keep evidence intact and Retry obtains a fre
   expect(await page.evaluate(() => window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool").map((c) => c.args.input.payload._researchRetry ?? 0))).toEqual([0, 1]);
 });
 
-test("English-source studio completes research, reuses Back/Forward results and shows occurrence/paragraph counts", async ({ page }) => {
+test("English-source studio completes research, reuses previous-step results and shows occurrence/paragraph counts", async ({ page }) => {
   await mountStudio(page);
   await page.getByRole("button", { name: "New research", exact: true }).click();
   await page.getByLabel("Term to research").fill("walk");
   await page.getByRole("listbox", { name: "Projects", exact: true }).selectOption("p1");
-  const next = () => page.getByRole("button", { name: "Save and continue", exact: true }).click();
+  const next = () => page.locator('[data-action="studio:next"]').click();
   const heading = (text) => expect(page.getByRole("heading", { name: text, exact: true })).toBeVisible();
-  await next(); await heading("2a · Forms and spellings");
+  await next(); await heading("2a · List other forms and spellings");
   await startFormsResearch(page);
   await expect(page.getByLabel("Source form", { exact: true })).toHaveCount(3);
   await expect(page.getByLabel("Source form", { exact: true }).first()).toBeEnabled();
   const calls = await page.evaluate(() => window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool").length);
-  await page.getByRole("button", { name: "Back", exact: true }).click();
-  await next(); await heading("2a · Forms and spellings");
+  await page.locator('[data-action="studio:visit:1"]').click();
+  await next(); await heading("2a · List other forms and spellings");
   expect(await page.evaluate(() => window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool").length)).toBe(calls);
-  await next(); await heading("2b · Existing entries");
-  await next(); await heading("3 · Research sample");
   await next(); await heading("4.1 · Dictionary");
   await page.getByRole("button", { name: "Skip this step", exact: true }).click();
   await heading("4.2 · Corpus meanings"); await next(); await heading("4.3 · Word parts");
   await page.getByRole("button", { name: "Skip this step", exact: true }).click();
-  await heading("4.4.1 · Bibliographical sources"); await next(); await heading("4.4.2 · Internet sources");
+  await heading("4.4.2 · Internet sources");
   await page.getByRole("button", { name: "Skip this step", exact: true }).click();
   await heading("4.5 · Review meanings");
   await expect(page.getByText(/source summary \(4.4.3\) is skipped automatically/)).toBeVisible();
@@ -635,20 +854,18 @@ test("English-source studio completes research, reuses Back/Forward results and 
   await expect(page.getByText("Tôi đi bộ về nhà.", { exact: true })).toHaveCount(3);
   await expect(page.getByText("Preliminary translation", { exact: true })).toHaveCount(3);
   await expect(page.getByText("Judge meanings from the original English text.", { exact: false })).toBeVisible();
-  await next(); await heading("4.7 · Split entries"); await next(); await heading("5 · Compounds and phrases");
+  await next(); await heading("5 · Compounds and phrases");
   await page.getByRole("button", { name: "Skip this step", exact: true }).click();
-  await heading("6 · Translation candidates"); await next(); await heading("7 · Standardize spelling");
-  await next(); await heading("8 · Test each meaning"); await next(); await heading("9 · Test complete entry");
-  await next(); await heading("10a · Review usage");
+  await heading("6 · Translation candidates"); await next(); await heading("10a · Review usage");
   await expect(page.getByText("3 occurrences across 3 paragraphs", { exact: true })).toBeVisible();
   const testedCalls = await page.evaluate(() => window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool").length);
-  for (let i = 0; i < 4; i += 1) await page.getByRole("button", { name: "Back", exact: true }).click();
+  await page.locator('[data-action="studio:visit:6"]').click();
   await heading("6 · Translation candidates");
   for (let i = 0; i < 4; i += 1) await next();
   await heading("10a · Review usage");
   expect(await page.evaluate(() => window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool").length)).toBe(testedCalls);
   await expect(page.getByText("3 occurrences across 3 paragraphs", { exact: true })).toBeVisible();
-  await next(); await heading("10b · Resolve collisions"); await next(); await heading("11 · Save glossary entry");
+  await next(); await heading("11 · Save glossary entry");
 });
 
 async function seedPreliminaryStudy(page) {
@@ -744,7 +961,7 @@ test("mixed collisions remain staged through editor cancellation and survive reo
   await expect(page.getByRole("heading", { name: "12 · Split-entry queue", exact: true })).toBeVisible();
   expect(await page.evaluate(() => window.studioGlossary.terms[0].sourceTerms)).toEqual(["WALK", "WALKED"]);
   expect(await page.evaluate(async () => (await import(`/${"app"}/state.js`)).state.glossaryResearchStudio.study.steps["11"]?.status)).not.toBe("complete");
-  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await page.locator('[data-action="studio:visit:11"]').click();
   await page.getByRole("button", { name: "Open term editor", exact: true }).click();
   await expect(page.getByRole("dialog").getByRole("heading", { name: "New Term", exact: true })).toBeVisible();
   const reopened = await page.evaluate(async () => (await import(`/${"app"}/state.js`)).state.glossaryTermEditor);
@@ -822,7 +1039,7 @@ test("split studies retain their parent and shared temporary glossary without au
   expect(child.translationRuntimeVersion).toBe("0.8.125");
   expect(child.temporaryEntries.map((e) => e.sourceTerms)).toEqual([["walk in"]]);
   expect(child.passages[0].text).toBe("I walk home.");
-  await expect(page.getByRole("heading", { name: "AI recommendation: Run", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "AI recommendation: Run it.", exact: true })).toBeVisible();
   expect(await page.evaluate(() => window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool").map((c) => c.args.input.step))).toEqual(["recommendation:5"]);
   await page.evaluate(async () => {
     const { state } = await import(`/${"app"}/state.js`);
@@ -846,8 +1063,27 @@ test("step 2a recommends before searching, then expands forms when the researche
   await page.getByLabel("Term to research").fill("walk");
   await page.getByLabel("Additional forms or spellings (one per line)").fill("walked");
   await page.getByRole("listbox", { name: "Projects", exact: true }).selectOption("p1");
-  await page.getByRole("button", { name: "Save and continue", exact: true }).click();
-  await startFormsResearch(page);
+  await page.getByRole("button", { name: "Begin research", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "AI recommendation: Run it.", exact: true })).toBeVisible();
+  await page.evaluate(async () => {
+    const { state } = await import(`/${"app"}/state.js`);
+    const { studioStageActivities } = await import(`/${"app"}/glossary-research-studio-activity.js`);
+    const { renderGlossaryResearchStudio } = await import(`/${"screens"}/glossary-research-studio.js`);
+    const s = state.glossaryResearchStudio.study;
+    s.activitySteps = { "2a": { items: studioStageActivities(s).filter((item) => item.id !== "origin") } };
+    window.studioHold = "proposal";
+    document.querySelector("#app").innerHTML = renderGlossaryResearchStudio(state);
+  });
+  const work = page.getByRole("region", { name: "Work in this step", exact: true });
+  await expect(work).toHaveCount(0);
+  await expect(page.getByRole("list", { name: "Entered forms", exact: true })).toHaveText("walkwalked");
+  await expect(page.getByLabel("Source form", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("checkbox")).toHaveCount(0);
+  await page.locator('[data-action="studio:run"]').click();
+  await expect(work.locator(":scope > .studio-work-list > li")).toHaveCount(5);
+  await expect(work.getByText("Verify original spelling", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Source form", { exact: true })).toHaveCount(0);
+  await page.evaluate(() => { window.studioReleased.push("proposal"); });
   await expect(page.getByLabel("Source form", { exact: true })).toHaveCount(3);
   await expect(page.getByLabel("Source form", { exact: true }).first()).toBeEnabled();
   await expect(page.getByRole("button", { name: "Run this step", exact: true })).toHaveCount(0);
@@ -860,7 +1096,7 @@ test("step 2a recommends before searching, then expands forms when the researche
   await page.getByRole("button", { name: "Add spelling or form", exact: true }).click();
   await page.getByLabel("Source form", { exact: true }).last().fill("walks");
   await page.getByRole("button", { name: "Save and continue", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "2b · Existing entries", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "4.1 · Dictionary", exact: true })).toBeVisible();
   const selected = await page.evaluate(async () => (await import(`/${"app"}/state.js`)).state.glossaryResearchStudio.study.forms.filter((f) => f.selected).map((f) => f.text));
   expect(selected).toEqual(["walk", "walked", "walks"]);
 });
@@ -872,19 +1108,26 @@ test("step 2a shows live candidates and corpus progress while each search phase 
   await page.getByLabel("Term to research").fill("walk");
   await page.getByRole("listbox", { name: "Projects", exact: true }).selectOption("p1");
   await page.evaluate(() => { window.studioHold = "proposal"; });
-  await page.getByRole("button", { name: "Save and continue", exact: true }).click();
+  await page.getByRole("button", { name: "Begin research", exact: true }).click();
+  const work = page.getByRole("region", { name: "Work in this step", exact: true });
+  await expect(work).toHaveCount(0);
   await startFormsResearch(page);
-  await expect(page.getByLabel("Source form", { exact: true })).toHaveCount(1);
-  await expect(page.getByLabel("Source form", { exact: true }).first()).toBeDisabled();
+  await expect(page.getByLabel("Source form", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("status", { name: "In progress: Find additional forms and spellings", exact: true })).toBeVisible();
   await expect(page.locator(".studio-work-announcement")).toContainText("Looking for additional forms and spellings");
   await page.evaluate(() => { window.studioReleased.push("proposal"); window.studioHold = "corpus"; });
-  await expect(page.getByLabel("Source form", { exact: true })).toHaveCount(3);
-  await expect(page.getByLabel("Source form", { exact: true }).last()).toHaveValue("walking");
-  await expect(page.getByLabel("Source form", { exact: true }).last()).toBeDisabled();
+  await expect(page.getByLabel("Source form", { exact: true })).toHaveCount(0);
+  await expect(work).toContainText("3 forms proposed: walk, walked, walking.");
   await expect(page.locator(".studio-work-announcement")).toContainText("Reading selected project texts");
   await page.evaluate(() => { window.studioReleased.push("corpus"); window.studioHold = "verification"; });
-  await expect(page.getByText("1 matching paragraph · Awaiting identity review", { exact: true })).toHaveCount(3);
+  await expect(work).toContainText("We found 3 forms used in the selected projects:");
+  await expect(work.getByRole("list", { name: "Forms found in the corpus", exact: true }).getByRole("listitem")).toHaveText([
+    "walk — 1 matching paragraph", "walked — 1 matching paragraph", "walking — 1 matching paragraph",
+  ]);
+  await expect(work.getByText(/^1 exact matching paragraphs\./u)).toHaveCount(3);
+  await expect(work.getByText(/^1 exact matching paragraphs\./u).first()).toBeHidden();
+  await work.getByText("Check details", { exact: true }).click();
+  await expect(work.getByText(/^1 exact matching paragraphs\./u).first()).toBeVisible();
   await expect(page.locator(".studio-work-announcement")).toContainText("Verifying which forms are the same word");
   await expect(page.getByRole("button", { name: "Save and continue", exact: true })).toHaveCount(0);
   await page.evaluate(() => { window.studioReleased.push("verification"); });
@@ -893,26 +1136,195 @@ test("step 2a shows live candidates and corpus progress while each search phase 
   await expect(page.getByRole("button", { name: "Save and continue", exact: true })).toBeEnabled();
 });
 
-test("pausing research allows Back and resuming after the native job has been consumed", async ({ page }) => {
+for (const width of [1280, 700]) test(`completed step 2a puts review last and scrolls down once at ${width}px`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 700 });
+  await mountStudio(page);
+  await page.evaluate(() => { window.studioHold = "verification"; });
+  await page.getByRole("button", { name: "New research", exact: true }).click();
+  await page.getByLabel("Term to research").fill("walk");
+  await page.getByRole("listbox", { name: "Projects", exact: true }).selectOption("p1");
+  await page.getByRole("button", { name: "Begin research", exact: true }).click();
+  await startFormsResearch(page);
+  await expect(page.locator(".studio-work-announcement")).toContainText("Verifying which forms are the same word");
+  const review = page.locator("[data-studio-forms-review]");
+  await expect(review).toHaveCount(0);
+  await page.locator(".studio-content").evaluate((element) => { element.scrollTop = 0; });
+  await page.evaluate(() => { window.studioReleased.push("verification"); });
+  await expect(review.getByLabel("Source form", { exact: true })).toHaveCount(3);
+  await expect(review.locator(":scope > p").first()).toBeInViewport();
+  const layout = await page.locator(".studio-content").evaluate((element) => {
+    const review = element.querySelector("[data-studio-forms-review]");
+    return { scroll: element.scrollTop, workBottom: element.querySelector(".studio-work").getBoundingClientRect().bottom,
+      reviewTop: review.getBoundingClientRect().top, contentTop: element.getBoundingClientRect().top,
+      padding: Number.parseFloat(getComputedStyle(element).paddingTop), reviewLast: element.lastElementChild === review };
+  });
+  expect(layout.scroll).toBeGreaterThan(0);
+  expect(layout.workBottom).toBeLessThan(layout.reviewTop);
+  expect(layout.reviewLast).toBe(true);
+  expect(layout.reviewTop - layout.contentTop).toBeCloseTo(layout.padding, 0);
+  await expect(page.getByRole("heading", { name: "2a · List other forms and spellings", exact: true })).toBeInViewport();
+  await expect(page.getByRole("button", { name: "Save and continue", exact: true })).toBeInViewport();
+  await page.screenshot({ path: `/tmp/gnosis-studio-bottom-review-${width}.png`, fullPage: true });
+  const after = await page.evaluate(async () => {
+    const { state } = await import(`/${"app"}/state.js`);
+    const { renderGlossaryResearchStudio } = await import(`/${"screens"}/glossary-research-studio.js`);
+    const { captureStudioDisclosures, restoreStudioDisclosures } = await import(`/${"app"}/glossary-research-studio-disclosures.js`);
+    const root = document.querySelector("#app"); root.querySelector(".studio-content").scrollTop = 0;
+    const snapshot = captureStudioDisclosures(root);
+    root.innerHTML = renderGlossaryResearchStudio(state); restoreStudioDisclosures(root, snapshot);
+    return root.querySelector(".studio-content").scrollTop;
+  });
+  expect(after).toBe(0);
+});
+
+test("original-spelling findings have a clean preview and formatted complete report", async ({ page }) => {
+  await mountStudio(page);
+  await page.evaluate(async () => {
+    const { state } = await import(`/${"app"}/state.js`);
+    const { newStudioStudy } = await import(`/${"app"}/glossary-research-studio-workflow.js`);
+    const { renderGlossaryResearchStudio } = await import(`/${"screens"}/glossary-research-studio.js`);
+    const study = newStudioStudy({ term: "Hierofantes", sourceLanguage: { code: "es", name: "Spanish" }, targetLanguage: { code: "vi", name: "Vietnamese" } }, "formatted-findings");
+    const summary = "## Findings\n\n**The Ancient Greek headword is *ἱεροφάντης*.** Spanish uses *hierofante* (singular) and *hierofantes* (plural) (/doc/book-34?line=21924).\n\n### Attested forms\n\n- **Greek:** ἱεροφάντης\n- **Spanish:** hierofante\n\n| Form | Language |\n| --- | --- |\n| ἱεροφάντης | Ancient Greek |\n| hierofante | Spanish |\n\n### Source evidence\n\n> A cited dictionary attests the spelling (/doc/lecture-287?line=87357).\n\nSee [Dictionary entry](https://example.org/original-spelling).\n\n" + "Additional quoted evidence remains available for review. ".repeat(35) + "\n\n### Uncertainty\n\nFinal caveat beyond the saved activity receipt.";
+    study.step = "2a";
+    study.formDiscovery = { version: 3, phase: "checking-origin" };
+    study.origin = { proposal: { originLanguage: "grc", originTerm: "ἱεροφάντης" }, evidence: { summary } };
+    study.activitySteps = { "2a": { items: [{ id: "origin", label: "Verify original spelling", status: "complete", children: [
+      { id: "search", label: "Search cited dictionary and book sources", status: "complete", children: [
+        { id: "operation:web", status: "complete", result: summary.slice(0, 1800) + "…" },
+      ] },
+    ] }] } };
+    state.glossaryResearchStudio = { ...state.glossaryResearchStudio, study, busy: false };
+    document.querySelector("#app").innerHTML = renderGlossaryResearchStudio(state);
+  });
+  const search = page.locator(".studio-work-item").filter({ has: page.locator(":scope > .studio-work-heading", { hasText: "Search cited dictionary and book sources" }) });
+  const preview = search.locator(":scope > .studio-work-result");
+  await expect(preview).toHaveText("The Ancient Greek headword is ἱεροφάντης. Spanish uses hierofante (singular) and hierofantes (plural).");
+  await expect(search.getByRole("heading", { name: "Findings", exact: true })).toBeHidden();
+  await page.screenshot({ path: "/tmp/gnosis-studio-findings-collapsed.png", fullPage: true });
+  await search.getByText("Read full findings", { exact: true }).click();
+  await expect(search.getByRole("heading", { name: "Findings", exact: true })).toBeVisible();
+  await expect(search.locator("strong").first()).toHaveText("The Ancient Greek headword is ἱεροφάντης.");
+  await expect(search.locator("em").first()).toHaveText("ἱεροφάντης");
+  await expect(search.getByRole("table")).toBeVisible();
+  await expect(search.getByRole("link", { name: "Dictionary entry", exact: true })).toHaveAttribute("href", "https://example.org/original-spelling");
+  await expect(search.getByText("Final caveat beyond the saved activity receipt.", { exact: true })).toBeAttached();
+  await expect(search.locator(".studio-report")).not.toContainText("##");
+  await expect(search).not.toContainText("/doc/");
+  expect(await page.evaluate(async () => (await import(`/${"app"}/state.js`)).state.glossaryResearchStudio.study.origin.evidence.summary)).toContain("/doc/book-34?line=21924");
+  await page.screenshot({ path: "/tmp/gnosis-studio-findings-expanded.png", fullPage: true });
+});
+
+test("step 2a publishes forms and corpus counts while original spelling is still searching, then shows cited findings", async ({ page }) => {
+  await mountStudio(page);
+  await page.evaluate(() => {
+    window.studioOriginProposal = { originLanguage: "la", originTerm: "originalis" };
+    window.studioHold = "origin";
+  });
+  await page.getByRole("button", { name: "New research", exact: true }).click();
+  await page.getByLabel("Term to research").fill("walk");
+  await page.getByRole("listbox", { name: "Projects", exact: true }).selectOption("p1");
+  await page.getByRole("button", { name: "Begin research", exact: true }).click();
+  await startFormsResearch(page);
+  await expect(page.getByRole("status", { name: "In progress: Search cited dictionary and book sources", exact: true })).toBeVisible();
+  await expect(page.getByLabel("Source form", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Original-spelling findings", exact: true })).toHaveCount(0);
+  const findings = page.getByRole("region", { name: "Work in this step", exact: true });
+  await expect(findings).toBeInViewport();
+  await expect(findings).toContainText("We found 3 forms used in the selected projects:");
+  await expect(findings.getByRole("list", { name: "Forms found in the corpus", exact: true }).getByRole("listitem")).toHaveCount(3);
+  await expect(findings.getByText(/^1 exact matching paragraphs\./u)).toHaveCount(3);
+  await expect(findings.getByText(/^1 exact matching paragraphs\./u).first()).toBeHidden();
+  await expect(findings).toContainText("Possible origin language: la. Proposed original spelling: originalis.");
+  await expect(findings).toContainText("Search cited dictionary and book sources");
+  const checkpoint = await page.evaluate(async () => {
+    const s = (await import(`/${"app"}/state.js`)).state.glossaryResearchStudio.study;
+    const saved = JSON.parse(localStorage.getItem("studio-test-studies"))[s.id];
+    const calls = window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool");
+    return { counts: saved.forms.map((f) => f.paragraphCount), phase: saved.formDiscovery.phase,
+      originals: calls.filter((c) => c.args.input.kind === "web").length,
+      identity: calls.filter((c) => c.args.input.payload.prompt?.includes("Verify all proposed")).length };
+  });
+  expect(checkpoint).toEqual({ counts: [1, 1, 1], phase: "checking-origin", originals: 1, identity: 0 });
+  await page.evaluate(() => { window.studioReleased.push("origin"); window.studioHold = "verification"; });
+  await expect(page.locator(".studio-work-announcement")).toContainText("Verifying which forms are the same word");
+  await expect(findings).toContainText("Original spelling documented in a cited dictionary source.");
+  await findings.getByText("Evidence and sources", { exact: true }).click();
+  await expect(findings.getByRole("link")).toHaveAttribute("href", "https://example.org/original-spelling");
+  await page.evaluate(() => { window.studioReleased.push("verification"); });
+  await expect(page.getByLabel("Source form", { exact: true }).first()).toBeEnabled();
+  await expect(page.locator(".studio-form-explanation")).toHaveCount(3);
+  await page.locator('[data-action="studio:visit:1"]').click();
+  await returnToStudioHistory(page);
+  await page.getByRole("button", { name: "Open study", exact: true }).click();
+  await page.locator('[data-action="studio:visit:2a"]').click();
+  await expect(page.getByRole("region", { name: "Original-spelling findings", exact: true })).toHaveCount(0);
+  await expect(findings).toContainText("Original spelling documented in a cited dictionary source.");
+  await findings.getByText("Evidence and sources", { exact: true }).click();
+  await expect(findings.getByRole("link")).toHaveAttribute("href", "https://example.org/original-spelling");
+  expect(await page.evaluate(() => window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool" && c.args.input.kind === "web").length)).toBe(1);
+});
+
+test("step 2a overlaps origin and project evidence, pauses both jobs, and resumes from saved discovery", async ({ page }) => {
+  await mountStudio(page);
+  await page.evaluate(() => {
+    window.studioOriginProposal = { originLanguage: "la", originTerm: "originalis" };
+    window.studioHoldStages = ["origin", "corpus"];
+  });
+  await page.getByRole("button", { name: "New research", exact: true }).click();
+  await page.getByLabel("Term to research").fill("walk");
+  await page.getByRole("listbox", { name: "Projects", exact: true }).selectOption("p1");
+  await page.getByRole("button", { name: "Begin research", exact: true }).click();
+  await startFormsResearch(page);
+  await expect(page.getByRole("status", { name: "In progress: Search cited dictionary and book sources", exact: true })).toBeVisible();
+  await expect(page.getByRole("status", { name: "In progress: Check forms against the corpus", exact: true })).toBeVisible();
+  const starts = await page.evaluate(() => {
+    const calls = window.studioCalls.filter((call) => call.command === "start_glossary_studio_tool");
+    return { projects: calls.filter((call) => call.args.input.kind === "projects").length,
+      web: calls.filter((call) => call.args.input.kind === "web").length,
+      identity: calls.filter((call) => call.args.input.payload.prompt?.includes("Verify all proposed")).length };
+  });
+  expect(starts).toEqual({ projects: 1, web: 1, identity: 0 });
+  await page.getByRole("button", { name: "Pause research", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Pause research", exact: true })).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => window.studioCalls.filter((call) => call.command === "glossary_studio_job" && call.args.cancel).length)).toBe(2);
+  await expect(page.locator('.studio-work [data-work-state="running"]')).toHaveCount(0);
+  await page.locator('[data-action="studio:visit:1"]').click();
+  await page.evaluate(() => { window.studioHoldStages = []; });
+  await page.getByRole("button", { name: "Begin research", exact: true }).click();
+  await startFormsResearch(page, { resuming: true });
+  await expect(page.getByLabel("Source form", { exact: true })).toHaveCount(3);
+  await expect(page.getByLabel("Source form", { exact: true }).first()).toBeEnabled();
+  await expect(page.getByText("Research was interrupted. Resume the saved study.", { exact: true })).toHaveCount(0);
+  const calls = await page.evaluate(() => window.studioCalls.filter((call) => call.command === "start_glossary_studio_tool").map((call) => call.args.input));
+  expect(calls.filter((call) => call.kind === "ai" && call.payload.prompt.includes("List genuine source-language"))).toHaveLength(1);
+  expect(calls.filter((call) => call.kind === "ai" && call.payload.prompt.includes("Verify all proposed"))).toHaveLength(1);
+  expect(calls.filter((call) => call.kind === "projects")).toHaveLength(2);
+  expect(calls.filter((call) => call.kind === "web")).toHaveLength(2);
+});
+
+test("pausing research allows outline navigation and resuming after the native job has been consumed", async ({ page }) => {
   await mountStudio(page);
   await page.getByRole("button", { name: "New research", exact: true }).click();
   await page.getByLabel("Term to research").fill("walk");
   await page.getByRole("listbox", { name: "Projects", exact: true }).selectOption("p1");
   await page.evaluate(() => { window.studioHold = "proposal"; });
-  await page.getByRole("button", { name: "Save and continue", exact: true }).click();
+  await page.getByRole("button", { name: "Begin research", exact: true }).click();
   await startFormsResearch(page);
   await expect(page.locator(".studio-work-announcement")).toContainText("Looking for additional forms and spellings");
   await page.getByRole("button", { name: "Pause research", exact: true }).click();
   await expect(page.getByRole("button", { name: "Pause research", exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Source form", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Work in this step", exact: true })).toBeVisible();
   await expect(page.getByText("Research paused.", { exact: true })).toHaveCount(0);
-  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(page.locator(".studio-recommendation")).toHaveCount(0);
+  await page.locator('[data-action="studio:visit:1"]').click();
   await expect(page.getByRole("heading", { name: "1 · Scope", exact: true })).toBeVisible();
   await page.evaluate(() => { window.studioHold = null; });
-  await page.getByRole("button", { name: "Save and continue", exact: true }).click();
-  await startFormsResearch(page);
+  await page.getByRole("button", { name: "Begin research", exact: true }).click();
+  await startFormsResearch(page, { resuming: true });
   await expect(page.getByLabel("Source form", { exact: true })).toHaveCount(3);
   await expect(page.getByLabel("Source form", { exact: true }).first()).toBeEnabled();
-  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await page.locator('[data-action="studio:visit:1"]').click();
   await expect(page.getByRole("heading", { name: "1 · Scope", exact: true })).toBeVisible();
   await expect(page.getByText("Research was interrupted. Resume the saved study.", { exact: true })).toHaveCount(0);
 });
@@ -928,10 +1340,10 @@ test("Spanish form cards combine case variants, select the attested plural, and 
   await page.getByRole('button', { name: 'New research', exact: true }).click();
   await page.getByLabel('Term to research').fill('Mundo');
   await page.getByLabel('Additional forms or spellings (one per line)').fill('mundo\nMUNDOS\nmundos');
-  await page.getByRole('button', { name: 'Save and continue', exact: true }).click();
+  await page.getByRole('button', { name: 'Begin research', exact: true }).click();
   await startFormsResearch(page);
   await expect(page.locator('.studio-work-announcement')).toContainText('Checking 3 possible forms');
-  await expect(page.getByLabel('Source form', { exact: true })).toHaveCount(2);
+  await expect(page.getByLabel('Source form', { exact: true })).toHaveCount(0);
   await expect(page.locator('input[value="terrible"]')).toHaveCount(0);
   await page.evaluate(() => { window.studioReleased.push('verification'); });
   await expect(page.getByLabel('Source form', { exact: true }).first()).toBeEnabled();
@@ -943,6 +1355,8 @@ test("Spanish form cards combine case variants, select the attested plural, and 
   await expect(cards.nth(1)).toContainText('Found in 2,026 distinct paragraphs');
   await expect(cards.nth(0)).toContainText('The noun means world');
   await expect(cards.nth(1)).toContainText('The regular plural');
+  await expect(cards.nth(0)).not.toContainText('/doc/');
+  expect(await page.evaluate(async () => (await import(`/${"app"}/state.js`)).state.glossaryResearchStudio.study.forms[0].reason)).toContain('/doc/book-34?line=21924');
   async function assertContained() {
     const boxes = await cards.evaluateAll((rows) => rows.map((row) => {
       const card = row.getBoundingClientRect(); const explanation = row.querySelector('.studio-form-explanation').getBoundingClientRect();
@@ -976,7 +1390,7 @@ test("Spanish form cards combine case variants, select the attested plural, and 
     await invoke('glossary_studio_storage', { operation: 'save', input: { value: s } });
     await resumeStudy(s.id);
   });
-  await expect(page.getByRole("button", { name: "Save and continue", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Save and continue", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Refresh forms research", exact: true }).click();
   await expect(cards).toHaveCount(2);
   await expect(cards.nth(1).getByRole('checkbox', { name: 'Use', exact: true })).toBeChecked();
@@ -988,7 +1402,7 @@ test("saved research can be deleted individually, cancellation keeps it, and del
   for (const term of ["Mundo", "Other research"]) {
     await page.getByRole("button", { name: "New research", exact: true }).click();
     await page.getByLabel("Term to research").fill(term);
-    await page.getByRole("button", { name: "Back", exact: true }).click();
+    await returnToStudioHistory(page);
   }
   const card = (term) => page.locator(".studio-history .studio-entry").filter({ has: page.getByRole("heading", { name: term, exact: true }) });
   await expect(page.locator(".studio-history .studio-entry")).toHaveCount(2);
@@ -1017,7 +1431,7 @@ test("a deletion error keeps the saved study visible and allows retry", async ({
   await mountStudio(page);
   await page.getByRole("button", { name: "New research", exact: true }).click();
   await page.getByLabel("Term to research").fill("Keep on failure");
-  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await returnToStudioHistory(page);
   await page.evaluate(() => { window.studioDeleteError = "Could not delete research evidence."; });
   await page.getByRole("button", { name: "Delete research", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Delete saved research?", exact: true });
@@ -1242,7 +1656,7 @@ test("a researcher can correct one failed occurrence without changing the other 
   await modal.getByRole("button", { name: "Save meaning", exact: true }).click();
   await expect(modal).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Retest meanings", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Save and continue", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Save and continue", exact: true })).toHaveCount(0);
   const actual = await page.evaluate(async () => {
     const s = (await import(`/${"app"}/state.js`)).state.glossaryResearchStudio.study;
     const { exportStudioStudy } = await import(`/${"app"}/glossary-research-studio-query.js`);
@@ -1566,13 +1980,11 @@ test("legacy source-heavy research reopens and reuses checkpoints with compact s
     await invoke("glossary_studio_storage", { operation: "save", input: { value: s } });
     await resumeStudy(s.id);
   });
-  await expect(page.getByRole("heading", { name: "5 · Compounds and phrases", exact: true })).toBeVisible();
-  expect(await page.evaluate(() => window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool").length)).toBe(0);
-  await page.getByRole("button", { name: "Save and continue", exact: true }).click();
   await expect(page.getByRole("heading", { name: "6 · Translation candidates", exact: true })).toBeVisible();
   await expect(page.getByLabel("Translation", { exact: true })).toHaveValue("đi bộ");
+  expect(await page.evaluate(() => window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool" && c.args.input.step === "5").length)).toBe(0);
   const calls = await page.evaluate(() => window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool").length);
-  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await page.locator('[data-action="studio:visit:5"]').click();
   await expect(page.getByRole("heading", { name: "5 · Compounds and phrases", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Save and continue", exact: true }).click();
   await expect(page.getByLabel("Translation", { exact: true })).toHaveValue("đi bộ");
@@ -1814,12 +2226,12 @@ test("work checklist declares future steps, adds discovered tasks and preserves 
   await expect(work.getByText("842 matching paragraphs.", { exact: true })).toBeVisible();
 });
 
-test("step timings survive normal saves and reopening and are included in research export", async ({ page }) => {
+test("hidden timing diagnostics survive normal saves, reopening and research export", async ({ page }) => {
   await mountStudio(page);
   await page.getByRole("button", { name: "New research", exact: true }).click();
   await page.getByLabel("Term to research").fill("walk");
   await page.getByRole("listbox", { name: "Projects", exact: true }).selectOption("p1");
-  await page.getByRole("button", { name: "Save and continue", exact: true }).click();
+  await page.getByRole("button", { name: "Begin research", exact: true }).click();
   await startFormsResearch(page);
   await expect(page.getByLabel("Source form", { exact: true }).first()).toBeEnabled();
   const original = await page.evaluate(async () => {
@@ -1834,20 +2246,23 @@ test("step timings survive normal saves and reopening and are included in resear
   expect(original.savedRun.operations[0].path[0]).toBe("discover");
   expect(original.savedRun.operations[0].requestMs).toBeGreaterThan(0);
   expect(original.timing.steps["2a"].saves.count).toBeGreaterThan(0);
-  await page.locator("details.studio-timings > summary").click();
-  await expect(page.getByRole("table", { name: "Recorded research timings" })).toBeVisible();
-  await expect(page.getByRole("row").filter({ has: page.getByRole("rowheader", { name: "2a · Forms and spellings", exact: true }) })).toContainText("1");
-  await expect(page.getByText(/Tool time:/).first()).toBeVisible();
-  await page.getByRole("button", { name: "Back", exact: true }).click();
-  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(page.getByText(/Step timings|Tool time:/)).toHaveCount(0);
+  await expect(page.getByRole("table", { name: "Recorded research timings" })).toHaveCount(0);
+  await page.locator('[data-action="studio:visit:1"]').click();
+  await returnToStudioHistory(page);
   await page.getByRole("button", { name: "Open study", exact: true }).click();
   await expect(page.getByRole("heading", { name: "1 · Scope", exact: true })).toBeVisible();
   const reopened = await page.evaluate(async () => {
     const { state } = await import(`/${"app"}/state.js`);
     return { run: state.glossaryResearchStudio.study.timing.steps["2a"].runs[0], calls: window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool").length };
   });
+  await expect(page.getByText(/Step timings|Tool time:/)).toHaveCount(0);
   expect(reopened.run).toEqual(original.savedRun);
   expect(reopened.calls).toBe(original.calls);
+  await page.locator('[data-action="studio:visit:2a"]').click();
+  await expect(page.getByLabel("Source form", { exact: true }).first()).toBeEnabled();
+  await expect(page.locator(".studio-recommendation")).toHaveCount(0);
+  await showExportStep(page);
   await page.locator('[data-action="studio:export"]').click();
   await expect.poll(() => page.evaluate(() => window.studioExports?.length ?? 0)).toBe(1);
   const exported = await page.evaluate(() => window.studioExports[0].value);
@@ -1951,36 +2366,33 @@ test("bibliography reads published references and performs no author-verificatio
   expect(saved.mentionEvidence.witnesses).toBeUndefined();
 });
 
-test("comparison reruns AI, preserves earlier results as pieces and exports complete evidence", async ({ page }) => {
+test("completed forms have no comparison rerun and export the original evidence", async ({ page }) => {
   await mountStudio(page);
   await page.getByRole("button", { name: "New research", exact: true }).click();
   await page.getByLabel("Term to research").fill("walk");
   await page.getByRole("listbox", { name: "Projects", exact: true }).selectOption("p1");
-  await page.getByRole("button", { name: "Save and continue", exact: true }).click();
+  await page.getByRole("button", { name: "Begin research", exact: true }).click();
   await startFormsResearch(page);
   await expect(page.getByLabel("Source form", { exact: true }).first()).toBeEnabled();
-  const before = await page.evaluate(() => window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool"));
-  await page.locator("details.studio-timings > summary").click();
-  await page.getByRole("button", { name: "Rerun this step for comparison", exact: true }).click();
-  await expect(page.getByLabel("Source form", { exact: true }).first()).toBeEnabled();
-  const after = await page.evaluate(() => ({
-    calls: window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool"),
-    manifest: Object.values(JSON.parse(localStorage.getItem("studio-test-studies")))[0],
-  }));
-  const newCalls = after.calls.slice(before.length);
-  expect(newCalls.filter((c) => c.args.input.kind === "ai")).toHaveLength(2);
-  expect(newCalls.every((c) => c.args.input.kind === "ai")).toBe(true);
-  expect(newCalls.every((c) => c.args.input.payload._researchComparison)).toBe(true);
-  expect(after.manifest.comparisonHistory["2a"][0]._studioArtifact).toMatch(/^[a-f0-9]{64}$/);
-  expect(after.manifest.timing.steps["2a"].runs).toHaveLength(2);
-  expect(Object.keys(after.manifest.cache).every((key) => key.startsWith("sha256:"))).toBe(true);
+  await expect(page.getByText("Research comparison", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Rerun this step for comparison", exact: true })).toHaveCount(0);
+  const before = await page.evaluate(() => window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool").length);
+  // A stale action from an older render cannot start a comparison either.
+  await page.evaluate(async () => {
+    const { studioAction } = await import(`/${"app"}/glossary-research-studio-flow.js`);
+    await studioAction("studio:compare-run", () => {});
+  });
+  expect(await page.evaluate(() => window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool").length)).toBe(before);
+  await showExportStep(page);
   await page.locator('[data-action="studio:export"]').click();
   await expect.poll(() => page.evaluate(() => window.studioExports?.length ?? 0)).toBe(1);
   const full = await page.evaluate(() => window.studioExports[0].value);
-  expect(full.comparisonHistory["2a"][0].record.value.forms.length).toBeGreaterThan(0);
+  expect(full.steps["2a"].value.forms.length).toBeGreaterThan(0);
+  expect(full.timing.steps["2a"].runs).toHaveLength(1);
   expect(Object.values(full.cache).some((entry) => entry.request.payload.prompt?.includes("Verify all proposed"))).toBe(true);
   expect(JSON.stringify(full)).not.toContain("_studioArtifact");
 });
+
 
 test("compact corpus citations open complete saved source context on demand without research calls", async ({ page }) => {
   await mountStudio(page);
@@ -2013,7 +2425,7 @@ test("compact corpus citations open complete saved source context on demand with
   await expect(dialog).toHaveCount(0);
 });
 
-test("Back opens a cold report's complete evidence without rerunning research", async ({ page }) => {
+test("outline navigation opens a cold report's complete evidence without rerunning research", async ({ page }) => {
   await mountStudio(page);
   await page.getByRole("button", { name: "New research", exact: true }).click();
   await page.evaluate(async () => {
@@ -2025,7 +2437,7 @@ test("Back opens a cold report's complete evidence without rerunning research", 
     await saveStudioStudy(s);
     document.querySelector("#app").innerHTML = renderGlossaryResearchStudio(state);
   });
-  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await page.locator('[data-action="studio:visit:4.4.1"]').click();
   await expect(page.getByRole("heading", { name: "4.4.1 · Bibliographical sources", exact: true })).toBeVisible();
   await page.getByText("Sources and retrieval details", { exact: true }).click();
   await page.getByText("Dictionary text", { exact: true }).click();
@@ -2034,60 +2446,46 @@ test("Back opens a cold report's complete evidence without rerunning research", 
 });
 
 
-test("assignment comparisons rerun classification without eager reading aids and preserve the prior workflow state", async ({ page }) => {
+test("completed assignments progress without offering a comparison rerun", async ({ page }) => {
   await mountStudio(page); await seedPreliminaryStudy(page);
   await page.evaluate(() => window.studioReleased.push("preliminary"));
   await page.getByRole("button", { name: "Run this step", exact: true }).click();
   await expect(page.getByRole("button", { name: "Save and continue", exact: true })).toBeEnabled();
-  await page.locator("details.studio-timings > summary").click();
-  await page.evaluate(() => { window.studioAssertDurableComparison = true; });
-  await page.getByRole("button", { name: "Rerun this step for comparison", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Save and continue", exact: true })).toBeEnabled();
+  await expect(page.getByText("Research comparison", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Rerun this step for comparison", exact: true })).toHaveCount(0);
   const result = await page.evaluate(async () => {
     const s = (await import(`/${"app"}/state.js`)).state.glossaryResearchStudio.study;
-    const { resolveStudioEvidence } = await import(`/${"app"}/glossary-research-studio-evidence.js`);
-    const old = await resolveStudioEvidence(s, s.comparisonHistory["4.6"][0]);
     const calls = window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool").map((c) => c.args.input);
-    return { calls: calls.map((c) => ({ kind: c.kind, nonce: c.payload._researchComparison })), oldCount: old.workflowState.assignments.length, oldTranslations: Object.keys(old.workflowState.displayTranslations).length, newCount: s.assignments.length };
+    return { aiCalls: calls.filter((c) => c.kind === "ai").length,
+      translationCalls: calls.filter((c) => c.kind === "translate").length,
+      assignments: s.assignments.length, runs: s.timing.steps["4.6"].runs.length };
   });
-  expect(result.calls.filter((c) => c.kind === "ai")).toHaveLength(2);
-  expect(result.calls.filter((c) => c.kind === "translate")).toHaveLength(0);
-  expect(result.calls.filter((c) => c.nonce)).toHaveLength(1);
-  expect(await page.evaluate(() => window.studioDurabilityChecked)).toBe(true);
-  expect(result.oldCount).toBe(31); expect(result.oldTranslations).toBe(0); expect(result.newCount).toBe(31);
+  expect(result).toEqual({ aiCalls: 1, translationCalls: 0, assignments: 31, runs: 1 });
 });
 
 
-test("meaning and entry comparisons restore recorded inputs, rerun model work and preserve earlier phases", async ({ page }) => {
+test("completed meaning and entry tests do not offer comparison reruns", async ({ page }) => {
   await mountStudio(page); await seedCollision(page);
   await page.evaluate(async () => {
     const { state } = await import(`/${"app"}/state.js`);
     const { renderGlossaryResearchStudio } = await import(`/${"screens"}/glossary-research-studio.js`);
-    const s = state.glossaryResearchStudio.study; s.step = "8"; s.candidates[0].confirmed = false; s.generalNote = "Recorded input note";
+    const s = state.glossaryResearchStudio.study; s.step = "8"; s.candidates[0].confirmed = false;
     document.querySelector("#app").innerHTML = renderGlossaryResearchStudio(state);
   });
   await page.getByRole("button", { name: "Run this step", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "10a · Review usage", exact: true })).toBeVisible();
+  await page.locator('[data-action="studio:visit:8"]').click();
   await expect(page.getByRole("button", { name: "Save and continue", exact: true })).toBeEnabled();
-  await page.evaluate(async () => { window.studioAssertDurableComparison = true; (await import(`/${"app"}/state.js`)).state.glossaryResearchStudio.study.generalNote = "Edited after meaning baseline"; });
-  await page.locator("details.studio-timings > summary").click();
-  await page.getByRole("button", { name: "Rerun this step for comparison", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Save and continue", exact: true })).toBeEnabled();
+  await expect(page.getByText("Research comparison", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Rerun this step for comparison", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Save and continue", exact: true }).click();
   await expect(page.getByRole("heading", { name: "9 · Test complete entry", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Save and continue", exact: true })).toBeEnabled();
-  await page.evaluate(async () => { (await import(`/${"app"}/state.js`)).state.glossaryResearchStudio.study.generalNote = "Edited after entry baseline"; });
-  await page.locator("details.studio-timings > summary").click();
-  await page.getByRole("button", { name: "Rerun this step for comparison", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Save and continue", exact: true })).toBeEnabled();
-  const result = await page.evaluate(async () => {
+  await expect(page.getByText("Research comparison", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Rerun this step for comparison", exact: true })).toHaveCount(0);
+  const runs = await page.evaluate(async () => {
     const s = (await import(`/${"app"}/state.js`)).state.glossaryResearchStudio.study;
-    const { resolveStudioEvidence } = await import(`/${"app"}/glossary-research-studio-evidence.js`);
-    const old8 = await resolveStudioEvidence(s, s.comparisonHistory["8"][0]);
-    const old9 = await resolveStudioEvidence(s, s.comparisonHistory["9"][0]);
-    const calls = window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool").map((c) => c.args.input);
-    return { note: s.generalNote, old8: old8.workflowState.generalNote, old9: old9.workflowState.generalNote, meaningPassed: s.tests["8:m1"].passed,
-      counts: ["8", "9"].map((step) => [calls.filter((c) => c.step === step && c.kind === "ai").length, calls.filter((c) => c.step === step && c.kind === "translate").length]) };
+    return ["8", "9"].map((step) => s.timing.steps[step].runs.length);
   });
-  expect(result.note).toBe("Recorded input note"); expect(result.old8).toBe("Edited after meaning baseline"); expect(result.old9).toBe("Edited after entry baseline");
-  expect(result.meaningPassed).toBe(true); expect(result.counts).toEqual([[4, 2], [2, 2]]);
+  expect(runs).toEqual([1, 1]);
 });

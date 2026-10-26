@@ -12,7 +12,8 @@ import { setStudioEditorHandler } from "./glossary-research-studio-editor-bridge
 import { loadStudioHistory, loadStudioStudy, saveStudioStudy, deleteStudioStudy, studioGlossaryEntries, refreshStudioGlossary, exportStudioStudy } from "./glossary-research-studio-query.js";
 import { hydrateStudioStep, resolveStudioEvidence } from "./glossary-research-studio-evidence.js";
 import { createStudioTools } from "./glossary-research-studio-tools.js";
-import { currentStudioRecommendation, recommendStudioStep, sourceSummaryMustBeSkipped, studioCanRecommendSkip } from "./glossary-research-studio-recommendations.js";
+import { studioStepNeedsReview } from "./glossary-research-studio-review.js";
+import { currentStudioRecommendation, recommendStudioStep, sourceSummaryMustBeSkipped, studioCanRecommendSkip, studioResearchStarted } from "./glossary-research-studio-recommendations.js";
 import { prepareReadingTranslations, runResearchStage } from "./glossary-research-studio-stages.js";
 import { testMeanings, testCompleteEntry } from "./glossary-research-studio-testing.js";
 import { reviewCompoundReport, STUDIO_STEPS, STUDIO_DICTIONARY_REVIEW_VERSION, newStudioStudy, uniqueTexts, selectedForms, activeMeanings,
@@ -75,6 +76,7 @@ async function visitStudioStep(step) {
   s.reviewNavigation = { frontier: view.reviewFrontier, decisionStep: view.decisionStep };
   view.hideDecision = Boolean(s.pendingDecision && view.decisionStep !== step);
   view.busy = false; view.message = ""; view.error = ""; renderStudio();
+  if (step === "2a" && !s.pendingDecision) await recommendCurrentStep();
 }
 export function studioView() {
   return state.glossaryResearchStudio ??= { study: null, history: [], busy: false,
@@ -257,8 +259,9 @@ export async function resumeStudy(id) {
     view.mergeDestinations = study.mergeDestinations ?? {};
     view.hideDecision = Boolean(study.pendingDecision && view.decisionStep && view.decisionStep !== study.step);
     view.modal = null; view.openingStudyId = null; renderStudio();
+    if (await advanceIfNoReview(study, study.step, generation)) return;
     if (studioCanRecommendSkip(study.step) && !["complete", "merged", "cancelled"].includes(study.status)
-      && !view.revisiting && !await stepIsReusable(study, study.step)) await recommendCurrentStep();
+      && (!view.revisiting || study.step === "2a") && !await stepIsReusable(study, study.step)) await recommendCurrentStep();
   } catch (error) {
     if (accepted || (view.openingStudyId === id && view.study === previous)) throw error;
   } finally {
@@ -387,11 +390,13 @@ export async function runCurrentStage(fresh = false) {
       throw error;
     } finally { timing.finish("paused"); }
   }, s);
+  await advanceIfNoReview(s, step, generation);
 }
 
 async function recommendCurrentStep(refresh = false) {
   const view = studioView(); const s = view.study;
   if (!s || view.busy || !studioCanRecommendSkip(s.step) || ["complete", "merged", "cancelled"].includes(s.status)) return;
+  if (studioResearchStarted(s)) return;
   if (!canWriteGlossaries(selectedTeam())) throw new Error("You no longer have permission to research this glossary.");
   if (!refresh && currentStudioRecommendation(s)) return;
   const step = s.step; const generation = operationGeneration; const request = {};
@@ -433,16 +438,23 @@ async function recommendCurrentStep(refresh = false) {
 }
 
 async function moveTo(s, step) {
+  const generation = operationGeneration;
+  const isCurrent = () => contextMatches(s) && generation === operationGeneration && state.screen === "glossaryResearchStudio";
+  if (!isCurrent()) return;
   studioView().revisiting = false; studioView().reviewFrontier = null; studioView().decisionStep = null;
   delete s.reviewNavigation;
   await readingTools?.cancel(); readingTools = null; studioView().readingBusy = null;
+  if (!isCurrent()) return;
   if (step === "10b") await refreshStudioGlossary(s.scope);
+  if (!isCurrent()) return;
   s.step = step; s.pendingDecision = null;
   await hydrateStudioStep(s, step);
+  if (!isCurrent()) return;
   if (await stepIsReusable(s, step)) hydrateResult(s, step, s.steps[step].approved);
   else if (await stepSignatureMatches(s, step, s.steps[step]?.generatedSignature)) {
     hydrateResult(s, step, s.steps[step].value);
   }
+  if (!isCurrent()) return;
   if (step === "10a") {
     const counts = finalUsage(s);
     const textCounts = finalUsage(s, { groupByText: true });
@@ -452,17 +464,22 @@ async function moveTo(s, step) {
     }
     s.usage = counts; s.usageByText = textCounts;
   }
-  await persist(s); renderStudio();
+  await persist(s);
+  if (!isCurrent()) return;
+  renderStudio();
   if (step === "4.4.1" && s.scope.corpus !== "samael") {
     const value = { skipped: true, reason: "Available for Samael Aun Weor only" };
     s.steps[step] = { value }; await approveStep(s, step, value); await persist(s);
+    if (isCurrent()) await moveTo(s, "4.4.2");
   } else if (step === "4.4.4" && sourceSummaryMustBeSkipped(s)) {
     const value = { skipped: true, reason: "Both source branches were skipped" };
     s.steps[step] = { ...s.steps[step], value };
     await approveStep(s, step, value); await persist(s);
-    await moveTo(s, "4.5");
+    if (isCurrent()) await moveTo(s, "4.5");
   } else if (studioCanRecommendSkip(step)) {
-    if (!await stepIsReusable(s, step)) await recommendCurrentStep();
+    if (!await advanceIfNoReview(s, step, operationGeneration) && !await stepIsReusable(s, step)) await recommendCurrentStep();
+  } else if (step === "10b") {
+    await advanceIfNoReview(s, step, operationGeneration);
   } else if (!["1", "10a", "10b", "11", "12"].includes(step)) await runCurrentStage();
 }
 
@@ -516,86 +533,107 @@ export async function advanceStudio() {
   }
   const generation = ++operationGeneration;
   view.saving = true; renderStudio();
-  await guarded(async () => {
-    if (s.pendingDecision) throw new Error("Resolve the current research question before continuing.");
-    const step = s.step;
-    let value = s.steps[step]?.value;
-    if (step === "1") {
-      if (!s.scope.term.trim()) throw new Error("Enter a term to research.");
-      if (s.scope.corpus === "projects" && !s.scope.projectIds.length) throw new Error("Select at least one project.");
-      if (!s.model.modelId) throw new Error("Select a Research model in AI Settings first.");
-      s.scope.forms = uniqueSourceTexts([s.scope.term, ...s.scope.forms], s.scope.sourceLanguage.code);
-      s.forms = s.scope.forms.map((text) => ({ text, selected: true })); value = s.scope;
-    } else if (step === "2a") {
-      if (!s.steps[step]?.value || s.formDiscovery?.version !== 3 || s.formDiscovery.phase !== "complete") throw new Error("Finish the forms search, or skip this optional step.");
-      s.forms = deduplicateSourceForms(s.forms, s.scope.sourceLanguage.code);
-      if (!selectedForms(s).length) throw new Error("Select at least one source form.");
-      value = { forms: s.forms };
-    } else if (step === "2b" && s.relatedEntries.length) {
-      if (studioView().branch === "merge") { await mergeOnly(s); return; }
-      if (studioView().branch === "research") {
-        const forms = uniqueSourceTexts([...s.scope.forms, ...s.relatedEntries.flatMap((e) => e.sourceTerms)], s.scope.sourceLanguage.code);
-        s.carriedTargets = s.relatedEntries.flatMap((e) => e.targetTerms.map((text, i) => ({ text, note: e.targetVariantNotes?.[i] ?? "", originTermId: e.termId })));
-        const changed = stableSignature(forms) !== stableSignature(s.scope.forms) || !s.reResearchStarted;
-        s.scope.forms = forms; s.reResearchStarted = true;
-        if (changed) { delete s.steps["2a"]; await moveTo(s, "2a"); return; }
-      }
-      value = { branch: studioView().branch, entries: s.relatedEntries };
-    } else if (step === "4.1" && value?.dictionaryVersion !== STUDIO_DICTIONARY_REVIEW_VERSION) {
-      throw new Error("Refresh dictionary research before continuing so capitalization variants are checked.");
-    } else if (step === "5") {
-      value = reviewCompoundReport(s, value);
-    } else if (step === "4.7") {
-      if (!value || value.pending) throw new Error("Run the split-entry check before continuing.");
-      Object.assign(s, applySplitReview(s, s.splitProposals ?? []));
-      value = { splits: s.queue, proposals: s.splitProposals ?? [] };
-    } else if (step === "4.5") {
-      if (!s.meanings.some((m) => m.enabled !== false)) throw new Error("Keep at least one meaning.");
-      value = { meanings: s.meanings.map(({ splitOff: _splitOff, unused: _unused, ...meaning }) => meaning) };
-    } else if (step === "6") {
-      s.candidates = s.candidates.filter((c) => c.selected !== false && c.meaningIds.length);
-      if (activeMeanings(s).some((m) => !s.candidates.some((c) => c.meaningIds.includes(m.id)))) throw new Error("Each active meaning needs a candidate.");
-      value = { candidates: s.candidates.map(({ confirmed: _confirmed, retained: _retained, temporary: _temporary, ...candidate }) => candidate) };
-    } else if (step === "8" && !meaningTrialsAreCurrent(s)) {
-      throw new Error("Retest the edited meaning candidates before continuing.");
-    } else if (step === "9" && s.assignmentReviewPending) {
-      throw new Error("Retest the revised meaning assignments before continuing.");
-    } else if (step === "9" && !entryTrialsAreCurrent(s)) {
-      throw new Error("Retest the edited entry before continuing.");
-    } else if (step === "10a") {
-      if (!s.candidates.some((c) => c.confirmed && c.retained !== false)) throw new Error("Keep at least one target translation.");
-      value = { retained: s.candidates.filter((c) => c.retained !== false).map((c) => c.id) };
-    } else if (step === "10b") {
-      const draft = buildStudioDraft(s);
-      await refreshStudioGlossary(s.scope);
-      if (!contextMatches(s) || generation !== operationGeneration) return;
-      const colliding = sourceCollisions(s, studioGlossaryEntries(s.scope)).map((item) => item.form);
-      if (colliding.some((form) => !s.collisions[form])) throw new Error("Choose how to resolve each collision.");
-      if (!draft.sourceTerms.length) { s.status = "no-new-entry"; await moveTo(s, "12"); return; }
-      // Pruning/retention changes require a final test of the actual retained entry.
-      const timing = createStudioStepTiming(s, step); currentTiming = timing;
-      currentTools = toolsFor(s, timing); studioView().busy = true;
-      let checked;
-      try { checked = await testCompleteEntry(s, currentTools); timing.finish(checked.pending ? "awaiting-review" : "complete"); }
-      catch (error) { timing.finish(error?.message === "Research paused." ? "paused" : "failed"); throw error; }
-      if (checked.pending) { s.step = "9"; await persist(s); return; }
-      s.usage = finalUsage(s);
-      s.usageByText = finalUsage(s, { groupByText: true });
-      value = { collisions: s.collisions };
-    } else if (step === "11") { await openDraftEditor(s); return; }
-    else if (step === "12") { await startQueuedEntry(s); return; }
-    else if (!value || value.pending) throw new Error("Run this step and resolve its questions before continuing.");
-    const changed = await approveStep(s, step, value);
-    if (changed && STUDIO_STEPS.findIndex((st) => st.id === step) <= STUDIO_STEPS.findIndex((st) => st.id === "4.5")) {
-      s.assignments = []; s.queue = []; s.tests = {}; s.rounds = {}; s.retentionReviewed = false;
-      s.recoveryScanned = []; s.recoveryConsidered = 0; s.excludedParagraphIds = [];
-      for (const meaning of s.meanings) { meaning.splitOff = false; meaning.unused = false; }
-    }
-    if (step === "4.7" && !activeMeanings(s).length) { await moveTo(s, "12"); return; }
-    const next = STUDIO_STEPS[STUDIO_STEPS.findIndex((st) => st.id === step) + 1];
-    if (next) await moveTo(s, next.id);
-  }, s).finally(() => { view.saving = false; renderStudio(); });
+  await guarded(() => advanceStudioCheckpoint(s, generation), s).finally(() => { view.saving = false; renderStudio(); });
 }
+
+async function advanceStudioCheckpoint(s, generation) {
+  if (!contextMatches(s) || generation !== operationGeneration) return;
+  if (s.pendingDecision) throw new Error("Resolve the current research question before continuing.");
+  const step = s.step;
+  let value = s.steps[step]?.value ?? s.steps[step]?.approved;
+  if (step === "1") {
+    if (!s.scope.term.trim()) throw new Error("Enter a term to research.");
+    if (s.scope.corpus === "projects" && !s.scope.projectIds.length) throw new Error("Select at least one project.");
+    if (!s.model.modelId) throw new Error("Select a Research model in AI Settings first.");
+    s.scope.forms = uniqueSourceTexts([s.scope.term, ...s.scope.forms], s.scope.sourceLanguage.code);
+    s.forms = s.scope.forms.map((text) => ({ text, selected: true })); value = s.scope;
+  } else if (step === "2a") {
+    if (!s.steps[step]?.value || s.formDiscovery?.version !== 3 || s.formDiscovery.phase !== "complete") throw new Error("Finish the forms search, or skip this optional step.");
+    s.forms = deduplicateSourceForms(s.forms, s.scope.sourceLanguage.code);
+    if (!selectedForms(s).length) throw new Error("Select at least one source form.");
+    value = { forms: s.forms };
+  } else if (step === "2b" && s.relatedEntries.length) {
+    if (studioView().branch === "merge") { await mergeOnly(s); return; }
+    if (studioView().branch === "research") {
+      const forms = uniqueSourceTexts([...s.scope.forms, ...s.relatedEntries.flatMap((e) => e.sourceTerms)], s.scope.sourceLanguage.code);
+      s.carriedTargets = s.relatedEntries.flatMap((e) => e.targetTerms.map((text, i) => ({ text, note: e.targetVariantNotes?.[i] ?? "", originTermId: e.termId })));
+      const changed = stableSignature(forms) !== stableSignature(s.scope.forms) || !s.reResearchStarted;
+      s.scope.forms = forms; s.reResearchStarted = true;
+      if (changed) { delete s.steps["2a"]; await moveTo(s, "2a"); return; }
+    }
+    value = { branch: studioView().branch, entries: s.relatedEntries };
+  } else if (step === "4.1" && value?.dictionaryVersion !== STUDIO_DICTIONARY_REVIEW_VERSION) {
+    throw new Error("Refresh dictionary research before continuing so capitalization variants are checked.");
+  } else if (step === "5") {
+    value = reviewCompoundReport(s, value);
+  } else if (step === "4.7") {
+    if (!value || value.pending) throw new Error("Run the split-entry check before continuing.");
+    Object.assign(s, applySplitReview(s, s.splitProposals ?? []));
+    value = { splits: s.queue, proposals: s.splitProposals ?? [] };
+  } else if (step === "4.5") {
+    if (!s.meanings.some((m) => m.enabled !== false)) throw new Error("Keep at least one meaning.");
+    value = { meanings: s.meanings.map(({ splitOff: _splitOff, unused: _unused, ...meaning }) => meaning) };
+  } else if (step === "6") {
+    s.candidates = s.candidates.filter((c) => c.selected !== false && c.meaningIds.length);
+    if (activeMeanings(s).some((m) => !s.candidates.some((c) => c.meaningIds.includes(m.id)))) throw new Error("Each active meaning needs a candidate.");
+    value = { candidates: s.candidates.map(({ confirmed: _confirmed, retained: _retained, temporary: _temporary, ...candidate }) => candidate) };
+  } else if (step === "8" && !meaningTrialsAreCurrent(s)) {
+    throw new Error("Retest the edited meaning candidates before continuing.");
+  } else if (step === "9" && s.assignmentReviewPending) {
+    throw new Error("Retest the revised meaning assignments before continuing.");
+  } else if (step === "9" && !entryTrialsAreCurrent(s)) {
+    throw new Error("Retest the edited entry before continuing.");
+  } else if (step === "10a") {
+    if (!s.candidates.some((c) => c.confirmed && c.retained !== false)) throw new Error("Keep at least one target translation.");
+    value = { retained: s.candidates.filter((c) => c.retained !== false).map((c) => c.id) };
+  } else if (step === "10b") {
+    const draft = buildStudioDraft(s);
+    await refreshStudioGlossary(s.scope);
+    if (!contextMatches(s) || generation !== operationGeneration) return;
+    const colliding = sourceCollisions(s, studioGlossaryEntries(s.scope)).map((item) => item.form);
+    if (colliding.some((form) => !s.collisions[form])) throw new Error("Choose how to resolve each collision.");
+    if (!draft.sourceTerms.length) { s.status = "no-new-entry"; await moveTo(s, "12"); return; }
+    // Pruning/retention changes require a final test of the actual retained entry.
+    const timing = createStudioStepTiming(s, step); currentTiming = timing;
+    currentTools = toolsFor(s, timing); studioView().busy = true;
+    let checked;
+    try { checked = await testCompleteEntry(s, currentTools); timing.finish(checked.pending ? "awaiting-review" : "complete"); }
+    catch (error) { timing.finish(error?.message === "Research paused." ? "paused" : "failed"); throw error; }
+    if (!contextMatches(s) || generation !== operationGeneration) return;
+    if (checked.pending) { s.step = "9"; await persist(s); return; }
+    s.usage = finalUsage(s);
+    s.usageByText = finalUsage(s, { groupByText: true });
+    value = { collisions: s.collisions };
+  } else if (step === "11") { await openDraftEditor(s); return; }
+  else if (step === "12") { await startQueuedEntry(s); return; }
+  else if (!value || value.pending) throw new Error("Run this step and resolve its questions before continuing.");
+  const changed = await approveStep(s, step, value);
+  if (!contextMatches(s) || generation !== operationGeneration) return;
+  if (changed && STUDIO_STEPS.findIndex((st) => st.id === step) <= STUDIO_STEPS.findIndex((st) => st.id === "4.5")) {
+    s.assignments = []; s.queue = []; s.tests = {}; s.rounds = {}; s.retentionReviewed = false;
+    s.recoveryScanned = []; s.recoveryConsidered = 0; s.excludedParagraphIds = [];
+    for (const meaning of s.meanings) { meaning.splitOff = false; meaning.unused = false; }
+  }
+  if (step === "4.7" && !activeMeanings(s).length) { await moveTo(s, "12"); return; }
+  const next = STUDIO_STEPS[STUDIO_STEPS.findIndex((st) => st.id === step) + 1];
+  if (next) await moveTo(s, next.id);
+}
+
+async function advanceIfNoReview(s, step, generation) {
+  const view = studioView();
+  if (view.busy || view.error || view.revisiting || view.modal || state.screen !== "glossaryResearchStudio"
+    || s.referenceStudyId
+    || !contextMatches(s) || s.step !== step || generation !== operationGeneration
+    || ["complete", "merged", "cancelled", "no-new-entry"].includes(s.status)) return false;
+  const result = s.steps[step]?.value ?? s.steps[step]?.approved;
+  if (studioStepNeedsReview(s, step, result, studioGlossaryEntries(s.scope))) return false;
+  const saving = view.saving;
+  view.saving = true; renderStudio();
+  try { await guarded(() => advanceStudioCheckpoint(s, generation), s); }
+  finally { if (view.study === s) view.saving = saving; renderStudio(); }
+  return true;
+}
+
 
 async function openDraftEditor(s) {
   s.draft = buildStudioDraft(s); await persist(s);
@@ -935,7 +973,7 @@ export async function studioAction(action, render) {
       await persist(s);
       await modal.operation(); render(); return;
     }
-    let changesResearch = ["run", "redo", "compare-run", "recheck-forms", "skip", "confirm-skip", "expand-recovery", "add-form", "add-meaning", "save-assignment", "load-context"].includes(name)
+    let changesResearch = ["run", "redo", "recheck-forms", "skip", "confirm-skip", "expand-recovery", "add-form", "add-meaning", "save-assignment", "load-context"].includes(name)
       || ["expand-meaning:", "select-splits:", "add-candidate:", "candidate-up:", "candidate-first:", "add-inflection:", "all-collisions:"].some((prefix) => name.startsWith(prefix));
     if (s && name.startsWith("select-splits:")) changesResearch = (s.splitProposals ?? []).some((proposal) => proposal.selected !== (name.slice(14) === "all"));
     if (s && name.startsWith("all-collisions:")) changesResearch = sourceCollisions(s, studioGlossaryEntries(s.scope)).some(({ form }) => s.collisions[form] !== name.slice(15));
@@ -950,7 +988,7 @@ export async function studioAction(action, render) {
       if (next && studioCanVisitStep(s, next.id)) { await visitStudioStep(next.id); return; }
     }
     if (s && changesResearch && !studioView().busy && requestStudioRedo(() => studioAction(action, render))) return;
-    if (s && changesResearch && !["run", "compare-run", "redo"].includes(name)) markStudioEdited(s);
+    if (s && changesResearch && !["run", "redo"].includes(name)) markStudioEdited(s);
     if (name === "new") await newStudy();
     else if (name.startsWith("visit:")) await visitStudioStep(name.slice(6));
     else if (name.startsWith("resume:")) await resumeStudy(name.slice(7));
@@ -1019,11 +1057,10 @@ export async function studioAction(action, render) {
       await persist(s); await runCurrentStage();
     }
     else if (name === "recommend") {
-      if (!studioView().saving) await recommendCurrentStep(true);
+      if (!studioView().saving) await recommendCurrentStep(s.step !== "2a");
     }
     else if (name === "run") await runCurrentStage();
     else if (name === "redo") await runCurrentStage(true);
-    else if (name === "compare-run") await runCurrentStage(true);
     else if (name === "recheck-forms" && s.step === "2a" && !studioView().busy) {
       s.scope.forms = uniqueSourceTexts([...s.scope.forms, ...s.forms.map((f) => f.text)], s.scope.sourceLanguage.code);
       if (s.steps["2a"]) { s.steps["2a"].status = "stale"; s.steps["2a"].generatedSignature = null; }

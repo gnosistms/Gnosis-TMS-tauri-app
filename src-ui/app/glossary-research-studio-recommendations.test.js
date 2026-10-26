@@ -2,12 +2,33 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { newStudioStudy, STUDIO_STEPS, studioStepNumber } from "./glossary-research-studio-workflow.js";
 import { STUDIO_SKIP_PROMPTS, studioCanRecommendSkip, studioRecommendationInput, studioRecommendationKey,
-  currentStudioRecommendation, recommendStudioStep, sourceSummaryMustBeSkipped } from "./glossary-research-studio-recommendations.js";
+  currentStudioRecommendation, recommendStudioStep, sourceSummaryMustBeSkipped, studioResearchStarted } from "./glossary-research-studio-recommendations.js";
 
 const study = (step = "4.3") => ({ ...newStudioStudy({ term: "ilustre", forms: ["ilustre", "ilustres"],
   sourceLanguage: { code: "es", name: "Spanish" }, targetLanguage: { code: "en", name: "English" } }, "advice"),
 step, forms: [{ text: "ilustre" }, { text: "ilustres" }], model: { providerId: "anthropic", modelId: "test" } });
 const tools = (answer) => ({ assertCurrent() {}, ask: async () => answer });
+
+test("every recommendation step recognizes prior work and skip decisions without treating plans as work", () => {
+  for (const step of Object.keys(STUDIO_SKIP_PROMPTS)) {
+    const s = study(step);
+    s.activitySteps = { [step]: { items: [{ status: "waiting", children: [{ status: "waiting" }] }] } };
+    assert.equal(studioResearchStarted(s), false, `${step}: waiting plan`);
+    for (const status of ["running", "paused", "failed", "complete"]) {
+      s.activitySteps[step].items[0].children[0].status = status;
+      assert.equal(studioResearchStarted(s), true, `${step}: ${status} activity`);
+    }
+    delete s.activitySteps;
+    for (const record of [{ value: {} }, { approved: {} }, { status: "running" }, { status: "failed" },
+      { status: "awaiting-review" }, { status: "complete" }, { status: "skipped", approved: { skipped: true } },
+      { status: "stale", value: { summary: "Saved report" } }]) {
+      s.steps[step] = record;
+      assert.equal(studioResearchStarted(s), true, `${step}: ${JSON.stringify(record)}`);
+    }
+    s.steps[step] = { status: "undone" };
+    assert.equal(studioResearchStarted(s), false, `${step}: reset for new inputs`);
+  }
+});
 
 test("every skippable operation has a specific conservative prompt, with consecutive visible numbering", async () => {
   assert.deepEqual(Object.keys(STUDIO_SKIP_PROMPTS).sort(), [...STUDIO_STEPS.filter((s) => s.optional).map((s) => s.id), "4.4.4"].sort());
@@ -84,4 +105,29 @@ test("forms recommendation ignores later evidence; source summary does not load 
     s.passages = { _studioArtifact: "saved", length: 57 };
     assert.equal(studioRecommendationKey(s), before);
   }
+});
+
+test("forms recommendations invalidate all scope changes even outside the compact preview", async () => {
+  const s = study("2a");
+  s.scope.forms = Array.from({ length: 25 }, (_, i) => `form-${i}`);
+  const answer = { recommendation: "Run", reason: "Check variants." };
+  let calls = 0; const fingerprints = [];
+  const api = { ...tools(), ask: async (_, input) => { calls += 1; fingerprints.push(input.inputFingerprint); return answer; } };
+  s.skipRecommendations = { "2a": await recommendStudioStep(s, api) };
+  await recommendStudioStep(s, api);
+  assert.equal(calls, 1);
+  for (const edit of [
+    () => { s.scope.forms[24] = "changed-last-form"; },
+    () => { s.scope.term = "ilustre" + "x".repeat(220); },
+    () => { s.scope.term += "y"; },
+    () => { s.scope.corpus = "projects"; },
+    () => { s.scope.projectIds = ["another-project"]; },
+  ]) {
+    edit();
+    assert.equal(currentStudioRecommendation(s), null);
+    s.skipRecommendations["2a"] = await recommendStudioStep(s, api);
+    assert.equal(currentStudioRecommendation(s), s.skipRecommendations["2a"]);
+  }
+  assert.equal(calls, 6);
+  assert.equal(new Set(fingerprints).size, 6, "full scope also invalidates tool caches");
 });
