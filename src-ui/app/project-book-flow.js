@@ -151,6 +151,10 @@ export function updateBookField(element, render) {
   if (!item || !["title", "subtitle", "author", "translator", "text", "caption", "includeH1Headings"].includes(field)) return;
   const value = field === "includeH1Headings" ? element.checked : element.hasAttribute("contenteditable") ? bookEditorText(element) : element.value;
   if (element.hasAttribute("contenteditable")) element.dataset.bookEmpty = String(!value);
+  if (element.dataset.bookChapterTitle) {
+    const measure = element.parentElement?.querySelector("[data-book-title-size]");
+    if (measure) measure.textContent = value || item.defaultTitle || item.name;
+  }
   const items = current.book.items.map((entry) => entry.id === item.id ? { ...entry, [field]: value } : entry);
   update({ book: { ...current.book, items, ...(field === "includeH1Headings" ? { previewRequest: "" } : {}) }, pdfFontStatus: "idle", pdfFontInspectionKey: "" }, field === "includeH1Headings" || item.kind === "chapter" ? render : undefined);
   if (item.kind === "title") requestBookTitlePreview(render);

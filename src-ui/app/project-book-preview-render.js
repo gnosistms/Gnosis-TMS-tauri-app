@@ -49,7 +49,9 @@ export function renderProjectBookPreview(root, state) {
   reconcileInclusion(list, modal);
   const items = new Map(modal.book.items.map((item) => [item.id, item]));
   for (const row of list.querySelectorAll("[data-book-item]")) {
-    row.classList.toggle("is-selected", row.dataset.bookItem === modal.book.selectedItemId);
+    const selected = row.dataset.bookItem === modal.book.selectedItemId;
+    row.classList.toggle("is-selected", selected);
+    row.querySelector("[data-book-preview-select]")?.setAttribute("aria-pressed", String(selected));
   }
   for (const input of list.querySelectorAll("[data-book-chapter-title]")) {
     const item = items.get(input.dataset.bookChapterTitle);
@@ -57,6 +59,8 @@ export function renderProjectBookPreview(root, state) {
     const value = item.title ?? bookItemTitle(item);
     if (input.value !== value) input.value = value;
     input.placeholder = item.defaultTitle || item.name;
+    const measure = input.parentElement.querySelector("[data-book-title-size]");
+    if (measure) measure.textContent = value || input.placeholder;
     input.closest("[data-book-item]")?.querySelector("[data-book-drag-handle]")
       ?.setAttribute("aria-label", `Reorder ${bookItemTitle(item)}`);
   }

@@ -310,6 +310,49 @@ test("book contents include H1 headings only when the saved checkbox is selected
   expect(contents.includeH1Headings).toBe(true);
 });
 
+test("chapter row space previews without editing and only the title text takes a caret", async ({ page }) => {
+  await mountProjectExport(page);
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  const first = modal.locator('[data-book-chapter-title="fixture-chapter-0-0"]');
+  const second = modal.locator('[data-book-chapter-title="fixture-chapter-0-1"]');
+  const third = modal.locator('[data-book-chapter-title="fixture-chapter-0-2"]');
+  const preview = modal.getByRole("button", { name: "Preview chapter: File 002", exact: true });
+  await first.click();
+  await first.fill("Edited title");
+  await expect(first).toBeFocused();
+  const inputBox = await second.boundingBox();
+  const buttonBox = await preview.boundingBox();
+  expect(buttonBox.x).toBeGreaterThanOrEqual(inputBox.x + inputBox.width - 1);
+  expect(buttonBox.width).toBeGreaterThanOrEqual(24);
+  await preview.click();
+  await expect(modal.locator(".book-chapter__number")).toHaveText("2");
+  await expect(preview).toBeFocused();
+  await expect(second).not.toBeFocused();
+  await expect(first).not.toBeFocused();
+  await expect(first).toHaveValue("Edited title");
+  await expect(preview).toHaveAttribute("aria-pressed", "true");
+  await modal.locator('[data-book-item="fixture-chapter-0-0"] [data-book-chapter-select]').click({ position: { x: 60, y: 2 } });
+  await expect(modal.locator(".book-chapter__number")).toHaveText("1");
+  await expect(first).not.toBeFocused();
+  await expect(modal.getByRole("button", { name: "Preview chapter: File 001", exact: true })).toBeFocused();
+  await second.click();
+  await expect(second).toBeFocused();
+  const before = await second.boundingBox();
+  await second.fill("A much longer chapter title that must not cover the separate preview target");
+  const after = await second.boundingBox();
+  expect(after.width).toBeGreaterThan(before.width);
+  const longPreviewBox = await preview.boundingBox();
+  expect(longPreviewBox.width).toBeGreaterThanOrEqual(24);
+  expect(longPreviewBox.x).toBeGreaterThanOrEqual(after.x + after.width - 1);
+  const thirdPreview = modal.getByRole("button", { name: "Preview chapter: File 003", exact: true });
+  await thirdPreview.focus();
+  await thirdPreview.press("Enter");
+  await expect(modal.locator(".book-chapter__number")).toHaveText("3");
+  await expect(thirdPreview).toBeFocused();
+  await expect(third).not.toBeFocused();
+  await expect(modal).toContainText("1 of 2");
+});
+
 test("editing adjacent chapter titles keeps focus and long-list scroll through preview loads", async ({ page }) => {
   await mountProjectExport(page, false, false, 40);
   const modal = page.getByRole("dialog", { name: "Export project", exact: true });

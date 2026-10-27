@@ -27,6 +27,15 @@ export function registerProjectBookEvents(render) {
     updateBookField(editor);
   });
   document.addEventListener("pointerdown", (event) => {
+    const chapterRow = event.target.closest?.("[data-book-chapter-select]");
+    const control = event.target.closest?.("input, button");
+    const previewButton = event.target.closest?.("[data-book-preview-select]")
+      || (!control && chapterRow?.querySelector("[data-book-preview-select]"));
+    if (previewButton && event.button === 0) {
+      if (!control) event.preventDefault();
+      previewButton.focus({ preventScroll: true });
+      return;
+    }
     const handle = event.target.closest?.("[data-book-drag-handle]");
     if (!handle || event.button !== 0) return;
     const row = handle.closest("[data-book-item]");
