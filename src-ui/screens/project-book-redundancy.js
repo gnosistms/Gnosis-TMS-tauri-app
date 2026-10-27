@@ -41,7 +41,6 @@ function messages(review) {
 function contents(modal) {
   const review = modal.book.redundancy || {};
   return `<div data-book-redundancy-results>
-    <p class="modal__supporting">Check for redundant images and footnotes.</p>
     ${messages(review)}${section(review, "images")}${section(review, "footnotes")}</div>`;
 }
 export function renderBookRedundancy(modal) {

@@ -1453,7 +1453,7 @@ test("independent redundancy progress bypasses settings sync and preserves image
   const modal = page.getByRole("dialog", { name: "Export project", exact: true });
   await modal.getByRole("button", { name: "Next", exact: true }).click();
   await expect(modal.getByRole("heading", { name: "Redundancy checks", exact: true })).toBeVisible();
-  await expect(modal.getByText("Check for redundant images and footnotes.", { exact: true })).toBeVisible();
+  await expect(modal.getByText("Check for redundant images and footnotes.", { exact: true })).toHaveCount(0);
   await expect(modal.getByText("Checking for new images and footnotes…")).toHaveCount(0);
   const images = modal.locator('[data-book-redundancy-section="images"]');
   const footnotes = modal.locator('[data-book-redundancy-section="footnotes"]');
