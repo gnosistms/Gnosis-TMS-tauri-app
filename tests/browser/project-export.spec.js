@@ -600,9 +600,24 @@ test("shared paper size gives copyright pages print proportions and survives exp
   await modal.getByRole("button", { name: "Next", exact: true }).click();
   await modal.locator('[data-action="select-editor-export-option:file:pdf"]').click();
   await expect(modal.locator("[data-editor-export-paper-size-select]")).toHaveValue("a5");
+  await chooseBookOption(modal, "editor-export-paper-size", "US Letter (8.5 × 11 in)");
+  await modal.locator('[data-action="select-editor-export-option:file:docx"]').click();
+  await expect(modal.locator("[data-editor-export-paper-size-select]")).toHaveCount(0);
+  await modal.locator('[data-action="select-editor-export-option:file:pdf"]').click();
+  await expect(modal.locator("[data-editor-export-paper-size-select]")).toHaveValue("us-letter");
   await modal.getByRole("button", { name: "Previous", exact: true }).click();
-  await expect(modal.locator("[data-editor-export-paper-size-select]")).toHaveValue("a5");
+  await expect(modal.locator("[data-editor-export-paper-size-select]")).toHaveValue("us-letter");
+  expect((await measure()).ratio).toBeCloseTo(11 / 8.5, 3);
   await expect(modal.getByRole("textbox", { name: "Copyright text", exact: true })).toHaveText("Copyright © Gnosis VN, 2026.");
+  await modal.getByRole("button", { name: "Cancel", exact: true }).click();
+  // A fresh page boot must recover the preference from persistent settings,
+  // rather than retaining it only on the in-memory modal object.
+  await mountProjectExport(page);
+  await expect(modal.locator("[data-editor-export-paper-size-select]")).toHaveValue("us-letter");
+  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await expect(modal.locator("[data-editor-export-paper-size-select]")).toHaveValue("us-letter");
+  await modal.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.__projectExports.find((call) => call.command === "start_gtms_chapter_pdf_export")?.input.paperSize)).toBe("us-letter");
 });
 
 test("book composer saves independent language layouts, sections, and format settings immediately", async ({ page }) => {
