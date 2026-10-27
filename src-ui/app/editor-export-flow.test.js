@@ -1061,8 +1061,8 @@ test("project clipboard titles and contents honor overrides without promoting a 
     }),
     writeClipboard: async (formats) => { clipboard = formats; },
   });
-  assert.match(clipboard["text/html"], /<h1[^>]*>Custom Vietnamese Title<\/h1>/);
-  assert.match(clipboard["text/html"], /<h1[^>]*>Chapter 10<\/h1>[\s\S]*Original opening[\s\S]*Later heading/);
+  assert.match(clipboard["text/html"], /<h1[^>]*>1\. Custom Vietnamese Title<\/h1>/);
+  assert.match(clipboard["text/html"], /<h1[^>]*>2\. Chapter 10<\/h1>[\s\S]*Original opening[\s\S]*Later heading/);
   assert.doesNotMatch(clipboard["text/html"], /Internal file title/);
   assert.match(clipboard["text/plain"], /Contents[\s\S]*Custom Vietnamese Title[\s\S]*Chapter 10/);
 });
@@ -1084,6 +1084,7 @@ test("project Vellum titles honor overrides and opening headings that have notes
     copyVellumTextEditorContent: async (input) => { vellum = input; },
   });
   assert.match(vellum.ogElementPrivateDecodedPropertyListXml, /Edited Vellum Title/);
+  assert.doesNotMatch(vellum.ogElementPrivateDecodedPropertyListXml, />1\. Edited Vellum Title/);
   assert.match(vellum.ogElementPrivateDecodedPropertyListXml, /Translated heading/);
   assert.doesNotMatch(vellum.ogElementPrivateDecodedPropertyListXml, /<string>Chapter 10<\/string>/);
 });

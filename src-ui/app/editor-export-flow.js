@@ -873,7 +873,7 @@ async function submitEditorCopyExport(render, option, operations) {
   let blocks;
   try {
     blocks = modal.projectId
-      ? await loadProjectExportBlocks(modal, operations)
+      ? await loadProjectExportBlocks(modal, operations, { numberChapters: option.format !== "vellum" })
       : buildEditorPreviewDocument(state.editorChapter?.rows, languageCode);
   } catch (error) {
     failEditorExport(render, error);

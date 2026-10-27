@@ -399,11 +399,6 @@ pub(super) fn build_scoped_export_document(
             item.title = document.title.clone();
             chapter_documents.insert(item.id.clone(), document);
         }
-        let contents = items
-            .iter()
-            .filter(|item| !matches!(item.kind.as_str(), "title" | "copyright" | "contents"))
-            .map(|item| item.title.clone())
-            .collect::<Vec<_>>();
         let mut seen = BTreeSet::new();
         let mut parts = Vec::new();
         for item in &items {
@@ -415,20 +410,18 @@ pub(super) fn build_scoped_export_document(
                     .remove(&item.id)
                     .ok_or_else(|| "A chapter selected for the book is missing.".to_string())?
             } else {
-                section_document(app, item, document_language, &contents)?
+                section_document(app, item, document_language, &[])?
             };
             parts.push(BookPart {
                 item: item.clone(),
                 document,
             });
         }
-        let mut flattened = combine_export_documents(
+        return Ok(compose_book_document(
             &input.project_title,
             document_language,
-            parts.iter().map(|part| part.document.clone()).collect(),
-        );
-        flattened.book_parts = parts;
-        return Ok(flattened);
+            parts,
+        ));
     }
     if input.chapter_ids.is_empty() {
         return documents
@@ -441,6 +434,124 @@ pub(super) fn build_scoped_export_document(
         &input.language_code,
         documents,
     ))
+}
+
+struct BookContentsEntry {
+    title: String,
+    part_index: usize,
+    block_index: Option<usize>,
+}
+
+fn book_chapter_numbers(parts: &[BookPart]) -> Vec<Option<usize>> {
+    let mut number = 0;
+    parts
+        .iter()
+        .map(|part| {
+            if part.item.kind == "chapter" && part.item.numbered != Some(false) {
+                number += 1;
+                Some(number)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn book_contents_entries(parts: &[BookPart], include_h1: bool) -> Vec<BookContentsEntry> {
+    let numbers = book_chapter_numbers(parts);
+    let mut entries = Vec::new();
+    for (index, part) in parts
+        .iter()
+        .enumerate()
+        .filter(|(_, part)| part.item.kind == "chapter")
+    {
+        entries.push(BookContentsEntry {
+            title: numbers[index]
+                .map(|number| format!("{number}. {}", part.document.title))
+                .unwrap_or_else(|| part.document.title.clone()),
+            part_index: index,
+            block_index: None,
+        });
+        if include_h1 {
+            for (block_index, block) in part.document.blocks.iter().enumerate().skip(1) {
+                if let ExportBlock::Text { text_style, text } = block {
+                    if export_text_style(Some(text_style)) == "heading1" {
+                        entries.push(BookContentsEntry {
+                            title: inline_visible_text(text),
+                            part_index: index,
+                            block_index: Some(block_index),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    entries
+}
+
+// PDF and Vellum keep numbering as structural metadata. Flat document formats
+// need the same generated number in their chapter-heading text instead.
+fn numbered_book_documents(parts: &[BookPart]) -> Vec<ExportDocument> {
+    let mut documents = Vec::with_capacity(parts.len());
+    for (part, number) in parts.iter().zip(book_chapter_numbers(parts)) {
+        let mut document = part.document.clone();
+        if let Some(number) = number {
+            document.title = format!("{number}. {}", document.title);
+            let leading_heading = matches!(document.blocks.first(), Some(ExportBlock::Text { text_style, .. }) if export_text_style(Some(text_style)) == "heading1");
+            if leading_heading {
+                if let Some(ExportBlock::Text { text, .. }) = document.blocks.first_mut() {
+                    *text = format!("{number}. {text}");
+                }
+            } else {
+                for block in &mut document.blocks {
+                    if let ExportBlock::Footnote {
+                        anchor_block: Some(index),
+                        ..
+                    } = block
+                    {
+                        *index += 1;
+                    }
+                }
+                document.blocks.insert(
+                    0,
+                    ExportBlock::Text {
+                        text_style: "heading1".into(),
+                        text: document.title.clone(),
+                    },
+                );
+            }
+        }
+        documents.push(document);
+    }
+    documents
+}
+
+fn compose_book_document(title: &str, language: &str, mut parts: Vec<BookPart>) -> ExportDocument {
+    for index in 0..parts.len() {
+        if parts[index].item.kind != "contents" {
+            continue;
+        }
+        let entries = book_contents_entries(&parts, parts[index].item.include_h1_headings);
+        let mut blocks = vec![ExportBlock::Text {
+            text_style: "heading1".into(),
+            text: parts[index].item.title.clone(),
+        }];
+        blocks.extend(entries.into_iter().map(|entry| {
+            ExportBlock::Text {
+                text_style: if entry.block_index.is_some() {
+                    "indented"
+                } else {
+                    "paragraph"
+                }
+                .into(),
+                text: entry.title,
+            }
+        }));
+        parts[index].document.blocks = blocks;
+    }
+    let mut flattened = combine_export_documents(title, language, numbered_book_documents(&parts));
+    flattened.book_parts = parts;
+    flattened
 }
 
 pub(super) fn apply_book_chapter_title(
@@ -1818,6 +1929,8 @@ fn render_docx_document(
     let mut body = String::new();
     let mut rel_index = 1usize;
     let mut media_index = 1usize;
+    let mut bookmark_index = document.book_parts.len();
+    let numbered_sections = numbered_book_documents(&document.book_parts);
 
     let sections: Vec<(Option<&BookPart>, &ExportDocument)> = if document.book_parts.is_empty() {
         vec![(None, document)]
@@ -1825,7 +1938,8 @@ fn render_docx_document(
         document
             .book_parts
             .iter()
-            .map(|part| (Some(part), &part.document))
+            .zip(&numbered_sections)
+            .map(|(part, numbered)| (Some(part), numbered))
             .collect()
     };
     for (section_index, (part, section)) in sections.iter().enumerate() {
@@ -1839,14 +1953,33 @@ fn render_docx_document(
                 &section.title,
                 false,
             ));
-            for (index, entry) in document.book_parts.iter().enumerate() {
-                if matches!(entry.item.kind.as_str(), "title" | "copyright" | "contents") {
-                    continue;
-                }
-                body.push_str(&format!("<w:p><w:hyperlink w:anchor=\"BookItem{index}\"><w:r>{}</w:r></w:hyperlink><w:r><w:tab/></w:r><w:fldSimple w:instr=\" PAGEREF BookItem{index} \\h \" w:dirty=\"true\"><w:r><w:t> </w:t></w:r></w:fldSimple></w:p>", docx_run_text_xml(&entry.document.title)));
+            for entry in book_contents_entries(
+                &document.book_parts,
+                part.is_some_and(|part| part.item.include_h1_headings),
+            ) {
+                let target = entry
+                    .block_index
+                    .map(|block| format!("BookItem{}Block{block}", entry.part_index))
+                    .unwrap_or_else(|| format!("BookItem{}", entry.part_index));
+                let indent = if entry.block_index.is_some() {
+                    "<w:pPr><w:ind w:left=\"360\"/></w:pPr>"
+                } else {
+                    ""
+                };
+                body.push_str(&format!("<w:p>{indent}<w:hyperlink w:anchor=\"{target}\"><w:r>{}</w:r></w:hyperlink><w:r><w:tab/></w:r><w:fldSimple w:instr=\" PAGEREF {target} \\h \" w:dirty=\"true\"><w:r><w:t> </w:t></w:r></w:fldSimple></w:p>", docx_run_text_xml(&entry.title)));
             }
         } else {
-            for block in &section.blocks {
+            for (block_index, block) in section.blocks.iter().enumerate() {
+                let bookmark = if part_kind == "chapter"
+                    && block_index > 0
+                    && matches!(block, ExportBlock::Text { text_style, .. } if export_text_style(Some(text_style)) == "heading1")
+                {
+                    let bookmark = format!("<w:bookmarkStart w:id=\"{bookmark_index}\" w:name=\"BookItem{section_index}Block{block_index}\"/><w:bookmarkEnd w:id=\"{bookmark_index}\"/>");
+                    bookmark_index += 1;
+                    bookmark
+                } else {
+                    String::new()
+                };
                 match block {
                     ExportBlock::Text { text_style, text } => {
                         if part_kind == "title" {
@@ -1857,7 +1990,10 @@ fn render_docx_document(
                             };
                             body.push_str(&format!("<w:p><w:pPr><w:jc w:val=\"center\"/><w:spacing w:before=\"240\" w:after=\"240\"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii=\"Alegreya\" w:hAnsi=\"Alegreya\"/><w:sz w:val=\"{size}\"/></w:rPr>{}</w:r></w:p>", docx_run_text_xml(&inline_visible_text(text))));
                         } else {
-                            body.push_str(&docx_text_paragraph_xml(Some(text_style), text, false));
+                            body.push_str(&docx_paragraph_runs_xml(
+                                Some(text_style),
+                                &format!("{bookmark}{}", docx_runs_xml(text, false)),
+                            ));
                         }
                     }
                     ExportBlock::Attribution { text } => {
@@ -2884,6 +3020,113 @@ mod tests {
     use super::*;
     use std::io::Read;
     use zip::ZipArchive;
+
+    fn review_book(include_h1: bool) -> ExportDocument {
+        let part = |kind: &str, title: &str, numbered: bool| BookPart {
+            item: BookItemInput {
+                id: title.into(),
+                kind: kind.into(),
+                title: title.into(),
+                numbered: Some(numbered),
+                include_h1_headings: include_h1,
+                ..Default::default()
+            },
+            document: ExportDocument {
+                title: title.into(),
+                language_code: "en".into(),
+                book_parts: vec![],
+                blocks: vec![
+                    ExportBlock::Text {
+                        text_style: "heading1".into(),
+                        text: title.into(),
+                    },
+                    ExportBlock::Text {
+                        text_style: "paragraph".into(),
+                        text: "Body [1]".into(),
+                    },
+                    ExportBlock::Footnote {
+                        number: 1,
+                        marker: 1,
+                        anchor_block: Some(1),
+                        text: "Preserved note".into(),
+                    },
+                    ExportBlock::Text {
+                        text_style: "heading1".into(),
+                        text: format!("Inside {title}"),
+                    },
+                ],
+            },
+        };
+        compose_book_document(
+            "Book",
+            "en",
+            vec![
+                part("contents", "Contents", false),
+                part("dedication", "Dedication", false),
+                part("chapter", "First", true),
+                part("chapter", "Interlude", false),
+                part("chapter", "Last", true),
+                part("image", "Image page", false),
+            ],
+        )
+    }
+
+    #[test]
+    fn composed_documents_share_contents_and_chapter_numbering_without_mutating_pdf_parts() {
+        for include_h1 in [false, true] {
+            let book = review_book(include_h1);
+            let entries: Vec<_> = book.book_parts[0]
+                .document
+                .blocks
+                .iter()
+                .filter_map(|block| match block {
+                    ExportBlock::Text { text, .. } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect();
+            let expected = if include_h1 {
+                vec![
+                    "Contents",
+                    "1. First",
+                    "Inside First",
+                    "Interlude",
+                    "Inside Interlude",
+                    "2. Last",
+                    "Inside Last",
+                ]
+            } else {
+                vec!["Contents", "1. First", "Interlude", "2. Last"]
+            };
+            assert_eq!(entries, expected);
+            let html = render_html_document(&book).unwrap();
+            assert!(html.contains("<h1>1. First</h1>"));
+            assert!(html.contains("<h1>Interlude</h1>"));
+            assert!(html.contains("<h1>2. Last</h1>"));
+            assert!(render_txt_document(&book).contains("2. LAST"));
+            assert!(render_md_document(&book).contains("# 2. Last"));
+            assert!(render_rtf_document(&book, false).contains("2. Last"));
+            assert_eq!(book.book_parts[2].document.title, "First");
+            assert!(
+                matches!(&book.book_parts[2].document.blocks[0], ExportBlock::Text { text, .. } if text == "First")
+            );
+
+            let bytes = render_docx_document(&book, false).unwrap();
+            let mut zip = ZipArchive::new(Cursor::new(bytes)).unwrap();
+            let mut xml = String::new();
+            zip.by_name("word/document.xml")
+                .unwrap()
+                .read_to_string(&mut xml)
+                .unwrap();
+            assert_eq!(xml.matches(">1. First</w:t>").count(), 2);
+            assert_eq!(xml.matches(">2. Last</w:t>").count(), 2);
+            assert!(xml.contains(" PAGEREF BookItem2 "));
+            assert!(!xml.contains(" PAGEREF BookItem1 "));
+            assert!(!xml.contains(" PAGEREF BookItem5 "));
+            assert_eq!(xml.contains(" PAGEREF BookItem2Block3 "), include_h1);
+            assert!(xml.contains("w:name=\"BookItem2Block3\""));
+            assert!(xml.contains("Preserved note"));
+        }
+    }
 
     #[test]
     fn markdown_bundles_book_images_beside_the_document_and_keeps_remote_links() {

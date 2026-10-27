@@ -1020,7 +1020,7 @@ test("book composer saves independent language layouts, sections, and format set
   await modal.getByRole("button", { name: "Previous", exact: true }).click();
   await chooseBookOption(modal, "editor-export-language", "English (en)");
   await expect(included).toHaveCount(2); // English title page and one included chapter.
-  await modal.locator('[data-action^="book-select:"]').filter({ hasText: "English Book" }).click();
+  await modal.getByRole("button", { name: "Title page", exact: true }).click();
   await expect(modal.getByRole("textbox", { name: "Author", exact: true })).toHaveValue("An Author");
   await modal.getByRole("button", { name: "Cancel", exact: true }).click();
   await page.locator('[data-action="export-project:fixture-project-001"]').click();
