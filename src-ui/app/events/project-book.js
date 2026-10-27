@@ -30,7 +30,9 @@ export function registerProjectBookEvents(render) {
     if (event.target.closest?.("[data-book-numbered-control]")) return;
     const chapterRow = event.target.closest?.("[data-book-chapter-select]");
     const control = event.target.closest?.("input, textarea, button");
-    const previewButton = event.target.closest?.("[data-book-preview-select]")
+    // WebKit does not focus clicked buttons. Move focus before a section's
+    // full render so it cannot restore the previously edited chapter title.
+    const previewButton = event.target.closest?.("[data-book-preview-select], [data-book-section-select]")
       || (!control && chapterRow?.querySelector("[data-book-preview-select]"));
     if (previewButton && event.button === 0) {
       if (!control) event.preventDefault();

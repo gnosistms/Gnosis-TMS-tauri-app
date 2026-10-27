@@ -1168,3 +1168,32 @@ test("long chapter titles wrap inside the sidebar without hiding controls", asyn
   await expect(modal).toContainText("1 of 2");
   await page.screenshot({ path: test.info().outputPath("wrapped-chapter-titles.png") });
 });
+
+test("selecting front matter focuses its navigation button instead of a chapter editor", async ({ page }) => {
+  await mountProjectExport(page);
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  for (const kind of ["title", "copyright", "dedication", "contents", "image"]) await addSection(modal, kind);
+  // WebKit on macOS does not normally focus a button when it is clicked.
+  // Suppress Chrome's native mousedown focus to exercise that behavior too.
+  await page.evaluate(() => document.addEventListener("mousedown", (event) => {
+    if (event.target.closest('.book-item__select[data-action^="book-select:"]')) event.preventDefault();
+  }));
+  const chapter = modal.locator('[data-book-chapter-title="fixture-chapter-0-0"]');
+  const sections = modal.locator('.book-item__select[data-action^="book-select:"]');
+  await expect(sections).toHaveCount(5);
+  for (let index = 0; index < 5; index++) {
+    await chapter.focus();
+    await chapter.evaluate((input) => input.select());
+    const section = sections.nth(index);
+    await section.click();
+    await expect(section).toHaveAttribute("aria-pressed", "true");
+    await expect(section).toBeFocused();
+    await expect(chapter).not.toBeFocused();
+    await expect(chapter).toHaveValue("File 001");
+    await expect(chapter.locator('xpath=ancestor::li')).not.toHaveClass(/is-selected/);
+  }
+  await modal.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.locator('[data-action="export-project:fixture-project-001"]').click();
+  await expect(modal.locator('.book-item__select[data-action][aria-pressed="true"]')).toBeFocused();
+  await expect(chapter).not.toBeFocused();
+});
