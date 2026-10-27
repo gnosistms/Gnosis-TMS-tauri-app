@@ -696,7 +696,7 @@ export function renderEditorExportModal(state) {
             </nav>
             <div class="editor-export-modal__detail">
               <p class="editor-export-modal__detail-heading">${escapeHtml(option?.label ?? "")}</p>
-              ${modal.book ? supportingText(`${modal.book.items.filter((item) => !item.excluded && item.available !== false).length} items in your saved book order.`) : modal.projectId ? supportingText(`${modal.chapterIds.length} files in project order.`) : ""}
+              ${!modal.book && modal.projectId ? supportingText(`${modal.chapterIds.length} files in project order.`) : ""}
               ${modal.projectId && !modal.languages.length && option?.format !== "team" ? `<p class="modal__error" role="alert">These files have no language in common. Add the same language to every file before exporting a combined document.</p>` : ""}
               ${detail.bodyMarkup}
               ${errorMarkup}
