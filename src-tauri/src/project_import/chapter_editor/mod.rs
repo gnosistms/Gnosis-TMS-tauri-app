@@ -105,8 +105,8 @@ pub(super) use self::images::{
 pub(crate) use self::pdf_export::{
     approve_gtms_chapter_pdf_fonts, cancel_gtms_chapter_pdf_export, forget_gtms_pdf_font_approval,
     inspect_gtms_chapter_pdf_fonts, start_gtms_chapter_pdf_export,
-    start_project_book_title_preview, PdfChapterExportInput, PdfFontInspection,
-    PdfFontInspectionInput, TitlePagePreviewInput,
+    start_project_book_preview_fonts, start_project_book_title_preview, BookPreviewFontsInput,
+    PdfChapterExportInput, PdfFontInspection, PdfFontInspectionInput, TitlePagePreviewInput,
 };
 pub(crate) use self::project_transfer::{
     acknowledge_project_transfer_status, get_project_transfer_status,

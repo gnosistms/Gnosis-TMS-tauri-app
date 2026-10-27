@@ -1,5 +1,6 @@
+import { bookPaperStyle } from "./project-book-paper.js";
 import { bookItemIncluded, bookItemTitle } from "./project-book-model.js";
-import { renderBookTitleProof, renderProjectBookItems, renderSelectedBookPage } from "../screens/project-book-composer.js";
+import { renderBookTitleProof, renderBookPreviewFontStatus, renderProjectBookItems, renderSelectedBookPage } from "../screens/project-book-composer.js";
 
 function reconcileInclusion(list, modal) {
   const rows = new Map([...list.querySelectorAll("[data-book-item]")].map((row) => [row.dataset.bookItem, row]));
@@ -65,6 +66,16 @@ export function renderProjectBookPreview(root, state) {
       ?.setAttribute("aria-label", `Reorder ${bookItemTitle(item)}`);
   }
   const selected = items.get(modal.book.selectedItemId);
+  const fontStatus = root.querySelector("[data-book-font-status]");
+  if (fontStatus) {
+    const template = root.ownerDocument.createElement("template");
+    template.innerHTML = renderBookPreviewFontStatus(modal);
+    if (fontStatus.innerHTML !== template.content.firstElementChild.innerHTML) fontStatus.replaceWith(template.content.firstElementChild);
+  }
+  if (selected?.kind !== "chapter") {
+    for (const paper of scroll.querySelectorAll(".book-paper")) paper.style.cssText = bookPaperStyle(modal, selected?.kind);
+  }
+
   if (selected?.kind === "chapter") {
     const template = root.ownerDocument.createElement("template");
     template.innerHTML = renderSelectedBookPage(modal);

@@ -20,7 +20,10 @@ use uuid::Uuid;
 mod font_fallback;
 mod font_preferences;
 mod font_review;
+mod preview_fonts;
 mod title_preview;
+
+pub(crate) use preview_fonts::{start_project_book_preview_fonts, BookPreviewFontsInput};
 
 pub(crate) use title_preview::{start_project_book_title_preview, TitlePagePreviewInput};
 
@@ -2519,12 +2522,12 @@ fn heading_font_families(document: &ExportDocument) -> Vec<&'static str> {
     }
 }
 
-fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
+fn body_font_style(document: &ExportDocument) -> (Vec<&'static str>, &'static str, f64, f64) {
     let code = document
         .language_code
         .to_ascii_lowercase()
         .replace('_', "-");
-    let (families, direction, size_pt, leading_em) = if code.starts_with("ja") {
+    if code.starts_with("ja") {
         (vec!["Shippori Mincho", "EB Garamond"], "ltr", 11.0, 0.65)
     } else if code.starts_with("ko") {
         (vec!["Noto Serif KR", "EB Garamond"], "ltr", 11.0, 0.65)
@@ -2546,7 +2549,11 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
             11.5,
             0.78,
         )
-    };
+    }
+}
+
+fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
+    let (families, direction, size_pt, leading_em) = body_font_style(document);
     let family_list = families
         .iter()
         .map(|family| typst_string(family))
@@ -3813,10 +3820,15 @@ mod tests {
                     text("An opening paragraph in the chapter style, long enough to continue beside the decorative initial for several complete lines. The next paragraph should begin with the traditional first-line indent. This representative text also checks that normal word spacing and line spacing remain comfortable on a small A5 page."),
                     text("The second paragraph starts with an indent and no blank line above it. This is the ordinary rhythm used throughout the body of the book."),
                     text_block("heading1", "A first-level heading"),
-                    text(&"A paragraph to fill the book and verify pagination. ".repeat(700)),
                     text_block("heading2", "A second-level heading"),
                     text_block("quote", "A quotation keeps its upright default and can retain <i>an explicitly italic phrase</i>."),
                     ExportBlock::Attribution { text: "— An Example Author".into() },
+                    text_block("centered", "A centered paragraph"),
+                    text_block("indented", "An indented paragraph"),
+                    text("A paragraph with a footnote [1] and ordinary text after the reference."),
+                    ExportBlock::Footnote { number: 1, marker: 1, anchor_block: Some(8), text: "A representative footnote long enough to wrap onto another line. It keeps an upright body and <i>explicit italic words</i>.".into() },
+                    ExportBlock::Separator,
+                    text(&"A paragraph to fill the book and verify pagination. ".repeat(700)),
                 ],
             ),
             part(

@@ -4,7 +4,7 @@ import { renderExportSelect } from "./export-fields.js";
 import { BOOK_SECTION_TYPES, bookChapterPreviewBlocks, bookContentsItems, bookContentsEntries, bookItemIncluded, bookItemTitle, bookSectionLabel } from "../app/project-book-model.js";
 import { bookPaperStyle } from "../app/project-book-paper.js";
 import { bookImageSrc } from "../app/project-book-flow.js";
-import { renderEditorPreviewDocumentHtml } from "../app/editor-preview.js";
+import { renderBookChapterBody } from "../app/project-book-chapter-preview.js";
 import { convertLocalFileSrc } from "../app/runtime.js";
 import { DEFAULT_PDF_PAPER_SIZE, PDF_PAPER_SIZES } from "../app/editor-export-options.js";
 import { renderBookTextHtml } from "../app/project-book-text.js";
@@ -39,7 +39,7 @@ function itemRow(item, modal) {
 }
 
 function field(name, value, placeholder, className = "") {
-  return `<input class="book-page__input ${className}" type="text" data-book-field="${name}" aria-label="${placeholder}" placeholder="${placeholder}" value="${escapeHtml(value || "")}" />`;
+  return `<div class="book-page__input ${className}" contenteditable="plaintext-only" role="textbox" aria-multiline="true" data-book-field="${name}" data-book-empty="${!value}" aria-label="${placeholder}" data-placeholder="${placeholder}">${escapeHtml(value || "").replaceAll("\n", "<br>")}</div>`;
 }
 function titleInfoField(name, value, label, multiline = false) {
   const attributes = `data-book-field="${name}" aria-label="${label}" placeholder="Enter ${label.toLowerCase()}"`;
@@ -87,7 +87,7 @@ function imageEditor(item, logo = false) {
 }
 export function renderSelectedBookPage(modal) {
   const { book } = modal;
-  const paper = (kind, html) => `<div class="book-paper" style="${bookPaperStyle(modal, kind)}">${html}</div>`;
+  const paper = (kind, html) => `<div class="book-paper" style="${escapeHtml(bookPaperStyle(modal, kind))}">${html}</div>`;
   const item = book.items.find((entry) => entry.id === book.selectedItemId);
   if (!item) return '<p class="modal__supporting">Select an item to preview it.</p>';
   if (item.kind === "chapter") {
@@ -98,8 +98,8 @@ export function renderSelectedBookPage(modal) {
     const title = extractVellumLeadingHeadingTitle(blocks);
     const bodyBlocks = title ? blocks.slice(1) : blocks;
     const number = bookContentsItems(book.items).findIndex((entry) => entry.id === item.id) + 1;
-    const html = renderEditorPreviewDocumentHtml(bodyBlocks, { resolveImageSrc: (image) => image.kind === "url" ? image.url : convertLocalFileSrc(image.filePath || "") }).html;
-    return paper("chapter", `<article class="book-page book-page--chapter translate-preview" aria-label="Chapter preview"><header class="book-chapter__header"><span class="book-chapter__number">${number}</span><h1>${escapeHtml(title || bookItemTitle(item))}</h1>${flourish}</header>${html.replace(/ data-(?:preview-block|row-id|tooltip)="[^"]*"/g, "")}</article>`);
+    const html = renderBookChapterBody(bodyBlocks, modal, (image) => image.kind === "url" ? image.url : convertLocalFileSrc(image.filePath || ""));
+    return paper("chapter", `<article class="book-page book-page--chapter translate-preview" aria-label="Chapter preview" lang="${escapeHtml(modal.languageCode || "en")}"><header class="book-chapter__header"><span class="book-chapter__number">${number}</span><h1>${escapeHtml(title || bookItemTitle(item))}</h1>${flourish}</header>${html}</article>`);
   }
   if (item.kind === "title") return titlePageEditor(modal, item);
   let body = "";
@@ -125,6 +125,11 @@ export function renderProjectBookItems(modal) {
     <h3 class="book-excluded-heading" ${excluded.length ? "" : "hidden"}>Excluded <span data-book-count="excluded">${excluded.length}</span></h3><ul data-book-list="excluded" ${excluded.length ? "" : "hidden"}>${excluded.map((item) => itemRow(item, modal)).join("")}</ul>`;
 }
 
+export function renderBookPreviewFontStatus(modal) {
+  const fonts = modal.book.previewFonts;
+  return `<div class="book-preview-font-status" data-book-font-status role="status">${fonts?.status === "loading" ? "Preparing preview fonts…" : fonts?.status === "error" ? `${escapeHtml(fonts.error)} <button type="button" class="text-action" data-action="book-fonts-retry">Retry preview fonts</button>` : ""}</div>`;
+}
+
 export function renderProjectBookComposer(modal) {
   const included = modal.book.items.filter(bookItemIncluded);
   return `<div class="modal-backdrop"><section class="card modal-card modal-card--editor-export modal-card--book" role="dialog" aria-modal="true" aria-labelledby="editor-export-modal-title" data-modal-dialog="editor-export" tabindex="-1">
@@ -132,6 +137,7 @@ export function renderProjectBookComposer(modal) {
       <header class="editor-export-modal__header"><div><h2 class="modal__title" id="editor-export-modal-title">Export project</h2><p class="book-step">1 of 2 · Arrange your book</p></div><div class="book-composer__header-actions">${secondaryButton("Cancel", "close-editor-export-options", { modalCancel: true })}${bookNavButton("next", !included.length)}</div></header>
       <div class="book-composer__toolbar">${renderExportSelect({ id: "editor-export-language", label: "Export language", selectAttributes: { "data-editor-export-language-select": true }, options: modal.languages.map((language) => ({ value: language.code, label: `${language.name || language.code} (${language.code})` })), value: modal.languageCode })}
         ${renderExportSelect({ id: "editor-export-paper-size", label: "Paper size", selectAttributes: { "data-editor-export-paper-size-select": true }, options: PDF_PAPER_SIZES, value: modal.pdfPaperSize || DEFAULT_PDF_PAPER_SIZE })}
+        ${renderBookPreviewFontStatus(modal)}
       </div>
       <div class="book-composer"><div class="book-composer__sidebar"><nav class="book-composer__list" aria-label="Book items" tabindex="-1">${renderProjectBookItems(modal)}</nav><div class="book-add"><button type="button" class="button button--secondary" data-action="book-add-menu" aria-expanded="${modal.book.addMenuOpen}" ${modal.book.addMenuOpen ? "" : tooltipAttributes("Add sections such as table of contents, title page, dedication, copyright page, etc.", { align: "start" })}>+ Add new</button>${modal.book.addMenuOpen ? `<div class="book-add__menu">${BOOK_SECTION_TYPES.map((type) => `<button type="button" data-action="book-add:${type.kind}">${type.label}</button>`).join("")}</div>` : ""}</div></div><div class="book-composer__preview">${formattingToolbar(modal)}<div class="book-composer__page-scroll">${renderSelectedBookPage(modal)}</div></div></div>
       ${modal.error ? `<p class="modal__error book-composer__error" role="alert">${escapeHtml(modal.error)}</p>` : ""}

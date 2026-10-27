@@ -544,8 +544,9 @@ function renderTextWithWordPressFootnoteRefs(block, footnoteState, options = {})
   return `${html}${appendedRefs.join(" ")}`;
 }
 
-function renderPreviewSeparatorBlock(block) {
-  return `<hr class="translate-preview__separator" data-preview-block="separator" data-row-id="${escapeHtml(block?.rowId ?? "")}" lang="${escapeHtml(block?.languageCode ?? "")}" data-tooltip="Double-click to edit." aria-hidden="true">`;
+function renderPreviewSeparatorBlock(block, options = {}) {
+  const extra = options.blockClassName?.(block, "separator") || "";
+  return `<hr class="translate-preview__separator${extra ? ` ${escapeHtml(extra)}` : ""}" data-preview-block="separator" data-row-id="${escapeHtml(block?.rowId ?? "")}" lang="${escapeHtml(block?.languageCode ?? "")}" data-tooltip="Double-click to edit." aria-hidden="true">`;
 }
 
 function renderWordPressFootnotesList(footnoteState, renderSegment, options = {}) {
@@ -557,7 +558,9 @@ function renderWordPressFootnotesList(footnoteState, renderSegment, options = {}
     const backLink = options.serialize
       ? `<a href="#fnref-${escapeHtml(item.id)}" aria-label="Jump to footnote reference ${escapeHtml(item.number)}">&#8617;</a>`
       : `<a class="translate-preview__footnote-backlink" href="#fnref-${escapeHtml(item.id)}" aria-label="Jump to footnote reference ${escapeHtml(item.number)}">&#8617;</a>`;
-    return `<li id="fn-${escapeHtml(item.id)}" data-preview-block="footnote" data-row-id="${escapeHtml(item.rowId)}" lang="${escapeHtml(item.languageCode)}" data-tooltip="Double-click to edit.">${renderSegment(item.text, item.languageCode)} ${backLink}</li>`;
+    const text = renderSegment(item.text, item.languageCode);
+    const body = options.footnoteTextClass ? `<span class="${escapeHtml(options.footnoteTextClass)}">${text}</span>` : text;
+    return `<li id="fn-${escapeHtml(item.id)}" data-preview-block="footnote" data-row-id="${escapeHtml(item.rowId)}" lang="${escapeHtml(item.languageCode)}" data-tooltip="Double-click to edit.">${body} ${backLink}</li>`;
   }).join("");
 
   return `<ol class="wp-block-footnotes">${items}</ol>`;
@@ -574,6 +577,7 @@ export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
   const html = (Array.isArray(blocks) ? blocks : [])
     .map((block) => {
       if (block?.kind === "image") {
+        options.blockClassName?.(block, "image");
         const imageSrc = resolveImageSrc(block.image);
         if (!imageSrc) {
           return "";
@@ -606,7 +610,7 @@ export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
       return parts
         .map((part, index) => {
           if (part.kind === "separator") {
-            return renderPreviewSeparatorBlock(block);
+            return renderPreviewSeparatorBlock(block, options);
           }
 
           const textHtml = renderTextWithWordPressFootnoteRefs(
@@ -622,7 +626,8 @@ export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
           const attributionHtml = block.attribution?.trim() && index === parts.length - 1
             ? `<cite class="translate-preview__attribution" data-preview-block="attribution" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}" data-tooltip="Double-click to edit.">${renderPreviewHighlightedText(block.attribution, searchState, matchCounter, block.languageCode)}</cite>` : "";
           if (!textHtml.trim() && !attributionHtml) return "";
-          return `<${tagName} class="translate-preview__block translate-preview__block--${variant}" data-preview-block="${escapeHtml(variant)}" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}" data-tooltip="Double-click to edit.">${textHtml}${attributionHtml}</${tagName}>`;
+          const extra = options.blockClassName?.(part.block, variant) || "";
+          return `<${tagName} class="translate-preview__block translate-preview__block--${variant}${extra ? ` ${escapeHtml(extra)}` : ""}" data-preview-block="${escapeHtml(variant)}" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}" data-tooltip="Double-click to edit.">${textHtml}${options.attributionOutside ? "" : attributionHtml}</${tagName}>${options.attributionOutside ? attributionHtml : ""}`;
         })
         .filter(Boolean)
         .join("");
@@ -632,10 +637,12 @@ export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
   const footnotesHtml = renderWordPressFootnotesList(
     footnoteState,
     (text, languageCode) => renderPreviewHighlightedText(text, searchState, matchCounter, languageCode),
+    { footnoteTextClass: options.footnoteTextClass },
   );
 
   return {
     html: `${html}${footnotesHtml}`,
+    bodyHtml: html, footnotesHtml,
     searchState,
   };
 }

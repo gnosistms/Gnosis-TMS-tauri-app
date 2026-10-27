@@ -1,3 +1,4 @@
+import { requestBookPreviewFonts } from "./project-book-preview-fonts.js";
 import { extractInlineMarkupVisibleText } from "./editor-inline-markup/serialize.js";
 import { extractVellumLeadingHeadingTitle } from "./vellum-text-editor-content.js";
 import { cancelBookTitlePreview, requestBookTitlePreview } from "./project-book-title-preview.js";
@@ -40,6 +41,7 @@ function update(patch, render) {
       input?.focus({ preventScroll: true });
       if (input && selection) input.setSelectionRange(...selection);
     }
+    requestBookPreviewFonts(render);
   }
 }
 
@@ -68,6 +70,7 @@ export async function loadSelectedBookPreview(render, operations = {}) {
   const item = current?.book?.items.find((entry) => entry.id === current.book.selectedItemId);
   if (!current?.isOpen || !current.book) return;
   requestBookTitlePreview(render);
+  requestBookPreviewFonts(render);
   const repaint = () => render?.({ scope: "project-book-preview" });
   if (item?.kind === "contents" && item.includeH1Headings) return loadContentsHeadings(repaint, current, operations);
   const team = selectedProjectsTeam();
@@ -149,7 +152,8 @@ export function updateBookField(element, render) {
   const item = current?.book?.items.find((entry) => entry.id === (element.dataset.bookChapterTitle || current.book.selectedItemId));
   const field = element.dataset.bookField;
   if (!item || !["title", "subtitle", "author", "translator", "text", "caption", "includeH1Headings"].includes(field)) return;
-  const value = field === "includeH1Headings" ? element.checked : element.hasAttribute("contenteditable") ? bookEditorText(element) : element.value;
+  const edited = element.hasAttribute("contenteditable") ? bookEditorText(element) : element.value;
+  const value = field === "includeH1Headings" ? element.checked : field === "text" ? edited : edited.replaceAll("\u2028", "\n");
   if (element.hasAttribute("contenteditable")) element.dataset.bookEmpty = String(!value);
   if (element.dataset.bookChapterTitle) {
     const measure = element.parentElement?.querySelector("[data-book-title-size]");
@@ -157,6 +161,7 @@ export function updateBookField(element, render) {
   }
   const items = current.book.items.map((entry) => entry.id === item.id ? { ...entry, [field]: value } : entry);
   update({ book: { ...current.book, items, ...(field === "includeH1Headings" ? { previewRequest: "" } : {}) }, pdfFontStatus: "idle", pdfFontInspectionKey: "" }, field === "includeH1Headings" || item.kind === "chapter" ? render : undefined);
+  requestBookPreviewFonts(render);
   if (item.kind === "title") requestBookTitlePreview(render);
   if (field === "includeH1Headings" && value) void loadSelectedBookPreview(render);
   if (item.kind === "contents" && field === "title") saveContentsTitle(current.languageCode, value);
@@ -218,6 +223,7 @@ export async function handleProjectBookAction(action, render) {
     if (current.selectedOptionId === "file:pdf") void import("./editor-export-flow.js").then((module) => module.refreshPdfFontInspection(render));
   } }
   else if (action === "book-previous") update({ page: 1 }, render);
+  else if (action === "book-fonts-retry") requestBookPreviewFonts(render, { force: true });
   else if (action === "book-title-preview-retry") cancelBookTitlePreview();
   else if (action === "book-add-menu") update({ book: { ...book, addMenuOpen: !book.addMenuOpen } }, render);
   else if (action.startsWith("book-add:")) {

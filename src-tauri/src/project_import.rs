@@ -45,6 +45,7 @@ use self::{
         remove_gtms_editor_language_image_sync, restore_gtms_editor_field_from_history_sync,
         reverse_gtms_editor_batch_replace_commit_sync, save_gtms_editor_language_image_url_sync,
         start_gtms_chapter_pdf_export as start_gtms_chapter_pdf_export_task,
+        start_project_book_preview_fonts as start_project_book_preview_fonts_task,
         start_project_book_title_preview as start_project_book_title_preview_task,
         start_project_transfer, start_team_chapter_copy, start_wordpress_caption_enrichment,
         update_gtms_chapter_glossary_links_sync, update_gtms_chapter_language_selection_sync,
@@ -56,7 +57,7 @@ use self::{
         AlignedTranslationPreflightInput, AlignedTranslationPreflightResponse,
         ApplyEditorAiReviewResultInput, ApplyEditorAiReviewResultResponse,
         ApplyEditorAiReviewResultsBatchInput, ApplyEditorAiReviewResultsBatchResponse,
-        ClearEditorReviewedMarkersInput, ClearEditorReviewedMarkersResponse,
+        BookPreviewFontsInput, ClearEditorReviewedMarkersInput, ClearEditorReviewedMarkersResponse,
         ClearImportedEditorConflictInput, DuplicateEditorLanguageImageInput,
         ExportChapterFileInput, ExportChapterFileResponse, ImportBookImageInput, ImportedBookImage,
         InitializeProjectRepoInput, InitializeProjectRepoResponse, InsertEditorRowInput,
@@ -292,6 +293,15 @@ pub(crate) async fn start_gtms_chapter_pdf_export(
     input: PdfChapterExportInput,
 ) -> Result<String, String> {
     start_gtms_chapter_pdf_export_task(app, input)
+}
+
+/// Returns immediately; `book-preview-fonts` delivers cached PDF fonts and metrics.
+#[tauri::command]
+pub(crate) fn start_project_book_preview_fonts(
+    app: AppHandle,
+    input: BookPreviewFontsInput,
+) -> Result<(), String> {
+    start_project_book_preview_fonts_task(app, input)
 }
 
 /// Starts immediately; `book-title-preview` reports rendered SVG pages or errors

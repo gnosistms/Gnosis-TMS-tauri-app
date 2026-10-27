@@ -17,6 +17,15 @@ async function mountProjectExport(page, multilingual = false, chapterTitles = fa
           if (!window.__holdTitlePreview) setTimeout(() => window.__pdfListeners["book-title-preview"]?.({ payload: { requestId: args.input.requestId, pages, error: "" } }), 0);
           return null;
         }
+        if (command === "start_project_book_preview_fonts") {
+          const payload = { requestId: args.input.requestId, fonts: window.__printFonts || [], profile: {
+            bodyFamilies: ["Crimson Pro", "EB Garamond"], headingFamilies: ["Alegreya", "EB Garamond"],
+            direction: "ltr", bodySizePt: 11.5, lineHeight: 1.3532421875, frontMatterLineHeight: 1.2532421875,
+            headingLineHeight: 1.417, wordSpacingEm: .022, latin: true,
+          }, error: "" };
+          setTimeout(() => window.__pdfListeners["book-preview-fonts"]?.({ payload }), 0);
+          return null;
+        }
         if (command === "list_wordpress_connections") return window.__wordpressSites ?? [];
         if (command === "load_gtms_chapter_editor_data") {
           if (window.__holdBookPreviewChapter === args.input.chapterId) {
@@ -648,7 +657,7 @@ test("front matter keeps Return paragraphs distinct from Shift+Return line break
       const style = getComputedStyle(element);
       return { line: parseFloat(style.lineHeight) / parseFloat(style.fontSize), paragraph: parseFloat(getComputedStyle(element.firstElementChild).marginBottom) / parseFloat(style.fontSize) };
     });
-    expect(spacing.line).toBeCloseTo(1.25, 3);
+    expect(spacing.line).toBeCloseTo(1.2532421875, 3);
     expect(spacing.paragraph).toBeCloseTo(.75, 3);
     await modal.locator('[data-action="book-select:fixture-chapter-0-0"]').click();
     await modal.locator(`[data-action="book-select:${itemId}"]`).click();
@@ -673,6 +682,64 @@ test("front matter keeps Return paragraphs distinct from Shift+Return line break
     }, itemId);
     expect(pasted).toBe("Pasted first\nPasted second");
   }
+});
+
+test("book preview uses print typography for body, headings, quotes, captions, and footnotes", async ({ page }) => {
+  await page.route("https://example.com/book-proof.svg", (route) => route.fulfill({ contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="80"><rect width="300" height="80" fill="#b79858"/></svg>' }));
+  await page.addInitScript(() => {
+    const row = (textStyle, text, extra = {}) => ({ rowId: crypto.randomUUID(), textStyle, fields: { en: text }, ...extra });
+    window.__bookHeadingRows = { "fixture-chapter-0-0": [
+      row("paragraph", "An opening paragraph to compare with the print edition. ".repeat(5)),
+      row("paragraph", "The next paragraph uses a first-line indent without an empty line."),
+      row("heading1", "A mixed-case Heading"), row("heading2", "A smaller Heading"),
+      row("quote", "An upright quotation with <i>explicit italics</i>.", { attributions: { en: "— An Author" } }),
+      row("centered", "Centered text"), row("indented", "Indented text"),
+      row("paragraph", "A reference [1] in ordinary text.", { footnotes: { en: "A footnote with <i>italic</i> words. ".repeat(4) } }),
+      row("paragraph", "<hr>"),
+      row("paragraph", "", { images: { en: { kind: "url", url: "https://example.com/book-proof.svg" } }, imageCaptions: { en: "An italic image caption" } }),
+    ] };
+  });
+  await mountProjectExport(page);
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  await chooseBookOption(modal, "editor-export-paper-size", "A5 (148 × 210 mm)");
+  await expect(modal.locator(".book-chapter__footnotes")).toBeVisible();
+  await expect(modal.locator("[data-book-font-status]")).toBeEmpty();
+  const styles = await modal.locator(".book-page--chapter").evaluate((page) => {
+    const read = (selector) => {
+      const element = page.querySelector(selector), s = getComputedStyle(element);
+      return { family: s.fontFamily, size: parseFloat(s.fontSize), line: parseFloat(s.lineHeight) / parseFloat(s.fontSize),
+        weight: s.fontWeight, italic: s.fontStyle, caps: s.textTransform, tracking: parseFloat(s.letterSpacing) || 0,
+        indent: parseFloat(s.textIndent), before: parseFloat(s.marginTop), after: parseFloat(s.marginBottom), align: s.textAlign };
+    };
+    return { trimmed: CSS.supports("text-box", "trim-both cap alphabetic"), body: read(".translate-preview__block--paragraph"), indent: read(".book-print-indent"),
+      title: read(".book-chapter__header h1"), h1: read(".translate-preview__block--heading1"), h2: read(".translate-preview__block--heading2"),
+      quote: read("blockquote"), attribution: read("cite"), caption: read("figcaption"),
+      note: read(".book-footnote__text"), centered: read(".translate-preview__block--centered"),
+    };
+  });
+  expect(styles.body.family).toContain("Crimson Pro");
+  expect(styles.body.line).toBeCloseTo(1.3532421875, 3);
+  expect(styles.body.before).toBe(0);
+  expect(styles.body.after / styles.body.size).toBeCloseTo(styles.trimmed ? .78 : 0, 3);
+  expect(styles.indent.indent / styles.body.size).toBeCloseTo(1.5, 3);
+  expect(styles.title.family).toContain("Alegreya");
+  expect(styles.title.caps).toBe("uppercase");
+  expect(styles.title.tracking / styles.title.size).toBeCloseTo(.1, 3);
+  expect(styles.h1.family).toContain("Alegreya");
+  expect(styles.h1.size / styles.body.size).toBeCloseTo(13 / 11.5, 3);
+  expect(styles.h2.size).toBeCloseTo(styles.body.size, 3);
+  expect(styles.h1.caps).toBe("none");
+  expect(styles.h1.weight).toBe("400");
+  expect(styles.quote.italic).toBe("normal");
+  expect(styles.quote.size / styles.body.size).toBeCloseTo(.9, 3);
+  expect(styles.attribution.size / styles.body.size).toBeCloseTo(.8, 3);
+  expect(styles.attribution.caps).toBe("uppercase");
+  expect(styles.caption.size / styles.body.size).toBeCloseTo(.75, 3);
+  expect(styles.caption.italic).toBe("italic");
+  expect(styles.note.size / styles.body.size).toBeCloseTo(.85, 3);
+  expect(styles.note.line).toBeCloseTo(1.0732421875, 3);
+  expect(styles.centered.align).toBe("center");
+  await page.screenshot({ path: test.info().outputPath("book-print-elements.png") });
 });
 
 test("shared paper size gives copyright pages print proportions and survives export steps", async ({ page }) => {
@@ -737,6 +804,44 @@ test("shared paper size gives copyright pages print proportions and survives exp
   await expect(modal.locator("[data-editor-export-paper-size-select]")).toHaveValue("us-letter");
   await modal.getByRole("button", { name: "Save", exact: true }).click();
   await expect.poll(() => page.evaluate(() => window.__projectExports.find((call) => call.command === "start_gtms_chapter_pdf_export")?.input.paperSize)).toBe("us-letter");
+});
+
+test("full-page captions wrap below a centered image and contents titles retain their entered case", async ({ page }) => {
+  await mountProjectExport(page);
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  await addSection(modal, "image");
+  const chooser = page.waitForEvent("filechooser");
+  await modal.locator('[data-action="book-image-pick"]').click();
+  await (await chooser).setFiles({ name: "image.png", mimeType: "image/png", buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64") });
+  const caption = modal.getByRole("textbox", { name: "Enter image caption.", exact: true });
+  const first = "An image caption long enough to wrap within the printed text column. ".repeat(4);
+  await caption.fill(first);
+  const geometry = await modal.locator(".book-page--image").evaluate((element) => {
+    const image = element.querySelector(".book-image").getBoundingClientRect(), caption = element.querySelector(".book-page__caption").getBoundingClientRect();
+    const page = element.getBoundingClientRect(), style = getComputedStyle(element);
+    return { gap: caption.top - image.bottom, font: parseFloat(style.fontSize), captionHeight: caption.height,
+      center: (image.top + caption.bottom) / 2, pageCenter: (page.top + page.bottom) / 2 };
+  });
+  expect(geometry.gap / geometry.font).toBeCloseTo(.85, 2);
+  expect(geometry.captionHeight).toBeGreaterThan(geometry.font * 2);
+  expect(Math.abs(geometry.center - geometry.pageCenter)).toBeLessThan(1);
+  await caption.evaluate((element) => {
+    const selection = window.getSelection();
+    selection.selectAllChildren(element);
+    selection.collapseToEnd();
+  });
+  await caption.press("Enter");
+  await page.keyboard.insertText("A second line");
+  const imageId = await modal.locator(".book-item.is-selected").getAttribute("data-book-item");
+  await addSection(modal, "contents");
+  await modal.getByRole("textbox", { name: "Table of Contents", exact: true }).fill("My mixed-case contents title");
+  const saved = await page.evaluate(async (imageId) => {
+    const { state } = await import("/app/state.js");
+    const book = state.editorChapter.exportModal.book;
+    return { caption: book.items.find((item) => item.id === imageId).caption, title: book.items.find((item) => item.id === book.selectedItemId).title };
+  }, imageId);
+  expect(saved.caption).toBe(first + "\nA second line");
+  expect(saved.title).toBe("My mixed-case contents title");
 });
 
 test("book composer saves independent language layouts, sections, and format settings immediately", async ({ page }) => {
