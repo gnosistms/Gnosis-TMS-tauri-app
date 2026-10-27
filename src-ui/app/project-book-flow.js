@@ -1,4 +1,4 @@
-import { startBookRedundancy, cancelBookRedundancy, flushBookRedundancyChoices } from "./project-book-redundancy-flow.js";
+import { startBookRedundancy, cancelBookRedundancy, flushBookRedundancyChoices, retryBookRedundancyChoiceSave } from "./project-book-redundancy-flow.js";
 import { requestBookPreviewFonts } from "./project-book-preview-fonts.js";
 import { beginBookSettingsSync, leaveBookSettingsPage1, acceptRemoteBookSettings } from "./project-book-settings-sync.js";
 import { portableBookOptions } from "./project-book-settings-document.js";
@@ -244,7 +244,7 @@ export async function handleProjectBookAction(action, render) {
     } else if (["ready", "error"].includes(book.redundancy?.status)) {
       try { await flushBookRedundancyChoices(); } catch (error) { update({ error: formatErrorForDisplay(error) }, render); return true; }
       cancelBookRedundancy();
-      update({ page: 3 }, render);
+      update({ page: 3, error: "" }, render);
       if (current.selectedOptionId === "file:pdf") void import("./editor-export-flow.js").then((module) => module.refreshPdfFontInspection(render));
     }
   } }
@@ -256,6 +256,7 @@ export async function handleProjectBookAction(action, render) {
       beginBookSettingsSync(render);
     }
   }
+  else if (action === "book-redundancy-save-retry") retryBookRedundancyChoiceSave();
   else if (action === "book-redundancy-retry") void startBookRedundancy(render);
   else if (action === "book-fonts-retry") requestBookPreviewFonts(render, { force: true });
   else if (action === "book-title-preview-retry") cancelBookTitlePreview();

@@ -13,6 +13,7 @@ function contents(modal) {
     <p class="modal__supporting">Include the first occurrence by default. Check additional occurrences to keep them in this book.</p>
     ${review.stage ? `<p role="status">${escapeHtml(review.stage)}</p>` : ""}
     ${review.error ? `<p class="modal__error" role="alert">${escapeHtml(review.error)}</p>` : ""}
+    ${review.error && review.status === "ready" ? '<button type="button" class="button button--secondary" data-action="book-redundancy-save-retry">Retry saving choices</button>' : ""}
     ${(result.warnings || []).map((warning) => `<p class="modal__supporting" role="status">${escapeHtml(warning)} Unresolved footnotes and images remain included.</p>`).join("")}
     ${review.status === "error" || result.warnings?.length ? '<button type="button" class="button button--secondary" data-action="book-redundancy-retry">Retry checks</button>' : ""}
     <section aria-labelledby="book-redundancy-images"><h3 id="book-redundancy-images">Redundant images</h3>

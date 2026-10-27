@@ -37,7 +37,7 @@ export async function startBookRedundancy(render, operations = {}) {
   if (!current?.book || current.page !== 2 || !project || !team) return;
   const request = { id: crypto.randomUUID(), render, projectId: current.projectId, languageCode: current.languageCode,
     teamId: team.id, login: getActiveStorageLogin(), session: current.book.previewCache, invoke: operations.invoke || invoke,
-    scope: { installationId: team.installationId, projectId: current.projectId, languageCode: current.languageCode } };
+    scope: { login: getActiveStorageLogin() || "", installationId: team.installationId, projectId: current.projectId, languageCode: current.languageCode } };
   active = request;
   publish(request, { status: "loading", stage: "Checking saved results…", error: "" });
   try {
@@ -66,7 +66,7 @@ export async function startBookRedundancy(render, operations = {}) {
     request.started = true;
     // Inventory always sees originals, never last time's export exclusions.
     const bookItems = bookExportItems({ ...current, book: { ...current.book, redundancy: null } });
-    await request.invoke("start_book_redundancy", { input: { requestId: request.id,
+    await request.invoke("start_book_redundancy", { input: { requestId: request.id, login: request.scope.login,
       providerId: selection.providerId || null, modelId: selection.modelId || "",
       export: { ...request.scope, repoName: project.name, chapterId: current.chapterId || "",
         chapterIds: bookItems.filter((item) => item.kind === "chapter").map((item) => item.chapterId),
@@ -83,8 +83,28 @@ export function setBookRedundancyChoice(id, included, operations = {}) {
   state.editorChapter = { ...state.editorChapter, exportModal: { ...current, pdfFontStatus: "idle", pdfFontInspectionKey: "",
     book: { ...current.book, redundancy: { ...current.book.redundancy, choices } },
   } };
-  pendingChoiceSave = pendingChoiceSave.catch(() => {}).then(() => (operations.invoke || request.invoke)("book_redundancy_cache", { input: { ...request.scope, choices } }))
-    .catch((error) => { request.saveError = error; publish(request, { error: formatErrorForDisplay(error) }); });
+  queueChoiceSave(request, choices, operations.invoke || request.invoke);
+}
+
+function queueChoiceSave(request, choices, invokeCommand = request.invoke) {
+  const version = (request.choiceVersion || 0) + 1;
+  request.choiceVersion = version;
+  request.saveError = null;
+  pendingChoiceSave = pendingChoiceSave.catch(() => {}).then(async () => {
+    if (getActiveStorageLogin() !== request.login) return;
+    await invokeCommand("book_redundancy_cache", { input: { ...request.scope, choices } });
+    if (request.choiceVersion === version) {
+      request.saveError = null;
+      if (matches(request) && modal().book.redundancy.error) publish(request, { error: "" });
+    }
+  }).catch((error) => {
+    if (request.choiceVersion !== version) return;
+    request.saveError = error;
+    publish(request, { error: formatErrorForDisplay(error) });
+  });
+}
+export function retryBookRedundancyChoiceSave() {
+  if (active && matches(active) && modal().book.redundancy?.status === "ready") queueChoiceSave(active, modal().book.redundancy.choices);
 }
 
 export async function flushBookRedundancyChoices() { await pendingChoiceSave; if (active?.saveError) throw active.saveError; }

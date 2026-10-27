@@ -86,6 +86,7 @@ struct Cache {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DetectionInput {
+    pub login: String,
     pub request_id: String,
     pub export: ExportChapterFileInput,
     pub provider_id: Option<AiProviderId>,
@@ -95,6 +96,7 @@ pub(crate) struct DetectionInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CacheInput {
+    pub login: String,
     pub installation_id: i64,
     pub project_id: String,
     pub language_code: String,
@@ -122,15 +124,22 @@ pub(super) fn field_signature(field: &StoredFieldValue) -> Result<String, String
         .map_err(|e| e.to_string())?,
     ))
 }
+fn checked_login(actual: &str, expected: &str) -> Result<String, String> {
+    if expected.trim().is_empty() || !actual.eq_ignore_ascii_case(expected.trim()) {
+        return Err("The signed-in account changed during book review.".into());
+    }
+    Ok(actual.to_lowercase())
+}
 fn scope_root(
     app: &AppHandle,
+    expected_login: &str,
     installation: i64,
     project: &str,
     language: &str,
 ) -> Result<PathBuf, String> {
-    let login = crate::broker_auth_storage::load_broker_auth_session_internal(app)?
-        .map(|s| s.login.to_lowercase())
+    let session = crate::broker_auth_storage::load_broker_auth_session_internal(app)?
         .ok_or("Sign in before preparing a book.")?;
+    let login = checked_login(&session.login, expected_login)?;
     let key = digest(
         serde_json::to_vec(&json!([login, installation, project, language]))
             .map_err(|e| e.to_string())?,
@@ -160,18 +169,24 @@ fn write_json(root: &Path, name: &str, value: &impl Serialize) -> Result<(), Str
 pub(crate) fn cache(app: &AppHandle, input: CacheInput) -> Result<Value, String> {
     let root = scope_root(
         app,
+        &input.login,
         input.installation_id,
         &input.project_id,
         &input.language_code,
     )?;
-    if let Some(choices) = input.choices {
-        write_json(&root, "choices.json", &choices)?;
+    cache_at(&root, input.choices)
+}
+fn cache_at(root: &Path, choices: Option<BTreeMap<String, bool>>) -> Result<Value, String> {
+    if let Some(choices) = choices {
+        write_json(root, "choices.json", &choices)?;
+        // Checkbox writes must not parse/transfer potentially large evidence.
+        return Ok(json!({"choices":choices}));
     }
     let choices = fs::read(root.join("choices.json"))
         .ok()
-        .and_then(|b| serde_json::from_slice::<BTreeMap<String, bool>>(&b).ok())
+        .and_then(|bytes| serde_json::from_slice::<BTreeMap<String, bool>>(&bytes).ok())
         .unwrap_or_default();
-    Ok(json!({"result":read_cache(&root).snapshot,"choices":choices}))
+    Ok(json!({"result":read_cache(root).snapshot,"choices":choices}))
 }
 
 fn uploaded_revision(repo: &Path, image: Option<&StoredFieldImage>) -> Option<String> {
@@ -696,7 +711,13 @@ fn run(app: &AppHandle, input: &DetectionInput, cancel: &AtomicBool) -> Result<D
         .project_id
         .as_deref()
         .ok_or("Choose a project to review.")?;
-    let root = scope_root(app, scope.installation_id, project, &scope.language_code)?;
+    let root = scope_root(
+        app,
+        &input.login,
+        scope.installation_id,
+        project,
+        &scope.language_code,
+    )?;
     static LOCKS: OnceLock<Mutex<BTreeMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
     let lock = {
         let mut locks = LOCKS
@@ -880,7 +901,14 @@ fn run(app: &AppHandle, input: &DetectionInput, cancel: &AtomicBool) -> Result<D
                 }
             }
             let _=app.emit("book-redundancy-progress",json!({"requestId":input.request_id,"stage":format!("Checking footnote meanings: {} candidates remaining",candidates.len()-done)}));
-            if scope_root(app, scope.installation_id, project, &scope.language_code)? != root {
+            if scope_root(
+                app,
+                &input.login,
+                scope.installation_id,
+                project,
+                &scope.language_code,
+            )? != root
+            {
                 return Err("The signed-in account changed during book review.".into());
             }
             let compared =
@@ -1282,5 +1310,30 @@ mod tests {
             &BTreeSet::from(["New image unavailable".into()])
         )
         .is_none());
+    }
+
+    #[test]
+    fn queued_cache_access_requires_the_initiating_account() {
+        assert_eq!(
+            checked_login("Alice", "alice").expect("same account"),
+            "alice"
+        );
+        assert!(checked_login("Bob", "alice").is_err());
+        assert!(checked_login("Alice", "").is_err());
+    }
+    #[test]
+    fn saving_choices_does_not_return_or_decode_detection_evidence() {
+        let folder = std::env::temp_dir().join(format!("redundancy-save-{}", uuid::Uuid::now_v7()));
+        fs::create_dir_all(&folder).expect("folder");
+        fs::create_dir(folder.join("evidence.json")).expect("unreadable evidence");
+        let result =
+            cache_at(&folder, Some(BTreeMap::from([("note".into(), false)]))).expect("save");
+        assert!(result.get("result").is_none());
+        assert_eq!(result["choices"]["note"], false);
+        let saved: BTreeMap<String, bool> =
+            serde_json::from_slice(&fs::read(folder.join("choices.json")).expect("read choices"))
+                .expect("choices");
+        assert!(!saved["note"]);
+        fs::remove_dir_all(folder).expect("cleanup");
     }
 }
