@@ -553,9 +553,11 @@ test.describe("projects page virtualization", () => {
     }, selectSelector);
 
     // A full render arriving while the select is engaged must not replace it.
+    // The render adds a project: a render that changes nothing is skipped
+    // outright and would leave nothing to flush.
     await page.evaluate(async (fixtureOptions) => {
       await window.__gnosisDebug.mountProjectsFixture(fixtureOptions);
-    }, { projectCount: 3, filesPerProject: 4, glossaryCount: 2, expandedProjectIds: ["fixture-project-001"] });
+    }, { projectCount: 4, filesPerProject: 4, glossaryCount: 2, expandedProjectIds: ["fixture-project-001"] });
     const heldState = await page.evaluate((selector) => {
       const element = document.querySelector(selector);
       return {
@@ -574,6 +576,44 @@ test.describe("projects page virtualization", () => {
       (selector) => document.querySelector(selector)?.__holdMarker === undefined,
       selectSelector,
     );
+  });
+
+  test("a full render that changes nothing leaves the page and scroll position in place", async ({ page }) => {
+    const fixtureOptions = {
+      projectCount: 40,
+      filesPerProject: 10,
+      expandedProjectIds: ["fixture-project-001", "fixture-project-002"],
+    };
+    await mountProjectsFixture(page, fixtureOptions);
+    await page.evaluate(() => {
+      const body = document.querySelector('[data-screen="projects"] .page-body');
+      body.scrollTop = 900;
+      body.__unchangedMarker = true;
+    });
+    await page.waitForTimeout(120);
+    const scrollTopBefore = await page.evaluate(
+      () => document.querySelector('[data-screen="projects"] .page-body').scrollTop,
+    );
+    expect(scrollTopBefore).toBeGreaterThan(0);
+
+    // Same content as new objects, as a background sync would publish it.
+    await page.evaluate(async (options) => {
+      await window.__gnosisDebug.mountProjectsFixture(options);
+    }, fixtureOptions);
+    const afterUnchanged = await page.evaluate(() => {
+      const body = document.querySelector('[data-screen="projects"] .page-body');
+      return { sameBody: body?.__unchangedMarker === true, scrollTop: body?.scrollTop };
+    });
+    expect(afterUnchanged.sameBody).toBe(true);
+    expect(afterUnchanged.scrollTop).toBe(scrollTopBefore);
+
+    // A real change still renders.
+    await page.evaluate(async (options) => {
+      await window.__gnosisDebug.mountProjectsFixture({ ...options, projectCount: 41 });
+    }, fixtureOptions);
+    const replaced = await page.evaluate(() =>
+      document.querySelector('[data-screen="projects"] .page-body')?.__unchangedMarker === undefined);
+    expect(replaced).toBe(true);
   });
 
   test("expand and collapse work on virtualized rows", async ({ page }) => {
