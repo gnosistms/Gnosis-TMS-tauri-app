@@ -3687,13 +3687,10 @@ mod tests {
             .unwrap()
             .item
             .include_h1_headings = true;
-        parts[4].document.blocks.insert(
-            0,
-            ExportBlock::Text {
-                text_style: "heading1".into(),
-                text: "Original source title".into(),
-            },
-        );
+        parts[4].document.blocks[0] = ExportBlock::Text {
+            text_style: "heading1".into(),
+            text: "Original source title".into(),
+        };
         parts[4].item.title_override = Some("Chapter Two".into());
         parts[4].document = super::super::chapter_export::apply_book_chapter_title(
             parts[4].document.clone(),

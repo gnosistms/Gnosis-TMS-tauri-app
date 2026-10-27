@@ -152,7 +152,7 @@ test("background project refresh draws once and retains an unrelated export dial
   const modal = page.getByRole("dialog", { name: "Export project", exact: true });
   await expect(modal.locator(".book-page--chapter")).toBeVisible();
   await addSection(modal, "title");
-  const title = modal.locator('[data-book-field="title"]');
+  const title = modal.locator('.book-page--title [data-book-field="title"]');
   await title.fill("My draft title");
   await title.evaluate((element) => element.setSelectionRange(3, 8));
   await page.evaluate(async () => {
@@ -161,7 +161,7 @@ test("background project refresh draws once and retains an unrelated export dial
     window.__refreshProjects = structuredClone(state.projects);
     window.__refreshPage = document.querySelector("#app").firstElementChild;
     window.__refreshModal = document.querySelector('[data-modal-dialog="editor-export"]');
-    window.__refreshTitle = document.querySelector('[data-book-field="title"]');
+    window.__refreshTitle = document.querySelector('.book-page--title [data-book-field="title"]');
     const scroll = document.querySelector(".book-composer__page-scroll");
     scroll.scrollTop = 72;
     window.__refreshScroll = scroll.scrollTop;
@@ -270,7 +270,8 @@ test("book contents include H1 headings only when the saved checkbox is selected
   await checkbox.check();
   await expect(modal.locator(".book-contents__subheading")).toHaveCount(3);
   await expect(modal.locator(".book-contents")).toContainText("Inside chapter 0");
-  await expect(modal.locator(".book-contents")).not.toContainText("Promoted title");
+  await expect(modal.locator(".book-contents__subheading")).toHaveText(["Inside chapter 0", "Inside chapter 1", "Inside chapter 2"]);
+  await expect(modal.locator(".book-contents")).toContainText("1. Promoted title 0");
   await expect(modal.locator(".book-contents")).not.toContainText("Second-level heading");
   await modal.locator('[data-action="book-exclude:fixture-chapter-0-2"]').click();
   await expect(modal.locator(".book-contents__subheading")).toHaveCount(2);
@@ -304,11 +305,13 @@ test("chapter export titles use opening H1s, edit inline, and persist independen
   await expect(first).toBeFocused();
   await expect(first).toHaveValue("Custom English Title");
   await expect(modal.locator(".book-page--chapter h1").first()).toHaveText("Custom English Title");
+  await expect(modal.locator(".book-chapter__number")).toHaveText("1");
   await expect(modal.locator(".book-page--chapter")).not.toContainText("English opening heading");
   await second.click();
   await expect(second).toBeFocused();
   await second.fill("A renamed chapter");
   await expect(modal.locator(".book-page--chapter h1").first()).toHaveText("A renamed chapter");
+  await expect(modal.locator(".book-chapter__number")).toHaveText("2");
   await chooseBookOption(modal, "editor-export-language", "Vietnamese (vi)");
   await expect(first).toHaveValue("Tiêu đề tiếng Việt");
   await first.fill("Tên chương tùy chỉnh");
@@ -316,8 +319,8 @@ test("chapter export titles use opening H1s, edit inline, and persist independen
   await expect(first).toHaveValue("Custom English Title");
   await expect(second).toHaveValue("A renamed chapter");
   await addSection(modal, "contents");
-  await expect(modal.locator(".book-contents")).toContainText("Custom English Title");
-  await expect(modal.locator(".book-contents")).toContainText("A renamed chapter");
+  await expect(modal.locator(".book-contents")).toContainText("1. Custom English Title");
+  await expect(modal.locator(".book-contents")).toContainText("2. A renamed chapter");
   await modal.getByRole("button", { name: "Cancel", exact: true }).click();
   await page.locator('[data-action="export-project:fixture-project-001"]').click();
   await expect(first).toHaveValue("Custom English Title");
