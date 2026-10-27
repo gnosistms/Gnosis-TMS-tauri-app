@@ -379,9 +379,9 @@ function patchFixtureEditorRowState(rowId, updates = {}) {
   return rowChanged;
 }
 
-// Key of the last full projects-page render; null after any other screen.
+// Key of the latest projects-page render, including scoped book updates.
 let lastProjectsRenderKey = null;
-const PROJECTS_SCOPED_RENDER_SCOPES = new Set(["status-surface", "app-update-progress"]);
+const PROJECTS_SCOPED_RENDER_SCOPES = new Set(["status-surface", "app-update-progress", "book-redundancy", "project-book-preview"]);
 
 function currentProjectsRenderKey() {
   return buildProjectsRenderKey({
@@ -816,8 +816,14 @@ function renderProjectsBackgroundSurfaces() {
 }
 
 function renderWithOptionsImpl(options = {}) {
-  if (options.scope === "book-redundancy" && updateBookRedundancyView(app, state)) return;
-  if (options.scope === "project-book-preview" && renderProjectBookPreview(app, state)) return;
+  const bookUpdated = options.scope === "book-redundancy" ? updateBookRedundancyView(app, state)
+    : options.scope === "project-book-preview" ? renderProjectBookPreview(app, state) : false;
+  if (bookUpdated) {
+    // A scoped book update changes the visible export dialog too. Keep the
+    // projects no-op key current so reverting an edit cannot skip its repaint.
+    lastProjectsRenderKey = state.screen === "projects" ? currentProjectsRenderKey() : null;
+    return;
+  }
   if (deferProjectsBackgroundRender(app, state, options)) {
     renderProjectsBackgroundSurfaces();
     return;

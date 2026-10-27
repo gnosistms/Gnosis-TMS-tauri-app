@@ -964,6 +964,9 @@ test("full-page captions wrap below a centered image and contents titles retain 
   const chooser = page.waitForEvent("filechooser");
   await modal.locator('[data-action="book-image-pick"]').click();
   await (await chooser).setFiles({ name: "image.png", mimeType: "image/png", buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64") });
+  // setFiles completes before the asynchronous import replaces the empty page.
+  // Measure the imported page, rather than a handle detached by its completion.
+  await expect(modal.getByRole("img", { name: "Full page image", exact: true })).toBeVisible();
   const caption = modal.getByRole("textbox", { name: "Enter image caption.", exact: true });
   const first = "An image caption long enough to wrap within the printed text column. ".repeat(4);
   await caption.fill(first);
