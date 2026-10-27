@@ -38,6 +38,9 @@ function itemRow(item, modal) {
 function field(name, value, placeholder, className = "") {
   return `<input class="book-page__input ${className}" type="text" data-book-field="${name}" aria-label="${placeholder}" placeholder="${placeholder}" value="${escapeHtml(value || "")}" />`;
 }
+function titleField(value) {
+  return `<div class="book-page__input book-page__title" contenteditable="plaintext-only" role="textbox" aria-label="Title" aria-multiline="true" data-book-field="title" data-book-empty="${!value}" data-placeholder="Title">${escapeHtml(value || "")}</div>`;
+}
 function imageEditor(item, logo = false) {
   const src = bookImageSrc(item.image);
   return `<div class="book-image ${logo ? "book-image--logo" : ""}" data-book-image-dropzone>
@@ -62,7 +65,7 @@ export function renderSelectedBookPage(modal) {
     return `<article class="book-page book-page--chapter translate-preview" aria-label="Chapter preview"><header class="book-chapter__header"><span class="book-chapter__number">${number}</span><h1>${escapeHtml(title || bookItemTitle(item))}</h1>${flourish}</header>${html.replace(/ data-(?:preview-block|row-id|tooltip)="[^"]*"/g, "")}</article>`;
   }
   let body = "";
-  if (item.kind === "title") body = `<div class="book-page__title-group">${field("title", item.title, "Title", "book-page__title")}${field("subtitle", item.subtitle, "Subtitle", "book-page__subtitle")}</div><div class="book-page__title-ornament">${flourish}</div><div class="book-page__contributors">${field("author", item.author, "Author", "book-page__author")}${field("translator", item.translator, "Translator", "book-page__translator")}</div>${imageEditor(item, true)}`;
+  if (item.kind === "title") body = `<div class="book-page__title-group">${titleField(item.title)}${field("subtitle", item.subtitle, "Subtitle", "book-page__subtitle")}</div><div class="book-page__title-ornament">${flourish}</div><div class="book-page__contributors">${field("author", item.author, "Author", "book-page__author")}${field("translator", item.translator, "Translator", "book-page__translator")}</div>${imageEditor(item, true)}`;
 
   if (item.kind === "image") body = `${imageEditor(item)}${field("caption", item.caption, "Enter image caption.", "book-page__caption")}`;
   if (item.kind === "contents") body = `${field("title", item.title, "Table of Contents", "book-page__contents-title")}<ol class="book-contents">${bookContentsEntries(book.items, book.contentsHeadings, item.includeH1Headings).map((entry) => `<li class="${entry.level ? "book-contents__subheading" : ""}"><span>${escapeHtml(entry.title)}</span><span class="book-contents__leader"></span></li>`).join("")}</ol><p class="book-contents__hint">Page numbers are calculated from the final layout at export.</p>`;

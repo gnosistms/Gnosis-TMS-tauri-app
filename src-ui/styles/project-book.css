@@ -39,10 +39,12 @@
 .book-page__input { display: block; border: 0; border-bottom: 1px solid transparent; background: transparent; color: inherit; font: inherit; width: 100%; text-align: center; padding: 8px 0; outline-offset: 3px; }
 .book-page__input:hover, .book-page__input:focus { border-bottom-color: #b3864a55; }
 .book-page__input::placeholder, .book-page textarea::placeholder { color: #9d8e7c; opacity: 1; }
-.book-page--title { display: flex; flex-direction: column; text-align: center; }
-.book-page__title-group { margin-top: 45px; }
-.book-page__title { font-family: "Alegreya", "Noto Serif", serif; font-size: 32px; line-height: 1.15; font-weight: 500; }
-.book-page__subtitle { font-family: "Alegreya", "Noto Serif", serif; font-size: 19px; }
+.book-page--title { display: flex; flex-direction: column; text-align: center; word-spacing: normal; }
+.book-page__title-group { margin-top: 45px; container-type: inline-size; }
+/* Keep the 30pt/14pt hierarchy proportional to the A5 preview's text column. */
+.book-page__title { font-family: "Alegreya", "Noto Serif", serif; font-size: 32px; font-size: 9.9cqw; line-height: 1.2; font-weight: 500; white-space: pre-wrap; text-wrap: balance; overflow-wrap: anywhere; min-height: 1.2em; }
+.book-page__title[data-book-empty="true"]::before { content: attr(data-placeholder); color: #9d8e7c; pointer-events: none; }
+.book-page__subtitle { font-family: "Alegreya", "Noto Serif", serif; font-size: 15px; font-size: 4.62cqw; }
 .book-page__contributors { margin: 45px 0; }
 .book-page__author { font-size: 19px; }
 .book-page__translator { font-size: 15px; }

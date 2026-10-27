@@ -165,7 +165,14 @@ test("background project refresh draws once and retains an unrelated export dial
   await addSection(modal, "title");
   const title = modal.locator('.book-page--title [data-book-field="title"]');
   await title.fill("My draft title");
-  await title.evaluate((element) => element.setSelectionRange(3, 8));
+  await title.evaluate((element) => {
+    const range = document.createRange();
+    range.setStart(element.firstChild, 3);
+    range.setEnd(element.firstChild, 8);
+    const selection = getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  });
   await page.evaluate(async () => {
     const { state } = await import("/app/state.js");
     const { createProjectsQuerySnapshot, applyProjectsQuerySnapshotToState } = await import("/app/project-query.js");
@@ -201,7 +208,7 @@ test("background project refresh draws once and retains an unrelated export dial
     draws: window.__refreshDraws,
     page: document.querySelector("#app").firstElementChild === window.__refreshPage,
     title: document.activeElement === window.__refreshTitle,
-    selection: [window.__refreshTitle.selectionStart, window.__refreshTitle.selectionEnd],
+    selection: [getSelection().anchorOffset, getSelection().focusOffset],
   }))).toEqual({ draws: { page: 0, modal: 0 }, page: true, title: true, selection: [3, 8] });
 
   // No net change, even though intermediate snapshots changed this project.
@@ -218,10 +225,10 @@ test("background project refresh draws once and retains an unrelated export dial
     draws: window.__refreshDraws,
     sameDialog: document.querySelector('[data-modal-dialog="editor-export"]') === window.__refreshModal,
     title: document.activeElement === window.__refreshTitle,
-    selection: [window.__refreshTitle.selectionStart, window.__refreshTitle.selectionEnd],
+    selection: [getSelection().anchorOffset, getSelection().focusOffset],
     scrollUnchanged: document.querySelector(".book-composer__page-scroll").scrollTop === window.__refreshScroll,
   }))).toEqual({ draws: { page: 1, modal: 0 }, sameDialog: true, title: true, selection: [3, 8], scrollUnchanged: true });
-  await expect(title).toHaveValue("My draft title");
+  await expect(title).toHaveText("My draft title");
 
   // This project changes: one final dialog redraw, with the draft preserved.
   await page.evaluate(() => {
@@ -231,7 +238,7 @@ test("background project refresh draws once and retains an unrelated export dial
     window.__publishProjectsRefresh(false, "active");
   });
   expect(await page.evaluate(() => window.__refreshDraws)).toEqual({ page: 2, modal: 1 });
-  await expect(title).toHaveValue("My draft title");
+  await expect(title).toHaveText("My draft title");
   await modal.getByRole("button", { name: "Next", exact: true }).click();
   await expect(modal.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
 });
@@ -358,6 +365,40 @@ test("editing adjacent chapter titles keeps focus and long-list scroll through p
   expect(await readList()).toEqual({ sameList: true, sameInput: true, scrollTop: before });
   await expect(first).toHaveValue("Edited chapter 25");
   await expect(next).toHaveValue("Edited chapter 26");
+});
+
+test("title pages balance wrapping automatically and keep the smaller subtitle hierarchy", async ({ page }) => {
+  await mountProjectExport(page);
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  await addSection(modal, "title");
+  const title = modal.getByRole("textbox", { name: "Title", exact: true });
+  await title.fill("Hôn Nhân Hoàn Hảo");
+  await modal.getByRole("textbox", { name: "Subtitle", exact: true }).fill("Bí mật về tình yêu và tâm linh");
+  await title.blur();
+  const layout = await title.evaluate((element) => {
+    const text = element.firstChild;
+    let offset = 0;
+    const tops = text.textContent.split(" ").map((word) => {
+      const range = document.createRange();
+      range.setStart(text, offset);
+      range.setEnd(text, offset + word.length);
+      offset += word.length + 1;
+      return Math.round(range.getBoundingClientRect().top);
+    });
+    return {
+      tops, alignment: getComputedStyle(element).textAlign,
+      ratio: parseFloat(getComputedStyle(document.querySelector(".book-page__subtitle")).fontSize) / parseFloat(getComputedStyle(element).fontSize),
+    };
+  });
+  expect(layout.tops[0]).toBe(layout.tops[1]);
+  expect(layout.tops[2]).toBe(layout.tops[3]);
+  expect(layout.tops[2]).toBeGreaterThan(layout.tops[0]);
+  expect(layout.alignment).toBe("center");
+  expect(layout.ratio).toBeCloseTo(14 / 30, 2);
+  await page.screenshot({ path: test.info().outputPath("balanced-title-page.png") });
+  await modal.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.locator('[data-action="export-project:fixture-project-001"]').click();
+  await expect(title).toHaveText("Hôn Nhân Hoàn Hảo");
 });
 
 test("Enter finishes and saves a chapter title without advancing the export modal", async ({ page }) => {
@@ -549,7 +590,7 @@ test("book composer saves independent language layouts, sections, and format set
   await expect(modal.getByRole("textbox", { name: "Author", exact: true })).toHaveValue("An Author");
   await modal.getByRole("button", { name: "Cancel", exact: true }).click();
   await page.locator('[data-action="export-project:fixture-project-001"]').click();
-  await expect(modal.getByRole("textbox", { name: "Title", exact: true })).toHaveValue("English Book");
+  await expect(modal.getByRole("textbox", { name: "Title", exact: true })).toHaveText("English Book");
   await chooseBookOption(modal, "editor-export-language", "Vietnamese (vi)");
   await expect(included.last()).toHaveAttribute("data-book-item", tocId);
   await page.screenshot({ path: test.info().outputPath("book-composer.png") });

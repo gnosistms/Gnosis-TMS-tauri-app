@@ -1612,13 +1612,56 @@ const BOOK_LAYOUT_RULES: &str = r#"
 }
 "#;
 
+// Balance any title's rendered content, including inline styles and scripts with
+// no spaces. Keep the full-width line count, then find the narrowest centered
+// column that preserves it. Single-line and deliberately broken titles retain
+// their natural layout; no title-specific strings or inserted breaks are used.
+const BOOK_TITLE_BALANCE_RULE: &str = r#"
+#let gnosis-balanced-title(words, body) = layout(region => {
+  let widest = 0pt
+  for word in words {
+    let word = upper(word)
+    for sample in (word, strong(word), emph(word), strong(emph(word))) {
+      let natural-word = measure(sample)
+      // Do not shrink scripts that can wrap naturally without word spaces.
+      if measure(sample, width: 1pt).height <= natural-word.height + 0.1pt {
+        widest = calc.max(widest, natural-word.width)
+      }
+    }
+  }
+  set text(size: if widest > region.width { (region.width / widest) * 1em } else { 1em })
+  let natural = measure(body)
+  let full = measure(block(width: region.width, body))
+  if full.height <= natural.height + 0.1pt {
+    if natural.width > region.width {
+      let factor = (region.width / natural.width) * 100%
+      scale(x: factor, y: factor, reflow: true, body)
+    } else {
+      body
+    }
+  } else {
+    let low = 0pt
+    let high = region.width
+    for _ in range(14) {
+      let middle = (low + high) / 2
+      if measure(block(width: middle, body)).height <= full.height + 0.1pt {
+        high = middle
+      } else {
+        low = middle
+      }
+    }
+    align(center, block(width: calc.min(region.width, high + 0.2pt), body))
+  }
+})
+"#;
+
 fn render_typst_book(
     document: &ExportDocument,
     image_paths: &HashMap<String, PreparedTypstImage>,
     options: &PdfWorkspacePreparationOptions<'_>,
     cancelled: &AtomicBool,
 ) -> Result<String, String> {
-    let mut source = BOOK_LAYOUT_RULES.to_string();
+    let mut source = format!("{BOOK_LAYOUT_RULES}{BOOK_TITLE_BALANCE_RULE}");
     let mut body_started = false;
     let mut chapter_number = 0usize;
     let title_page = document
@@ -1702,10 +1745,14 @@ fn render_typst_book(
                 item.include_h1_headings
             ));
         } else if item.kind == "title" {
-            source.push_str(&format!("#align(center)[\n#v(0.2fr)\n#text(font: ({heading_fonts}), size: 30pt, weight: \"medium\")[#upper[{}]]\n", render_inline_typst(&item.title, false)));
+            let title_words = inline_visible_text(&item.title)
+                .split_whitespace()
+                .map(|word| format!("{},", typst_string(word)))
+                .collect::<String>();
+            source.push_str(&format!("#align(center)[\n#set par(justify: false, first-line-indent: 0pt, linebreaks: \"optimized\")\n#set text(spacing: 100%, hyphenate: false)\n#v(0.2fr)\n#block(width: 100%)[\n#set text(font: ({heading_fonts}), size: 30pt, weight: \"medium\")\n#set par(leading: 0.6em, spacing: 0pt, linebreaks: \"simple\")\n#gnosis-balanced-title(({title_words}))[#upper[{}]]\n]\n", render_inline_typst(&item.title, false)));
             if !item.subtitle.trim().is_empty() {
                 source.push_str(&format!(
-                    "#v(1em)\n#text(font: ({heading_fonts}), size: 18pt)[#upper[{}]]\n",
+                    "#v(1em)\n#text(font: ({heading_fonts}), size: 14pt)[#upper[{}]]\n",
                     render_inline_typst(&item.subtitle, false)
                 ));
             }
@@ -3612,6 +3659,97 @@ mod tests {
         };
         // Promoting it would strip the heading and orphan the footnote.
         assert_eq!(leading_heading_title(&document), None);
+    }
+
+    #[test]
+    fn title_pages_balance_different_titles_with_normal_spacing() {
+        use super::super::book_export::{BookItemInput, BookPart};
+        let workspace = pdf_workspace().unwrap();
+        let _cleanup = WorkspaceCleanup(workspace.clone());
+        let titles = [
+            "Hôn Nhân Hoàn Hảo",
+            "A Journey Through the World of Ideas",
+            "The Art of Change",
+            "Über außergewöhnliche Wege und neue Möglichkeiten",
+            "A longer title about changing the way we see the world",
+            "First line\nSecond line",
+            "First soft\u{2028}Second soft",
+            "The <i>Art</i> of Change",
+            "Supercalifragilisticexpialidocious",
+        ];
+        let document = ExportDocument {
+            title: "Title layout examples".into(),
+            language_code: "vi".into(),
+            blocks: Vec::new(),
+            book_parts: titles
+                .iter()
+                .enumerate()
+                .map(|(index, title)| BookPart {
+                    item: BookItemInput {
+                        id: format!("title-{index}"),
+                        kind: "title".into(),
+                        title: (*title).into(),
+                        subtitle: "A subtitle about love and the inner life".into(),
+                        author: "Example Author".into(),
+                        translator: "Example Translator".into(),
+                        ..Default::default()
+                    },
+                    document: ExportDocument {
+                        title: (*title).into(),
+                        language_code: "vi".into(),
+                        blocks: Vec::new(),
+                        book_parts: Vec::new(),
+                    },
+                })
+                .collect(),
+        };
+        let session = begin_pdf_image_cache(&test_image_cache_scope("title-layout"));
+        let options = PdfWorkspacePreparationOptions {
+            paper_size: "a5",
+            footnote_links_as_plain_text: true,
+            image_cache_session: &session,
+        };
+        prepare_typst_workspace(
+            None,
+            "",
+            &workspace,
+            &document,
+            &options,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let source = fs::read_to_string(workspace.join("chapter.typ")).unwrap();
+        assert_eq!(
+            source.matches("#gnosis-balanced-title(").count(),
+            titles.len()
+        );
+        assert!(source.contains("size: 14pt"));
+        let (Some(binary), Some(fonts)) = (
+            std::env::var_os("GNOSIS_TYPST_BIN"),
+            std::env::var_os("GNOSIS_TYPST_SMOKE_FONT_DIR"),
+        ) else {
+            return;
+        };
+        let pdf = workspace.join("titles.pdf");
+        let output = std::process::Command::new(binary)
+            .args(["compile", "--ignore-system-fonts", "--font-path"])
+            .arg(fonts)
+            .arg("--root")
+            .arg(&workspace)
+            .arg("--package-path")
+            .arg(workspace.join("packages"))
+            .arg(workspace.join("chapter.typ"))
+            .arg(&pdf)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if let Some(destination) = std::env::var_os("GNOSIS_TITLE_SMOKE_OUTPUT") {
+            fs::copy(pdf, destination).unwrap();
+        }
     }
 
     #[test]
