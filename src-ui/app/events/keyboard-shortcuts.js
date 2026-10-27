@@ -100,9 +100,11 @@ export function shouldInsertHoveredGlossaryFootnote(event, hasActiveRequest) {
     return false;
   }
   const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
+  const hasModifier = isMacPlatform()
+    ? event.metaKey && !event.ctrlKey
+    : event.ctrlKey && !event.metaKey;
   return key === "f"
-    && event.ctrlKey
-    && !event.metaKey
+    && hasModifier
     && !event.altKey
     && !event.shiftKey;
 }

@@ -135,25 +135,26 @@ test("keyboard shortcuts leave browser find alone when no page search input exis
   assert.equal(event.prevented, false);
 });
 
-test("hovered glossary footnote insertion uses Ctrl+F on every platform", () => {
-  navigator.platform = "MacIntel";
-
-  assert.equal(
-    shouldInsertHoveredGlossaryFootnote(
-      keyboardEvent({ metaKey: false, ctrlKey: true }),
-      true,
-    ),
-    true,
-  );
-  assert.equal(shouldInsertHoveredGlossaryFootnote(keyboardEvent(), true), false);
-  assert.equal(
-    shouldInsertHoveredGlossaryFootnote(
-      keyboardEvent({ metaKey: false, ctrlKey: true }),
-      false,
-    ),
-    false,
-  );
-});
+for (const { platform, modifiers } of [
+  { platform: "MacIntel", modifiers: { metaKey: true, ctrlKey: false } },
+  { platform: "Win32", modifiers: { metaKey: false, ctrlKey: true } },
+  { platform: "Linux x86_64", modifiers: { metaKey: false, ctrlKey: true } },
+]) {
+  test(`hovered glossary footnote insertion uses the primary modifier on ${platform}`, () => {
+    navigator.platform = platform;
+    assert.equal(shouldInsertHoveredGlossaryFootnote(keyboardEvent(modifiers), true), true);
+    assert.equal(shouldInsertHoveredGlossaryFootnote(keyboardEvent({ ...modifiers, key: "F" }), true), true);
+    assert.equal(shouldInsertHoveredGlossaryFootnote(keyboardEvent(modifiers), false), false);
+    for (const excluded of [
+      { metaKey: !modifiers.metaKey, ctrlKey: !modifiers.ctrlKey },
+      { metaKey: true, ctrlKey: true },
+      { altKey: true }, { shiftKey: true }, { repeat: true },
+      { isComposing: true }, { defaultPrevented: true }, { key: "g" },
+    ]) {
+      assert.equal(shouldInsertHoveredGlossaryFootnote(keyboardEvent({ ...modifiers, ...excluded }), true), false);
+    }
+  });
+}
 
 function inlineStyleShortcutFixture({ buttonAvailable = true, disabled = false, readOnly = false, editorField = true, modalOpen = false, srt = false, key = "i", style = "italic" } = {}) {
   const originalChapter = state.editorChapter;
