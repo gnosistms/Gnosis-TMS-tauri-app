@@ -1,6 +1,6 @@
 import { bookTextParts } from "./project-book-text.js";
 import { extractVellumLeadingHeadingTitle } from "./vellum-text-editor-content.js";
-import { bookExportItems, bookContentsItems, bookItemTitle } from "./project-book-model.js";
+import { bookExportItems, bookContentsItems, bookItemTitle, bookChapterDefaultTitle, bookChapterPreviewBlocks } from "./project-book-model.js";
 import { state } from "./state.js";
 import { invoke } from "./runtime.js";
 import { compareFilesByName } from "./projects-list-model.js";
@@ -37,10 +37,10 @@ export async function loadProjectExportBlocks(modal, operations = {}) {
   }
   await (operations.waitForRepoQueue ?? waitForRepoWriteQueueIdle)(projectRepoScope({ team, project }));
   const blocks = [];
+  const chapterDocuments = new Map();
   const items = modal.book ? bookExportItems(modal) : modal.chapterIds.map((chapterId) => ({ kind: "chapter", chapterId, id: chapterId }));
   for (const item of items) {
     if (item.kind !== "chapter") {
-      blocks.push(...bookSectionPreviewBlocks(item, modal));
       continue;
     }
     const chapterId = item.chapterId;
@@ -57,6 +57,11 @@ export async function loadProjectExportBlocks(modal, operations = {}) {
       throw new Error("A project file was deleted or no longer has the selected language. Reopen Export to update the file list.");
     }
     const chapterBlocks = buildEditorPreviewDocument(normalizeEditorRows(payload.rows), modal.languageCode);
+    if (modal.book) {
+      chapterDocuments.set(item.id, bookChapterPreviewBlocks(item, chapterBlocks, modal.languageCode).map((block) => ({ ...block, bookItemId: item.id })));
+      item.title = item.titleOverride || bookChapterDefaultTitle(chapterBlocks, item.title);
+      continue;
+    }
     if (!extractVellumLeadingHeadingTitle(chapterBlocks)) blocks.push({
       kind: "text", rowId: `chapter-title:${chapterId}`, languageCode: modal.languageCode,
       textStyle: "heading1", text: payload.title || payload.fileTitle
@@ -65,14 +70,14 @@ export async function loadProjectExportBlocks(modal, operations = {}) {
     });
     blocks.push(...chapterBlocks.map((block) => ({ ...block, bookItemId: item.id })));
   }
-  return blocks;
+  return modal.book ? items.flatMap((item) => item.kind === "chapter" ? chapterDocuments.get(item.id) : bookSectionPreviewBlocks(item, modal, items)) : blocks;
 }
 
-function bookSectionPreviewBlocks(item, modal) {
+function bookSectionPreviewBlocks(item, modal, contentsItems) {
   const text = (value, textStyle = "paragraph") => ({ kind: "text", rowId: item.id, languageCode: modal.languageCode, text: value || "", textStyle, footnotes: [] });
   const result = [];
   if (item.kind === "title") result.push(text(item.title, "heading1"), text(item.subtitle, "heading2"), text(item.author, "centered"), text(item.translator, "centered"));
-  if (item.kind === "contents") result.push(text(item.title, "heading1"), ...bookContentsItems(modal.book.items).map((entry) => text(bookItemTitle(entry))));
+  if (item.kind === "contents") result.push(text(item.title, "heading1"), ...bookContentsItems(contentsItems || modal.book.items).map((entry) => text(bookItemTitle(entry))));
   if (["copyright", "dedication"].includes(item.kind)) result.push(...bookTextParts(item.text).map((part) => part.kind === "separator"
     ? { kind: "separator", rowId: item.id, languageCode: modal.languageCode }
     : text(part.text.replaceAll("\u2028", "\n"), item.kind === "dedication" ? "centered" : "paragraph")));

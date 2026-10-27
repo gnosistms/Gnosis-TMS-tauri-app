@@ -13,6 +13,8 @@ pub(super) struct BookItemInput {
     #[serde(default)]
     pub(super) title: String,
     #[serde(default)]
+    pub(super) title_override: Option<String>,
+    #[serde(default)]
     pub(super) subtitle: String,
     #[serde(default)]
     pub(super) author: String,

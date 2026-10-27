@@ -7215,7 +7215,7 @@ test("quote attribution saves separately, previews at 90%, and appends when leav
   expect(parseFloat(await body.evaluate((field) => getComputedStyle(field).fontSize))).toBeCloseTo(normalSize, 2);
   const attribution = page.locator(`[data-editor-row-field][data-content-kind="attribution"][data-row-id="${rowId}"][data-language-code="vi"]`);
   await expect(attribution).toBeHidden();
-  const prompt = attribution.locator("..").getByText("Click here to enter attribution.", { exact: true });
+  const prompt = attribution.locator("..").getByText("Enter attribution", { exact: true });
   await expect(prompt).toBeVisible();
   await prompt.click();
   await expect(attribution).toBeFocused();
@@ -7273,8 +7273,12 @@ test("empty quote attribution opens on click, keeps undo, and collapses again on
   await expect(page.locator(".translate-preview__attribution")).toHaveCount(0);
   await page.locator('[data-action="set-editor-mode:translate"]').click();
   const field = page.locator(`[data-content-kind="attribution"][data-row-id="${rowId}"][data-language-code="vi"]`);
-  const prompt = field.locator("..").getByText("Click here to enter attribution.", { exact: true });
+  const prompt = field.locator("..").getByText("Enter attribution", { exact: true });
   await expect(prompt).toBeVisible();
+  await expect(prompt).toHaveCSS("font-style", "italic");
+  const promptSize = parseFloat(await prompt.evaluate((node) => getComputedStyle(node).fontSize));
+  const attributionSize = parseFloat(await field.evaluate((node) => getComputedStyle(node).fontSize));
+  expect(promptSize).toBeCloseTo(attributionSize * .8, 2);
   await expect(field).toBeHidden();
   await prompt.click();
   await expect(field).toBeFocused();
@@ -7296,7 +7300,7 @@ test("empty quote attribution opens on click, keeps undo, and collapses again on
   await flushDirtyRows(page);
   const mock = await readMockTauriState(page);
   for (const entry of mock.invocations.filter((item) => item.command === "update_gtms_editor_row_fields")) {
-    expect(JSON.stringify(entry.payload)).not.toMatch(/Click here to enter attribution|Enter attribution here/);
+    expect(JSON.stringify(entry.payload)).not.toMatch(/Enter attribution/);
   }
   await page.screenshot({ path: "/tmp/gnosis-quote-empty-prompt.png" });
 });

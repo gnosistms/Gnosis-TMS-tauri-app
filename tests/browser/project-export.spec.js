@@ -1,7 +1,7 @@
 import { expect, test } from "./test.js";
 
-async function mountProjectExport(page, multilingual = false) {
-  await page.addInitScript(() => {
+async function mountProjectExport(page, multilingual = false, chapterTitles = false) {
+  await page.addInitScript(({ chapterTitles }) => {
     window.__projectExports = [];
     window.__pdfListeners = {};
     window.__TAURI__ = {
@@ -12,7 +12,11 @@ async function mountProjectExport(page, multilingual = false) {
         if (command === "list_wordpress_connections") return window.__wordpressSites ?? [];
         if (command === "load_gtms_chapter_editor_data") return {
           fileTitle: args.input.chapterId, languages: [{ code: "en" }, { code: "vi" }],
-          rows: window.__bookHeadingRows?.[args.input.chapterId] ?? [{ rowId: `${args.input.chapterId}-row`, textStyle: "paragraph", fields: { en: `Opening ${args.input.chapterId}`, vi: `Bản dịch ${args.input.chapterId}` } }],
+          rows: window.__bookHeadingRows?.[args.input.chapterId] ?? (chapterTitles ? [
+            { rowId: `${args.input.chapterId}-row`, textStyle: args.input.chapterId.endsWith("-0") ? "heading1" : "paragraph", fields: { en: "English opening heading", vi: "Tiêu đề tiếng Việt" } },
+            { rowId: `${args.input.chapterId}-body`, textStyle: "paragraph", fields: { en: "Chapter body", vi: "Nội dung" } },
+            { rowId: `${args.input.chapterId}-later`, textStyle: "heading1", fields: { en: "Later heading", vi: "Tiêu đề sau" } },
+          ] : [{ rowId: `${args.input.chapterId}-row`, textStyle: "paragraph", fields: { en: `Opening ${args.input.chapterId}`, vi: `Bản dịch ${args.input.chapterId}` } }]),
         };
         if (command === "import_project_book_image") {
           if (args.input.fileName === "bad.png") throw new Error("The selected file is not a valid image.");
@@ -30,7 +34,7 @@ async function mountProjectExport(page, multilingual = false) {
         return () => {};
       } },
     };
-  });
+  }, { chapterTitles });
   await page.goto("/?fixture=editor&rows=1");
   await page.waitForFunction(() => typeof window.__gnosisDebug?.mountProjectsFixture === "function");
   await page.evaluate(async (multilingual) => {
@@ -284,6 +288,50 @@ test("book contents include H1 headings only when the saved checkbox is selected
   await expect.poll(() => page.evaluate(() => window.__projectExports.some((call) => call.command === "start_gtms_chapter_pdf_export"))).toBe(true);
   const contents = await page.evaluate(() => window.__projectExports.findLast((call) => call.command === "start_gtms_chapter_pdf_export").input.bookItems.find((item) => item.kind === "contents"));
   expect(contents.includeH1Headings).toBe(true);
+});
+
+test("chapter export titles use opening H1s, edit inline, and persist independently by language", async ({ page }) => {
+  await mountProjectExport(page, true, true);
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  const first = modal.locator('[data-book-chapter-title="fixture-chapter-0-0"]');
+  const second = modal.locator('[data-book-chapter-title="fixture-chapter-0-1"]');
+  await expect(first).toHaveValue("English opening heading");
+  // A later H1 must not replace the filename when the file opens with prose.
+  await expect(second).toHaveValue("File 002");
+  await first.click();
+  await first.fill("");
+  await first.pressSequentially("Custom English Title");
+  await expect(first).toBeFocused();
+  await expect(first).toHaveValue("Custom English Title");
+  await expect(modal.locator(".book-page--chapter h1").first()).toHaveText("Custom English Title");
+  await expect(modal.locator(".book-page--chapter")).not.toContainText("English opening heading");
+  await second.click();
+  await expect(second).toBeFocused();
+  await second.fill("A renamed chapter");
+  await expect(modal.locator(".book-page--chapter h1").first()).toHaveText("A renamed chapter");
+  await chooseBookOption(modal, "editor-export-language", "Vietnamese (vi)");
+  await expect(first).toHaveValue("Tiêu đề tiếng Việt");
+  await first.fill("Tên chương tùy chỉnh");
+  await chooseBookOption(modal, "editor-export-language", "English (en)");
+  await expect(first).toHaveValue("Custom English Title");
+  await expect(second).toHaveValue("A renamed chapter");
+  await addSection(modal, "contents");
+  await expect(modal.locator(".book-contents")).toContainText("Custom English Title");
+  await expect(modal.locator(".book-contents")).toContainText("A renamed chapter");
+  await modal.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.locator('[data-action="export-project:fixture-project-001"]').click();
+  await expect(first).toHaveValue("Custom English Title");
+  await chooseBookOption(modal, "editor-export-language", "Vietnamese (vi)");
+  await expect(first).toHaveValue("Tên chương tùy chỉnh");
+  await chooseBookOption(modal, "editor-export-language", "English (en)");
+  await first.click();
+  await page.screenshot({ path: test.info().outputPath("editable-chapter-titles.png") });
+  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await modal.locator('[data-action="select-editor-export-option:file:docx"]').click();
+  await modal.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(modal).toBeHidden();
+  const exported = await page.evaluate(() => window.__projectExports.find((call) => call.command === "export_gtms_chapter_file"));
+  expect(exported.input.bookItems.filter((item) => item.kind === "chapter").map((item) => item.titleOverride)).toEqual(["Custom English Title", "A renamed chapter"]);
 });
 async function dragBefore(page, source, target) {
   const from = await source.boundingBox();

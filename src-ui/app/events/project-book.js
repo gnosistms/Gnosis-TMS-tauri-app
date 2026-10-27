@@ -1,5 +1,7 @@
 import { importBookImage, moveProjectBookItem, updateBookField } from "../project-book-flow.js";
 import { escapeHtml } from "../../lib/ui.js";
+import { state } from "../state.js";
+import { renderSelectedBookPage } from "../../screens/project-book-composer.js";
 let drag = null;
 function cancel() {
   drag?.preview?.remove();
@@ -7,7 +9,13 @@ function cancel() {
   drag = null;
 }
 export function registerProjectBookEvents(render) {
-  document.addEventListener("input", (event) => { const field = event.target.closest?.("[data-book-field]"); if (field) updateBookField(field, render); });
+  document.addEventListener("input", (event) => {
+    const field = event.target.closest?.("[data-book-field]");
+    if (field) updateBookField(field, field.dataset.bookChapterTitle ? () => {
+      const preview = document.querySelector(".book-composer__page-scroll");
+      if (preview) preview.innerHTML = renderSelectedBookPage(state.editorChapter.exportModal);
+    } : render);
+  });
   document.addEventListener("mousedown", (event) => { if (event.target.closest?.('[data-action^="book-copyright:"]')) event.preventDefault(); });
   document.addEventListener("paste", (event) => {
     const editor = event.target.closest?.("[data-book-copyright-editor]");

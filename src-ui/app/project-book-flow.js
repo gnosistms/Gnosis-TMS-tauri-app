@@ -10,7 +10,7 @@ import { normalizeEditorRows } from "./editor-state-flow.js";
 import { openLocalFilePicker } from "./local-file-picker.js";
 import { enforceImportFileSizeLimit } from "./import-file-limit.js";
 import { formatErrorForDisplay } from "./error-display.js";
-import { addBookSection, bookItemIncluded, bookContentsItems, bookLanguages, includeBookItem, reconcileBookLayout, reorderBookItems } from "./project-book-model.js";
+import { addBookSection, bookChapterDefaultTitle, bookItemIncluded, bookContentsItems, bookLanguages, includeBookItem, reconcileBookLayout, reorderBookItems } from "./project-book-model.js";
 import { loadBookSettings, loadContentsTitle, saveBookSettings, saveContentsTitle } from "./project-book-settings.js";
 
 const modal = () => state.editorChapter?.exportModal;
@@ -22,17 +22,33 @@ function update(patch, render) {
   const current = modal();
   if (!current?.projectId) return;
   const next = { ...current, ...patch };
-  if (next.book && (next.book.items !== current.book?.items || next.languageCode !== current.languageCode)) next.chapterIds = next.book.items.filter((item) => item.kind === "chapter" && bookItemIncluded(item)).map((item) => item.chapterId);
+  if (next.book && (next.book.items !== current.book?.items || next.languageCode !== current.languageCode)) {
+    const ids = next.book.items.filter((item) => item.kind === "chapter" && bookItemIncluded(item)).map((item) => item.chapterId);
+    if (JSON.stringify(ids) !== JSON.stringify(current.chapterIds)) next.chapterIds = ids;
+  }
   state.editorChapter = { ...state.editorChapter, exportModal: next };
   saveBookSettings(next);
-  render?.();
+  if (render) {
+    // Background title/preview loads must not interrupt a title being typed.
+    const focused = typeof document === "undefined" ? null : document.activeElement;
+    const titleId = focused?.dataset?.bookChapterTitle;
+    const selection = titleId ? [focused.selectionStart, focused.selectionEnd] : null;
+    render();
+    if (titleId) {
+      const input = document.querySelector(`[data-book-chapter-title="${CSS.escape(titleId)}"]`);
+      input?.focus({ preventScroll: true });
+      if (input && selection) input.setSelectionRange(...selection);
+    }
+  }
 }
+
+const previewState = () => ({ previewStatus: "idle", previewBlocks: [], previewChapterId: "", previewCache: new Map(), addMenuOpen: false });
 
 export function initializeProjectBook(projectRecord, chapters, defaultLanguageCode) {
   const saved = loadBookSettings(projectRecord.id);
   const languages = bookLanguages(chapters);
   const languageCode = languages.some((entry) => entry.code === saved.languageCode) ? saved.languageCode : defaultLanguageCode || languages[0]?.code || "";
-  const book = { ...reconcileBookLayout(chapters, languageCode, saved.layouts?.[languageCode]), previewStatus: "idle", previewBlocks: [], previewChapterId: "", addMenuOpen: false };
+  const book = { ...reconcileBookLayout(chapters, languageCode, saved.layouts?.[languageCode]), ...previewState() };
   return { languageCode, languages, book, page: 1, savedOptions: saved.options ?? {} };
 }
 
@@ -41,39 +57,60 @@ export function selectProjectBookLanguage(render, code) {
   if (!current?.book || current.status !== "idle" || !current.languages.some((language) => language.code === code)) return;
   saveBookSettings(current);
   const saved = loadBookSettings(current.projectId);
-  const book = { ...reconcileBookLayout(project()?.chapters ?? [], code, saved.layouts?.[code]), previewStatus: "idle", previewBlocks: [], previewChapterId: "", addMenuOpen: false };
+  const book = { ...reconcileBookLayout(project()?.chapters ?? [], code, saved.layouts?.[code]), ...previewState() };
   update({ languageCode: code, book, pdfFontStatus: "idle", pdfFontInspectionKey: "", error: "" }, render);
   void loadSelectedBookPreview(render);
 }
 
-let previewGeneration = 0;
-
 export async function loadSelectedBookPreview(render, operations = {}) {
   const current = modal();
   const item = current?.book?.items.find((entry) => entry.id === current.book.selectedItemId);
-  if (!current?.isOpen) return;
+  if (!current?.isOpen || !current.book) return;
   if (item?.kind === "contents" && item.includeH1Headings) return loadContentsHeadings(render, current, operations);
-  if (item?.kind !== "chapter") return;
-  if (item.available === false) {
-    update({ book: { ...current.book, previewStatus: "ready", previewBlocks: [], previewChapterId: item.chapterId } }, render);
-    return;
-  }
   const team = selectedProjectsTeam();
-  const context = findChapterContext(item.chapterId);
-  const request = `${++previewGeneration}:${current.projectId}:${current.languageCode}:${item.id}`;
-  const isCurrent = () => modal()?.isOpen && modal()?.book?.previewRequest === request;
-  update({ book: { ...current.book, previewStatus: "loading", previewRequest: request, previewBlocks: [], previewChapterId: item.chapterId } }, render);
-  try {
-    await (operations.waitForRepoQueue ?? waitForRepoWriteQueueIdle)(projectRepoScope({ team, project: context?.project }));
-    const payload = await (operations.invoke ?? invoke)("load_gtms_chapter_editor_data", { input: {
-      installationId: team.installationId, projectId: current.projectId, repoName: context.project.name, chapterId: item.chapterId,
-    } });
-    if (!isCurrent()) return;
-    update({ book: { ...modal().book, previewStatus: "ready", previewBlocks: buildEditorPreviewDocument(normalizeEditorRows(payload?.rows), current.languageCode) } }, render);
-  } catch (error) {
-    if (isCurrent()) update({ book: { ...modal().book, previewStatus: "error", previewError: formatErrorForDisplay(error) } }, render);
+  const cache = current.book.previewCache;
+  const isCurrent = () => modal()?.isOpen && modal()?.book?.previewCache === cache && state.selectedTeamId === team?.id;
+  const load = (chapter) => {
+    if (!cache.has(chapter.id)) cache.set(chapter.id, (async () => {
+      const context = findChapterContext(chapter.chapterId);
+      try {
+        await (operations.waitForRepoQueue ?? waitForRepoWriteQueueIdle)(projectRepoScope({ team, project: context?.project }));
+        const payload = await (operations.invoke ?? invoke)("load_gtms_chapter_editor_data", { input: {
+          installationId: team.installationId, projectId: current.projectId, repoName: context.project.name, chapterId: chapter.chapterId,
+        } });
+        const blocks = buildEditorPreviewDocument(normalizeEditorRows(payload?.rows), current.languageCode);
+        if (isCurrent()) {
+          const book = modal().book;
+          update({ book: { ...book,
+            items: book.items.map((entry) => entry.id === chapter.id ? { ...entry, defaultTitle: bookChapterDefaultTitle(blocks, entry.name) } : entry),
+            ...(book.selectedItemId === chapter.id ? { previewStatus: "ready", previewChapterId: chapter.chapterId, previewBlocks: blocks } : {}),
+          } }, render);
+        }
+        return { blocks };
+      } catch (error) {
+        return { error: formatErrorForDisplay(error) };
+      }
+    })());
+    return cache.get(chapter.id);
+  };
+  // Resolve all list titles once per language/session, sharing chapter reads with
+  // the preview and limiting background reads for large projects.
+  if (!cache.started) {
+    cache.started = true;
+    const pending = current.book.items.filter((entry) => entry.kind === "chapter" && entry.available !== false && entry.id !== item?.id);
+    for (let worker = 0; worker < 3; worker++) void (async () => {
+      while (pending.length && isCurrent()) await load(pending.shift());
+    })();
   }
+  if (item?.kind !== "chapter") return;
+  update({ book: { ...modal().book, previewStatus: item.available === false ? "ready" : "loading", previewBlocks: [], previewChapterId: item.chapterId } }, render);
+  if (item.available === false) return;
+  const result = await load(item);
+  if (!isCurrent() || modal().book.selectedItemId !== item.id) return;
+  update({ book: { ...modal().book, previewStatus: result.error ? "error" : "ready", previewError: result.error || "", previewBlocks: result.blocks || [], previewChapterId: item.chapterId } }, render);
 }
+
+let previewGeneration = 0;
 
 async function loadContentsHeadings(render, current, operations) {
   const team = selectedProjectsTeam();
@@ -84,17 +121,21 @@ async function loadContentsHeadings(render, current, operations) {
   try {
     await (operations.waitForRepoQueue ?? waitForRepoWriteQueueIdle)(projectRepoScope({ team, project: record }));
     const headings = {};
+    const defaultTitles = new Map();
     for (const item of bookContentsItems(current.book.items)) {
       const payload = await (operations.invoke ?? invoke)("load_gtms_chapter_editor_data", { input: {
         installationId: team.installationId, projectId: current.projectId, repoName: record.name, chapterId: item.chapterId,
       } });
       if (!isCurrent()) return;
       const blocks = buildEditorPreviewDocument(normalizeEditorRows(payload?.rows), current.languageCode);
+      defaultTitles.set(item.id, bookChapterDefaultTitle(blocks, item.name));
       const body = extractVellumLeadingHeadingTitle(blocks) ? blocks.slice(1) : blocks;
       headings[item.chapterId] = body.filter((block) => block.kind === "text" && block.textStyle === "heading1")
         .map((block) => extractInlineMarkupVisibleText(block.text));
     }
-    if (isCurrent()) update({ book: { ...modal().book, contentsHeadings: headings }, error: "" }, render);
+    if (isCurrent()) update({ book: { ...modal().book, contentsHeadings: headings,
+      items: modal().book.items.map((entry) => defaultTitles.has(entry.id) ? { ...entry, defaultTitle: defaultTitles.get(entry.id) } : entry),
+    }, error: "" }, render);
   } catch (error) {
     if (isCurrent()) update({ error: formatErrorForDisplay(error) }, render);
   }
@@ -102,16 +143,16 @@ async function loadContentsHeadings(render, current, operations) {
 
 export function updateBookField(element, render) {
   const current = modal();
-  const item = current?.book?.items.find((entry) => entry.id === current.book.selectedItemId);
+  const item = current?.book?.items.find((entry) => entry.id === (element.dataset.bookChapterTitle || current.book.selectedItemId));
   const field = element.dataset.bookField;
   if (!item || !["title", "subtitle", "author", "translator", "text", "caption", "includeH1Headings"].includes(field)) return;
   const value = field === "includeH1Headings" ? element.checked : element.hasAttribute("contenteditable") ? bookEditorText(element) : element.value;
   if (element.hasAttribute("contenteditable")) element.dataset.bookEmpty = String(!value);
   const items = current.book.items.map((entry) => entry.id === item.id ? { ...entry, [field]: value } : entry);
-  update({ book: { ...current.book, items, ...(field === "includeH1Headings" ? { previewRequest: "" } : {}) }, pdfFontStatus: "idle", pdfFontInspectionKey: "" }, field === "includeH1Headings" ? render : undefined);
+  update({ book: { ...current.book, items, ...(field === "includeH1Headings" ? { previewRequest: "" } : {}) }, pdfFontStatus: "idle", pdfFontInspectionKey: "" }, field === "includeH1Headings" || item.kind === "chapter" ? render : undefined);
   if (field === "includeH1Headings" && value) void loadSelectedBookPreview(render);
   if (item.kind === "contents" && field === "title") saveContentsTitle(current.languageCode, value);
-  if (field === "title") document.querySelector(`[data-book-item-label="${CSS.escape(item.id)}"]`)?.replaceChildren(document.createTextNode(value || (item.kind === "contents" ? "Table of contents" : "Title page")));
+  if (field === "title" && item.kind !== "chapter") document.querySelector(`[data-book-item-label="${CSS.escape(item.id)}"]`)?.replaceChildren(document.createTextNode(value || (item.kind === "contents" ? "Table of contents" : "Title page")));
 }
 
 export async function importBookImage(render, file, operations = {}) {
@@ -174,8 +215,10 @@ export async function handleProjectBookAction(action, render) {
     const added = items.find((item) => !book.items.some((old) => old.id === item.id));
     update({ book: { ...book, items, selectedItemId: added?.id || book.selectedItemId, addMenuOpen: false }, pdfFontStatus: "idle" }, render);
   } else if (action.startsWith("book-select:")) {
-    update({ book: { ...book, selectedItemId: action.slice(12), previewRequest: "" } }, render);
-    void loadSelectedBookPreview(render);
+    if (book.selectedItemId !== action.slice(12)) {
+      update({ book: { ...book, selectedItemId: action.slice(12) } }, render);
+      void loadSelectedBookPreview(render);
+    }
   } else if (action.startsWith("book-exclude:") || action.startsWith("book-include:")) {
     const include = action.startsWith("book-include:");
     const id = action.slice(13);
