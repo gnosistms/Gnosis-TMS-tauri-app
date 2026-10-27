@@ -1,4 +1,5 @@
 import { applyEditorRowFieldInput } from "./editor-row-input.js";
+import { applyEditorFieldEdit } from "./editor-field-undo.js";
 import { parseInlineMarkup, sanitizeInlineLinkHref } from "./editor-inline-markup/parser.js";
 import { escapeHtml } from "./editor-inline-markup/serialize.js";
 import { findElementContainingSelection } from "./editor-inline-markup/ranges.js";
@@ -266,8 +267,11 @@ export function submitEditorInsertLink(render, operations = {}) {
     return;
   }
 
-  textarea.value = result.value;
-  textarea.setSelectionRange(result.selectionStart, result.selectionEnd);
+  // Remove the dialog before focusing the caption/footnote/main field; the
+  // modal controller otherwise traps focus in its URL input.
+  setInsertLinkModalState(null);
+  render?.({ scope: "translate-insert-link-modal" });
+  applyEditorFieldEdit(textarea, result);
   applyEditorRowFieldInput({
     input: textarea,
     render,
@@ -277,7 +281,5 @@ export function submitEditorInsertLink(render, operations = {}) {
     syncEditorGlossaryHighlightRowDom: operations.syncEditorGlossaryHighlightRowDom,
   });
 
-  setInsertLinkModalState(null);
-  render?.({ scope: "translate-insert-link-modal" });
   refocusInsertLinkTextarea(rowId, languageCode, result.selectionStart, result.selectionEnd, contentKind, footnoteMarker);
 }
