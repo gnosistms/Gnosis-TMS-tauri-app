@@ -391,7 +391,7 @@ function handleEnter(event, dialog) {
     return;
   }
 
-  if (isTextLikeInput(event.target) && event.target.hasAttribute("data-modal-enter-blur")) {
+  if ((isTextLikeInput(event.target) || event.target instanceof HTMLTextAreaElement) && event.target.hasAttribute("data-modal-enter-blur")) {
     event.preventDefault();
     event.target.blur();
     return;

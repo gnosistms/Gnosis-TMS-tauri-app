@@ -29,7 +29,7 @@ export function registerProjectBookEvents(render) {
   document.addEventListener("pointerdown", (event) => {
     if (event.target.closest?.("[data-book-numbered-control]")) return;
     const chapterRow = event.target.closest?.("[data-book-chapter-select]");
-    const control = event.target.closest?.("input, button");
+    const control = event.target.closest?.("input, textarea, button");
     const previewButton = event.target.closest?.("[data-book-preview-select]")
       || (!control && chapterRow?.querySelector("[data-book-preview-select]"));
     if (previewButton && event.button === 0) {

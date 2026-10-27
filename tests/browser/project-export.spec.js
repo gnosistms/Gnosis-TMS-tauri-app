@@ -1129,3 +1129,42 @@ test("offline Git save keeps local setup and Cancel remains immediate", async ({
   await page.locator('[data-action="export-project:fixture-project-001"]').click();
   await expect(modal.locator('[data-book-chapter-title="fixture-chapter-0-0"]')).toHaveValue("Offline draft");
 });
+
+test("long chapter titles wrap inside the sidebar without hiding controls", async ({ page }) => {
+  await mountProjectExport(page);
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  const title = modal.locator('[data-book-chapter-title="fixture-chapter-0-0"]');
+  const longTitle = "Hạnh phúc, âm nhạc, vũ điệu, và nụ hôn trong cuộc sống";
+  await title.fill(longTitle);
+  for (const width of [1440, 1000, 700]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect(title).toHaveValue(longTitle);
+    const geometry = await title.evaluate((input) => {
+      const row = input.closest("[data-book-item]");
+      const list = row.closest(".book-composer__list");
+      const bounds = (el) => el.getBoundingClientRect().toJSON();
+      return { row: bounds(row), list: bounds(list), input: bounds(input),
+        toggle: bounds(row.querySelector(".book-item__toggle")),
+        listWidth: list.clientWidth, listScrollWidth: list.scrollWidth,
+        inputHeight: input.clientHeight, inputScrollHeight: input.scrollHeight,
+        lineHeight: parseFloat(getComputedStyle(input).lineHeight),
+      };
+    });
+    expect(geometry.row.right).toBeLessThanOrEqual(geometry.list.right + 1);
+    expect(geometry.toggle.right).toBeLessThanOrEqual(geometry.row.right);
+    expect(geometry.input.right).toBeLessThan(geometry.toggle.left);
+    expect(geometry.listScrollWidth).toBeLessThanOrEqual(geometry.listWidth + 1);
+    expect(geometry.inputScrollHeight).toBeLessThanOrEqual(geometry.inputHeight + 1);
+    if (width > 760) expect(geometry.input.height).toBeGreaterThan(geometry.lineHeight * 2);
+    await expect(modal.getByRole("button", { name: "+ Add new", exact: true })).toBeInViewport();
+  }
+  await page.setViewportSize({ width: 1000, height: 900 });
+  await title.fill("VeryLongUnbrokenChapterTitle".repeat(5));
+  expect(await title.evaluate((input) => input.scrollWidth <= input.clientWidth + 1)).toBe(true);
+  await title.fill(longTitle);
+  await title.press("Enter");
+  await expect(title).not.toBeFocused();
+  await expect(title).toHaveValue(longTitle);
+  await expect(modal).toContainText("1 of 2");
+  await page.screenshot({ path: test.info().outputPath("wrapped-chapter-titles.png") });
+});
