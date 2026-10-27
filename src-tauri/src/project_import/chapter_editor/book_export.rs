@@ -89,7 +89,7 @@ pub(crate) fn import_project_book_image_sync(
         )
     };
     ensure_within_import_size_limit(bytes.len() as u64, &name)?;
-    let extension = validate_book_image(&name, &bytes)?;
+    let (extension, bytes) = validate_book_image(&name, &bytes)?;
     let asset_id = format!("{:x}.{extension}", Sha256::digest(&bytes));
     let root = asset_root(app)?;
     fs::create_dir_all(&root)
@@ -111,15 +111,17 @@ pub(crate) fn import_project_book_image_sync(
     })
 }
 
-fn validate_book_image(name: &str, bytes: &[u8]) -> Result<&'static str, String> {
+fn validate_book_image<'a>(
+    name: &str,
+    bytes: &'a [u8],
+) -> Result<(&'static str, std::borrow::Cow<'a, [u8]>), String> {
     let extension = Path::new(name)
         .extension()
         .and_then(|value| value.to_str())
         .unwrap_or_default()
         .to_ascii_lowercase();
     if extension == "svg" {
-        validate_book_svg(bytes)?;
-        return Ok("svg");
+        return Ok(("svg", super::book_svg::sanitize(bytes)?));
     }
     let extension = super::images::validated_uploaded_image_extension(name, bytes)?;
     if !matches!(extension, "png" | "jpg" | "webp") {
@@ -133,70 +135,7 @@ fn validate_book_image(name: &str, bytes: &[u8]) -> Result<&'static str, String>
     if image.0 == 0 || image.1 == 0 || (image.0 as u64) * (image.1 as u64) > 100_000_000 {
         return Err("Choose an image with at most 100 million pixels.".to_string());
     }
-    Ok(extension)
-}
-
-fn validate_book_svg(bytes: &[u8]) -> Result<(), String> {
-    use quick_xml::{events::Event, Reader};
-    let mut reader = Reader::from_reader(bytes);
-    let mut root_seen = false;
-    let invalid = || {
-        "Choose a self-contained SVG without scripts, external resources, or embedded HTML."
-            .to_string()
-    };
-    loop {
-        match reader
-            .read_event()
-            .map_err(|_| "The selected SVG is invalid.".to_string())?
-        {
-            Event::Start(element) | Event::Empty(element) => {
-                let name = String::from_utf8_lossy(element.name().as_ref()).to_ascii_lowercase();
-                if !root_seen {
-                    if name != "svg" {
-                        return Err(invalid());
-                    }
-                    root_seen = true;
-                }
-                if matches!(
-                    name.as_str(),
-                    "script"
-                        | "foreignobject"
-                        | "iframe"
-                        | "object"
-                        | "embed"
-                        | "animate"
-                        | "set"
-                        | "style"
-                ) {
-                    return Err(invalid());
-                }
-                for attribute in element.attributes() {
-                    let attribute = attribute.map_err(|_| invalid())?;
-                    let key = String::from_utf8_lossy(attribute.key.as_ref()).to_ascii_lowercase();
-                    let value = attribute
-                        .decode_and_unescape_value(&reader)
-                        .map_err(|_| invalid())?
-                        .to_ascii_lowercase();
-                    if key.starts_with("on")
-                        || value.contains("javascript:")
-                        || value.contains("@import")
-                        || ((key.ends_with("href") || key == "src") && !value.starts_with('#'))
-                        || (value.contains("url(")
-                            && !value.replace(['\'', '"', ' '], "").contains("url(#"))
-                    {
-                        return Err(invalid());
-                    }
-                }
-            }
-            Event::DocType(_) => return Err(invalid()),
-            Event::Eof => break,
-            _ => {}
-        }
-    }
-    if !root_seen {
-        return Err("The selected file is not an SVG image.".into());
-    }
-    Ok(())
+    Ok((extension, std::borrow::Cow::Borrowed(bytes)))
 }
 
 pub(super) fn book_image(app: &AppHandle, id: &str) -> Result<Option<ExportImage>, String> {
@@ -347,6 +286,9 @@ mod tests {
             r#"<svg onload="x()"/>"#,
             r#"<svg><image href="https://example.com/x.png"/></svg>"#,
             r#"<!DOCTYPE svg><svg/>"#,
+            r#"<!DOCTYPE svg SYSTEM "https://example.com/svg.dtd"><svg/>"#,
+            r#"<!DOCTYPE svg [<!ENTITY logo SYSTEM "file:///logo">]><svg>&logo;</svg>"#,
+            r#"<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd" [<!ENTITY logo "test">]><svg/>"#,
             r#"<svg><foreignObject/></svg>"#,
         ] {
             assert!(
@@ -355,5 +297,31 @@ mod tests {
             );
         }
         assert!(validate_book_image("photo.jpg", b"not an image").is_err());
+    }
+
+    #[test]
+    fn book_svg_strips_standard_design_tool_doctype_before_storage() {
+        let artwork = r#"<svg width="100%" height="100%" viewBox="0 0 2048 1536" xmlns="http://www.w3.org/2000/svg"><g transform="translate(1,2)"><path d="M0 0L1 1"/><circle cx="2" cy="2" r="1"/></g></svg>"#;
+        let prolog = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>\n";
+        for doctype in [
+            r#"<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">"#,
+            "<!DOCTYPE svg\n PUBLIC '-//W3C//DTD SVG 1.1//EN'\n 'https://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd'>",
+        ] {
+            let source = format!("{prolog}{doctype}\n{artwork}");
+            let (extension, normalized) = validate_book_image("logo.SVG", source.as_bytes()).unwrap();
+            assert_eq!(extension, "svg");
+            assert_eq!(normalized.as_ref(), super::book_svg::sanitize(format!("{prolog}\n{artwork}").as_bytes()).unwrap().as_ref());
+            assert_eq!(svg_dimensions(&normalized), (2048, 1536));
+            assert!(validate_book_image("logo.svg", &normalized).is_ok());
+
+            for bad in [
+                format!("{doctype}{doctype}{artwork}"),
+                format!("{artwork}{doctype}"),
+                format!("{doctype}<svg><script>alert(1)</script></svg>"),
+                format!("{doctype}<svg><image href=\"https://example.com/logo.png\"/></svg>"),
+            ] {
+                assert!(validate_book_image("logo.svg", bad.as_bytes()).is_err(), "{bad}");
+            }
+        }
     }
 }

@@ -36,6 +36,7 @@ use super::{
 
 mod aligned_translation;
 mod book_export;
+mod book_svg;
 mod changed_after_my_edit;
 mod chapter_export;
 mod chapter_selection;
