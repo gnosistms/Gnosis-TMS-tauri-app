@@ -34,7 +34,10 @@ function section(modal, kind) {
           return `<li class="term-variant-row book-item book-redundancy__chapter"><div class="term-variant-row__shell"><div class="book-redundancy__chapter-name"><span data-book-redundancy-chapter-title="${escapeHtml(entry.choiceId)}">${escapeHtml(title)}</span>${entry.occurrences.length > 1 ? `<small>${entry.occurrences.length} occurrences (keeps the first here)</small>` : ""}</div>${checkbox(entry.choiceId, reviewChoiceIncluded(review.choices, entry.choiceId, index), title)}</div></li>`;
         }).join("")}</ul></article>`;
       }
-      return `<article class="book-redundancy__group"><blockquote>${escapeHtml(group.anchor)}</blockquote><ul>${group.occurrences.map((entry, index) => `<li><div><strong>${escapeHtml(entry.chapterName)} · note ${entry.marker}</strong><p>${escapeHtml(extractInlineMarkupVisibleText(entry.text))}</p><small>${escapeHtml(entry.context)}</small></div>${checkbox(entry.id, reviewChoiceIncluded(review.choices, entry.id, index), `${entry.chapterName}, note ${entry.marker}`)}</li>`).join("")}</ul></article>`;
+      return `<article class="book-redundancy__group"><blockquote>${escapeHtml(group.anchor)}</blockquote><ul>${group.occurrences.map((entry, index) => {
+        const title = labels.get(entry.itemId) || entry.chapterName;
+        return `<li><div><strong><span data-book-redundancy-chapter-title="${escapeHtml(entry.id)}">${escapeHtml(title)}</span> · note ${entry.marker}</strong><p>${escapeHtml(extractInlineMarkupVisibleText(entry.text))}</p><small>${escapeHtml(entry.context)}</small></div>${checkbox(entry.id, reviewChoiceIncluded(review.choices, entry.id, index), `${title}, note ${entry.marker}`)}</li>`;
+      }).join("")}</ul></article>`;
     }).join("") || `<p class="modal__supporting">${warnings.length ? `No redundant ${kind} confirmed so far.` : `No redundant ${kind} found.`}</p>`;
     content += warnings.map((warning) => `<p class="modal__supporting" role="status">${escapeHtml(warning)} Unresolved ${kind} remain included.</p>`).join("");
   }

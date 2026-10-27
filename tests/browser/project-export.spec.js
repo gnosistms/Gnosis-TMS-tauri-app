@@ -1545,7 +1545,7 @@ test("accepted Git settings do not show a second notice when unchanged on reopen
 });
 
 
-test("redundant images use page-one chapter titles and optional numbers in shared rounded rows", async ({ page }) => {
+test("redundancy reports use page-one chapter titles and optional numbers", async ({ page }) => {
   await mountProjectExport(page, false, false, 5);
   const modal = page.getByRole("dialog", { name: "Export project", exact: true });
   const row = (index) => modal.locator(`[data-book-item="fixture-chapter-0-${index}"]`);
@@ -1556,12 +1556,16 @@ test("redundant images use page-one chapter titles and optional numbers in share
   const radius = await row(4).locator(".term-variant-row__shell").evaluate((element) => getComputedStyle(element).borderRadius);
   await page.evaluate(() => {
     const picture = (chapter) => ({ id: `picture-${chapter}`, itemId: `fixture-chapter-0-${chapter}`, rowId: `row-${chapter}`, kind: "image", marker: 0, signature: `signature-${chapter}`, chapterName: "Stale native chapter title", imageSrc: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='100'%3E%3Crect width='160' height='100' rx='8' fill='%23ef9a32'/%3E%3C/svg%3E" });
-    window.__redundancyResult = { images: [{ id: "repeated", occurrences: [picture(1), picture(3), picture(4)] }], footnotes: [], warnings: [] };
+    const footnote = (chapter, marker) => ({ id: `note-${chapter}`, itemId: `fixture-chapter-0-${chapter}`, rowId: `row-${chapter}`, kind: "footnote", marker, signature: `note-signature-${chapter}`, chapterName: "Stale native chapter title", text: "An explanation", context: "The term" });
+    window.__redundancyResult = { images: [{ id: "repeated", occurrences: [picture(1), picture(3), picture(4)] }], footnotes: [{ id: "notes", anchor: "The term", occurrences: [footnote(1, 1), footnote(3, 2), footnote(4, 3)] }], warnings: [] };
   });
   await modal.getByRole("button", { name: "Next", exact: true }).click();
   const images = modal.locator('[data-book-redundancy-section="images"]');
   await expect(images.getByRole("heading", { name: "Chapters that include this image:", exact: true })).toBeVisible();
   await expect(images.locator("[data-book-redundancy-chapter-title]")).toHaveText(["File 002", "2. File 004", "3. The great battle"]);
+  const footnotes = modal.locator('[data-book-redundancy-section="footnotes"]');
+  await expect(footnotes.locator("[data-book-redundancy-chapter-title]")).toHaveText(["File 002", "2. File 004", "3. The great battle"]);
+  await expect(footnotes.getByRole("checkbox", { name: "Include in export: 3. The great battle, note 3", exact: true })).toBeVisible();
   await expect(images.getByText("Stale native chapter title", { exact: true })).toHaveCount(0);
   const shells = images.locator(".term-variant-row__shell");
   expect(await shells.evaluateAll((elements) => elements.map((element) => getComputedStyle(element).borderRadius))).toEqual([radius, radius, radius]);
@@ -1574,5 +1578,7 @@ test("redundant images use page-one chapter titles and optional numbers in share
   await expect(row(4).locator("[data-book-chapter-number]")).toHaveText("2.");
   await modal.getByRole("button", { name: "Next", exact: true }).click();
   await expect(images.locator("[data-book-redundancy-chapter-title]")).toHaveText(["File 002", "3. File 004", "2. The great battle"]);
+  await expect(footnotes.locator("[data-book-redundancy-chapter-title]")).toHaveText(["File 002", "3. File 004", "2. The great battle"]);
+  await expect(footnotes.getByRole("checkbox", { name: "Include in export: 2. The great battle, note 3", exact: true })).toBeVisible();
   await expect(images.getByRole("checkbox", { name: "Include in export: 2. The great battle", exact: true })).toBeChecked();
 });
