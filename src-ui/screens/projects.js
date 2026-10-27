@@ -27,6 +27,7 @@ import { renderProjectClearDeletedFilesModal } from "./project-clear-deleted-fil
 import { renderProjectPermanentDeletionModal } from "./project-permanent-deletion-modal.js";
 import { renderProjectImportModal } from "./project-import-modal.js";
 import { renderEditorExportModal } from "./editor-export-modal.js";
+import { renderEditorWordPressExportSuccessModal } from "./editor-wordpress-export-success-modal.js";
 import { renderProjectAddTranslationModal } from "./project-add-translation-modal.js";
 import { renderProjectRenameModal } from "./project-rename-modal.js";
 import { renderProjectTransferModal } from "./project-transfer-modal.js";
@@ -510,6 +511,7 @@ export function renderProjectsScreen(state) {
     renderProjectClearDeletedFilesModal(state) +
     renderProjectImportModal(state) +
     renderProjectAddTranslationModal(state) +
-    renderEditorExportModal(state)
+    renderEditorExportModal(state) +
+    renderEditorWordPressExportSuccessModal(state)
   );
 }

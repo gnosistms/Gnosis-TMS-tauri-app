@@ -54,6 +54,11 @@ export function deriveProjectRenderState(project, options = {}) {
       isDeleted && isTombstone
         ? []
         : [
+            !isDeleted && canDownloadFiles
+              ? textAction("Export", `export-project:${project.id}`, {
+                  disabled: localRepoUnavailable || disableContentActions || filesLength === 0,
+                })
+              : "",
             canManageProjects
               ? textAction("Add files", `add-project-files:${project.id}`, {
                   disabled: offlineMode || addFilesWriteDisabled || addFilesDisabled || localRepoSetupPending || disableContentActions,

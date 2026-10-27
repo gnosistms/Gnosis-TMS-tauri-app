@@ -3,7 +3,10 @@ import {
   describeInlineMarkupSelection,
   toggleInlineMarkupSelection,
 } from "./editor-inline-markup.js";
+import { chapterHasSrtSourceFormat } from "./editor-timing.js";
 import { state } from "./state.js";
+import { toggleSrtGroupInlineStyle } from "./editor-srt-group-formatting.js";
+import { showNoticeBadge } from "./status-feedback.js";
 
 function languageClusterForButton(button) {
   return button?.closest?.("[data-editor-language-cluster]") ?? null;
@@ -76,20 +79,25 @@ export function syncActiveEditorInlineStyleButtons(doc = document) {
 }
 
 export function toggleEditorInlineStyle(render, button, operations = {}) {
+  if (chapterHasSrtSourceFormat(state.editorChapter?.sourceFormats)) return;
   const textarea = resolveTargetTextarea(button);
   if (!(textarea instanceof HTMLTextAreaElement) || textarea.disabled || textarea.readOnly) {
     return;
   }
 
   const style = button?.dataset?.inlineStyle ?? "";
-  const result = toggleInlineMarkupSelection({
+  const options = {
     value: textarea.value,
     selectionStart: textarea.selectionStart ?? 0,
     selectionEnd: textarea.selectionEnd ?? 0,
     selectionDirection: textarea.selectionDirection ?? "none",
     style,
     languageCode: textarea.dataset.languageCode ?? "",
-  });
+  };
+  const edit = !textarea.dataset.contentKind
+    ? state.editorChapter?.srtGroupEdits?.[`${textarea.dataset.rowId}:${textarea.dataset.languageCode}`] : null;
+  const result = edit ? toggleSrtGroupInlineStyle(options, edit.markers) : toggleInlineMarkupSelection(options);
+  if (result.error) showNoticeBadge(result.error, render);
   if (result.changed !== true) {
     syncEditorInlineStyleButtonsForTextarea(textarea);
     return;

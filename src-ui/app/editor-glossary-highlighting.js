@@ -12,6 +12,7 @@ import {
   serializeGlossaryRubyForAiPrompt,
   targetTextContainsGlossaryVariantExactRuby,
 } from "./glossary-ruby.js";
+import { isNonSpaceDelimitedLanguage } from "./language-word-boundaries.js";
 
 function resolveLanguageCode(language) {
   if (typeof language === "string" && language.trim()) {
@@ -69,27 +70,8 @@ function escapeHtmlAttribute(value) {
   return escapeHtml(value).replaceAll("'", "&#39;");
 }
 
-const NON_SPACE_DELIMITED_LANGUAGE_CODES = new Set([
-  "zh",
-  "ja",
-  "th",
-  "lo",
-  "km",
-  "my",
-  "bo",
-  "dz",
-]);
-
-function primaryLanguageSubtag(languageCode) {
-  const [primarySubtag = ""] = String(languageCode ?? "")
-    .trim()
-    .toLowerCase()
-    .split(/[-_]/u);
-  return primarySubtag;
-}
-
 function isNonSpaceDelimitedGlossaryLanguage(languageCode) {
-  return NON_SPACE_DELIMITED_LANGUAGE_CODES.has(primaryLanguageSubtag(languageCode));
+  return isNonSpaceDelimitedLanguage(languageCode);
 }
 
 function textUnitsForGlossaryMatching(text) {

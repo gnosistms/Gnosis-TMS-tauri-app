@@ -91,7 +91,7 @@ function renderPasteTextPanel(modal, disabled, config) {
 }
 
 export function renderProjectDocumentInputModal(modal, config) {
-  const inputMode = normalizeProjectDocumentInputMode(modal?.inputMode);
+  const inputMode = config.uploadOnly ? "upload" : normalizeProjectDocumentInputMode(modal?.inputMode);
   const isUploadMode = inputMode === "upload";
   const isPasteLinkMode = inputMode === "pasteLink";
   const isPasteTextMode = inputMode === "pasteText";
@@ -126,7 +126,7 @@ export function renderProjectDocumentInputModal(modal, config) {
           <p class="modal__supporting">${escapeHtml(config.supportingText)}</p>
           <div class="modal__form project-document-input project-import-modal">
             ${errorMarkup}
-            ${renderModeControl(inputMode, controlsDisabled, config)}
+            ${config.uploadOnly ? "" : renderModeControl(inputMode, controlsDisabled, config)}
             ${isUploadMode
               ? renderUploadPanel(config)
               : isPasteLinkMode

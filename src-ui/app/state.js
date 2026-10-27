@@ -35,6 +35,12 @@ export function invalidateAuthSession() {
   authSessionGeneration += 1;
 }
 
+import {
+  createEditorGlossaryEntryState,
+  createGlossaryResearchReportState,
+  createGlossaryResearchState,
+} from "./glossary-research-state.js";
+
 export const state = {
   screen: "start",
   expandedProjects: new Set(),
@@ -126,6 +132,9 @@ export const state = {
   glossaryPermanentDeletion: createGlossaryPermanentDeletionState(),
   qaListPermanentDeletion: createQaListPermanentDeletionState(),
   glossaryTermEditor: createGlossaryTermEditorState(),
+  glossaryResearch: createGlossaryResearchState(),
+  editorGlossaryEntry: createEditorGlossaryEntryState(),
+  glossaryResearchReport: createGlossaryResearchReportState(),
   qaTermEditor: createQaTermEditorState(),
   aiReviewMissingKeyModal: createAiReviewMissingKeyModalState(),
   showDeletedProjects: false,
@@ -376,9 +385,15 @@ export function createProjectAddTranslationState() {
     isOpen: false,
     step: "input",
     inputMode: "upload",
+    requiresSrtFile: false,
     linkUrl: "",
     linkErrorModal: null,
     inputRequestId: 0,
+    alignmentRequestId: "",
+    subtitleFile: null,
+    subtitleMismatch: null,
+    subtitleConfirmations: [],
+    subtitleMeaningCheckReady: false,
     pendingFileName: "",
     chapterId: "",
     projectId: "",
@@ -430,6 +445,11 @@ export function createEditorChapterState() {
     chapterBaseCommitSha: null,
     fileTitle: "",
     sourceFormats: [],
+    srtViewMode: "standard",
+    srtPauseSplitEnabled: false,
+    srtPauseThresholdMs: 500,
+    srtGroupEdits: {},
+    srtMarkerModal: null,
     languages: [],
     wordCounts: {},
     selectedSourceLanguageCode: null,
@@ -850,6 +870,10 @@ export function createEditorExportModalState() {
     // the chapter is not open in the editor (the editor follows the preview
     // toolbar language).
     chapterId: "",
+    projectId: "",
+    chapterIds: [],
+    projectTitle: "",
+    languages: [],
     languageCode: "",
     // Print-oriented option for formats where a hyperlink cannot be clicked: append
     // each footnote link's URL as plain text after the link. On by default — a bare
@@ -877,6 +901,11 @@ export function createEditorExportModalState() {
     pdfFontMissingBytes: 0,
     pdfFontFamilies: [],
     pdfFontMessage: "",
+    pdfFontReview: null,
+    pdfSavedFallbackFonts: [],
+    pdfSavedFontsExpanded: false,
+    pdfForgettingFontId: "",
+    pdfFontInspectionRequestId: 0,
     wordpress: createEditorExportWordPressState(),
     teamCopy: createEditorExportTeamCopyState(),
   });

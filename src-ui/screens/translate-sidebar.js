@@ -87,7 +87,7 @@ function activeAssistantThreadHasItems(editorChapter, activeRowId, sourceLanguag
 }
 
 function renderTranslateTools(editorChapter, rows, languages, sourceCode, targetCode, actionConfig, offlineMode = false, readOnly = false) {
-  const activeRow = rows.find((row) => row.id === editorChapter?.activeRowId) ?? null;
+  const activeRow = rows.find((row) => (row.id === editorChapter?.activeRowId || row.srtGroup?.memberRowIds.includes(editorChapter?.activeRowId))) ?? null;
   const translateLanguages = resolveEditorAiTranslateLanguages(editorChapter);
   const sourceLanguage =
     translateLanguages.sourceLanguage
@@ -659,7 +659,7 @@ function assistantTranscriptStatusText(assistant, threadKey) {
 }
 
 function renderAssistantTranscript(editorChapter, rows, languages, sourceCode, targetCode) {
-  const activeRow = rows.find((row) => row.id === editorChapter?.activeRowId) ?? null;
+  const activeRow = rows.find((row) => (row.id === editorChapter?.activeRowId || row.srtGroup?.memberRowIds.includes(editorChapter?.activeRowId))) ?? null;
   const translateLanguages = resolveEditorAiTranslateLanguages(editorChapter);
   const sourceLanguage =
     translateLanguages.sourceLanguage
@@ -710,7 +710,7 @@ function renderAssistantTranscript(editorChapter, rows, languages, sourceCode, t
 }
 
 function renderAssistantComposer(editorChapter, rows, languages, targetCode, offlineMode = false) {
-  const activeRow = rows.find((row) => row.id === editorChapter?.activeRowId) ?? null;
+  const activeRow = rows.find((row) => (row.id === editorChapter?.activeRowId || row.srtGroup?.memberRowIds.includes(editorChapter?.activeRowId))) ?? null;
   const translateLanguages = resolveEditorAiTranslateLanguages(editorChapter);
   const targetLanguage =
     translateLanguages.targetLanguage
@@ -736,7 +736,7 @@ function renderAssistantComposer(editorChapter, rows, languages, targetCode, off
 }
 
 function renderAssistantPane(editorChapter, rows, languages, sourceCode, targetCode, actionConfig, offlineMode = false, readOnly = false) {
-  if (!rows.some((row) => row.id === editorChapter?.activeRowId)) {
+  if (!rows.some((row) => (row.id === editorChapter?.activeRowId || row.srtGroup?.memberRowIds.includes(editorChapter?.activeRowId)))) {
     return `
       <div class="history-empty">
         <p>Select a translation to use the AI Assistant.</p>
@@ -765,7 +765,7 @@ export function renderTranslateSidebar(
   writeActionsAvailable = true,
 ) {
   const requestedTab = normalizeEditorSidebarTab(editorChapter?.sidebarTab);
-  const hasActiveRow = rows.some((row) => row.id === editorChapter?.activeRowId);
+  const hasActiveRow = rows.some((row) => (row.id === editorChapter?.activeRowId || row.srtGroup?.memberRowIds.includes(editorChapter?.activeRowId)));
   const activeTab = !writeActionsAvailable && (requestedTab === "assistant" || requestedTab === "review")
     ? "history"
     : requestedTab;

@@ -57,6 +57,11 @@ test("skips expected session-expired and native login-changed paths", () => {
   }
 });
 
+test("intentional alignment cancellation is expected control flow", () => {
+  assert.equal(resolveCommandFailureReport("preflight_aligned_translation_to_gtms_chapter", "ALIGNMENT_CANCELED: Alignment canceled."), null);
+  assert.equal(resolveCommandFailureReport("apply_aligned_translation_to_gtms_chapter", "ALIGNMENT_CANCELED: Alignment canceled."), null);
+});
+
 test("expected glossary/QA validation stays visible to callers without becoming telemetry", () => {
   for (const message of [
     "Enter at least one source term.",

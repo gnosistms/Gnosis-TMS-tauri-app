@@ -1,4 +1,6 @@
 import { buildEditorCommentsButtonState, normalizeEditorSidebarTab } from "./editor-comments.js";
+import { projectSrtDisplayRows, srtGroupingEnabled } from "./editor-srt-grouping.js";
+import { canManageGlossaries } from "./glossary-shared.js";
 import { buildEditorSectionChangeView } from "./editor-change-view.js";
 import {
   changedAfterMyEditFilterIsActive,
@@ -13,7 +15,12 @@ import { normalizeEditorDerivedGlossariesByRowId } from "./editor-derived-glossa
 import { editorRowHasGlossaryError } from "./editor-glossary-highlight-cache.js";
 import { coerceEditorFontSizePx } from "./state.js";
 import { canPermanentlyDeleteProjectFiles } from "./resource-capabilities.js";
-import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
+import {
+  findChapterContextById,
+  resolveSelectedChapterGlossary,
+  selectedProjectsTeam,
+} from "./project-context.js";
+import { editorGlossaryEntryLanguages, glossaryEntryLanguageRole } from "./editor-glossary-entry-selection.js";
 import {
   editorSessionCanWrite,
   getProjectLifecycleWritePolicy,
@@ -240,6 +247,7 @@ function buildLiveTranslationRows(editorChapter, languages) {
           openFootnoteMarker: Number.isInteger(openFootnoteMarkerValue) ? openFootnoteMarkerValue : null,
           searchFootnote: persistedFootnoteText(row, language.code, footnote),
           imageCaption,
+          attribution: String(row.attributions?.[language.code] ?? ""),
           searchImageCaption: persistedLanguageText(
             row,
             "persistedImageCaptions",
@@ -478,7 +486,7 @@ function buildEditorDisplayItems(contentRows, editorChapter, team, editorReplace
       ...row,
       canEdit: canEditRows,
       canInsert: row.lifecycleState === "active" && canEditRows,
-      canMerge: row.lifecycleState === "active" && canEditRows,
+      canMerge: row.lifecycleState === "active" && canEditRows && !srtGroupingEnabled(editorChapter),
       canMergePrevious:
         row.lifecycleState === "active" && canEditRows && hasActiveRowBefore.get(row.rowId) === true,
       canMergeNext:
@@ -541,7 +549,7 @@ export function buildEditorScreenViewModel(appState) {
     ? changedAfterMyEdit?.rowsById ?? null
     : null;
   const editorFilters = buildEditorFilterResult({
-    rows: rawRows,
+    rows: projectSrtDisplayRows(rawRows, editorChapter, languages),
     languages,
     collapsedLanguageCodes,
     filters: editorChapter?.filters,
@@ -551,6 +559,11 @@ export function buildEditorScreenViewModel(appState) {
     changedAfterMyEditRowIds: changedAfterMyEdit?.rowIds ?? new Set(),
   });
   const editorReplace = buildEditorReplaceViewModel(editorChapter, editorFilters);
+  const glossaryEntryLanguages = editorGlossaryEntryLanguages(
+    editorChapter,
+    resolveSelectedChapterGlossary(),
+    languages.find((language) => language.role === "source")?.code ?? "",
+  );
   const contentRows = buildEditorDisplayItems(
     editorFilters.filteredRows,
     editorChapter,
@@ -566,7 +579,7 @@ export function buildEditorScreenViewModel(appState) {
       : null;
     return {
       ...row,
-      isConnected: row.id === editorChapter?.activeRowId,
+      isConnected: row.id === editorChapter?.activeRowId || row.srtGroup?.memberRowIds.includes(editorChapter?.activeRowId),
       sections: (Array.isArray(row.sections) ? row.sections : []).map((section) => {
         const changeView = buildEditorSectionChangeView({
           baselineRow: changeBaselineRow,
@@ -603,6 +616,9 @@ export function buildEditorScreenViewModel(appState) {
             targetLanguageCode: targetCode,
             seenRevisions: commentSeenRevisions,
           }),
+          showResearchButton:
+            Boolean(row?.rowId) && canManageGlossaries(),
+          glossaryEntryRole: glossaryEntryLanguageRole(section, glossaryEntryLanguages),
           isAiTranslating,
           changeView: isAiTranslating ? null : changeView,
           // A footnote or caption someone deleted still gets its box, showing the

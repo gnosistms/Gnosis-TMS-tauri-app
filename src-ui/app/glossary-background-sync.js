@@ -16,6 +16,8 @@ const glossaryBackgroundSyncSession = {
   lastScrollAt: 0,
   pendingSync: null,
   hasLocalMutations: false,
+  // Counts edits, so a finished sync knows whether it covered the latest one.
+  mutationCount: 0,
 };
 
 function currentSessionKey() {
@@ -116,6 +118,7 @@ async function runGlossaryBackgroundSync(render) {
     return false;
   }
 
+  const mutationsAtStart = glossaryBackgroundSyncSession.mutationCount;
   try {
     const payload = await invoke("sync_gtms_glossary_editor_repo", {
       input,
@@ -123,6 +126,11 @@ async function runGlossaryBackgroundSync(render) {
     });
     if (!sessionMatchesCurrentGlossary()) {
       return false;
+    }
+    // Every edit made before this sync started is now on GitHub, so leaving
+    // the glossary no longer needs a sync of its own (unless more edits came).
+    if (glossaryBackgroundSyncSession.mutationCount === mutationsAtStart) {
+      glossaryBackgroundSyncSession.hasLocalMutations = false;
     }
 
     markGlossaryTermsStale(payload);
@@ -146,6 +154,12 @@ export async function maybeStartGlossaryBackgroundSync(render, options = {}) {
 
   if (glossaryBackgroundSyncSession.pendingSync) {
     return glossaryBackgroundSyncSession.pendingSync;
+  }
+
+  // The page behind the Research windows does not need refreshing while they
+  // are open; the interval resumes syncing once they close.
+  if (state.glossaryResearch?.isOpen === true) {
+    return false;
   }
 
   if (
@@ -199,6 +213,7 @@ export function markGlossaryBackgroundSyncDirty() {
   }
 
   glossaryBackgroundSyncSession.hasLocalMutations = true;
+  glossaryBackgroundSyncSession.mutationCount += 1;
 }
 
 export function glossaryBackgroundSyncNeedsExitSync() {

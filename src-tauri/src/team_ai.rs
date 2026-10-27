@@ -205,7 +205,11 @@ pub(crate) async fn save_team_ai_settings(
     session_token: String,
 ) -> Result<TeamAiSettingsRecord, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_team_management(&app, installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            installation_id,
+            ensure_installation_allows_team_management,
+        )?;
         let client = broker_client()?;
         save_team_ai_settings_with_client(
             &client,
@@ -249,7 +253,11 @@ pub(crate) async fn save_team_ai_provider_secret(
     session_token: String,
 ) -> Result<TeamAiSecretsMetadata, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_team_management(&app, installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            installation_id,
+            ensure_installation_allows_team_management,
+        )?;
         let client = broker_client()?;
         save_team_ai_provider_secret_with_client(
             &client,
@@ -275,7 +283,11 @@ pub(crate) async fn issue_team_ai_provider_secret(
     session_token: String,
 ) -> Result<TeamAiIssuedProviderSecret, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_team_ai_access(&app, installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            installation_id,
+            ensure_installation_allows_team_ai_access,
+        )?;
         let client = broker_client()?;
         issue_team_ai_provider_secret_with_client(
             &client,
@@ -296,7 +308,11 @@ pub(crate) async fn load_team_ai_member_keypair(
     installation_id: i64,
 ) -> Result<Option<TeamAiMemberKeypair>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_team_ai_access(&app, installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            installation_id,
+            ensure_installation_allows_team_ai_access,
+        )?;
         load_team_ai_member_keypair_value(&app, installation_id)
     })
     .await
@@ -311,7 +327,11 @@ pub(crate) async fn save_team_ai_member_keypair(
     private_key_pem: String,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_team_ai_access(&app, installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            installation_id,
+            ensure_installation_allows_team_ai_access,
+        )?;
         save_team_ai_member_keypair_value(&app, installation_id, &public_key_pem, &private_key_pem)
     })
     .await
@@ -325,7 +345,11 @@ pub(crate) async fn load_team_ai_provider_cache(
     provider_id: AiProviderId,
 ) -> Result<TeamAiCachedProviderSecret, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_team_ai_access(&app, installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            installation_id,
+            ensure_installation_allows_team_ai_access,
+        )?;
         load_team_ai_cached_provider_secret_value(&app, installation_id, provider_id)
     })
     .await
@@ -341,7 +365,11 @@ pub(crate) async fn save_team_ai_provider_cache(
     key_version: i64,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_team_ai_access(&app, installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            installation_id,
+            ensure_installation_allows_team_ai_access,
+        )?;
         save_team_ai_cached_provider_secret_value(
             &app,
             installation_id,

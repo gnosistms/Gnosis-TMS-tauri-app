@@ -1,0 +1,13 @@
+import {attachSelectionContract} from './htn_core.mjs';
+const selectionInput=inp(6),selectionPassage=selectionInput.test.find(p=>String(p.itemId)==='f7904d60cae49569');
+const selectionSaved=attachSelectionContract(read(`${dir(6)}/htn-v4/en/saved-glossary.json`));
+const selectionContent={passages:sourcePacket([selectionPassage],true),glossary_info:consumerHints(selectionSaved,selectionPassage.text)};
+const selectionAnswer=await ask(6,'source-selection-contract-diagnostic',translationSchema,'Use the surrounding source context to disambiguate. Translate only text accurately and naturally into English, preserving content, numbers, names and grammar. No explanation. '+read(`${run}/consumer-rules.json`).rules,selectionContent,'translation','low');
+validateTranslations(selectionAnswer.items,selectionContent.passages);
+const selectionBaseline=read(`${dir(6)}/context-baseline/en/no-glossary.json`).find(p=>p.id===String(selectionPassage.itemId));
+const selectionPair=blindPair({id:String(selectionPassage.itemId),text:selectionPassage.text},selectionBaseline.translation,selectionAnswer.items[0].translation,'source-selection-contract-diagnostic');
+const selectionPacket={...selectionPair.public,term:'fatal',language:'en',criteria:requirements.fatal,sourceJudgments:[1,2].map(j=>loadStage(6,`source-labels-${j}`).find(p=>p.id===String(selectionPassage.itemId))),sourceContext:{before:selectionPassage.contextBefore,after:selectionPassage.contextAfter}};
+const selectionFirst=(await grade(6,'source-selection-contract-grade',[selectionPacket]))[0];
+const selectionSecond=(await grade(6,'source-selection-contract-confirm',[{...selectionPacket,A:selectionPacket.B,B:selectionPacket.A}]))[0];
+selectionFirst.candidateSide=selectionPair.candidateSide;selectionSecond.candidateSide=selectionPair.candidateSide==='A'?'B':'A';
+write(`${run}/selection-contract-diagnostic.json`,{source:selectionPassage,baseline:selectionBaseline,previous:read(`${dir(6)}/htn-v4/en/htn.json`).find(p=>p.id===String(selectionPassage.itemId)),candidate:selectionAnswer.items[0],savedGlossary:selectionSaved,first:selectionFirst,second:selectionSecond,exposure:'Post-confirmation diagnostic on an exposed failure. Not independent confirmation.'});

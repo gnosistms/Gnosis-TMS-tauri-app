@@ -2423,7 +2423,7 @@ test("a style save recovers its expired native session before committing once", 
     if (command === "refresh_broker_auth_session") return { login: "owner", sessionToken: "fresh-token" };
     if (command === "save_broker_auth_session") { nativeToken = payload.session.sessionToken; return; }
     if (command !== "update_gtms_editor_row_text_style") return null;
-    if (nativeToken === "stale-token") throw "AUTH_REQUIRED:Expired";
+    if (nativeToken === "stale-token") throw "AUTH_RETRY_SAFE:AUTH_REQUIRED:Expired";
     commits += 1;
     return { textStyle: payload.input.textStyle, chapterBaseCommitSha: "head-2" };
   };

@@ -36,6 +36,7 @@ function activeEditorChapter(overrides = {}) {
     selectedTargetLanguageCode: "vi",
     sidebarTab: "assistant",
     assistant: {},
+    reviewExpandedSectionKeys: new Set(),
     ...overrides,
   };
 }
@@ -1540,7 +1541,7 @@ test("review sidebar compares a stale clean review with current text and reopens
     createAiActionConfigurationState(),
   );
 
-  const reviewHtml = html.slice(html.indexOf('data-action="toggle-editor-review-section:ai-review"'));
+  const reviewHtml = html.slice(html.indexOf('data-editor-review-section="ai-review"'));
   assert.match(reviewHtml, /Xin chao<span class="history-diff__delete"> da sua<\/span>/);
   assert.match(reviewHtml, /class="history-item__meta">Compared with the current text in the editor\.<\/p>/);
   assert.doesNotMatch(reviewHtml, /The text changed since the last AI review\.|Your translation looks good!|apply-editor-ai-review/);
@@ -1566,7 +1567,7 @@ test("review sidebar keeps suggestions visible against each successive edit", ()
       [{ id: "row-1", sections: [{ code: "vi", text: `Xin chao${addition}` }] }],
       languages, "es", "vi", createAiActionConfigurationState(),
     );
-    const reviewHtml = html.slice(html.indexOf('data-action="toggle-editor-review-section:ai-review"'));
+    const reviewHtml = html.slice(html.indexOf('data-editor-review-section="ai-review"'));
     assert.ok(reviewHtml.includes(`Xin chao<span class="history-diff__delete">${addition}</span>`));
     assert.match(reviewHtml, /Compared with the current text in the editor\./);
     assert.match(reviewHtml, /Check spelling and grammar on Xin chau/);
@@ -1595,7 +1596,7 @@ test("stale review compares footnotes and captions against the editor, including
     }] }],
     languages, "es", "vi", createAiActionConfigurationState(),
   );
-  const reviewHtml = html.slice(html.indexOf('data-action="toggle-editor-review-section:ai-review"'));
+  const reviewHtml = html.slice(html.indexOf('data-editor-review-section="ai-review"'));
   for (const text of ["Reviewed text", "Reviewed note", "Reviewed caption"]) {
     assert.ok(reviewHtml.includes(`${text}<span class="history-diff__delete"> edited</span>`), reviewHtml);
   }

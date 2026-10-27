@@ -185,7 +185,7 @@ const SUPPORTED_LANGUAGE_OPTIONS: &[(&str, &str)] = &[
     ("zu", "Zulu"),
 ];
 
-pub(super) fn normalize_language_code(header: &str) -> Option<String> {
+pub(crate) fn normalize_language_code(header: &str) -> Option<String> {
     canonical_language_code(header).map(str::to_string)
 }
 

@@ -205,6 +205,12 @@ export function mergeEditorRowVersions(input = {}) {
     cloneRowFields(input?.localImageCaptions),
     remoteRow.imageCaptions,
   );
+  const attributionMerge = mergeStringSlices(
+    "attribution",
+    cloneRowFields(input?.baseAttributions),
+    cloneRowFields(input?.localAttributions),
+    remoteRow.attributions,
+  );
   const imageMerge = mergeImageSlices(
     cloneRowImages(input?.baseImages),
     cloneRowImages(input?.localImages),
@@ -220,6 +226,7 @@ export function mergeEditorRowVersions(input = {}) {
     ...fieldMerge.conflicts,
     ...footnoteMerge.conflicts,
     ...imageCaptionMerge.conflicts,
+    ...attributionMerge.conflicts,
     ...imageMerge.conflicts,
   ];
   if (conflicts.length > 0) {
@@ -244,6 +251,7 @@ export function mergeEditorRowVersions(input = {}) {
     mergedFields: fieldMerge.mergedMap,
     mergedFootnotes: footnoteMerge.mergedMap,
     mergedImageCaptions: imageCaptionMerge.mergedMap,
+    mergedAttributions: attributionMerge.mergedMap,
     mergedImages: imageMerge.mergedImages,
     mergedFieldStates: fieldStateMerge.mergedFieldStates,
     conflicts: [],
@@ -255,11 +263,13 @@ export function mergeDirtyEditorRowWithRemote(row, remoteRow) {
     baseFields: row?.baseFields,
     baseFootnotes: row?.baseFootnotes,
     baseImageCaptions: row?.baseImageCaptions,
+    baseAttributions: row?.baseAttributions,
     baseImages: row?.baseImages ?? row?.persistedImages,
     baseFieldStates: row?.persistedFieldStates,
     localFields: row?.fields,
     localFootnotes: row?.footnotes,
     localImageCaptions: row?.imageCaptions,
+    localAttributions: row?.attributions,
     localImages: row?.images,
     localFieldStates: row?.fieldStates,
     remoteRow,

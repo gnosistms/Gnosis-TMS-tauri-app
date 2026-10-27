@@ -7,6 +7,7 @@ import {
   navButton,
   pageShell,
   primaryButton,
+  secondaryButton,
   renderStateCard,
   textAction,
 } from "../lib/ui.js";
@@ -135,7 +136,12 @@ export function renderGlossaryEditorScreen(state) {
       }),
       navButtons,
       leftTools: searchField,
-      tools: canManageTerms ? primaryButton("+ New Term", "open-new-term") : "",
+      tools: canManageTerms
+        ? `${secondaryButton("Research", "open-glossary-research", {
+          tooltip: "Research the meaning of a word in the source language and suggest translations in the target language.",
+          tooltipOptions: { align: "end", side: "bottom" },
+        })}${primaryButton("+ New Term", "open-new-term")}`
+        : "",
       pageSync: state.pageSync,
       noticeText: getNoticeBadgeText(),
       statusItems: getStatusSurfaceItems("glossaryEditor"),

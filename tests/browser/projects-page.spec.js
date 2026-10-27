@@ -48,6 +48,36 @@ test("project search case toggle updates through the action dispatcher", async (
   await expect(toggle).toHaveAttribute("aria-pressed", "false");
 });
 
+// Windows Vietnamese Telex composes each word in the field ("vieejt" →
+// "việt") until the word ends. A render that replaces the field mid-word cut
+// the composition off and scrambled the typed text.
+async function typeWithInputMethod(page, words) {
+  const session = await page.context().newCDPSession(page);
+  for (const [index, steps] of words.entries()) {
+    for (const text of steps) {
+      await session.send("Input.imeSetComposition", { text, selectionStart: text.length, selectionEnd: text.length });
+      await page.waitForTimeout(30);
+    }
+    await session.send("Input.insertText", { text: steps.at(-1) });
+    await page.waitForTimeout(30);
+    if (index < words.length - 1) {
+      await page.keyboard.type(" ");
+    }
+  }
+}
+
+test("project search keeps text typed with an input method (Vietnamese Telex)", async ({ page }) => {
+  await mountProjectsFixture(page, { projectCount: 2 });
+  const input = page.locator("[data-project-search-input]");
+  await input.click();
+  await typeWithInputMethod(page, [
+    ["v", "vi", "vie", "viê", "việ", "việt"],
+    ["n", "na", "nam"],
+  ]);
+  await expect(input).toHaveValue("việt nam");
+  await expect(input).toBeFocused();
+});
+
 function renderedItemKeys(page) {
   return page.evaluate(() =>
     [...document.querySelectorAll("[data-projects-item-key]")].map(
@@ -637,4 +667,71 @@ for (const refreshInitially of [true, false]) {
     expect(await page.evaluate(() => window.localRemovalCalls.map((call) => call.command)))
       .toEqual(["purge_local_gtms_project_repo"]);
   });
+}
+
+for (const width of [1024, 1440]) {
+  for (const status of ["updateRequired", "importedEditorConflicts", "dirtyLocal"]) {
+    test(`project ${status} notices stay inside the card at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.route("**/project-notice-fixture", (route) => route.fulfill({
+        contentType: "text/html",
+        body: '<html><head><link rel="stylesheet" href="/styles.css"></head><body><div id="app"></div></body></html>',
+      }));
+      await page.goto("/project-notice-fixture");
+      await page.evaluate(async (syncStatus) => {
+        const { state } = await import(`${location.origin}/app/state.js`);
+        const { renderProjectsScreen } = await import(`${location.origin}/screens/projects.js`);
+        const team = { id: "notice-team", name: "Team", installationId: 42, membershipRole: "owner" };
+        state.teams = [team];
+        state.selectedTeamId = team.id;
+        state.screen = "projects";
+        state.projects = [{
+          id: "notice-project", name: "subtitles", title: "Subtitles", fileLoadState: "ready",
+          chapters: Array.from({ length: 7 }, (_, index) => ({
+            id: `notice-chapter-${index}`, name: `Subtitle file ${index + 1}`, status: "active", sourceWordCount: 100,
+          })),
+        }];
+        state.expandedProjects = new Set(["notice-project"]);
+        state.projectDiscovery = { status: "ready" };
+        state.projectRepoSyncByProjectId = {
+          "notice-project": {
+            status: syncStatus,
+            message: "This project repo 'subtitles' was last saved by Gnosis TMS 0.8.127. You are running 0.8.125. Update Gnosis TMS before syncing so an older app version does not overwrite newer-format data.",
+          },
+        };
+        window.renderNoticeFixture = (expanded, showNotice = true) => {
+          state.expandedProjects = new Set(expanded ? ["notice-project"] : []);
+          state.projectRepoSyncByProjectId["notice-project"].status = showNotice ? syncStatus : "idle";
+          document.querySelector("#app").innerHTML = renderProjectsScreen(state);
+        };
+        window.renderNoticeFixture(true);
+      }, status);
+      const notice = page.locator(".project-vlist__card .expandable-card__status");
+      await expect(notice).toBeVisible();
+      const measure = () => page.evaluate(() => {
+        const header = document.querySelector(".project-vlist__card--header");
+        const notice = header.querySelector(".expandable-card__status");
+        const file = document.querySelector(".project-vlist__card--body-start");
+        return {
+          seam: file ? file.getBoundingClientRect().top - header.getBoundingClientRect().bottom : 0,
+          noticeBottomSpace: header.getBoundingClientRect().bottom - notice.getBoundingClientRect().bottom,
+          noticeMargin: parseFloat(getComputedStyle(notice).marginBottom),
+        };
+      });
+      const expanded = await measure();
+      expect(Math.abs(expanded.seam)).toBeLessThanOrEqual(1);
+      expect(expanded.noticeBottomSpace).toBeGreaterThanOrEqual(expanded.noticeMargin);
+      await page.evaluate(() => window.renderNoticeFixture(false));
+      await expect(notice).toBeVisible();
+      const collapsed = await measure();
+      expect(collapsed.noticeBottomSpace).toBeGreaterThanOrEqual(collapsed.noticeMargin);
+      await page.evaluate(() => window.renderNoticeFixture(true, false));
+      await expect(notice).toHaveCount(0);
+      const seamWithoutNotice = await page.evaluate(() =>
+        document.querySelector(".project-vlist__card--body-start").getBoundingClientRect().top
+        - document.querySelector(".project-vlist__card--header").getBoundingClientRect().bottom,
+      );
+      expect(Math.abs(seamWithoutNotice)).toBeLessThanOrEqual(1);
+    });
+  }
 }

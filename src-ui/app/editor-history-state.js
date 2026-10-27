@@ -161,6 +161,7 @@ export function createOptimisticEditorHistoryEntryFromRow(row, languageCode, opt
     // and diffs cleanly against the committed entry that lands for this save.
     footnote: serializeEditorFootnotesForLegacy(row.footnotes?.[languageCode]),
     imageCaption: String(row.imageCaptions?.[languageCode] ?? ""),
+    attribution: String(row.attributions?.[languageCode] ?? ""),
     image: normalizeEditorFieldImage(row.images?.[languageCode]),
     textStyle: normalizeEditorRowTextStyle(row.textStyle),
     reviewed: fieldState.reviewed,
@@ -415,11 +416,24 @@ export function applyEditorRowHistoryRestored(row, languageCode, payload) {
   const nextValue = payload?.plainText ?? "";
   const nextFootnote = payload?.footnote ?? "";
   const nextImageCaption = payload?.imageCaption ?? "";
+  const nextAttribution = payload?.attribution ?? "";
   const nextImage = normalizeEditorFieldImage(payload?.image);
   const nextTextStyle =
     typeof payload?.textStyle === "string" && payload.textStyle.trim()
       ? payload.textStyle
       : row.textStyle;
+  if (row.textStyle === "quote" && nextTextStyle !== "quote") {
+    const fields = cloneRowFields(payload?.fields ?? row.fields);
+    const attributions = cloneRowFields(payload?.attributions ?? row.attributions);
+    if (!payload?.fields) {
+      for (const [code, text] of Object.entries(attributions)) {
+        if (text) fields[code] = fields[code] ? `${fields[code].trimEnd()}\n\n${text}` : text;
+        attributions[code] = "";
+      }
+    }
+    row = { ...row, fields, attributions, baseFields: cloneRowFields(fields), persistedFields: cloneRowFields(fields),
+      baseAttributions: cloneRowFields(attributions), persistedAttributions: cloneRowFields(attributions) };
+  }
   const nextImages = cloneRowImages(row.images);
   const nextPersistedImages = cloneRowImages(row.persistedImages);
   if (nextImage) {
@@ -445,6 +459,10 @@ export function applyEditorRowHistoryRestored(row, languageCode, payload) {
       ...cloneRowFields(row.imageCaptions),
       [languageCode]: nextImageCaption,
     },
+    attributions: {
+      ...cloneRowFields(row.attributions),
+      [languageCode]: nextAttribution,
+    },
     images: nextImages,
     persistedFields: {
       ...cloneRowFields(row.persistedFields),
@@ -457,6 +475,10 @@ export function applyEditorRowHistoryRestored(row, languageCode, payload) {
     persistedImageCaptions: {
       ...cloneRowFields(row.persistedImageCaptions),
       [languageCode]: nextImageCaption,
+    },
+    persistedAttributions: {
+      ...cloneRowFields(row.persistedAttributions),
+      [languageCode]: nextAttribution,
     },
     persistedImages: nextPersistedImages,
     saveStatus: "idle",
@@ -482,6 +504,7 @@ export function editorRowMatchesHistoryPayload(row, languageCode, payload) {
     String(row.fields?.[languageCode] ?? "") === String(payload?.plainText ?? "")
     && serializeEditorFootnotesForLegacy(row.footnotes?.[languageCode]) === String(payload?.footnote ?? "")
     && String(row.imageCaptions?.[languageCode] ?? "") === String(payload?.imageCaption ?? "")
+    && String(row.attributions?.[languageCode] ?? "") === String(payload?.attribution ?? "")
     && historyImageKey(row.images?.[languageCode]) === historyImageKey(payload?.image)
     && String(row.textStyle ?? "") === String(expectedTextStyle ?? "")
   );

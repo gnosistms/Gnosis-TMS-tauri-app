@@ -9,7 +9,9 @@ export function applyEditorRowFieldInput({
   const rowId = input?.dataset?.rowId ?? "";
   const languageCode = input?.dataset?.languageCode ?? "";
   const contentKind =
-    input?.dataset?.contentKind === "footnote"
+    input?.dataset?.contentKind === "attribution"
+      ? "attribution"
+      : input?.dataset?.contentKind === "footnote"
       ? "footnote"
       : input?.dataset?.contentKind === "image-caption"
         ? "image-caption"

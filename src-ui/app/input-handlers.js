@@ -76,6 +76,7 @@ import {
   syncEditorGlossaryHighlightRowDom,
   updateEditorConflictResolutionFinalFootnote,
   updateEditorConflictResolutionFinalImageCaption,
+  updateEditorConflictResolutionFinalAttribution,
   updateEditorConflictResolutionFinalImageUrl,
   updateEditorImageUrlDraft,
   updateEditorPreviewSearchQuery,
@@ -96,6 +97,7 @@ import {
   updateEditorRowFieldValue,
   updateEditorSearchFilterQuery,
   updateEditorSourceLanguage,
+  updateEditorSrtPauseSettings,
   updateEditorTargetLanguage,
 } from "./translate-flow.js";
 import {
@@ -115,6 +117,7 @@ import {
   updateProjectTransferName,
 } from "./project-transfer-flow.js";
 import { normalizedConfirmationValue } from "./resource-entity-modal.js";
+import { handleGlossaryResearchInput } from "./glossary-research-input.js";
 
 let liveReviewSidebarRenderPending = false;
 
@@ -375,6 +378,17 @@ function handleGlossaryTermVariantInput(event) {
   return true;
 }
 
+function handleGlossaryTermSiblingInput(event) {
+  const input = event.target.closest("[data-glossary-term-sibling-input]");
+  if (!input || !state.glossaryTermEditor) {
+    return false;
+  }
+
+  state.glossaryTermEditor.siblingInput = input.value;
+  state.glossaryTermEditor.siblingError = "";
+  return true;
+}
+
 function handleGlossaryTermNotesInput(event) {
   const input = event.target.closest("[data-glossary-term-notes-input]");
   if (!input) {
@@ -515,6 +529,21 @@ function handleQaTermRegularExpressionInput(event) {
   }
   updateQaTermDraftField("isRegularExpression", input.checked);
   return true;
+}
+
+function handleEditorSrtPauseInput(event, render) {
+  if (event.type !== "change") return false;
+  const toggle = event.target.closest("[data-editor-srt-pause-toggle]");
+  const threshold = event.target.closest("[data-editor-srt-pause-threshold]");
+  if (toggle instanceof HTMLInputElement) {
+    void updateEditorSrtPauseSettings(render, { enabled: toggle.checked });
+    return true;
+  }
+  if (threshold instanceof HTMLSelectElement) {
+    void updateEditorSrtPauseSettings(render, { thresholdMs: Number(threshold.value) });
+    return true;
+  }
+  return false;
 }
 
 function handleEditorSourceLanguageInput(event, render) {
@@ -734,6 +763,12 @@ function handleEditorCommentDraftInput(event, render) {
 }
 
 function handleEditorAssistantDraftInput(event) {
+  // Replacing the focused composer on send can fire change with its old value.
+  // The draft already tracks input events; a blur commit must not restore it.
+  if (event.type !== "input") {
+    return false;
+  }
+
   const input = event.target.closest("[data-editor-assistant-draft]");
   if (!input) {
     return false;
@@ -843,6 +878,13 @@ function handleEditorConflictResolutionInput(event) {
   if (imageCaptionInput) {
     updateEditorConflictResolutionFinalImageCaption(imageCaptionInput.value);
     syncEditorConflictResolutionTextareaHeight(imageCaptionInput);
+    return true;
+  }
+
+  const attributionInput = event.target.closest("[data-editor-conflict-final-attribution-input]");
+  if (attributionInput) {
+    updateEditorConflictResolutionFinalAttribution(attributionInput.value);
+    syncEditorConflictResolutionTextareaHeight(attributionInput);
     return true;
   }
 
@@ -1225,7 +1267,9 @@ const inputHandlers = [
   handleGlossaryTermVariantInput,
   handleGlossaryTermVariantNoteInput,
   handleGlossaryTermNotesInput,
+  handleGlossaryTermSiblingInput,
   handleGlossaryTermFootnoteInput,
+  handleGlossaryResearchInput,
   handleQaListTitleInput,
   handleQaListLanguageInput,
   handleQaListRenameInput,
@@ -1235,6 +1279,7 @@ const inputHandlers = [
   handleQaTermNotesInput,
   handleQaTermCaseSensitiveInput,
   handleQaTermRegularExpressionInput,
+  handleEditorSrtPauseInput,
   handleEditorSourceLanguageInput,
   handleEditorTargetLanguageInput,
   handleEditorPreviewLanguageInput,

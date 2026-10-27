@@ -422,3 +422,25 @@ test("copy progress events drive stage, success, and error states by job id", ()
   assert.equal(state.editorChapter.exportModal.status, "idle");
   assert.match(state.editorChapter.exportModal.error, /copy failed/);
 });
+
+test("project team copy starts one background job with all chapter ids in order", async () => {
+  installTeamCopyFixture();
+  const first = state.projects[0].chapters[0];
+  state.projects[0].chapters = [
+    { ...first, id: "chapter-10", name: "Chapter 10" },
+    { ...first, id: "chapter-2", name: "Chapter 2" },
+  ];
+  const { openProjectExportOptions } = await import("./editor-export-flow.js");
+  openProjectExportOptions(() => {}, "project-1");
+  state.editorChapter.exportModal.teamCopy = {
+    ...state.editorChapter.exportModal.teamCopy,
+    targetTeamId: "team-2", projects: [otherTeamProject], targetProjectId: "project-9", copyTitle: "Project",
+  };
+  let input;
+  await submitTeamChapterCopy(() => {}, {
+    waitForRepoQueue: async () => {}, requireBrokerSession: () => "session-token",
+    invoke: async (_command, args) => { input = args.input; },
+  });
+  assert.deepEqual(input.source.chapterIds, ["chapter-2", "chapter-10"]);
+  assert.equal(state.editorChapter.exportModal.status, "exporting");
+});

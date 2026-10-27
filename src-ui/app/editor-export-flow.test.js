@@ -51,6 +51,7 @@ const {
   closeEditorExportOptions,
   editorExportCategories,
   findEditorExportOption,
+  forgetPdfFontApproval,
   handleChapterPdfExportProgress,
   openEditorExportOptions,
   refreshPdfFontInspection,
@@ -655,6 +656,58 @@ test("PDF font inspection records the exact missing download before export", asy
   assert.deepEqual(state.editorChapter.exportModal.pdfFontFamilies, ["Noto Serif", "Noto Serif JP"]);
 });
 
+test("PDF inspection opens immediately and waits for local saves in the background", async () => {
+  installEditorExportFixture();
+  openExportModal("file:pdf");
+  let release;
+  const queue = new Promise((resolve) => { release = resolve; });
+  let invoked = false;
+  const inspection = refreshPdfFontInspection(() => {}, {
+    waitForRepoQueue: () => queue,
+    invoke: async (_command, payload) => {
+      invoked = true;
+      assert.equal(payload.input.omitCustomHtml, true);
+      assert.equal(payload.input.footnoteLinksAsPlainText, true);
+      return { supported: true, savedFallbackFonts: [{ id: "font-1", family: "Noto Sans EgyptHiero" }] };
+    },
+  });
+  assert.equal(state.editorChapter.exportModal.isOpen, true);
+  assert.equal(state.editorChapter.exportModal.pdfFontStatus, "loading");
+  assert.equal(invoked, false);
+  release();
+  await inspection;
+  assert.equal(state.editorChapter.exportModal.pdfSavedFallbackFonts.length, 1);
+});
+
+test("an older inspection cannot restore saved fonts after a newer check", async () => {
+  installEditorExportFixture();
+  openExportModal("file:pdf");
+  let finishOlder;
+  const olderResponse = new Promise((resolve) => { finishOlder = resolve; });
+  const older = refreshPdfFontInspection(() => {}, { waitForRepoQueue: async () => {}, invoke: () => olderResponse });
+  await Promise.resolve();
+  await refreshPdfFontInspection(() => {}, { waitForRepoQueue: async () => {}, invoke: async () => ({ supported: true, savedFallbackFonts: [] }) });
+  finishOlder({ supported: true, savedFallbackFonts: [{ id: "old", family: "Old approval" }] });
+  await older;
+  assert.deepEqual(state.editorChapter.exportModal.pdfSavedFallbackFonts, []);
+});
+
+test("forgetting a font removes its app-wide approval and refreshes the contextual control", async () => {
+  installEditorExportFixture();
+  openExportModal("file:pdf");
+  const calls = [];
+  const operations = { waitForRepoQueue: async () => {}, invoke: async (command, payload) => {
+    calls.push([command, payload]);
+    return command === "inspect_gtms_chapter_pdf_fonts" ? { supported: true, savedFallbackFonts: [] } : true;
+  } };
+  state.editorChapter.exportModal.pdfSavedFallbackFonts = [{ id: "font-1", family: "Noto Sans EgyptHiero" }];
+  await forgetPdfFontApproval(() => {}, "font-1", operations);
+  assert.deepEqual(calls[0], ["forget_gtms_pdf_font_approval", { fontId: "font-1" }]);
+  assert.equal(calls[1][0], "inspect_gtms_chapter_pdf_fonts");
+  assert.deepEqual(state.editorChapter.exportModal.pdfSavedFallbackFonts, []);
+  assert.equal(state.editorChapter.exportModal.pdfForgettingFontId, "");
+});
+
 test("Cancel remains available for a running PDF job and requests backend cancellation", async () => {
   installEditorExportFixture();
   openExportModal("file:pdf");
@@ -732,6 +785,67 @@ test("PDF export progress ignores events from another job", () => {
 
   assert.equal(state.editorChapter.exportModal.status, "exporting");
   assert.equal(state.editorChapter.exportModal.error, "");
+});
+
+function openFontReview() {
+  installEditorExportFixture();
+  openExportModal("file:pdf");
+  state.editorChapter.exportModal.status = "exporting";
+  state.editorChapter.exportModal.pdfJobId = "current-job";
+  handleChapterPdfExportProgress({
+    jobId: "current-job", status: "font-review",
+    fontReview: { reviewId: "review-1", fontFamilies: ["Noto Sans Egyptian Hieroglyphs"], excerpts: [
+      { label: "Paragraph 4", imageDataUrl: "data:image/svg+xml;base64,PHN2Zy8+" },
+    ] },
+  }, () => {});
+}
+
+test("font review locks export settings and approves the existing job without another save dialog", async () => {
+  openFontReview();
+  assert.equal(state.editorChapter.exportModal.status, "reviewing-fonts");
+  selectEditorExportOption(() => {}, "file:docx");
+  assert.equal(state.editorChapter.exportModal.selectedOptionId, "file:pdf");
+  const calls = [];
+  await submitEditorExport(() => {}, {
+    saveDialog: () => assert.fail("Approval must reuse the selected destination"),
+    invoke: async (command, input) => { calls.push([command, input]); return true; },
+  });
+  assert.deepEqual(calls, [["approve_gtms_chapter_pdf_fonts", { jobId: "current-job", reviewId: "review-1" }]]);
+  assert.equal(state.editorChapter.exportModal.status, "exporting");
+});
+
+test("cancelling a font review cancels its job and ignores a late review event", async () => {
+  openFontReview();
+  const calls = [];
+  closeEditorExportOptions(() => {}, { invoke: async (...args) => { calls.push(args); return true; } });
+  assert.equal(state.editorChapter.exportModal.status, "cancelling");
+  handleChapterPdfExportProgress({ jobId: "current-job", status: "font-review", fontReview: { reviewId: "late" } }, () => {});
+  assert.equal(state.editorChapter.exportModal.status, "cancelling");
+  assert.deepEqual(calls, [["cancel_gtms_chapter_pdf_export", { jobId: "current-job" }]]);
+  handleChapterPdfExportProgress({ jobId: "current-job", status: "cancelled" }, () => {});
+  assert.equal(state.editorChapter.exportModal.isOpen, false);
+  assert.equal(state.editorChapter.exportModal.pdfFontReview, null);
+});
+
+test("a failed approval retains the review for retry, and an expired review cannot publish", async () => {
+  openFontReview();
+  await submitEditorExport(() => {}, { invoke: async () => { throw new Error("Try again"); } });
+  assert.equal(state.editorChapter.exportModal.status, "reviewing-fonts");
+  assert.equal(state.editorChapter.exportModal.pdfFontReview.reviewId, "review-1");
+  await submitEditorExport(() => {}, { invoke: async () => false });
+  assert.match(state.editorChapter.exportModal.error, /expired/);
+  assert.equal(state.editorChapter.exportModal.pdfJobId, "");
+  assert.equal(state.editorChapter.exportModal.pdfFontReview, null);
+});
+
+test("an approval failure after cancellation cannot reopen the font review", async () => {
+  openFontReview();
+  let rejectApproval;
+  const approval = submitEditorExport(() => {}, { invoke: () => new Promise((_, reject) => { rejectApproval = reject; }) });
+  closeEditorExportOptions(() => {}, { invoke: async () => true });
+  rejectApproval(new Error("Late failure"));
+  await approval;
+  assert.equal(state.editorChapter.exportModal.status, "cancelling");
 });
 
 test("PDF export progress records determinate image preparation progress", () => {
@@ -847,4 +961,111 @@ test("submitEditorExport ignores options that are not available yet", async () =
 
   assert.equal(invokeCalls.length, 0);
   assert.equal(createEditorExportModalState().selectedOptionId, "file:html");
+});
+
+function installProjectExportFixture() {
+  installEditorExportFixture();
+  const first = state.projects[0].chapters[0];
+  state.projects[0].chapters = [
+    { ...first, id: "chapter-10", name: "Chapter 10" },
+    { ...first, id: "deleted", name: "Chapter 1", status: "deleted" },
+    { ...first, id: "chapter-2", name: "Chapter 2" },
+  ];
+  // An unrelated open editor must never supply the export language or content.
+  state.editorChapter.selectedTargetLanguageCode = "es";
+}
+
+test("project export sends every active chapter in displayed order and uses the project title", async () => {
+  installProjectExportFixture();
+  const { openProjectExportOptions } = await import("./editor-export-flow.js");
+  openProjectExportOptions(() => {}, "project-1");
+  const calls = [];
+  await submitEditorExport(() => {}, {
+    saveDialog: async (options) => {
+      assert.equal(options.defaultPath, "Project-vi.html");
+      return "/tmp/book.html";
+    },
+    waitForRepoQueue: async () => {},
+    invoke: async (command, args) => { calls.push({ command, ...args }); },
+  });
+  assert.equal(calls[0].command, "export_gtms_chapter_file");
+  assert.deepEqual(calls[0].input.chapterIds, ["chapter-2", "chapter-10"]);
+  assert.equal(calls[0].input.projectTitle, "Project");
+  assert.equal(calls[0].input.languageCode, "vi");
+});
+
+test("project clipboard export reads all chapters and preserves content order and footnotes", async () => {
+  installProjectExportFixture();
+  const { openProjectExportOptions } = await import("./editor-export-flow.js");
+  openProjectExportOptions(() => {}, "project-1");
+  selectEditorExportOption(() => {}, "copy:html");
+  const chaptersRead = [];
+  let clipboard;
+  await submitEditorExport(() => {}, {
+    waitForRepoQueue: async () => {},
+    invoke: async (command, { input }) => {
+      assert.equal(command, "load_gtms_chapter_editor_data");
+      assert.equal(state.editorChapter.exportModal.status, "exporting");
+      chaptersRead.push(input.chapterId);
+      return {
+        fileTitle: input.chapterId,
+        languages: [{ code: "vi" }],
+        rows: [{ rowId: `${input.chapterId}-row`, fields: { vi: `Content ${input.chapterId}[1]` }, footnotes: { vi: `Note ${input.chapterId}` } }],
+      };
+    },
+    writeClipboard: async (formats) => { clipboard = formats; },
+  });
+  assert.deepEqual(chaptersRead, ["chapter-2", "chapter-10"]);
+  assert.match(clipboard["text/html"], /chapter-2[\s\S]*Content chapter-2[\s\S]*chapter-10[\s\S]*Content chapter-10/);
+  assert.match(clipboard["text/html"], /Note chapter-2/);
+  assert.match(clipboard["text/html"], /Note chapter-10/);
+  assert.doesNotMatch(clipboard["text/plain"], /Text one/);
+});
+
+test("project PDF inspection and export share the complete chapter scope", async () => {
+  installProjectExportFixture();
+  const { openProjectExportOptions } = await import("./editor-export-flow.js");
+  openProjectExportOptions(() => {}, "project-1");
+  state.editorChapter.exportModal.selectedOptionId = "file:pdf";
+  const calls = [];
+  const invoke = async (command, { input }) => {
+    calls.push({ command, input });
+    return { supported: true, fontFamilies: [], missingBytes: 0, requiredBytes: 0 };
+  };
+  await refreshPdfFontInspection(() => {}, { invoke, waitForRepoQueue: async () => {} });
+  await submitEditorExport(() => {}, { invoke, waitForRepoQueue: async () => {}, saveDialog: async () => "/tmp/book.pdf" });
+  assert.deepEqual(calls.map((call) => call.command), ["inspect_gtms_chapter_pdf_fonts", "start_gtms_chapter_pdf_export"]);
+  for (const call of calls) {
+    assert.deepEqual(call.input.chapterIds, ["chapter-2", "chapter-10"]);
+    assert.equal(call.input.projectTitle, "Project");
+  }
+});
+
+test("project export offers all languages and gates SRT on included chapters", async () => {
+  installProjectExportFixture();
+  const { openProjectExportOptions, selectEditorExportLanguage } = await import("./editor-export-flow.js");
+  state.projects[0].chapters[0].languages = [{ code: "vi", role: "target" }];
+  state.projects[0].chapters[0].sourceFormats = ["srt"];
+  openProjectExportOptions(() => {}, "project-1");
+  assert.deepEqual(state.editorChapter.exportModal.languages.map((language) => language.code), ["es", "vi"]);
+  selectEditorExportLanguage(() => {}, "es");
+  assert.equal(state.editorChapter.exportModal.languageCode, "es");
+  assert.deepEqual(state.editorChapter.exportModal.chapterIds, ["chapter-2"]);
+  assert.equal(findEditorExportOption("file:srt"), null);
+  state.projects[0].chapters[2].sourceFormats = ["srt"];
+  assert.ok(findEditorExportOption("file:srt"));
+});
+
+test("project copy fails without publishing partial content when one chapter lacks the language", async () => {
+  installProjectExportFixture();
+  const { openProjectExportOptions } = await import("./editor-export-flow.js");
+  openProjectExportOptions(() => {}, "project-1");
+  selectEditorExportOption(() => {}, "copy:text");
+  await submitEditorExport(() => {}, {
+    waitForRepoQueue: async () => {},
+    invoke: async (_command, { input }) => ({ languages: input.chapterId === "chapter-2" ? [{ code: "vi" }] : [], rows: [] }),
+    writeClipboard: async () => assert.fail("Do not copy an incomplete book"),
+  });
+  assert.equal(state.editorChapter.exportModal.isOpen, true);
+  assert.match(state.editorChapter.exportModal.error, /no longer has the selected language/);
 });

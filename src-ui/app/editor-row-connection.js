@@ -21,7 +21,7 @@ export function reconcileEditorRowConnection(appState) {
   if (appState.screen !== "translate" || !chapter?.activeRowId
     || !["ready", "refreshing"].includes(chapter.status)) return false;
   const model = buildEditorScreenViewModel(appState);
-  if (model.contentRows.some((row) => row.kind === "row" && row.id === chapter.activeRowId)) return false;
+  if (model.contentRows.some((row) => row.kind === "row" && (row.id === chapter.activeRowId || row.srtGroup?.memberRowIds.includes(chapter.activeRowId)))) return false;
   appState.editorChapter = {
     ...chapter,
     activeRowId: null,

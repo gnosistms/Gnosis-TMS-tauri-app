@@ -267,7 +267,7 @@ test("renderEditorPreviewDocumentHtml keeps row and language metadata on text bl
 
   assert.match(
     html,
-    /<p class="translate-preview__block translate-preview__block--paragraph" data-preview-block="paragraph" data-row-id="row-1" lang="vi">Alpha body<\/p>/,
+    /<p class="translate-preview__block translate-preview__block--paragraph" data-preview-block="paragraph" data-row-id="row-1" lang="vi" data-tooltip="Double-click to edit\.">Alpha body<\/p>/,
   );
 });
 
@@ -296,6 +296,34 @@ test("preview rendering and serialization preserve supported inline markup", () 
   assert.match(rendered.html, /<ruby>漢字<rt><mark class="translate-preview__search-match is-active"/);
   assert.match(serialized, /<strong>Alpha<\/strong>/);
   assert.match(serialized, /<ruby>漢字<rt>よみ<\/rt><\/ruby>/);
+});
+
+test("every preview content block carries an edit hint and its own row and language", () => {
+  const blocks = buildEditorPreviewDocument([
+    {
+      rowId: "body-row",
+      fields: { es: "Body [1]<hr>After separator" },
+      footnotes: { es: [{ marker: 1, text: "First note" }] },
+      images: { es: { kind: "url", url: "https://example.com/image.png" } },
+      imageCaptions: { es: "Image caption" },
+    },
+    { rowId: "heading-row", textStyle: "heading1", fields: { es: "Heading" } },
+    { rowId: "html-row", textStyle: "custom_html", fields: { es: "<div>Custom HTML</div>" } },
+    { rowId: "note-only-row", fields: {}, footnotes: { es: [{ marker: 1, text: "Note without body text" }] } },
+  ], "es");
+  const { html } = renderEditorPreviewDocumentHtml(blocks, { resolveImageSrc: (image) => image.url });
+
+  for (const [kind, rowId] of [
+    ["paragraph", "body-row"], ["separator", "body-row"],
+    ["image", "body-row"], ["image-caption", "body-row"],
+    ["footnote", "body-row"], ["footnote", "note-only-row"],
+    ["heading1", "heading-row"], ["custom-html", "html-row"],
+  ]) {
+    assert.ok(html.includes(`data-preview-block="${kind}" data-row-id="${rowId}" lang="es" data-tooltip="Double-click to edit."`), `${kind}: ${rowId}`);
+  }
+  assert.match(html, /href="#fnref-/);
+  assert.doesNotMatch(serializeEditorPreviewHtml(blocks), /data-preview-block=|Double-click to edit/);
+  assert.doesNotMatch(serializeEditorPreviewWordPress(blocks).content, /data-preview-block=|Double-click to edit/);
 });
 
 test("preview rendering and export escape literal quotes only once", () => {
@@ -903,4 +931,40 @@ test("serializeEditorPreviewWordPress does not promote H1s that are not first or
   const imageFirstResult = serializeEditorPreviewWordPress(imageFirst);
   assert.equal(imageFirstResult.title, null);
   assert.match(imageFirstResult.content, /Not a title/);
+});
+
+test("quote attribution stays attached in preview, WordPress, HTML and plain text", () => {
+  const blocks = buildEditorPreviewDocument([{ rowId: "q", textStyle: "quote", fields: { en: "Body" }, attributions: { en: 'Author & <b>Source</b>' } }], "en");
+  const preview = renderEditorPreviewDocumentHtml(blocks, { searchState: { query: "Source" } });
+  assert.match(preview.html, /<blockquote[\s\S]*<cite class="translate-preview__attribution"[\s\S]*Author &amp; <strong>[\s\S]*Source[\s\S]*<\/cite><\/blockquote>/);
+  assert.equal(countEditorPreviewSearchMatches(blocks, "Source"), 1);
+  const wp = serializeEditorPreviewWordPress(blocks).content;
+  assert.match(wp, /<cite>Author &amp; <strong>Source<\/strong><\/cite><\/blockquote>/);
+  assert.doesNotMatch(wp, /font-size|text-align/);
+  assert.match(serializeEditorPreviewHtml(blocks), /<cite style="display:block;font-size:90%;text-align:right;font-style:normal">/);
+  assert.match(serializeEditorPreviewHtml(blocks), /<blockquote class="wp-block-quote">/);
+  assert.equal(serializeEditorPreviewPlainText(blocks), "Body\n\nAuthor & Source");
+});
+
+test("an attribution-only quote and quotes with separators retain their source once", () => {
+  for (const text of ["", "First<hr>Second", "First<hr>"]) {
+    const blocks = buildEditorPreviewDocument([{ textStyle: "quote", fields: { en: text }, attributions: { en: "Author" } }], "en");
+    assert.equal((serializeEditorPreviewWordPress(blocks).content.match(/<cite>Author<\/cite>/g) ?? []).length, 1);
+    assert.equal((renderEditorPreviewDocumentHtml(blocks).html.match(/>Author<\/cite>/g) ?? []).length, 1);
+    assert.match(serializeEditorPreviewPlainText(blocks), /Author$/);
+  }
+});
+
+test("blank quote attribution is absent from preview and all clipboard formats", () => {
+  for (const attribution of ["", " \n\t"]) {
+    const blocks = buildEditorPreviewDocument([{ textStyle: "quote", fields: { en: "Body" }, attributions: { en: attribution } }], "en");
+    assert.equal(blocks[0].attribution, undefined);
+    // Also tolerate callers supplying their own blocks without normalization.
+    for (const input of [blocks, [{ ...blocks[0], attribution }]]) {
+      assert.doesNotMatch(renderEditorPreviewDocumentHtml(input).html, /<cite/);
+      assert.doesNotMatch(serializeEditorPreviewHtml(input), /<cite/);
+      assert.doesNotMatch(serializeEditorPreviewWordPress(input).content, /<cite/);
+    }
+    assert.equal(serializeEditorPreviewPlainText(blocks), "Body");
+  }
 });

@@ -284,7 +284,7 @@ test("closeEditorImagePreview renders only the overlay so editor scroll stays st
   assert.deepEqual(render.calls, [[{ scope: "translate-image-preview-overlay" }]]);
 });
 
-test("WordPress caption enrichment applies the background row for the saved image", () => {
+test("WordPress caption enrichment preserves imported links in the background row", () => {
   installEditorFixture();
   const imageUrl = "https://example.com/wp-content/uploads/photo.jpg";
   installFixtureImage(imageUrl);
@@ -298,9 +298,11 @@ test("WordPress caption enrichment applies the background row for the saved imag
     }],
   };
   const render = createRenderSpy();
+  const importedCaption = 'Xem mô hình tại <a href="https://chakras.gnosis-tms.com/">đây</a>, và các nguồn tại <a href="https://chakras.gnosis-tms.com/dau">đây</a>.';
   const payloadRow = {
     ...state.editorChapter.rows[0],
-    imageCaptions: { ...state.editorChapter.rows[0].imageCaptions, vi: "WordPress caption" },
+    imageCaptions: { ...state.editorChapter.rows[0].imageCaptions, vi: importedCaption },
+    persistedImageCaptions: { ...state.editorChapter.rows[0].persistedImageCaptions, vi: importedCaption },
   };
 
   assert.equal(handleEditorImageCaptionEnrichedEvent({
@@ -312,7 +314,8 @@ test("WordPress caption enrichment applies the background row for the saved imag
     chapterBaseCommitSha: "caption-commit",
   }, render), true);
 
-  assert.equal(state.editorChapter.rows[0].imageCaptions.vi, "WordPress caption");
+  assert.equal(state.editorChapter.rows[0].imageCaptions.vi, importedCaption);
+  assert.equal(state.editorChapter.rows[0].persistedImageCaptions.vi, importedCaption);
   assert.equal(state.editorChapter.chapterBaseCommitSha, "caption-commit");
 });
 
@@ -941,6 +944,41 @@ test("dismissActiveIdleEditorImageUpload keeps active upload work in place", () 
     status: "saving",
   });
   assert.deepEqual(render.calls, []);
+});
+
+test("removeEditorLanguageImage refreshes an expired native login and completes deletion", async () => {
+  installEditorFixture();
+  const imageUrl = "https://gnosisvn.org/wp-content/uploads/2026/10/LuanXa.webp";
+  installFixtureImage(imageUrl);
+  state.auth.session = { sessionToken: "expired-token", login: "owner" };
+  const render = createRenderSpy();
+  let nativeToken = "expired-token";
+  let deletionAttempts = 0;
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "refresh_broker_auth_session") {
+      assert.equal(payload.sessionToken, "expired-token");
+      return { sessionToken: "renewed-token", login: "owner" };
+    }
+    if (command === "save_broker_auth_session") {
+      nativeToken = payload.session.sessionToken;
+      return;
+    }
+    assert.equal(command, "remove_gtms_editor_language_image");
+    deletionAttempts += 1;
+    assert.equal(payload.input.rowId, "row-1");
+    assert.equal(payload.input.baseImage.url, imageUrl);
+    if (nativeToken === "expired-token") {
+      throw new Error("AUTH_RETRY_SAFE:AUTH_REQUIRED:Your GitHub session expired. Please sign in again.");
+    }
+    return { status: "saved", row: { ...state.editorChapter.rows[0], images: {} }, chapterBaseCommitSha: "image-removed" };
+  };
+  const { removeEditorLanguageImage } = await import("./editor-image-flow.js");
+  await removeEditorLanguageImage(render, "row-1", "vi", { updateEditorChapterRow });
+  assert.equal(deletionAttempts, 2);
+  assert.equal(invokeLog.filter(({ command }) => command === "refresh_broker_auth_session").length, 1);
+  assert.equal(state.auth.session.sessionToken, "renewed-token");
+  assert.equal(state.editorChapter.rows[0].images.vi, undefined);
+  assert.equal(state.editorChapter.chapterBaseCommitSha, "image-removed");
 });
 
 test("removeEditorLanguageImage stays clickable while row text save is pending", async () => {

@@ -65,6 +65,7 @@ pub(crate) struct ChangedAfterMyEditBaselineField {
     plain_text: String,
     footnote: String,
     image_caption: String,
+    attribution: String,
     image: Option<EditorFieldImage>,
     /// Uploaded images can be deleted or rewritten in place after the baseline, so the
     /// baseline image travels as a data URL when it differs from the current one.
@@ -125,6 +126,7 @@ struct FieldContent {
     plain_text: String,
     footnote: String,
     image_caption: String,
+    attribution: String,
     image: Option<StoredFieldImage>,
     timing: Option<StoredSrtTiming>,
 }
@@ -134,6 +136,7 @@ impl FieldContent {
         self.plain_text.is_empty()
             && self.footnote.is_empty()
             && self.image_caption.is_empty()
+            && self.attribution.is_empty()
             && self.image.is_none()
             && self.timing.is_none()
     }
@@ -151,6 +154,7 @@ impl RowContent {
                         plain_text: field.plain_text.clone(),
                         footnote: normalize_editor_footnote_value(&field.footnote),
                         image_caption: normalize_editor_image_caption_value(&field.image_caption),
+                        attribution: field.attribution.clone(),
                         image: normalize_editor_field_image_value(&field.image),
                         timing: field.timing,
                     },
@@ -655,6 +659,7 @@ fn baseline_fields(
                     plain_text: field.plain_text.clone(),
                     footnote: field.footnote.clone(),
                     image_caption: field.image_caption.clone(),
+                    attribution: field.attribution.clone(),
                     image: editor_field_image_from_stored(repo_path, &field.image),
                     image_data_url,
                 },

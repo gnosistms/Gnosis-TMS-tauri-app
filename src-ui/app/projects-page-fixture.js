@@ -17,6 +17,7 @@ function fixtureChapter(projectIndex, fileIndex, options = {}) {
       : `File ${String(fileIndex + 1).padStart(3, "0")}`,
     status: deleted ? "deleted" : "active",
     linkedGlossary: null,
+    ...(Array.isArray(options.languages) ? { languages: options.languages } : {}),
     sourceWordCount: 120 + ((projectIndex * 31 + fileIndex * 7) % 400),
   };
 }
@@ -35,10 +36,10 @@ function buildProjectsPageFixtureProjects(options = {}) {
     status: "active",
     chapters: [
       ...Array.from({ length: filesPerProject }, (_alsoUnused, fileIndex) =>
-        fixtureChapter(projectIndex, fileIndex),
+        fixtureChapter(projectIndex, fileIndex, { languages: options.languagesByFileIndex?.[fileIndex] ?? options.languages }),
       ),
       ...Array.from({ length: deletedFilesPerProject }, (_alsoUnused, fileIndex) =>
-        fixtureChapter(projectIndex, fileIndex, { deleted: true }),
+        fixtureChapter(projectIndex, fileIndex, { deleted: true, languages: options.languages }),
       ),
     ],
   }));

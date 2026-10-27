@@ -18,6 +18,7 @@ import {
 } from "./repo-resource/query-controller.js";
 import { setResourcePageDataOwner, setResourcePageRefreshing } from "./resource-page-controller.js";
 import { createGlossaryDiscoveryState, state } from "./state.js";
+import { showScopedSyncBadge } from "./status-feedback.js";
 import { teamCacheKey } from "./team-cache.js";
 import {
   applyGlossaryWriteIntentsToSnapshot,
@@ -326,6 +327,13 @@ const glossaryQueryController = createRepoResourceQueryController({
   },
   loadRemoteSnapshot: async (team, options = {}) => {
     const teamId = options.teamId ?? team?.id ?? null;
+    const onStep = (text) => {
+      if (state.selectedTeamId === teamId && state.statusBadges.right?.scope === "glossaries") {
+        const lead = state.glossaries.length > 0 ? "Checking for changes" : "Loading glossaries";
+        showScopedSyncBadge("glossaries", `${lead}: ${text}...`, options.render);
+      }
+    };
+    onStep("checking for data format updates");
     await runTeamResourceMigrationSync(options.render, team);
     const {
       glossaries,
@@ -336,6 +344,8 @@ const glossaryQueryController = createRepoResourceQueryController({
     } = await loadRepoBackedGlossariesForTeam(team, {
       offlineMode: state.offline?.isEnabled === true,
       suppressRecoveryWarning: options.suppressRecoveryWarning === true,
+      stepNouns: ["glossary", "glossaries"],
+      onStep,
       onRecoveryDetected: (message) => {
         if (state.selectedTeamId !== teamId) {
           return;

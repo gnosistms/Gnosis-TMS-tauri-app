@@ -212,6 +212,7 @@ function renderEditorReplaceControls(editorReplace) {
     <label class="replace-toggle${editorReplace.isEnabled ? " replace-toggle--checkbox-only" : ""}">
       <input
         type="checkbox"
+        class="editor-checkbox"
         data-editor-replace-toggle
         aria-label="${editorReplace.isEnabled ? "Hide replace controls" : "Show replace controls"}"
         ${editorReplace.isEnabled ? "checked" : ""}

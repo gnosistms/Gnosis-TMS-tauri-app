@@ -26,6 +26,7 @@ import {
   saveEditorConflictResolution as saveEditorConflictResolutionFlow,
   updateEditorConflictResolutionFinalFootnote as updateEditorConflictResolutionFinalFootnoteFlow,
   updateEditorConflictResolutionFinalImageCaption as updateEditorConflictResolutionFinalImageCaptionFlow,
+  updateEditorConflictResolutionFinalAttribution as updateEditorConflictResolutionFinalAttributionFlow,
   updateEditorConflictResolutionFinalImageUrl as updateEditorConflictResolutionFinalImageUrlFlow,
   updateEditorConflictResolutionFinalText as updateEditorConflictResolutionFinalTextFlow,
 } from "./editor-conflict-resolution-flow.js";
@@ -37,7 +38,13 @@ import {
   switchEditorSidebarTab as switchEditorSidebarTabFlow,
   updateEditorCommentDraft as updateEditorCommentDraftFlow,
 } from "./editor-comments-flow.js";
-import { resolveEditorSidebarTabForField } from "./editor-comments.js";
+import { normalizeEditorSidebarTab } from "./editor-comments.js";
+import { beginSrtGroupEdit, updateSrtGroupDraft, rebaseSrtGroupEditsAfterResolution } from "./editor-srt-group-edit-flow.js";
+import { SRT_PAUSE_THRESHOLDS_MS, srtGroupingEnabled, srtGroupForRow, srtDisplayRowId } from "./editor-srt-grouping.js";
+import { applySrtGroupAction } from "./editor-srt-group-actions.js";
+import { runSrtGroupAi, applySrtGroupReview } from "./editor-srt-group-ai-flow.js";
+import { locateSrtGroupPosition } from "./editor-srt-group-text.js";
+import { mapInlineMarkupVisiblePositionToRawInsertionOffset } from "./editor-inline-markup.js";
 import {
   openTranslateChapter as openTranslateChapterFlow,
 } from "./editor-chapter-load-flow.js";
@@ -171,7 +178,6 @@ import { applyStructuralEditorChange } from "./editor-structural-change-flow.js"
 import { syncEditorRowTextareaHeight } from "./autosize.js";
 import { saveStoredEditorFontSizePx } from "./editor-preferences.js";
 import { ensureEditorRowReadyForActivation } from "./editor-row-sync-flow.js";
-import { findEditorRowById } from "./editor-utils.js";
 import {
   noteEditorBackgroundSyncScrollActivity as noteEditorBackgroundSyncScrollActivityFlow,
   syncEditorBackgroundNow as syncEditorBackgroundNowFlow,
@@ -304,6 +310,9 @@ export function loadActiveEditorFieldHistory(render, options = {}) {
 }
 
 export function loadActiveEditorRowComments(render) {
+  if (srtGroupingEnabled(state.editorChapter)) state.editorChapter = {
+    ...state.editorChapter, activeRowId: srtDisplayRowId(state.editorChapter, state.editorChapter.activeRowId),
+  };
   loadActiveEditorRowCommentsFlow(render);
 }
 
@@ -312,13 +321,16 @@ export function collapseEditorMainField(render, rowId, languageCode) {
     return;
   }
 
+  const previousMembers = srtGroupForRow(state.editorChapter, rowId).map((row) => row.rowId).join(":");
   state.editorChapter = {
     ...state.editorChapter,
     mainFieldEditor: createEditorMainFieldEditorState(),
     pendingSelection: createEditorPendingSelectionState(),
   };
 
-  renderEditorRowScoped(render, rowId, "main-field-collapse");
+  const nextMembers = srtGroupForRow(state.editorChapter, rowId).map((row) => row.rowId).join(":");
+  if (previousMembers !== nextMembers) render?.({ scope: "translate-body" });
+  else renderEditorRowScoped(render, rowId, "main-field-collapse");
 }
 
 // Logical identity of the focused text control, stable across DOM remounts.
@@ -384,13 +396,9 @@ export async function setActiveEditorField(render, rowId, languageCode, options 
   }
 
   const previousSidebarTab = state.editorChapter.sidebarTab;
-  const row = findEditorRowById(rowId, state.editorChapter);
-  const nextSidebarTab = resolveEditorSidebarTabForField(
-    previousSidebarTab,
-    row,
-    languageCode,
-  );
+  const nextSidebarTab = normalizeEditorSidebarTab(previousSidebarTab);
   const shouldOpenEditor = options.openEditor === true || textareaOpensMainField(options.input);
+  if (shouldOpenEditor) beginSrtGroupEdit(rowId, languageCode);
   const pendingSelectionOffset =
     Number.isInteger(options.pendingSelectionOffset) && options.pendingSelectionOffset >= 0
       ? options.pendingSelectionOffset
@@ -486,8 +494,8 @@ function editorChapterLoadOperations() {
   };
 }
 
-export function scheduleDirtyEditorRowScan(render, rowId) {
-  scheduleDirtyEditorRowScanFlow(render, rowId, editorPersistenceOperations());
+export function scheduleDirtyEditorRowScan(render, rowId, options = {}) {
+  scheduleDirtyEditorRowScanFlow(render, rowId, editorPersistenceOperations(), options);
 }
 
 export function noteEditorBackgroundSyncScrollActivity() {
@@ -525,6 +533,9 @@ export function toggleEditorReviewSectionExpanded(sectionKey) {
 }
 
 export async function runEditorAiReview(render, reviewMode) {
+  if (await runSrtGroupAi(render, reviewMode === "meaning" ? "meaning" : "grammar", null, {
+    flushDirtyEditorRows, updateEditorRowFieldValue,
+  })) return;
   await runEditorAiReviewFlow(render, reviewMode);
 }
 
@@ -553,6 +564,7 @@ export async function confirmEditorAiReviewAll(render) {
 }
 
 export async function runEditorAiTranslate(render, actionId) {
+  if (await runSrtGroupAi(render, "translate", actionId, { flushDirtyEditorRows, updateEditorRowFieldValue })) return;
   await runEditorAiTranslateFlow(render, actionId, {
     updateEditorRowFieldValue,
     persistEditorRowOnBlur,
@@ -574,7 +586,7 @@ export function updateEditorAiTranslateAllLanguageSelection(render, languageCode
 
 export async function confirmEditorAiTranslateAll(render) {
   await confirmEditorAiTranslateAllFlow(render, {
-    updateEditorRowFieldValue,
+    updateEditorRowFieldValue: updateEditorCanonicalRowFieldValue,
     persistEditorRowOnBlur,
     persistEditorRowsBatch,
     syncEditorGlossaryHighlightRowDom,
@@ -611,7 +623,7 @@ export function cancelEditorDeriveGlossariesModal(render) {
 
 export async function confirmEditorDeriveGlossaries(render) {
   await confirmEditorDeriveGlossariesFlow(render, {
-    updateEditorRowFieldValue,
+    updateEditorRowFieldValue: updateEditorCanonicalRowFieldValue,
     persistEditorRowOnBlur,
     persistEditorRowsBatch,
     syncEditorGlossaryHighlightRowDom,
@@ -626,6 +638,7 @@ export async function applyEditorAssistantDraft(render, itemId) {
   await applyEditorAssistantDraftFlow(render, itemId, {
     updateEditorRowFieldValue,
     persistEditorRowOnBlur,
+    flushDirtyEditorRows,
   });
 }
 
@@ -634,6 +647,7 @@ export function toggleEditorAssistantDraftDiff(render, itemId) {
 }
 
 export async function applyEditorAiReview(render) {
+  if (await applySrtGroupReview(render, { flushDirtyEditorRows, updateEditorRowFieldValue })) return;
   await applyEditorAiReviewFlow(render, {
     updateEditorRowFieldValue,
     persistEditorRowOnBlur,
@@ -641,6 +655,7 @@ export async function applyEditorAiReview(render) {
 }
 
 export function openEditorRowComments(render, rowId, languageCode) {
+  rowId = srtDisplayRowId(state.editorChapter, rowId);
   openEditorRowCommentsFlow(render, rowId, languageCode);
 }
 
@@ -662,6 +677,10 @@ export function updateEditorConflictResolutionFinalFootnote(nextValue) {
   updateEditorConflictResolutionFinalFootnoteFlow(nextValue);
 }
 
+export function updateEditorConflictResolutionFinalAttribution(nextValue) {
+  updateEditorConflictResolutionFinalAttributionFlow(nextValue);
+}
+
 export function updateEditorConflictResolutionFinalImageCaption(nextValue) {
   updateEditorConflictResolutionFinalImageCaptionFlow(nextValue);
 }
@@ -675,6 +694,7 @@ export async function copyEditorConflictResolutionVersion(render, side) {
 }
 
 export async function saveEditorConflictResolution(render) {
+  const resolvingRowId = state.editorChapter?.conflictResolutionModal?.rowId;
   await saveEditorConflictResolutionFlow(render, {
     updateEditorChapterRow,
     applyEditorSelectionsToProjectState,
@@ -682,9 +702,13 @@ export async function saveEditorConflictResolution(render) {
     loadActiveEditorFieldHistory,
     syncEditorBackgroundNow: syncEditorBackgroundNowFlow,
   });
+  rebaseSrtGroupEditsAfterResolution(resolvingRowId);
 }
 
 export function switchEditorSidebarTab(render, tab) {
+  if (tab === "comments" && srtGroupingEnabled(state.editorChapter)) state.editorChapter = {
+    ...state.editorChapter, activeRowId: srtDisplayRowId(state.editorChapter, state.editorChapter.activeRowId),
+  };
   switchEditorSidebarTabFlow(render, tab, {
     loadActiveEditorFieldHistory,
     scheduleAssistantTranscriptScrollToBottom,
@@ -760,14 +784,19 @@ export async function openTranslateChapter(render, chapterId) {
   return opened === true;
 }
 
-export function updateEditorSourceLanguage(render, nextCode) {
+export async function updateEditorSourceLanguage(render, nextCode) {
+  if (srtGroupingEnabled(state.editorChapter) && !(await flushDirtyEditorRows(render))) return;
+  if (srtGroupingEnabled(state.editorChapter)) state.editorChapter = {
+    ...state.editorChapter, srtGroupEdits: {}, mainFieldEditor: createEditorMainFieldEditorState(),
+  };
   updateEditorSourceLanguageFlow(render, nextCode, {
     applyChapterMetadataToState,
     applyEditorSelectionsToProjectState,
   });
 }
 
-export function updateEditorTargetLanguage(render, nextCode) {
+export async function updateEditorTargetLanguage(render, nextCode) {
+  if (srtGroupingEnabled(state.editorChapter) && !(await flushDirtyEditorRows(render))) return;
   updateEditorTargetLanguageFlow(render, nextCode, {
     applyChapterMetadataToState,
     applyEditorSelectionsToProjectState,
@@ -789,8 +818,42 @@ export function updateEditorFontSize(nextValue) {
   saveStoredEditorFontSizePx(fontSizePx);
 }
 
-export function setEditorMode(render, nextMode) {
+export async function setEditorMode(render, nextMode) {
+  if (srtGroupingEnabled(state.editorChapter) && !(await flushDirtyEditorRows(render))) return;
   setEditorModeFlow(render, nextMode);
+}
+
+export async function setEditorSrtView(render, mode) {
+  if (!["standard", "group-fragments"].includes(mode) || mode === state.editorChapter?.srtViewMode) return;
+  if (!(await flushDirtyEditorRows(render))) return;
+  const activeRowId = mode === "group-fragments"
+    ? srtDisplayRowId({ ...state.editorChapter, srtViewMode: mode }, state.editorChapter.activeRowId)
+    : state.editorChapter.activeRowId;
+  state.editorChapter = { ...state.editorChapter, srtViewMode: mode, srtGroupEdits: {},
+    activeRowId, mainFieldEditor: createEditorMainFieldEditorState(),
+    pendingSelection: createEditorPendingSelectionState() };
+  render?.({ scope: "translate-body" });
+  loadActiveEditorFieldHistoryFlow(render);
+}
+
+export async function updateEditorSrtPauseSettings(render, changes) {
+  if (!srtGroupingEnabled(state.editorChapter)) return;
+  const chapterId = state.editorChapter.chapterId;
+  if (changes.thresholdMs !== undefined && !SRT_PAUSE_THRESHOLDS_MS.includes(changes.thresholdMs)) return;
+  if (!(await flushDirtyEditorRows(render))) {
+    render?.({ scope: "translate-body" });
+    return;
+  }
+  if (state.editorChapter.chapterId !== chapterId || !srtGroupingEnabled(state.editorChapter)) return;
+  const srtPauseSplitEnabled = changes.enabled ?? (state.editorChapter.srtPauseSplitEnabled === true);
+  const srtPauseThresholdMs = changes.thresholdMs ?? state.editorChapter.srtPauseThresholdMs ?? 500;
+  const nextChapter = { ...state.editorChapter, srtPauseSplitEnabled, srtPauseThresholdMs, srtGroupEdits: {} };
+  state.editorChapter = { ...nextChapter,
+    activeRowId: srtDisplayRowId(nextChapter, nextChapter.activeRowId),
+    mainFieldEditor: createEditorMainFieldEditorState(),
+    pendingSelection: createEditorPendingSelectionState() };
+  render?.({ scope: "translate-body" });
+  loadActiveEditorFieldHistoryFlow(render);
 }
 
 export function jumpFromPreviewBlockToTranslateMode(render, previewBlock) {
@@ -858,6 +921,10 @@ export function setWordPressExportMode(render, mode) {
 }
 
 export async function restoreEditorFieldHistory(render, commitSha) {
+  if (srtGroupingEnabled(state.editorChapter)) {
+    if (!(await flushDirtyEditorRows(render))) return;
+    state.editorChapter = { ...state.editorChapter, srtGroupEdits: {}, mainFieldEditor: createEditorMainFieldEditorState() };
+  }
   await restoreEditorFieldHistoryFlow(render, commitSha, {
     updateEditorChapterRow,
     reconcileDirtyTrackedEditorRows,
@@ -928,6 +995,7 @@ export function cancelInsertEditorRowModal() {
 }
 
 export function openMergeEditorRowModal(rowId) {
+  if (srtGroupingEnabled(state.editorChapter)) return;
   openMergeEditorRowModalFlow(rowId);
 }
 
@@ -936,6 +1004,7 @@ export function cancelMergeEditorRowModal() {
 }
 
 export async function confirmMergeEditorRows(render, direction) {
+  if (srtGroupingEnabled(state.editorChapter)) return;
   await confirmMergeEditorRowsFlow(render, direction, editorRowStructureOperations());
 }
 
@@ -952,10 +1021,18 @@ export function toggleDeletedEditorRowGroup(render, groupId, anchorSnapshot = nu
 }
 
 export async function confirmInsertEditorRow(render, position) {
+  if (srtGroupingEnabled(state.editorChapter) && position === "after") {
+    const members = srtGroupForRow(state.editorChapter, state.editorChapter.insertRowModal?.rowId);
+    if (members.length) state.editorChapter = { ...state.editorChapter,
+      insertRowModal: { ...state.editorChapter.insertRowModal, rowId: members.at(-1).rowId } };
+  }
   await confirmInsertEditorRowFlow(render, position, editorRowStructureOperations());
 }
 
 export async function softDeleteEditorRow(render, rowId, triggerAnchorSnapshot = null) {
+  if (await applySrtGroupAction(render, rowId, "delete", {}, {
+    ...editorPersistenceOperations(), flushDirtyEditorRows,
+  })) return;
   await softDeleteEditorRowFlow(render, rowId, triggerAnchorSnapshot, editorRowStructureOperations());
 }
 
@@ -980,6 +1057,12 @@ export async function confirmEditorUnreviewAll(render) {
 }
 
 export function updateEditorRowFieldValue(rowId, languageCode, nextValue, contentKind = "field", options = {}) {
+  if (contentKind === "field" && srtGroupingEnabled(state.editorChapter) && srtGroupForRow(state.editorChapter, rowId).length > 1
+    && updateSrtGroupDraft(rowId, languageCode, nextValue)) return;
+  updateEditorCanonicalRowFieldValue(rowId, languageCode, nextValue, contentKind, options);
+}
+
+function updateEditorCanonicalRowFieldValue(rowId, languageCode, nextValue, contentKind = "field", options = {}) {
   updateEditorRowFieldValueFlow(rowId, languageCode, nextValue, contentKind, options, {
     updateEditorChapterRow,
   });
@@ -1004,6 +1087,12 @@ export function insertEditorSeparator(render, button) {
 }
 
 export function openEditorInsertLink(render, button) {
+  const textarea = button?.closest?.("[data-editor-language-cluster]")?.querySelector("[data-editor-row-field]");
+  const edit = textarea && state.editorChapter?.srtGroupEdits?.[`${textarea.dataset.rowId}:${textarea.dataset.languageCode}`];
+  if (edit && edit.markers.some((marker) => textarea.value.slice(textarea.selectionStart, textarea.selectionEnd).includes(marker))) {
+    showNoticeBadge("Select text within one subtitle fragment to insert a link.", render);
+    return;
+  }
   openEditorInsertLinkFlow(render, button);
 }
 
@@ -1020,7 +1109,25 @@ export function submitEditorInsertLink(render) {
   });
 }
 
-export function openEditorFootnote(render, rowId, languageCode, options = {}) {
+export async function openEditorFootnote(render, rowId, languageCode, options = {}) {
+  const edit = beginSrtGroupEdit(rowId, languageCode);
+  if (edit) {
+    const input = typeof document !== "undefined" ? document.querySelector(`textarea[data-editor-row-field][data-row-id="${CSS.escape(rowId)}"][data-language-code="${CSS.escape(languageCode)}"]:not([data-content-kind])`) : null;
+    const start = Number.isInteger(options.visibleInsertIndex)
+      ? mapInlineMarkupVisiblePositionToRawInsertionOffset(edit.draft, options.visibleInsertIndex)
+      : options.insertIndex ?? input?.selectionStart ?? edit.draft.length;
+    const end = Number.isInteger(options.visibleInsertIndex) ? start : input?.selectionEnd ?? start;
+    const from = locateSrtGroupPosition(edit.draft, edit.markers, start);
+    const to = locateSrtGroupPosition(edit.draft, edit.markers, end);
+    if (!from || !to || from.fragment !== to.fragment) {
+      showNoticeBadge("Place the cursor within one subtitle fragment to add a footnote.", render);
+      return;
+    }
+    if (!(await flushDirtyEditorRows(render))) return;
+    rowId = edit.memberRowIds[from.fragment];
+    options = { ...options, visibleInsertIndex: undefined, insertIndex: from.offset, selectionEnd: to.offset };
+    state.editorChapter = { ...state.editorChapter, srtGroupEdits: {}, mainFieldEditor: createEditorMainFieldEditorState() };
+  }
   openEditorFootnoteFlow(render, rowId, languageCode, {
     ...options,
     updateEditorChapterRow,
@@ -1272,6 +1379,9 @@ export function closeEditorImageInvalidFileModal(render) {
 }
 
 export async function updateEditorRowTextStyle(render, rowId, nextTextStyle) {
+  if (await applySrtGroupAction(render, rowId, "text-style", { textStyle: nextTextStyle }, {
+    ...editorPersistenceOperations(), flushDirtyEditorRows,
+  })) return;
   await updateEditorRowTextStyleFlow(render, rowId, nextTextStyle, {
     updateEditorChapterRow,
     applyEditorSelectionsToProjectState,
@@ -1315,6 +1425,7 @@ export function selectAllEditorReplaceRows(render) {
 }
 
 export async function replaceSelectedEditorRows(render) {
+  if (srtGroupingEnabled(state.editorChapter) && !(await flushDirtyEditorRows(render))) return;
   await replaceSelectedEditorRowsFlow(render, {
     markEditorRowsPersisted,
     loadActiveEditorFieldHistory,
@@ -1322,6 +1433,9 @@ export async function replaceSelectedEditorRows(render) {
 }
 
 export async function toggleEditorRowFieldMarker(render, rowId, languageCode, kind) {
+  if (await applySrtGroupAction(render, rowId, kind, { languageCode }, {
+    ...editorPersistenceOperations(), flushDirtyEditorRows,
+  })) return;
   await toggleEditorRowFieldMarkerFlow(
     render,
     rowId,
@@ -1370,4 +1484,5 @@ export function applyEditorTimingFieldBlur(render, input) {
 
 export async function resolveEditorRowConflict(render, rowId, resolution) {
   await resolveEditorRowConflictFlow(render, rowId, resolution, editorPersistenceOperations());
+  rebaseSrtGroupEditsAfterResolution(rowId);
 }
