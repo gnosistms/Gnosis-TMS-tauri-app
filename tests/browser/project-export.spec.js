@@ -420,6 +420,49 @@ test("editing adjacent chapter titles keeps focus and long-list scroll through p
   await expect(next).toHaveValue("Edited chapter 26");
 });
 
+test("Add new stays fixed while the book list and preview scroll at resized window sizes", async ({ page }) => {
+  await mountProjectExport(page, false, false, 40);
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  const list = modal.locator(".book-composer__list");
+  const preview = modal.locator(".book-composer__page-scroll");
+  const add = modal.getByRole("button", { name: "+ Add new", exact: true });
+  const geometry = () => modal.evaluate((element) => {
+    const card = element.getBoundingClientRect(), footer = element.querySelector(".book-add").getBoundingClientRect();
+    const button = element.querySelector('[data-action="book-add-menu"]').getBoundingClientRect();
+    return { footerTop: footer.top, footerBottom: footer.bottom, buttonBottom: button.bottom,
+      modalBottom: card.bottom, outerScrollRange: element.scrollHeight - element.clientHeight, outerScroll: element.scrollTop };
+  });
+  for (const [width, height] of [[1280, 720], [1003, 560], [1600, 1000], [720, 900]]) {
+    await page.setViewportSize({ width, height });
+    const before = await geometry();
+    expect(before.outerScrollRange).toBeLessThanOrEqual(1);
+    expect(before.outerScroll).toBe(0);
+    if (width > 760) expect(Math.abs(before.modalBottom - before.footerBottom)).toBeLessThan(2);
+    expect(before.footerBottom - before.buttonBottom).toBeGreaterThanOrEqual(11);
+    await expect(add).toBeInViewport();
+    for (const pane of [list, preview]) {
+      for (const deltaY of [20000, 20000, -20000, -20000]) {
+        // Start at the edge explicitly: one large wheel event need not travel
+        // the whole pane, and this regression is about scrolling past its edge.
+        await pane.evaluate((element, direction) => { element.scrollTop = direction > 0 ? element.scrollHeight : 0; }, deltaY);
+        await pane.hover();
+        await page.mouse.wheel(0, deltaY);
+        await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        const after = await geometry();
+        expect(after.footerTop).toBeCloseTo(before.footerTop, 1);
+        expect(after.footerBottom).toBeCloseTo(before.footerBottom, 1);
+        expect(after.outerScroll).toBe(0);
+      }
+    }
+    await add.click();
+    await expect(modal.locator(".book-add__menu")).toBeInViewport();
+    await expect(modal.getByRole("button", { name: "Title page", exact: true })).toBeInViewport();
+    await expect(modal.getByRole("button", { name: "Full page image", exact: true })).toBeInViewport();
+    if (width === 1280 || width === 720) await page.screenshot({ path: test.info().outputPath(`fixed-add-footer-${width}.png`) });
+    await add.click();
+  }
+});
+
 test("Include and Exclude retain the scrolling list and preview in a long book", async ({ page }) => {
   await mountProjectExport(page, false, false, 40);
   const modal = page.getByRole("dialog", { name: "Export project", exact: true });
@@ -851,7 +894,8 @@ test("book composer saves independent language layouts, sections, and format set
   await expect(included).toHaveCount(2);
   const unavailable = modal.locator('[data-action="book-include:fixture-chapter-0-2"]');
   await expect(unavailable).toBeDisabled();
-  await expect(unavailable.locator("..")).toHaveAttribute("data-tooltip", "This chapter does not contain a translation in English.");
+  await expect(unavailable.locator("..")).toHaveAttribute("data-tooltip", "Include this in the export.");
+  await expect(unavailable).toHaveAttribute("aria-description", "This chapter does not contain a translation in English.");
   await dragBefore(page, modal.locator('[data-book-item="fixture-chapter-0-1"] [data-book-drag-handle]'), modal.locator('[data-book-item="fixture-chapter-0-0"]'));
   await expect(included.first()).toHaveAttribute("data-book-item", "fixture-chapter-0-1");
   await modal.locator('[data-action="book-exclude:fixture-chapter-0-1"]').click();
