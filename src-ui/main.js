@@ -1,4 +1,5 @@
 import { reconcileEditorRowConnection } from "./app/editor-row-connection.js";
+import { updateBookRedundancyView } from "./screens/project-book-redundancy.js";
 import { renderProjectBookPreview } from "./app/project-book-preview-render.js";
 import { commitProjectsPageHtml, deferProjectsBackgroundRender } from "./app/projects-background-render.js";
 import {
@@ -761,6 +762,7 @@ function renderProjectsBackgroundSurfaces() {
 }
 
 function renderWithOptionsImpl(options = {}) {
+  if (options.scope === "book-redundancy" && updateBookRedundancyView(app, state)) return;
   if (options.scope === "project-book-preview" && renderProjectBookPreview(app, state)) return;
   if (deferProjectsBackgroundRender(app, state, options)) {
     renderProjectsBackgroundSurfaces();

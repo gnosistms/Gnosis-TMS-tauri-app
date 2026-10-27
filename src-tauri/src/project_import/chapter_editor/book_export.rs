@@ -2,9 +2,13 @@ use super::chapter_export::{ExportBlock, ExportDocument, ExportImage};
 use super::*;
 use tauri::Manager;
 
-#[derive(Clone, Default, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct BookItemInput {
+    #[serde(default)]
+    pub(super) review_revision: String,
+    #[serde(default)]
+    pub(super) exclusions: Vec<super::book_redundancy::Exclusion>,
     #[serde(default)]
     pub(super) id: String,
     pub(super) kind: String,
@@ -33,6 +37,26 @@ pub(super) struct BookItemInput {
     pub(super) include_h1_headings: bool,
 }
 
+// Return export-only metadata as well as filtering document blocks: the PDF
+// renderer also reads section image IDs directly from BookPart.item.
+pub(super) fn filtered_item(item: &BookItemInput) -> Result<Option<BookItemInput>, String> {
+    let mut filtered = item.clone();
+    if item.kind != "chapter" && !item.exclusions.is_empty() {
+        let expected = format!("{:x}", Sha256::digest(item.image_asset_id.as_bytes()));
+        if item
+            .exclusions
+            .iter()
+            .any(|e| e.kind != "image" || !e.row_id.is_empty() || e.signature != expected)
+        {
+            return Err("A reviewed book image changed. Return to redundancy review.".into());
+        }
+        if item.kind == "image" {
+            return Ok(None);
+        }
+        filtered.image_asset_id.clear();
+    }
+    Ok(Some(filtered))
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct BookPart {
     pub(super) item: BookItemInput,
@@ -408,5 +432,34 @@ mod tests {
                 assert!(validate_book_image("logo.svg", bad.as_bytes()).is_err(), "{bad}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod redundancy_tests {
+    use super::*;
+    #[test]
+    fn omitted_section_images_are_removed_from_pdf_metadata_too() {
+        let mut item = BookItemInput {
+            kind: "title".into(),
+            image_asset_id: "asset.png".into(),
+            ..Default::default()
+        };
+        item.exclusions
+            .push(super::super::book_redundancy::Exclusion {
+                row_id: String::new(),
+                kind: "image".into(),
+                marker: 0,
+                signature: format!("{:x}", Sha256::digest(b"asset.png")),
+            });
+        let result = filtered_item(&item)
+            .expect("filter")
+            .expect("title page remains");
+        assert!(result.image_asset_id.is_empty());
+        assert_eq!(item.image_asset_id, "asset.png");
+        item.kind = "image".into();
+        assert!(filtered_item(&item).expect("filter").is_none());
+        item.image_asset_id = "changed.png".into();
+        assert!(filtered_item(&item).is_err());
     }
 }

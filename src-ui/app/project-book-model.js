@@ -1,3 +1,4 @@
+import { bookRedundancyExclusions } from "./project-book-redundancy-model.js";
 import { compareFilesByName } from "./projects-list-model.js";
 import { extractInlineMarkupVisibleText } from "./editor-inline-markup.js";
 
@@ -128,6 +129,8 @@ export function bookExportItems(modal) {
   return (modal.book?.items ?? []).filter(bookItemIncluded).map((item) => ({
     // Unedited chapter defaults are resolved again from the export snapshot.
     // Keep the input stable while background previews discover their H1s.
+    exclusions: bookRedundancyExclusions(modal, item.id),
+    reviewRevision: modal.book?.redundancy?.result?.revisions?.[item.id] || "",
     id: item.id, kind: item.kind, chapterId: item.chapterId || "", title: item.kind === "chapter" ? item.title?.trim() || item.name : bookItemTitle(item),
     ...(item.kind === "chapter" ? { titleOverride: item.title?.trim() || null, numbered: item.numbered !== false } : {}),
     subtitle: item.subtitle || "", author: item.author || "", translator: item.translator || "",

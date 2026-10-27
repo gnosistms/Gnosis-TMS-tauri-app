@@ -1,3 +1,4 @@
+import { setBookRedundancyChoice } from "../project-book-redundancy-flow.js";
 import { importBookImage, moveProjectBookItem, updateBookField } from "../project-book-flow.js";
 import { escapeHtml } from "../../lib/ui.js";
 import { state } from "../state.js";
@@ -10,6 +11,10 @@ function cancel() {
   drag = null;
 }
 export function registerProjectBookEvents(render) {
+  document.addEventListener("change", (event) => {
+    const input = event.target.closest?.("[data-book-redundancy-choice]");
+    if (input) setBookRedundancyChoice(input.dataset.bookRedundancyChoice, input.checked);
+  });
   document.addEventListener("click", (event) => handleBookChapterMenuClick(event, render));
   document.addEventListener("keydown", handleBookChapterMenuKeydown);
   document.addEventListener("scroll", (event) => dismissBookChapterMenuOutside(event.target), true);

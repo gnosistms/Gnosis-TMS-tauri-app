@@ -26,6 +26,28 @@ pub(crate) use self::chapter_editor::{
 };
 
 #[tauri::command]
+pub(crate) fn start_book_redundancy(
+    app: AppHandle,
+    input: chapter_editor::BookRedundancyInput,
+) -> Result<(), String> {
+    chapter_editor::start_book_redundancy_job(app, input)
+}
+#[tauri::command]
+pub(crate) fn cancel_book_redundancy(request_id: String) -> Result<(), String> {
+    chapter_editor::cancel_book_redundancy_job(&request_id)
+}
+#[tauri::command]
+pub(crate) async fn book_redundancy_cache(
+    app: AppHandle,
+    input: chapter_editor::BookRedundancyCacheInput,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        chapter_editor::book_redundancy_cache_sync(&app, input)
+    })
+    .await
+    .map_err(|_| "Could not load book review choices.".to_string())?
+}
+#[tauri::command]
 pub(crate) async fn load_project_export_settings(
     app: AppHandle,
     input: chapter_editor::ProjectExportSettingsInput,

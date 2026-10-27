@@ -1,8 +1,22 @@
 import { expect, test } from "./test.js";
 
+async function advanceToExport(modal) {
+  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  if (await modal.locator("[data-book-redundancy-results]").count()) {
+    await expect(modal.getByRole("button", { name: "Next", exact: true })).toBeEnabled();
+    await modal.getByRole("button", { name: "Next", exact: true }).click();
+  }
+}
+async function backToComposition(modal) {
+  await modal.getByRole("button", { name: "Previous", exact: true }).click();
+  if (await modal.locator("[data-book-redundancy-results]").count()) await modal.getByRole("button", { name: "Previous", exact: true }).click();
+}
 async function mountProjectExport(page, multilingual = false, chapterTitles = false, filesPerProject = 3, settings = {}) {
   await page.addInitScript(({ chapterTitles, settings }) => {
     window.__projectExports = [];
+    window.__redundancyCalls = [];
+    window.__redundancyChoices = {};
+    window.__redundancyResult = { images: [], footnotes: [], warnings: [], cached: true };
     window.__bookSettingsRequests = [];
     window.__remoteBookSettings = settings.remote || null;
     window.__localBookSettings = settings.local || null;
@@ -16,6 +30,16 @@ async function mountProjectExport(page, multilingual = false, chapterTitles = fa
         if (["export_gtms_chapter_file", "inspect_gtms_chapter_pdf_fonts", "start_gtms_chapter_pdf_export", "cancel_gtms_chapter_pdf_export"].includes(command)) {
           window.__projectExports.push({ command, ...args });
         }
+        if (command === "book_redundancy_cache") {
+          if (args.input.choices) window.__redundancyChoices = args.input.choices;
+          return { result: window.__redundancyResult, choices: window.__redundancyChoices };
+        }
+        if (command === "start_book_redundancy") {
+          window.__redundancyCalls.push(args.input);
+          setTimeout(() => window.__pdfListeners["book-redundancy-progress"]?.({ payload: { requestId: args.input.requestId, complete: true, result: window.__redundancyResult } }), 0);
+          return null;
+        }
+        if (command === "cancel_book_redundancy") return null;
         if (command === "load_project_export_settings") return { settings: window.__localBookSettings };
         if (command === "start_project_export_settings_sync") {
           window.__bookSettingsRequests.push(args.input);
@@ -108,7 +132,7 @@ test("project card export saves all active files through the shared dialog", asy
   await page.screenshot({ path: test.info().outputPath("book-composer-top-actions.png") });
   await expect(modal.locator('[data-book-included="true"]')).toHaveCount(3);
   await expect(modal.locator("[data-editor-export-language-select]")).toHaveValue("en");
-  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await advanceToExport(modal);
   await modal.getByRole("button", { name: "Save", exact: true }).click();
   await expect(modal).toBeHidden();
   const exported = await page.evaluate(() => window.__projectExports[0]);
@@ -121,10 +145,10 @@ test("project PDF export inspects the entire book and exposes cancellation", asy
   await mountProjectExport(page);
   const modal = page.getByRole("dialog", { name: "Export project", exact: true });
   await page.evaluate(() => { window.__holdPdfInspection = true; });
-  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await advanceToExport(modal);
   await modal.locator('[data-action="select-editor-export-option:file:pdf"]').click();
-  await modal.getByRole("button", { name: "Previous", exact: true }).click();
-  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await backToComposition(modal);
+  await advanceToExport(modal);
   const save = modal.getByRole("button", { name: "Save", exact: true });
   await expect(save).toBeInViewport();
   await expect(save).toBeDisabled();
@@ -158,7 +182,7 @@ test("WordPress forget tooltips stay visible at both ends of the scrolling site 
     }));
   });
   const modal = page.getByRole("dialog", { name: "Export project", exact: true });
-  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await advanceToExport(modal);
   await modal.locator('[data-action="toggle-editor-export-category:link"]').click();
   await modal.locator('[data-action="select-editor-export-option:link:wordpress"]').click();
   const buttons = page.getByRole("button", { name: "Forget this site", exact: true });
@@ -268,7 +292,7 @@ test("background project refresh draws once and retains an unrelated export dial
   });
   expect(await page.evaluate(() => window.__refreshDraws)).toEqual({ page: 2, modal: 1 });
   await expect(title).toHaveValue("My draft title");
-  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await advanceToExport(modal);
   await expect(modal.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
 });
 
@@ -330,7 +354,7 @@ test("book contents include H1 headings only when the saved checkbox is selected
   await expect(checkbox).toBeChecked();
   await expect(modal.locator(".book-contents__subheading")).toHaveCount(3);
   await page.screenshot({ path: test.info().outputPath("book-contents-headings.png") });
-  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await advanceToExport(modal);
   await modal.locator('[data-action="select-editor-export-option:file:pdf"]').click();
   await modal.getByRole("button", { name: "Save", exact: true }).click();
   await expect.poll(() => page.evaluate(() => window.__projectExports.some((call) => call.command === "start_gtms_chapter_pdf_export"))).toBe(true);
@@ -485,7 +509,7 @@ test("chapter numbers are read-only, optional, consecutive, and saved in the exp
   await numbered.press("Escape");
   await expect(modal.locator(".book-chapter__number")).toHaveCount(0);
   await page.screenshot({ path: test.info().outputPath("optional-chapter-numbering.png") });
-  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await advanceToExport(modal);
   await modal.locator('[data-action="select-editor-export-option:file:pdf"]').click();
   await modal.getByRole("button", { name: "Save", exact: true }).click();
   await expect.poll(() => page.evaluate(() => window.__projectExports.some((call) => call.command === "start_gtms_chapter_pdf_export"))).toBe(true);
@@ -641,7 +665,7 @@ test("title form keeps edits and Enter breaks beside a live PDF preview", async 
   await page.locator('[data-action="export-project:fixture-project-001"]').click();
   await expect(title).toHaveValue("Hôn Nhân\nHoàn Hảo");
   await expect(modal.locator("[data-editor-export-paper-size-select]")).toHaveValue("a5");
-  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await advanceToExport(modal);
   await modal.getByRole("button", { name: "Save", exact: true }).click();
   expect(await page.evaluate(() => window.__projectExports.at(-1).input.bookItems.find((item) => item.kind === "title").title)).toBe("Hôn Nhân\nHoàn Hảo");
 });
@@ -738,7 +762,7 @@ test("chapter export titles use opening H1s, edit inline, and persist independen
   await chooseBookOption(modal, "editor-export-language", "English (en)");
   await first.click();
   await page.screenshot({ path: test.info().outputPath("editable-chapter-titles.png") });
-  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await advanceToExport(modal);
   await modal.locator('[data-action="select-editor-export-option:file:docx"]').click();
   await modal.getByRole("button", { name: "Save", exact: true }).click();
   await expect(modal).toBeHidden();
@@ -902,7 +926,7 @@ test("shared paper size gives copyright pages print proportions and survives exp
   expect(narrow.ratio).toBeCloseTo(210 / 148, 3);
   expect(narrow.font).toBeCloseTo(9.2 * 25.4 / 72 / 148, 4);
   await page.setViewportSize({ width: 1280, height: 720 });
-  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await advanceToExport(modal);
   await modal.locator('[data-action="select-editor-export-option:file:pdf"]').click();
   await expect(modal.locator("[data-editor-export-paper-size-select]")).toHaveValue("a5");
   await chooseBookOption(modal, "editor-export-paper-size", "US Letter (8.5 × 11 in)");
@@ -910,7 +934,7 @@ test("shared paper size gives copyright pages print proportions and survives exp
   await expect(modal.locator("[data-editor-export-paper-size-select]")).toHaveCount(0);
   await modal.locator('[data-action="select-editor-export-option:file:pdf"]').click();
   await expect(modal.locator("[data-editor-export-paper-size-select]")).toHaveValue("us-letter");
-  await modal.getByRole("button", { name: "Previous", exact: true }).click();
+  await backToComposition(modal);
   await expect(modal.locator("[data-editor-export-paper-size-select]")).toHaveValue("us-letter");
   expect((await measure()).ratio).toBeCloseTo(11 / 8.5, 3);
   await expect(modal.getByRole("textbox", { name: "Copyright text", exact: true })).toHaveText("Copyright © Gnosis VN, 2026.");
@@ -919,7 +943,7 @@ test("shared paper size gives copyright pages print proportions and survives exp
   // rather than retaining it only on the in-memory modal object.
   await mountProjectExport(page);
   await expect(modal.locator("[data-editor-export-paper-size-select]")).toHaveValue("us-letter");
-  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await advanceToExport(modal);
   await expect(modal.locator("[data-editor-export-paper-size-select]")).toHaveValue("us-letter");
   await modal.getByRole("button", { name: "Save", exact: true }).click();
   await expect.poll(() => page.evaluate(() => window.__projectExports.find((call) => call.command === "start_gtms_chapter_pdf_export")?.input.paperSize)).toBe("us-letter");
@@ -1013,11 +1037,11 @@ test("book composer saves independent language layouts, sections, and format set
   await page.mouse.move(from.x + 12, from.y + 12); await page.mouse.down();
   await page.mouse.move(to.x + 40, to.y + to.height - 3, { steps: 10 }); await page.mouse.up();
   await expect(included.last()).toHaveAttribute("data-book-item", tocId);
-  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await advanceToExport(modal);
   await modal.locator('[data-action="select-editor-export-option:file:pdf"]').click();
   await chooseBookOption(modal, "editor-export-paper-size", "A5 (148 × 210 mm)");
   await page.screenshot({ path: test.info().outputPath("book-export-options.png") });
-  await modal.getByRole("button", { name: "Previous", exact: true }).click();
+  await backToComposition(modal);
   await chooseBookOption(modal, "editor-export-language", "English (en)");
   await expect(included).toHaveCount(2); // English title page and one included chapter.
   await modal.getByRole("button", { name: "Title page", exact: true }).click();
@@ -1028,7 +1052,7 @@ test("book composer saves independent language layouts, sections, and format set
   await chooseBookOption(modal, "editor-export-language", "Vietnamese (vi)");
   await expect(included.last()).toHaveAttribute("data-book-item", tocId);
   await page.screenshot({ path: test.info().outputPath("book-composer.png") });
-  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await advanceToExport(modal);
   await expect(modal.locator('[data-editor-export-paper-size-select]')).toHaveValue("a5");
   await expect(modal.locator('[data-action="select-editor-export-option:file:pdf"]')).toHaveClass(/is-selected/);
   await modal.getByRole("button", { name: "Save", exact: true }).click();
@@ -1089,10 +1113,10 @@ test("page 1 saves to Git on Next and Cancel, reloads on Back, and leaves format
   const modal = page.getByRole("dialog", { name: "Export project", exact: true });
   await releaseSettingsFetch(page, null);
   await modal.locator('[data-book-chapter-title="fixture-chapter-0-0"]').fill("Saved title");
-  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await advanceToExport(modal);
   await expect.poll(() => page.evaluate(() => window.__bookSettingsRequests.filter((r) => r.settings).length)).toBe(1);
   await modal.locator('[data-action="select-editor-export-option:file:pdf"]').click();
-  await modal.getByRole("button", { name: "Previous", exact: true }).click();
+  await backToComposition(modal);
   await expect(modal.locator('[data-book-chapter-title="fixture-chapter-0-0"]')).toHaveValue("Saved title");
   await releaseSettingsFetch(page, settingsDoc(settingsLayout("Updated on GitHub")));
   await settingsDialog(page).getByRole("button", { name: "Ok", exact: true }).click();
@@ -1105,7 +1129,7 @@ test("page 1 saves to Git on Next and Cancel, reloads on Back, and leaves format
   expect(saves[1].settings.layouts.en.options).toEqual({ pdfPaperSize: "a5" });
   expect(JSON.stringify(saves)).not.toContain("selectedOptionId");
   await page.locator('[data-action="export-project:fixture-project-001"]').click();
-  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await advanceToExport(modal);
   await expect(modal.locator('[data-action="select-editor-export-option:file:pdf"]')).toHaveAttribute("aria-pressed", "true");
 });
 
@@ -1323,4 +1347,40 @@ test("contents preview follows PDF entry gaps and leading for wrapped chapters a
   await page.screenshot({ path: test.info().outputPath("contents-print-spacing-a5.png") });
   await chooseBookOption(modal, "editor-export-paper-size", "A4 (210 × 297 mm)");
   await check(true);
+});
+
+
+test("redundancy page keeps local decisions through page 3 and reopening, and exports the exclusions", async ({ page }) => {
+  await mountProjectExport(page);
+  await page.evaluate(() => {
+    const occurrence = (id, itemId, kind = "footnote") => ({ id, itemId, rowId: `${itemId}-row`, kind, marker: kind === "footnote" ? 1 : 0, signature: `sig-${id}`, chapterName: itemId, text: "An explanation of dependent origination.", context: "dependent origination", imageSrc: "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMDAiIGhlaWdodD0iMTIwIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjEyMCIgcng9IjgiIGZpbGw9IiNlZjlhMzIiLz48cGF0aCBkPSJNMjAgOTVMNzAgMzBMMTEwIDc1TDE1MCA0NUwxODUgOTVaIiBmaWxsPSIjODM1MDJkIi8+PC9zdmc+" });
+    window.__redundancyResult = {
+      images: [{ id: "image", occurrences: [occurrence("i1", "fixture-chapter-0-0", "image"), occurrence("i2", "fixture-chapter-0-1", "image")] }],
+      footnotes: [{ id: "note", anchor: "dependent origination", occurrences: [occurrence("n1", "fixture-chapter-0-0"), occurrence("n2", "fixture-chapter-0-1")] }], warnings: [], cached: true, revisions: { "fixture-chapter-0-0": "reviewed-a", "fixture-chapter-0-1": "reviewed-b" },
+    };
+  });
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await expect(modal.getByRole("heading", { name: "Review redundancy" })).toBeVisible();
+  const checks = modal.locator("[data-book-redundancy-choice]");
+  await expect(checks).toHaveCount(4);
+  await expect(checks.nth(0)).toBeChecked();await expect(checks.nth(1)).not.toBeChecked();
+  await expect(checks.nth(2)).toBeChecked();await expect(checks.nth(3)).not.toBeChecked();
+  await page.screenshot({ path: test.info().outputPath("book-redundancy-review.png") });
+  await checks.nth(1).check();
+  await checks.nth(2).uncheck();
+  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await expect(modal.getByRole("button", { name: "Save", exact: true })).toBeVisible();
+  await modal.getByRole("button", { name: "Previous", exact: true }).click();
+  await expect(checks.nth(1)).toBeChecked();await expect(checks.nth(2)).not.toBeChecked();
+  await modal.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.locator('[data-action="export-project:fixture-project-001"]').click();
+  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await expect(checks.nth(1)).toBeChecked();await expect(checks.nth(2)).not.toBeChecked();
+  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await modal.getByRole("button", { name: "Save", exact: true }).click();
+  const input = await page.evaluate(() => window.__projectExports.find((entry) => entry.command === "export_gtms_chapter_file").input);
+  expect(input.bookItems[0].reviewRevision).toBe("reviewed-a");
+  expect(input.bookItems[0].exclusions).toEqual([{ rowId: "fixture-chapter-0-0-row", kind: "footnote", marker: 1, signature: "sig-n1" }]);
+  expect(input.bookItems[1].exclusions.filter((entry) => entry.kind === "image")).toHaveLength(0);
 });

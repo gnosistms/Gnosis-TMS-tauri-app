@@ -1,3 +1,4 @@
+import { startBookRedundancy, cancelBookRedundancy, flushBookRedundancyChoices } from "./project-book-redundancy-flow.js";
 import { requestBookPreviewFonts } from "./project-book-preview-fonts.js";
 import { beginBookSettingsSync, leaveBookSettingsPage1, acceptRemoteBookSettings } from "./project-book-settings-sync.js";
 import { portableBookOptions } from "./project-book-settings-document.js";
@@ -74,9 +75,10 @@ export function applyProjectBookSettings(saved, render, page = modal()?.page) {
   const code = current.languageCode;
   const options = portableBookOptions(saved.layouts?.[code]?.options || saved.options);
   const book = { ...reconcileBookLayout(project()?.chapters || [], code, saved.layouts?.[code]), ...previewState(), settingsEntryId: current.book.settingsEntryId, settingsLocalSeeded: true };
-  update({ ...options, page, languageCode: code, book, pdfFontStatus: "idle", pdfFontInspectionKey: "", error: "" }, render);
-  if (page === 1) void loadSelectedBookPreview(render);
-  else if (modal().selectedOptionId === "file:pdf") void import("./editor-export-flow.js").then((module) => module.refreshPdfFontInspection(render));
+  const nextPage = page === 1 ? 1 : 2;
+  update({ ...options, page: nextPage, languageCode: code, book, pdfFontStatus: "idle", pdfFontInspectionKey: "", error: "" }, render);
+  if (nextPage === 1) void loadSelectedBookPreview(render);
+  else void startBookRedundancy(render);
 }
 
 export async function loadSelectedBookPreview(render, operations = {}) {
@@ -236,13 +238,25 @@ export async function handleProjectBookAction(action, render) {
   if (action === "book-settings-ok") { acceptRemoteBookSettings(render); return true; }
   if (action === "book-next") { if (book.items.some(bookItemIncluded)) {
     leaveBookSettingsPage1(render);
-    update({ page: 2 }, render);
-    if (current.selectedOptionId === "file:pdf") void import("./editor-export-flow.js").then((module) => module.refreshPdfFontInspection(render));
+    if (current.page === 1) {
+      update({ page: 2 }, render);
+      void startBookRedundancy(render);
+    } else if (["ready", "error"].includes(book.redundancy?.status)) {
+      try { await flushBookRedundancyChoices(); } catch (error) { update({ error: formatErrorForDisplay(error) }, render); return true; }
+      cancelBookRedundancy();
+      update({ page: 3 }, render);
+      if (current.selectedOptionId === "file:pdf") void import("./editor-export-flow.js").then((module) => module.refreshPdfFontInspection(render));
+    }
   } }
   else if (action === "book-previous") {
-    applyProjectBookSettings(loadBookSettings(current.projectId), render, 1);
-    beginBookSettingsSync(render);
+    if (current.page === 3) { update({ page: 2 }, render); void startBookRedundancy(render); }
+    else {
+      cancelBookRedundancy();
+      applyProjectBookSettings(loadBookSettings(current.projectId), render, 1);
+      beginBookSettingsSync(render);
+    }
   }
+  else if (action === "book-redundancy-retry") void startBookRedundancy(render);
   else if (action === "book-fonts-retry") requestBookPreviewFonts(render, { force: true });
   else if (action === "book-title-preview-retry") cancelBookTitlePreview();
   else if (action === "book-add-menu") update({ book: { ...book, addMenuOpen: !book.addMenuOpen } }, render);

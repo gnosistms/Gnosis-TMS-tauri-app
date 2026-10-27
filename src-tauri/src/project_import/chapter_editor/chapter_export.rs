@@ -80,7 +80,7 @@ pub(crate) struct ExportChapterFileResponse {
     skipped_rows_without_timing: Option<usize>,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ExportChapterFileInput {
     #[serde(default)]
@@ -310,7 +310,12 @@ pub(super) fn load_export_chapters(
         if !sanitize_chapter_languages(&chapter.languages).iter().any(|language| language.code == input.language_code) {
             return Err(format!("The selected export language is not available in '{}'.", chapter.title));
         }
-        Ok((chapter, load_editor_rows(&path.join("rows"))?))
+        let mut rows = load_editor_rows(&path.join("rows"))?;
+        if let Some(item) = input.book_items.iter().find(|item| item.kind == "chapter" && item.chapter_id == *id) {
+            super::book_redundancy::validate_revision(&rows, &input.language_code, &item.review_revision)?;
+            super::book_redundancy::filter_rows(&mut rows, &input.language_code, &item.exclusions)?;
+        }
+        Ok((chapter, rows))
     }).collect()
 }
 
@@ -402,6 +407,9 @@ pub(super) fn build_scoped_export_document(
         let mut seen = BTreeSet::new();
         let mut parts = Vec::new();
         for item in &items {
+            let Some(part_item) = super::book_export::filtered_item(item)? else {
+                continue;
+            };
             if item.id.is_empty() || !seen.insert(item.id.clone()) {
                 return Err("The book contains a duplicate or invalid item.".into());
             }
@@ -410,10 +418,10 @@ pub(super) fn build_scoped_export_document(
                     .remove(&item.id)
                     .ok_or_else(|| "A chapter selected for the book is missing.".to_string())?
             } else {
-                section_document(app, item, document_language, &[])?
+                section_document(app, &part_item, document_language, &[])?
             };
             parts.push(BookPart {
-                item: item.clone(),
+                item: part_item,
                 document,
             });
         }
@@ -4782,5 +4790,88 @@ mod tests {
 
         assert!(output.contains("HYPERLINK \"http://127.0.0.1/image.png\""));
         assert!(!output.contains("\\pict"));
+    }
+
+    #[test]
+    fn book_redundancy_filters_all_native_formats_before_numbering() {
+        use super::super::book_redundancy::{field_signature, filter_rows, Exclusion};
+        let mut source = row("row", "a", "First[1] second[2]", "paragraph");
+        let field = source.fields.get_mut("en").expect("field");
+        field.footnote = "[1] Redundant explanation\n[2] Surviving explanation".into();
+        field.image = Some(StoredFieldImage {
+            kind: "url".into(),
+            url: Some("https://example.com/omitted.png".into()),
+            path: None,
+        });
+        field.image_caption = "Omitted caption".into();
+        let signature = field_signature(field).expect("signature");
+        let original = source.clone();
+        let mut rows = vec![source];
+        filter_rows(
+            &mut rows,
+            "en",
+            &[
+                Exclusion {
+                    row_id: "row".into(),
+                    kind: "footnote".into(),
+                    marker: 1,
+                    signature: signature.clone(),
+                },
+                Exclusion {
+                    row_id: "row".into(),
+                    kind: "image".into(),
+                    marker: 0,
+                    signature,
+                },
+            ],
+        )
+        .expect("filter");
+        let chapter = StoredChapterFile {
+            chapter_id: "chapter".into(),
+            title: "Chapter".into(),
+            lifecycle: active_lifecycle_state(),
+            source_files: vec![],
+            languages: vec![export_language("en", "target", None)],
+            settings: None,
+            source_word_count: None,
+        };
+        let chapter_document =
+            build_export_document(Path::new("/repo"), &chapter, &rows, "en", None, "")
+                .expect("document");
+        let document = combine_export_documents("Book", "en", vec![chapter_document]);
+        for rendered in [
+            render_html_document(&document).expect("html"),
+            render_txt_document(&document),
+            render_md_document(&document),
+            render_rtf_document(&document, false),
+        ] {
+            assert!(!rendered.contains("Redundant explanation"));
+            assert!(!rendered.contains("Omitted caption"));
+            assert!(rendered.contains("Surviving explanation"));
+        }
+        assert!(render_txt_document(&document).contains("second[1]"));
+        for (bytes, path) in [
+            (
+                render_docx_document(&document, false).expect("docx"),
+                "word/document.xml",
+            ),
+            (
+                render_xlsx_workbook("Book", &chapter.languages, &rows, false).expect("xlsx"),
+                "xl/worksheets/sheet1.xml",
+            ),
+        ] {
+            let mut archive = ZipArchive::new(Cursor::new(bytes)).expect("zip");
+            let mut xml = String::new();
+            archive
+                .by_name(path)
+                .expect("xml")
+                .read_to_string(&mut xml)
+                .expect("read");
+            assert!(!xml.contains("Redundant explanation"));
+            assert!(xml.contains("Surviving explanation"));
+            assert!(!xml.contains("Omitted caption"));
+        }
+        assert_eq!(original.fields["en"].plain_text, "First[1] second[2]");
+        assert!(original.fields["en"].image.is_some());
     }
 }

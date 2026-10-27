@@ -1026,6 +1026,7 @@ test("project PDF inspection and export share the complete chapter scope", async
   installProjectExportFixture();
   const { openProjectExportOptions } = await import("./editor-export-flow.js");
   openProjectExportOptions(() => {}, "project-1");
+  state.editorChapter.exportModal.page = 3;
   state.editorChapter.exportModal.selectedOptionId = "file:pdf";
   const calls = [];
   const invoke = async (command, { input }) => {

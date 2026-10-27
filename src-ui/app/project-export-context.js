@@ -48,7 +48,7 @@ export async function loadProjectExportBlocks(modal, operations = {}, { numberCh
     }
     const chapterId = item.chapterId;
     const payload = await (operations.invoke ?? invoke)("load_gtms_chapter_editor_data", {
-      input: { installationId: team.installationId, projectId: project.id, repoName: project.name, chapterId },
+      input: { installationId: team.installationId, projectId: project.id, repoName: project.name, chapterId, exportLanguageCode: modal.languageCode, exportReviewRevision: item.reviewRevision || "", exportExclusions: item.exclusions || [] },
     });
     const current = state.editorChapter?.exportModal;
     if (state.selectedTeamId !== team.id || !current?.isOpen
@@ -92,6 +92,6 @@ function bookSectionPreviewBlocks(item, modal, contentsItems, headings) {
     ? { kind: "separator", rowId: item.id, languageCode: modal.languageCode }
     : text(part.text.replaceAll("\u2028", "\n"), item.kind === "dedication" ? "centered" : "paragraph")));
   const source = modal.book.items.find((entry) => entry.id === item.id);
-  if (source?.image) result.push({ kind: "image", rowId: item.id, languageCode: modal.languageCode, image: { kind: "upload", path: source.image.assetId, filePath: source.image.vellumFilePath || source.image.filePath, fileName: source.image.fileName }, caption: item.caption || "" });
+  if (source?.image && !item.exclusions?.length) result.push({ kind: "image", rowId: item.id, languageCode: modal.languageCode, image: { kind: "upload", path: source.image.assetId, filePath: source.image.vellumFilePath || source.image.filePath, fileName: source.image.fileName }, caption: item.caption || "" });
   return result.map((block) => ({ ...block, bookItemId: item.id }));
 }
