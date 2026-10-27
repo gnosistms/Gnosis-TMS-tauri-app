@@ -4,6 +4,7 @@ test.use({ actionTimeout: 5000 });
 
 async function mountEditor(page, rowCount = 2) {
   await page.addInitScript(() => {
+    let preflightGate = null;
     const term = { termId: "term-1", sourceTerms: ["alpha"], targetTerms: ["old wording"],
       targetVariantNotes: ["old variant note"], notesToTranslators: "old translator note",
       footnote: "old footnote", lifecycleState: "active" };
@@ -22,7 +23,20 @@ async function mountEditor(page, rowCount = 2) {
       }
       if (command === "load_gtms_glossary_term") return { term: structuredClone(window.glossaryDisk.terms[0]) };
       if (command === "sync_gtms_glossary_editor_repo") {
-        if (window.holdPreflight) await new Promise(resolve => { window.releasePreflight = resolve; });
+        if (window.holdPreflight) {
+          window.preflightWaits = (window.preflightWaits || 0) + 1;
+          // A late initial background sync may overlap the save preflight.
+          // Release the phase for every caller instead of losing the earlier
+          // resolver when a second sync reaches the mock.
+          preflightGate ??= new Promise(resolve => {
+            window.releasePreflight = () => {
+              window.holdPreflight = false;
+              preflightGate = null;
+              resolve();
+            };
+          });
+          await preflightGate;
+        }
         return {};
       }
       if (command === "upsert_gtms_glossary_term") {
@@ -134,7 +148,7 @@ test("a footnote edit after opening during batch sync preserves newly synced wor
   expect(await page.evaluate(() => window.glossaryDisk.terms[0].targetTerms)).toEqual(["new remote wording"]);
 });
 
-for (const timing of ["during-push", "during-preflight", "during-chapter-reload", "saved-before-return", "virtualized", "during-access-refresh"]) {
+for (const timing of ["during-push", "during-preflight", "during-preflight-and-background-sync", "during-chapter-reload", "saved-before-return", "virtualized", "during-access-refresh"]) {
   test(`returning from a glossary edit refreshes hovered notes (${timing})`, async ({ page }) => {
     await mountEditor(page, timing === "virtualized" ? 120 : 2);
     await page.locator('[data-action="open-editor-glossary"]').click();
@@ -145,10 +159,20 @@ for (const timing of ["during-push", "during-preflight", "during-chapter-reload"
     await page.evaluate(timing => {
       window.holdPush = true;
       window.holdChapter = timing === "during-chapter-reload" || timing === "saved-before-return";
-      window.holdPreflight = timing === "during-preflight" || timing === "during-chapter-reload";
+      window.holdPreflight = timing.startsWith("during-preflight") || timing === "during-chapter-reload";
     }, timing);
     await page.locator('[data-action="submit-glossary-term-editor"]').click();
     await expect(page.locator('[data-modal-dialog="glossary-term-editor"]')).toHaveCount(0);
+    if (timing === "during-preflight-and-background-sync") {
+      await page.waitForFunction(() => window.preflightWaits > 0);
+      // Model the initial background sync reaching the mock after the save's
+      // preflight: both calls must remain held until the pointer is stationary.
+      await page.evaluate(async () => {
+        const { startGlossaryBackgroundSyncSession } = await import("/app/glossary-background-sync.js");
+        startGlossaryBackgroundSyncSession(() => {});
+      });
+      await page.waitForFunction(() => window.preflightWaits >= 2);
+    }
     if (timing === "saved-before-return" || timing === "during-access-refresh") {
       await expect.poll(() => page.evaluate(() => typeof window.releasePush)).toBe("function");
     }
@@ -171,7 +195,7 @@ for (const timing of ["during-push", "during-preflight", "during-chapter-reload"
       }
       const mark = page.locator('[data-row-id="fixture-row-0001"] [data-language-code="es"] [data-editor-glossary-mark]').first();
       await mark.hover();
-      if (timing === "during-preflight" || timing === "during-chapter-reload") {
+      if (timing.startsWith("during-preflight") || timing === "during-chapter-reload") {
         // Keep the pointer stationary while the save completes. The open hover
         // must refresh along with its underlying mark, before the chapter loads.
         await expect(page.locator(".editor-glossary-tooltip")).toContainText("old translator note");
