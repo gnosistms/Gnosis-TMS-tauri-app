@@ -941,7 +941,7 @@ function renderQuoteAttribution(row, language) {
   if (disabled && !attribution.trim()) return "";
   return `<label class="translation-language-panel__attribution">
     <span class="translation-language-panel__attribution-label">Attribution</span>
-    <span class="translation-language-panel__attribution-prompt" aria-hidden="true">Click here to enter attribution.</span>
+    <span class="translation-language-panel__attribution-prompt" aria-hidden="true">Enter attribution</span>
     <textarea class="translation-language-panel__field translation-language-panel__field--attribution"
       data-editor-row-field data-content-kind="attribution"
       data-row-id="${escapeHtml(row.id)}" data-language-code="${escapeHtml(language.code)}"
